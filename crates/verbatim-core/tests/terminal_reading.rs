@@ -21,11 +21,12 @@ mod terminal_support;
 use std::fmt::Write as _;
 use std::io::BufReader;
 
-use terminal_support::{Asked, Outpost, Said, Session, said};
+use terminal_support::{Asked, Key, Outpost, Said, Session, caret, said};
 use verbatim_core::{RecordedInput, SrState, dump, read_of, replay, snapshot_of};
+use verbatim_model::request::{PressAction, QueueInput};
 use verbatim_model::{
-    CaretKey, CaretMotion, Earcon, Effect, Input, Message, ReaderSettings, ReviewCommand,
-    SegmentContent, TraceId, TypingEcho,
+    CaretKey, CaretMotion, Earcon, Effect, Input, KeySeq, Message, ReaderSettings, ReviewCommand,
+    SegmentContent, SpeechMark, TraceId, TypingEcho,
 };
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
@@ -38,17 +39,15 @@ fn plain(words: &[&str]) -> Vec<Said> {
 }
 
 /// A review command, its first press.
-fn command(command: ReviewCommand) -> Input {
+fn command(command: ReviewCommand) -> Key {
     pressed(command, 0)
 }
 
-fn pressed(command: ReviewCommand, repeat: u8) -> Input {
-    Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
+fn pressed(command: ReviewCommand, repeat: u8) -> Key {
+    Key {
         trace_id: TraceId::from_raw(1),
-        command,
-        repeat,
+        at_ms: 0,
+        action: PressAction::Command { command, repeat },
     }
 }
 
@@ -82,9 +81,9 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     let mut session = showing(20, 4, 100, "one\r\ntwo\r\nthree\r\n");
     // Up from the caret's line, the blank row below the output, to "three"
     // and "two", each after a fresh read.
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["three"]));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["two"]));
     assert_eq!(session.requests(), [FRESH, FRESH]);
     // Output scrolls "two" up the screen and into the history above the
@@ -94,10 +93,10 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
         session.heard(),
         plain(&["four", "five", "six", "seven", "eight", "nine"])
     );
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["two"]));
     // Down from it, through the history, read again for each command.
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
     // Each history read asks for a screen more than the command needs.
     let history = Asked::History {
@@ -114,8 +113,8 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
 fn reviewing_two() -> Session {
     let text = format!("{}one\r\ntwo\r\nthree\r\n", numbered(1..=6));
     let mut session = showing(20, 4, 100, &text);
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     session.write("four\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\n", 200);
     let _ = session.heard();
     let _ = session.requests();
@@ -130,7 +129,7 @@ fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_
     // "two": the command reads it with one history read.
     let mut session = reviewing_two();
     session.output_before_histories = [("ten\r\neleven\r\n".to_owned(), 300)].into();
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["ten", "eleven", "two"]));
     assert_eq!(
         session.requests(),
@@ -142,7 +141,7 @@ fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_
             }
         ]
     );
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
 }
 
@@ -161,7 +160,7 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_is_placed_from_the_an
         300,
     )]
     .into();
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     // The output's first two lines are handed to speech ahead of the
     // command's words, the rest as playback reaches them.
     assert_eq!(
@@ -178,7 +177,7 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_is_placed_from_the_an
             }
         ]
     );
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["two"]));
 }
 
@@ -194,14 +193,14 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     // and reads the row there now, "line 32" ("Limits"), and the next
     // command reads it again.
     let mut session = showing(20, 3, 9, &numbered(1..=12));
-    session.input(&command(ReviewCommand::ReviewTop));
-    session.input(&command(ReviewCommand::ReviewNextLine));
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewTop));
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["line 2", "line 3", "line 4"]));
     let _ = session.requests();
     session.output_before_histories = [(numbered(13..=40), 100)].into();
     session.hold_whole = true;
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     session.answer_held();
     let mut flood = vec![
         "line 32".to_owned(),
@@ -221,7 +220,7 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
             Asked::Whole
         ]
     );
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["line 32"]));
 }
 
@@ -233,14 +232,14 @@ fn a_review_place_whose_line_left_its_search_keeps_its_place() {
     // place to a screen above it, so it keeps its place and reads the row
     // there now ("The review anchor").
     let mut session = showing(20, 3, 9, &numbered(1..=12));
-    session.input(&command(ReviewCommand::ReviewTop));
-    session.input(&command(ReviewCommand::ReviewNextLine));
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewTop));
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["line 2", "line 3", "line 4"]));
     session.write(&numbered(13..=24), 100);
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["line 16"]));
 }
 
@@ -254,9 +253,9 @@ fn a_review_place_above_the_memory_is_found_lower_after_its_history_was_printed_
     // review anchor").
     let lines = numbered(1..=12);
     let mut session = showing(20, 3, 100, &lines);
-    session.input(&command(ReviewCommand::ReviewTop));
-    session.input(&command(ReviewCommand::ReviewNextLine));
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewTop));
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["line 1", "line 2", "line 3"]));
     session.write(
         &format!("\x1b[2J\x1b[3J\x1b[Hnew a\r\nnew b\r\n{lines}"),
@@ -264,14 +263,14 @@ fn a_review_place_above_the_memory_is_found_lower_after_its_history_was_printed_
     );
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["line 3"]));
 }
 
 #[test]
 fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
     let mut session = showing(20, 3, 100, &numbered(1..=12));
-    session.input(&command(ReviewCommand::ReviewTop));
+    session.press(&command(ReviewCommand::ReviewTop));
     assert_eq!(session.heard(), plain(&["line 1"]));
     assert_eq!(
         session.requests(),
@@ -284,10 +283,10 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
         ]
     );
     // Up from the document's first row goes nowhere.
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["Message(Top) line 1"]));
     for line in ["line 2", "line 3", "line 4"] {
-        session.input(&command(ReviewCommand::ReviewNextLine));
+        session.press(&command(ReviewCommand::ReviewNextLine));
         assert_eq!(session.heard(), plain(&[line]));
     }
 }
@@ -295,41 +294,42 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
 #[test]
 fn a_row_ends_at_its_text_and_a_range_joins_lines() {
     let mut session = showing(20, 4, 100, "ab\r\ncd\r\n");
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     // No padding: the row's text is all of it.
     assert_eq!(session.heard(), plain(&["cd", "ab"]));
-    session.input(&command(ReviewCommand::ReviewNextCharacter));
-    session.input(&command(ReviewCommand::SetStartMarker));
-    session.input(&command(ReviewCommand::ReviewNextLine));
-    session.input(&pressed(ReviewCommand::SelectThenCopy, 0));
+    session.press(&command(ReviewCommand::ReviewNextCharacter));
+    session.press(&command(ReviewCommand::SetStartMarker));
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    session.press(&pressed(ReviewCommand::SelectThenCopy, 0));
     assert_eq!(
         session.heard(),
         plain(&["b", "Message(StartMarked)", "cd", "Message(CannotSelect)"])
     );
-    session.input(&pressed(ReviewCommand::SelectThenCopy, 1));
+    session.press(&pressed(ReviewCommand::SelectThenCopy, 1));
     assert_eq!(session.copied, ["b\r\ncd"]);
 }
 
 #[test]
 fn the_review_reads_where_the_caret_is() {
     let mut session = showing(20, 4, 100, "ready> abc");
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
-    session.input(&command(ReviewCommand::ReviewPreviousCharacter));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(ReviewCommand::ReviewPreviousCharacter));
     assert_eq!(session.heard(), plain(&["ready> abc", "c"]));
 }
 
 // Keys against reads.
 
-fn typed(text: &str, at_ms: u64) -> (TraceId, Input) {
+fn typed(text: &str, at_ms: u64) -> (TraceId, Key) {
     let trace_id = TraceId::from_raw(2);
     (
         trace_id,
-        Input::CharacterTyped {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
+        Key {
             trace_id,
-            text: text.to_owned(),
             at_ms,
+            action: PressAction::Typed {
+                text: text.to_owned(),
+            },
         },
     )
 }
@@ -338,7 +338,7 @@ fn typed(text: &str, at_ms: u64) -> (TraceId, Input) {
 fn a_key_whose_time_is_after_a_reads_start_is_given_to_the_rules_after_that_read() {
     let mut session = showing(20, 4, 100, "$ ");
     let (key, input) = typed("l", 1000);
-    session.input(&input);
+    session.press(&input);
     // The colours travel in the reads themselves: nothing else is asked.
     assert_eq!(session.requests(), Vec::<Asked>::new());
     // The program's own output, in a read that began before the key: no
@@ -358,20 +358,20 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
     // "x", whose number the speech manager's fence keeps.
     let mut session = showing(20, 3, 10, "$ ");
     let up = TraceId::from_raw(3);
-    let held = Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: up,
-        key: CaretKey {
+    let held = caret(
+        up,
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: 200,
-    };
+        200,
+        true,
+    );
     let (x, input) = typed("x", 210);
     // Up's starting read is answered at 205: Up is passed on then, and
     // "x" after it.
     session.at_ms = 205;
-    session.inputs(&[held, input]);
+    session.presses(&[held, input]);
     session.write("echo onex", 250);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
 }
@@ -386,18 +386,18 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
         speak_typed_characters: TypingEcho::Off,
         ..ReaderSettings::default()
     }));
-    let held = Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(4),
-        key: CaretKey {
+    let held = caret(
+        TraceId::from_raw(4),
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: 200,
-    };
+        200,
+        true,
+    );
     let (x, input) = typed("x", 210);
     session.at_ms = 205;
-    session.inputs(&[held, input]);
+    session.presses(&[held, input]);
     session.write("echo one", 220);
     assert_eq!(session.heard(), [said(Some(x), "echo one")]);
     session.write("x", 250);
@@ -408,7 +408,7 @@ fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
 fn a_read_after_every_window_carries_no_key() {
     let mut session = showing(20, 4, 100, "$ ");
     let (_, input) = typed("l", 1000);
-    session.input(&input);
+    session.press(&input);
     // A line of output after the window: no key.
     session.write("\r\nlate\r\n", 1400);
     assert_eq!(session.heard(), plain(&["late"]));
@@ -425,8 +425,9 @@ fn with_passwords_spoken_a_character_is_heard_as_typed_and_its_asterisk_as_shown
         ..ReaderSettings::default()
     }));
     let (key, input) = typed("s", 1000);
-    session.input(&input);
-    assert_eq!(session.heard(), [said(Some(key), "s")]);
+    session.press(&input);
+    // Echoed by the key's own entry, whose speech carries its number.
+    assert_eq!(session.heard(), [said(None, "s")]);
     session.write("*", 1050);
     assert_eq!(session.heard(), [said(Some(key), "*")]);
     // The colours travel in the reads themselves: nothing else is asked.
@@ -439,7 +440,7 @@ fn lines_of_one_and_two_characters_after_enter_are_output_not_echo() {
     // are output, never taken for the echo of typing.
     let mut session = showing(30, 6, 10, "ready> ");
     let (key, input) = typed("\r", 1000);
-    session.input(&input);
+    session.press(&input);
     session.write("\r\ny\r\nok\r\nready> ", 1050);
     assert_eq!(
         session.heard(),
@@ -493,22 +494,22 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
     // timer says nothing and comes again.
     let mut session = showing(20, 5, 10, "line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H");
     let up = TraceId::from_raw(5);
-    session.input(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: up,
-        key: CaretKey {
+    session.press(&caret(
+        up,
+        CaretKey {
             motion: CaretMotion::NextLine,
             select: false,
         },
-        pressed_at_ms: 1000,
-    });
+        1000,
+        false,
+    ));
     session.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
     assert_eq!(session.heard(), [said(Some(up), "line two")]);
     assert_eq!(session.timers, [Some(2000)]);
-    session.input(&Input::ClearingKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
+    session.press(&Key {
         trace_id: TraceId::from_raw(6),
         at_ms: 1900,
+        action: PressAction::Clearing,
     });
     session.timers.clear();
     session.input(&Input::Queue {
@@ -524,15 +525,15 @@ fn the_timer_gives_the_keys_that_reached_the_program_by_then_first() {
 /// whose answer a read showed.
 fn timed() -> Session {
     let mut session = showing(20, 5, 10, "line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H");
-    session.input(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(5),
-        key: CaretKey {
+    session.press(&caret(
+        TraceId::from_raw(5),
+        CaretKey {
             motion: CaretMotion::NextLine,
             select: false,
         },
-        pressed_at_ms: 1000,
-    });
+        1000,
+        false,
+    ));
     session.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
     assert_eq!(session.armed(), Some(2000));
     session
@@ -663,7 +664,7 @@ fn the_status_bar_is_the_lines_below_the_caret_one_segment_each() {
         "transcript\r\n> fix it\r\nmodel: x\r\ntokens: 12\x1b[2;9H",
     );
     session.log.clear();
-    session.input(&command(STATUS_BAR));
+    session.press(&command(STATUS_BAR));
     assert_eq!(session.heard(), plain(&["model: x tokens: 12"]));
     assert_eq!(
         last_spoken(&session),
@@ -681,21 +682,21 @@ fn the_status_bar_is_the_rewritten_rows_at_the_bottom_with_the_caret_on_the_last
     // The program rewrites its last two rows, leaving the caret on the last.
     session.write("\x1b[1A\rprogress 2\r\nstatus 2", 100);
     let _ = session.heard();
-    session.input(&command(STATUS_BAR));
+    session.press(&command(STATUS_BAR));
     assert_eq!(session.heard(), plain(&["progress 2 status 2"]));
 }
 
 #[test]
 fn the_status_bar_is_the_last_line_with_text_with_no_footer() {
     let mut session = showing(20, 4, 100, "one\r\ntwo\r\nready>");
-    session.input(&command(STATUS_BAR));
+    session.press(&command(STATUS_BAR));
     assert_eq!(session.heard(), plain(&["ready>"]));
 }
 
 #[test]
 fn a_blank_screen_has_no_status_bar_information() {
     let mut session = showing(20, 4, 100, "");
-    session.input(&command(STATUS_BAR));
+    session.press(&command(STATUS_BAR));
     assert_eq!(session.heard(), plain(&["Message(NoStatusBarInformation)"]));
 }
 
@@ -703,9 +704,9 @@ fn a_blank_screen_has_no_status_bar_information() {
 fn the_status_bar_is_spelled_on_the_second_press_and_copied_on_the_third() {
     let mut session = showing(20, 4, 100, "one\r\nab\r\ncd\x1b[1;4H");
     // The lines spelled as one text, the space between them spelled.
-    session.input(&pressed(STATUS_BAR, 1));
+    session.press(&pressed(STATUS_BAR, 1));
     assert_eq!(session.heard(), plain(&["a b Message(Space) c d"]));
-    session.input(&pressed(STATUS_BAR, 2));
+    session.press(&pressed(STATUS_BAR, 2));
     assert_eq!(session.heard(), []);
     assert_eq!(session.copied, ["ab\r\ncd"]);
 }
@@ -713,11 +714,11 @@ fn the_status_bar_is_spelled_on_the_second_press_and_copied_on_the_third() {
 #[test]
 fn the_status_bar_leaves_the_review_cursor_where_it_was() {
     let mut session = showing(20, 5, 100, "one\r\ntwo\r\nready>\r\nfooter");
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["ready>", "two"]));
-    session.input(&command(STATUS_BAR));
-    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.press(&command(STATUS_BAR));
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["footer", "two"]));
 }
 
@@ -731,7 +732,7 @@ fn a_footer_written_just_before_the_command_is_the_one_read() {
         .sim
         .write(b"\x1b[s\x1b[4;1Hstatus: done\x1b[u");
     session.log.clear();
-    session.input(&command(STATUS_BAR));
+    session.press(&command(STATUS_BAR));
     // In the order Core speaks them; the support hears an utterance with no
     // index marks at once, ahead of output still queued.
     let spoken: Vec<String> = session
@@ -798,12 +799,12 @@ fn enter(session: &mut Session, command: &str, output: &str, at_ms: u64) -> u64 
     let mut at_ms = at_ms;
     for character in command.chars() {
         let (_, input) = typed(&character.to_string(), at_ms);
-        session.input(&input);
+        session.press(&input);
         session.write(&character.to_string(), at_ms + 5);
         at_ms += 10;
     }
     let (_, input) = typed("\r", at_ms);
-    session.input(&input);
+    session.press(&input);
     session.write(&format!("\r\n{output}$ "), at_ms + 5);
     let _ = session.heard();
     let _ = session.requests();
@@ -825,14 +826,14 @@ fn enter_on_a_typed_line_marks_it_and_a_bare_enter_does_not() {
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     // A bare Enter: a new prompt, no mark.
     let (_, input) = typed("\r", at_ms);
-    session.input(&input);
+    session.press(&input);
     session.write("\r\n$ ", at_ms + 5);
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
     // Past the oldest mark nothing is said.
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
     assert_eq!(session.requests(), [FRESH, FRESH]);
 }
@@ -841,25 +842,25 @@ fn enter_on_a_typed_line_marks_it_and_a_bare_enter_does_not() {
 fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
     let mut session = showing(30, 8, 100, "$ ");
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
-    session.input(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(8),
-        key: CaretKey {
+    session.press(&caret(
+        TraceId::from_raw(8),
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: at_ms,
-    });
+        at_ms,
+        false,
+    ));
     session.write("echo one", at_ms + 5);
     let (_, input) = typed("\r", at_ms + 1000);
-    session.input(&input);
+    session.press(&input);
     session.write("\r\none\r\n$ ", at_ms + 1005);
     let _ = session.heard();
     for _ in 0..2 {
-        session.input(&command(UP));
+        session.press(&command(UP));
         assert_eq!(session.heard(), plain(&["$ echo one"]));
     }
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -870,19 +871,19 @@ fn up_and_down_move_between_the_marks_and_say_nothing_past_them() {
     at_ms = enter(&mut session, "echo two", "two\r\n", at_ms);
     enter(&mut session, "echo three", "three\r\n", at_ms);
     for line in ["$ echo three", "$ echo two", "$ echo one"] {
-        session.input(&command(UP));
+        session.press(&command(UP));
         assert_eq!(session.heard(), plain(&[line]));
     }
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
     for line in ["$ echo two", "$ echo three"] {
-        session.input(&command(DOWN));
+        session.press(&command(DOWN));
         assert_eq!(session.heard(), plain(&[line]));
     }
-    session.input(&command(DOWN));
+    session.press(&command(DOWN));
     assert_eq!(session.heard(), []);
     // The review cursor is on the mark's line, as a line move leaves it.
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["two"]));
 }
 
@@ -900,15 +901,15 @@ fn input_printed_lower_is_marked_on_its_new_row() {
     let mut at_ms = 1000;
     for character in "hi there".chars() {
         let (_, input) = typed(&character.to_string(), at_ms);
-        session.input(&input);
+        session.press(&input);
         session.write(&character.to_string(), at_ms + 5);
         at_ms += 10;
     }
     let (_, input) = typed("\r", at_ms);
-    session.input(&input);
+    session.press(&input);
     session.write("\x1b[2K\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 200);
     let _ = session.heard();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["hi there"]));
 }
 
@@ -927,22 +928,22 @@ fn input_printed_lower_again_is_marked_again() {
     for _ in 0..2 {
         for character in "hi there".chars() {
             let (_, input) = typed(&character.to_string(), at_ms);
-            session.input(&input);
+            session.press(&input);
             session.write(&character.to_string(), at_ms + 5);
             at_ms += 10;
         }
         let (_, input) = typed("\r", at_ms);
-        session.input(&input);
+        session.press(&input);
         session.write("\x1b[2K\r", at_ms + 100);
         session.write("\x1b[1A\x1b[Lhi there\x1b[2B\r", at_ms + 500);
         at_ms += 2000;
     }
     let _ = session.heard();
     for _ in 0..2 {
-        session.input(&command(UP));
+        session.press(&command(UP));
         assert_eq!(session.heard(), plain(&["hi there"]));
     }
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -957,18 +958,18 @@ fn input_printed_after_the_quiet_period_is_not_marked() {
     let mut at_ms = 1000;
     for character in "hi there".chars() {
         let (_, input) = typed(&character.to_string(), at_ms);
-        session.input(&input);
+        session.press(&input);
         session.write(&character.to_string(), at_ms + 5);
         at_ms += 10;
     }
     let (_, input) = typed("\r", at_ms);
-    session.input(&input);
+    session.press(&input);
     // The editor clears at once; the input is printed only after the quiet
     // period.
     session.write("\x1b[2K\r", at_ms + 100);
     session.write("\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 1500);
     let _ = session.heard();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -978,7 +979,7 @@ fn a_mark_above_the_memory_is_found_by_one_search() {
     enter(&mut session, "echo one", "one\r\n", 1000);
     session.write(&numbered(1..=20), 5000);
     let _ = session.heard();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
     // The document's 23 rows: the next read starts at row 19, and the
     // search works outward from the mark's own row, 19 rows above it.
@@ -995,14 +996,14 @@ fn a_command_entered_twice_above_the_memory_is_found_at_each_mark() {
     session.write(&numbered(1..=20), 6000);
     let _ = session.heard();
     for _ in 0..2 {
-        session.input(&command(UP));
+        session.press(&command(UP));
         assert_eq!(session.heard(), plain(&["$ ls"]));
     }
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
-    session.input(&command(DOWN));
+    session.press(&command(DOWN));
     assert_eq!(session.heard(), plain(&["$ ls"]));
-    session.input(&command(DOWN));
+    session.press(&command(DOWN));
     assert_eq!(session.heard(), []);
 }
 
@@ -1020,7 +1021,7 @@ fn every_copy_of_a_command_entered_many_times_is_reached() {
     let _ = session.heard();
     let _ = session.requests();
     for press in 0..22 {
-        session.input(&command(UP));
+        session.press(&command(UP));
         assert_eq!(session.heard(), plain(&["$ x"]), "press {press}");
         // Each mark lies above the rows Core keeps, found by one search.
         let finds = session
@@ -1030,14 +1031,14 @@ fn every_copy_of_a_command_entered_many_times_is_reached() {
             .count();
         assert_eq!(finds, 1, "press {press}");
         // The line below is the next copy's, or the output's for the newest.
-        session.input(&command(ReviewCommand::ReviewNextLine));
+        session.press(&command(ReviewCommand::ReviewNextLine));
         let below = if press == 0 { "$ line 1" } else { "$ x" };
         assert_eq!(session.heard(), plain(&[below]), "press {press}");
-        session.input(&command(ReviewCommand::ReviewPreviousLine));
+        session.press(&command(ReviewCommand::ReviewPreviousLine));
         let _ = session.heard();
         let _ = session.requests();
     }
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -1049,13 +1050,13 @@ fn a_marks_line_printed_again_nearer_the_review_position_is_passed_over() {
     let at_ms = enter(&mut session, "echo hi", "hi\r\n", 1000);
     session.write(&format!("$ echo hi\r\ncopy\r\n{}", numbered(1..=20)), at_ms);
     let _ = session.heard();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo hi"]));
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["hi"]));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     let _ = session.heard();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -1086,7 +1087,7 @@ fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
         spoken.extend_from_slice(&lines[2..]);
         spoken
     };
-    session.input(&command(UP));
+    session.press(&command(UP));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, spoken(21..=25, "$ echo two"));
     let searched = |requests: &[Asked]| {
@@ -1096,16 +1097,16 @@ fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
             .count()
     };
     assert_eq!(searched(&session.requests()), 1);
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["two"]));
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(UP));
+    session.press(&command(UP));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, spoken(26..=30, "$ echo one"));
     assert_eq!(searched(&session.requests()), 1);
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["one"]));
 }
 
@@ -1126,7 +1127,7 @@ fn a_press_makes_at_most_three_searches() {
     );
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
     let needles: Vec<String> = session
         .requests()
@@ -1137,7 +1138,7 @@ fn a_press_makes_at_most_three_searches() {
         })
         .collect();
     assert_eq!(needles, ["$ echo d", "$ echo c", "$ echo b"]);
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo a"]));
 }
 
@@ -1153,14 +1154,14 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
     let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
     session.write(&numbered(1..=20), at_ms);
     let _ = session.heard();
-    session.input(&command(UP));
-    session.input(&command(ReviewCommand::ReviewNextLine));
-    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(UP));
+    session.press(&command(ReviewCommand::ReviewNextLine));
+    session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["$ echo one", "one", "$ line 1"]));
     let _ = session.requests();
     session.outpost.sim.write(numbered(21..=26).as_bytes());
     session.output_before_finds = [(numbered(27..=28), at_ms + 1000)].into();
-    session.inputs(&[
+    session.presses(&[
         command(ReviewCommand::ReviewNextLine),
         command(UP),
         command(ReviewCommand::ReviewPreviousLine),
@@ -1213,10 +1214,10 @@ fn a_search_that_never_ran_drops_no_mark() {
     // The outpost answers the search unanswered, as when the focus moved:
     // the move says nothing, and the mark is kept for the next.
     session.unanswered_finds = true;
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
     session.unanswered_finds = false;
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
 }
 
@@ -1239,14 +1240,14 @@ fn a_mark_whose_line_is_gone_is_dropped_and_the_next_one_tried() {
     );
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
     let requests = session.requests();
     assert_eq!(requests.len(), 3, "{requests:?}");
     assert!(matches!(&requests[1], Asked::Find { needle, .. } if needle == "$ echo two"));
     assert!(matches!(&requests[2], Asked::Find { needle, .. } if needle == "$ echo one"));
     // The dropped mark is not looked for again.
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
 }
 
@@ -1264,7 +1265,7 @@ fn a_mark_above_windows_terminals_clear_is_dropped() {
     session.write(&format!("\x1b[H\x1b[2J\x1b[3J{}$ ", numbered(1..=10)), 5000);
     let _ = session.heard();
     let _ = session.requests();
-    session.input(&command(UP));
+    session.press(&command(UP));
     assert_eq!(session.heard(), []);
     assert_eq!(session.requests(), [FRESH]);
 }
@@ -1278,9 +1279,9 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
     let base: SrState = session.state.clone();
     session.log.clear();
     let (_, input) = typed("l", 1000);
-    session.input(&input);
+    session.press(&input);
     session.write("l", 1050);
-    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
     session.write("s\r\nfour\r\n", 3000);
     let (inputs, effects): (Vec<Input>, Vec<Vec<Effect>>) = session.log.drain(..).unzip();
     let recorded: Vec<RecordedInput> = inputs
@@ -1320,15 +1321,15 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
     let mut session = showing(20, 4, 10, "$ ls");
     session.outpost.sim.write(b"\r\nfile\r\n$ ");
     session.at_ms = 300;
-    session.input(&Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(9),
-        key: CaretKey {
+    session.press(&caret(
+        TraceId::from_raw(9),
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: 200,
-    });
+        200,
+        true,
+    ));
     assert_eq!(session.heard(), plain(&["file", "$"]));
     assert_eq!(
         session.requests(),
@@ -1340,15 +1341,15 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
 /// the watch Core sent.
 fn held_up_watch(session: &mut Session) -> Vec<verbatim_model::Watch> {
     session.at_ms = 300;
-    session.input(&Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(9),
-        key: CaretKey {
+    session.press(&caret(
+        TraceId::from_raw(9),
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: 200,
-    });
+        200,
+        true,
+    ));
     assert_eq!(
         session.requests(),
         [Asked::Starting, Asked::Watch, Asked::Fresh]
@@ -1452,18 +1453,18 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     // it, reached the program then too, the newer of the two keys, so the
     // read that shows them is spoken for "x".
     let mut session = showing(20, 4, 10, "$ ");
-    let held = Input::HeldKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(10),
-        key: CaretKey {
+    let held = caret(
+        TraceId::from_raw(10),
+        CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
         },
-        pressed_at_ms: 200,
-    };
+        200,
+        true,
+    );
     let (x, input) = typed("x", 210);
     session.at_ms = 300;
-    session.inputs(&[held, input]);
+    session.presses(&[held, input]);
     assert_eq!(session.requests(), [Asked::Starting]);
     session.write("echo onex", 320);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
@@ -1479,15 +1480,15 @@ fn a_caret_move_with_no_key_says_nothing_and_the_next_key_is_judged_from_it() {
     // Right Arrow then moves it one along, from where the program put it,
     // to the "n".
     let right = TraceId::from_raw(11);
-    session.input(&Input::CaretKey {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: right,
-        key: CaretKey {
+    session.press(&caret(
+        right,
+        CaretKey {
             motion: CaretMotion::NextCharacter,
             select: false,
         },
-        pressed_at_ms: 200,
-    });
+        200,
+        false,
+    ));
     session.write("\x1b[C", 250);
     assert_eq!(session.heard(), [said(Some(right), "n")]);
 }
@@ -1499,7 +1500,7 @@ fn a_key_that_reached_the_program_while_a_read_was_taken_is_given_before_it() {
     // read ended at 1002. The echo goes out for the key.
     let mut session = showing(20, 4, 100, "$ ");
     let (key, input) = typed("l", 1001);
-    session.input(&input);
+    session.press(&input);
     let _ = session.requests();
     session.outpost.sim.write(b"l");
     session.next_read_began = Some(1000);
@@ -1518,11 +1519,11 @@ fn a_read_not_sent_as_the_last_one_again_leaves_the_colours_to_the_echos_read() 
     // it has the colours too, and the echo is spoken.
     let mut session = showing(20, 4, 100, "$ ");
     let (_, input) = typed("a", 1000);
-    session.input(&input);
+    session.press(&input);
     session.write("a", 1010);
     let _ = session.heard();
     let (b, input) = typed("b", 2000);
-    session.input(&input);
+    session.press(&input);
     session.live(2001);
     assert_eq!(session.heard(), [], "the read is the last one again");
     session.write("b", 2010);
@@ -1540,7 +1541,7 @@ fn a_read_taken_at_once_before_the_program_draws_the_key_leaves_the_echo_to_the_
     session.hold_output = true;
     session.live(999);
     let (c, input) = typed("c", 1000);
-    session.input(&input);
+    session.press(&input);
     session.hold_output = false;
     session.release_output(1001);
     assert_eq!(session.heard(), []);
@@ -1575,4 +1576,41 @@ fn a_hung_terminal_sounds_then_speaks_its_output_once_the_window_answers() {
     assert_eq!(session.heard(), plain(&["alpha", "beta"]));
     assert_eq!(session.earcons(), []);
     assert_eq!(session.output_reads, 2, "one read after the hang");
+}
+
+/// The words and key number of each utterance `session`'s steps from the
+/// `from`th on handed to speech.
+fn handed_on(session: &Session, from: usize) -> Vec<(String, Option<KeySeq>)> {
+    let effects = session.log[from..].iter().flat_map(|(_, effects)| effects);
+    effects
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance, key) => {
+                Some((terminal_support::words(&utterance.segments), *key))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Output handed to speech outside its read's entry keeps that read's key
+/// number (the build 3 design's review, S4 and R2-1): a typed key's output,
+/// handed on when the utterance before it fails, carries the key's
+/// number, so a later key's cut fences it off; output the quiet-period
+/// timer reads carries none, so no earlier key's cut fences it off.
+#[test]
+fn output_handed_on_outside_its_entry_carries_its_reads_key_number() {
+    let mut session = showing(20, 8, 100, "$ ");
+    session.manual_play = true;
+    let (_, input) = typed("l", 1000);
+    session.press(&input);
+    session.write("l\r\none\r\ntwo\r\nthree\r\n", 1050);
+    let from = session.log.len();
+    let marks = vec![SpeechMark(0), SpeechMark(1)];
+    session.queue(QueueInput::UtteranceFailed { marks });
+    let two = ("two".to_owned(), Some(KeySeq::new(1)));
+    assert_eq!(handed_on(&session, from), [two]);
+    let mut session = timed();
+    let from = session.log.len();
+    session.queue(QueueInput::TerminalDue { at_ms: 2000 });
+    assert_eq!(handed_on(&session, from), [("2,1 Top".to_owned(), None)]);
 }

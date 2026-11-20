@@ -128,33 +128,41 @@ fn a_lock_keys_new_state_is_said_interrupting() {
 #[test]
 fn the_time_is_said_on_a_first_press_and_the_date_on_a_second() {
     let trace_id = TraceId::from_raw(2);
+    let key = KeySeq::new(4);
     let clock = |repeat| Input::ClockRead {
         trace_id,
         repeat,
+        key,
         time: Some("10:30 AM".to_owned()),
         date: Some("Saturday, October 24, 2026".to_owned()),
     };
+    // Each carries the gesture's key number, handed back with the read.
+    let for_key = |effect| match effect {
+        Effect::Speak(utterance, None) => Effect::Speak(utterance, Some(key)),
+        other => other,
+    };
     assert_eq!(
         effects_of(&clock(0)),
-        [said(
+        [for_key(said(
             trace_id,
             SpeechPriority::Interrupt,
             SegmentContent::Text("10:30 AM".to_owned()),
-        )]
+        ))]
     );
     assert_eq!(
         effects_of(&clock(1)),
-        [said(
+        [for_key(said(
             trace_id,
             SpeechPriority::Interrupt,
             SegmentContent::Text("Saturday, October 24, 2026".to_owned()),
-        )]
+        ))]
     );
     // One the system could not format says nothing.
     assert_eq!(
         effects_of(&Input::ClockRead {
             trace_id,
             repeat: 0,
+            key,
             time: None,
             date: Some("Saturday".to_owned()),
         }),
@@ -540,7 +548,6 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         &mut desk.runtime,
         &Input::ToggleKeyPressed {
             trace_id: TraceId::from_raw(9),
-            key_seq: KeySeq::new(1),
             toggle: LockKey::ScrollLock,
             pressed_at_ms: 1_000,
         },
@@ -561,13 +568,10 @@ fn a_lock_keys_announcement_is_heard_after_a_key_pressed_within_its_30_ms() {
         },
     })));
     let [
-        Effect::ForKey(_, effect),
+        Effect::Speak(utterance, key),
         Effect::Queue(verbatim_model::request::QueueEffect::WakeAt(Some(_))),
     ] = effects.as_slice()
     else {
-        panic!("expected the letter echoed: {effects:?}");
-    };
-    let Effect::Speak(utterance, key) = effect.as_ref() else {
         panic!("expected the letter echoed: {effects:?}");
     };
     assert_eq!(

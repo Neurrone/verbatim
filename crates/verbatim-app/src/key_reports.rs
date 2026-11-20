@@ -416,7 +416,6 @@ fn gesture_command(
     if let Some(&toggle) = tables.toggles.get(&gesture.gesture) {
         return Some(ShellCommand::Input(Box::new(Input::ToggleKeyPressed {
             trace_id,
-            key_seq,
             toggle,
             pressed_at_ms: pressed_at_us / 1_000,
         })));
@@ -586,7 +585,6 @@ mod tests {
     #[test]
     fn each_gesture_maps_to_its_script_command_or_lock_key() {
         let trace_id = TraceId::mint();
-        let key_seq = KeySeq::new(4);
         let script = |script, repeat| pressed(PressAction::Script { script, repeat });
         assert_eq!(
             mapped(gesture(trace_id, "kb:verbatim+v", 0)),
@@ -613,7 +611,6 @@ mod tests {
                 "{:?}",
                 Input::ToggleKeyPressed {
                     trace_id,
-                    key_seq,
                     toggle: LockKey::ScrollLock,
                     pressed_at_ms: PRESSED_AT_US / 1_000
                 }

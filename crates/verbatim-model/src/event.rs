@@ -3,15 +3,15 @@
 //! The reducer's inputs are normalized events, fetch completions, the
 //! user's keys and gestures, and what the shell's threads learn; its
 //! effects are speech, fetches, and what the shell carries out for it, a
-//! window shown among them. Every user input carries its key number
-//! ([`KeySeq`]), and Core stamps the speech it causes with it.
+//! window shown among them. Speech a key caused carries the key's number
+//! ([`KeySeq`]).
 
 use serde::{Deserialize, Serialize};
 
 use crate::settings::ReaderSettings;
 use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange};
+use crate::text::{CaretReport, FocusText, SelectionChange};
 use crate::tree::{Backend, NodeSnapshot, StateSet};
 use crate::{KeySeq, NodeId, TraceId};
 
@@ -387,49 +387,6 @@ pub enum QueryKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Input {
-    /// A review or object-navigation command, from a bound gesture
-    /// (roadmap M3). The imperative shell translates a keyboard script
-    /// into this; the reducer runs it against its navigator object and
-    /// review cursor.
-    Command {
-        /// Trace ID minted when the triggering key was observed, carried
-        /// through so a command's speech joins the latency timeline.
-        trace_id: TraceId,
-        /// The gesture's key number, which its speech carries.
-        key_seq: KeySeq,
-        /// Which command.
-        command: ReviewCommand,
-        /// Milliseconds on the run's shared clock when the hook saw the
-        /// gesture, which bounds its wait behind a held key's watch; 0 when
-        /// unknown.
-        #[serde(default)]
-        pressed_at_ms: u64,
-        /// How many times the gesture was pressed in quick succession, zero
-        /// for the first press: report-current-object reports on 0, spells
-        /// on 1, copies on 2 (NVDA's multi-press semantics); the
-        /// current-line, current-word, and current-character review
-        /// commands spell on a repeat, and a third press of current
-        /// character speaks its character code. Other commands ignore it.
-        repeat: u8,
-    },
-    /// A bound gesture whose script is not a review command: the menu, the
-    /// time, or the shell's lists. Run in the order pressed, behind a held
-    /// key as a review command is.
-    Script {
-        /// Trace ID minted when the gesture was observed.
-        trace_id: TraceId,
-        /// The gesture's key number, which its speech carries.
-        key_seq: KeySeq,
-        /// How many times the gesture was pressed in quick succession, zero
-        /// for the first press: the time on 0 and the date after; the
-        /// system tray on 0 and the taskbar after.
-        repeat: u8,
-        /// Which script.
-        script: Script,
-        /// As [`Input::Command`]'s.
-        #[serde(default)]
-        pressed_at_ms: u64,
-    },
     /// A lock key reached the operating system: its new state is announced
     /// 30 ms after `pressed_at_ms`, once Windows has changed it: the shell
     /// reads the key's state at the due time Core's state gives, then
@@ -437,9 +394,6 @@ pub enum Input {
     ToggleKeyPressed {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
-        /// The key's number. The announcement does not carry it, so a key
-        /// pressed within the 30 ms does not silence it.
-        key_seq: KeySeq,
         /// Which key.
         toggle: LockKey,
         /// Milliseconds on the run's shared clock when the hook saw it.
@@ -460,105 +414,6 @@ pub enum Input {
     /// part of the frozen vocabulary so adding policies is not a breaking
     /// change.
     Tick,
-    /// A caret key was pressed and passed to the application, which moves
-    /// the caret itself (milestone M4). The keyboard hook reports it as it
-    /// passes it on; the reducer waits for evidence of what it did and
-    /// speaks the result when the focus has text.
-    CaretKey {
-        /// Trace ID minted when the key was observed.
-        trace_id: TraceId,
-        /// The key's number, which its speech carries.
-        key_seq: KeySeq,
-        /// Which key.
-        key: CaretKey,
-        /// Milliseconds since the Unix epoch when the hook saw the key,
-        /// before the application could, on the run's shared clock that an
-        /// event's `observed_at_us` reads, so an outpost can tell whether a
-        /// caret it read came before the key. 0 when unknown.
-        #[serde(default)]
-        pressed_at_ms: u64,
-    },
-    /// A caret key the keyboard hook held back from the application, as
-    /// NVDA's caret scripts hold theirs (`books/dev/src/explanation/design/key-holding.md`): the
-    /// reducer has the focus's outpost read the caret before the key, then
-    /// passes the key on ([`Effect::PassHeldKey`]) and watches for its
-    /// evidence from that exact caret, as for [`Input::CaretKey`]. The key
-    /// is always passed on, whatever the read's outcome.
-    HeldKey {
-        /// Trace ID minted when the key was observed; it also names the
-        /// key to pass on.
-        trace_id: TraceId,
-        /// The key's number, which its speech carries.
-        key_seq: KeySeq,
-        /// Which key.
-        key: CaretKey,
-        /// As [`Input::CaretKey`]'s: when the hook saw the key, on the
-        /// outposts' clock; 0 when unknown.
-        #[serde(default)]
-        pressed_at_ms: u64,
-    },
-    /// Text was typed into the focused application: one character, or
-    /// several at once when an input method commits a composition (one key
-    /// press need not be one character). Sourced on the platform side,
-    /// from the keyboard hook's translation of a key to text or from the
-    /// application's own text-edit events; the reducer echoes it by the
-    /// typing echo settings.
-    CharacterTyped {
-        /// Trace ID minted when the typing was observed.
-        trace_id: TraceId,
-        /// The number of the key that typed it, which its speech carries.
-        key_seq: KeySeq,
-        /// The text typed, a tab as a tab character and Enter as a carriage
-        /// return.
-        text: String,
-        /// Milliseconds on the run's shared clock when the hook saw the
-        /// key, the clock of a caret key's `pressed_at_ms`; 0 when unknown.
-        #[serde(default)]
-        at_ms: u64,
-    },
-    /// A key typed a control character into the focused application, one
-    /// other than a tab, a carriage return, Backspace's and
-    /// Control+Backspace's (Control+C, Control+Enter; never Escape): the word
-    /// being typed ends and is spoken by the typing echo settings, and
-    /// nothing is spelled (`docs/parity/input.md`, "Typed-character
-    /// echo"). It follows the key's other inputs.
-    ControlTyped {
-        /// Trace ID minted when the key was observed.
-        trace_id: TraceId,
-        /// The key's number, which its speech carries.
-        key_seq: KeySeq,
-        /// As [`Input::CharacterTyped`]'s.
-        at_ms: u64,
-    },
-    /// A key that ends or clears the command line being typed, Escape,
-    /// Control+C, Control+D, or Control+Break, was passed to the focused
-    /// application. A terminal forgets the typing it holds, which it never
-    /// showed (a password perhaps), as NVDA forgets its queued characters
-    /// (`docs/parity/terminals.md`, "New terminal output"). These keys type no
-    /// text, so they never arrive as [`Input::CharacterTyped`].
-    ClearingKey {
-        /// Trace ID minted when the key was observed.
-        trace_id: TraceId,
-        /// The key's number, which its speech carries.
-        key_seq: KeySeq,
-        /// As [`Input::CharacterTyped`]'s: when the hook saw the key; 0
-        /// when unknown.
-        #[serde(default)]
-        at_ms: u64,
-    },
-    /// An editing chord, Control+Z, Control+Y, Control+X, Control+V or
-    /// Escape, was passed to the focused application. In a text field it
-    /// says nothing for the key, its selection changes being spoken from the
-    /// application's caret event; in a terminal it is any other key passed
-    /// (`docs/design/caret-selection-rework.md`).
-    EditingChord {
-        /// Trace ID minted when the key was observed.
-        trace_id: TraceId,
-        /// The key's number, which its speech carries.
-        key_seq: KeySeq,
-        /// As [`Input::CaretKey`]'s: when the hook saw the key.
-        pressed_at_ms: u64,
-    },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
     /// The details the active theme reports ([`crate::ReportedDetails`]),
@@ -620,6 +475,8 @@ pub enum Input {
         /// How many times the gesture was pressed in quick succession, zero
         /// for the first press.
         repeat: u8,
+        /// The gesture's key number, which the time's speech carries.
+        key: KeySeq,
         /// The time, without seconds.
         time: Option<String>,
         /// The long date.
@@ -814,7 +671,7 @@ pub struct BarChange {
     pub in_foreground: bool,
 }
 
-/// What a [`Input::Script`] runs.
+/// What a [`PressAction::Script`](crate::request::PressAction::Script) runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Script {
     /// Open the Verbatim menu.
@@ -837,20 +694,11 @@ pub enum GuiRequest {
 
 impl Input {
     /// The trace the input carries, for the inputs that carry one: the
-    /// trace the shell executes the input's effects under, and Core's
-    /// stamp looks a key number up by.
+    /// trace the shell executes the input's effects under.
     #[must_use]
     pub fn trace_id(&self) -> Option<TraceId> {
         match self {
-            Self::Command { trace_id, .. }
-            | Self::Script { trace_id, .. }
-            | Self::ToggleKeyPressed { trace_id, .. }
-            | Self::CaretKey { trace_id, .. }
-            | Self::HeldKey { trace_id, .. }
-            | Self::CharacterTyped { trace_id, .. }
-            | Self::ControlTyped { trace_id, .. }
-            | Self::ClearingKey { trace_id, .. }
-            | Self::EditingChord { trace_id, .. }
+            Self::ToggleKeyPressed { trace_id, .. }
             | Self::LockKeyToggled { trace_id, .. }
             | Self::ClockRead { trace_id, .. }
             | Self::ClipboardCopied { trace_id, .. }
@@ -1020,8 +868,9 @@ pub enum Earcon {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
     /// Queue an utterance in the speech pipeline, with the number of the
-    /// user input that caused it, if one did: Core stamps it as its last
-    /// step, and every other construction gives `None`.
+    /// key that caused it, if one did: the event queue stamps its entries'
+    /// speech with their fences, and the clock's and a terminal's pumped
+    /// output carry the number their key gave them.
     Speak(Utterance, Option<KeySeq>),
     /// Cancel current and queued speech.
     StopSpeech,
@@ -1069,6 +918,8 @@ pub enum Effect {
     ReadClock {
         /// The gesture's repeat count, handed back on the input.
         repeat: u8,
+        /// The gesture's key number, handed back on the input.
+        key: KeySeq,
     },
     /// Show a window of the GUI.
     Show(GuiRequest),

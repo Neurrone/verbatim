@@ -204,13 +204,25 @@ fn mark_reached(mark: SpeechMark) -> Input {
     }
 }
 
-fn typed(text: &str) -> Input {
-    Input::CharacterTyped {
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(3),
-        text: text.to_owned(),
-        at_ms: 1_000,
-    }
+/// Key `key` pressed, `action` as the hook reports it to the event queue,
+/// `key` milliseconds after the first second.
+fn press(key: u64, action: verbatim_model::request::PressAction) -> Input {
+    queue_input(verbatim_model::request::QueueInput::Press(Box::new(
+        verbatim_model::request::Press {
+            key_seq: verbatim_model::KeySeq::new(key),
+            pressed_at_us: (1_000 + key) * 1_000,
+            action,
+        },
+    )))
+}
+
+fn typed(key: u64, text: &str) -> Input {
+    press(
+        key,
+        verbatim_model::request::PressAction::Typed {
+            text: text.to_owned(),
+        },
+    )
 }
 
 /// What one utterance says, as text. Every segment kind terminal speech
@@ -1091,17 +1103,23 @@ fn blank_lines_are_dropped() {
 fn report_new_output_toggles_with_verbatim_5() {
     let mut state = terminal();
     let mut playback = Playback::default();
-    let toggle = Input::Command {
-        pressed_at_ms: 0,
-        key_seq: verbatim_model::KeySeq::NONE_YET,
-        trace_id: TraceId::from_raw(6),
-        command: ReviewCommand::ToggleReportNewOutput,
-        repeat: 0,
+    let toggle = |key| {
+        press(
+            key,
+            verbatim_model::request::PressAction::Command {
+                command: ReviewCommand::ToggleReportNewOutput,
+                repeat: 0,
+            },
+        )
     };
     // Each press speaks its new value, then reports the settings, with the
     // toggle changed and nothing else, for the shell to save.
-    let press = |state: &mut SrState, playback: &mut Playback, on: bool| {
-        let mut effects = reduce(state, &mut crate::Runtime::default(), &toggle);
+    let press = |state: &mut SrState, playback: &mut Playback, key: u64, on: bool| {
+        // The event queue's own effects, such as its next wake, aside.
+        let mut effects: Vec<Effect> = reduce(state, &mut crate::Runtime::default(), &toggle(key))
+            .into_iter()
+            .filter(|effect| !matches!(effect, Effect::Queue(_)))
+            .collect();
         assert_eq!(
             effects.pop(),
             Some(Effect::SettingsChanged(ReaderSettings {
@@ -1112,10 +1130,10 @@ fn report_new_output_toggles_with_verbatim_5() {
         assert_eq!(effects.len(), 1, "{effects:?}");
         playback.take(state, effects);
     };
-    press(&mut state, &mut playback, false);
+    press(&mut state, &mut playback, 1, false);
     playback.feed(&mut state, &output(lines(1..=3)));
     assert_eq!(playback.play_all(&mut state), ["off"]);
-    press(&mut state, &mut playback, true);
+    press(&mut state, &mut playback, 2, true);
     playback.feed(&mut state, &output(lines(4..=4)));
     assert_eq!(playback.play_all(&mut state), ["on", "line 4"]);
 }
@@ -1311,7 +1329,7 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
         &mut crate::Runtime::default(),
         &Input::Settings(settings),
     );
-    let effects = reduce(&mut state, &mut crate::Runtime::default(), &typed("p"));
+    let effects = reduce(&mut state, &mut crate::Runtime::default(), &typed(1, "p"));
     assert_eq!(
         spoken(&effects[..1]),
         ["p"],

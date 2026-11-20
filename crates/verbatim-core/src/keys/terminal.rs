@@ -35,9 +35,8 @@ fn kinds_at_arrival(state: &SrState, press: &PressEntry) -> Vec<TerminalKeyKind>
         PressAction::CaretKey { .. }
         | PressAction::Command { .. }
         | PressAction::Script { .. }
-        | PressAction::Passed
-        // The key's other report, a clearing key's, a chord's or a key
-        // passed, is what it is to the terminal.
+        // The key's other report, a clearing key's or a chord's, is what
+        // it is to the terminal.
         | PressAction::Control => Vec::new(),
     }
 }

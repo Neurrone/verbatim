@@ -49,7 +49,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, SegmentContent,
+    CaretKey, CaretMotion, Effect, FocusValidity, KeySeq, Message, NodeId, Phrase, SegmentContent,
     SpeechMark, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
@@ -94,6 +94,10 @@ pub(crate) struct TerminalSpeechState {
     /// The trace of the newest output, which output handed to speech when
     /// a mark is reached is spoken under.
     pub(crate) trace: Option<TraceId>,
+    /// The key number of the newest output: its speech entry's fence,
+    /// which every utterance of output handed to speech carries, whatever
+    /// input hands it on; `None` for output the quiet-period timer read.
+    pub(crate) key: Option<KeySeq>,
     /// The group's last line is playing, and the backlog is looked at once
     /// the release read's speech is taken.
     pub(crate) deciding: bool,
@@ -284,23 +288,23 @@ pub(crate) fn speech(
     // Read before speech was last cut off: the output pending then is
     // dropped, as NVDA drops it.
     let before_cut = observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms;
-    take(state, trace_id, Some(node), speech, before_cut)
+    take(state, (trace_id, None), Some(node), speech, before_cut)
 }
 
 /// Takes in what a full read of the focused terminal `node`, begun at
-/// `started_ms`, said at its speech entry's turn: the answers to keys
-/// spoken, and the output, unless `silent` or read before the last cut,
-/// queued by the flood policy; a release read's (`release`) lets the look
-/// at the backlog run.
+/// `started_ms`, said at its speech entry's turn, under its trace and its
+/// fence's key number: the answers to keys spoken, and the output, unless
+/// `silent` or read before the last cut, queued by the flood policy; a
+/// release read's (`release`) lets the look at the backlog run.
 pub(crate) fn read_spoken(
     state: &mut SrState,
-    trace_id: TraceId,
+    under: (TraceId, Option<KeySeq>),
     (node, started_ms): (NodeId, u64),
     speech: Said,
     (silent, release): (bool, bool),
 ) -> Vec<Effect> {
     let before_cut = silent || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
-    let mut effects = take(state, trace_id, Some(node), speech, before_cut);
+    let mut effects = take(state, under, Some(node), speech, before_cut);
     if release {
         state.terminal.release_waiting = false;
         if std::mem::take(&mut state.terminal.deciding) {
@@ -354,12 +358,13 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
     })
 }
 
-/// Takes in what the focused terminal, `node`, said: speaks the answers to
-/// keys, then, unless the output is `before_cut` (read before a cut),
-/// queues it by the flood policy and hands the oldest to speech.
+/// Takes in what the focused terminal, `node`, said, under a trace and a
+/// key number: speaks the answers to keys, then, unless the output is
+/// `before_cut` (read before a cut), queues it by the flood policy and
+/// hands the oldest to speech.
 fn take(
     state: &mut SrState,
-    trace_id: TraceId,
+    (trace_id, key): (TraceId, Option<KeySeq>),
     node: Option<NodeId>,
     speech: Said,
     before_cut: bool,
@@ -394,6 +399,7 @@ fn take(
         return effects;
     }
     state.terminal.trace = Some(trace_id);
+    state.terminal.key = key;
     if state.terminal.group.is_none() {
         state.terminal.group = Some(state.settings.full_lines());
     }
@@ -1002,7 +1008,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
         segments.extend(content);
         segments.push(UtteranceSegment::new(SegmentContent::Mark(end)));
         let utterance = output_utterance(state, trace_id, segments);
-        effects.push(Effect::Speak(utterance, None));
+        effects.push(Effect::Speak(utterance, state.terminal.key));
         state.terminal.ahead.push_back((mark, line));
         state.terminal.sounding = Some(end);
     }

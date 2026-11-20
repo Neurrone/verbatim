@@ -72,9 +72,20 @@ fn pressed(key: u64, action: PressAction) -> Input<Entry> {
     ))))
 }
 
-/// A key passed to the application, which stops say-all.
+/// A key passed to the application, which stops say-all: a caret key of
+/// motion `Other` passed at once, as the app posts it.
 fn passed_key(key: u64) -> Input<Entry> {
-    pressed(key, PressAction::Passed)
+    pressed(
+        key,
+        PressAction::CaretKey {
+            key: verbatim_model::CaretKey {
+                motion: verbatim_model::CaretMotion::Other,
+                select: false,
+            },
+            held: None,
+            bound: None,
+        },
+    )
 }
 
 /// Playback reaching `mark`, joining the queue.

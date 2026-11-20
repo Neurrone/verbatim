@@ -11,12 +11,13 @@
 //! ([`crate::report_focus`], [`crate::caret_location`],
 //! [`crate::navigator`], [`crate::review_text`], [`crate::say_all`]), each
 //! holding the queue until its last answer;
-//! every other action runs today's handling of the key or command at its
-//! turn, and a caret key runs its own entry ([`crate::keys::caret_key`]).
+//! a caret key runs its own entry ([`crate::keys::caret_key`]), and every
+//! other action calls its handling at its turn: the toggles, the scripts,
+//! and text typed.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{Press, PressAction};
-use verbatim_model::{Effect, Input, KeySeq, ReviewCommand, TraceId};
+use verbatim_model::{Effect, KeySeq, ReviewCommand, TraceId};
 
 use crate::entries::Entries;
 use crate::event_queue::Cx;
@@ -186,15 +187,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         }
         return;
     }
-    let Some(input) = today(trace_id, &press) else {
-        // A key passed with nothing more to do stops say-all at its turn,
-        // as any key does; today's handling stops it for every other.
-        let stopped = crate::say_all::stop(&mut cx.facts_mut());
-        for effect in stopped {
-            cx.emit(effect);
-        }
-        return;
-    };
     let effects = {
         let mut facts = cx.facts_mut();
         // A held stroke is sent at its turn.
@@ -204,10 +196,37 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
             .map(Effect::Queue)
             .into_iter()
             .collect();
-        // What its handling asks outside the queue answers under its
-        // trace, whose speech then carries its number.
-        facts.key_origins.record(trace_id, press.key_seq);
-        effects.extend(crate::reduce::waited_input(&mut facts, &input));
+        let facts = &mut *facts;
+        match &press.action {
+            PressAction::Command { command, .. } => {
+                // Any command stops say-all, as any key does in NVDA.
+                effects.extend(crate::say_all::stop(facts));
+                effects.extend(match command {
+                    ReviewCommand::ToggleFollowCaret
+                    | ReviewCommand::ToggleTypedCharacters
+                    | ReviewCommand::ToggleTypedWords => {
+                        crate::reduce::toggle_setting(facts, trace_id, *command)
+                    }
+                    ReviewCommand::ToggleReportNewOutput => {
+                        crate::terminal::toggle(facts, trace_id)
+                    }
+                    _ => Vec::new(),
+                });
+            }
+            PressAction::Script { script, repeat } => {
+                effects.extend(crate::shell::script(*script, *repeat, press.key_seq));
+            }
+            PressAction::Typed { text } => {
+                effects.extend(crate::editing::character_typed(facts, trace_id, text));
+            }
+            PressAction::Control => {
+                effects.extend(crate::editing::control_typed(facts, trace_id));
+            }
+            PressAction::Clearing => crate::editing::clearing_key(facts),
+            // A caret key ran its own entry above; an editing chord's cut
+            // of speech at the press was all it does.
+            PressAction::CaretKey { .. } | PressAction::EditingChord => {}
+        }
         effects
     };
     for effect in effects {
@@ -263,67 +282,6 @@ impl Own {
             _ => None,
         }
     }
-}
-
-/// The input today's handling of `press` takes; `None` for a key passed
-/// that does nothing more at its turn than stop say-all.
-fn today(trace_id: TraceId, press: &Press) -> Option<Input> {
-    let key_seq = press.key_seq;
-    let pressed_at_ms = press.pressed_at_us / 1_000;
-    Some(match &press.action {
-        PressAction::Command { command, repeat } => Input::Command {
-            trace_id,
-            key_seq,
-            command: *command,
-            pressed_at_ms,
-            repeat: *repeat,
-        },
-        PressAction::Script { script, repeat } => Input::Script {
-            trace_id,
-            key_seq,
-            repeat: *repeat,
-            script: *script,
-            pressed_at_ms,
-        },
-        PressAction::CaretKey {
-            key, held: Some(_), ..
-        } => Input::HeldKey {
-            trace_id,
-            key_seq,
-            key: *key,
-            pressed_at_ms,
-        },
-        PressAction::CaretKey {
-            key, held: None, ..
-        } => Input::CaretKey {
-            trace_id,
-            key_seq,
-            key: *key,
-            pressed_at_ms,
-        },
-        PressAction::Typed { text } => Input::CharacterTyped {
-            trace_id,
-            key_seq,
-            text: text.clone(),
-            at_ms: pressed_at_ms,
-        },
-        PressAction::Clearing => Input::ClearingKey {
-            trace_id,
-            key_seq,
-            at_ms: pressed_at_ms,
-        },
-        PressAction::EditingChord => Input::EditingChord {
-            trace_id,
-            key_seq,
-            pressed_at_ms,
-        },
-        PressAction::Control => Input::ControlTyped {
-            trace_id,
-            key_seq,
-            at_ms: pressed_at_ms,
-        },
-        PressAction::Passed => return None,
-    })
 }
 
 #[cfg(test)]

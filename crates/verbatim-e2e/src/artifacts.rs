@@ -687,12 +687,21 @@ mod tests {
         String::from_utf8(out).expect("a dump is UTF-8")
     }
 
+    /// A key typing `text` at `at_ms`, as the hook reports it to the
+    /// event queue.
     fn typed(trace: TraceId, text: &str, at_ms: u64) -> verbatim_model::Input {
-        verbatim_model::Input::CharacterTyped {
+        verbatim_model::Input::Queue {
             trace_id: trace,
-            key_seq: verbatim_model::KeySeq::none_yet(),
-            text: text.to_owned(),
-            at_ms,
+            at_us: at_ms * 1_000,
+            input: verbatim_model::request::QueueInput::Press(Box::new(
+                verbatim_model::request::Press {
+                    key_seq: verbatim_model::KeySeq::new(1),
+                    pressed_at_us: at_ms * 1_000,
+                    action: verbatim_model::request::PressAction::Typed {
+                        text: text.to_owned(),
+                    },
+                },
+            )),
         }
     }
 
@@ -742,8 +751,9 @@ mod tests {
         ));
         let lines = failure_lines(&dir, Some(trace), window).expect("reads the logs");
         let typed_at = |line: usize, trace: TraceId, text: &str, at_ms: u64| {
+            let at_us = at_ms * 1_000;
             format!(
-                "{line}: CharacterTyped trace {trace}, at_ms {at_ms}, key_seq 0, text \"{text}\". 0 effects"
+                "{line}: Queue trace {trace}, at_us {at_us}, input Press pressed_at_us {at_us}, action Typed text \"{text}\", key_seq 1. 1 effect: Queue"
             )
         };
         assert_eq!(

@@ -53,9 +53,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     if state.exiting {
         return Vec::new();
     }
-    // A user input's number, recorded by its trace before anything it
-    // causes is spoken (`crate::keys`).
-    crate::keys::record(state, input);
     // The speech side's reports and Core's timers reach Core as queue
     // inputs and are handled at once, as the inputs they stand for, from
     // here on (`crate::entries::Routed::AtOnce`).
@@ -86,8 +83,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
         let cut = terminal::cut(state, 0);
         effects.extend(cut);
     }
-    // Speech caused by a key carries the key's number.
-    crate::keys::stamp(state, input, &mut effects);
     // A say-all in the event queue changed by an input outside it, such as
     // the speech side's cut: the queue settles, its entries stamping their
     // own speech.
@@ -101,11 +96,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
 /// [`reduce`]'s dispatch, by input.
 fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
-        Input::Command { .. } | Input::Script { .. } => command_arrived(state, input),
-        Input::CharacterTyped { .. }
-        | Input::ControlTyped { .. }
-        | Input::ClearingKey { .. }
-        | Input::EditingChord { .. } => key_arrived(state, input),
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::Settings(settings) => {
             let mut effects =
@@ -152,52 +142,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     }
 }
 
-/// Handles a key passed to the application that is not held: a caret key
-/// judged by where the caret lands, text typed, or a key that clears a
-/// terminal's line. Any other input does nothing here, an editing chord in
-/// a text field among them: the hook's cut of speech was all it does.
-pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    // A terminal Core reads took the key as it reached the inbox
-    // (`crate::keys::terminal`).
-    let mut effects = Vec::new();
-    effects.extend(match input {
-        Input::CharacterTyped { trace_id, text, .. } => {
-            editing::character_typed(state, *trace_id, text)
-        }
-        Input::ControlTyped { trace_id, .. } => editing::control_typed(state, *trace_id),
-        Input::ClearingKey { .. } => {
-            editing::clearing_key(state);
-            Vec::new()
-        }
-        _ => Vec::new(),
-    });
-    effects
-}
-
-/// Runs a review command or a script. Any other input does nothing here.
-pub(crate) fn command_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    match input {
-        Input::Command {
-            trace_id, command, ..
-        } => reduce_command(state, *trace_id, *command),
-        Input::Script { repeat, script, .. } => shell::script(*script, *repeat),
-        _ => Vec::new(),
-    }
-}
-
-/// The trace of a key's input, minted when the hook saw the key.
-pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
-    match input {
-        Input::CaretKey { trace_id, .. }
-        | Input::CharacterTyped { trace_id, .. }
-        | Input::ControlTyped { trace_id, .. }
-        | Input::ClearingKey { trace_id, .. }
-        | Input::EditingChord { trace_id, .. }
-        | Input::HeldKey { trace_id, .. } => Some(*trace_id),
-        _ => None,
-    }
-}
-
 /// Speaks what an activation did: the action's name, NVDA's "Activate" for
 /// an action with none, or "No action" when nothing was `activated`.
 pub(crate) fn activation_completed(
@@ -226,56 +170,6 @@ pub(crate) fn activation_completed(
         },
         None,
     )]
-}
-
-/// A key command or script with no focus report waiting ahead of it: one
-/// pressed while a held key waits, or while the watch of the held key last
-/// passed on is open, runs after it, as NVDA runs scripts one at a time in
-/// the order queued (`books/dev/src/explanation/design/ownership.md`); any
-/// other runs now.
-fn command_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    command_input(state, input)
-}
-
-/// An input that waited behind focus reports, handled in its turn
-/// (`crate::focus::versions`): a key, key command or script acts on the focus
-/// executed before it, behind a held key if one waits then, its effects
-/// under its own trace; a menu's or the switcher's end judges the focus
-/// taken since it.
-pub(crate) fn waited_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    match input {
-        Input::Command { .. } | Input::Script { .. } => {
-            under_key(input.trace_id(), command_arrived(state, input))
-        }
-        Input::CharacterTyped { .. }
-        | Input::ControlTyped { .. }
-        | Input::ClearingKey { .. }
-        | Input::EditingChord { .. } => under_key(key_trace(input), key_arrived(state, input)),
-        _ => shell::reduce(state, input),
-    }
-}
-
-/// A key with no focus report waiting ahead of it: one pressed while a held
-/// key waits reaches the application after it, so it is handled after it
-/// (`books/dev/src/explanation/design/key-holding.md`, "Keys behind a held
-/// key"); any other now.
-fn key_arrived(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    key_input(state, input)
-}
-
-/// `effects`, of a key or command handled after the input it reached Core
-/// with, carried under its own trace, as the held-key line carries them.
-fn under_key(trace_id: Option<TraceId>, effects: Vec<Effect>) -> Vec<Effect> {
-    match trace_id {
-        Some(trace_id) => effects
-            .into_iter()
-            .map(|effect| match effect {
-                carried @ Effect::ForKey(..) => carried,
-                effect => Effect::ForKey(trace_id, Box::new(effect)),
-            })
-            .collect(),
-        None => effects,
-    }
 }
 
 /// Keeps the navigator's copy of the focus current: a name, value, or state
@@ -1047,33 +941,13 @@ pub(crate) fn announce_object(
     )
 }
 
-/// Runs a review or object-navigation command (roadmap M3) against the
-/// navigator object and its review cursor. A command with no navigator yet
-/// (nothing has ever been focused) does nothing. Object-navigation moves
-/// (`Parent`, `NextSibling`, `PreviousSibling`, `FirstChild`) are async:
-/// they emit a `Fetch` to the owning outpost and the completion moves the
-/// navigator; everything else — report, activate, review text motion — is
-/// synchronous over state the reducer already holds.
-fn reduce_command(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
-    // Any command stops say-all, as any key does in NVDA; say-all's own
-    // commands start it afresh.
-    let mut stopped = say_all::stop(state);
-    let mut effects = match command {
-        ReviewCommand::ToggleFollowCaret
-        | ReviewCommand::ToggleTypedCharacters
-        | ReviewCommand::ToggleTypedWords => toggle_setting(state, trace_id, command),
-        ReviewCommand::ToggleReportNewOutput => terminal::toggle(state, trace_id),
-        // Every other command runs as its own function on the event queue
-        // (`crate::keys::entry`).
-        _ => Vec::new(),
-    };
-    stopped.append(&mut effects);
-    stopped
-}
-
 /// Toggles a reader setting from its key, says its new value as NVDA does,
 /// and reports the settings for the shell to save.
-fn toggle_setting(state: &mut SrState, trace_id: TraceId, command: ReviewCommand) -> Vec<Effect> {
+pub(crate) fn toggle_setting(
+    state: &mut SrState,
+    trace_id: TraceId,
+    command: ReviewCommand,
+) -> Vec<Effect> {
     let settings = &mut state.settings;
     let segment = match command {
         ReviewCommand::ToggleFollowCaret => {

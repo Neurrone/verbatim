@@ -512,9 +512,6 @@ pub struct SrState {
     pub(crate) navigator: Option<Navigator>,
     /// The reader settings (milestone M4).
     pub(crate) settings: ReaderSettings,
-    /// The key numbers of what recent user inputs caused, by trace, which
-    /// Core stamps their speech with (`crate::keys`).
-    pub(crate) key_origins: crate::keys::KeyOrigins,
     /// The lock keys pressed whose new state is still to be announced, in
     /// the order pressed (`Input::ToggleKeyPressed`), each with when its
     /// state is read, on the run's shared clock.

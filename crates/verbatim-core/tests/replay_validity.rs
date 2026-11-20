@@ -725,6 +725,9 @@ fn desktop_delete(desk: &mut Desk) {
         at(&events[1]) + 1_000,
         file(52, "zz-verbatim-rec-b.txt", (15, 16)),
     );
+    // Delete, passed at once: a caret key of motion `Other`, as the app
+    // posts it, bound to the committed focus as Core takes it.
+    let bound = desk.state.caret_binding().map(Box::new);
     desk.keys += 1;
     let delete_us = at(&events[2]) - 38_100;
     desk.step_at(
@@ -732,7 +735,14 @@ fn desktop_delete(desk: &mut Desk) {
         QueueInput::Press(Box::new(Press {
             key_seq: KeySeq::new(desk.keys),
             pressed_at_us: delete_us,
-            action: PressAction::Passed,
+            action: PressAction::CaretKey {
+                key: CaretKey {
+                    motion: CaretMotion::Other,
+                    select: false,
+                },
+                held: None,
+                bound,
+            },
         })),
     );
     play(desk, &mut windows, &events[2..], at(&events[2]));

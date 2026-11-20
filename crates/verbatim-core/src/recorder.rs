@@ -364,13 +364,18 @@ mod tests {
     use super::*;
     use verbatim_model::TraceId;
 
-    /// A typed-text input carrying `text`.
+    /// A key typing `text`, as the hook reports it to the event queue.
     fn typed(text: String) -> Input {
-        Input::CharacterTyped {
-            key_seq: verbatim_model::KeySeq::NONE_YET,
+        Input::Queue {
             trace_id: TraceId::from_raw(1),
-            text,
-            at_ms: 0,
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::Press(Box::new(
+                verbatim_model::request::Press {
+                    key_seq: verbatim_model::KeySeq::new(1),
+                    pressed_at_us: 0,
+                    action: verbatim_model::request::PressAction::Typed { text },
+                },
+            )),
         }
     }
 

@@ -583,7 +583,7 @@ pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
     };
     let effects = crate::terminal::read_spoken(
         state,
-        entry.key.unwrap_or(entry.trace),
+        (entry.key.unwrap_or(entry.trace), entry.fence.key()),
         (entry.node, entry.started_ms),
         said,
         (entry.silent, entry.release),

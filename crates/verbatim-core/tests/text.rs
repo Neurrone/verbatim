@@ -1440,7 +1440,23 @@ fn word_echo_forgets_the_word_only_when_the_caret_moves_without_shift() {
         }
         text.typed(" ")
     };
-    let mut other = |text: &mut Text| assert_eq!(text.press(PressAction::Passed), []);
+    // A key outside the caret table, passed at once: a caret key of
+    // motion `Other`, as the app posts it, bound as Core takes it.
+    let mut other = |text: &mut Text| {
+        let bound = text.desk.state.caret_binding().map(Box::new);
+        let other = CaretKey {
+            motion: CaretMotion::Other,
+            select: false,
+        };
+        assert_eq!(
+            text.press(PressAction::CaretKey {
+                key: other,
+                held: None,
+                bound,
+            }),
+            []
+        );
+    };
     assert_eq!(
         type_word(&mut text, &mut other),
         words(vec![UtteranceSegment::text("hello")])
@@ -3295,54 +3311,6 @@ fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
     assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
 }
 
-#[test]
-fn speech_of_an_unkeyed_input_or_a_forgotten_key_carries_no_number() {
-    let mut text = editing("ab", 2);
-    let copied = |text: &mut Text, trace_id| {
-        let effects = verbatim_core::reduce(
-            &mut text.desk.state,
-            &mut text.desk.runtime,
-            &Input::ClipboardCopied {
-                trace_id,
-                text: "ab".to_owned(),
-                copied: true,
-            },
-        );
-        text.stamps.clear();
-        let _ = text.take(effects);
-        text.stamps.clone()
-    };
-    // Typed "c" as key 1, its press traced `first`.
-    let first = TraceId::from_raw(28);
-    let typed = |text: &mut Text, trace_id, key| {
-        let press = Press {
-            key_seq: KeySeq::new(key),
-            pressed_at_us: text.desk.at_us,
-            action: PressAction::Typed {
-                text: "c".to_owned(),
-            },
-        };
-        let effects = verbatim_core::reduce(
-            &mut text.desk.state,
-            &mut text.desk.runtime,
-            &Input::Queue {
-                trace_id,
-                at_us: text.desk.at_us,
-                input: QueueInput::Press(Box::new(press)),
-            },
-        );
-        let _ = text.take(effects);
-    };
-    typed(&mut text, first, 1);
-    assert_eq!(copied(&mut text, first), [Some(KeySeq::new(1))]);
-    assert_eq!(copied(&mut text, TraceId::from_raw(29)), [None]);
-    // 1,024 newer keys push the first one's number out.
-    for key in 2..=1_025 {
-        typed(&mut text, TraceId::from_raw(30), key);
-    }
-    assert_eq!(copied(&mut text, first), [None]);
-}
-
 /// A console host's terminal, 20 cells wide and 4 rows high, showing
 /// `text`, its caret then placed by `caret`, an escape sequence, as Core
 /// reads it through its terminal model (`terminal_support`).
@@ -3356,13 +3324,11 @@ fn terminal(text: &str, caret: &str) -> terminal_support::Session {
 
 /// Review command `command`, its first press, as the terminal session
 /// takes it.
-fn terminal_command(command: ReviewCommand) -> Input {
-    Input::Command {
-        pressed_at_ms: 0,
-        key_seq: KeySeq::NONE_YET,
+fn terminal_command(command: ReviewCommand) -> terminal_support::Key {
+    terminal_support::Key {
         trace_id: TraceId::from_raw(1),
-        command,
-        repeat: 0,
+        at_ms: 0,
+        action: PressAction::Command { command, repeat: 0 },
     }
 }
 
@@ -3382,7 +3348,7 @@ fn a_terminal_rows_line_ends_at_its_last_character() {
     for row in ["ab", "ab        "] {
         // The caret on "b".
         let mut session = terminal(row, "\x1b[1;2H");
-        session.input(&terminal_command(ReviewCommand::ReviewNextCharacter));
+        session.press(&terminal_command(ReviewCommand::ReviewNextCharacter));
         assert_eq!(
             session.heard(),
             terminal_heard(&["Message(Right) b"]),
@@ -3397,7 +3363,7 @@ fn a_terminal_rows_line_ends_at_its_last_character() {
 #[test]
 fn review_bottom_in_a_terminal_reads_the_last_row() {
     let mut session = terminal("$ ls\r\ndone", "\x1b[1;3H");
-    session.input(&terminal_command(ReviewCommand::ReviewBottom));
+    session.press(&terminal_command(ReviewCommand::ReviewBottom));
     assert_eq!(session.heard(), terminal_heard(&["done"]));
 }
 
@@ -3407,7 +3373,7 @@ fn review_bottom_in_a_terminal_reads_the_last_row() {
 #[test]
 fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
     let mut session = terminal("ab cd", "\x1b[1;4H");
-    session.input(&terminal_command(ReviewCommand::ReviewStartOfLine));
+    session.press(&terminal_command(ReviewCommand::ReviewStartOfLine));
     assert_eq!(session.heard(), terminal_heard(&["a"]));
 }
 
@@ -3417,13 +3383,14 @@ fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
     // (`tests/terminal_reading.rs`); typing alone says nothing, nor does a
     // change that shows nothing new.
     let mut session = terminal("$ ", "");
-    let typed = |text: &str| Input::CharacterTyped {
-        key_seq: KeySeq::NONE_YET,
+    let typed = |text: &str| terminal_support::Key {
         trace_id: TraceId::from_raw(8),
-        text: text.to_owned(),
         at_ms: 0,
+        action: PressAction::Typed {
+            text: text.to_owned(),
+        },
     };
-    session.input(&typed("l"));
+    session.press(&typed("l"));
     session.live(10);
     assert_eq!(session.heard(), []);
 
@@ -3432,11 +3399,9 @@ fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
         speak_terminal_passwords: true,
         ..ReaderSettings::default()
     }));
-    session.input(&typed("x"));
-    assert_eq!(
-        session.heard(),
-        [terminal_support::said(Some(TraceId::from_raw(8)), "x")]
-    );
+    session.press(&typed("x"));
+    // Echoed by the key's own entry, whose speech carries its number.
+    assert_eq!(session.heard(), [terminal_support::said(None, "x")]);
 }
 
 /// One part of a say-all utterance: an index mark, or text.
@@ -4029,17 +3994,17 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     // gives every character one cell, so the column is kept by cell here
     // as for a wide character's two.
     let mut session = terminal("abcdef    \r\nxy", "\x1b[1;4H");
-    session.input(&terminal_command(ReviewCommand::ReviewNextCharacter));
-    session.input(&terminal_command(ReviewCommand::ReviewNextLine));
+    session.press(&terminal_command(ReviewCommand::ReviewNextCharacter));
+    session.press(&terminal_command(ReviewCommand::ReviewNextLine));
     // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
-    session.input(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
+    session.press(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
     assert_eq!(
         session.heard(),
         terminal_heard(&["e", "xy", "Message(Blank)"])
     );
-    session.input(&terminal_command(ReviewCommand::ReviewPreviousLine));
+    session.press(&terminal_command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), terminal_heard(&["abcdef"]));
-    session.input(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
+    session.press(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
     assert_eq!(session.heard(), terminal_heard(&["e"]));
 }
 

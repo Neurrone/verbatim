@@ -1436,11 +1436,6 @@ impl ReducerThread<'_> {
     /// recorder, and executes the resulting effects.
     fn apply(&mut self, input: Input) {
         let trace_id = input.trace_id().unwrap_or_else(TraceId::mint);
-        if let Input::Command { command, .. } = &input {
-            tracing::info!(%trace_id, ?command, "gesture");
-        } else if let Input::Script { script, .. } = &input {
-            tracing::info!(%trace_id, ?script, "gesture");
-        }
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
         self.context
             .readiness
@@ -1603,8 +1598,8 @@ impl ReducerThread<'_> {
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(&mut self.token, earcon),
             Effect::Queue(effect) => self.execute_queue(effect),
             Effect::ForKey(key, effect) => self.execute(key, *effect),
-            Effect::ReadClock { repeat } => {
-                self.follow_ups.push(read_clock(trace_id, repeat));
+            Effect::ReadClock { repeat, key } => {
+                self.follow_ups.push(read_clock(trace_id, repeat, key));
             }
             Effect::Observed(observed) => self.observed(*observed),
             Effect::Show(request) => send_gui_command(
@@ -2201,10 +2196,10 @@ fn read_toggle_key(toggle: LockKey) -> Input {
     queued(QueueInput::LockKeyRead { key: toggle, on })
 }
 
-/// The localized current time and date, read for the time gesture, whose
-/// effect ran under `trace_id`, for the reducer to speak the time on a
-/// first press and the date on a quick second (`repeat`).
-fn read_clock(trace_id: TraceId, repeat: u8) -> Input {
+/// The localized current time and date, read for the time gesture, key
+/// `key`, whose effect ran under `trace_id`, for the reducer to speak the
+/// time on a first press and the date on a quick second (`repeat`).
+fn read_clock(trace_id: TraceId, repeat: u8, key: verbatim_model::KeySeq) -> Input {
     let time = datetime::local_time();
     let date = datetime::local_date();
     if time.is_none() || date.is_none() {
@@ -2217,6 +2212,7 @@ fn read_clock(trace_id: TraceId, repeat: u8) -> Input {
     Input::ClockRead {
         trace_id,
         repeat,
+        key,
         time,
         date,
     }

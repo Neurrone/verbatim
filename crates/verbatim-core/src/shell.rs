@@ -11,7 +11,7 @@
 //! (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::{
-    Earcon, Effect, GuiRequest, Input, LockKey, Message, Phrase, Script, SegmentContent,
+    Earcon, Effect, GuiRequest, Input, KeySeq, LockKey, Message, Phrase, Script, SegmentContent,
     ShellItemKind, SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
@@ -41,9 +41,10 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::ClockRead {
             trace_id,
             repeat,
+            key,
             time,
             date,
-        } => clock(*trace_id, *repeat, time.as_ref(), date.as_ref()),
+        } => clock(*trace_id, *repeat, *key, time.as_ref(), date.as_ref()),
         Input::ClipboardCopied {
             trace_id,
             text,
@@ -84,10 +85,11 @@ fn utterance(
 }
 
 /// Runs a gesture's script, pressed `repeat` extra times in quick
-/// succession: the time is read, or the menu or a shell list shown.
-pub(crate) fn script(script: Script, repeat: u8) -> Vec<Effect> {
+/// succession as key `key`: the time is read, or the menu or a shell list
+/// shown.
+pub(crate) fn script(script: Script, repeat: u8, key: KeySeq) -> Vec<Effect> {
     vec![match script {
-        Script::ReportTime => Effect::ReadClock { repeat },
+        Script::ReportTime => Effect::ReadClock { repeat, key },
         Script::ShowMenu => Effect::Show(GuiRequest::Menu),
         Script::ShellList => Effect::Show(GuiRequest::ShellList(shell_list_kind(repeat))),
     }]
@@ -160,19 +162,27 @@ fn lock_key(trace_id: TraceId, key: LockKey, on: bool) -> Vec<Effect> {
 /// The report-time gesture: the time on its first press, the date on a
 /// quick second, interrupting, as NVDA's script does. The operating system
 /// formats both for the user's locale, so they are spoken as the text they
-/// are. One that could not be formatted says nothing.
+/// are, carrying the gesture's key number `key`. One that could not be
+/// formatted says nothing.
 fn clock(
     trace_id: TraceId,
     repeat: u8,
+    key: KeySeq,
     time: Option<&String>,
     date: Option<&String>,
 ) -> Vec<Effect> {
     let text = if repeat == 0 { time } else { date };
     text.map(|text| {
-        utterance(
-            trace_id,
-            SpeechPriority::Interrupt,
-            vec![UtteranceSegment::text(text.clone())],
+        Effect::Speak(
+            Utterance {
+                trace_id,
+                priority: SpeechPriority::Interrupt,
+                segments: vec![UtteranceSegment::text(text.clone())],
+                source: None,
+                say_all: false,
+                validity: None,
+            },
+            Some(key),
         )
     })
     .into_iter()

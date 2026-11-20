@@ -1523,8 +1523,6 @@ pub enum PressAction {
     /// An editing chord passed to the application: Control+Z, Control+Y,
     /// Control+X, Control+V or Escape.
     EditingChord,
-    /// Any other key passed to the application, which types no text.
-    Passed,
     /// A key passed to the application that types a control character
     /// other than Tab, a carriage return, Backspace's and Control+Backspace's
     /// (Control+C, Control+Enter and the like; never Escape), which ends the word

@@ -377,28 +377,32 @@ mod tests {
 
     #[test]
     fn a_long_text_is_shortened_with_its_length() {
-        let input = Input::CharacterTyped {
-            trace_id: TraceId::from_raw(3),
-            key_seq: verbatim_model::KeySeq::none_yet(),
-            text: "x".repeat(100),
-            at_ms: 5,
-        };
+        let input = typed(TraceId::from_raw(3), &"x".repeat(100), 5);
         assert_eq!(
             describe_input(&input),
             format!(
-                "CharacterTyped trace 3, at_ms 5, key_seq 0, text \"{}...\" (100 characters)",
+                "Queue trace 3, at_us 5000, input Press pressed_at_us 5000, action Typed text \"{}...\" (100 characters), key_seq 1",
                 "x".repeat(80)
             )
         );
         assert_eq!(input_time_us(&input), Some(5_000));
     }
 
+    /// A key typing `text` at `at_ms`, as the hook reports it to the
+    /// event queue.
     fn typed(trace: TraceId, text: &str, at_ms: u64) -> Input {
-        Input::CharacterTyped {
+        Input::Queue {
             trace_id: trace,
-            key_seq: verbatim_model::KeySeq::none_yet(),
-            text: text.to_owned(),
-            at_ms,
+            at_us: at_ms * 1_000,
+            input: verbatim_model::request::QueueInput::Press(Box::new(
+                verbatim_model::request::Press {
+                    key_seq: verbatim_model::KeySeq::new(1),
+                    pressed_at_us: at_ms * 1_000,
+                    action: verbatim_model::request::PressAction::Typed {
+                        text: text.to_owned(),
+                    },
+                },
+            )),
         }
     }
 
@@ -455,12 +459,12 @@ mod tests {
                 Shown {
                     time_us: Some(9_000_000),
                     line: 4,
-                    text: "(failing trace) 4: CharacterTyped trace 7, at_ms 9000, key_seq 0, text \"b\". 0 effects".to_owned(),
+                    text: "(failing trace) 4: Queue trace 7, at_us 9000000, input Press pressed_at_us 9000000, action Typed text \"b\", key_seq 1. 1 effect: Queue".to_owned(),
                 },
                 Shown {
                     time_us: Some(11_000_000),
                     line: 5,
-                    text: "5: CharacterTyped trace 8, at_ms 11000, key_seq 0, text \"c\". 0 effects".to_owned(),
+                    text: "5: Queue trace 8, at_us 11000000, input Press pressed_at_us 11000000, action Typed text \"c\", key_seq 1. 1 effect: Queue".to_owned(),
                 },
                 Shown {
                     time_us: Some(11_000_000),
@@ -470,7 +474,7 @@ mod tests {
                 Shown {
                     time_us: Some(11_000_000),
                     line: 7,
-                    text: "(untimed) 7: CharacterTyped trace 8, at_ms 0, key_seq 0, text \"d\". 0 effects".to_owned(),
+                    text: "(untimed) 7: Queue trace 8, at_us 0, input Press pressed_at_us 0, action Typed text \"d\", key_seq 1. 1 effect: Queue".to_owned(),
                 },
             ]
         );

@@ -24,9 +24,9 @@ use verbatim_model::request::{
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent, SpeechMark,
-    TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply, TraceId,
-    WindowHandle,
+    CaretKey, Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent,
+    SpeechMark, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply,
+    TraceId, WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Query, Range, Terminal};
 use verbatim_text::terminal_rows::{Read, ReadText};
@@ -68,6 +68,38 @@ pub fn binding() -> CaretBinding {
         provider: verbatim_model::TextProvider::Uia,
         record: None,
         formatting: verbatim_model::TextAttributes::default(),
+    }
+}
+
+/// A key a test presses: its trace, when it was pressed, and what the
+/// hook reports it does.
+#[derive(Clone, Debug)]
+pub struct Key {
+    pub trace_id: TraceId,
+    pub at_ms: u64,
+    pub action: PressAction,
+}
+
+/// Caret key `key` pressed at `at_ms` in the terminal, passed at once, or
+/// held back when `held`.
+pub fn caret(trace_id: TraceId, key: CaretKey, at_ms: u64, held: bool) -> Key {
+    let held = held.then(|| verbatim_model::stroke::HeldStroke {
+        stroke: verbatim_model::stroke::Stroke {
+            vk: 0x26,
+            scan_code: 0x48,
+            extended: true,
+            sequence: 0,
+        },
+        modifiers: Vec::new(),
+    });
+    Key {
+        trace_id,
+        at_ms,
+        action: PressAction::CaretKey {
+            key,
+            held,
+            bound: Some(Box::new(binding())),
+        },
     }
 }
 
@@ -618,103 +650,47 @@ impl Session {
         self.settle();
     }
 
-    /// The event queue's input a test's input stands for: a key or command
-    /// as the hook reports it, numbered in turn.
-    fn as_queued(&mut self, input: &Input) -> Input {
-        let next = self.keys + 1;
-        let mut press = |trace_id: TraceId, at_ms: u64, action: PressAction| {
-            self.keys += 1;
-            Input::Queue {
-                trace_id,
-                at_us: at_ms * 1_000,
-                input: QueueInput::Press(Box::new(Press {
-                    key_seq: KeySeq::new(self.keys),
-                    pressed_at_us: at_ms * 1_000,
-                    action,
-                })),
-            }
-        };
-        match input {
-            Input::Command {
-                trace_id,
-                command,
-                pressed_at_ms,
-                repeat,
-                ..
-            } => press(
-                *trace_id,
-                *pressed_at_ms,
-                PressAction::Command {
-                    command: *command,
-                    repeat: *repeat,
-                },
-            ),
-            Input::CharacterTyped {
-                trace_id,
-                text,
-                at_ms,
-                ..
-            } => press(*trace_id, *at_ms, PressAction::Typed { text: text.clone() }),
-            Input::CaretKey {
-                trace_id,
-                key,
-                pressed_at_ms,
-                ..
-            } => press(
-                *trace_id,
-                *pressed_at_ms,
-                PressAction::CaretKey {
-                    key: *key,
-                    held: None,
-                    bound: Some(Box::new(binding())),
-                },
-            ),
-            Input::ClearingKey {
-                trace_id, at_ms, ..
-            } => press(*trace_id, *at_ms, PressAction::Clearing),
-            Input::HeldKey {
-                trace_id,
-                key,
-                pressed_at_ms,
-                ..
-            } => {
-                let sequence = u32::try_from(next).expect("keys");
-                press(
-                    *trace_id,
-                    *pressed_at_ms,
-                    PressAction::CaretKey {
-                        key: *key,
-                        held: Some(verbatim_model::stroke::HeldStroke {
-                            stroke: verbatim_model::stroke::Stroke {
-                                vk: 0x26,
-                                scan_code: 0x48,
-                                extended: true,
-                                sequence,
-                            },
-                            modifiers: Vec::new(),
-                        }),
-                        bound: Some(Box::new(binding())),
-                    },
-                )
-            }
-            other => other.clone(),
+    /// `key` as the hook reports it to the event queue, numbered in turn,
+    /// a held key's stroke numbered as the key is.
+    fn pressed(&mut self, key: &Key) -> Input {
+        self.keys += 1;
+        let mut action = key.action.clone();
+        if let PressAction::CaretKey {
+            held: Some(held), ..
+        } = &mut action
+        {
+            held.stroke.sequence = u32::try_from(self.keys).expect("keys");
+        }
+        Input::Queue {
+            trace_id: key.trace_id,
+            at_us: key.at_ms * 1_000,
+            input: QueueInput::Press(Box::new(Press {
+                key_seq: KeySeq::new(self.keys),
+                pressed_at_us: key.at_ms * 1_000,
+                action,
+            })),
         }
     }
 
     /// Feeds `input`, takes in its effects, and plays what it queued.
     pub fn input(&mut self, input: &Input) {
-        let input = self.as_queued(input);
-        let effects = self.step(input);
+        let effects = self.step(input.clone());
         self.run(effects);
         self.settle();
     }
 
-    /// Feeds `inputs` one after another before the outpost answers any
+    /// Presses `key`, takes in its effects, and plays what it queued.
+    pub fn press(&mut self, key: &Key) {
+        let input = self.pressed(key);
+        self.input(&input);
+    }
+
+    /// Presses `keys` one after another before the outpost answers any
     /// request they make, as keys pressed faster than it answers, then
     /// answers those requests, in order, and plays what they queued.
-    pub fn inputs(&mut self, inputs: &[Input]) {
-        for input in inputs {
-            let input = self.as_queued(input);
+    pub fn presses(&mut self, keys: &[Key]) {
+        for key in keys {
+            let input = self.pressed(key);
             let effects = self.step(input);
             self.take(effects, None);
         }
