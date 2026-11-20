@@ -95,14 +95,34 @@ A step is a key to press, or one of these:
   foreground, the capture stops with an error. Just before every key,
   each key of a comma-joined batch on its own, and every character
   typed, the capture checks that the window in front is the window the
-  last `--front` brought forward (or, before any, the one in front when
-  the capture started), by its handle, and that Windows does not judge it
-  not responding, and stops with an error otherwise, so its keys never
-  reach another window; after a `--launch`, a `--front` must name the
-  launched program's window before any key. It checks once more at its
-  end and fails when the window is no longer in front and responding,
-  since keys it has not read would go to the window behind it when it
-  closes ("Keeping keys in the capture's window" below).
+  last `--front` brought forward or `--await-front` found (or, before
+  any, the one in front when the capture started), by its handle, and
+  that Windows does not judge it not responding, and stops with an error
+  otherwise, so its keys never reach another window; after a `--launch`,
+  a `--front` or an `--await-front` must name the launched program's
+  window before any key. It checks once more at its end and fails when
+  the window is no longer in front and responding, since keys it has not
+  read would go to the window behind it when it closes ("Keeping keys in
+  the capture's window" below).
+- `--await-front <image>=<title>` brings nothing forward: it waits, on
+  the agent's window events, for a window of that program with a title
+  containing the text to take the foreground by itself, shown or not yet
+  shown, and makes it the window the keys go to. It is how a key reaches
+  a dialog in front before its show, such as the Import a Theme file
+  dialog, which takes the foreground some time before it is shown, and
+  which no `--front` can name, since `--front` sees only shown windows.
+  The title is required, since without one the window already in front
+  would match. The step notes the window it found and whether it was
+  shown, and every key or character then sent to a window not yet shown
+  notes whether the window was still not shown once the key was sent,
+  the evidence that the key came before the show.
+- `--then` before a step runs that step at once after the step before,
+  with no wait for speech to settle between them; the speech after both
+  is printed after the later one, timed from it, so speech queued between
+  them has a negative time. For example, `enter --then --await-front
+  "verbatim.exe=Import a Theme" --then a` presses Enter on Import..., takes
+  the file dialog as the capture's window as soon as it is in front, and
+  types `a` into it before its show.
 - `--open-menu` opens the menu of the Verbatim running on this machine
   through its control pipe (`OpenMenu`), as a click on its tray icon
   does, so that no key NVDA also uses is pressed: Verbatim+V pressed as
@@ -193,9 +213,11 @@ keys meant for it.
 
 The capture presses its keys only in the window it means to, known by
 its handle: the one in front when it starts, then the one each `--front`
-brings forward. It stops with an error, sending nothing more, when a
-`--front` finds no window to bring forward, when a `--launch` has not
-been followed by a `--front`, and, checked just before every key of a
+brings forward or each `--await-front` finds in front, shown or not. It
+stops with an error, sending nothing more, when a `--front` finds no
+window to bring forward, when an `--await-front` finds no window of its
+program and title in front, when a `--launch` has not been followed by a
+`--front` or an `--await-front`, and, checked just before every key of a
 step and every character typed, when that window is not in front or
 Windows judges it not responding. It also fails at its end when its
 window is no longer in front and responding.

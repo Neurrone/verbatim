@@ -33,7 +33,7 @@
 //! The add-on's client itself is `verbatim_e2e::nvda`, shared with the
 //! end-to-end harness.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -82,10 +82,13 @@ pub fn run(args: &[String]) -> ExitCode {
                  --launch-minimized, as the end-to-end harness launches a terminal, or \
                  --launch-without-foreground, as it opens a File Explorer folder), \
                  --wait-file <path>, --front \
-                 <image>[=<title>] (* for any image), --type <text>, --hold <key> or \
+                 <image>[=<title>] (* for any image), --await-front <image>=<title> (waits \
+                 for that window to take the foreground by itself, shown or not yet \
+                 shown, and presses the next keys in it), --type <text>, --hold <key> or \
                  --release <key> (a key held down across the steps between them, released \
                  when the capture ends or fails), or --open-menu (opens the local \
-                 Verbatim's menu, as a click on its tray icon does)"
+                 Verbatim's menu, as a click on its tray icon does); --then before a step \
+                 runs it at once after the step before, without waiting for speech to settle"
             );
             eprintln!(
                 "  compare  [--agent <address>, or one it starts] [--quiet-ms <ms>] <scenario>: run an end-to-end \
@@ -271,6 +274,11 @@ enum Step {
         image: String,
         title: Option<String>,
     },
+    /// Wait for a window of an image, with a title containing some text, to
+    /// take the foreground by itself, shown or not yet shown, bringing
+    /// nothing forward, and make it the window the keys go to: a dialog in
+    /// front before its show, which no `Front` can name.
+    AwaitFront { image: String, title: String },
     /// Open the menu of the Verbatim running on this machine through its
     /// control pipe, as a click on its tray icon does, so that no key NVDA
     /// also uses is pressed.
@@ -307,6 +315,7 @@ impl Step {
                 Some(title) => format!("front {image} \"{title}\""),
                 None => format!("front {image}"),
             },
+            Self::AwaitFront { image, title } => format!("await front {image} \"{title}\""),
         }
     }
 }
@@ -322,6 +331,17 @@ struct CaptureOptions {
     quiet: Duration,
     timeout: Duration,
     steps: Vec<Step>,
+    /// The indices of the steps a `--then` joins to the step before: run
+    /// at once after it, with no wait for speech to settle between them.
+    joined: BTreeSet<usize>,
+}
+
+/// A window named as `<image>[=<title>]`.
+fn image_and_title(target: &str) -> (String, Option<String>) {
+    match target.split_once('=') {
+        Some((image, title)) => (image.to_owned(), Some(title.to_owned())),
+        None => (target.to_owned(), None),
+    }
 }
 
 fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
@@ -332,9 +352,13 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
         quiet: Duration::from_secs(1),
         timeout: Duration::from_secs(10),
         steps: Vec::new(),
+        joined: BTreeSet::new(),
     };
+    // A `--then` waiting for the step it joins.
+    let mut then = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
+        let steps_before = options.steps.len();
         let mut value = || {
             args.next()
                 .ok_or_else(|| io::Error::other(format!("{arg} needs a value")))
@@ -382,15 +406,34 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
             "--hold" => options.steps.push(Step::Hold(value()?.clone())),
             "--release" => options.steps.push(Step::Release(value()?.clone())),
             "--front" => {
-                let target = value()?;
-                let (image, title) = match target.split_once('=') {
-                    Some((image, title)) => (image.to_owned(), Some(title.to_owned())),
-                    None => (target.clone(), None),
-                };
+                let (image, title) = image_and_title(value()?);
                 options.steps.push(Step::Front { image, title });
+            }
+            "--await-front" => {
+                let target = value()?;
+                let (image, Some(title)) = image_and_title(target) else {
+                    return Err(io::Error::other(format!(
+                        "--await-front needs <image>=<title>, not {target}: any window \
+                         already in front would match a title left out"
+                    )));
+                };
+                options.steps.push(Step::AwaitFront { image, title });
+            }
+            "--then" => {
+                if options.steps.is_empty() || then {
+                    return Err(io::Error::other("--then must come between two steps"));
+                }
+                then = true;
             }
             key => options.steps.push(Step::Key(key.to_owned())),
         }
+        if then && options.steps.len() > steps_before {
+            options.joined.insert(steps_before);
+            then = false;
+        }
+    }
+    if then {
+        return Err(io::Error::other("--then must come between two steps"));
     }
     if options.steps.is_empty() {
         return Err(io::Error::other(
@@ -709,8 +752,9 @@ fn capture(args: &[String]) -> io::Result<()> {
         }
     };
     // The window the keys go to, by its handle: the one in front when the
-    // capture starts, then the one each --front brings forward. A launch
-    // leaves none until a --front names its window.
+    // capture starts, then the one each --front brings forward or each
+    // --await-front finds in front. A launch leaves none until a --front
+    // or an --await-front names its window.
     let mut target = agent
         .foreground_info()?
         .foreground
@@ -722,11 +766,19 @@ fn capture(args: &[String]) -> io::Result<()> {
     let steps = (|| -> io::Result<()> {
         for (index, step) in options.steps.iter().enumerate() {
             let sent_ms = source.now_ms();
-            run_step(&mut agent, &mut target, &mut held, step)?;
+            let notes = run_step(&mut agent, &mut target, &mut held, step)?;
             if options.json {
                 println!("{}", json!({"step": index, "label": step.label()}));
             } else {
                 println!("> {}", step.label());
+            }
+            for note in notes {
+                print(index, None, &Entry::Note(note));
+            }
+            // A step joined to this one runs at once; the speech of both
+            // is printed after the later, timed from it.
+            if options.joined.contains(&(index + 1)) {
+                continue;
             }
             let mut wait = QuietWait::starting_at(Instant::now(), options.quiet, options.timeout);
             loop {
@@ -761,7 +813,7 @@ fn capture(args: &[String]) -> io::Result<()> {
     // when they are read, or when it closes: a capture that ends with its
     // window behind another, or not responding, says so.
     let foreground = agent.foreground_info()?.foreground;
-    in_front(target, foreground.as_ref()).map_err(|why| {
+    in_front(target, foreground).map(drop).map_err(|why| {
         io::Error::other(format!(
             "at the end of the capture {why}; keys it was sent may not have been read, and \
              closing it would hand them to the window behind it"
@@ -770,21 +822,25 @@ fn capture(args: &[String]) -> io::Result<()> {
 }
 
 /// Does what `step` says through the agent: presses its keys, types its
-/// text, launches, brings a window forward, opens Verbatim's menu, or holds or
-/// releases a key, recording a held key in `held`; `target` is the window
-/// the keys go to, by its handle, which a launch or a --front changes.
+/// text, launches, brings a window forward or awaits one in front, opens
+/// Verbatim's menu, or holds or releases a key, recording a held key in
+/// `held`; `target` is the window the keys go to, by its handle, which a
+/// launch, a --front or an --await-front changes. Returns the notes the
+/// step leaves in its transcript.
 fn run_step(
     agent: &mut AgentClient,
     target: &mut Option<u64>,
     held: &mut Vec<String>,
     step: &Step,
-) -> io::Result<()> {
+) -> io::Result<Vec<String>> {
+    let mut notes = Vec::new();
     match step {
         Step::Key(keys) => {
             // Each key of a batch is checked and pressed on its own.
             for key in keys.split(',') {
-                require_in_front(agent, *target, step)?;
-                agent.send_keys(&[key.to_owned()])?;
+                send_checked(agent, *target, step, key, &mut notes, |agent| {
+                    agent.send_keys(&[key.to_owned()]).map(drop)
+                })?;
             }
         }
         Step::Launch { program, args, how } => {
@@ -810,60 +866,37 @@ fn run_step(
             }
         }
         Step::Front { image, title } => {
-            // A window named by its title is waited for until it is
-            // present, as the harness waits before it brings one forward
-            // (`Scenario::bring_forward`).
-            if let Some(title) = title {
-                agent.wait_for_window(
-                    WindowCondition::Present {
-                        title_contains: title.clone(),
-                    },
-                    verbatim_e2e::scenario::WINDOW_TIMEOUT,
-                )?;
-            }
-            // The window, found by its image and title, is brought
-            // forward with SetForegroundWindow, which injects no input;
-            // Windows allows it when the agent injected the last input.
-            let window = agent.foreground_info()?.windows.into_iter().find(|window| {
-                (image == ANY_IMAGE || window.image.eq_ignore_ascii_case(image))
-                    && title
-                        .as_deref()
-                        .is_none_or(|title| window.title.contains(title))
-            });
-            let Some(window) = window else {
-                return Err(io::Error::other(format!(
-                    "no window of {image} titled {title:?} is open; the remaining steps were not run"
-                )));
-            };
-            // The steps after it press keys in whatever is in front:
-            // without the window, none of them may run.
-            let outcome = agent.set_foreground(window.window)?;
-            if !outcome.in_front() {
-                // The window in front after the attempt, not before it.
-                let after = match agent.foreground_info()?.foreground {
-                    Some(front) => {
-                        format!("{:?} of {} (pid {})", front.title, front.image, front.pid)
-                    }
-                    None => "no window".to_owned(),
-                };
-                return Err(io::Error::other(format!(
-                    "the window of {image} titled {title:?} did not take the foreground: {}; after the attempt, {after} is in front; the remaining steps were not run",
-                    outcome.describe()
-                )));
-            }
+            *target = Some(bring_forward(agent, image, title.as_deref())?);
+        }
+        Step::AwaitFront { image, title } => {
+            let window = await_front(agent, image, title)?;
+            notes.push(format!(
+                "the capture's window is now {:?} of {} (window {}), {}",
+                window.title,
+                window.image,
+                window.window,
+                if window.hidden {
+                    "not yet shown"
+                } else {
+                    "shown"
+                }
+            ));
             *target = Some(window.window);
         }
         Step::OpenMenu => open_menu()?,
         Step::Type(text) => {
             // One character at a time, each checked just before it.
             for character in text.chars() {
-                require_in_front(agent, *target, step)?;
-                agent.type_text(&character.to_string())?;
+                let character = character.to_string();
+                send_checked(agent, *target, step, &character, &mut notes, |agent| {
+                    agent.type_text(&character).map(drop)
+                })?;
             }
         }
         Step::Hold(key) => {
-            require_in_front(agent, *target, step)?;
-            agent.press_key(key)?;
+            send_checked(agent, *target, step, key, &mut notes, |agent| {
+                agent.press_key(key).map(drop)
+            })?;
             held.push(key.clone());
         }
         Step::Release(key) => {
@@ -871,15 +904,135 @@ fn run_step(
             agent.release_key(key)?;
         }
     }
+    Ok(notes)
+}
+
+/// Brings the window of `image` titled with `title`, if given, to the
+/// foreground through the agent, and returns its handle; fails when there
+/// is none or it does not take the foreground.
+fn bring_forward(agent: &mut AgentClient, image: &str, title: Option<&str>) -> io::Result<u64> {
+    // A window named by its title is waited for until it is present, as
+    // the harness waits before it brings one forward
+    // (`Scenario::bring_forward`).
+    if let Some(title) = title {
+        agent.wait_for_window(
+            WindowCondition::Present {
+                title_contains: title.to_owned(),
+            },
+            verbatim_e2e::scenario::WINDOW_TIMEOUT,
+        )?;
+    }
+    // The window, found by its image and title, is brought forward with
+    // SetForegroundWindow, which injects no input; Windows allows it when
+    // the agent injected the last input.
+    let window = agent
+        .foreground_info()?
+        .windows
+        .into_iter()
+        .find(|window| named(window, image, title));
+    let Some(window) = window else {
+        return Err(io::Error::other(format!(
+            "no window of {image} titled {title:?} is open; the remaining steps were not run"
+        )));
+    };
+    // The steps after it press keys in whatever is in front: without the
+    // window, none of them may run.
+    let outcome = agent.set_foreground(window.window)?;
+    if !outcome.in_front() {
+        // The window in front after the attempt, not before it.
+        let after = match agent.foreground_info()?.foreground {
+            Some(front) => format!("{:?} of {} (pid {})", front.title, front.image, front.pid),
+            None => "no window".to_owned(),
+        };
+        return Err(io::Error::other(format!(
+            "the window of {image} titled {title:?} did not take the foreground: {}; after the attempt, {after} is in front; the remaining steps were not run",
+            outcome.describe()
+        )));
+    }
+    Ok(window.window)
+}
+
+/// Waits for the window of `image` titled with `title` to take the
+/// foreground by itself, shown or not yet shown, and returns it as it was
+/// then. The wait is woken by the foreground's change, never polled, and
+/// the one read of the window in front as it ends both names the window
+/// and verifies it.
+fn await_front(agent: &mut AgentClient, image: &str, title: &str) -> io::Result<WindowInfo> {
+    let (_, desktop) = agent.wait_for_window(
+        WindowCondition::Foreground {
+            title_contains: title.to_owned(),
+            unsaved: None,
+        },
+        verbatim_e2e::scenario::WINDOW_TIMEOUT,
+    )?;
+    desktop
+        .foreground
+        .filter(|window| named(window, image, Some(title)))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "no window of {image} titled {title:?} took the foreground within {:?}; the remaining steps were not run",
+                verbatim_e2e::scenario::WINDOW_TIMEOUT
+            ))
+        })
+}
+
+/// Whether `window` is of the program `image` (any, for `*`) and, when a
+/// title is given, has a title containing it.
+fn named(window: &WindowInfo, image: &str, title: Option<&str>) -> bool {
+    (image == ANY_IMAGE || window.image.eq_ignore_ascii_case(image))
+        && title.is_none_or(|title| window.title.contains(title))
+}
+
+/// Sends one key or character of `step`, `what`, with `send`, just after
+/// checking that the capture's window, `target` by its handle, is in front
+/// and responding. When that window was not yet shown, as a dialog in
+/// front before its show is, notes whether it was still not shown once the
+/// key was sent: the evidence that the key came before the show.
+fn send_checked(
+    agent: &mut AgentClient,
+    target: Option<u64>,
+    step: &Step,
+    what: &str,
+    notes: &mut Vec<String>,
+    send: impl FnOnce(&mut AgentClient) -> io::Result<()>,
+) -> io::Result<()> {
+    let window = require_in_front(agent, target, step)?;
+    send(agent)?;
+    if window.hidden {
+        let after = agent.foreground_info()?.foreground;
+        notes.push(hidden_note(what, window.window, after.as_ref()));
+    }
     Ok(())
+}
+
+/// The note for `what`, sent while the capture's window, `target`, was in
+/// front and not yet shown, given the window in front once it was sent.
+fn hidden_note(what: &str, target: u64, after: Option<&WindowInfo>) -> String {
+    let after = match after {
+        Some(window) if window.window == target && window.hidden => "still not shown".to_owned(),
+        Some(window) if window.window == target => "shown".to_owned(),
+        Some(window) => format!(
+            "no longer in front ({:?} of {} is)",
+            window.title, window.image
+        ),
+        None => "no longer in front (no window is)".to_owned(),
+    };
+    format!(
+        "{what} was sent while the capture's window was not yet shown; once sent, it was {after}"
+    )
 }
 
 /// Fails, just before one key or character of `step` is sent, unless the
 /// capture's window, `target` by its handle, is in front and responding
-/// (`books/dev/src/how-to/nvda.md`, "Keeping keys in the capture's window").
-fn require_in_front(agent: &mut AgentClient, target: Option<u64>, step: &Step) -> io::Result<()> {
+/// (`books/dev/src/how-to/nvda.md`, "Keeping keys in the capture's window");
+/// the window, as it is then, otherwise.
+fn require_in_front(
+    agent: &mut AgentClient,
+    target: Option<u64>,
+    step: &Step,
+) -> io::Result<WindowInfo> {
     let foreground = agent.foreground_info()?.foreground;
-    in_front(target, foreground.as_ref()).map_err(|why| {
+    in_front(target, foreground).map_err(|why| {
         io::Error::other(format!(
             "{why}; the rest of {} and the steps after it were not run",
             step.label()
@@ -887,17 +1040,17 @@ fn require_in_front(agent: &mut AgentClient, target: Option<u64>, step: &Step) -
     })
 }
 
-/// Whether the window `target`, by its handle, is `foreground`, the window
-/// in front, and responding; why not, otherwise. A key sent to any other
-/// window acts on whatever it is. A key sent to a window that is not
-/// responding waits unread, and goes to whichever window is in front when
-/// it is read, or when that window closes.
-fn in_front(target: Option<u64>, foreground: Option<&WindowInfo>) -> Result<(), String> {
+/// The window `target`, by its handle, when it is `foreground`, the window
+/// in front, and responding, shown or not; why not, otherwise. A key sent
+/// to any other window acts on whatever it is. A key sent to a window that
+/// is not responding waits unread, and goes to whichever window is in front
+/// when it is read, or when that window closes.
+fn in_front(target: Option<u64>, foreground: Option<WindowInfo>) -> Result<WindowInfo, String> {
     let Some(target) = target else {
         return Err("no window was brought forward after the launch".to_owned());
     };
     match foreground {
-        Some(window) if window.window == target && !window.hung => Ok(()),
+        Some(window) if window.window == target && !window.hung => Ok(window),
         Some(window) if window.window == target => Err(format!(
             "the capture's window, {:?} of {}, is not responding",
             window.title, window.image
@@ -1041,12 +1194,101 @@ mod tests {
 
     #[test]
     fn keys_go_only_to_the_capture_s_window_in_front_and_responding() {
-        assert_eq!(in_front(Some(7), Some(&window(7, 10, false))), Ok(()));
+        assert_eq!(
+            in_front(Some(7), Some(window(7, 10, false))),
+            Ok(window(7, 10, false))
+        );
+        // A window in front before its show is the capture's all the same.
+        let hidden = WindowInfo {
+            hidden: true,
+            ..window(7, 10, false)
+        };
+        assert_eq!(in_front(Some(7), Some(hidden.clone())), Ok(hidden));
         // Another window of the same process is not the capture's.
-        assert!(in_front(Some(7), Some(&window(8, 10, false))).is_err());
-        assert!(in_front(Some(7), Some(&window(7, 10, true))).is_err());
+        assert!(in_front(Some(7), Some(window(8, 10, false))).is_err());
+        assert!(in_front(Some(7), Some(window(7, 10, true))).is_err());
         assert!(in_front(Some(7), None).is_err());
-        assert!(in_front(None, Some(&window(7, 10, false))).is_err());
+        assert!(in_front(None, Some(window(7, 10, false))).is_err());
+    }
+
+    #[test]
+    fn an_awaited_window_is_named_by_its_program_and_title() {
+        let dialog = WindowInfo {
+            title: "Import a Theme".to_owned(),
+            image: "verbatim.exe".to_owned(),
+            hidden: true,
+            ..window(7, 10, false)
+        };
+        assert!(named(&dialog, "Verbatim.exe", Some("Import")));
+        assert!(named(&dialog, ANY_IMAGE, Some("Import")));
+        assert!(!named(&dialog, "notepad.exe", Some("Import")));
+        assert!(!named(&dialog, "verbatim.exe", Some("Export")));
+    }
+
+    #[test]
+    fn a_key_sent_before_the_show_says_whether_it_came_before_it() {
+        let shown = window(7, 10, false);
+        let hidden = WindowInfo {
+            hidden: true,
+            ..window(7, 10, false)
+        };
+        assert_eq!(
+            hidden_note("a", 7, Some(&hidden)),
+            "a was sent while the capture's window was not yet shown; once sent, it was still not shown"
+        );
+        assert_eq!(
+            hidden_note("tab", 7, Some(&shown)),
+            "tab was sent while the capture's window was not yet shown; once sent, it was shown"
+        );
+        assert_eq!(
+            hidden_note("tab", 8, Some(&shown)),
+            "tab was sent while the capture's window was not yet shown; once sent, it was no longer in front (\"capture\" of conhost.exe is)"
+        );
+        assert_eq!(
+            hidden_note("control", 7, None),
+            "control was sent while the capture's window was not yet shown; once sent, it was no longer in front (no window is)"
+        );
+    }
+
+    #[test]
+    fn then_joins_the_next_step_to_the_one_before() {
+        let args = [
+            "enter",
+            "--then",
+            "--await-front",
+            "verbatim.exe=Import a Theme",
+            "--then",
+            "a",
+            "escape",
+        ]
+        .map(str::to_owned);
+        let options = parse_capture_args(&args).unwrap();
+        assert_eq!(
+            options.steps,
+            [
+                Step::Key("enter".to_owned()),
+                Step::AwaitFront {
+                    image: "verbatim.exe".to_owned(),
+                    title: "Import a Theme".to_owned(),
+                },
+                Step::Key("a".to_owned()),
+                Step::Key("escape".to_owned()),
+            ]
+        );
+        assert_eq!(options.joined, BTreeSet::from([1, 2]));
+    }
+
+    #[test]
+    fn then_and_await_front_refuse_what_cannot_be_joined_or_named() {
+        for args in [
+            &["--then", "a"][..],
+            &["a", "--then"],
+            &["a", "--then", "--then", "b"],
+            &["--await-front", "verbatim.exe"],
+        ] {
+            let args: Vec<String> = args.iter().map(|&arg| arg.to_owned()).collect();
+            assert!(parse_capture_args(&args).is_err(), "{args:?}");
+        }
     }
 
     #[test]
