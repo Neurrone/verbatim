@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
 
-use verbatim_model::{GestureId, TraceId, VerbatimKeys};
+use verbatim_model::{CaretKey, GestureId, TraceId, VerbatimKeys};
 
 use crate::keys;
 use crate::map::GestureMap;
@@ -164,7 +164,7 @@ pub struct KeyInput {
     /// Whether Core's view lets keys be held in the window it names
     /// (`holds_keys`), whether or not that window is still in front: a
     /// bound gesture swallowed while it is set gets a mask
-    /// ([`Decision::mask`]).
+    /// ([`Act::Gesture`]'s mask).
     pub may_mask: bool,
 }
 
@@ -200,96 +200,165 @@ pub enum PressReport {
     TranslatedOrPassed,
 }
 
-/// The outcome of feeding one [`KeyInput`] to the state machine.
+/// The outcome of feeding one [`KeyInput`] to the state machine: what the
+/// transition does to speech, and what the hook does with it and reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decision {
-    /// What the hook does with the transition.
-    pub verdict: Verdict,
-    /// The gesture this transition raised, if any. Only ever set on a
-    /// [`Verdict::Swallow`].
-    pub emitted: Option<RaisedGesture>,
     /// What this transition does to speech, carried out before the gesture
     /// is acted on. Set on nearly every key-down, whether it is bound,
     /// swallowed, or passed on; never for Verbatim's own key.
     pub speech: Option<KeySpeechEffect>,
-    /// Whether a passed transition is the Verbatim modifier key's own, held
-    /// or double-tapped, passed in share mode for the screen reader hooked
-    /// behind Verbatim
-    /// ([`DecisionConfig::share_modifier`]). That reader decides whether the
-    /// key reaches the operating system, so whether a lock key used this
-    /// way changes state is not known here.
-    pub shared_modifier: bool,
-    /// An observed gesture this key-down completed ([`GestureMap::observes`]):
-    /// the key is passed to the application, and the gesture reported, so
-    /// the reducer can speak what the application did with it (a caret
-    /// key). Never set on a [`Verdict::Swallow`], nor for Verbatim's own
-    /// key; its `repeat` is always 0.
-    pub observed: Option<RaisedGesture>,
-    /// What a press that reaches the application reports.
-    pub typing: PressReport,
-    /// The lock key whose new state is announced: one pressed and passed
-    /// to the operating system, not as the Verbatim modifier shared.
-    pub toggle: Option<ToggleKey>,
-    /// The places in line of the mask's press and release, two deferred
-    /// transitions of [`VK_MASK`] the application is sent after a bound
-    /// gesture swallowed while Alt, a Windows key, or Control and Shift
-    /// together are down in it, so that the modifier does not act alone
-    /// when released: Alt opening the menu bar, the Windows key Start, or
-    /// Control+Shift switching the keyboard layout (`docs/parity/input.md`,
-    /// "A modifier released after a command"). Only the user's gestures
-    /// get one, while [`KeyInput::may_mask`] is set, and only modifiers
-    /// whose press reached the application count, since a swallowed
-    /// press has its release swallowed.
-    pub mask: Option<(u32, u32)>,
+    /// What the hook does with the transition, and what it reports.
+    pub act: Act,
+}
+
+/// What the hook does with a key transition and what it reports, one
+/// variant for each combination that can occur.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Act {
+    /// Swallowed for good, raising nothing: the Verbatim modifier's own
+    /// transition, or a release whose key's press did not reach the
+    /// application.
+    Swallowed,
+    /// Swallowed, raising a bound gesture.
+    Gesture {
+        /// The gesture.
+        gesture: RaisedGesture,
+        /// The places in line of the mask's press and release, two deferred
+        /// transitions of [`VK_MASK`] the application is sent after a bound
+        /// gesture swallowed while Alt, a Windows key, or Control and Shift
+        /// together are down in it, so that the modifier does not act alone
+        /// when released: Alt opening the menu bar, the Windows key Start,
+        /// or Control+Shift switching the keyboard layout
+        /// (`docs/parity/input.md`, "A modifier released after a command").
+        /// Only the user's gestures get one, while [`KeyInput::may_mask`]
+        /// is set, and only modifiers whose press reached the application
+        /// count, since a swallowed press has its release swallowed.
+        mask: Option<(u32, u32)>,
+    },
+    /// A caret key's press held back for its caret to be read: Core has it
+    /// sent again, press and release, once read.
+    Held {
+        /// The observed gesture it completed, its `repeat` 0.
+        gesture: RaisedGesture,
+        /// The caret key the gesture map gives it.
+        key: CaretKey,
+        /// Its place in line.
+        place: u32,
+    },
+    /// The transition reaches the application, now or once deferred.
+    Reaches {
+        /// Its place in line when deferred behind a held key; `None` when
+        /// it passes now.
+        place: Option<u32>,
+        /// An observed gesture this key-down completed
+        /// ([`GestureMap::observes`]), reported so the reducer can speak
+        /// what the application did with it; never for Verbatim's own key,
+        /// and its `repeat` always 0.
+        observed: Option<RaisedGesture>,
+        /// What the press reports of what it did.
+        typing: PressReport,
+        /// The lock key whose new state is announced: one pressed and
+        /// passed to the operating system now.
+        toggle: Option<ToggleKey>,
+    },
+    /// The Verbatim modifier key's own transition, held or double-tapped,
+    /// passed in share mode for the screen reader hooked behind Verbatim
+    /// (the `share_modifier` of [`VerbatimKeys`]),
+    /// now or once deferred. That reader decides whether the key reaches
+    /// the operating system, so whether a lock key used this way changes
+    /// state is not known here, and nothing is reported.
+    Shared {
+        /// Its place in line when deferred; `None` when it passes now.
+        place: Option<u32>,
+    },
 }
 
 impl Decision {
-    /// Pass the transition through, raising nothing.
-    fn pass() -> Self {
-        Self {
-            verdict: Verdict::Pass,
-            emitted: None,
-            speech: None,
-            shared_modifier: false,
-            observed: None,
-            typing: PressReport::Nothing,
-            toggle: None,
-            mask: None,
+    /// What the hook does with the transition.
+    #[must_use]
+    pub fn verdict(&self) -> Verdict {
+        match &self.act {
+            Act::Swallowed | Act::Gesture { .. } => Verdict::Swallow,
+            Act::Held { place, .. } => Verdict::Hold(*place),
+            Act::Reaches { place, .. } | Act::Shared { place } => {
+                place.map_or(Verdict::Pass, Verdict::Defer)
+            }
         }
     }
 
-    /// Pass the transition through, reporting the observed gesture.
-    fn pass_observed(gesture: GestureId) -> Self {
-        Self {
-            observed: Some(RaisedGesture { gesture, repeat: 0 }),
-            ..Self::pass()
+    /// The bound gesture this transition raised, if any.
+    #[must_use]
+    pub fn emitted(&self) -> Option<&RaisedGesture> {
+        match &self.act {
+            Act::Gesture { gesture, .. } => Some(gesture),
+            _ => None,
         }
     }
 
-    /// Pass the Verbatim modifier's own transition in share mode.
-    fn pass_shared_modifier() -> Self {
-        Self {
-            shared_modifier: true,
-            ..Self::pass()
+    /// The observed gesture this transition completed and reports, held
+    /// or reaching the application, if any.
+    #[must_use]
+    pub fn observed(&self) -> Option<&RaisedGesture> {
+        match &self.act {
+            Act::Held { gesture, .. } => Some(gesture),
+            Act::Reaches { observed, .. } => observed.as_ref(),
+            _ => None,
         }
     }
 
-    /// Swallow the transition, raising nothing.
-    fn swallow() -> Self {
-        Self {
-            verdict: Verdict::Swallow,
-            ..Self::pass()
+    /// What a press that reaches the application reports.
+    #[must_use]
+    pub fn typing(&self) -> PressReport {
+        match &self.act {
+            Act::Reaches { typing, .. } => *typing,
+            _ => PressReport::Nothing,
         }
     }
 
-    /// Swallow the transition and raise a gesture.
-    fn swallow_emit(emitted: RaisedGesture) -> Self {
-        Self {
-            verdict: Verdict::Swallow,
-            emitted: Some(emitted),
-            ..Self::pass()
+    /// The lock key whose new state is announced, if any.
+    #[must_use]
+    pub fn toggle(&self) -> Option<ToggleKey> {
+        match &self.act {
+            Act::Reaches { toggle, .. } => *toggle,
+            _ => None,
         }
     }
+
+    /// The places of a raised gesture's mask, if it has one.
+    #[must_use]
+    pub fn mask(&self) -> Option<(u32, u32)> {
+        match &self.act {
+            Act::Gesture { mask, .. } => *mask,
+            _ => None,
+        }
+    }
+}
+
+/// What a press means before its place is decided, one shape for each
+/// meaning it can have.
+enum Pressed {
+    /// It passes, raising nothing.
+    Pass,
+    /// It passes, completing an observed gesture.
+    Observed(GestureId),
+    /// The Verbatim modifier's own press, passed in share mode.
+    Shared,
+    /// It is swallowed, raising nothing.
+    Swallow,
+    /// It is swallowed, raising a bound gesture.
+    Emit(RaisedGesture),
+}
+
+/// Where a transition goes, as [`DecisionMachine::place`] decides it.
+enum Placed {
+    /// Swallowed.
+    Swallow,
+    /// A caret key's press held back with its place, the observed gesture
+    /// it completed and its caret key.
+    Hold(u32, GestureId, CaretKey),
+    /// Reaching the application, now or deferred to its place.
+    Reach(Option<u32>),
 }
 
 /// Virtual-key codes the speech effect treats specially.
@@ -315,7 +384,6 @@ pub const VK_MASK: u16 = VK_UNKNOWN;
 type KeyCode = (u16, bool);
 
 /// What the machine knows of a key it has seen go down and not come up.
-/// All four combinations are valid.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct KeyDown {
     /// A press of the key has reached the application, or is deferred to
@@ -325,11 +393,6 @@ struct KeyDown {
     /// press, and delivered once it is true, so a key one of whose presses
     /// reached the application is seen to come up.
     reached: bool,
-    /// A press of the key completed a bound gesture, or was the Verbatim
-    /// modifier's, and was swallowed, since it last went down: a later
-    /// press is the operating system's auto-repeat, for multi-press
-    /// counting.
-    swallowed_gesture: bool,
 }
 
 /// A key transition held back or deferred, not yet passed on.
@@ -518,12 +581,11 @@ pub struct DecisionMachine {
     /// back to the operating system.
     lone_modifier: LoneModifier,
     /// The gesture and observation time, in microseconds on the run's
-    /// shared clock, of the most recent genuine (not auto-repeated)
-    /// bound-gesture press, for multi-press counting.
+    /// shared clock, of the most recent bound-gesture press, an
+    /// auto-repeat among them, for multi-press counting.
     last_gesture: Option<(GestureId, u64)>,
     /// The multi-press repeat count of
-    /// [`last_gesture`](Self::last_gesture); carried unchanged across
-    /// auto-repeats of the same held gesture.
+    /// [`last_gesture`](Self::last_gesture).
     repeat_count: u8,
     /// The key transitions held back or deferred and not yet passed on, in
     /// the order pressed; while any is, every later transition that would
@@ -562,37 +624,62 @@ impl DecisionMachine {
             permit,
             may_mask,
         } = input;
-        let mut decision = if event.pressed {
+        let (speech, pressed) = if event.pressed {
             let speech = self.speech_effect(event);
-            let mut decision = self.on_press(event, now, num_lock);
-            decision.speech = speech;
-            decision
+            (speech, self.on_press(event, now, num_lock))
         } else {
-            self.on_release(event, now)
+            self.on_release(event, now);
+            (None, Pressed::Pass)
         };
-        decision.verdict = self.place(event, source, permit, &decision);
-        // A gesture observed only when held (Enter) and not held passes as
-        // the text it types, reported as any unobserved key.
-        if !matches!(decision.verdict, Verdict::Hold(_))
-            && decision
-                .observed
-                .as_ref()
-                .is_some_and(|observed| self.map.holds_only(&observed.gesture))
-        {
-            decision.observed = None;
-        }
-        report(event, source, &mut decision);
-        if decision.emitted.is_some()
-            && source == KeySource::User
-            && may_mask
-            && self.modifiers_may_act_alone()
-        {
-            decision.mask = Some((
-                self.queue(Some((VK_MASK, true))),
-                self.queue(Some((VK_MASK, false))),
-            ));
-        }
-        decision
+        // Verbatim's own key reports nothing but a bound gesture or a lock
+        // key, and does nothing to speech.
+        let user = source == KeySource::User;
+        let speech = speech.filter(|_| user);
+        let held = match &pressed {
+            Pressed::Observed(gesture) if user && permit == HoldPermit::HoldAndDefer => {
+                self.map.holds(gesture).map(|key| (gesture.clone(), key))
+            }
+            _ => None,
+        };
+        let swallowed = matches!(pressed, Pressed::Swallow | Pressed::Emit(_));
+        let act = match (pressed, self.place(event, source, permit, swallowed, held)) {
+            (Pressed::Emit(gesture), _) => {
+                let mask = (user && may_mask && self.modifiers_may_act_alone()).then(|| {
+                    (
+                        self.queue(Some((VK_MASK, true))),
+                        self.queue(Some((VK_MASK, false))),
+                    )
+                });
+                Act::Gesture { gesture, mask }
+            }
+            (_, Placed::Swallow) => Act::Swallowed,
+            (_, Placed::Hold(place, gesture, key)) => Act::Held {
+                gesture: RaisedGesture { gesture, repeat: 0 },
+                key,
+                place,
+            },
+            (Pressed::Shared, Placed::Reach(place)) => Act::Shared { place },
+            (pressed, Placed::Reach(place)) => {
+                // A gesture observed only when held (Enter) and not held
+                // passes as the text it types, reported as any unobserved
+                // key.
+                let observed = match pressed {
+                    Pressed::Observed(gesture) if user && !self.map.holds_only(&gesture) => {
+                        Some(RaisedGesture { gesture, repeat: 0 })
+                    }
+                    _ => None,
+                };
+                Act::Reaches {
+                    typing: typing(event, user, observed.is_some()),
+                    toggle: (event.pressed && place.is_none())
+                        .then(|| ToggleKey::from_vk(event.vk))
+                        .flatten(),
+                    observed,
+                    place,
+                }
+            }
+        };
+        Decision { speech, act }
     }
 
     /// Whether the modifiers down in the application could act if
@@ -650,54 +737,45 @@ impl DecisionMachine {
         self.line.iter().filter_map(|waiting| waiting.transition)
     }
 
-    /// The verdict on a transition the rules above passed or swallowed,
+    /// Where a transition the rules above passed or swallowed goes,
     /// recording what it did to its key (`books/dev/src/reference/crates/verbatim-input.md`): a caret key's press is held while the
-    /// permit lets it be; any other transition that would pass is deferred
-    /// while a transition waits in the line and the permit lets it be,
-    /// unless it is a lock key or Verbatim's own; a release is swallowed
-    /// while no press of its key has reached the application since it went
-    /// down or was last held.
+    /// permit lets it be (`held`, its gesture and caret key); any other
+    /// transition that would pass is deferred while a transition waits in
+    /// the line and the permit lets it be, unless it is a lock key or
+    /// Verbatim's own; a release is swallowed while no press of its key has
+    /// reached the application since it went down or was last held.
     fn place(
         &mut self,
         event: KeyEvent,
         source: KeySource,
         permit: HoldPermit,
-        decision: &Decision,
-    ) -> Verdict {
+        swallowed: bool,
+        held: Option<(GestureId, CaretKey)>,
+    ) -> Placed {
         let key: KeyCode = (event.vk, event.extended);
         if event.pressed {
-            let held = source == KeySource::User
-                && permit == HoldPermit::HoldAndDefer
-                && decision
-                    .observed
-                    .as_ref()
-                    .is_some_and(|observed| self.map.holds(&observed.gesture));
             let down = self.keys_down.entry(key).or_default();
-            if decision.verdict == Verdict::Swallow {
-                return Verdict::Swallow;
+            if swallowed {
+                return Placed::Swallow;
             }
             // A held press is sent again with its own release, so it
             // leaves nothing of this key down in the application.
-            down.reached = !held;
-            if held {
-                return Verdict::Hold(self.queue(None));
+            down.reached = held.is_none();
+            if let Some((gesture, caret)) = held {
+                return Placed::Hold(self.queue(None), gesture, caret);
             }
         } else if self
             .keys_down
             .remove(&key)
             .is_some_and(|down| !down.reached)
         {
-            return Verdict::Swallow;
+            return Placed::Swallow;
         }
         let deferred = source == KeySource::User
             && ToggleKey::from_vk(event.vk).is_none()
             && permit != HoldPermit::None
             && !self.line.is_empty();
-        if deferred {
-            Verdict::Defer(self.queue(Some((event.vk, event.pressed))))
-        } else {
-            Verdict::Pass
-        }
+        Placed::Reach(deferred.then(|| self.queue(Some((event.vk, event.pressed)))))
     }
 
     /// Puts a transition held back or deferred in line, giving it the next
@@ -768,7 +846,7 @@ impl DecisionMachine {
 
     /// Decides a key-down in three steps: what part the key plays, where that
     /// leaves the lone-modifier lifecycle, and what chord it completes.
-    fn on_press(&mut self, event: KeyEvent, now: u64, num_lock: bool) -> Decision {
+    fn on_press(&mut self, event: KeyEvent, now: u64, num_lock: bool) -> Pressed {
         let key: KeyCode = (event.vk, event.extended);
 
         // Step one: the key's part in this press. A modifier key whose press
@@ -789,12 +867,12 @@ impl DecisionMachine {
             KeyRole::Modifier => keys::VERBATIM_MODIFIER_NAME,
             KeyRole::Named(_) if num_lock && is_numpad_operator(event.vk) => {
                 self.last_gesture = None;
-                return Decision::pass();
+                return Pressed::Pass;
             }
             KeyRole::Named(name) => name,
             KeyRole::Unnamed => {
                 self.last_gesture = None;
-                return Decision::pass();
+                return Pressed::Pass;
             }
         };
         if role == KeyRole::Modifier || is_normal_modifier(event.vk) {
@@ -806,8 +884,7 @@ impl DecisionMachine {
             && self.map.contains(gesture)
         {
             let repeat = self.count_press(gesture, now);
-            self.keys_down.entry(key).or_default().swallowed_gesture = true;
-            return Decision::swallow_emit(RaisedGesture {
+            return Pressed::Emit(RaisedGesture {
                 gesture: gesture.clone(),
                 repeat,
             });
@@ -829,33 +906,31 @@ impl DecisionMachine {
         // hooked behind Verbatim to see and swallow in its turn.
         if role == KeyRole::Modifier {
             if self.config.keys.share_modifier {
-                return Decision::pass_shared_modifier();
+                return Pressed::Shared;
             }
-            self.keys_down.entry(key).or_default().swallowed_gesture = true;
-            return Decision::swallow();
+            return Pressed::Swallow;
         }
         // A double tap passes the modifier key to the operating system; in
         // share mode the screen reader behind Verbatim decides that press's
         // fate as much as any other.
         if hands_to_os && self.config.keys.share_modifier {
-            return Decision::pass_shared_modifier();
+            return Pressed::Shared;
         }
         if let Some(gesture) = gesture
             && (self.map.observes(&gesture) || self.map.holds_only(&gesture))
         {
-            return Decision::pass_observed(gesture);
+            return Pressed::Observed(gesture);
         }
-        Decision::pass()
+        Pressed::Pass
     }
 
     /// Decides a key-up: where the release leaves the lone-modifier
     /// lifecycle. Whether it is swallowed is decided by what its key's
     /// presses did ([`place`](Self::place)).
-    fn on_release(&mut self, event: KeyEvent, now: u64) -> Decision {
+    fn on_release(&mut self, event: KeyEvent, now: u64) {
         let key: KeyCode = (event.vk, event.extended);
         self.lone_modifier = self.lone_modifier.after_release(key, now);
         self.held_modifiers.remove(&key);
-        Decision::pass()
     }
 
     /// What part a key plays in the press being decided. A configured
@@ -921,33 +996,18 @@ impl DecisionMachine {
     }
 }
 
-/// Completes `decision` with what the transition reports: nothing of
-/// Verbatim's own key but a bound gesture or a lock key; for a press that
-/// reaches the application, now or once deferred, the text it types and
-/// whether it may have edited the text; and a lock key passed to the
-/// operating system, whose new state is announced, as NVDA announces it.
-/// The Verbatim modifier passed in share mode reports neither: the screen
-/// reader behind Verbatim decides whether it reaches the operating system.
-fn report(event: KeyEvent, source: KeySource, decision: &mut Decision) {
-    if source == KeySource::Own {
-        decision.speech = None;
-        decision.observed = None;
+/// What a transition that reaches the application reports of what it did:
+/// for the user's press, the text it types and, when it completed no
+/// observed gesture, whether it may have edited the text; nothing for a
+/// release or Verbatim's own key.
+fn typing(event: KeyEvent, user: bool, observed: bool) -> PressReport {
+    if !(event.pressed && user) {
+        PressReport::Nothing
+    } else if !observed && may_edit(event.vk) {
+        PressReport::TranslatedOrPassed
+    } else {
+        PressReport::Translated
     }
-    let reaches = matches!(decision.verdict, Verdict::Pass | Verdict::Defer(_));
-    decision.typing =
-        if event.pressed && reaches && !decision.shared_modifier && source == KeySource::User {
-            if decision.observed.is_none() && may_edit(event.vk) {
-                PressReport::TranslatedOrPassed
-            } else {
-                PressReport::Translated
-            }
-        } else {
-            PressReport::Nothing
-        };
-    decision.toggle =
-        (event.pressed && decision.verdict == Verdict::Pass && !decision.shared_modifier)
-            .then(|| ToggleKey::from_vk(event.vk))
-            .flatten();
 }
 
 /// Whether `vk`, passed to the application without typing text, may edit
@@ -996,6 +1056,7 @@ fn is_normal_modifier(vk: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verbatim_model::CaretMotion;
 
     /// Builds a map of bound gestures from raw identifiers.
     fn map_of(ids: &[&str]) -> GestureMap {
@@ -1124,7 +1185,7 @@ mod tests {
         let t = START;
         let plus = 0x6B;
         assert_eq!(
-            m.on_key(key(down(plus, false), t)).verdict,
+            m.on_key(key(down(plus, false), t)).verdict(),
             Verdict::Swallow
         );
         m.on_key(key(up(plus, false), t));
@@ -1132,9 +1193,9 @@ mod tests {
             num_lock: true,
             ..key(down(plus, false), t)
         });
-        assert_eq!(decision.verdict, Verdict::Pass);
-        assert!(decision.emitted.is_none());
-        assert_eq!(m.on_key(key(up(plus, false), t)).verdict, Verdict::Pass);
+        assert_eq!(decision.verdict(), Verdict::Pass);
+        assert!(decision.emitted().is_none());
+        assert_eq!(m.on_key(key(up(plus, false), t)).verdict(), Verdict::Pass);
     }
 
     #[test]
@@ -1145,14 +1206,14 @@ mod tests {
         let t = START;
         let left = 0x25;
         let decision = m.on_key(key(down(left, true), t));
-        assert_eq!(decision.verdict, Verdict::Pass);
-        assert!(decision.emitted.is_none());
-        let observed = decision.observed.expect("observed");
+        assert_eq!(decision.verdict(), Verdict::Pass);
+        assert!(decision.emitted().is_none());
+        let observed = decision.observed().expect("observed");
         assert_eq!(observed.gesture.as_str(), "kb:leftarrow");
         assert_eq!(observed.repeat, 0);
-        assert_eq!(m.on_key(key(up(left, true), t)).verdict, Verdict::Pass);
+        assert_eq!(m.on_key(key(up(left, true), t)).verdict(), Verdict::Pass);
         // The numpad twin is a different key and is not observed.
-        assert!(m.on_key(key(down(left, false), t)).observed.is_none());
+        assert!(m.on_key(key(down(left, false), t)).observed().is_none());
     }
 
     #[test]
@@ -1181,13 +1242,13 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
         let t = START;
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         m.desktop_switched();
         let v_down = m.on_key(key(down(V, false), t));
-        assert_eq!(v_down.verdict, Verdict::Pass);
-        assert!(v_down.emitted.is_none());
+        assert_eq!(v_down.verdict(), Verdict::Pass);
+        assert!(v_down.emitted().is_none());
     }
 
     #[test]
@@ -1196,16 +1257,19 @@ mod tests {
         let t = START;
 
         let caps_down = m.on_key(key(down(CAPS, false), t));
-        assert_eq!(caps_down.verdict, Verdict::Swallow);
-        assert!(caps_down.emitted.is_none());
+        assert_eq!(caps_down.verdict(), Verdict::Swallow);
+        assert!(caps_down.emitted().is_none());
 
         let v_down = m.on_key(key(down(V, false), t));
-        assert_eq!(v_down.verdict, Verdict::Swallow);
-        let emitted = v_down.emitted.expect("gesture emitted");
+        assert_eq!(v_down.verdict(), Verdict::Swallow);
+        let emitted = v_down.emitted().expect("gesture emitted");
         assert_eq!(emitted.gesture.as_str(), "kb:v+verbatim");
 
-        assert_eq!(m.on_key(key(up(V, false), t)).verdict, Verdict::Swallow);
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(m.on_key(key(up(V, false), t)).verdict(), Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
     }
 
     #[test]
@@ -1215,18 +1279,24 @@ mod tests {
 
         // First tap acts as the modifier and is swallowed.
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
 
         // Second tap, comfortably inside the window, passes through both
         // transitions so the OS toggles caps lock.
         let t2 = t + ms(100);
         let second = m.on_key(key(down(CAPS, false), t2));
-        assert_eq!(second.verdict, Verdict::Pass);
-        assert!(!second.shared_modifier, "Verbatim alone decides its fate");
-        assert_eq!(m.on_key(key(up(CAPS, false), t2)).verdict, Verdict::Pass);
+        assert_eq!(second.verdict(), Verdict::Pass);
+        assert!(
+            !matches!(second.act, Act::Shared { .. }),
+            "Verbatim alone decides its fate"
+        );
+        assert_eq!(m.on_key(key(up(CAPS, false), t2)).verdict(), Verdict::Pass);
 
         // In share mode the double tap passes for the screen reader behind
         // Verbatim, which decides whether it reaches the operating system.
@@ -1243,8 +1313,8 @@ mod tests {
         m.on_key(key(down(CAPS, false), t));
         m.on_key(key(up(CAPS, false), t));
         let second = m.on_key(key(down(CAPS, false), t2));
-        assert_eq!(second.verdict, Verdict::Pass);
-        assert!(second.shared_modifier);
+        assert_eq!(second.verdict(), Verdict::Pass);
+        assert_eq!(second.act, Act::Shared { place: None });
     }
 
     #[test]
@@ -1253,21 +1323,24 @@ mod tests {
         let t = START;
 
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
 
         // Beyond the timeout, caps acts as the modifier again.
         let t2 = t + ms(600);
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t2)).verdict,
+            m.on_key(key(down(CAPS, false), t2)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t2));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
     }
@@ -1278,20 +1351,26 @@ mod tests {
         let t = START;
 
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
 
         let t2 = t + ms(100);
-        assert_eq!(m.on_key(key(down(CAPS, false), t2)).verdict, Verdict::Pass);
-        assert_eq!(m.on_key(key(up(CAPS, false), t2)).verdict, Verdict::Pass);
+        assert_eq!(
+            m.on_key(key(down(CAPS, false), t2)).verdict(),
+            Verdict::Pass
+        );
+        assert_eq!(m.on_key(key(up(CAPS, false), t2)).verdict(), Verdict::Pass);
 
         // The passed-through tap does not arm another passthrough; the next
         // press is the modifier again.
         let t3 = t2 + ms(100);
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t3)).verdict,
+            m.on_key(key(down(CAPS, false), t3)).verdict(),
             Verdict::Swallow
         );
     }
@@ -1303,13 +1382,13 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
         let t = START;
         assert_eq!(
-            m.on_key(key(down(INSERT, true), t)).verdict,
+            m.on_key(key(down(INSERT, true), t)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
     }
@@ -1320,12 +1399,12 @@ mod tests {
         let t = START;
         // Non-extended insert is the numpad insert.
         assert_eq!(
-            m.on_key(key(down(INSERT, false), t)).verdict,
+            m.on_key(key(down(INSERT, false), t)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
-        let emitted = v.emitted.expect("emitted");
+        assert_eq!(v.verdict(), Verdict::Swallow);
+        let emitted = v.emitted().expect("emitted");
         assert_eq!(emitted.gesture.as_str(), "kb:v+verbatim");
         assert_eq!(emitted.repeat, 0);
 
@@ -1339,10 +1418,13 @@ mod tests {
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);
-        assert_eq!(m.on_key(key(down(INSERT, false), t)).verdict, Verdict::Pass);
+        assert_eq!(
+            m.on_key(key(down(INSERT, false), t)).verdict(),
+            Verdict::Pass
+        );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Pass);
-        assert!(v.emitted.is_none());
+        assert_eq!(v.verdict(), Verdict::Pass);
+        assert!(v.emitted().is_none());
     }
 
     #[test]
@@ -1359,10 +1441,13 @@ mod tests {
         let t = START;
         // Extended insert is not a modifier here, so it passes through and V
         // is an ordinary keystroke.
-        assert_eq!(m.on_key(key(down(INSERT, true), t)).verdict, Verdict::Pass);
+        assert_eq!(
+            m.on_key(key(down(INSERT, true), t)).verdict(),
+            Verdict::Pass
+        );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Pass);
-        assert!(v.emitted.is_none());
+        assert_eq!(v.verdict(), Verdict::Pass);
+        assert!(v.emitted().is_none());
     }
 
     #[test]
@@ -1373,23 +1458,26 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
         let t = START;
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         let z = m.on_key(key(down(Z, false), t));
-        assert_eq!(z.verdict, Verdict::Pass);
-        assert!(z.emitted.is_none());
-        assert_eq!(m.on_key(key(up(Z, false), t)).verdict, Verdict::Pass);
+        assert_eq!(z.verdict(), Verdict::Pass);
+        assert!(z.emitted().is_none());
+        assert_eq!(m.on_key(key(up(Z, false), t)).verdict(), Verdict::Pass);
         // The bound chord still works after the passed-through key, and the
         // modifier's own transitions remain swallowed throughout.
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
-        assert_eq!(m.on_key(key(up(V, false), t)).verdict, Verdict::Swallow);
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(m.on_key(key(up(V, false), t)).verdict(), Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
     }
 
     #[test]
@@ -1398,17 +1486,17 @@ mod tests {
         let t = START;
         // Control alone passes through and is tracked as a held modifier.
         assert_eq!(
-            m.on_key(key(down(CONTROL, false), t)).verdict,
+            m.on_key(key(down(CONTROL, false), t)).verdict(),
             Verdict::Pass
         );
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:control+v+verbatim"
         );
     }
@@ -1418,14 +1506,14 @@ mod tests {
         // A right-control variant must generalize to `control`.
         let mut m = machine(DecisionConfig::default(), &["kb:control+v+verbatim"]);
         let t = START;
-        assert_eq!(m.on_key(key(down(0xA3, false), t)).verdict, Verdict::Pass); // right control
+        assert_eq!(m.on_key(key(down(0xA3, false), t)).verdict(), Verdict::Pass); // right control
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t));
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:control+v+verbatim"
         );
     }
@@ -1442,10 +1530,10 @@ mod tests {
             injected: true,
             ..down(V, false)
         };
-        assert_eq!(m.on_key(key(caps, t)).verdict, Verdict::Swallow);
+        assert_eq!(m.on_key(key(caps, t)).verdict(), Verdict::Swallow);
         let decision = m.on_key(key(v, t));
-        assert_eq!(decision.verdict, Verdict::Swallow);
-        let emitted = decision.emitted.expect("emitted");
+        assert_eq!(decision.verdict(), Verdict::Swallow);
+        let emitted = decision.emitted().expect("emitted");
         assert_eq!(emitted.gesture.as_str(), "kb:v+verbatim");
         assert_eq!(emitted.repeat, 0);
     }
@@ -1456,15 +1544,18 @@ mod tests {
         let t = START;
 
         // An ordinary keystroke with no modifier passes on the way down and up.
-        assert_eq!(m.on_key(key(down(A, false), t)).verdict, Verdict::Pass);
-        assert_eq!(m.on_key(key(up(A, false), t)).verdict, Verdict::Pass);
+        assert_eq!(m.on_key(key(down(A, false), t)).verdict(), Verdict::Pass);
+        assert_eq!(m.on_key(key(up(A, false), t)).verdict(), Verdict::Pass);
 
         // The modifier is trapped on the way down and again on the way up.
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(
+            m.on_key(key(up(CAPS, false), t)).verdict(),
+            Verdict::Swallow
+        );
     }
 
     #[test]
@@ -1472,11 +1563,11 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &[]);
         let t = START;
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         // 0x07 is undefined and unnamed; it passes through.
-        assert_eq!(m.on_key(key(down(0x07, false), t)).verdict, Verdict::Pass);
+        assert_eq!(m.on_key(key(down(0x07, false), t)).verdict(), Verdict::Pass);
     }
 
     #[test]
@@ -1485,9 +1576,12 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &["kb:f6"]);
         let t = START;
         let f6 = m.on_key(key(down(0x75, false), t)); // VK_F6
-        assert_eq!(f6.verdict, Verdict::Swallow);
-        assert_eq!(f6.emitted.expect("emitted").gesture.as_str(), "kb:f6");
-        assert_eq!(m.on_key(key(up(0x75, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(f6.verdict(), Verdict::Swallow);
+        assert_eq!(f6.emitted().expect("emitted").gesture.as_str(), "kb:f6");
+        assert_eq!(
+            m.on_key(key(up(0x75, false), t)).verdict(),
+            Verdict::Swallow
+        );
     }
 
     #[test]
@@ -1496,9 +1590,9 @@ mod tests {
         let mut m = machine(DecisionConfig::default(), &["kb:verbatim"]);
         let t = START;
         let caps = m.on_key(key(down(CAPS, false), t));
-        assert_eq!(caps.verdict, Verdict::Swallow);
+        assert_eq!(caps.verdict(), Verdict::Swallow);
         assert_eq!(
-            caps.emitted.expect("emitted").gesture.as_str(),
+            caps.emitted().expect("emitted").gesture.as_str(),
             "kb:verbatim"
         );
     }
@@ -1520,23 +1614,27 @@ mod tests {
         let t = START;
 
         let caps = m.on_key(key(down(CAPS, false), t));
-        assert_eq!(caps.verdict, Verdict::Pass);
-        assert!(caps.shared_modifier, "passed as the shared modifier");
+        assert_eq!(caps.verdict(), Verdict::Pass);
+        assert_eq!(
+            caps.act,
+            Act::Shared { place: None },
+            "passed as the shared modifier"
+        );
         let z = m.on_key(key(down(Z, false), t));
-        assert!(!z.shared_modifier);
-        assert_eq!(z.verdict, Verdict::Pass);
-        assert!(z.emitted.is_none());
-        assert_eq!(m.on_key(key(up(Z, false), t)).verdict, Verdict::Pass);
+        assert!(!matches!(z.act, Act::Shared { .. }));
+        assert_eq!(z.verdict(), Verdict::Pass);
+        assert!(z.emitted().is_none());
+        assert_eq!(m.on_key(key(up(Z, false), t)).verdict(), Verdict::Pass);
 
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
-        assert_eq!(m.on_key(key(up(V, false), t)).verdict, Verdict::Swallow);
+        assert_eq!(m.on_key(key(up(V, false), t)).verdict(), Verdict::Swallow);
 
-        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict, Verdict::Pass);
+        assert_eq!(m.on_key(key(up(CAPS, false), t)).verdict(), Verdict::Pass);
     }
 
     #[test]
@@ -1545,17 +1643,17 @@ mod tests {
         let t = START;
         // Caps auto-repeats (repeated down with no up).
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         assert_eq!(
-            m.on_key(key(down(CAPS, false), t)).verdict,
+            m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
         let v = m.on_key(key(down(V, false), t));
-        assert_eq!(v.verdict, Verdict::Swallow);
+        assert_eq!(v.verdict(), Verdict::Swallow);
         assert_eq!(
-            v.emitted.expect("emitted").gesture.as_str(),
+            v.emitted().expect("emitted").gesture.as_str(),
             "kb:v+verbatim"
         );
     }
@@ -1565,7 +1663,7 @@ mod tests {
     fn press_v_verbatim(m: &mut DecisionMachine, t: u64) -> u8 {
         m.on_key(key(down(CAPS, false), t));
         let v = m.on_key(key(down(V, false), t));
-        let repeat = v.emitted.expect("emitted").repeat;
+        let repeat = v.emitted().expect("emitted").repeat;
         m.on_key(key(up(V, false), t));
         m.on_key(key(up(CAPS, false), t));
         repeat
@@ -1623,7 +1721,7 @@ mod tests {
         let t2 = t + ms(100);
         m.on_key(key(down(CAPS, false), t2));
         let a = m.on_key(key(down(A, false), t2));
-        assert_eq!(a.emitted.expect("emitted").repeat, 0);
+        assert_eq!(a.emitted().expect("emitted").repeat, 0);
         m.on_key(key(up(A, false), t2));
         m.on_key(key(up(CAPS, false), t2));
 
@@ -1640,7 +1738,7 @@ mod tests {
         assert_eq!(press_v_verbatim(&mut m, t), 0);
         let t2 = t + ms(50);
         assert_eq!(
-            m.on_key(key(down(CONTROL, false), t2)).verdict,
+            m.on_key(key(down(CONTROL, false), t2)).verdict(),
             Verdict::Pass
         );
         m.on_key(key(up(CONTROL, false), t2));
@@ -1650,7 +1748,7 @@ mod tests {
             "a lone modifier does not end the streak"
         );
         let t3 = t2 + ms(100);
-        assert_eq!(m.on_key(key(down(A, false), t3)).verdict, Verdict::Pass);
+        assert_eq!(m.on_key(key(down(A, false), t3)).verdict(), Verdict::Pass);
         m.on_key(key(up(A, false), t3));
         assert_eq!(
             press_v_verbatim(&mut m, t3 + ms(50)),
@@ -1673,14 +1771,14 @@ mod tests {
         m.on_key(key(down(CAPS, false), t));
 
         let first = m.on_key(key(down(V, false), t));
-        assert_eq!(first.emitted.expect("emitted").repeat, 0);
+        assert_eq!(first.emitted().expect("emitted").repeat, 0);
 
         // Auto-repeat: V goes down again with no key-up in between, each
         // within the timeout of the one before.
         let repeat1 = m.on_key(key(down(V, false), t + ms(400)));
-        assert_eq!(repeat1.emitted.expect("emitted").repeat, 1);
+        assert_eq!(repeat1.emitted().expect("emitted").repeat, 1);
         let repeat2 = m.on_key(key(down(V, false), t + ms(800)));
-        assert_eq!(repeat2.emitted.expect("emitted").repeat, 2);
+        assert_eq!(repeat2.emitted().expect("emitted").repeat, 2);
 
         m.on_key(key(up(V, false), t + ms(800)));
         m.on_key(key(up(CAPS, false), t + ms(800)));
@@ -1702,6 +1800,11 @@ mod tests {
     }
 
     const RIGHT: u16 = 0x27;
+    /// Right Arrow's caret key.
+    const RIGHT_KEY: CaretKey = CaretKey {
+        motion: CaretMotion::NextCharacter,
+        select: false,
+    };
     const X: u16 = 0x58;
     const ESCAPE: u16 = 0x1B;
 
@@ -1713,7 +1816,7 @@ mod tests {
             DecisionConfig::default(),
             GestureMap::new([id("kb:rightarrow+verbatim")])
                 .with_observed([id("kb:escape")])
-                .with_held([id("kb:rightarrow")]),
+                .with_held([(id("kb:rightarrow"), RIGHT_KEY)]),
         )
     }
 
@@ -1727,7 +1830,7 @@ mod tests {
 
     /// The verdict on the user's `event` at `now` with `permit`.
     fn verdict(m: &mut DecisionMachine, permit: HoldPermit, event: KeyEvent, now: u64) -> Verdict {
-        m.on_key(with(permit, event, now)).verdict
+        m.on_key(with(permit, event, now)).verdict()
     }
 
     const HOLD: HoldPermit = HoldPermit::HoldAndDefer;
@@ -1744,12 +1847,12 @@ mod tests {
         let mut m = holding_machine();
         let t = START;
         let held = m.on_key(with(HOLD, down(RIGHT, true), t));
-        assert_eq!(held.verdict, Verdict::Hold(1));
-        assert_eq!(held.typing, PressReport::Nothing);
+        assert_eq!(held.verdict(), Verdict::Hold(1));
+        assert_eq!(held.typing(), PressReport::Nothing);
         assert_eq!(verdict(&mut m, HOLD, up(RIGHT, true), t), Verdict::Swallow);
         let x = m.on_key(with(HOLD, down(X, false), t));
-        assert_eq!(x.verdict, Verdict::Defer(2));
-        assert_eq!(x.typing, PressReport::TranslatedOrPassed);
+        assert_eq!(x.verdict(), Verdict::Defer(2));
+        assert_eq!(x.typing(), PressReport::TranslatedOrPassed);
         assert_eq!(
             verdict(&mut m, HOLD, down(RIGHT, true), t),
             Verdict::Hold(3)
@@ -1797,7 +1900,7 @@ mod tests {
             for _ in 0..presses {
                 for event in [down(vk, extended), up(vk, extended)] {
                     let decision = m.on_key(with(HOLD, event, t + ms(10)));
-                    decided.push((vk, event.pressed, decision.verdict, decision.toggle));
+                    decided.push((vk, event.pressed, decision.verdict(), decision.toggle()));
                 }
             }
         }
@@ -1828,21 +1931,21 @@ mod tests {
         let mut m = holding_machine();
         let t = START;
         let held = m.on_key(with(HOLD, down(RIGHT, true), t));
-        assert_eq!(held.verdict, Verdict::Hold(1));
+        assert_eq!(held.verdict(), Verdict::Hold(1));
         assert_eq!(
-            held.observed.map(|observed| observed.gesture),
+            held.observed().map(|observed| observed.gesture.clone()),
             Some(GestureId::parse("kb:rightarrow").expect("valid id"))
         );
         assert_eq!(verdict(&mut m, HOLD, up(RIGHT, true), t), Verdict::Swallow);
         m.passed_on(1);
         let escape = m.on_key(with(HOLD, down(ESCAPE, false), t));
-        assert_eq!(escape.verdict, Verdict::Pass);
-        assert!(escape.observed.is_some());
+        assert_eq!(escape.verdict(), Verdict::Pass);
+        assert!(escape.observed().is_some());
         assert_eq!(verdict(&mut m, HOLD, up(ESCAPE, false), t), Verdict::Pass);
         let defer = HoldPermit::Defer;
         let passed = m.on_key(with(defer, down(RIGHT, true), t));
-        assert_eq!(passed.verdict, Verdict::Pass);
-        assert!(passed.observed.is_some());
+        assert_eq!(passed.verdict(), Verdict::Pass);
+        assert!(passed.observed().is_some());
         assert_eq!(verdict(&mut m, defer, up(RIGHT, true), t), Verdict::Pass);
     }
 
@@ -1857,24 +1960,34 @@ mod tests {
         let mut m = DecisionMachine::new(
             DecisionConfig::default(),
             GestureMap::new([])
-                .with_held([id("kb:rightarrow")])
-                .with_held_only([id("kb:enter")]),
+                .with_held([(id("kb:rightarrow"), RIGHT_KEY)])
+                .with_held_only([(
+                    id("kb:enter"),
+                    CaretKey {
+                        motion: CaretMotion::NewLine,
+                        select: false,
+                    },
+                )]),
         );
         let t = START;
         let held = m.on_key(with(HOLD, down(ENTER, false), t));
-        assert_eq!(held.verdict, Verdict::Hold(1));
+        assert_eq!(held.verdict(), Verdict::Hold(1));
         assert_eq!(
-            held.observed.map(|observed| observed.gesture),
+            held.observed().map(|observed| observed.gesture.clone()),
             Some(id("kb:enter"))
         );
-        assert_eq!(held.typing, PressReport::Nothing);
+        assert_eq!(held.typing(), PressReport::Nothing);
         assert_eq!(verdict(&mut m, HOLD, up(ENTER, false), t), Verdict::Swallow);
         m.passed_on(1);
         for permit in [HoldPermit::Defer, HoldPermit::None] {
             let passed = m.on_key(with(permit, down(ENTER, false), t));
-            assert_eq!(passed.verdict, Verdict::Pass, "{permit:?}");
-            assert_eq!(passed.observed, None, "{permit:?}");
-            assert_eq!(passed.typing, PressReport::TranslatedOrPassed, "{permit:?}");
+            assert_eq!(passed.verdict(), Verdict::Pass, "{permit:?}");
+            assert_eq!(passed.observed(), None, "{permit:?}");
+            assert_eq!(
+                passed.typing(),
+                PressReport::TranslatedOrPassed,
+                "{permit:?}"
+            );
             assert_eq!(
                 verdict(&mut m, permit, up(ENTER, false), t),
                 Verdict::Pass,
@@ -1886,8 +1999,8 @@ mod tests {
             Verdict::Hold(2)
         );
         let behind = m.on_key(with(HOLD, down(ENTER, false), t));
-        assert_eq!(behind.verdict, Verdict::Hold(3));
-        assert!(behind.observed.is_some());
+        assert_eq!(behind.verdict(), Verdict::Hold(3));
+        assert!(behind.observed().is_some());
     }
 
     #[test]
@@ -1932,7 +2045,7 @@ mod tests {
         let mut m = holding_machine();
         let repeat = |m: &mut DecisionMachine, now| {
             m.on_key(with(HOLD, down(RIGHT, true), now))
-                .emitted
+                .emitted()
                 .expect("emitted")
                 .repeat
         };
@@ -2054,10 +2167,10 @@ mod tests {
             });
             assert_eq!(
                 (
-                    decision.verdict,
+                    decision.verdict(),
                     decision.speech,
-                    decision.observed,
-                    decision.typing
+                    decision.observed(),
+                    decision.typing()
                 ),
                 (Verdict::Pass, None, None, PressReport::Nothing)
             );
@@ -2086,7 +2199,7 @@ mod tests {
         keys.iter()
             .map(|&(vk, extended)| {
                 m.on_key(masking(HoldPermit::None, down(vk, extended), START))
-                    .mask
+                    .mask()
             })
             .collect()
     }
@@ -2104,34 +2217,31 @@ mod tests {
         let defer = HoldPermit::Defer;
         let mut t = START;
         for (repeat, first) in [(0, 1), (1, 4)] {
-            assert_eq!(m.on_key(masking(none, down(INSERT, true), t)).mask, None);
+            assert_eq!(m.on_key(masking(none, down(INSERT, true), t)).mask(), None);
             assert_eq!(verdict(&mut m, none, down(ALT, false), t), Verdict::Pass);
             assert_eq!(
                 m.on_key(masking(none, down(HOME, true), t)),
                 Decision {
-                    verdict: Verdict::Swallow,
-                    emitted: Some(RaisedGesture {
-                        gesture: GestureId::parse("kb:verbatim+alt+home").expect("valid id"),
-                        repeat,
-                    }),
                     speech: Some(KeySpeechEffect::Cancel),
-                    shared_modifier: false,
-                    observed: None,
-                    typing: PressReport::Nothing,
-                    toggle: None,
-                    mask: Some((first, first + 1)),
+                    act: Act::Gesture {
+                        gesture: RaisedGesture {
+                            gesture: GestureId::parse("kb:verbatim+alt+home").expect("valid id"),
+                            repeat,
+                        },
+                        mask: Some((first, first + 1)),
+                    },
                 }
             );
             assert_eq!(
-                m.on_key(masking(defer, up(HOME, true), t)).verdict,
+                m.on_key(masking(defer, up(HOME, true), t)).verdict(),
                 Verdict::Swallow
             );
             assert_eq!(
-                m.on_key(masking(defer, up(ALT, false), t)).verdict,
+                m.on_key(masking(defer, up(ALT, false), t)).verdict(),
                 Verdict::Defer(first + 2)
             );
             assert_eq!(
-                m.on_key(masking(defer, up(INSERT, true), t)).verdict,
+                m.on_key(masking(defer, up(INSERT, true), t)).verdict(),
                 Verdict::Swallow
             );
             assert_eq!(
@@ -2206,7 +2316,7 @@ mod tests {
                 .into_iter()
                 .map(|(vk, extended)| {
                     let decision = m.on_key(masking(HoldPermit::None, down(vk, extended), START));
-                    (decision.verdict, decision.mask)
+                    (decision.verdict(), decision.mask())
                 })
                 .collect();
         assert_eq!(decided, [(Verdict::Swallow, None); 3]);
@@ -2223,7 +2333,7 @@ mod tests {
         .into_iter()
         .map(|(vk, extended)| {
             let decision = m.on_key(masking(HoldPermit::None, down(vk, extended), START));
-            (decision.verdict, decision.mask)
+            (decision.verdict(), decision.mask())
         })
         .collect();
         assert_eq!(
@@ -2249,7 +2359,7 @@ mod tests {
         );
         let repeat = m.on_key(masking(HoldPermit::Defer, down(HOME, true), START + ms(33)));
         assert_eq!(
-            (repeat.emitted.map(|raised| raised.repeat), repeat.mask),
+            (repeat.emitted().map(|raised| raised.repeat), repeat.mask()),
             (Some(1), Some((3, 4)))
         );
         let mut m = machine(DecisionConfig::default(), &["kb:verbatim+alt+home"]);
@@ -2257,13 +2367,16 @@ mod tests {
             m.on_key(masking(HoldPermit::None, event, START));
         }
         let unmasked = m.on_key(key(down(HOME, true), START));
-        assert_eq!((unmasked.emitted.is_some(), unmasked.mask), (true, None));
+        assert_eq!(
+            (unmasked.emitted().is_some(), unmasked.mask()),
+            (true, None)
+        );
         m.on_key(key(up(HOME, true), START));
         let own = m.on_key(KeyInput {
             source: KeySource::Own,
             ..masking(HoldPermit::None, down(HOME, true), START + ms(600))
         });
-        assert_eq!((own.emitted.is_some(), own.mask), (true, None));
+        assert_eq!((own.emitted().is_some(), own.mask()), (true, None));
         assert!(!m.has_outstanding());
     }
 }

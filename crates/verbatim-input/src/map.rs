@@ -1,13 +1,13 @@
-//! The gesture map: the set of bound gesture identifiers the hook consults.
-//!
-//! In milestone M1 the map is exactly a set of bound [`GestureId`]s; resolving
-//! a gesture to an action lives in the application's gesture router, not here.
-//! The decision machine owns its map, given when it is made: nothing changes
-//! the bindings while Verbatim runs.
+//! The gesture map: the gestures the hook consults, bound, observed and
+//! held, each held one with its caret key. It is built from the one
+//! gesture table ([`crate::Tables::gesture_map`]); resolving a bound
+//! gesture to its action is the table's. The decision machine owns its
+//! map, given when it is made: nothing changes the bindings while
+//! Verbatim runs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use verbatim_model::GestureId;
+use verbatim_model::{CaretKey, GestureId};
 
 /// The set of gesture identifiers currently bound to some action, and the
 /// set of gestures observed on their way to the application.
@@ -26,7 +26,8 @@ use verbatim_model::GestureId;
 pub struct GestureMap {
     bound: BTreeSet<GestureId>,
     observed: BTreeSet<GestureId>,
-    held: BTreeSet<GestureId>,
+    /// The held gestures, each with its caret key.
+    held: BTreeMap<GestureId, CaretKey>,
     /// The held gestures observed only when held: Enter, which passed is
     /// typed text, reported as the text it types.
     held_only: BTreeSet<GestureId>,
@@ -39,7 +40,7 @@ impl GestureMap {
         Self {
             bound: gestures.into_iter().collect(),
             observed: BTreeSet::new(),
-            held: BTreeSet::new(),
+            held: BTreeMap::new(),
             held_only: BTreeSet::new(),
         }
     }
@@ -52,13 +53,14 @@ impl GestureMap {
         self
     }
 
-    /// This map, also observing and holding `gestures`: the caret keys,
-    /// held back while Core's view lets keys be held.
+    /// This map, also observing and holding `gestures`, each with its
+    /// caret key: the caret keys, held back while Core's view lets keys be
+    /// held.
     #[must_use]
-    pub fn with_held(mut self, gestures: impl IntoIterator<Item = GestureId>) -> Self {
-        for gesture in gestures {
+    pub fn with_held(mut self, gestures: impl IntoIterator<Item = (GestureId, CaretKey)>) -> Self {
+        for (gesture, key) in gestures {
             self.observed.insert(gesture.clone());
-            self.held.insert(gesture);
+            self.held.insert(gesture, key);
         }
         self
     }
@@ -68,19 +70,23 @@ impl GestureMap {
     /// does not: Enter, which then passes as typed text
     /// (`books/dev/src/explanation/design/key-holding.md`).
     #[must_use]
-    pub fn with_held_only(mut self, gestures: impl IntoIterator<Item = GestureId>) -> Self {
-        for gesture in gestures {
-            self.held.insert(gesture.clone());
+    pub fn with_held_only(
+        mut self,
+        gestures: impl IntoIterator<Item = (GestureId, CaretKey)>,
+    ) -> Self {
+        for (gesture, key) in gestures {
+            self.held.insert(gesture.clone(), key);
             self.held_only.insert(gesture);
         }
         self
     }
 
-    /// Whether the given gesture is held: observed, or held only, and its
-    /// key held back while Core's view lets keys be held.
+    /// The caret key of the given gesture when it is held: observed, or
+    /// held only, and its key held back while Core's view lets keys be
+    /// held.
     #[must_use]
-    pub fn holds(&self, gesture: &GestureId) -> bool {
-        self.held.contains(gesture)
+    pub fn holds(&self, gesture: &GestureId) -> Option<CaretKey> {
+        self.held.get(gesture).copied()
     }
 
     /// Whether the given gesture is observed only when held

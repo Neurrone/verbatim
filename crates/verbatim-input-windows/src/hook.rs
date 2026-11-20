@@ -20,7 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_input::state::{
-    DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, VK_MASK, Verdict,
+    Act, DecisionMachine, HoldPermit, KeyInput, KeySource, PressReport, VK_MASK, Verdict,
 };
 use verbatim_input::{KeyDecision, KeyEvent};
 use verbatim_model::{FocusTextKind, HookForeground, KeySeq, TraceId};
@@ -351,6 +351,28 @@ fn num_lock_on() -> bool {
     state & 1 != 0
 }
 
+/// Reports a transition deferred behind a held key, as `stroke`, after what
+/// the key did, so that whoever passes it on has been told of it first.
+fn report_deferred(state: &HookState, stroke: Option<HeldStroke>, pressed: bool) {
+    if let Some(stroke) = stroke {
+        (state.reports)(KeyReport::Deferred { stroke, pressed });
+    }
+}
+
+/// Reports a lock key reaching the operating system, key `key_seq`, for
+/// its new state to be announced, as NVDA announces it.
+fn report_toggle(state: &HookState, toggle: verbatim_input::ToggleKey, key_seq: KeySeq) {
+    (state.reports)(KeyReport::Gesture {
+        gesture: verbatim_input::state::EmittedGesture {
+            trace_id: TraceId::mint(),
+            gesture: toggle.gesture(),
+            repeat: 0,
+        },
+        key_seq,
+        pressed_at_us: unix_us(),
+    });
+}
+
 /// Gathers one key transition's inputs, has the machine decide it, carries
 /// out its effect on speech, and reports what it caused, each report
 /// carrying the key's number; `scan_code` and `extra_info` are the key
@@ -401,62 +423,57 @@ pub(crate) fn decide(
     if let Some(effect) = decision.speech {
         (state.speech)(effect, key_seq);
     }
-    if let Some(emitted) = decision.emitted {
-        (state.reports)(KeyReport::Gesture {
-            gesture: emitted.stamped(TraceId::mint()),
+    let verdict = decision.verdict();
+    match decision.act {
+        Act::Swallowed => {}
+        Act::Gesture { gesture, mask } => {
+            (state.reports)(KeyReport::Gesture {
+                gesture: gesture.stamped(TraceId::mint()),
+                key_seq,
+                pressed_at_us: unix_us(),
+            });
+            report_mask(state, mask);
+        }
+        Act::Held {
+            gesture,
+            key,
+            place,
+        } => (state.reports)(KeyReport::Held {
+            gesture: gesture.stamped(TraceId::mint()),
+            key,
             key_seq,
             pressed_at_us: unix_us(),
-        });
-    }
-    if let Some(observed) = decision.observed {
-        let pressed_at_us = unix_us();
-        let observed = observed.stamped(TraceId::mint());
-        (state.reports)(if let Verdict::Hold(sequence) = decision.verdict {
-            KeyReport::Held {
-                gesture: observed,
-                key_seq,
-                pressed_at_us,
-                stroke: stroke(sequence),
+            stroke: stroke(place),
+        }),
+        Act::Reaches {
+            place,
+            observed,
+            typing,
+            toggle,
+        } => {
+            if let Some(observed) = observed {
+                (state.reports)(KeyReport::Observed {
+                    gesture: observed.stamped(TraceId::mint()),
+                    key_seq,
+                    pressed_at_us: unix_us(),
+                });
             }
-        } else {
-            KeyReport::Observed {
-                gesture: observed,
-                key_seq,
-                pressed_at_us,
+            if typing != PressReport::Nothing {
+                report_passed(
+                    state,
+                    (event.vk, scan_code),
+                    key_seq,
+                    typing,
+                    now_us,
+                    (view, window),
+                );
             }
-        });
-    }
-    if decision.typing != PressReport::Nothing {
-        report_passed(
-            state,
-            (event.vk, scan_code),
-            key_seq,
-            decision.typing,
-            now_us,
-            (view, window),
-        );
-    }
-    // After what the key did, so that whoever passes it on has been told
-    // of it first.
-    if let Verdict::Defer(sequence) = decision.verdict {
-        (state.reports)(KeyReport::Deferred {
-            stroke: stroke(sequence),
-            pressed: event.pressed,
-        });
-    }
-    report_mask(state, decision.mask);
-    // A lock key reaching the operating system is reported, for its new
-    // state to be announced, as NVDA announces it.
-    if let Some(toggle) = decision.toggle {
-        (state.reports)(KeyReport::Gesture {
-            gesture: verbatim_input::state::EmittedGesture {
-                trace_id: TraceId::mint(),
-                gesture: toggle.gesture(),
-                repeat: 0,
-            },
-            key_seq,
-            pressed_at_us: unix_us(),
-        });
+            report_deferred(state, place.map(stroke), event.pressed);
+            if let Some(toggle) = toggle {
+                report_toggle(state, toggle, key_seq);
+            }
+        }
+        Act::Shared { place } => report_deferred(state, place.map(stroke), event.pressed),
     }
     // A harness's stroke is complete with its last key event: say
     // so behind everything the stroke caused.
@@ -467,7 +484,7 @@ pub(crate) fn decide(
     {
         (state.reports)(KeyReport::Handled(numbered.number));
     }
-    if decision.verdict == Verdict::Pass {
+    if verdict == Verdict::Pass {
         KeyDecision::Pass
     } else {
         KeyDecision::Swallow
@@ -576,9 +593,13 @@ mod tests {
     fn holding_state(reports: &Arc<Mutex<Vec<KeyReport>>>) -> HookState {
         let right = GestureId::parse("kb:rightarrow").expect("valid id");
         let escape = GestureId::parse("kb:escape").expect("valid id");
-        let map = GestureMap::new([])
-            .with_observed([escape])
-            .with_held([right]);
+        let map = GestureMap::new([]).with_observed([escape]).with_held([(
+            right,
+            verbatim_model::CaretKey {
+                motion: verbatim_model::CaretMotion::NextCharacter,
+                select: false,
+            },
+        )]);
         let sink = Arc::clone(reports);
         let foreground = Arc::new(ForegroundView::new());
         foreground.set(Some(IN_FRONT));
@@ -711,7 +732,15 @@ mod tests {
         let mut state = HookState::new(
             DecisionMachine::new(
                 DecisionConfig::default(),
-                GestureMap::new([]).with_held_only([id("kb:enter"), id("kb:numpadenter")]),
+                GestureMap::new([]).with_held_only([id("kb:enter"), id("kb:numpadenter")].map(
+                    |gesture| {
+                        let key = verbatim_model::CaretKey {
+                            motion: verbatim_model::CaretMotion::NewLine,
+                            select: false,
+                        };
+                        (gesture, key)
+                    },
+                )),
             ),
             (
                 Box::new(|_, _| {}),

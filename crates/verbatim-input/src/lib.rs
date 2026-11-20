@@ -8,8 +8,9 @@
 //!
 //! This crate holds the vocabulary ([`KeyEvent`], [`KeyDecision`], and the
 //! [`keys`] name table shared with the control plane's key injection), the
-//! pure decision [`state`] machine, the [`map`] of bound gestures, and the
-//! [`scripts`] tables. It depends on nothing from the operating system, so
+//! pure decision [`state`] machine, the [`map`] of bound gestures, the
+//! [`scripts`] tables, and the one gesture table built from them
+//! ([`tables`]). It depends on nothing from the operating system, so
 //! the whole of Verbatim's keyboard behaviour is testable with scripted key
 //! streams. The thin, never-blocking hook thread that installs the real
 //! `WH_KEYBOARD_LL` hook and drives the machine is `verbatim-input-windows`.
@@ -57,6 +58,7 @@ pub mod keys;
 pub mod map;
 pub mod scripts;
 pub mod state;
+pub mod tables;
 pub mod toggle;
 
 pub use map::GestureMap;
@@ -65,9 +67,10 @@ pub use scripts::{
     gesture_map_for, selection_bindings,
 };
 pub use state::{
-    Decision, DecisionConfig, DecisionMachine, EmittedGesture, HoldPermit, KeyInput, KeySource,
-    KeySpeechEffect, PressReport, RaisedGesture, Verdict,
+    Act, Decision, DecisionConfig, DecisionMachine, EmittedGesture, HoldPermit, KeyInput,
+    KeySource, KeySpeechEffect, PressReport, RaisedGesture, Verdict,
 };
+pub use tables::Tables;
 pub use toggle::ToggleKey;
 
 /// One raw key transition as seen by the low-level hook, before any

@@ -43,7 +43,7 @@ use verbatim_control::protocol::{FocusReport, OutpostState, OutpostStatus, Statu
 use verbatim_control::server::{ControlServer, ServerHandlers};
 use verbatim_core::{ReducerRecorder, SrState, reduce};
 use verbatim_gui::{GuiCommand, GuiEvent, GuiHandle, ShellItemKind, run_gui};
-use verbatim_input::{DecisionConfig, GestureMap, KeyboardLayout};
+use verbatim_input::DecisionConfig;
 use verbatim_input_windows::{ForegroundView, InputHook};
 use verbatim_model::protocol::{CoreToListener, ListenerToCore};
 use verbatim_model::protocol::{CoreToOutpost, EventTiming, OutpostToCore};
@@ -396,8 +396,12 @@ fn run(
             .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle, &command_tx))?;
     }
 
-    // The gesture map the hook decides keys against.
-    let bound_gestures = bound_gestures(keyboard_layout);
+    // The one gesture table, from which the gesture map the hook decides
+    // keys against is built.
+    let tables = verbatim_input::Tables::for_layout(
+        keyboard_layout,
+        GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding"),
+    );
 
     // Keyboard hook. Everything it decides goes to the reducer's port, and
     // a key that cancels speech to the speech queue's, both made before
@@ -407,13 +411,9 @@ fn run(
     let hook_ports = key_reports::Ports::new(command_tx.clone(), manager.control());
     let hook = InputHook::start(
         decision_config,
-        bound_gestures,
+        tables.gesture_map(),
         key_reports::speech_effect(hook_ports.clone()),
-        key_reports::reports(
-            key_reports::Tables::for_layout(keyboard_layout),
-            Arc::clone(&ledger),
-            hook_ports,
-        ),
+        key_reports::reports(tables, Arc::clone(&ledger), hook_ports),
         foreground,
     )?;
 
@@ -2132,45 +2132,6 @@ fn next_of(received: Received<ShellCommand>) -> Next {
         Received::TimedOut => Next::Woken,
         Received::Closed => Next::Closed,
     }
-}
-
-/// The keyboard bindings this milestone ships, as the gesture map the
-/// hook's decision machine owns: the menu gesture
-/// plus every review and object-navigation binding for the active layout
-/// (roadmap M3). The layout's own table already carries the time and tray
-/// gestures, so they are not listed separately. The caret keys are observed
-/// and held, not bound: they reach the application, held back while the
-/// focus has text until its caret is read, and the hook reports them for
-/// the reducer to speak what they did (milestone M4); Enter is held only,
-/// in a text field other than a terminal, and otherwise typed text. The
-/// selection keys are observed and never held: they pass at once.
-fn bound_gestures(layout: KeyboardLayout) -> GestureMap {
-    let mut gestures = vec![GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding")];
-    gestures.extend(
-        verbatim_input::bindings_for(layout)
-            .into_iter()
-            .map(|(gesture, _action)| gesture),
-    );
-    GestureMap::new(gestures)
-        .with_observed(verbatim_input::clearing_keys())
-        .with_observed(verbatim_input::editing_chords())
-        .with_observed(
-            verbatim_input::selection_bindings()
-                .into_iter()
-                .map(|(gesture, _key)| gesture),
-        )
-        .with_held(
-            verbatim_input::caret_bindings()
-                .into_iter()
-                .filter(|(_gesture, key)| key.motion != verbatim_model::CaretMotion::NewLine)
-                .map(|(gesture, _key)| gesture),
-        )
-        .with_held_only(
-            verbatim_input::caret_bindings()
-                .into_iter()
-                .filter(|(_gesture, key)| key.motion == verbatim_model::CaretMotion::NewLine)
-                .map(|(gesture, _key)| gesture),
-        )
 }
 
 /// Sends one command to the GUI when it is up; during the startup window

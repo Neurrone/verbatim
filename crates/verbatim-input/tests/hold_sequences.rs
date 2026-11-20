@@ -1,17 +1,17 @@
 //! Every sequence of up to four keys, pass-ons, permit changes and pauses
 //! through the decision machine, from a view that lets keys be held,
-//! checked against invariants that need no model and a small reference
-//! model of what the application should receive
-//! (`books/dev/src/reference/crates/verbatim-input.md`), for each keyboard layout's bindings.
+//! checked against invariants that need no model
+//! (`books/dev/src/reference/crates/verbatim-input.md`), for each keyboard
+//! layout's gesture map, built from the one gesture table
+//! ([`verbatim_input::Tables`]).
 //!
 //! The alphabet is twenty steps: the press and release of Right Arrow (a
 //! press of a key already down is its auto-repeat), A, Shift, Alt,
 //! Control, the left Windows key, Insert and Caps Lock, the last two both
 //! Verbatim keys; T's press; Core's pass-on of the oldest place in line;
 //! the permit moved to its next value; and a pause past the multi-press
-//! timeout. The gesture map is the one the app builds for the layout (its
-//! table, the menu gesture, the clearing keys observed and the caret keys
-//! held), with Verbatim+Right Arrow, Verbatim+T, Verbatim+Alt+T,
+//! timeout. The gesture map is the table's for the layout, with
+//! Verbatim+Right Arrow, Verbatim+T, Verbatim+Alt+T,
 //! Verbatim+Control+Shift+T, Verbatim+Windows+T and Verbatim+Left Alt
 //! bound as well, so a caret key is also a gesture's key, every kind of
 //! mask is walked, and Alt's press can be a gesture's own.
@@ -27,33 +27,21 @@
 //! line, decides as `Defer` does with an empty line, which the walk
 //! covers.
 //!
-//! After every step, with no model: no release reaches the application
-//! before its press; Alt's, the Windows key's, or Control's and Shift's
-//! together, release does not reach it after a gesture made with them down
-//! in it until that gesture's mask has; and the machine's line holds a
-//! place exactly while one is given out and not passed on. After every sequence, every
-//! key let go and every place passed on, the application has every key up.
-//! The model states, for a press whose meaning it takes from the machine
-//! (a bound gesture, the Verbatim key, a held caret key, or anything
-//! else), whether each transition reaches the application, is held or
-//! deferred, or is swallowed, and the places of a mask; the machine's
-//! verdict and mask must equal it. Gesture naming, multi-press counting
-//! and the double tap are stated by `state.rs`'s unit tests.
-//!
-//! Which caret gestures are held is the model's own ([`MODEL_HELD`]):
-//! NVDA's caret scripts of editable text, without the selection keys
-//! (the Shift forms of the movement keys and Control+A), which pass at once
-//! and are deferred only behind a place in line, as every key is (ADR 0003,
-//! "Keys and commands": "Selection keys are not held"; NVDA binds them only
-//! in controls without automatic selection detection, which Verbatim does
-//! not read, `docs/design/readers-tell-core-asks-build1.md`, "The hook and
-//! Core's stroke line"). The machine's map holds what the app's map holds.
+//! After every step: no release reaches the application before its press;
+//! Alt's, the Windows key's, or Control's and Shift's together, release
+//! does not reach it after a gesture made with them down in it until that
+//! gesture's mask has; and the machine's line holds a place exactly while
+//! one is given out and not passed on. After every sequence, every key let
+//! go and every place passed on, the application has every key up. What
+//! each transition's verdict is, gesture naming, multi-press counting and
+//! the double tap are stated by `state.rs`'s unit tests and the examples
+//! here.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use verbatim_input::{
     DecisionConfig, DecisionMachine, GestureMap, HoldPermit, KeyEvent, KeyInput, KeySource,
-    KeyboardLayout, Verdict, bindings_for, caret_bindings, clearing_keys,
+    KeyboardLayout, ScriptAction, Tables, Verdict,
 };
 use verbatim_model::GestureId;
 
@@ -85,11 +73,6 @@ impl K {
             K::Caps => (0x14, false),
             K::T => (0x54, false),
         }
-    }
-
-    /// Whether the key is a Verbatim key, as both are by default.
-    fn verbatim(self) -> bool {
-        matches!(self, K::Insert | K::Caps)
     }
 }
 
@@ -142,162 +125,24 @@ const STEP_US: u64 = 33_000;
 /// The multi-press timeout, NVDA's default, in microseconds.
 const TIMEOUT_US: u64 = 500_000;
 
-/// The caret gestures the model holds: NVDA's caret scripts of editable
-/// text (`nvda/source/editableText.py` 388 to 412), every one a key the
-/// application moves or deletes by; the selection keys NVDA binds only
-/// without automatic selection detection (495 to 509) are not among them,
-/// so they pass (ADR 0003, "Keys and commands").
-const MODEL_HELD: [&str; 25] = [
-    "kb:upArrow",
-    "kb:downArrow",
-    "kb:leftArrow",
-    "kb:rightArrow",
-    "kb:pageUp",
-    "kb:pageDown",
-    "kb:control+leftArrow",
-    "kb:control+rightArrow",
-    "kb:control+upArrow",
-    "kb:control+downArrow",
-    "kb:alt+upArrow",
-    "kb:alt+downArrow",
-    "kb:home",
-    "kb:end",
-    "kb:control+home",
-    "kb:control+end",
-    "kb:delete",
-    "kb:shift+delete",
-    "kb:numpadDelete",
-    "kb:shift+numpadDelete",
-    "kb:control+delete",
-    "kb:control+numpadDelete",
-    "kb:backspace",
-    "kb:shift+backspace",
-    "kb:control+backspace",
-];
-
-/// The app's gesture map for `layout` with the walk's own bindings, its
-/// caret keys held as the app holds them, and the caret gestures the model
-/// holds ([`MODEL_HELD`]).
-fn map_for(layout: KeyboardLayout) -> (GestureMap, BTreeSet<GestureId>) {
+/// The gesture map of `layout`'s gesture table with the walk's own
+/// bindings, which run a script as any binding does; which script is the
+/// reducer's concern, not the machine's.
+fn map_for(layout: KeyboardLayout) -> GestureMap {
     let id = |raw| GestureId::parse(raw).expect("valid id");
-    let app_held = caret_bindings().into_iter().map(|(gesture, _)| gesture);
-    let held: BTreeSet<GestureId> = MODEL_HELD.into_iter().map(id).collect();
-    let map = GestureMap::new(
-        bindings_for(layout)
-            .into_iter()
-            .map(|(gesture, _)| gesture)
-            .chain(
-                [
-                    "kb:verbatim+v",
-                    "kb:verbatim+rightarrow",
-                    "kb:verbatim+t",
-                    "kb:verbatim+leftalt",
-                    "kb:verbatim+alt+t",
-                    "kb:verbatim+control+shift+t",
-                    "kb:verbatim+leftwindows+t",
-                ]
-                .map(id),
-            ),
-    )
-    .with_observed(clearing_keys())
-    .with_held(app_held);
-    (map, held)
+    let mut tables = Tables::for_layout(layout, id("kb:verbatim+v"));
+    for gesture in [
+        "kb:verbatim+rightarrow",
+        "kb:verbatim+t",
+        "kb:verbatim+leftalt",
+        "kb:verbatim+alt+t",
+        "kb:verbatim+control+shift+t",
+        "kb:verbatim+leftwindows+t",
+    ] {
+        tables.scripts.insert(id(gesture), ScriptAction::SpeakTime);
+    }
+    tables.gesture_map()
 }
-
-/// What a press means, as the walk reads it from the machine's report:
-/// how gestures are named and counted, and when a Verbatim key's press is
-/// a double tap passed to Windows, are stated by `state.rs`'s unit tests,
-/// so the model takes them as given.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Meaning {
-    /// It completed a bound gesture.
-    Gesture,
-    /// A Verbatim key acting as the Verbatim key.
-    VerbatimKey,
-    /// It completed a caret gesture the model holds.
-    Held,
-    /// Anything else.
-    Other,
-}
-
-/// The reference model: which transitions reach the application, are held
-/// or deferred, or are swallowed, and when a mask is due, for a press
-/// whose meaning is given.
-#[derive(Clone, Debug)]
-struct Model {
-    /// Each key down, and whether the model lets its release through:
-    /// true after a press that passed or was deferred, false after a held
-    /// press, and unchanged by a swallowed one (false for a key whose first
-    /// press it is).
-    reached: BTreeMap<K, bool>,
-    /// How many places wait in line.
-    line: usize,
-    /// The last place given out.
-    place: u32,
-}
-
-impl Model {
-    fn new() -> Self {
-        Self {
-            reached: BTreeMap::new(),
-            line: 0,
-            place: 0,
-        }
-    }
-
-    fn queue(&mut self) -> u32 {
-        self.place += 1;
-        self.line += 1;
-        self.place
-    }
-
-    /// A transition that would reach the application: deferred while a
-    /// place waits and the permit lets it be, unless it is Caps Lock, a
-    /// lock key; passed otherwise.
-    fn reach(&mut self, key: K, permit: HoldPermit) -> Verdict {
-        if permit != HoldPermit::None && self.line > 0 && key != K::Caps {
-            Verdict::Defer(self.queue())
-        } else {
-            Verdict::Pass
-        }
-    }
-
-    fn press(&mut self, key: K, meaning: Meaning, permit: HoldPermit) -> Expected {
-        let reached = |model: &Self, key| model.reached.get(&key) == Some(&true);
-        let may_act_alone = reached(self, K::Alt)
-            || reached(self, K::Windows)
-            || (reached(self, K::Control) && reached(self, K::Shift));
-        self.reached.entry(key).or_insert(false);
-        match meaning {
-            Meaning::Gesture => {
-                let mask = (permit != HoldPermit::None && may_act_alone)
-                    .then(|| (self.queue(), self.queue()));
-                (Verdict::Swallow, mask)
-            }
-            Meaning::VerbatimKey => (Verdict::Swallow, None),
-            Meaning::Held if permit == HoldPermit::HoldAndDefer => {
-                self.reached.insert(key, false);
-                (Verdict::Hold(self.queue()), None)
-            }
-            Meaning::Held | Meaning::Other => {
-                self.reached.insert(key, true);
-                (self.reach(key, permit), None)
-            }
-        }
-    }
-
-    fn release(&mut self, key: K, permit: HoldPermit) -> Verdict {
-        if self.reached.remove(&key) == Some(false) {
-            Verdict::Swallow
-        } else {
-            self.reach(key, permit)
-        }
-    }
-}
-
-/// What the model expects of a key transition: its verdict and the places
-/// of its mask.
-type Expected = (Verdict, Option<(u32, u32)>);
 
 /// What a place in line sends the application when passed on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,13 +155,10 @@ enum Sent {
     Mask(bool),
 }
 
-/// The machine, the model, and what the application has received.
+/// The machine, and what the application has received.
 #[derive(Clone)]
-struct World<'a> {
-    /// The caret gestures the model holds.
-    held: &'a BTreeSet<GestureId>,
+struct World {
     machine: DecisionMachine,
-    model: Model,
     now: u64,
     permit: HoldPermit,
     user_down: BTreeSet<K>,
@@ -330,12 +172,10 @@ struct World<'a> {
     trail: Vec<Step>,
 }
 
-impl<'a> World<'a> {
-    fn new(map: GestureMap, held: &'a BTreeSet<GestureId>, permit: HoldPermit) -> Self {
+impl World {
+    fn new(map: GestureMap, permit: HoldPermit) -> Self {
         Self {
-            held,
             machine: DecisionMachine::new(DecisionConfig::default(), map),
-            model: Model::new(),
             now: 1_000_000_000,
             permit,
             user_down: BTreeSet::new(),
@@ -414,8 +254,8 @@ impl<'a> World<'a> {
     /// Puts a transition's mask in line, and for a gesture made with the
     /// view letting keys be held, notes the modifiers whose release must
     /// wait for that mask.
-    fn masked(&mut self, meaning: Meaning, mask: Option<(u32, u32)>) -> Result<(), String> {
-        if meaning == Meaning::Gesture && self.permit != HoldPermit::None {
+    fn masked(&mut self, gesture: bool, mask: Option<(u32, u32)>) -> Result<(), String> {
+        if gesture && self.permit != HoldPermit::None {
             let acting = self.acting_modifiers();
             match mask {
                 Some((press, _)) => {
@@ -437,7 +277,7 @@ impl<'a> World<'a> {
     }
 
     /// Takes `step`, returning the verdict of a key's transition, and
-    /// checks it against the model and the line.
+    /// checks it against the line.
     fn apply(&mut self, step: Step) -> Result<Option<Verdict>, String> {
         self.trail.push(step);
         let mut verdict = None;
@@ -460,51 +300,24 @@ impl<'a> World<'a> {
                     permit: self.permit,
                     may_mask: self.permit != HoldPermit::None,
                 });
-                let meaning = if decision.emitted.is_some() {
-                    Meaning::Gesture
-                } else if key.verbatim() && decision.verdict == Verdict::Swallow {
-                    Meaning::VerbatimKey
-                } else if decision
-                    .observed
-                    .as_ref()
-                    .is_some_and(|observed| self.held.contains(&observed.gesture))
-                {
-                    Meaning::Held
-                } else {
-                    Meaning::Other
-                };
-                let expected = if pressed {
-                    self.model.press(key, meaning, self.permit)
-                } else {
-                    (self.model.release(key, self.permit), None)
-                };
-                if (decision.verdict, decision.mask) != expected {
-                    return Err(format!(
-                        "{key:?} {} ({meaning:?}): the machine {:?} {:?}, the model {expected:?}",
-                        if pressed { "down" } else { "up" },
-                        decision.verdict,
-                        decision.mask
-                    ));
-                }
-                self.masked(meaning, decision.mask)?;
+                self.masked(decision.emitted().is_some(), decision.mask())?;
                 if pressed {
                     self.user_down.insert(key);
                 } else {
                     self.user_down.remove(&key);
                 }
-                match decision.verdict {
+                match decision.verdict() {
                     Verdict::Pass => self.app(key, pressed)?,
                     Verdict::Swallow => {}
                     Verdict::Hold(place) => self.push(place, Sent::Held(key))?,
                     Verdict::Defer(place) => self.push(place, Sent::Transition(key, pressed))?,
                 }
-                verdict = Some(decision.verdict);
+                verdict = Some(decision.verdict());
             }
             Step::PassOn => {
                 self.now += STEP_US;
                 let (place, sent) = self.line.pop_front().expect("a place in line");
                 self.machine.passed_on(place);
-                self.model.line -= 1;
                 match sent {
                     Sent::Held(key) => {
                         self.app(key, true)?;
@@ -576,8 +389,7 @@ fn walk(world: &World, depth: usize, failures: &mut Vec<(Vec<Step>, String)>) {
 /// The verdicts of the key transitions in `steps`, from a fresh world with
 /// the desktop layout, with the sequence checked as the walk checks it.
 fn verdicts(steps: &[Step]) -> Vec<Verdict> {
-    let (map, held) = map_for(KeyboardLayout::Desktop);
-    let mut world = World::new(map, &held, HoldPermit::None);
+    let mut world = World::new(map_for(KeyboardLayout::Desktop), HoldPermit::None);
     let verdicts = steps
         .iter()
         .filter_map(|&step| world.apply(step).expect("the sequence holds"))
@@ -587,7 +399,7 @@ fn verdicts(steps: &[Step]) -> Vec<Verdict> {
 }
 
 #[test]
-fn every_sequence_of_up_to_four_steps_matches_the_model() {
+fn every_sequence_of_up_to_four_steps_keeps_the_invariants() {
     use Step::{NextPermit, Pause, Press, Release};
     // A press passed, then held once the focus has text: the held press is
     // sent with its own release, so the user's release is swallowed.
@@ -669,15 +481,14 @@ fn every_sequence_of_up_to_four_steps_matches_the_model() {
         ]
     );
     for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {
-        let (map, held) = map_for(layout);
         let mut failures = Vec::new();
-        let world = World::new(map, &held, HoldPermit::HoldAndDefer);
+        let world = World::new(map_for(layout), HoldPermit::HoldAndDefer);
         walk(&world, DEPTH, &mut failures);
         if let Some((shortest, _)) = failures.iter().min_by_key(|(trail, _)| trail.len()) {
             let steps: Vec<String> = shortest.iter().map(|step| step.code()).collect();
             eprintln!(
                 "the shortest failing sequence, as a line for `found()` in crates/verbatim-input/tests/hold_sequences.rs:\n        (KeyboardLayout::{layout:?}, vec![{}]),\n\
-                 the found sequences alone: cargo test -p verbatim-input --test hold_sequences -- --exact found_sequences_match_the_model",
+                 the found sequences alone: cargo test -p verbatim-input --test hold_sequences -- --exact found_sequences_keep_the_invariants",
                 steps.join(", ")
             );
         }
@@ -692,16 +503,15 @@ fn found() -> Vec<(KeyboardLayout, Vec<Step>)> {
     Vec::new()
 }
 
-/// Every found sequence, from the walk's start, matches the model at each
-/// step and once every key is let go.
+/// Every found sequence, from the walk's start, keeps the invariants at
+/// each step and once every key is let go.
 #[test]
-fn found_sequences_match_the_model() {
+fn found_sequences_keep_the_invariants() {
     for (layout, steps) in found() {
-        let (map, held) = map_for(layout);
-        let mut world = World::new(map, &held, HoldPermit::HoldAndDefer);
+        let mut world = World::new(map_for(layout), HoldPermit::HoldAndDefer);
         for step in steps {
             assert!(world.allows(step), "{step:?} after {:?}", world.trail);
-            world.apply(step).expect("the step matches the model");
+            world.apply(step).expect("the step keeps the invariants");
         }
         world.finish().expect("every key ends up");
     }

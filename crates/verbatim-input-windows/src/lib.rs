@@ -201,6 +201,8 @@ pub enum KeyReport {
     Held {
         /// The gesture.
         gesture: EmittedGesture,
+        /// The caret key the gesture map gives the gesture.
+        key: verbatim_model::CaretKey,
         /// The key's number.
         key_seq: KeySeq,
         /// As [`KeyReport::Observed`]'s.

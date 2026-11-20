@@ -15,54 +15,19 @@
 //! ([`Ports`]), with no lock and no timer.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use verbatim_input::{EmittedGesture, KeySpeechEffect, KeyboardLayout, ScriptAction, ToggleKey};
+use verbatim_input::{EmittedGesture, KeySpeechEffect, ScriptAction, Tables};
 use verbatim_model::request::{Press, PressAction, QueueInput};
-use verbatim_model::{CaretKey, CaretMotion, GestureId, Input, KeySeq, LockKey, Script, TraceId};
+use verbatim_model::{CaretKey, CaretMotion, Input, KeySeq, Script, TraceId};
 use verbatim_process::port_queue::Poster;
 use verbatim_speech::SpeechControl;
 
 use crate::latency::LatencyLedger;
 use verbatim_input_windows::KeyReport;
 
-use crate::{SHOW_MENU_GESTURE, ShellCommand};
-
-/// What a gesture or an observed key is to the reducer, looked up on the
-/// hook thread: fixed when the hook starts.
-pub(crate) struct Tables {
-    caret_keys: HashMap<GestureId, CaretKey>,
-    clearing_keys: HashSet<GestureId>,
-    editing_chords: HashSet<GestureId>,
-    show_menu: GestureId,
-    scripts: HashMap<GestureId, ScriptAction>,
-    toggles: HashMap<GestureId, LockKey>,
-}
-
-impl Tables {
-    /// The tables for keyboard layout `layout`.
-    pub(crate) fn for_layout(layout: KeyboardLayout) -> Self {
-        Self {
-            caret_keys: verbatim_input::caret_bindings()
-                .into_iter()
-                .chain(verbatim_input::selection_bindings())
-                .collect(),
-            clearing_keys: verbatim_input::clearing_keys().into_iter().collect(),
-            editing_chords: verbatim_input::editing_chords().into_iter().collect(),
-            show_menu: GestureId::parse(SHOW_MENU_GESTURE).expect("valid binding"),
-            scripts: verbatim_input::bindings_for(layout).into_iter().collect(),
-            toggles: [
-                ToggleKey::CapsLock,
-                ToggleKey::NumLock,
-                ToggleKey::ScrollLock,
-            ]
-            .into_iter()
-            .map(|toggle| (toggle.gesture(), toggle.lock_key()))
-            .collect(),
-        }
-    }
-}
+use crate::ShellCommand;
 
 /// One of the hook's posts: a command for the reducer's port, or a key's
 /// cancel or pause toggle for the speech queue's.
@@ -310,20 +275,15 @@ fn commands_for(report: KeyReport, tables: &Tables, mut post: impl FnMut(ShellCo
             key_seq,
             pressed_at_us,
         } => observed_commands(&gesture, key_seq, pressed_at_us, tables, &mut post),
-        // A held key joins Core's stroke line, which sends it on; the hook
-        // holds only caret keys, Enter among them, so it is one, any other
-        // passed at its turn.
+        // A held key joins Core's stroke line, which sends it on, with the
+        // caret key the gesture map gave it.
         KeyReport::Held {
             gesture,
+            key,
             key_seq,
             pressed_at_us,
             stroke,
         } => {
-            let key = tables
-                .caret_keys
-                .get(&gesture.gesture)
-                .copied()
-                .unwrap_or(OTHER_KEY);
             let held = crate::strokes::held_of(&gesture.gesture, stroke);
             post(press(
                 gesture.trace_id,
@@ -436,10 +396,28 @@ fn gesture_command(
 
 #[cfg(test)]
 mod tests {
+    use verbatim_input::KeyboardLayout;
     use verbatim_input_windows::HeldStroke;
-    use verbatim_model::{ReviewCommand, TraceId};
+    use verbatim_model::{GestureId, LockKey, ReviewCommand, TraceId};
 
     use super::*;
+
+    /// The app's gesture table for `layout`.
+    fn tables(layout: KeyboardLayout) -> Tables {
+        Tables::for_layout(
+            layout,
+            GestureId::parse(crate::SHOW_MENU_GESTURE).expect("valid binding"),
+        )
+    }
+
+    /// The caret key the desktop layout's gesture map holds `name` with,
+    /// which the hook reports with a held key.
+    fn held_key(name: &str) -> CaretKey {
+        tables(KeyboardLayout::Desktop)
+            .gesture_map()
+            .holds(&GestureId::parse(name).expect("valid id"))
+            .expect("a held gesture")
+    }
 
     /// What each command `report` is to the reducer says, in order, with
     /// the desktop layout's tables.
@@ -451,7 +429,7 @@ mod tests {
     /// `layout`'s tables.
     fn mapped_in(layout: KeyboardLayout, report: KeyReport) -> Vec<String> {
         let mut commands = Vec::new();
-        commands_for(report, &Tables::for_layout(layout), |command| {
+        commands_for(report, &tables(layout), |command| {
             commands.push(command);
         });
         commands
@@ -475,7 +453,7 @@ mod tests {
             let mut commands = Vec::new();
             commands_for(
                 KeyReport::Alt { down },
-                &Tables::for_layout(KeyboardLayout::Desktop),
+                &tables(KeyboardLayout::Desktop),
                 |command| commands.push(command),
             );
             let [ShellCommand::Input(input)] = commands.as_slice() else {
@@ -727,7 +705,7 @@ mod tests {
         );
         let (ports, mut commands, _speech) = ports();
         let report = reports(
-            Tables::for_layout(KeyboardLayout::Desktop),
+            tables(KeyboardLayout::Desktop),
             Arc::new(LatencyLedger::new(1, 1, Arc::default())),
             ports,
         );
@@ -842,6 +820,7 @@ mod tests {
             assert_eq!(
                 mapped(KeyReport::Held {
                     gesture: emitted(TraceId::mint(), name, 0),
+                    key: held_key(name),
                     key_seq: KeySeq::new(4),
                     pressed_at_us: PRESSED_AT_US,
                     stroke,
@@ -868,6 +847,7 @@ mod tests {
         assert_eq!(
             mapped(KeyReport::Held {
                 gesture: emitted(trace_id, "kb:downarrow", 0),
+                key: held_key("kb:downarrow"),
                 key_seq,
                 pressed_at_us: PRESSED_AT_US,
                 stroke: HeldStroke {
