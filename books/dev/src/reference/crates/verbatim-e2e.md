@@ -50,9 +50,14 @@ this guide describes the code.
   names) is measurement, not tests: run only by name or with
   `cargo xtask measure`, and deselected from every suite run with
   `--skip measure_`.
-- A same-process `Mutex` allows one live Verbatim per test process, and
-  `--test-threads=1` makes that sufficient; the workspace's run lock,
-  `target/e2e-run.lock`, keeps separate test processes apart.
+- The workspace's run lock, `target/e2e-run.lock`, taken for each run,
+  allows one live run at a time, in one test process or across several.
+- `registry::run` runs a scenario in either mode, against Verbatim or, in
+  compare mode, NVDA. `Scenario` holds what it runs against as one value,
+  the Verbatim it launched or NVDA, and the Verbatim's life as one state:
+  connected, a second start not yet connected, asked to quit, or exited by
+  itself at a step's keys.
+
 
 ## The starting state
 
@@ -346,7 +351,7 @@ shorter (`compare::QuietPeriod`).
 - `ScenarioDef::speech`: compare mode runs only a scenario whose speech
   source is `Speech::Capture`, and refuses any other with its source
   (`Speech::not_comparable`).
-- The run (`registry::run_compare`). It hears the desktop as an ordinary
+- The run (`registry::run`, in its compare mode). It hears the desktop as an ordinary
   step, runs setup, the body and the end of the speech, the teardown and
   the cleanup, writes the timeline, the report, the foreground record and
   the summary, and archives the run; none of the checks on Verbatim after

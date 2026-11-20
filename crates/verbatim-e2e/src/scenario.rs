@@ -45,8 +45,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use verbatim_agent::protocol::{
@@ -209,13 +209,6 @@ pub const RUST_LOG_ENV: &str = "VERBATIM_E2E_RUST_LOG";
 /// ago it was raised, so a delay before an event reached Verbatim shows.
 pub const DEFAULT_RUST_LOG: &str = "info,verbatim_outpost=debug,verbatim_listener=debug,verbatim_supervisor=debug,request_hop=debug,verbatim_uia::subscribe=debug,verbatim_uia::com=debug,verbatim_ia2::hook=debug";
 
-/// Enforces one live Verbatim instance at a time within this process; the
-/// tests also run with `--test-threads=1`.
-fn live_instance_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
 /// One application a scenario launched, for cleanup.
 struct Launched {
     /// The process the agent launched, which must have exited once its
@@ -291,17 +284,13 @@ impl Closing {
 /// Owns the lifecycle of one live Verbatim instance driven through the M2
 /// agent.
 pub struct Scenario {
-    _lock: MutexGuard<'static, ()>,
     agent: AgentClient,
-    /// Verbatim's process id; `None` in compare mode, which launches no
-    /// Verbatim.
-    verbatim_pid: Option<u32>,
+    /// What the scenario runs against: the Verbatim it launched, or NVDA.
+    reader: Reader,
     /// The processes Verbatim was told to ignore entirely: the owner's own
     /// Windows Terminal and its console hosts. No outpost may be started
     /// for one ([`Scenario::collect_run_artifacts`]).
     ignored: Vec<u32>,
-    /// The command connection to Verbatim; `None` in compare mode.
-    control: Option<ControlClient>,
     speech: SpeechCollector,
     timeline: Timeline,
     launched: Vec<Launched>,
@@ -326,18 +315,10 @@ pub struct Scenario {
     dumps_collected: Vec<String>,
     /// Whether [`Scenario::clean_up`] has run.
     cleaned_up: bool,
-    /// Whether Verbatim has been asked to quit.
-    quit: bool,
-    /// Whether Verbatim exited by itself at a step's keys
-    /// ([`Scenario::send_keys_exiting`]): nothing is left to ask it.
-    exited: bool,
     /// The keys the scenario holds down ([`Scenario::hold_key`]), in the
     /// order it pressed them, released at the latest by
     /// [`Scenario::release_held_keys`].
     held: Vec<String>,
-    /// The NVDA the scenario runs against in compare mode; `None` when it
-    /// runs against Verbatim.
-    nvda: Option<NvdaRun>,
     /// What was recorded when a window the scenario launched did not open
     /// or take the foreground in time ([`LaunchEvidence`]), for the
     /// scenario's artifacts.
@@ -346,16 +327,47 @@ pub struct Scenario {
     /// played the application-not-responding sound, one a line, for the
     /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
     not_responding_chains: Option<Vec<String>>,
-    /// The executable Verbatim was launched from, for a second start
-    /// ([`Scenario::replace_verbatim`]); empty in compare mode.
-    launch_exe: String,
-    /// The environment Verbatim was launched with, but for its readiness
-    /// event, for a second start.
-    launch_env: Vec<(String, String)>,
     /// Each Verbatim a second start replaced, by its process id, with the
     /// path of its stderr log, whose artifacts are collected with the
     /// run's.
     replaced: Vec<(u32, String)>,
+}
+
+/// What a scenario runs against.
+enum Reader {
+    /// A Verbatim the harness launched.
+    Verbatim(VerbatimRun),
+    /// NVDA, in compare mode, which launches no Verbatim.
+    Nvda(NvdaRun),
+}
+
+/// The Verbatim a scenario runs against.
+struct VerbatimRun {
+    /// Its process id: after a second start
+    /// ([`Scenario::replace_verbatim`]), the second's.
+    pid: u32,
+    /// Where it is in its life.
+    state: VerbatimState,
+    /// The executable it was launched from, for a second start.
+    exe: String,
+    /// The environment it was launched with, but for its readiness event,
+    /// for a second start.
+    env: Vec<(String, String)>,
+}
+
+/// Where the scenario's Verbatim is in its life.
+enum VerbatimState {
+    /// Running, with its command connection.
+    Connected(ControlClient),
+    /// A second start whose start has not finished, so with no command
+    /// connection ([`Scenario::replace_verbatim`]).
+    Unconnected,
+    /// Asked to quit, or ended by its process id: nothing more is asked of
+    /// it.
+    Quit,
+    /// Exited by itself at a step's keys ([`Scenario::send_keys_exiting`]):
+    /// nothing is left to ask it.
+    Exited,
 }
 
 /// The NVDA a compare-mode scenario runs against.
@@ -367,16 +379,6 @@ struct NvdaRun {
 }
 
 impl Scenario {
-    /// Launches a fresh Verbatim through the agent named by
-    /// [`crate::ENDPOINT_ENV`], with the fixed e2e settings.
-    ///
-    /// # Errors
-    ///
-    /// As [`Scenario::launch_with`].
-    pub fn launch() -> io::Result<Self> {
-        Self::launch_with(None, None)
-    }
-
     /// Launches a fresh Verbatim with `configure` applied to the fixed
     /// settings, from the desktop every scenario starts from, with
     /// `document` open in Windows 11 Notepad when there is one.
@@ -443,9 +445,6 @@ impl Scenario {
     ) -> io::Result<Self> {
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
-        let lock = live_instance_lock()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
 
         // An earlier run that ended without its cleanup can have left its
         // Verbatim running from the stage, which staging would then fail to
@@ -544,11 +543,9 @@ impl Scenario {
                 println!("compare mode records no video");
             }
             return Ok(Self {
-                _lock: lock,
                 agent,
-                verbatim_pid: None,
+                reader: Reader::Nvda(nvda),
                 ignored: Vec::new(),
-                control: None,
                 speech,
                 timeline,
                 launched: opened,
@@ -563,14 +560,9 @@ impl Scenario {
                 dumps_before: None,
                 dumps_collected: Vec::new(),
                 cleaned_up: false,
-                quit: false,
-                exited: false,
                 held: Vec::new(),
-                nvda: Some(nvda),
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
-                launch_exe: String::new(),
-                launch_env: Vec::new(),
                 replaced: Vec::new(),
             });
         }
@@ -664,11 +656,14 @@ impl Scenario {
         };
 
         Ok(Self {
-            _lock: lock,
             agent,
-            verbatim_pid: Some(verbatim_pid),
+            reader: Reader::Verbatim(VerbatimRun {
+                pid: verbatim_pid,
+                state: VerbatimState::Connected(control),
+                exe: exe_str,
+                env: launch_env,
+            }),
             ignored,
-            control: Some(control),
             speech,
             timeline,
             launched: opened,
@@ -683,14 +678,9 @@ impl Scenario {
             dumps_before,
             dumps_collected: Vec::new(),
             cleaned_up: false,
-            quit: false,
-            exited: false,
             held: Vec::new(),
-            nvda: None,
             launch_evidence: Vec::new(),
             not_responding_chains: None,
-            launch_exe: exe_str,
-            launch_env,
             replaced: Vec::new(),
         })
     }
@@ -699,16 +689,17 @@ impl Scenario {
     /// ([`crate::compare`]).
     #[must_use]
     pub fn is_comparing(&self) -> bool {
-        self.nvda.is_some()
+        matches!(self.reader, Reader::Nvda(_))
     }
 
     /// In compare mode, NVDA's version, as the transcript add-on's `Hello`
     /// gives it, and the quiet period each step waits for.
     #[must_use]
     pub fn nvda_run(&self) -> Option<(&str, crate::compare::QuietPeriod)> {
-        self.nvda
-            .as_ref()
-            .map(|run| (run.version.as_str(), run.quiet))
+        match &self.reader {
+            Reader::Nvda(run) => Some((run.version.as_str(), run.quiet)),
+            Reader::Verbatim(_) => None,
+        }
     }
 
     /// Declares that the step under way, begun by the last input,
@@ -743,13 +734,30 @@ impl Scenario {
     /// Verbatim's process id, or, in compare mode, an error saying there is
     /// no Verbatim to `what`.
     fn pid(&self, what: &str) -> io::Result<u32> {
-        self.verbatim_pid.ok_or_else(|| no_verbatim(what))
+        self.verbatim_pid().ok_or_else(|| no_verbatim(what))
+    }
+
+    /// Verbatim's process id; `None` in compare mode.
+    fn verbatim_pid(&self) -> Option<u32> {
+        match &self.reader {
+            Reader::Verbatim(run) => Some(run.pid),
+            Reader::Nvda(_) => None,
+        }
     }
 
     /// The command connection to Verbatim, or, in compare mode, an error
     /// saying there is no Verbatim to `what`.
     fn control_client(&mut self, what: &str) -> io::Result<&mut ControlClient> {
-        self.control.as_mut().ok_or_else(|| no_verbatim(what))
+        match &mut self.reader {
+            Reader::Verbatim(VerbatimRun {
+                state: VerbatimState::Connected(control),
+                ..
+            }) => Ok(control),
+            Reader::Verbatim(_) => Err(io::Error::other(format!(
+                "Verbatim has no command connection, as it quit, exited or did not finish its start, to {what}"
+            ))),
+            Reader::Nvda(_) => Err(no_verbatim(what)),
+        }
     }
 
     /// Opens one more connection to Verbatim's control plane, subscribed to
@@ -985,7 +993,7 @@ impl Scenario {
     pub fn expect_nothing_more(&mut self) {
         // Once Verbatim has exited by itself, its speech was taken to the
         // connection's end and asserted then.
-        if !self.exited {
+        if !self.exited() {
             self.speech.expect_nothing_more(self.last_input);
         }
     }
@@ -995,7 +1003,13 @@ impl Scenario {
     /// its flight recorder can be dumped and it needs no quit.
     #[must_use]
     pub fn exited(&self) -> bool {
-        self.exited
+        matches!(
+            self.reader,
+            Reader::Verbatim(VerbatimRun {
+                state: VerbatimState::Exited,
+                ..
+            })
+        )
     }
 
     /// [`Scenario::send_keys`] for a step that makes Verbatim exit, such as
@@ -1022,9 +1036,10 @@ impl Scenario {
         let state = self.agent.wait_for_exit(pid, QUIT_TIMEOUT)?;
         // Gone, so nothing is left to quit; one still running is quit by
         // the run as usual.
-        if matches!(state, ProcessState::Exited { .. }) {
-            self.quit = true;
-            self.exited = true;
+        if matches!(state, ProcessState::Exited { .. })
+            && let Reader::Verbatim(run) = &mut self.reader
+        {
+            run.state = VerbatimState::Exited;
         }
         match state {
             ProcessState::Exited { exit_code: Some(0) } => {}
@@ -2337,19 +2352,22 @@ impl Scenario {
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let ready_event = ready_event_name();
         self.agent.create_event(&ready_event)?;
+        let Reader::Verbatim(run) = &mut self.reader else {
+            return Err(no_verbatim("replace (replace_verbatim)"));
+        };
         let mut env = vec![(READY_EVENT_ENV.to_owned(), ready_event.clone())];
-        env.extend(self.launch_env.iter().cloned());
+        env.extend(run.env.iter().cloned());
         let stderr_path = replacement_stderr_path(&self.stderr_log_path);
         let (launched, ignored) =
             self.agent
-                .launch_verbatim(&self.launch_exe, &self.run_dir, &env, &stderr_path)?;
+                .launch_verbatim(&run.exe, &self.run_dir, &env, &stderr_path)?;
         // From here the second is the scenario's Verbatim, for cleanup to
         // end whatever happens next; the first's artifacts are kept.
         let replaced_stderr = std::mem::replace(&mut self.stderr_log_path, stderr_path);
         self.replaced.push((replaced, replaced_stderr));
-        self.verbatim_pid = Some(launched.pid);
+        run.pid = launched.pid;
+        run.state = VerbatimState::Unconnected;
         self.ignored = ignored;
-        self.control = None;
         self.last_input = None;
         match self.agent.wait_for_exit(replaced, QUIT_TIMEOUT)? {
             ProcessState::Exited { exit_code: Some(0) } => {}
@@ -2393,7 +2411,9 @@ impl Scenario {
         }
         let (mut control, speech) = connect_with(&agent_addr, self.timeline.clone())?;
         require_ready(&mut control)?;
-        self.control = Some(control);
+        if let Reader::Verbatim(run) = &mut self.reader {
+            run.state = VerbatimState::Connected(control);
+        }
         self.speech = speech;
         Ok(())
     }
@@ -2410,7 +2430,7 @@ impl Scenario {
             .replaced
             .iter()
             .map(|(pid, _)| *pid)
-            .chain(self.verbatim_pid)
+            .chain(self.verbatim_pid())
             .collect();
         let mut problems = Vec::new();
         for pid in pids {
@@ -2464,22 +2484,33 @@ impl Scenario {
     /// connection to ask.
     pub fn quit_verbatim(&mut self) -> io::Result<()> {
         let pid = self.pid("quit")?;
-        // Its exit with code 0 was checked when it exited.
-        if self.exited {
-            return Ok(());
-        }
-        self.quit = true;
-        if self.control.is_none() {
-            let mut problems = vec![format!(
-                "Verbatim (pid {pid}) has no control connection, since its start as a replacement did not finish, so every Verbatim the scenario started was ended by its process id"
-            )];
-            problems.extend(self.end_by_pid());
-            return Err(io::Error::other(problems.join("; ")));
-        }
+        let Reader::Verbatim(run) = &mut self.reader else {
+            return Err(no_verbatim("quit"));
+        };
+        let mut control = match std::mem::replace(&mut run.state, VerbatimState::Quit) {
+            VerbatimState::Connected(control) => control,
+            // Its exit with code 0 was checked when it exited.
+            VerbatimState::Exited => {
+                run.state = VerbatimState::Exited;
+                return Ok(());
+            }
+            VerbatimState::Quit => {
+                return Err(io::Error::other(format!(
+                    "Verbatim (pid {pid}) was asked to quit once already"
+                )));
+            }
+            VerbatimState::Unconnected => {
+                let mut problems = vec![format!(
+                    "Verbatim (pid {pid}) has no control connection, since its start as a replacement did not finish, so every Verbatim the scenario started was ended by its process id"
+                )];
+                problems.extend(self.end_by_pid());
+                return Err(io::Error::other(problems.join("; ")));
+            }
+        };
         // The reply races Verbatim's own teardown: the connection can close
         // before it is written. The exit code, read below, is the
         // authority on whether the quit worked.
-        match self.control_client("quit")?.request(Request::Quit) {
+        match control.request(Request::Quit) {
             Ok(frame) => {
                 ok_or_error(frame)?;
             }
@@ -3213,16 +3244,23 @@ impl Drop for Scenario {
     /// complete. Anything that will not close is printed; the run has
     /// already failed.
     fn drop(&mut self) {
-        if !self.quit
-            && let Some(pid) = self.verbatim_pid
+        if let Reader::Verbatim(run) = &mut self.reader
+            && matches!(
+                run.state,
+                VerbatimState::Connected(_) | VerbatimState::Unconnected
+            )
         {
-            let exited = self.control.as_mut().is_some_and(|control| {
-                let _ = control.request(Request::Quit);
-                matches!(
-                    self.agent.wait_for_exit(pid, QUIT_TIMEOUT),
-                    Ok(ProcessState::Exited { .. })
-                )
-            });
+            let pid = run.pid;
+            let exited = match std::mem::replace(&mut run.state, VerbatimState::Quit) {
+                VerbatimState::Connected(mut control) => {
+                    let _ = control.request(Request::Quit);
+                    matches!(
+                        self.agent.wait_for_exit(pid, QUIT_TIMEOUT),
+                        Ok(ProcessState::Exited { .. })
+                    )
+                }
+                _ => false,
+            };
             if !exited {
                 for problem in self.end_by_pid() {
                     eprintln!("cleanup after a failed run: {problem}");

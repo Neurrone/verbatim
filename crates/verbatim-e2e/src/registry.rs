@@ -80,7 +80,7 @@
 //!
 //! Every entry states where its expected speech comes from, its
 //! [`Speech`]. In compare mode ([`crate::compare`]) [`run_named`] runs a
-//! scenario against NVDA instead, with [`run_compare`]'s order, and writes
+//! scenario against NVDA instead, with [`run`]'s order, and writes
 //! its report; compare mode runs only a scenario whose speech comes from
 //! its capture ([`Speech::Capture`]), and refuses any other with its
 //! source.
@@ -636,11 +636,14 @@ pub fn run_named(name: &str) {
     );
     let comparing = compare::selects(name, std::env::var(compare::ENV).ok().as_deref())
         .unwrap_or_else(|error| panic!("{error}"));
-    if comparing {
-        run_compare(def);
-    } else {
-        run(def);
-    }
+    run(
+        def,
+        if comparing {
+            Mode::Compare
+        } else {
+            Mode::Verbatim
+        },
+    );
 }
 
 /// Takes the workspace's run lock, `target/e2e-run.lock`, for one run of
@@ -683,34 +686,52 @@ fn hold_run_lock(name: &str) -> std::fs::File {
     }
 }
 
-/// Runs one scenario in compare mode ([`crate::compare`]): against NVDA,
-/// asserting nothing, and writing what the scenario expects Verbatim to
-/// say beside what NVDA said as `compare.txt` in the run's artifacts, and
-/// printing it.
+/// What a run of a scenario runs against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// A Verbatim the run launches, every assertion checked.
+    Verbatim,
+    /// NVDA, in compare mode ([`crate::compare`]): asserting nothing, and
+    /// writing what the scenario expects Verbatim to say beside what NVDA
+    /// said as `compare.txt` in the run's artifacts, and printing it.
+    Compare,
+}
+
+/// Runs one scenario in `mode` and fails it, after collecting everything,
+/// if anything went wrong.
 ///
-/// The order: refuse a scenario whose speech is not its capture, giving
-/// its source ([`Speech::not_comparable`]);
-/// start from the minimized desktop with NVDA's transcript connected
-/// ([`Scenario::compare_with`]); hear the desktop as an ordinary step; run
-/// setup, the body, and the end of the speech; release any key still held;
-/// run the teardown; close everything the scenario opened; write the
-/// timeline, the report, the foreground record, and the summary; and
-/// archive the run. None of the checks on Verbatim after the body runs,
-/// since there is no Verbatim. It passes unless the harness itself fails,
-/// such as a window that does not come to the front, a method that needs
-/// Verbatim, or the transcript lost; never on what was said.
+/// The order: refuse, in compare mode, a scenario whose speech is not its
+/// capture, giving its source ([`Speech::not_comparable`]); start from the
+/// minimized desktop, launching Verbatim, or with NVDA's transcript
+/// connected ([`Scenario::compare_with`]); assert Verbatim's startup speech
+/// ([`startup_speech`]), or hear NVDA's desktop as an ordinary step; run
+/// setup and the body, which ends by asserting that nothing more was said;
+/// release any key still held. Against Verbatim: save Core's focus and the
+/// flight recorder while Verbatim is up; check that none of Verbatim's own
+/// processes exited unexpectedly; quit Verbatim and check it exited with
+/// code 0 and its outposts shut down cleanly; take the speech Verbatim
+/// sent, until the speech connection ends after a clean quit, or what has
+/// arrived after a failed one. In compare mode, take the steps instead.
+/// Then run the scenario's teardown; close everything the scenario opened;
+/// collect the logs, latency report, audio, crash dumps, and video, or
+/// write the comparison's report; write the summary and archive the run.
+/// Each step after the body runs whatever happened before it, and every
+/// problem it meets is a failure of the run, reported together with the
+/// body's own. In compare mode none of the checks on Verbatim runs, so it
+/// passes unless the harness itself fails, never on what was said.
 #[expect(
     clippy::too_many_lines,
-    reason = "one run in order, as `run` is, each step's problems collected"
+    reason = "one run in order, each step's problems collected, so a failure's place in the order is plain"
 )]
-fn run_compare(def: &ScenarioDef) {
-    if let Some(why) = def.speech.not_comparable() {
+fn run(def: &ScenarioDef, mode: Mode) {
+    if mode == Mode::Compare
+        && let Some(why) = def.speech.not_comparable()
+    {
         panic!(
             "scenario {:?} cannot be compared with NVDA: {why}",
             def.name
         );
     }
-
     let _run_lock = hold_run_lock(def.name);
     let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
     if dir.exists() {
@@ -722,153 +743,24 @@ fn run_compare(def: &ScenarioDef) {
             )
         });
     }
-    let mut scenario =
-        Scenario::compare_with(def.settings, def.document.map(|document| document()))
-            .unwrap_or_else(|error| {
-                record_launch_evidence(&dir, &error);
-                panic!(
-                    "scenario {:?}: starting against NVDA failed: {error}",
-                    def.name
-                )
-            });
-    let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
-    let mut problems: Vec<String> = Vec::new();
 
-    let mut state = None;
-    let body_outcome = caught(|| {
-        crate::scenarios::expect_desktop(&mut scenario);
-        let mut created = (def.setup)(&mut scenario)
-            .unwrap_or_else(|error| panic!("scenario {:?}: setup failed: {error}", def.name));
-        let result = panic::catch_unwind(AssertUnwindSafe(|| {
-            (def.body)(&mut scenario, &mut created);
-            scenario.expect_nothing_more();
-        }));
-        state = Some(created);
-        if let Err(payload) = result {
-            panic::resume_unwind(payload);
-        }
-    });
-    problems.extend(scenario.release_held_keys());
-    let steps = scenario.speech().take_comparison();
-    let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
-    if let Some(Err(payload)) = &teardown_outcome {
-        problems.push(format!(
-            "teardown failed: {}",
-            panic_message(payload.as_ref())
-        ));
-    }
-    problems.extend(scenario.clean_up());
-    problems.extend(scenario.collect_run_artifacts(&dir));
-    let (nvda_version, quiet) = scenario
-        .nvda_run()
-        .map(|(version, quiet)| (version.to_owned(), quiet))
-        .expect("compare mode runs against NVDA");
-    let (pin, pin_matches) =
-        compare::submodule_pin(&crate::scenario::workspace_root(), &nvda_version);
-    let header = ReportHeader {
-        scenario: def.name.to_owned(),
-        date: artifacts::utc_date(std::time::SystemTime::now()),
-        nvda_version,
-        pin,
-        pin_matches,
-        quiet,
+    let document = def.document.map(|document| document());
+    let started = match mode {
+        Mode::Verbatim => Scenario::launch_with(def.settings, document),
+        Mode::Compare => Scenario::compare_with(def.settings, document),
     };
-    let report = compare::render_report(&header, &steps);
-    if let Err(error) = std::fs::write(dir.join(compare::REPORT_FILE_NAME), &report) {
-        problems.push(format!("could not write the comparison: {error}"));
-    }
-    // Written to the handle itself, past the test harness's capture, so
-    // the report shows for a run that passes.
-    let _ = io::stdout().write_all(format!("{report}\n").as_bytes());
-    foreground.push(format!("after cleanup: {}", scenario.cleanup_report()));
-    drop(scenario);
-    if let Err(error) = write_foreground(&dir, &foreground) {
-        problems.push(format!("could not write the foreground record: {error}"));
-    }
-
-    let passed = body_outcome.is_ok() && problems.is_empty();
-    if let Err(error) = ScenarioSummary::new(def.name, passed, None).write(&dir) {
-        problems.push(format!("could not write the run summary: {error}"));
-    }
-    if let Err(error) = artifacts::archive_run(&artifacts::artifacts_root(), def.name, &dir, passed)
-    {
-        problems.push(format!("could not archive the run's artifacts: {error}"));
-    }
-    println!(
-        "scenario {:?} compared with NVDA: {}",
-        def.name,
-        if body_outcome.is_ok() && problems.is_empty() {
-            "done"
-        } else {
-            "harness error"
-        }
-    );
-    let problems = problems.join("\n");
-    if let Err(payload) = body_outcome {
-        panic!(
-            "scenario {:?}: the comparison stopped on a harness error: {}{}",
-            def.name,
-            panic_message(payload.as_ref()),
-            if problems.is_empty() {
-                String::new()
-            } else {
-                format!("\nalso:\n{problems}")
-            }
-        );
-    }
-    assert!(
-        problems.is_empty(),
-        "scenario {:?}'s comparison failed after its body:\n{problems}",
-        def.name
-    );
-}
-
-/// Runs one scenario end to end and fails it, after collecting everything,
-/// if anything went wrong.
-///
-/// The order: launch Verbatim from the minimized desktop; assert its
-/// startup speech ([`startup_speech`]); run setup and the body, which ends
-/// by asserting that nothing more was said; save Core's focus and the
-/// flight recorder while Verbatim is up; check that none of Verbatim's own
-/// processes exited unexpectedly; quit Verbatim and check it exited with
-/// code 0 and its outposts shut down cleanly; take the speech Verbatim
-/// sent, until the speech connection ends after a clean quit, or what has
-/// arrived after a failed one; run the scenario's teardown; close everything the scenario
-/// opened; collect the logs, latency report, audio, crash dumps, and video;
-/// write the summary and archive the run. Each step after the body runs
-/// whatever happened before it, and every problem it meets is a failure of
-/// the run, reported together with the body's own.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one run in order, each step's problems collected, so a failure's place in the order is plain"
-)]
-fn run(def: &ScenarioDef) {
-    let _run_lock = hold_run_lock(def.name);
-    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
-            panic!(
-                "scenario {:?}: could not clear the previous run's artifacts in {}: {error}",
-                def.name,
-                dir.display()
-            )
-        });
-    }
-
-    let mut scenario = Scenario::launch_with(def.settings, def.document.map(|document| document()))
-        .unwrap_or_else(|error| {
-            record_launch_evidence(&dir, &error);
-            panic!(
-                "scenario {:?}: launching Verbatim through the agent failed: {error}",
-                def.name
-            )
-        });
+    let mut scenario = started.unwrap_or_else(|error| {
+        record_launch_evidence(&dir, &error);
+        panic!("scenario {:?}: starting the run failed: {error}", def.name)
+    });
     let mut foreground = vec![format!("before setup: {}", scenario.foreground_report())];
     let mut problems: Vec<String> = Vec::new();
 
     let mut state = None;
     let body_outcome = caught(|| {
-        scenario.speech().expect_sequence(&startup_speech());
+        if mode == Mode::Verbatim {
+            scenario.speech().expect_sequence(&startup_speech());
+        }
         crate::scenarios::expect_desktop(&mut scenario);
         // The measure set asserts no speech after the desktop's.
         if def.group == Group::Measure {
@@ -917,54 +809,13 @@ fn run(def: &ScenarioDef) {
     // with a modifier down.
     problems.extend(scenario.release_held_keys());
 
-    // A Verbatim that exited by itself, as a step of the body made it, has
-    // no focus or flight recorder left to dump.
-    if !scenario.exited() {
-        if let Err(error) = scenario.collect_focus(&dir) {
-            problems.push(format!("could not save Core's focus: {error}"));
+    let steps = match mode {
+        Mode::Compare => Some(scenario.speech().take_comparison()),
+        Mode::Verbatim => {
+            problems.extend(check_and_quit(&mut scenario, &dir));
+            None
         }
-        if let Err(error) = scenario.collect_flight_recorder(&dir) {
-            problems.push(format!("could not save the flight recorder: {error}"));
-        }
-    }
-    match scenario.unexpected_exits() {
-        Ok(exits) => problems.extend(exits.into_iter().map(|exit| {
-            format!(
-                "Verbatim's process {} (pid {}) exited unexpectedly: exit code {:?}{}",
-                exit.image,
-                exit.pid,
-                exit.exit_code,
-                if exit.abnormal {
-                    ", abnormally (a crash)"
-                } else {
-                    ""
-                }
-            )
-        })),
-        Err(error) => problems.push(format!("could not read Verbatim's process exits: {error}")),
-    }
-    // Once Verbatim has quit, the speech connection's end is the evidence
-    // that every frame it sent has been taken: `latency.csv` and the
-    // summary then cover the run's last utterance, and a failed run's
-    // speech after its failing step. A quit that failed may leave the
-    // connection open, so only what has arrived is taken then.
-    match scenario.quit_verbatim() {
-        Ok(()) => {
-            match scenario.outposts_shut_down_cleanly() {
-                Ok(found) => problems.extend(found),
-                Err(error) => problems.push(format!(
-                    "could not check that Verbatim's outposts shut down cleanly: {error}"
-                )),
-            }
-            if let Err(problem) = scenario.speech().take_until_the_end() {
-                problems.push(problem);
-            }
-        }
-        Err(error) => {
-            problems.push(format!("quitting Verbatim failed: {error}"));
-            scenario.speech().take_remaining();
-        }
-    }
+    };
     let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
     if let Some(Err(payload)) = &teardown_outcome {
         problems.push(format!(
@@ -974,29 +825,12 @@ fn run(def: &ScenarioDef) {
     }
     problems.extend(scenario.clean_up());
     problems.extend(scenario.collect_run_artifacts(&dir));
-    let outpost_crashes = match scenario.outpost_crashes(&dir) {
-        Ok(crashes) => Some(crashes),
-        Err(error) => {
-            problems.push(format!("could not read which outposts crashed: {error}"));
-            None
-        }
+    let outpost_crashes = if let Some(steps) = &steps {
+        problems.extend(write_comparison(def, &scenario, &dir, steps));
+        None
+    } else {
+        verbatim_artifacts(def, &mut scenario, &dir, body_end_ms, &mut problems)
     };
-    if let Err(error) =
-        scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)), body_end_ms)
-    {
-        problems.push(format!("the recording could not be saved: {error}"));
-    }
-    match scenario.foreign_terminal_windows() {
-        Ok(windows) => problems.extend(windows.into_iter().map(|window| {
-            format!(
-                "a Windows Terminal window the run did not open appeared: {:?} (pid {}, class {})",
-                window.title, window.pid, window.class
-            )
-        })),
-        Err(error) => problems.push(format!(
-            "could not check for Windows Terminal windows the run did not open: {error}"
-        )),
-    }
     foreground.push(format!("after cleanup: {}", scenario.cleanup_report()));
     let optional_utterances: Vec<String> = scenario
         .speech()
@@ -1006,7 +840,7 @@ fn run(def: &ScenarioDef) {
         .collect();
     // Every utterance of the run with its event's time, the rows
     // `latency.csv` holds.
-    let latency = scenario.speech().latency_rows();
+    let latency = (mode == Mode::Verbatim).then(|| scenario.speech().latency_rows());
     // The failure's report, made once the logs holding its step's trace
     // and the flight recorder are collected, reads the timeline after the
     // scenario is gone.
@@ -1019,7 +853,7 @@ fn run(def: &ScenarioDef) {
     let passed = body_outcome.is_ok() && problems.is_empty();
     report_outpost_crashes(def.name, outpost_crashes.as_deref());
     report_optional_utterances(def.name, &optional_utterances);
-    let mut summary = ScenarioSummary::new(def.name, passed, Some(&latency));
+    let mut summary = ScenarioSummary::new(def.name, passed, latency.as_deref());
     summary.outpost_crashes = outpost_crashes;
     summary.optional_utterances = optional_utterances;
     if let Err(error) = summary.write(&dir) {
@@ -1032,10 +866,11 @@ fn run(def: &ScenarioDef) {
     println!(
         "scenario {:?}: {}",
         def.name,
-        if body_outcome.is_ok() && problems.is_empty() {
-            "pass"
-        } else {
-            "fail"
+        match (mode, body_outcome.is_ok() && problems.is_empty()) {
+            (Mode::Verbatim, true) => "pass",
+            (Mode::Verbatim, false) => "fail",
+            (Mode::Compare, true) => "compared with NVDA",
+            (Mode::Compare, false) => "harness error in its comparison with NVDA",
         }
     );
     let problems = problems.join("\n");
@@ -1068,6 +903,129 @@ fn run(def: &ScenarioDef) {
                 lines.as_deref().map_err(String::as_str)
             )
         );
+    }
+}
+
+/// Against Verbatim, after the body: saves Core's focus and the flight
+/// recorder while Verbatim is up, unless it exited by itself at a step of
+/// the body; checks that none of its own processes exited unexpectedly;
+/// quits it, checking its outposts shut down cleanly; and takes its speech
+/// until the speech connection ends, the evidence that every frame it sent
+/// has been taken, so `latency.csv` and the summary cover the run's last
+/// utterance, or, after a failed quit, which may leave the connection open,
+/// what has arrived. Returns the problems it met.
+fn check_and_quit(scenario: &mut Scenario, dir: &std::path::Path) -> Vec<String> {
+    let mut problems = Vec::new();
+    if !scenario.exited() {
+        if let Err(error) = scenario.collect_focus(dir) {
+            problems.push(format!("could not save Core's focus: {error}"));
+        }
+        if let Err(error) = scenario.collect_flight_recorder(dir) {
+            problems.push(format!("could not save the flight recorder: {error}"));
+        }
+    }
+    match scenario.unexpected_exits() {
+        Ok(exits) => problems.extend(exits.into_iter().map(|exit| {
+            format!(
+                "Verbatim's process {} (pid {}) exited unexpectedly: exit code {:?}{}",
+                exit.image,
+                exit.pid,
+                exit.exit_code,
+                if exit.abnormal {
+                    ", abnormally (a crash)"
+                } else {
+                    ""
+                }
+            )
+        })),
+        Err(error) => problems.push(format!("could not read Verbatim's process exits: {error}")),
+    }
+    match scenario.quit_verbatim() {
+        Ok(()) => {
+            match scenario.outposts_shut_down_cleanly() {
+                Ok(found) => problems.extend(found),
+                Err(error) => problems.push(format!(
+                    "could not check that Verbatim's outposts shut down cleanly: {error}"
+                )),
+            }
+            if let Err(problem) = scenario.speech().take_until_the_end() {
+                problems.push(problem);
+            }
+        }
+        Err(error) => {
+            problems.push(format!("quitting Verbatim failed: {error}"));
+            scenario.speech().take_remaining();
+        }
+    }
+    problems
+}
+
+/// Against Verbatim, once its artifacts are collected: reads which
+/// outposts crashed, saves the recording, and checks that no Windows
+/// Terminal window the run did not open appeared, adding each problem to
+/// `problems`. Returns the outposts that crashed, when they could be read.
+fn verbatim_artifacts(
+    def: &ScenarioDef,
+    scenario: &mut Scenario,
+    dir: &std::path::Path,
+    body_end_ms: u64,
+    problems: &mut Vec<String>,
+) -> Option<Vec<OutpostCrash>> {
+    let outpost_crashes = match scenario.outpost_crashes(dir) {
+        Ok(crashes) => Some(crashes),
+        Err(error) => {
+            problems.push(format!("could not read which outposts crashed: {error}"));
+            None
+        }
+    };
+    if let Err(error) =
+        scenario.finish_recording(&dir.join(format!("{}.mp4", def.name)), body_end_ms)
+    {
+        problems.push(format!("the recording could not be saved: {error}"));
+    }
+    match scenario.foreign_terminal_windows() {
+        Ok(windows) => problems.extend(windows.into_iter().map(|window| {
+            format!(
+                "a Windows Terminal window the run did not open appeared: {:?} (pid {}, class {})",
+                window.title, window.pid, window.class
+            )
+        })),
+        Err(error) => problems.push(format!(
+            "could not check for Windows Terminal windows the run did not open: {error}"
+        )),
+    }
+    outpost_crashes
+}
+
+/// In compare mode, writes the report of `steps` as `compare.txt` in
+/// `dir` and prints it. Returns the problems it met.
+fn write_comparison(
+    def: &ScenarioDef,
+    scenario: &Scenario,
+    dir: &std::path::Path,
+    steps: &[compare::CompareStep],
+) -> Vec<String> {
+    let (nvda_version, quiet) = scenario
+        .nvda_run()
+        .map(|(version, quiet)| (version.to_owned(), quiet))
+        .expect("compare mode runs against NVDA");
+    let (pin, pin_matches) =
+        compare::submodule_pin(&crate::scenario::workspace_root(), &nvda_version);
+    let header = ReportHeader {
+        scenario: def.name.to_owned(),
+        date: artifacts::utc_date(std::time::SystemTime::now()),
+        nvda_version,
+        pin,
+        pin_matches,
+        quiet,
+    };
+    let report = compare::render_report(&header, steps);
+    // Written to the handle itself, past the test harness's capture, so
+    // the report shows for a run that passes.
+    let _ = io::stdout().write_all(format!("{report}\n").as_bytes());
+    match std::fs::write(dir.join(compare::REPORT_FILE_NAME), &report) {
+        Ok(()) => Vec::new(),
+        Err(error) => vec![format!("could not write the comparison: {error}")],
     }
 }
 
