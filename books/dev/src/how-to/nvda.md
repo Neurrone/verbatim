@@ -376,11 +376,11 @@ before a series of comparisons, as before a capture.
 Some scenarios cannot be compared, and compare mode refuses them, saying
 why: one that ends Verbatim's own processes (`crash_recovery`), and one
 that starts a second Verbatim (`verbatim_lifecycle`); those that read Verbatim's status
-(`switch_to_onecore`, `second_application_and_verbatim_menu`); those
+(`switch_to_onecore`); those
 that take speech until a given line or until Verbatim is idle
 (`rapid_tabbing_in_settings`, the `*_control_flood` scenarios); those that
 drive Verbatim's own menu and settings dialog, which do not exist without
-Verbatim (`menu_and_settings_dialog`, `object_navigation_in_settings`,
+Verbatim (`menu_and_settings_dialog`,
 `settings_dialog_keys`, `theme_panel`, `terminal_settings_page`); those
 that write their go file while a group of lines is still being spoken
 (the `*_during_group` scenarios), since compare mode waits for NVDA to go

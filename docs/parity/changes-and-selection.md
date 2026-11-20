@@ -243,7 +243,7 @@ user types and arrows ("Selection in a list the focus controls" in
 event's element to an element the relation names (`isDescendantOf`,
 `NVDAObjects/UIA/__init__.py` 2444 to 2463). Verbatim: **partial**.
 UIA suggestions match, verified for the arrows and the first suggestion
-by reducer tests and the `settings_search_suggestions` scenario: "sound"
+by reducer tests and the `settings_search_suggestions_reentered` scenario: "sound"
 typed in one injection gives each character's echo, "Suggestions
 available" cut off by the first suggestion, and the suggestions as Down
 Arrow twice and Up Arrow move through them, as NVDA says them in the

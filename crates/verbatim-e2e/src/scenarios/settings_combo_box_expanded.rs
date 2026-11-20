@@ -18,7 +18,7 @@
 //! "Location Settings link" instead of the Region button (run 39686251059
 //! heard "Settings", "Settings window", "Location Settings link"), a
 //! difference in the runner's Settings, not in Verbatim. The opening is
-//! not read from the agent, as `settings_search_suggestions` reads its
+//! not read from the agent, as `settings_search_suggestions_reentered` reads its
 //! suggestions' names, because the agent's reads of the focus give its
 //! name and no role, and composing the spoken role word here would copy
 //! Verbatim's role vocabulary into the scenario.

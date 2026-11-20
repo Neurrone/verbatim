@@ -403,7 +403,7 @@ and events before it (`inputCore.py` 583 to 604), and speaks a
 selection key's selection inside the key's script
 (`script_caret_changeSelection`, `editableText.py` 480 to 492), so
 Control pressed 30 ms after Shift+Right Arrow cuts "a selected" off,
-heard in two captures at the pin (`notepad_selection_then_control`).
+heard in two captures at the pin (`notepad_selection_keys`).
 An event that reaches NVDA after the cut runs after it and is spoken.
 Verbatim: **matched**. A modifier's cut joins no queue; a caret tell's
 selection speech stands for the words of the keys whose selection its

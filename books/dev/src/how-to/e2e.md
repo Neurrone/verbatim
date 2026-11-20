@@ -358,11 +358,10 @@ Windows Terminal its image ships.
 
 Some scenarios are local-only, marked `.local_only("reason")` in the registry, because
 they cannot hold on GitHub's Windows Server runner: the `notepad_`
-scenarios, `settings_search_suggestions`,
-`settings_search_suggestions_reentered`, `settings_combo_box_expanded`,
-`settings_system_page`, `explorer_folder_window`,
+scenarios, `settings_search_suggestions_reentered`, `settings_combo_box_expanded`,
+`explorer_folder_window`,
 `windows_terminal_two_windows`, `windows_terminal_long_lines`,
-`windows_terminal_close_tab`, `text_box_caret_keys` and `toast`. Each entry gives its reason
+`text_box_caret_keys` and `toast`. Each entry gives its reason
 in the method, with what would let it run there again, and
 [the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md)
 say the same for each.

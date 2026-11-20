@@ -6,17 +6,17 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 ## Settings' suggestions list replaced as it opens
 
-- Scenarios: `settings_search_suggestions` and `settings_search_suggestions_reentered`, local-only. `settings_search_suggestions` failed 2 of 13 local runs on 2026-11-09.
+- Scenario: `settings_search_suggestions_reentered`, local-only, which holds the steps of `settings_search_suggestions` since build 6 merged it there; `settings_search_suggestions` failed 2 of 13 local runs on 2026-11-09.
 - How: "Suggestions available" plays to completion where the scenario expects the first suggestion to cut it off. On GitHub's runner "Suggestions available" played to completion the same way (run 39558690998); the log shows only that.
 - Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as in NVDA (`docs/parity/changes-and-selection.md`, pinned by mockapp's `a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item`). The failures' logs are not kept, so this is inferred from the code and the parity record. When Settings replaces its list is outside Verbatim's control, and accepting either outcome would break the exact-assertion rule.
-- Fix: none in Verbatim. Both stay off GitHub until dispatched runs show the runner's Settings keeping its first selection; locally they run in build 6's scheduled run of the local-only scenarios.
+- Fix: none in Verbatim. It stays off GitHub until dispatched runs show the runner's Settings keeping its first selection; locally they run in build 6's scheduled run of the local-only scenarios.
 
 ## UI Automation focus never delivered on GitHub's runner
 
-- Scenarios, local-only for this reason: `settings_system_page` (8 failures, runs 42492633218, 42514816068, 42861051487, 43556583340, 44391277251, 44465917467, 44495098916 and 44571401780, 2026-11-08 to 2026-11-20), `windows_terminal_long_lines` (run 44414430624, 2026-11-19) and `windows_terminal_close_tab` (run 44465917467, 2026-11-19).
-- How: in `settings_system_page`, "Settings" is said for the frame, then nothing for 75 s, and "Settings window" is never queued; in the two terminal scenarios nothing is said after the new Windows Terminal window opens.
+- Scenario, local-only for this reason: `windows_terminal_long_lines` (run 44414430624, 2026-11-19). The same fault failed `settings_system_page` 8 times (2026-11-08 to 2026-11-20) and `windows_terminal_close_tab` once (run 44465917467); build 6 removed the first, its path covered by `settings_combo_box_expanded` and `settings_search_suggestions_reentered`, and merged the second's tab closing into `windows_terminal_tabs`, which runs on GitHub.
+- How: in `settings_system_page`, "Settings" was said for the frame, then nothing for 75 s, and "Settings window" was never queued; in the terminal scenarios nothing is said after the new Windows Terminal window opens.
 - Cause: UI Automation never delivered the focus to the listener's desktop-wide handler. In run 44571401780 and run 44465917467 the frame's focus arrived and was spoken; about 1.6 s later the page's `Windows.UI.Core.CoreWindow` (`SystemSettings.exe`) raised MSAA focus events, which the outpost rightly left to UI Automation, as NVDA does, and the listener's UI Automation layer, upstream of every filter of the listener's, logged no focus event and no window-opened event for 75 s. The terminals' listener logs hold one or two UI Automation events, none on the new terminal. This is the fault "A new process's focus events reach the desktop-wide handler late or not at all" ([UIA faults](../books/dev/src/reference/uia-bugs.md)); a focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits; Dickson, 2026-11-07).
-- Fix: none in Verbatim. They run on GitHub again once a runner image or a UI Automation change delivers these focuses, seen in dispatched runs.
+- Fix: none in Verbatim. It runs on GitHub again once a runner image or a UI Automation change delivers these focuses, seen in dispatched runs.
 
 ## `windows_terminal_control_flood`'s command marks steps
 

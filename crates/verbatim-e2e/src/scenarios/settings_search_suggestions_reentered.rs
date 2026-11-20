@@ -9,11 +9,14 @@
 //! where NVDA says "Search box, Find a setting edit sound", cut off by
 //! "Sound settings 1 of 22".
 //!
+//! Back in the box, Down Arrow, Down Arrow and Up Arrow move the
+//! selection through the suggestions: each key says the box's line at its
+//! bound, and the suggestion cuts it off, as NVDA's capture does (commit
+//! 10ddf7b8).
+//!
 //! Read-only, so it changes no setting. The suggestions' size and first
-//! name come from the agent's read of the list once Settings has filled
-//! it, as in
-//! [`settings_search_suggestions`](super::settings_search_suggestions):
-//! the scenario waits for Verbatim's utterance for the first suggestion to
+//! three names come from the agent's read of the list once Settings has
+//! filled it: the scenario waits for Verbatim's utterance for the first suggestion to
 //! be queued, the evidence that the list, which Settings fills all at
 //! once, holds every item, has the agent read the list, and then asserts
 //! the utterance exactly from that read. The second opening, on
@@ -22,9 +25,8 @@
 //! it by its UI Automation identifier, `UserProfileControlButton`, before
 //! the Tab reaches it.
 //!
-//! Local-only, as `settings_search_suggestions` is: GitHub's runner's
-//! Settings raises no selection event for a first suggestion as the list
-//! opens.
+//! Local-only: GitHub's runner's Settings raises no selection event for a
+//! first suggestion as the list opens.
 
 use std::io;
 
@@ -59,7 +61,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     );
     // The suggestions-opened sound for each of the search box's two
     // changes of its relation, the first before the notification, which
-    // the first suggestion cuts off, as in `settings_search_suggestions`
+    // the first suggestion cuts off
     // (`docs/parity/changes-and-selection.md`, "Suggestions appearing and
     // going away").
     scenario.speech().expect_sequence(&[
@@ -76,12 +78,13 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // has filled the list; it is asserted below, from the agent's read.
     scenario.speech().await_next_queued();
     let (count, names) = scenario
-        .controlled_items(1)
+        .controlled_items(3)
         .expect("the agent reads the suggestions");
-    let [first] = names.as_slice() else {
-        panic!("the agent read {names:?}, not one suggestion");
+    let [first, second, third] = names.as_slice() else {
+        panic!("the agent read {names:?}, not three suggestions");
     };
-    let suggestion = format!("{first} 1 of {count}");
+    let said = |name: &str, position: u32| format!("{name} {position} of {count}");
+    let suggestion = said(first, 1);
     scenario.speech().expect_sequence(&[heard(&suggestion)]);
 
     scenario.send_keys(&["escape"]).expect("sends Escape");
@@ -118,4 +121,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         cut_off("sound"),
         heard(&suggestion),
     ]);
+
+    // Down Arrow, which moves no caret in the one-line box, moves the
+    // selection; the key says the box's line at its bound and the
+    // suggestion cuts it off.
+    for (key, said) in [
+        ("downarrow", said(second, 2)),
+        ("downarrow", said(third, 3)),
+        ("uparrow", said(second, 2)),
+    ] {
+        scenario.send_keys(&[key]).expect("sends the key");
+        scenario
+            .speech()
+            .expect_sequence(&[cut_off("sound"), heard(&said)]);
+    }
 }

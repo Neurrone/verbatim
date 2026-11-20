@@ -239,8 +239,8 @@ queue; a focus behind a press is executed after it. Core's
 `a_focus_behind_a_navigation_and_a_report_is_executed_after_them`
 and `flat_reviews_current_line_leaves_the_position_where_it_was`;
 mockapp's `dead_objects` tests through a real outpost; the
-`review_dead_object`, `windows_terminal_review_stays_on_line` and
-`conhost_review_stays_on_line` scenarios.
+`review_dead_object`, `windows_terminal_review_grid` and
+`conhost_review_grid` scenarios.
 
 ### Review cursor line/word/character over object text
 

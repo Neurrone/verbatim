@@ -53,12 +53,12 @@ const NAME: &str = "selection-keys";
 /// Each line of the document, one for each key.
 const LINE: &str = "alpha beta gamma";
 
-/// The scenario's document: fourteen copies of [`LINE`], which Notepad
+/// The scenario's document: sixteen copies of [`LINE`], which Notepad
 /// opens before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
         name: NAME,
-        contents: format!("{LINE}\r\n").repeat(14),
+        contents: format!("{LINE}\r\n").repeat(16),
     }
 }
 
@@ -308,45 +308,21 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "enter", &["carriage return unselected"]);
-    scenario
-        .save_document(NAME, WINDOW_TIMEOUT)
-        .expect("saves the document");
-}
 
-/// The document of `notepad_selection_then_control`: one [`LINE`].
-const CUT_NAME: &str = "selection-then-control";
-
-/// `notepad_selection_then_control`'s document, which Notepad opens
-/// before Verbatim starts.
-pub(crate) fn cut_document() -> Document {
-    Document {
-        name: CUT_NAME,
-        contents: format!(
-            "{LINE}
-"
-        ),
-    }
-}
-
-/// Brings `notepad_selection_then_control`'s document forward in Windows
-/// 11 Notepad.
-pub(crate) fn notepad_cut_setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    scenario.bring_document_forward(CUT_NAME)?;
-    Ok(ScenarioState::None)
-}
-
-/// `notepad_selection_then_control`: Shift+Right Arrow, then Control 30 ms
-/// later, as a person starting Control+C, in Windows 11 Notepad. NVDA
-/// says "a selected", cut off by Control's cancel, in both of its
-/// captures at the pin (2026-11-17,
-/// `cargo xtask nvda compare notepad_selection_then_control`): Control's
-/// cut silences the selection key's words, even when its caret tell
-/// reaches Core after the cut (`docs/parity/text.md`, "Speech cut off by
-/// a modifier").
-pub(crate) fn notepad_cut_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
-    super::expect_notepad_in_front(scenario, CUT_NAME, LINE);
+    // Shift+Right Arrow at the next line's start, then Control 30 ms later,
+    // as a person starting Control+C. NVDA says "a selected", cut off by
+    // Control's cancel, in both of its captures at the pin (2026-11-17,
+    // `cargo xtask nvda compare notepad_selection_then_control`, the
+    // scenario this step had before build 6 merged it here): Control's
+    // cut silences the selection key's words, even when its caret tell
+    // reaches Core after the cut (`docs/parity/text.md`, "Speech cut off by
+    // a modifier").
+    press(scenario, "downarrow", &[LINE]);
     scenario
         .send_keys_paced(&["shift+rightarrow", "control"], 30)
         .expect("sends shift+rightarrow and control");
     scenario.speech().expect_sequence(&[cut_off("a selected")]);
+    scenario
+        .save_document(NAME, WINDOW_TIMEOUT)
+        .expect("saves the document");
 }

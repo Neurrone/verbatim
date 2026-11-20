@@ -21,8 +21,7 @@ use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
 
 pub(crate) use super::no_teardown as teardown;
 
-/// The text box's window's name in the run, as in
-/// `second_application_and_verbatim_menu`.
+/// The text box's window's name in the run.
 const NAME: &str = "second-application";
 
 /// The text box's name.

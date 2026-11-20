@@ -16,6 +16,19 @@
 //! Notepad scenario is local-only: GitHub's Windows Server runner has
 //! classic Notepad.
 //!
+//! Each body starts by moving up a line and selecting by word: Up Arrow
+//! speaks the line it reaches; Shift+Control+Right Arrow selects a word and
+//! then the next, each spoken followed by "selected";
+//! Shift+Control+Left Arrow takes the second out again, spoken followed by
+//! "unselected"; and Shift+End extends the selection to the line's end,
+//! spoken followed by "selected", NVDA's word order. A selected word takes
+//! the space after it in, and Windows 11 Notepad's Shift+End the line
+//! break, each spoken as white space before "selected"; an edit control's
+//! Shift+End stops before the line break. The selection is then taken back
+//! to the line's start. These steps' expectations follow the rule above,
+//! moved here from the word-selection scenarios on 2026-11-21 (build 6),
+//! and are re-set from the scenarios' NVDA captures.
+//!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! editor, which moves its caret; Verbatim waits for evidence that it did
 //! and reads the caret back, so each assertion is on what the caret really
@@ -72,6 +85,17 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         super::text_box::BOX_NAME,
         "alpha beta gamma",
     );
+    // Down to the second line and back up from the top, where the caret
+    // starts: Up Arrow speaks the line too. Two words selected, the second
+    // unselected, then the rest of the line selected; Shift+Home takes the
+    // selection back to the line's start, leaving nothing selected.
+    press(scenario, "downarrow", &["delta epsilon"]);
+    press(scenario, "uparrow", &["alpha beta gamma"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(scenario, "shift+control+rightarrow", &["beta  selected"]);
+    press(scenario, "shift+control+leftarrow", &["beta  unselected"]);
+    press(scenario, "shift+end", &["beta gamma selected"]);
+    press(scenario, "shift+home", &["alpha beta gamma unselected"]);
     // Control+Home at the top moves nothing, so it says nothing, a
     // deliberate difference from NVDA (`docs/parity/text.md`,
     // "TextInfo-equivalent layer"): Right Arrow, pressed next, is the first key heard.
@@ -85,8 +109,18 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // Focus leaves for Verbatim's menu and comes back: the text area says
     // the line the caret is on, the second.
+    // Verbatim's menu has no counterpart in NVDA, whose own menu speaks
+    // otherwise, so both steps are declared differences.
     super::open_verbatim_menu(scenario);
+    scenario.deviates_from_nvda(
+        "docs/parity/focus-announcement.md",
+        "Focus announcement content and property order",
+    );
     scenario.send_keys(&["escape"]).expect("sends escape");
+    scenario.deviates_from_nvda(
+        "docs/parity/focus-announcement.md",
+        "Focus announcement content and property order",
+    );
     super::text_box::expect_announced(scenario, NAME, super::text_box::BOX_NAME, "delta epsilon");
 
     // End puts the caret on the line break, which is named. Shift+Home
@@ -149,6 +183,22 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// The scenario in Windows 11 Notepad.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, "alpha beta gamma");
+    // Down to the second line and back up from the top, where the caret
+    // starts: Up Arrow speaks the line too. Two words selected, the second
+    // unselected, then the rest of the line selected, its line break with
+    // it; Shift+Control+Home takes the selection back to the start,
+    // leaving nothing selected.
+    press(scenario, "downarrow", &["delta epsilon"]);
+    press(scenario, "uparrow", &["alpha beta gamma"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(scenario, "shift+control+rightarrow", &["beta  selected"]);
+    press(scenario, "shift+control+leftarrow", &["beta  unselected"]);
+    press(scenario, "shift+end", &["beta gamma  selected"]);
+    press(
+        scenario,
+        "shift+control+home",
+        &["alpha beta gamma  unselected"],
+    );
     // Verbatim+Tab reports the focus as a query, with its states, and the
     // caret's line in place of its value, as its own utterance, where NVDA
     // says the two in one: the same words, so matched
@@ -172,8 +222,18 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 
     // Focus leaves for Verbatim's menu and comes back: the text area says
     // the line the caret is on, the second.
+    // Verbatim's menu has no counterpart in NVDA, whose own menu speaks
+    // otherwise, so both steps are declared differences.
     super::open_verbatim_menu(scenario);
+    scenario.deviates_from_nvda(
+        "docs/parity/focus-announcement.md",
+        "Focus announcement content and property order",
+    );
     scenario.send_keys(&["escape"]).expect("sends escape");
+    scenario.deviates_from_nvda(
+        "docs/parity/focus-announcement.md",
+        "Focus announcement content and property order",
+    );
     super::expect_notepad_in_front(scenario, NAME, "delta epsilon");
 
     // End puts the caret on the line break, which is named. Shift+Home

@@ -50,6 +50,11 @@
 //!    width. These expectations are the design's rule, not an NVDA
 //!    capture: none has been made of NVDA's review cursor at the end of a
 //!    terminal row.
+//! 7. A fourth script, `stays.ps1`, prints "Alpha" and "Beta", waits for a
+//!    key, then prints "Gamma" and "Delta". Numpad 7 reviews "Beta", and
+//!    Verbatim+6 keeps the review cursor off the caret, so the output
+//!    below leaves it on "Beta", which numpad 8 reads; Verbatim+6 then
+//!    turns following back on (`docs/parity/review.md`).
 //!
 //! The review commands are the desktop layout's numpad keys, sent as
 //! gestures.
@@ -79,6 +84,11 @@ const SCRIPT: &str =
 const OUTPUT_SCRIPT: &str = "'Fruit    Count'\r\n'Apple    3'\r\n'Fig'\r\n'Banana   12'\r\n'Kiwi'\r\n\
 'Cherry   7'\r\n$null = [Console]::ReadKey($true)\r\n'new one'\r\n'new two'\r\n";
 
+/// Prints two lines, waits for a key, then prints two more, so the output
+/// below the reviewed line arrives while the review cursor rests on it.
+const STAYS_SCRIPT: &str =
+    "'Alpha'\r\n'Beta'\r\n$null = [Console]::ReadKey($true)\r\n'Gamma'\r\n'Delta'\r\n";
+
 /// The script printing the short line.
 const SHORT_SCRIPT: &str = "'ab'\r\n";
 
@@ -87,6 +97,7 @@ const SCRIPTS: &[(&str, &str)] = &[
     ("grid.ps1", SCRIPT),
     ("review.ps1", OUTPUT_SCRIPT),
     ("short.ps1", SHORT_SCRIPT),
+    ("stays.ps1", STAYS_SCRIPT),
 ];
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
@@ -145,6 +156,22 @@ fn padding_steps(scenario: &mut Scenario) {
     review(scenario, "kb:numpad3", "Right b");
 }
 
+/// Step 7: with the review cursor kept off the caret, a line reviewed stays
+/// on its text as new output is written below it without filling the
+/// history (`docs/parity/review.md`).
+fn stays_steps(scenario: &mut Scenario) {
+    terminal::type_with_echo(scenario, r".\stays.ps1", terminal::Echo::Shown);
+    scenario.speech().expect(&["Alpha", "Beta"]);
+    review(scenario, "kb:numpad7", "Beta");
+    // The review cursor is kept off the caret, so the output's moving the
+    // caret leaves it on "Beta".
+    review(scenario, "kb:verbatim+6", "caret moves review cursor off");
+    scenario.send_keys(&["n"]).expect("presses n");
+    scenario.speech().expect(&["Gamma", "Delta", PROMPT]);
+    review(scenario, "kb:numpad8", "Beta");
+    review(scenario, "kb:verbatim+6", "caret moves review cursor on");
+}
+
 /// `windows_terminal_review_grid`.
 pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
@@ -171,6 +198,7 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     }
     output_steps(scenario);
     padding_steps(scenario);
+    stays_steps(scenario);
 }
 
 /// `conhost_review_grid`.
@@ -205,6 +233,7 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
     }
     output_steps(scenario);
     padding_steps(scenario);
+    stays_steps(scenario);
 }
 
 pub(crate) use super::no_teardown as teardown;

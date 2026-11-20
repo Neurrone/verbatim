@@ -1,5 +1,5 @@
 //! Object navigation over UI Automation (milestone M3 reducer item 4):
-//! the walk `object_navigation_in_settings` makes over MSAA, made in
+//! the walk `menu_and_settings_dialog` makes over MSAA, made in
 //! `mockapp`'s UIA provider, the scripted application staged beside
 //! Verbatim, which is the same on every machine. Its window holds a group,
 //! "Options", of two buttons and a check box, the first button focused.

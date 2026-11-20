@@ -1,8 +1,12 @@
 //! Two windows of each terminal, and two tabs of Windows Terminal, switched
 //! between and typed into (`docs/parity/terminals.md`, "Windows and
-//! tabs"): `conhost_two_windows`, `windows_terminal_two_windows`
-//! and `windows_terminal_tabs`. The console host has no tabs. The shared
-//! setup is described in the `terminal` module.
+//! tabs"): `conhost_leave_flood` and `windows_terminal_leave_flood`, the
+//! window-switching twins, each typing in the second window as well as
+//! leaving a flood in the first; `windows_terminal_tabs`, which also closes
+//! its second tab; and `windows_terminal_two_windows`, a Windows Terminal
+//! window renamed while the user is away, which has no console host twin,
+//! since its rename needs a tab its shell titles. The console host has no
+//! tabs. The shared setup is described in the `terminal` module.
 //!
 //! NVDA was captured first on each (2026-10-09, an NVDA alpha build,
 //! alpha-57645, with the same start script; the window switches replayed
@@ -71,8 +75,8 @@
 //! Typing after a switch is echoed and its output spoken as in any
 //! terminal.
 //!
-//! `windows_terminal_two_windows` ends with a window renamed while the
-//! user is away. Its first window's tab is titled by its shell
+//! `windows_terminal_two_windows` opens its second window and then renames
+//! the first while the user is away. Its first window's tab is titled by its shell
 //! (`terminal::open_windows_terminal_titled_by_its_shell`), so that a
 //! command renames the window: `retitle.ps1`, typed there, waits until the
 //! second window is in front and then gives the first the title
@@ -91,6 +95,7 @@
 //! for the file `more`; while the long first line plays, the second
 //! window is brought forward, which cuts that line and the two queued
 //! behind it off and says the second window, its terminal and prompt.
+//! `echo yo` typed there is echoed and its output spoken.
 //!
 //! The first line is long so that it is still playing when the switch
 //! lands, by construction. The harness asks for the switch once the
@@ -116,7 +121,7 @@
 //! 2026-10-09, speaks the flood's lines it had queued, until the focus
 //! moves, and says the same on returning.
 //!
-//! `windows_terminal_close_tab` closes the second tab with
+//! `windows_terminal_tabs` ends by closing the second tab with
 //! Control+Shift+W: the first tab's terminal and its line, the prompt, are
 //! said. NVDA, captured live, said the terminal without its line, which
 //! it says in other captures of the focus returning to a tab; Verbatim
@@ -155,10 +160,6 @@ Wait-For end\r\n";
 
 pub(crate) use super::no_teardown as teardown;
 
-pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "two-a", &[])
-}
-
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal_titled_by_its_shell(
         scenario,
@@ -190,10 +191,6 @@ fn retitled(title: &str) -> String {
 
 pub(crate) fn setup_tabs(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal_for_tabs(scenario, "tabs")
-}
-
-pub(crate) fn setup_close_tab(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal_for_tabs(scenario, "close-tab")
 }
 
 /// `away.ps1`: the file signals, the line before the flood, and the
@@ -246,6 +243,8 @@ fn leave_steps(
         scenario.speech().expect_ended(heard, Ending::Cancelled);
     }
     scenario.speech().expect(second_back);
+    terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
+    scenario.speech().expect(&["yo", PROMPT]);
     scenario
         .write_agent_file(&format!(r"{directory}\more"), b"")
         .expect("lets the flood go on");
@@ -342,64 +341,6 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
     );
 }
 
-/// `windows_terminal_close_tab`: the second tab closed with
-/// Control+Shift+W.
-pub(crate) fn body_close_tab(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let first = terminal::title(state).to_owned();
-    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
-    let second_state = terminal::open_windows_terminal_tab(scenario, "close-tab-two", state)
-        .expect("opens a second tab");
-    let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        &second_state,
-        &[&format!("{second} terminal"), "blank"],
-    );
-    scenario
-        .send_keys(&["control+shift+w"])
-        .expect("closes the second tab");
-    scenario
-        .speech()
-        .expect(&[&format!("{first} terminal"), PROMPT]);
-    terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
-    scenario.speech().expect(&["hi", PROMPT]);
-}
-
-/// `conhost_two_windows`.
-pub(crate) fn body_two_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
-    let first = terminal::title(state).to_owned();
-    // The console host's text area has no name.
-    terminal::expect_prompt_read(
-        scenario,
-        state,
-        &[&format!("{first} window"), "terminal", "blank"],
-    );
-    let second_state = terminal::open_console_host(scenario, "two-b", &[])
-        .expect("opens the second console window");
-    let second = terminal::title(&second_state).to_owned();
-    terminal::expect_prompt_read(
-        scenario,
-        &second_state,
-        &[&format!("{second} window"), "terminal", "blank"],
-    );
-    scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
-    scenario
-        .speech()
-        .expect(&[&format!("{first} window"), "terminal", PROMPT]);
-    terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
-    scenario.speech().expect(&["hi", PROMPT]);
-    scenario
-        .bring_window_forward(&second)
-        .expect("brings the second window forward");
-    scenario
-        .speech()
-        .expect(&[&format!("{second} window"), "terminal", PROMPT]);
-    terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
-    scenario.speech().expect(&["yo", PROMPT]);
-}
-
 /// `windows_terminal_two_windows`.
 pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
     let first = terminal::title(state).to_owned();
@@ -408,26 +349,6 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
     terminal::expect_second_windows_terminal_prompt_read(scenario, &second_state);
-    scenario
-        .bring_window_forward(&first)
-        .expect("brings the first window forward");
-    scenario.speech().expect(&[
-        &format!("{first} window"),
-        &format!("{first} terminal"),
-        PROMPT,
-    ]);
-    terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
-    scenario.speech().expect(&["hi", PROMPT]);
-    scenario
-        .bring_window_forward(&second)
-        .expect("brings the second window forward");
-    scenario.speech().expect(&[
-        &format!("{second} window"),
-        &format!("{second} terminal"),
-        PROMPT,
-    ]);
-    terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
-    scenario.speech().expect(&["yo", PROMPT]);
     retitle_while_away(scenario, &first, &second, &directory(state));
 }
 
@@ -513,4 +434,14 @@ pub(crate) fn body_tabs(scenario: &mut Scenario, state: &mut ScenarioState) {
     switch_tab(scenario, "tab", &second, 2);
     terminal::type_with_echo(scenario, "echo yo", terminal::Echo::Shown);
     scenario.speech().expect(&["yo", PROMPT]);
+    // Closing the second tab returns to the first: its terminal and its
+    // line, the prompt.
+    scenario
+        .send_keys(&["control+shift+w"])
+        .expect("closes the second tab");
+    scenario
+        .speech()
+        .expect(&[&format!("{first} terminal"), PROMPT]);
+    terminal::type_with_echo(scenario, "echo hi", terminal::Echo::Shown);
+    scenario.speech().expect(&["hi", PROMPT]);
 }

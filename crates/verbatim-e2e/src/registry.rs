@@ -103,20 +103,18 @@ use crate::scenarios::{
     demo_settings_dialog_keys, demo_terminal_session, document_keys, editing, event_recorder,
     explorer_folder_window, foreground_progress_bar, lock_key_announcements, measure,
     menu_and_settings_dialog, menu_end_over_a_hung_window, msaa_flood_then_focus, notepad_say_all,
-    notepad_spelling_errors, object_navigation_in_settings, object_navigation_over_uia,
-    owned_dialog_across_processes, password, quick_link_menu, quit_inside_a_file_dialog,
-    quit_inside_a_modal_dialog, quit_inside_the_remove_theme_confirmation,
-    quit_inside_the_verbatim_menu, rapid_tabbing_in_settings, read_only_field_typing,
-    return_from_a_held_application, review_cursor, review_dead_object, review_words,
-    second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
-    settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
-    settings_system_page, speak_time_and_date, spelling_errors, stale_focus_behind_a_caret_key,
-    switch_to_onecore, system_information_tree, table_cells, terminal_commands, terminal_editing,
-    terminal_flood, terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager,
-    terminal_progress, terminal_review_grid, terminal_review_stays, terminal_screens,
-    terminal_settings_page, terminal_status_bar, terminal_typing, terminal_windows,
-    text_box_say_all, theme_panel, toast, twin_item_at_a_deleted_items_ids, typed_words,
-    verbatim_lifecycle, word_selection,
+    notepad_spelling_errors, object_navigation_over_uia, owned_dialog_across_processes, password,
+    quick_link_menu, quit_inside_a_file_dialog, quit_inside_a_modal_dialog,
+    quit_inside_the_remove_theme_confirmation, quit_inside_the_verbatim_menu,
+    rapid_tabbing_in_settings, read_only_field_typing, return_from_a_held_application,
+    review_cursor, review_dead_object, review_words, selection_keys, settings_combo_box_expanded,
+    settings_dialog_keys, settings_search_suggestions_reentered, speak_time_and_date,
+    spelling_errors, stale_focus_behind_a_caret_key, switch_to_onecore, system_information_tree,
+    table_cells, terminal_commands, terminal_editing, terminal_flood, terminal_key_timing,
+    terminal_lists, terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
+    terminal_screens, terminal_settings_page, terminal_status_bar, terminal_typing,
+    terminal_windows, text_box_say_all, theme_panel, toast, twin_item_at_a_deleted_items_ids,
+    typed_words, verbatim_lifecycle,
 };
 use crate::speech::{FailurePoint, SpeechFailure};
 
@@ -402,9 +400,7 @@ use Speech::{Capture, Own, SourceDerived};
 /// Every registered scenario, in a fixed, stable order.
 pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(menu_and_settings_dialog, Own(OWN_GUI)),
-    suite!(second_application_and_verbatim_menu, Own("it reads Verbatim's status and opens Verbatim's own menu")),
     suite!(rapid_tabbing_in_settings, Own("it takes speech until Verbatim is idle (take_until_idle) and drives Verbatim's own settings dialog")),
-    suite!(object_navigation_in_settings, Own(OWN_GUI)),
     suite!(switch_to_onecore, Own("it reads Verbatim's status and drives Verbatim's own settings dialog")),
     suite!(crash_recovery, Own("it ends Verbatim's synthesizer host, an outpost and its focus listener")),
     suite!(verbatim_lifecycle, Own("it starts a second Verbatim to replace the first")),
@@ -435,12 +431,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(explorer_folder_window, Capture)
         .local_only("On GitHub's runner its new explorer.exe window sometimes stops responding, with dwm.exe's window thread blocked too (run 44344991044); the cause is not named, and the harness does not wait for the Desktop Window Manager (Dickson, 2026-10-26). It runs there again once a wait chain names what Explorer's thread waits on and Verbatim's part, if any, is fixed, or Dickson rules to keep it there (`docs/flaky-tests.md`)."),
     suite!(settings_dialog_keys, Own(OWN_GUI)),
-    suite!(settings_system_page, Capture)
-        .local_only("GitHub's runner fails to deliver the System page's UI Automation focus to the listener (8 failures, 2026-11-08 to 2026-11-20), a loss Verbatim accepts as NVDA does (ADR 0001). It runs there again once a runner image delivers the page's focus, seen in a dispatched run (`docs/flaky-tests.md`)."),
     suite!(settings_combo_box_expanded, Capture)
         .local_only("The runner's Date and time page opens with its focus on its location settings link, not the Region button. It runs there again once the runner's Settings opens it on the Region button."),
-    suite!(settings_search_suggestions, Capture)
-        .local_only(SUGGESTIONS_REPLACED),
     suite!(settings_search_suggestions_reentered, Capture)
         .local_only(SUGGESTIONS_REPLACED),
     suite!("notepad_editing", editing::{notepad_setup, notepad_body, teardown}, Capture)
@@ -450,9 +442,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("notepad_selection_keys", selection_keys::{notepad_setup, notepad_body, teardown}, Capture)
         .local_only(NOTEPAD)
         .document(selection_keys::document),
-    suite!("notepad_selection_then_control", selection_keys::{notepad_cut_setup, notepad_cut_body, teardown}, Capture)
-        .local_only(NOTEPAD)
-        .document(selection_keys::cut_document),
     suite!("text_box_selection_keys", selection_keys::{text_box_setup, text_box_body, teardown}, Capture),
     suite!("notepad_caret_keys", caret_keys::{notepad_setup, notepad_body, teardown}, Capture)
         .local_only(NOTEPAD)
@@ -484,10 +473,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(notepad_say_all, Capture)
         .local_only(NOTEPAD)
         .document(notepad_say_all::document),
-    suite!("notepad_word_selection", word_selection::{notepad_setup, notepad_body, teardown}, Capture)
-        .local_only(NOTEPAD)
-        .document(word_selection::document),
-    suite!("text_box_word_selection", word_selection::{text_box_setup, text_box_body, teardown}, Capture),
     suite!("notepad_typed_words", typed_words::{notepad_setup, notepad_body, teardown}, Capture)
         .local_only(NOTEPAD)
         .document(typed_words::document),
@@ -515,8 +500,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("conhost_line_key_flood", terminal_key_timing::{setup_line_key_console_host, body_line_key_console_host, teardown}, Capture),
     suite!("windows_terminal_leave_flood", terminal_windows::{setup_leave_windows_terminal, body_leave_windows_terminal, teardown}, Capture),
     suite!("conhost_leave_flood", terminal_windows::{setup_leave_console_host, body_leave_console_host, teardown}, Capture),
-    suite!("windows_terminal_close_tab", terminal_windows::{setup_close_tab, body_close_tab, teardown}, Capture)
-        .local_only("GitHub's runner once delivered no UI Automation focus for the new terminal to the listener (run 44465917467), a loss Verbatim accepts as NVDA does (ADR 0001). It runs there again once dispatched runs show the runner delivering the terminal's focus (`docs/flaky-tests.md`)."),
     suite!("windows_terminal_scrollback_overflow_during_group", terminal_overflow::{setup_windows_terminal, body_overflow_during_group_windows_terminal, teardown}, SourceDerived(TERMINAL_FLOOD))
         .settings(terminal_flood::half_limits),
     suite!("conhost_scrollback_overflow_during_group", terminal_overflow::{setup_console_host, body_overflow_during_group_console_host, teardown}, SourceDerived(TERMINAL_FLOOD))
@@ -525,8 +508,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("conhost_editing", terminal_editing::{setup_console_host, body_console_host, teardown}, Capture),
     suite!("windows_terminal_review_grid", terminal_review_grid::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
     suite!("conhost_review_grid", terminal_review_grid::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_review_stays_on_line", terminal_review_stays::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_review_stays_on_line", terminal_review_stays::{setup_console_host, body_console_host, teardown}, Capture),
     suite!("windows_terminal_progress", terminal_progress::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
     suite!("conhost_progress", terminal_progress::{setup_console_host, body_console_host, teardown}, Capture),
     suite!("windows_terminal_typing", terminal_typing::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
@@ -546,7 +527,6 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("conhost_status_bar", terminal_status_bar::{setup_console_host, body_console_host, teardown}, Capture),
     suite!("windows_terminal_two_windows", terminal_windows::{setup_windows_terminal, body_two_windows_terminal, teardown}, Capture)
         .local_only("On GitHub's elevated runner the console host's \"Administrator: \" title reaches Windows Terminal's window after the harness restores it, so the first announcement carries the prefix; what sends the prefixed title is not established. It runs there again once a dispatched run with the window's title logged at each name change names the sender, and a harness wait on that evidence is built (`docs/flaky-tests.md`)."),
-    suite!("conhost_two_windows", terminal_windows::{setup_console_host, body_two_console_host, teardown}, Capture),
     suite!("windows_terminal_tabs", terminal_windows::{setup_tabs, body_tabs, teardown}, Capture),
     suite!("event_recorder_records_mockapp", event_recorder::{setup, body, teardown}, Own("the recorder's file is what is under test, which NVDA does not write")),
     suite!(object_navigation_over_uia, Capture),
@@ -1179,7 +1159,6 @@ mod tests {
     #[test]
     fn find_locates_a_real_registered_scenario() {
         assert!(find("menu_and_settings_dialog").is_some());
-        assert!(find("second_application_and_verbatim_menu").is_some());
         assert!(find("no_such_scenario").is_none());
     }
 

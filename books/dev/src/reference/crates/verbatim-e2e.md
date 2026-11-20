@@ -736,9 +736,7 @@ under `src/scenarios/` documents exactly what it asserts.
   the setup found), `settings_dialog_keys`, `theme_panel` (a role changed to a
   sound is then heard as that sound), and `terminal_settings_page` (its
   applied change found in Core with Verbatim+5).
-- Shell: `second_application_and_verbatim_menu` (the Windows Forms text
-  box as a second application, Verbatim's menu, and back, the text box's
-  outpost the same process), `crash_recovery` (each ended by its process
+- Shell: `crash_recovery` (each ended by its process
   id: the synthesizer host, the next announcement heard in full from the
   host Verbatim starts in its place; an application's outpost, once Core
   reports its end and is idle, nothing more said, and the review cursor
@@ -770,21 +768,19 @@ under `src/scenarios/` documents exactly what it asserts.
   and closed with Escape), `explorer_folder_window` (a File Explorer
   window on a harness folder, with File Explorer's "Working on it..." an
   optional utterance on the window's opening and after Enter and
-  Backspace), `settings_system_page` (the list focused by its UI
-  Automation identifier through the agent), `settings_combo_box_expanded`
+  Backspace), `settings_combo_box_expanded`
   (a Date and time combo box opened with Alt+Down Arrow, "expanded"
   before its first item, and closed with Escape), and
-  `settings_search_suggestions` and
-  `settings_search_suggestions_reentered` (the suggestions read as the
+  `settings_search_suggestions_reentered` (the box entered again by
+  Shift+Tab while it holds text, then the suggestions read as the
   selection moves through them while the focus stays in the search box,
-  their number and names read by the agent first; and the box entered
-  again by Shift+Tab while it holds text).
-- Navigation: `object_navigation_in_settings` (over MSAA, in Verbatim's
+  their number and names read by the agent first).
+- Navigation: `menu_and_settings_dialog` (over MSAA, in Verbatim's
   own dialog), `object_navigation_over_uia` (over UIA, in `mockapp`'s
   provider), and `system_information_tree` (msinfo32's real Win32 tree
   view over MSAA, logical object navigation through it).
 - Text: editing, selection keys, review cursor, review words, typed word
-  echo, word selection and say-all, each in the Windows Forms text box
+  echo and say-all, each in the Windows Forms text box
   (`text_box_`) and in Windows 11 Notepad (`notepad_`), each its own code;
   the protected fields `text_box_password` (a Windows Forms password text
   box) and `wpf_password` (a WPF `PasswordBox`, through UI Automation), in
@@ -922,14 +918,16 @@ Each exists in both terminals unless named for one.
   `crates/verbatim-core/tests/terminal_floods.rs`. Outpost logs are collected in
   chunks, since a flood's debug log can be larger than one read of the
   agent's.
-- Windows and tabs (`scenarios/terminal_windows.rs`): `_two_windows`
-  switches between two windows as a taskbar button does and types in each;
+- Windows and tabs (`scenarios/terminal_windows.rs`):
+  `windows_terminal_two_windows` renames its first window while the
+  second is in front;
   `windows_terminal_tabs` opens a second tab from the command line
-  (`-w 0 new-tab`), switches with Control+Shift+Tab and Control+Tab, and
-  types in each; `windows_terminal_close_tab` closes the second tab;
+  (`-w 0 new-tab`), switches with Control+Shift+Tab and Control+Tab,
+  types in each, and closes the second tab;
   `*_leave_flood` leaves for a second window during a flood whose first
   line is still playing when the switch lands (a slow switch fails as a
-  harness error), the rest finished while away and not spoken. A second
+  harness error), types in the second window, and returns, the rest of
+  the flood finished while away and not spoken. A second
   Windows Terminal window or tab is handed to the harness's running copy,
   which must own it; the tabs scenario turns `confirmCloseAllTabs` off.
 - Footers (`scenarios/terminal_status_bar.rs`): three lines written

@@ -37,7 +37,6 @@ pub(crate) mod mockapp;
 pub(crate) mod msaa_flood_then_focus;
 pub(crate) mod notepad_say_all;
 pub(crate) mod notepad_spelling_errors;
-pub(crate) mod object_navigation_in_settings;
 pub(crate) mod object_navigation_over_uia;
 pub(crate) mod owned_dialog_across_processes;
 pub(crate) mod password;
@@ -52,13 +51,10 @@ pub(crate) mod return_from_a_held_application;
 pub(crate) mod review_cursor;
 pub(crate) mod review_dead_object;
 pub(crate) mod review_words;
-pub(crate) mod second_application_and_verbatim_menu;
 pub(crate) mod selection_keys;
 pub(crate) mod settings_combo_box_expanded;
 pub(crate) mod settings_dialog_keys;
-pub(crate) mod settings_search_suggestions;
 pub(crate) mod settings_search_suggestions_reentered;
-pub(crate) mod settings_system_page;
 pub(crate) mod speak_time_and_date;
 pub(crate) mod spelling_errors;
 pub(crate) mod stale_focus_behind_a_caret_key;
@@ -75,7 +71,6 @@ pub(crate) mod terminal_overflow;
 pub(crate) mod terminal_pager;
 pub(crate) mod terminal_progress;
 pub(crate) mod terminal_review_grid;
-pub(crate) mod terminal_review_stays;
 pub(crate) mod terminal_screens;
 pub(crate) mod terminal_settings_page;
 pub(crate) mod terminal_status_bar;
@@ -88,7 +83,6 @@ pub(crate) mod toast;
 pub(crate) mod twin_item_at_a_deleted_items_ids;
 pub(crate) mod typed_words;
 pub(crate) mod verbatim_lifecycle;
-pub(crate) mod word_selection;
 
 /// What the scenario says about the desktop, which has the focus after the
 /// harness minimized every window and once a dialog of Verbatim's closes:
