@@ -599,8 +599,6 @@ const SERIAL_TESTS: &str = concat!(
     " | binary_id(verbatim-audio::mixer)",
     " | binary_id(verbatim-agent) | binary_id(verbatim-ia2)",
     " | binary_id(verbatim-listener) | binary_id(verbatim-win32)",
-    " | (binary_id(mockapp::remote_ops)",
-    " & test(a_windows_forms_menu_item_is_checked_from_the_remote_read))",
 );
 
 /// The filter of the unit tests that run many at once: every test but

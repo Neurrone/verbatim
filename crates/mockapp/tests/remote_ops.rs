@@ -13,7 +13,6 @@ mod harness;
 
 use std::io::{BufRead, BufReader};
 use std::os::windows::io::AsRawHandle;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -1292,55 +1291,29 @@ fn a_provider_that_has_exited_fails_at_once() {
     );
 }
 
-/// Windows PowerShell showing a Windows Forms window whose menu bar holds
-/// one menu item, "View", checked: Windows Forms says a menu item is
-/// checked only in its legacy MSAA state, which NVDA reads for menu items
-/// (`verbatim_uia::map::wants_legacy_checked_state`). Every Windows has
-/// Windows PowerShell and Windows Forms, as the end-to-end suite's text box
-/// relies on. Closed through its window, the process exiting, by
-/// [`close`](Self::close); ended on drop otherwise.
+/// `forms_menu.cs`, compiled by mockapp's build script, showing a Windows
+/// Forms window whose menu bar holds one menu item, "View", checked:
+/// Windows Forms says a menu item is checked only in its legacy MSAA
+/// state, which NVDA reads for menu items
+/// (`verbatim_uia::map::wants_legacy_checked_state`). Every Windows 11 has
+/// the .NET Framework that compiles and runs it. Closed through its window,
+/// the process exiting, by [`close`](Self::close); ended on drop otherwise.
 struct FormsMenu {
     child: Child,
     hwnd: HWND,
-    script: PathBuf,
 }
 
 impl FormsMenu {
-    /// Opens the window, titled `title`, and waits for the script's word
+    /// Opens the window, titled `title`, and waits for the program's word
     /// that it is shown.
     fn open(title: &str) -> Self {
         common::contain_children();
-        let script = std::env::temp_dir().join(format!("{title}.ps1"));
-        std::fs::write(
-            &script,
-            format!(
-                "Add-Type -AssemblyName System.Windows.Forms\r\n\
-                 $form = New-Object System.Windows.Forms.Form\r\n\
-                 $form.Text = '{title}'\r\n\
-                 $menu = New-Object System.Windows.Forms.MenuStrip\r\n\
-                 $view = New-Object System.Windows.Forms.ToolStripMenuItem('View')\r\n\
-                 $view.Checked = $true\r\n\
-                 [void]$menu.Items.Add($view)\r\n\
-                 $form.MainMenuStrip = $menu\r\n\
-                 $form.Controls.Add($menu)\r\n\
-                 $form.Add_Shown({{ [Console]::Out.WriteLine('shown'); [Console]::Out.Flush() }})\r\n\
-                 [void]$form.ShowDialog()\r\n"
-            ),
-        )
-        .expect("the script is written");
-        let mut child = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-            ])
-            .arg(&script)
+        let mut child = Command::new(env!("MOCKAPP_FORMS_MENU"))
+            .arg(title)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()
-            .expect("Windows PowerShell starts");
+            .expect("the Windows Forms program starts");
         let stdout = child.stdout.take().expect("its output");
         let (lines, received) = mpsc::channel();
         std::thread::spawn(move || {
@@ -1353,29 +1326,31 @@ impl FormsMenu {
         let line = received
             .recv_timeout(common::WAIT_TIMEOUT)
             .expect("the window is shown");
-        assert_eq!(line, "shown", "the script's word");
+        assert_eq!(line, "shown", "the program's word");
         let hwnd = common::find_window(title);
-        Self {
-            child,
-            hwnd,
-            script,
-        }
+        Self { child, hwnd }
     }
 
-    /// Closes the window and waits for Windows PowerShell to exit, which it
-    /// must do cleanly.
+    /// Closes the window and waits for the program to exit, which it must
+    /// do cleanly.
     fn close(mut self) {
         // SAFETY: posting a message to a window handle is sound whatever
-        // the handle; the window is the script's, live until it closes.
+        // the handle; the window is the program's, live until it closes.
         unsafe { PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
             .expect("the close message is posted");
         let handle = HANDLE(self.child.as_raw_handle());
         let timeout = u32::try_from(common::WAIT_TIMEOUT.as_millis()).unwrap_or(u32::MAX);
         // SAFETY: the child's process handle, live while `self` owns it.
         let waited = unsafe { WaitForSingleObject(handle, timeout) };
-        assert_eq!(waited, WAIT_OBJECT_0, "Windows PowerShell did not exit");
+        assert_eq!(
+            waited, WAIT_OBJECT_0,
+            "the Windows Forms program did not exit"
+        );
         let status = self.child.wait().expect("its exit is read");
-        assert!(status.success(), "Windows PowerShell exited with {status}");
+        assert!(
+            status.success(),
+            "the Windows Forms program exited with {status}"
+        );
     }
 }
 
@@ -1383,17 +1358,15 @@ impl Drop for FormsMenu {
     fn drop(&mut self) {
         let killed = self.child.kill();
         let ended = self.child.wait();
-        let removed = std::fs::remove_file(&self.script);
         if !std::thread::panicking() {
             if let Err(error) = &killed {
                 assert!(
                     matches!(self.child.try_wait(), Ok(Some(_))),
-                    "Windows PowerShell {} could not be ended: {error}",
+                    "the Windows Forms program {} could not be ended: {error}",
                     self.child.id()
                 );
             }
-            ended.expect("Windows PowerShell is reaped");
-            removed.expect("the script is removed");
+            ended.expect("the Windows Forms program is reaped");
         }
     }
 }

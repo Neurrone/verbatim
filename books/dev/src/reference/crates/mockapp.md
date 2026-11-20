@@ -735,7 +735,12 @@ Each file's module comment says exactly what it asserts; in outline:
   nothing is selected ([verbatim-uia-rops](verbatim-uia-rops.md)). It
   also shows that `slow-parent` lets the steps it counts pass at once and
   answers the next raw-view step to the parent late, its wait bracketed by
-  its two lines inside that step's call.
+  its two lines inside that step's call. Its test of a real Windows Forms
+  menu item, checked only in its legacy MSAA state, runs `forms_menu.cs`,
+  which mockapp's `build.rs` compiles with the C# compiler of the .NET
+  Framework that Windows 11 ships, for the target's architecture: hosting
+  the window in Windows PowerShell instead passed the test's 15 s wait for
+  the window on GitHub's ARM64 runner.
 - `call_counts.rs` is the operation ledger's ratchet
   (`books/dev/src/reference/performance.md`, "The ledger"): over `counts.json`, and
   `dialog.json` (a message box) for a dialog's own text, it measures each

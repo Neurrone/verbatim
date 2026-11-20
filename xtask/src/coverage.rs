@@ -143,20 +143,12 @@ fn levels() -> Vec<Level> {
         },
         Level {
             name: "mockapp",
-            steps: vec![
-                nextest_step(
-                    "mockapp tests",
-                    COVERED_NEXTEST,
-                    &level(mockapp, &unit_test_filter()),
-                    false,
-                ),
-                nextest_step(
-                    "mockapp tests that run one at a time",
-                    COVERED_NEXTEST,
-                    &level(mockapp, SERIAL_TESTS),
-                    true,
-                ),
-            ],
+            steps: vec![nextest_step(
+                "mockapp tests",
+                COVERED_NEXTEST,
+                &level(mockapp, &unit_test_filter()),
+                false,
+            )],
         },
         Level {
             name: "faults",
