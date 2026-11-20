@@ -102,6 +102,48 @@ mod tests {
         problems
     }
 
+    /// The commit the superproject's `HEAD` pins the submodule at `path`
+    /// to, read from the gitlink itself (`git rev-parse HEAD:<path>`), so
+    /// it does not need the submodule checked out: in a submodule not
+    /// initialised, as on GitHub's runner, `git -C <path> rev-parse HEAD`
+    /// answers the superproject's own commit.
+    fn gitlink(root: &Path, path: &str) -> Result<String, String> {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", &format!("HEAD:{path}")])
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("could not run git: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git rev-parse HEAD:{path} failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let commit = String::from_utf8(output.stdout)
+            .map_err(|error| format!("git printed something not UTF-8: {error}"))?;
+        Ok(commit.trim().to_owned())
+    }
+
+    #[test]
+    fn the_pin_is_the_gitlink_not_the_superprojects_commit() {
+        let root = root();
+        let pin = gitlink(&root, "nvda").expect("reads the nvda gitlink");
+        assert_eq!(pin.len(), 40, "{pin}");
+        assert!(pin.chars().all(|c| c.is_ascii_hexdigit()), "{pin}");
+        let superproject = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&root)
+            .output()
+            .expect("runs git");
+        assert_ne!(
+            String::from_utf8_lossy(&superproject.stdout).trim(),
+            pin,
+            "the superproject's commit is not the submodule's pin"
+        );
+        assert!(gitlink(&root, "no-such-submodule").is_err());
+    }
+
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -128,12 +170,7 @@ mod tests {
     #[test]
     fn every_capture_has_the_pins_header_and_a_citation_and_every_citation_a_file() {
         let root = root();
-        let head = std::process::Command::new("git")
-            .args(["-C", "nvda", "rev-parse", "HEAD"])
-            .current_dir(&root)
-            .output()
-            .expect("runs git");
-        let head = String::from_utf8(head.stdout).expect("git prints UTF-8");
+        let head = gitlink(&root, "nvda").expect("reads the nvda submodule's pin");
         let mut files = Vec::new();
         for folder in FOLDERS {
             let Ok(entries) = std::fs::read_dir(root.join(folder)) else {
@@ -155,7 +192,7 @@ mod tests {
             .collect();
         let mut sources = Vec::new();
         rust_sources(&root.join("crates"), &mut sources);
-        let found = problems(&files, head.trim(), &capture_scenarios, &sources, |path| {
+        let found = problems(&files, &head, &capture_scenarios, &sources, |path| {
             root.join(path).exists()
         });
         assert!(found.is_empty(), "{}", found.join("\n"));
