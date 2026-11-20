@@ -13,7 +13,9 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, GetKeyState, VK_LMENU, VK_NUMLOCK, VK_RMENU,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
     LLKHF_INJECTED, MSG, WM_KEYDOWN, WM_SYSKEYDOWN,
@@ -308,16 +310,29 @@ fn source_of(extra_info: usize) -> KeySource {
 /// down before a switch away from the user's input desktop: on the first
 /// key after Core handled one, as the view's desktop part counts them,
 /// the machine forgets its modifiers and its line, as Core dropped its
-/// held keys (NVDA: `winAPI/secureDesktop.py` 43 to 45).
+/// held keys (NVDA: `winAPI/secureDesktop.py` 43 to 45), all but an Alt
+/// still physically down, which NVDA reads from the keyboard's state to
+/// judge the task switcher (NVDA: `appModules/explorer.py` 40 to 45).
 fn read_view(state: &mut HookState) -> Option<HookForeground> {
     let view = state.foreground.get();
     if let Some(view) = view
         && view.desktop_switches != state.desktop_switches
     {
         state.desktop_switches = view.desktop_switches;
-        state.machine.desktop_switched();
+        state.machine.desktop_switched(&alts_down());
     }
     view
+}
+
+/// The Alt keys physically down, each as the hook names it (Right Alt
+/// extended), read from the asynchronous key state, which a low-level hook
+/// sees updated for every key before the one it is deciding.
+fn alts_down() -> Vec<(u16, bool)> {
+    [(VK_LMENU.0, false), (VK_RMENU.0, true)]
+        .into_iter()
+        // SAFETY: GetAsyncKeyState takes any virtual-key code.
+        .filter(|&(vk, _)| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0)
+        .collect()
 }
 
 /// Whether Num Lock is on, which decides what the numpad's operator keys

@@ -60,9 +60,11 @@ Public API:
   gesture or typing. `alt_down()` says whether either Alt key is down, as
   the transitions decided left it, which the hook reports to Core.
   `passed_on(place)` takes the line of keys held back up to a
-  key Core passed on, and changes nothing else; `desktop_switched()`
+  key Core passed on, and changes nothing else; `desktop_switched(alts_down)`
   forgets every key down, the modifiers among them, and the line, after a
-  switch away from the user's input desktop whose releases never came; `has_outstanding()` and
+  switch away from the user's input desktop whose releases never came,
+  keeping down only the Alt keys the caller reads as physically down, as
+  NVDA judges the task switcher by the keyboard's physical Alt; `has_outstanding()` and
   `deferred_transitions()` read the line, for the hook's permit and its
   translation of typed text. The config's `interrupt_for_characters` and
   `interrupt_for_enter` are NVDA's two speech interrupt settings, both on

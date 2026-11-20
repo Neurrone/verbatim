@@ -726,12 +726,21 @@ impl DecisionMachine {
     /// switch, so the machine forgets every key down, its modifiers among
     /// them, and its line, as NVDA clears its recorded modifiers
     /// (`docs/design/readers-tell-core-asks-build1.md`, "The secure
-    /// desktop and the lock state").
-    pub fn desktop_switched(&mut self) {
+    /// desktop and the lock state"). The Alt keys in `alts_down`, each a
+    /// virtual-key code and extended flag, are the ones the keyboard's
+    /// own state has physically down now; they stay down, their presses
+    /// having reached the application, since NVDA judges a held Alt, the
+    /// task switcher's, from the keyboard's physical state
+    /// (`docs/nvda/app-modules-mechanism.md`, "App modules").
+    pub fn desktop_switched(&mut self, alts_down: &[(u16, bool)]) {
         self.held_modifiers.clear();
         self.keys_down.clear();
         self.lone_modifier = LoneModifier::Idle;
         self.line.clear();
+        for &key in alts_down {
+            self.held_modifiers.insert(key);
+            self.keys_down.insert(key, KeyDown { reached: true });
+        }
     }
 
     /// Whether a key transition waits in the line.
@@ -1254,10 +1263,26 @@ mod tests {
             m.on_key(key(down(CAPS, false), t)).verdict(),
             Verdict::Swallow
         );
-        m.desktop_switched();
+        m.desktop_switched(&[]);
         let v_down = m.on_key(key(down(V, false), t));
         assert_eq!(v_down.verdict(), Verdict::Pass);
         assert!(v_down.emitted().is_none());
+    }
+
+    /// An Alt the keyboard has physically down at a switch stays down,
+    /// as NVDA reads Alt from the keyboard's state, and its release
+    /// reaches the application and lets it go.
+    #[test]
+    fn a_switch_keeps_the_alt_physically_down() {
+        let mut m = machine(DecisionConfig::default(), &[]);
+        let t = START;
+        m.on_key(key(down(ALT, false), t));
+        m.desktop_switched(&[(ALT, false)]);
+        assert!(m.alt_down());
+        assert_eq!(m.on_key(key(up(ALT, false), t)).verdict(), Verdict::Pass);
+        assert!(!m.alt_down());
+        m.desktop_switched(&[]);
+        assert!(!m.alt_down());
     }
 
     #[test]
