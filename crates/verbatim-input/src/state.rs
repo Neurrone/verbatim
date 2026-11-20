@@ -70,18 +70,15 @@ pub struct RaisedGesture {
     /// The multi-press repeat count: 0 for the first press, 1 for the
     /// second, 2 for the third, and so on, saturating rather than
     /// overflowing. Incremented when the same gesture fires again within
-    /// `multi_press_timeout` of its previous genuine press; a different
-    /// gesture or the window elapsing resets it to 0. Consumers dispatch on
-    /// it for report-current (report, spell, copy), speak time (time, then
-    /// date), and show tray list (tray, then taskbar). Auto-repeat (holding
-    /// the gesture's key down, which re-fires the gesture on every OS
-    /// auto-repeat tick with no intervening key-up) does not advance this
-    /// count: a held key is one press for repeat purposes, so every
-    /// auto-repeated emission carries the same count as the genuine press
-    /// that started the hold. NVDA counts auto-repeat as presses; this is a
-    /// deliberate difference (`docs/parity/input.md`, "Script repeat counting").
-    /// Any key other than a modifier that completes no bound gesture ends
-    /// the streak, as in NVDA.
+    /// `multi_press_timeout` of its previous press; a different gesture or
+    /// the window elapsing resets it to 0. Consumers dispatch on it for
+    /// report-current (report, spell, copy), speak time (time, then date),
+    /// and show tray list (tray, then taskbar). An auto-repeat (holding the
+    /// gesture's key down, which re-fires the gesture on every OS
+    /// auto-repeat tick with no intervening key-up) counts as a further
+    /// press, as NVDA counts it (`docs/parity/input.md`, "Script repeat
+    /// counting"). Any key other than a modifier that completes no bound
+    /// gesture ends the streak, as in NVDA.
     pub repeat: u8,
 }
 
@@ -808,7 +805,7 @@ impl DecisionMachine {
         if let Some(gesture) = &gesture
             && self.map.contains(gesture)
         {
-            let repeat = self.count_press(gesture, key, now);
+            let repeat = self.count_press(gesture, now);
             self.keys_down.entry(key).or_default().swallowed_gesture = true;
             return Decision::swallow_emit(RaisedGesture {
                 gesture: gesture.clone(),
@@ -876,22 +873,10 @@ impl DecisionMachine {
     }
 
     /// The repeat count this emission carries, advancing the multi-press
-    /// streak if the press is a genuine one.
-    ///
-    /// A key-down for a key Verbatim swallowed for a gesture or as the
-    /// Verbatim modifier and has not yet seen released is the operating
-    /// system auto-repeating a held key, not a fresh press:
-    /// it re-reports the streak's current count and leaves the streak alone.
-    /// NVDA counts auto-repeat as presses; not counting it is a deliberate
-    /// difference, so holding a key never turns into a double press.
-    fn count_press(&mut self, gesture: &GestureId, key: KeyCode, now: u64) -> u8 {
-        if self
-            .keys_down
-            .get(&key)
-            .is_some_and(|down| down.swallowed_gesture)
-        {
-            return self.repeat_count;
-        }
+    /// streak: an auto-repeat of a held key counts as a press, measured
+    /// from the previous one, as NVDA counts it (`docs/parity/input.md`,
+    /// "Script repeat counting").
+    fn count_press(&mut self, gesture: &GestureId, now: u64) -> u8 {
         self.repeat_count = match &self.last_gesture {
             Some((last, at))
                 if last == gesture && since(*at, now) < self.config.multi_press_timeout =>
@@ -1674,14 +1659,15 @@ mod tests {
         );
     }
 
+    /// Holding the gesture's own key down auto-repeats its key-down with
+    /// no intervening key-up: each auto-repeat within the multi-press
+    /// timeout of the one before counts as a further press, as NVDA counts
+    /// it (`docs/parity/input.md`, "Script repeat counting"). Derived from
+    /// NVDA's pinned source, since injected key downs do not auto-repeat
+    /// and no capture could be made (Dickson's ruling of 2026-11-20 for
+    /// captures that cannot be made).
     #[test]
-    fn auto_repeat_does_not_advance_the_repeat_count() {
-        // Holding the gesture's own key down auto-repeats its key-down with
-        // no intervening key-up (unlike press_v_verbatim's up/down pairs,
-        // which are genuine separate presses). NVDA does not treat
-        // auto-repeat as a multi-press (deliberately unlike NVDA), so every
-        // auto-repeated emission must carry the same count as the press
-        // that started the hold.
+    fn auto_repeat_advances_the_repeat_count() {
         let mut m = machine(DecisionConfig::default(), &["kb:v+verbatim"]);
         let t = START;
         m.on_key(key(down(CAPS, false), t));
@@ -1689,20 +1675,18 @@ mod tests {
         let first = m.on_key(key(down(V, false), t));
         assert_eq!(first.emitted.expect("emitted").repeat, 0);
 
-        // Auto-repeat: V goes down again with no key-up in between.
-        let repeat1 = m.on_key(key(down(V, false), t));
-        assert_eq!(repeat1.emitted.expect("emitted").repeat, 0);
-        let repeat2 = m.on_key(key(down(V, false), t));
-        assert_eq!(repeat2.emitted.expect("emitted").repeat, 0);
+        // Auto-repeat: V goes down again with no key-up in between, each
+        // within the timeout of the one before.
+        let repeat1 = m.on_key(key(down(V, false), t + ms(400)));
+        assert_eq!(repeat1.emitted.expect("emitted").repeat, 1);
+        let repeat2 = m.on_key(key(down(V, false), t + ms(800)));
+        assert_eq!(repeat2.emitted.expect("emitted").repeat, 2);
 
-        m.on_key(key(up(V, false), t));
-        m.on_key(key(up(CAPS, false), t));
+        m.on_key(key(up(V, false), t + ms(800)));
+        m.on_key(key(up(CAPS, false), t + ms(800)));
 
-        // A genuine second press afterward, within the window, still counts
-        // as the second press (1), not a fourth (3): the auto-repeats above
-        // never advanced the count.
-        let t2 = t + ms(50);
-        assert_eq!(press_v_verbatim(&mut m, t2), 1);
+        // A second press afterward, within the window, is the fourth.
+        assert_eq!(press_v_verbatim(&mut m, t + ms(850)), 3);
     }
 
     #[test]
@@ -1941,7 +1925,8 @@ mod tests {
     /// Arrow held in text, which ends the streak, the Verbatim modifier
     /// pressed, and Right's auto-repeat completing the gesture: that
     /// auto-repeat is a fresh press, counted 0 rather than carrying the
-    /// streak's 1, and the auto-repeats after it carry its 0.
+    /// streak's 1, and each auto-repeat after it counts as a further press,
+    /// as NVDA counts it (`docs/parity/input.md`, "Script repeat counting").
     #[test]
     fn a_held_keys_auto_repeat_completing_a_gesture_counts_as_a_fresh_press() {
         let mut m = holding_machine();
@@ -1965,7 +1950,7 @@ mod tests {
         );
         m.on_key(with(HOLD, down(INSERT, true), t + ms(33)));
         assert_eq!(repeat(&mut m, t + ms(66)), 0);
-        assert_eq!(repeat(&mut m, t + ms(99)), 0);
+        assert_eq!(repeat(&mut m, t + ms(99)), 1);
     }
 
     /// Right Arrow held in a search box whose results list takes the focus:
@@ -2253,7 +2238,7 @@ mod tests {
     }
 
     /// Verbatim+Alt+Home held with auto-repeat: the repeat is masked too,
-    /// its count the press's; while Core's view lets no key be held, or
+    /// counted as a further press; while Core's view lets no key be held, or
     /// for Verbatim's own key, a gesture gets no mask.
     #[test]
     fn auto_repeat_is_masked_and_no_mask_without_the_view_or_for_own_keys() {
@@ -2265,7 +2250,7 @@ mod tests {
         let repeat = m.on_key(masking(HoldPermit::Defer, down(HOME, true), START + ms(33)));
         assert_eq!(
             (repeat.emitted.map(|raised| raised.repeat), repeat.mask),
-            (Some(0), Some((3, 4)))
+            (Some(1), Some((3, 4)))
         );
         let mut m = machine(DecisionConfig::default(), &["kb:verbatim+alt+home"]);
         for event in [down(ALT, false), down(INSERT, true)] {

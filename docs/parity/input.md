@@ -22,11 +22,11 @@ which implements this.
 ### Script repeat counting
 
 NVDA: `scriptHandler` counts each run of the
-same script within the multi-press timeout, and forgets the last script
-when an unbound gesture comes between. Verbatim: **matched
-(unverified)**, including the reset on an unbound key. Different,
-deliberately: auto-repeat of a held key is not counted as presses, so
-holding a key never turns into a double press; NVDA counts it.
+same script within the multi-press timeout, an auto-repeat of a held
+key among them, and forgets the last script when an unbound gesture
+comes between. Verbatim: **matched (unverified)**, including the reset
+on an unbound key and auto-repeats counted as presses, each measured
+from the one before, for every command (Dickson, 2026-11-21).
 ### A command pressed while a caret key is held
 
 NVDA runs scripts one at a time in the order queued
