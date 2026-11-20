@@ -1290,7 +1290,6 @@ impl ReducerThread<'_> {
             // consumes the rest, and hands none of them on.
             OutpostToCore::Answer(_)
             | OutpostToCore::Tell(_)
-            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::SpareReady { .. } => {}
@@ -2361,9 +2360,6 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 active_synth: Some(settings_host.active_synthesizer().id.0),
                 outposts,
                 ready,
-                // The live re-read is gone (ADR 0003); version 4's
-                // status reply keeps the count, always zero.
-                live_re_reads: 0,
             }
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),

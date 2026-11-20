@@ -35,10 +35,11 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
     if facts.window.class != TOAST_WINDOW || !native(tell) {
         return;
     }
-    let id = toast_id(&kept.runtime_id.0);
+    let id = ToastId(kept.runtime_id.clone());
     if cx
         .facts()
         .last_toast
+        .as_ref()
         .is_some_and(|last| last.id == id && tell.at_us.saturating_sub(last.at_us) < REPEAT_US)
     {
         return;
@@ -85,18 +86,4 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement) {
         &snapshot,
         SpeechPriority::Queued,
     ));
-}
-
-/// A toast's identity, a hash of its runtime id, which Core compares with
-/// the last toast's to drop a repeat.
-fn toast_id(runtime_id: &[i32]) -> ToastId {
-    // FNV-1a over the runtime id's parts.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for part in runtime_id {
-        for byte in part.to_le_bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    ToastId(hash)
 }

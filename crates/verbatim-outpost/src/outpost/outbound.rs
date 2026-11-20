@@ -440,10 +440,7 @@ mod tests {
         outbound.send(answer(1));
         outbound.send(ended(2, ""));
         outbound.send(answer(1));
-        outbound.urgent(Urgent::Pong {
-            parked_count: 0,
-            parked_on_hung: 0,
-        });
+        outbound.urgent(Urgent::Pong { parked_count: 0 });
         assert_eq!(read(&mut reader), large());
         assert!(
             matches!(read(&mut reader), OutpostToCore::Pong { .. }),
@@ -468,10 +465,7 @@ mod tests {
         outbound.send(answer(1));
         outbound.send(OutpostToCore::IdleAnswer { round: 4 });
         outbound.send(answer(2));
-        outbound.urgent(Urgent::Pong {
-            parked_count: 0,
-            parked_on_hung: 0,
-        });
+        outbound.urgent(Urgent::Pong { parked_count: 0 });
         assert_eq!(read(&mut reader), large());
         assert!(
             matches!(read(&mut reader), OutpostToCore::Pong { .. }),

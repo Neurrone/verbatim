@@ -1820,7 +1820,6 @@ fn an_executed_focus_is_the_control_planes_focus_change() {
                 ancestors: vec![msaa_node(1, "Editor", Role::Window)],
                 text: Some(Box::new(verbatim_model::FocusText::NotRead)),
                 earlier: None,
-                group: None,
             },
         }]
     );

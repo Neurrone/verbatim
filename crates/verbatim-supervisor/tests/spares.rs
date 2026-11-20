@@ -286,7 +286,6 @@ fn stand_in(args: &[String]) -> ! {
             Ok(Some(_)) if mute => {}
             Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
-                parked_on_hung: 0,
                 written_at_us: 0,
             }),
             Ok(Some(CoreToOutpost::Assign { target_pid })) => {
@@ -315,15 +314,13 @@ fn listener_stand_in(
     };
     send(&ListenerToCore::Ready {
         outpost_pid: Pid(std::process::id()),
-        target_pid: Pid(0),
     });
     loop {
         match read_message::<_, CoreToListener>(commands) {
             Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
-            Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
-                parked_count: 0,
-                written_at_us: 0,
-            }),
+            Ok(Some(CoreToListener::Ping { .. })) => {
+                send(&ListenerToCore::Pong { written_at_us: 0 });
+            }
             Ok(Some(CoreToListener::IdleQuery { round })) => {
                 send(&ListenerToCore::IdleAnswer { round });
             }

@@ -393,7 +393,6 @@ fn history_above_the_start_core_names_is_read_by_place() {
             ]
             .concat(),
             above: 2,
-            read: 0,
         }
     );
     terminal.outpost.settled();

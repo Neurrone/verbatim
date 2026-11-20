@@ -571,7 +571,6 @@ pub fn snapshot_of(
         started_ms: read.at_ms,
         ended_ms: read.at_ms,
         waited,
-        read: 0,
         colours: colours.map(|rows| {
             rows.iter()
                 .map(|runs| {
@@ -668,7 +667,6 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
         started_ms: _,
         ended_ms: _,
         waited,
-        read: _,
         colours,
         caret: _,
     } = snapshot;

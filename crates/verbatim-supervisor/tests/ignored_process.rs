@@ -77,15 +77,13 @@ fn stand_in(args: &[String]) -> ! {
         };
         send(&ListenerToCore::Ready {
             outpost_pid: Pid(std::process::id()),
-            target_pid: Pid(0),
         });
         let told = value(args, "--ignore-pids").is_some();
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
-                Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
-                    parked_count: 0,
-                    written_at_us: 0,
-                }),
+                Ok(Some(CoreToListener::Ping { .. })) => {
+                    send(&ListenerToCore::Pong { written_at_us: 0 });
+                }
                 Ok(Some(CoreToListener::Shutdown) | None) => {
                     std::process::exit(if told { 0 } else { 3 })
                 }
@@ -108,7 +106,6 @@ fn stand_in(args: &[String]) -> ! {
         match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
-                parked_on_hung: 0,
                 written_at_us: 0,
             }),
             Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),

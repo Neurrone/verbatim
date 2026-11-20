@@ -101,9 +101,7 @@ The rules for the edge cases, each with its reason:
 
 `verbatim-uia` and `verbatim-ia2` count calls per thread at the call. An
 outpost's worker is the only thread that calls into the application, so
-its count is exactly its current entry's; it travels in the published
-event's or reply's timing, and `verbatim-inspect latency` prints it with
-the outpost read stage. A dialog's
+its count is exactly its current entry's. A dialog's
 text is gathered on the worker's own client, its calls counted with the
 rest of its program's.
 
@@ -176,27 +174,14 @@ only.
 - The end-to-end suite calibrates against each scenario's target and
   reports each stage as a ratio, saved with its artifacts. It is a report,
   not a gate.
-- `verbatim-inspect latency` prints each stage's time and the outpost
-  read's calls by kind; it has no calibrated per-call cost, so it says the
-  floor needs calibration instead of printing a ratio.
 
 ## verbatim.exe's relay
 
 Every fact the listener sees and every request Core makes passes through
-verbatim.exe, so its share is a stage of its own in the latency line
-(`docs/design/communication.md`, section 10.1; `books/dev/src/how-to/inspect.md`
-lists the stages). Budget: verbatim.exe's own stage at most 1 to 2 ms,
+verbatim.exe. Budget: verbatim.exe's own share at most 1 to 2 ms,
 and its added hop no worse than the platform's floor for crossing
 processes, every exception attributed.
 
-- Its own time is measured on its monotonic clock alone, from taking a
-  fact in or queuing a request to its relay thread beginning the write,
-  and travels as a duration (`EventTiming::core_relay_us`), so it does not
-  depend on clocks agreeing across processes. The spans either side use
-  the clock every process shares (`verbatim_process::clock`).
-- On the way back the relay stamps when it read each outpost frame, and
-  the reducer parses it, separating the pipe from the wait for the
-  reducer.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
   messages. A terminal read's answer carries its text and colours in the

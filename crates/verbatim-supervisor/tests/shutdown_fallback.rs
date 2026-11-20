@@ -57,7 +57,6 @@ fn stuck_child(args: &[String]) -> ! {
         &mut messages,
         &ListenerToCore::Ready {
             outpost_pid: Pid(std::process::id()),
-            target_pid: Pid(0),
         },
     )
     .expect("Ready is written");

@@ -2,8 +2,7 @@
 //! and the outposts, and the types they carry (milestone M4.4,
 //! `books/dev/src/explanation/design/ownership.md`): one enum for each direction and
 //! role ([`CoreToOutpost`], [`CoreToListener`], [`OutpostToCore`] and
-//! [`ListenerToCore`]), each variant of a declared kind ([`Kind`]). The
-//! framing that carries them on the pipes is the outpost crate's own;
+//! [`ListenerToCore`]). The framing that carries them on the pipes is the outpost crate's own;
 //! these are pure data, and their methods pure functions of it.
 
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -15,13 +14,11 @@ pub use responder::Responder;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CallCounts, NodeDetails, NodeId, OutpostId, Pid, Role, StateSet, TextReply, TreeNode};
+use crate::{NodeDetails, NodeId, OutpostId, Pid, Role, StateSet, TextReply, TreeNode};
 /// When an event reached each point on its way through the listener and
-/// the outpost, for the latency log Core writes for every announcement:
-/// microseconds since the Unix epoch, 0 for a point it did not pass. Also
-/// the cross-process calls the outpost made for it.
+/// the outpost: microseconds since the Unix epoch, 0 for a point it did not
+/// pass.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct EventTiming {
     /// How many milliseconds before it was observed Windows raised the
     /// event; only `WinEvents` carry the time they were raised.
@@ -41,57 +38,10 @@ pub struct EventTiming {
     /// fact to verbatim.exe's pipe, taken just before the frame is encoded;
     /// 0 for anything the listener did not send.
     pub listener_written_at_us: u64,
-    /// When the outpost received it from Core, for an event the listener
-    /// observed.
-    pub relayed_at_us: u64,
-    /// When the outpost's worker took it from its queue.
-    pub dequeued_at_us: u64,
-    /// When the evidence that answered a caret key's watch, after its first
-    /// check found none, was taken from the outpost's queue
-    /// (`TextOp::Key`); 0 for anything else.
-    pub awaited_at_us: u64,
-    /// When the outpost's worker published the resulting event or reply,
-    /// queuing it for the outpost's writer.
-    pub published_at_us: u64,
-    /// When the outpost's writer began writing the message carrying this
-    /// timing to verbatim.exe's pipe, taken just before the message is
-    /// encoded; 0 until then.
-    pub written_at_us: u64,
-    /// The cross-process calls the outpost's worker made between taking the
-    /// entry from its queue and publishing this message, by kind
-    /// (`books/dev/src/reference/performance.md`). Zero from the listener, which makes none, and
-    /// from an older peer.
-    pub calls: CallCounts,
-    /// The part of `calls` a caret key's watch made in the checks that found
-    /// no evidence, before `awaited_at_us`.
-    pub awaited_calls: CallCounts,
-    /// When verbatim.exe took in what it relayed to the outpost: for a
-    /// listener's fact, when its relay thread took the read's completion;
-    /// for a request Core made, when the request was queued for the
-    /// outpost (`docs/design/communication.md`, section 10.1). 0 for an event the
-    /// outpost observed itself.
-    pub core_received_at_us: u64,
-    /// How long verbatim.exe held it, in microseconds, measured on one
-    /// clock in verbatim.exe from `core_received_at_us`'s moment to the
-    /// moment its relay thread began encoding it for the write to the
-    /// outpost; the time waiting in the outpost's command queue counts, and
-    /// so does `core_held_us`.
-    pub core_relay_us: u64,
-    /// The part of `core_relay_us` a listener's fact was held while its
-    /// outpost started, before the outpost said it was ready; 0 for a fact
-    /// delivered at once.
-    pub core_held_us: u64,
-    /// `core_received_at_us` plus `core_relay_us`: when verbatim.exe
-    /// relayed it, on the clock the other stamps share.
-    pub core_sent_at_us: u64,
-    /// When verbatim.exe read the outpost's message carrying this timing
-    /// off the outpost's pipe, parsed; 0 until then.
-    pub core_read_at_us: u64,
 }
 
 /// The time from the stamp `from_us` to the stamp `to_us`, in
-/// microseconds, or `None` when either is 0, a point not stamped (a message
-/// from an older peer).
+/// microseconds, or `None` when either is 0, a point not stamped.
 #[must_use]
 pub fn hop_us(from_us: u64, to_us: u64) -> Option<u64> {
     (from_us != 0 && to_us != 0).then(|| to_us.saturating_sub(from_us))
@@ -122,50 +72,6 @@ pub struct UiaSnapshotFact {
     pub details: NodeDetails,
 }
 
-/// One raw-view ancestor of a UIA focus, as the focus listener read it from
-/// the event's own element: its cached parts, its own native window handle
-/// (0 for an element that is not a window), and whether UIA counts it both
-/// a control and content. The outpost filters what it reports from these
-/// and finds its own elements by the runtime ids below a window
-/// (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element").
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UiaAncestorFact {
-    /// The ancestor's cached parts.
-    pub snapshot: UiaSnapshotFact,
-    /// Its own native window handle, or 0.
-    pub hwnd: isize,
-    /// Whether it is both a control and content element.
-    pub content: bool,
-}
-
-/// Where the chain above a UIA focus read's ancestors goes on, as the
-/// listener's walk ended (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"). The
-/// listener connects to no
-/// window, so it names the window and the outpost of the focus's
-/// application goes on from it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AncestorsEnd {
-    /// The ancestors reach the desktop root, the process boundary, or a
-    /// known ancestor, and the rest as read before: the outpost goes on
-    /// above the boundary, or from a window it reads through MSAA.
-    #[default]
-    Top,
-    /// A step to a parent failed or found none below the root: the chain
-    /// goes on from this window's own object, the parent window of the
-    /// outermost ancestor's nearest window, as NVDA's parent read falls
-    /// back to the window hierarchy (`Window._get_parent`); 0 for none. Or
-    /// a step reached this window, a ghost's or a hung application's,
-    /// other than the nearest window: the chain goes on from it, which the
-    /// outpost reads as a plain window, as NVDA does after that one step.
-    ContinueFrom(isize),
-    /// The walk was cut by the read's budget or its depth limit: the chain
-    /// is completed by plain windows from this window, included: the
-    /// outermost ancestor's nearest window, or its parent window when that
-    /// ancestor is the window's own element
-    /// ([`verbatim_uia::plain_windows_start`]).
-    PlainFrom(isize),
-}
-
 /// Messages from verbatim.exe to an outpost.
 ///
 /// An outpost's target application is set once (decision D9: one
@@ -178,7 +84,6 @@ pub enum CoreToOutpost {
     Ping {
         /// When verbatim.exe began writing this command, in microseconds
         /// since the Unix epoch ([`CoreToOutpost::stamp_sent`]).
-        #[serde(default)]
         sent_at_us: u64,
     },
     /// The nodes from this outpost that Core still holds
@@ -195,7 +100,6 @@ pub enum CoreToOutpost {
         /// (`SrState::held_anchors` in `verbatim-core`): the outpost keeps
         /// these, and may forget any other once it has minted newer ones
         /// (the text protocol, `books/dev/src/reference/crates/verbatim-model.md`).
-        #[serde(default)]
         anchors: Vec<u64>,
         /// The position of the last message Core has handled.
         acknowledged: u64,
@@ -269,20 +173,6 @@ impl CoreToOutpost {
             0
         }
     }
-
-    /// What kind of message this is.
-    #[must_use]
-    pub fn kind(&self) -> Kind {
-        match self {
-            CoreToOutpost::Request(_)
-            | CoreToOutpost::Cancel(_)
-            | CoreToOutpost::IdleQuery { .. } => Kind::Ask,
-            CoreToOutpost::NodesHeld { .. } | CoreToOutpost::WindowDestroyed(_) => Kind::Release,
-            CoreToOutpost::Assign { .. } | CoreToOutpost::Ping { .. } | CoreToOutpost::Shutdown => {
-                Kind::Lifecycle
-            }
-        }
-    }
 }
 
 /// Messages from verbatim.exe to the focus listener.
@@ -301,7 +191,6 @@ pub enum CoreToListener {
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch
         /// ([`CoreToListener::stamp_sent`]).
-        #[serde(default)]
         sent_at_us: u64,
     },
     /// The harness's idle barrier, round `round`
@@ -380,21 +269,6 @@ impl CoreToListener {
             | CoreToListener::Configuration { .. } => 0,
         }
     }
-
-    /// What kind of message this is.
-    #[must_use]
-    pub fn kind(&self) -> Kind {
-        match self {
-            CoreToListener::IdleQuery { .. }
-            | CoreToListener::Request(_)
-            | CoreToListener::Cancel(_) => Kind::Ask,
-            CoreToListener::ApplicationExited { .. }
-            | CoreToListener::Ping { .. }
-            | CoreToListener::Shutdown => Kind::Lifecycle,
-            CoreToListener::ElementsHeld { .. } => Kind::Release,
-            CoreToListener::Configuration { .. } => Kind::Configuration,
-        }
-    }
 }
 
 /// Messages from an outpost to verbatim.exe.
@@ -412,35 +286,12 @@ pub enum OutpostToCore {
     /// Answer to [`CoreToOutpost::Ping`].
     Pong {
         /// How many of this outpost's workers have been abandoned and have
-        /// not yet returned, but for those parked on a window the outpost
-        /// judged hung ([`Self::Pong::parked_on_hung`]): Core's generation
-        /// record ends an outpost that piles them up.
+        /// not yet returned: Core's generation record ends an outpost that
+        /// piles them up.
         parked_count: usize,
-        /// How many of this outpost's workers were abandoned when the
-        /// outpost judged their window hung and have not yet returned,
-        /// which Core does not count against it: each hung window
-        /// holds at most one, since every later program on it answers at
-        /// its check before its first call.
-        #[serde(default)]
-        parked_on_hung: usize,
         /// When the writer began writing this pong to verbatim.exe's pipe,
-        /// in microseconds since the Unix epoch; 0 from an older peer.
-        #[serde(default)]
+        /// in microseconds since the Unix epoch.
         written_at_us: u64,
-    },
-    /// A window of the outpost's application began a hang: the outpost's
-    /// one judge of a hung window found it hung, and the outpost remembers
-    /// it as the window told until it is judged not hung, is readable in
-    /// front, is destroyed, or the outpost ends. Sent once per hang of the
-    /// application: a window met hung while the told window is still hung
-    /// sends nothing, and one still hung after the told window recovers is
-    /// a new hang, told when next seen. Sent in order with the outpost's
-    /// events, after the reply of a commit that named the window hung; Core
-    /// plays the "not responding" sound for it only when the window's
-    /// application holds attention as it arrives.
-    NotResponding {
-        /// The window that stopped responding.
-        window: isize,
     },
     /// A backend error worth reporting without dying — a failed event
     /// registration, an arbitration probe that keeps timing out.
@@ -483,9 +334,6 @@ pub enum ListenerToCore {
     Ready {
         /// The listener's own process id.
         outpost_pid: Pid,
-        /// A sentinel, 0: the listener has no target application. Only
-        /// logged.
-        target_pid: Pid,
     },
     /// The listener's answer to [`CoreToListener::ApplicationExited`]: it
     /// has moved `pid`'s record, so the supervisor closes the process's
@@ -504,7 +352,6 @@ pub enum ListenerToCore {
         /// When the listener observed it and queued it, and when its writer
         /// began writing this message; verbatim.exe logs the listener's
         /// stages from them.
-        #[serde(default)]
         timing: EventTiming,
     },
     /// A window came to the system's foreground: the only report of one,
@@ -525,15 +372,12 @@ pub enum ListenerToCore {
         /// The window.
         window: isize,
         /// The top of its owner chain (`GetAncestor` with `GA_ROOTOWNER`).
-        #[serde(default)]
         root_owner: isize,
         /// The process its facts go to: its owner, or for a console window
         /// whose thread an event named, the console host.
-        #[serde(default)]
         process: u32,
         /// When the listener's callback observed the event that sent it,
         /// in microseconds on the run's shared clock.
-        #[serde(default)]
         observed_at_us: u64,
         /// The thread that raised its event, the console host's own for a
         /// console window; 0 for a console window whose thread no event
@@ -574,11 +418,8 @@ pub enum ListenerToCore {
     Answer(crate::request::Answer),
     /// Answer to [`CoreToListener::Ping`].
     Pong {
-        /// Always 0: the listener abandons no workers.
-        parked_count: usize,
         /// When the writer began writing this pong to verbatim.exe's pipe,
         /// in microseconds since the Unix epoch.
-        #[serde(default)]
         written_at_us: u64,
     },
     /// A fault worth reporting without dying, logged by verbatim.exe.
@@ -595,21 +436,6 @@ pub enum ListenerToCore {
 }
 
 impl OutpostToCore {
-    /// What kind of message this is.
-    #[must_use]
-    pub fn kind(&self) -> Kind {
-        match self {
-            OutpostToCore::IdleAnswer { .. } | OutpostToCore::Answer(_) => Kind::Answer,
-            OutpostToCore::Tell(_)
-            | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. } => Kind::Report,
-            OutpostToCore::Ready { .. }
-            | OutpostToCore::SpareReady { .. }
-            | OutpostToCore::TargetExited
-            | OutpostToCore::Pong { .. } => Kind::Lifecycle,
-        }
-    }
-
     /// Whether this message counts toward the message positions that
     /// [`CoreToOutpost::NodesHeld`] acknowledges: an answer with a result,
     /// the message that carries node ids. The outpost and Core count the
@@ -627,7 +453,6 @@ impl OutpostToCore {
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Tell(_)
             | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => false,
         }
@@ -652,7 +477,6 @@ impl OutpostToCore {
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => {}
         }
@@ -671,7 +495,6 @@ impl OutpostToCore {
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
-            | OutpostToCore::NotResponding { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => {}
         }
@@ -817,22 +640,6 @@ impl ListenerToCore {
         self.carried_token().is_some()
     }
 
-    /// What kind of message this is.
-    #[must_use]
-    pub fn kind(&self) -> Kind {
-        match self {
-            ListenerToCore::IdleAnswer { .. } | ListenerToCore::Answer(_) => Kind::Answer,
-            ListenerToCore::Fault { .. }
-            | ListenerToCore::Progress { .. }
-            | ListenerToCore::Foreground { .. }
-            | ListenerToCore::Destroyed { .. }
-            | ListenerToCore::Tell(_) => Kind::Report,
-            ListenerToCore::Ready { .. }
-            | ListenerToCore::Pong { .. }
-            | ListenerToCore::ExitHandled { .. } => Kind::Lifecycle,
-        }
-    }
-
     /// Records, in the timing the message carries, when its writer began
     /// writing it to verbatim.exe's pipe: a bar's change's
     /// (`EventTiming::listener_written_at_us`), or a pong's. Nothing for
@@ -855,32 +662,6 @@ impl ListenerToCore {
     }
 }
 
-/// What kind of message a variant of a direction enum is
-/// (`books/dev/src/explanation/design/ownership.md`), as its
-/// `kind` method says, one exhaustive match per enum, so a new variant is
-/// given a kind where it is added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// The asking half of a query, answered once: a query, its withdrawal
-    /// (answered by the query's own reply), and the idle barrier's query.
-    Ask,
-    /// The answering half of a query.
-    Answer,
-    /// Something observed, which the receiver judges.
-    Report,
-    /// What the receiver may let go of: the nodes Core holds.
-    Release,
-    /// A generation's life: its start, readiness, liveness, hand-over and
-    /// end, each from one ordered path per generation, the owner thread's
-    /// writer or the child's own pipe.
-    Lifecycle,
-    /// What the receiver judges its own reads under, set by Core alone: a
-    /// user setting a reader needs before a call, sent at its launch and on
-    /// every change (`books/dev/src/explanation/design/ownership.md`, "No
-    /// back-channel").
-    Configuration,
-}
-
 /// A message an outpost sends ahead of everything waiting in its outbound
 /// queue: none carries a node, so none can skip the outpost's numbering of
 /// the messages that do ([`OutpostToCore::carries_nodes`]).
@@ -888,11 +669,8 @@ pub enum Kind {
 pub enum Urgent {
     /// [`OutpostToCore::Pong`].
     Pong {
-        /// How many of the outpost's workers are abandoned, but for those
-        /// parked on a window it judged hung.
+        /// How many of the outpost's workers are abandoned.
         parked_count: usize,
-        /// How many are parked on a window it judged hung.
-        parked_on_hung: usize,
     },
     /// [`OutpostToCore::Ready`].
     Ready {
@@ -913,12 +691,8 @@ pub enum Urgent {
 impl From<Urgent> for OutpostToCore {
     fn from(urgent: Urgent) -> Self {
         match urgent {
-            Urgent::Pong {
+            Urgent::Pong { parked_count } => OutpostToCore::Pong {
                 parked_count,
-                parked_on_hung,
-            } => OutpostToCore::Pong {
-                parked_count,
-                parked_on_hung,
                 written_at_us: 0,
             },
             Urgent::Ready {

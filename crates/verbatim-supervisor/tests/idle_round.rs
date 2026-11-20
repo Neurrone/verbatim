@@ -101,7 +101,6 @@ fn stand_in(args: &[String]) -> ! {
         match command {
             CoreToOutpost::Ping { .. } => send(&OutpostToCore::Pong {
                 parked_count: 0,
-                parked_on_hung: 0,
                 written_at_us: 0,
             }),
             CoreToOutpost::Shutdown => std::process::exit(0),
@@ -136,7 +135,6 @@ fn listener_stand_in(
     };
     send(&ListenerToCore::Ready {
         outpost_pid: Pid(std::process::id()),
-        target_pid: Pid(0),
     });
     loop {
         let command = match read_message::<_, CoreToListener>(commands) {
@@ -145,10 +143,7 @@ fn listener_stand_in(
             Err(error) => panic!("the command pipe failed: {error}"),
         };
         match command {
-            CoreToListener::Ping { .. } => send(&ListenerToCore::Pong {
-                parked_count: 0,
-                written_at_us: 0,
-            }),
+            CoreToListener::Ping { .. } => send(&ListenerToCore::Pong { written_at_us: 0 }),
             CoreToListener::Shutdown => std::process::exit(0),
             CoreToListener::IdleQuery { round: 1 } => {
                 drop(messages.borrow_mut().take());

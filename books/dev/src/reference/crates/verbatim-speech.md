@@ -233,7 +233,7 @@ Public API:
   character; and an index mark (`SegmentContent::Mark`) as a mark item
   where it stands, which is how the reducer's marks reach the mixer, which
   reports them as they are played (`SpeechEvents::mark_reached`; the shell
-  turns each into `Input::MarkReached` for say-all). A span that is an
+  turns each into `QueueInput::MarkReached` for say-all). A span that is an
   indication (`verbatim_model::Indication::of_segment`: roles, states,
   descriptions, shortcuts, positions, levels, formatting, "blank",
   skipped lines) is reported as the theme says: nothing for off; its

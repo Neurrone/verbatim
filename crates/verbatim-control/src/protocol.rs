@@ -1,10 +1,5 @@
-//! Control-plane protocol v4: v3 with Core's count of live re-reads in the
-//! status reply ([`StatusInfo::live_re_reads`]); v3 was v2 without the
-//! injected gesture, whose keys a client now presses with
-//! [`Request::SendKeys`], and with [`Request::OpenMenu`]; v2 added the end-to-end harness's barrier
-//! ([`Request::AwaitIdle`], [`Frame::InputHandled`]) and Core's focus
-//! report ([`Request::DumpFocus`]); v1 added each latency timeline's stages
-//! and cross-process call counts ([`LatencyRecord::stages`]).
+//! Control-plane protocol v5 ([`PROTOCOL_VERSION`] gives each version's
+//! change).
 //!
 //! Newline-delimited compact JSON over the named pipe
 //! `\\.\pipe\verbatim-control`. Clients send [`RequestEnvelope`]s; the
@@ -19,8 +14,8 @@ use std::io::{self, BufRead, Write};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Backend, CallCounts, NodeSnapshot, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding,
-    UtteranceId, WindowFacts,
+    Backend, NodeSnapshot, NormalizedEvent, Pid, TraceId, TreeNode, UtteranceEnding, UtteranceId,
+    WindowFacts,
 };
 
 /// The protocol version this vocabulary defines. Version 1 added
@@ -28,9 +23,11 @@ use verbatim_model::{
 /// Version 2 added [`Request::AwaitIdle`], [`Request::DumpFocus`], and
 /// [`Frame::InputHandled`]. Version 3 removed the request that injected a
 /// gesture into the keyboard hook's thread, and added
-/// [`Request::OpenMenu`]. Version 4 added [`StatusInfo::live_re_reads`],
-/// read as 0 from an older peer.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// [`Request::OpenMenu`]. Version 4 added the status reply's count of live
+/// re-reads. Version 5 removed that count, the latency stages no timeline
+/// produced with their call counts, and the event stream's variants and
+/// fields no event carried.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// The pipe name clients connect to.
 pub const PIPE_NAME: &str = r"\\.\pipe\verbatim-control";
@@ -306,12 +303,6 @@ pub struct StatusInfo {
     /// waits for this rather than for a fixed time.
     #[serde(default)]
     pub ready: bool,
-    /// How many live re-reads Core has asked for since it started: each a
-    /// focus report set aside because it would have spoken an ancestor its
-    /// focus reader took from its ancestry cache, and read again live. Read
-    /// only; 0 from a peer of version 3 or older.
-    #[serde(default)]
-    pub live_re_reads: u64,
 }
 
 /// Status of one outpost.
@@ -349,10 +340,9 @@ pub struct LatencyRecord {
     pub speech_queued_at_ms: Option<u64>,
     /// When the first audio buffer reached the device.
     pub audio_started_at_ms: Option<u64>,
-    /// How long each stage the timeline passed took, in pipeline order,
-    /// with the cross-process calls made in it for the stages that make them
-    /// (a caret key's wait for evidence, and the outpost's read). A stage the timeline did not pass, or has not
-    /// reached yet, is left out. Empty from a v0 peer.
+    /// How long each stage the timeline passed took, in pipeline order. A
+    /// stage the timeline did not pass, or has not reached yet, is left
+    /// out. Empty from a v0 peer.
     #[serde(default)]
     pub stages: Vec<LatencyStage>,
 }
@@ -364,10 +354,6 @@ pub struct LatencyStage {
     pub kind: LatencyStageKind,
     /// How long it took, in microseconds.
     pub duration_us: u64,
-    /// The cross-process calls made in it, by kind, for the stages that make
-    /// them (the caret wait and the outpost read); `None` for every other
-    /// stage.
-    pub calls: Option<CallCounts>,
 }
 
 /// The stages of a latency timeline, in pipeline order (architecture
@@ -376,90 +362,9 @@ pub struct LatencyStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum LatencyStageKind {
-    /// From Windows raising the event to the listener or outpost observing
-    /// it; only `WinEvents` carry the time they were raised.
-    Windows,
     /// From the keyboard hook seeing a caret key to the reducer having
     /// handled it and asked the outpost for the caret.
     HookToCore,
-    /// From the listener observing a focus to its outpost receiving it, for
-    /// a timeline without verbatim.exe's relay stamps; one with them has
-    /// [`ListenerToRelay`](Self::ListenerToRelay) and the stages after it
-    /// instead.
-    ListenerToOutpost,
-    /// From the reducer asking an outpost (a caret key's watch, a command's
-    /// query) to the outpost receiving the request, for a timeline without
-    /// verbatim.exe's relay stamps; one with them has
-    /// [`RequestToRelay`](Self::RequestToRelay) and the stages after it
-    /// instead.
-    CoreToOutpost,
-    /// From the listener observing a focus to verbatim.exe's relay thread
-    /// taking it off the listener's pipe: the listener's read, queue and
-    /// writer, the pipe, and the relay thread's wake. For a timeline
-    /// without the listener's write stamp; one with it has
-    /// [`ListenerHandling`](Self::ListenerHandling),
-    /// [`ListenerQueue`](Self::ListenerQueue) and
-    /// [`ListenerPipe`](Self::ListenerPipe) instead.
-    ListenerToRelay,
-    /// From the listener observing the event to its having handled the
-    /// fact: for a fact a reading thread judges (a UIA focus or menu
-    /// opening, a selection, a notification), the reading thread's queue
-    /// and its cross-process read or check; for any other (a `WinEvent`'s
-    /// fact, a marker), the callback's own work until the fact is queued.
-    ListenerHandling,
-    /// From the listener having handled the fact (or, for a timeline
-    /// without that stamp, from its observing the event) to its writer
-    /// beginning the frame's write: the listener's outbound queue and its
-    /// writer's wake.
-    ListenerQueue,
-    /// From the listener's writer beginning the frame's write to
-    /// verbatim.exe's relay thread taking it off the listener's pipe: the
-    /// encoding, the pipe, and the relay thread's wake.
-    ListenerPipe,
-    /// From the reducer having handled the input to the request being
-    /// queued for the outpost: the reducer's other effects before it.
-    RequestToRelay,
-    /// A listener's fact held in verbatim.exe while its outpost started,
-    /// until the outpost said it was ready; reported apart from the relay.
-    OutpostStart,
-    /// verbatim.exe's own time relaying it: from taking it in to its relay
-    /// thread beginning the write to the outpost, measured on one clock in
-    /// verbatim.exe, the time any earlier command to the same outpost took
-    /// to write included, and the outpost's start not.
-    Relay,
-    /// From verbatim.exe's relay thread beginning the write to the outpost
-    /// receiving it: the encoding, the pipe, and the outpost reader's wake.
-    RelayToOutpost,
-    /// Waiting in the outpost's queue.
-    OutpostQueue,
-    /// A caret key's watch for evidence that the key did something, open
-    /// while the outpost's worker handled everything else, until the event
-    /// that brought the evidence was taken from the queue.
-    CaretWait,
-    /// The outpost's worker reading the application: the stage that makes
-    /// cross-process calls (after the caret wait, for a caret key).
-    OutpostRead,
-    /// From the outpost publishing to Core receiving it, for a timeline
-    /// without verbatim.exe's read stamp; one with it has
-    /// [`OutpostToRelay`](Self::OutpostToRelay) and
-    /// [`ReducerWait`](Self::ReducerWait) instead.
-    ToCore,
-    /// From the outpost publishing to verbatim.exe's reader having read and
-    /// parsed the message: the outpost's writer, the pipe, and the reader.
-    /// For a timeline without the outpost's write stamp; one with it has
-    /// [`OutpostOutbound`](Self::OutpostOutbound) and
-    /// [`OutpostPipe`](Self::OutpostPipe) instead.
-    OutpostToRelay,
-    /// From the outpost's worker publishing to its writer beginning the
-    /// message's write: the outpost's outbound queue and its writer's wake.
-    OutpostOutbound,
-    /// From the outpost's writer beginning the message's write to
-    /// verbatim.exe's reader having read and parsed it: the encoding, the
-    /// pipe, and the reader.
-    OutpostPipe,
-    /// From verbatim.exe's reader having the message to the reducer taking
-    /// it: the reducer busy with what came before, not the relay.
-    ReducerWait,
     /// The reducer.
     Reducer,
     /// From the reducer to the speech queue.
@@ -499,26 +404,7 @@ impl LatencyStageKind {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Windows => "Windows",
             Self::HookToCore => "hook to Core",
-            Self::ListenerToOutpost => "listener to outpost",
-            Self::CoreToOutpost => "Core to outpost",
-            Self::ListenerToRelay => "listener to verbatim.exe",
-            Self::ListenerHandling => "listener handling",
-            Self::ListenerQueue => "listener queue",
-            Self::ListenerPipe => "listener's pipe to verbatim.exe",
-            Self::RequestToRelay => "reducer to verbatim.exe's relay",
-            Self::OutpostStart => "waiting for the outpost to start",
-            Self::Relay => "verbatim.exe",
-            Self::RelayToOutpost => "verbatim.exe to outpost",
-            Self::OutpostQueue => "outpost queue",
-            Self::CaretWait => "caret wait",
-            Self::OutpostRead => "outpost read",
-            Self::ToCore => "to Core",
-            Self::OutpostToRelay => "outpost to verbatim.exe",
-            Self::OutpostOutbound => "outpost outbound",
-            Self::OutpostPipe => "outpost's pipe to verbatim.exe",
-            Self::ReducerWait => "waiting for the reducer",
             Self::Reducer => "reducer",
             Self::ToSpeech => "to speech",
             Self::Synthesis => "synthesis",

@@ -175,7 +175,6 @@ fn answer(
         started_ms: 0,
         ended_ms: 0,
         waited: false,
-        read: 0,
         colours,
         caret: None,
     };

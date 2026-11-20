@@ -398,9 +398,9 @@ code is in `reduce.rs` unless named.
   decision D12 the name travels as a `Label` span and the value as a
   `Value` span, and every utterance carries its source node's role and
   rectangle (`UtteranceSource`). Each entered container is its own
-  utterance with a `FocusValidity` whose `had_focus` is false, which never
-  expires (`FocusValidity::holds`); the focus's own utterance carries
-  `had_focus` true and is dropped once the focus moves outside it.
+  utterance with no `FocusValidity`, which never expires; the focus's own
+  utterance carries one and is dropped once the focus moves outside it
+  (`FocusValidity::holds`).
 - Focus-ancestry context (`docs/parity/focus-context.md`, "Focus-ancestry
   context" and "Top-level windows in the ancestry"). A `FocusChanged`
   carries the ancestor chain, outermost first, complete to the desktop
@@ -571,10 +571,10 @@ code is in `reduce.rs` unless named.
 - Selections (same document, "Selection announcements" and "Selection in
   a list the focus controls"). A focus on a selection container is
   spoken without its selected item, as NVDA speaks it (Dickson,
-  2026-11-17); a `SelectionChanged` while focus
+  2026-11-17); a selection while focus
   stays on the container speaks each newly selected item once,
-  deduplicated against the focus's own child. A `ControlledSelection` is
-  spoken as a focus, interrupting, and moves the navigator, only while
+  deduplicated against the focus's own child. A selection in a list the
+  focus controls is spoken as a focus, interrupting, and moves the navigator, only while
   its controller is the live focus.
 - Progress bars (`docs/nvda/object-model.md`, "How a progress bar reports
   its value"): the listener's `Input::Progress` plays `Earcon::Progress`
@@ -985,15 +985,10 @@ it. `KeySeq::NONE_YET` is not recorded.
 ### Caret keys
 
 (`docs/nvda/editable-text-and-terminals.md`; `docs/parity/text.md`,
-"TextInfo-equivalent layer".) A report carrying
-`ReadFacts` that ended at or after the key was passed on, on the key's
-node, and shows the key's effect by `had_effect` is the key's evidence; a
-report with no effect, or one of another node, is ordinary, and its
-selection changes are held for after the key's words. At its bound Core
-asks one final read: if it shows an effect that is the evidence too, and
-otherwise the read is the bound answer, which says the key's unit as NVDA
-does for a key that moved nothing. The previous line and selection the
-key's words need travel in `Change::Compared`.
+"TextInfo-equivalent layer".) A caret key is answered by its outpost's
+watch (`TextOp::Watch`), which compares the application's caret with the
+key's starting read, judging the key's effect by `had_effect`, until its
+bound, and ends with its final read (`Watched`, `WatchedRead`).
 
 Each focus object holds one caret (`FocusContext::caret`). Core takes
 every report as the newest caret by when its read began

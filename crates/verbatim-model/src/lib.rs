@@ -68,10 +68,10 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, AlertOrigin, BarChange, Earcon, EarlierElement, Effect, FocusGroup, FocusTextKind,
-    ForegroundWindow, GuiRequest, HookForeground, Input, LockKey, NormalizedEvent, Notification,
-    NotificationKind, NotificationProcessing, Observed, Percent, Pid, PropertyChange, QueryKind,
-    ReviewCommand, Script, ToastId, WindowFacts, WindowHandle,
+    ActionName, BarChange, Earcon, EarlierElement, Effect, FocusTextKind, ForegroundWindow,
+    GuiRequest, HookForeground, Input, LockKey, NormalizedEvent, NotificationKind,
+    NotificationProcessing, Observed, Percent, Pid, PropertyChange, QueryKind, ReviewCommand,
+    Script, ToastId, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;
@@ -90,15 +90,15 @@ pub use terminal::{
     TerminalColourRun, TerminalMatch, TerminalScope, TerminalSnapshot, TerminalText,
 };
 pub use text::{
-    BulletStyle, CaretChanges, CaretKey, CaretMotion, CaretReport, CaretSelection, Change,
-    Compared, EditSelection, FocusText, FormatAttribute, FormatRun, FormatSet, HeldAnchors,
-    LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
-    MAX_SELECTION_TEXT_BYTES, ReadFacts, Selection, SelectionChange, SelectionDifference,
-    SelectionRead, SelectionReadReply, SentenceMove, SentenceMoved, Started, StartingRead,
-    StartingUnit, TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk,
-    TextDetails, TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider,
-    TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched,
-    WatchedRead, had_effect,
+    BulletStyle, CaretKey, CaretMotion, CaretReport, CaretSelection, Compared, EditSelection,
+    FocusText, FormatAttribute, FormatRun, FormatSet, HeldAnchors, LanguageRun, LineStyle,
+    MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
+    MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange, SelectionDifference, SelectionRead,
+    SelectionReadReply, SentenceMove, SentenceMoved, Started, StartingRead, StartingUnit,
+    TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails,
+    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
+    TextReadAhead, TextReply, TextThrough, TextUnit, Watch, WatchFinalRead, Watched, WatchedRead,
+    had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,

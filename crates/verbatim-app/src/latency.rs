@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
 use verbatim_model::protocol::EventTiming;
-use verbatim_model::{CallCounts, Indication, TraceId, UtteranceEnding, UtteranceId};
+use verbatim_model::{Indication, TraceId, UtteranceEnding, UtteranceId};
 use verbatim_process::clock::now_us;
 use verbatim_speech::{SpeechEvents, SynthTiming};
 
@@ -128,220 +128,41 @@ fn us_to_ms(us: u64) -> f64 {
     f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1_000.0
 }
 
-/// The calls in `total` that are not in `part`, by kind.
-fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
-    CallCounts {
-        uia: total.uia.saturating_sub(part.uia),
-        msaa: total.msaa.saturating_sub(part.msaa),
-        window_messages: total.window_messages.saturating_sub(part.window_messages),
-        connections: total.connections.saturating_sub(part.connections),
-    }
-}
-
-/// One stage of an announcement: its kind, its duration if the
-/// announcement passed it, and its cross-process calls where they count.
-type Stage = (LatencyStageKind, Option<u64>, Option<CallCounts>);
-
-/// The listener's stages, from its observing the event to verbatim.exe's
-/// relay taking the fact in. The listener's stamps on its handling's end
-/// and its write split the span into its handling, its queue, and the
-/// pipe; a timeline without the write stamp has the span whole.
-fn listener_to_relay(event: &EventTiming) -> [Stage; 4] {
-    let at = |us: u64| (us != 0).then_some(us);
-    let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
-    let observed = at(event.observed_at_us);
-    let handled = at(event.listener_handled_at_us);
-    let written = at(event.listener_written_at_us);
-    let received = at(event.core_received_at_us);
-    [
-        (
-            LatencyStageKind::ListenerToRelay,
-            written
-                .is_none()
-                .then(|| span(observed, received))
-                .flatten(),
-            None,
-        ),
-        (
-            LatencyStageKind::ListenerHandling,
-            span(observed, handled),
-            None,
-        ),
-        (
-            LatencyStageKind::ListenerQueue,
-            span(handled.or(observed), written),
-            None,
-        ),
-        (
-            LatencyStageKind::ListenerPipe,
-            span(written, received),
-            None,
-        ),
-    ]
-}
+/// One stage of an announcement: its kind, and its duration if the
+/// announcement passed it.
+type Stage = (LatencyStageKind, Option<u64>);
 
 impl Stages {
     /// How long each stage the announcement has passed took, in pipeline
-    /// order, with the cross-process calls of the caret wait and the
-    /// outpost read.
+    /// order.
     fn breakdown(&self) -> Vec<LatencyStage> {
-        self.to_outpost_read()
+        self.stages()
             .into_iter()
-            .chain(self.after_outpost_read())
-            .filter_map(|(kind, duration_us, calls)| {
+            .filter_map(|(kind, duration_us)| {
                 Some(LatencyStage {
                     kind,
                     duration_us: duration_us?,
-                    calls,
                 })
             })
             .collect()
     }
 
-    /// The stages from the operating system's event to the outpost's read,
-    /// each with its duration if the announcement passed it, and its calls.
-    fn to_outpost_read(&self) -> Vec<Stage> {
-        let event = self.event.unwrap_or_default();
-        let at = |us: u64| (us != 0).then_some(us);
+    /// Each stage, from the caret key to the first sound, with its duration
+    /// if the announcement passed it.
+    fn stages(&self) -> [Stage; 11] {
         let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
-        let observed = at(event.observed_at_us);
-        let relayed = at(event.relayed_at_us);
-        let received_by_outpost = relayed.or(observed);
-        let dequeued = at(event.dequeued_at_us);
-        let awaited = at(event.awaited_at_us);
-        let read_calls = calls_besides(event.calls, event.awaited_calls);
-        // verbatim.exe's relay stamps, on what it relayed to the outpost
-        // (`docs/design/communication.md`, section 10.1): with them, the span from
-        // the listener or the reducer to the outpost is split at
-        // verbatim.exe, and its own time is its own stage. A relay time of
-        // 0 is a real one, under a microsecond.
-        let relayed_by_core = at(event.core_received_at_us);
-        let relay = relayed_by_core.map(|_| event.core_relay_us);
-        let held = relay
-            .and_then(|_| at(event.core_held_us))
-            .map(|held| held.min(event.core_relay_us));
-        let published = at(event.published_at_us);
-        let mut stages: Vec<Stage> = vec![
-            (
-                LatencyStageKind::Windows,
-                event.raised_ms_ago.map(|ms| u64::from(ms) * 1_000),
-                None,
-            ),
+        [
             (
                 LatencyStageKind::HookToCore,
                 span(self.key_pressed, self.requested),
-                None,
-            ),
-            (
-                LatencyStageKind::ListenerToOutpost,
-                relayed_by_core
-                    .is_none()
-                    .then(|| span(observed, relayed))
-                    .flatten(),
-                None,
-            ),
-            // A request Core made, not an event it relayed from the
-            // listener, which the stage before covers.
-            (
-                LatencyStageKind::CoreToOutpost,
-                (observed.is_none() && relayed_by_core.is_none())
-                    .then(|| span(self.requested, relayed))
-                    .flatten(),
-                None,
-            ),
-        ];
-        stages.extend(listener_to_relay(&event));
-        stages.extend([
-            (
-                LatencyStageKind::RequestToRelay,
-                observed
-                    .is_none()
-                    .then(|| span(self.requested, relayed_by_core))
-                    .flatten(),
-                None,
-            ),
-            (LatencyStageKind::OutpostStart, held, None),
-            (
-                LatencyStageKind::Relay,
-                relay.map(|relay| relay - held.unwrap_or(0)),
-                None,
-            ),
-            (
-                LatencyStageKind::RelayToOutpost,
-                span(at(event.core_sent_at_us), relayed),
-                None,
-            ),
-            (
-                LatencyStageKind::OutpostQueue,
-                span(received_by_outpost, dequeued),
-                None,
-            ),
-            (
-                LatencyStageKind::CaretWait,
-                span(dequeued, awaited),
-                Some(event.awaited_calls),
-            ),
-            (
-                LatencyStageKind::OutpostRead,
-                span(awaited.or(dequeued), published),
-                Some(read_calls),
-            ),
-        ]);
-        stages
-    }
-
-    /// The stages from the outpost's read to the first sound, each with its
-    /// duration if the announcement passed it.
-    fn after_outpost_read(&self) -> Vec<Stage> {
-        let event = self.event.unwrap_or_default();
-        let at = |us: u64| (us != 0).then_some(us);
-        let span = |from: Option<u64>, to: Option<u64>| Some(to?.saturating_sub(from?));
-        let read_by_core = at(event.core_read_at_us);
-        let published = at(event.published_at_us);
-        // The outpost writer's stamp splits the span to verbatim.exe into
-        // the outpost's outbound queue and the pipe.
-        let written = at(event.written_at_us);
-        [
-            (
-                LatencyStageKind::ToCore,
-                read_by_core
-                    .is_none()
-                    .then(|| span(published, self.core_received))
-                    .flatten(),
-                None,
-            ),
-            (
-                LatencyStageKind::OutpostToRelay,
-                written
-                    .is_none()
-                    .then(|| span(published, read_by_core))
-                    .flatten(),
-                None,
-            ),
-            (
-                LatencyStageKind::OutpostOutbound,
-                span(published, written),
-                None,
-            ),
-            (
-                LatencyStageKind::OutpostPipe,
-                span(written, read_by_core),
-                None,
-            ),
-            (
-                LatencyStageKind::ReducerWait,
-                span(read_by_core, self.core_received),
-                None,
             ),
             (
                 LatencyStageKind::Reducer,
                 span(self.core_received, self.reduced),
-                None,
             ),
             (
                 LatencyStageKind::ToSpeech,
                 span(self.reduced.or(self.requested), self.queued),
-                None,
             ),
             (
                 LatencyStageKind::Synthesis,
@@ -349,45 +170,36 @@ impl Stages {
                     .is_none()
                     .then(|| span(self.synthesis_started, self.synthesizer_audio))
                     .flatten(),
-                None,
             ),
             (
                 LatencyStageKind::SynthRequest,
                 self.synth_timing.map(|timing| timing.request_us),
-                None,
             ),
             (
                 LatencyStageKind::ToHost,
                 self.synth_timing.map(|timing| timing.to_host_us),
-                None,
             ),
             (
                 LatencyStageKind::HostFirstChunk,
                 self.synth_timing.map(|timing| timing.first_chunk_us),
-                None,
             ),
             (
                 LatencyStageKind::HostReturn,
                 self.synth_timing.map(|timing| timing.return_us),
-                None,
             ),
             (
                 LatencyStageKind::LeadingSilence,
                 span(self.synthesizer_audio, self.audio_to_mixer),
-                None,
             ),
             (
                 LatencyStageKind::MixerAndDevice,
                 span(self.audio_to_mixer, self.audio_started),
-                None,
             ),
             (
                 LatencyStageKind::DeviceClock,
                 span(self.audio_started, self.audio_heard),
-                None,
             ),
         ]
-        .into()
     }
 
     /// The announcement's latency line, or `None` when it was not spoken.
@@ -397,7 +209,6 @@ impl Stages {
         let event = self.event.unwrap_or_default();
         let ms = |from: u64, to: u64| us_to_ms(to.saturating_sub(from));
         let observed = (event.observed_at_us != 0).then_some(event.observed_at_us);
-        let windows = event.raised_ms_ago.map_or(0.0, f64::from);
         // The trace's first point: the caret key, the event, the request
         // Core made, or the outpost's message reaching Core.
         let start = self
@@ -406,7 +217,7 @@ impl Stages {
             .or(self.requested)
             .or(self.core_received)
             .unwrap_or(queued);
-        let event_side = ms(start, queued) + windows;
+        let event_side = ms(start, queued);
         let started = self.synthesis_started.unwrap_or(queued);
         let waited = ms(queued, started);
         let speech_side = ms(started, heard);
@@ -415,18 +226,7 @@ impl Stages {
             stages
                 .iter()
                 .filter(|stage| stage.kind.is_event_side() == event_side)
-                .map(|stage| {
-                    let calls = stage
-                        .calls
-                        .filter(|calls| !calls.is_empty())
-                        .map(|calls| format!(" ({} calls)", calls.total()))
-                        .unwrap_or_default();
-                    format!(
-                        "{} {:.1}{calls}",
-                        stage.kind.label(),
-                        us_to_ms(stage.duration_us)
-                    )
-                })
+                .map(|stage| format!("{} {:.1}", stage.kind.label(), us_to_ms(stage.duration_us)))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -1044,11 +844,7 @@ mod tests {
             last_key: None,
             requested: None,
             event: Some(EventTiming {
-                raised_ms_ago: Some(1),
                 observed_at_us: 1_000,
-                relayed_at_us: 1_500,
-                dequeued_at_us: 2_000,
-                published_at_us: 9_000,
                 ..EventTiming::default()
             }),
             core_received: Some(9_300),
@@ -1068,10 +864,9 @@ mod tests {
         assert_eq!(
             stages.line().as_deref(),
             Some(
-                "12.5 ms for \"OK button\": 9.5 ms to speech and 3.0 ms to sound, \
+                "11.5 ms for \"OK button\": 8.5 ms to speech and 3.0 ms to sound, \
                  not counting 50.0 ms waiting behind earlier speech. \
-                 Event: Windows 1.0, listener to outpost 0.5, outpost queue 0.5, \
-                 outpost read 7.0, to Core 0.3, reducer 0.1, to speech 0.1. \
+                 Event: reducer 0.1, to speech 0.1. \
                  Speech: synthesis 1.0, leading silence 0.2, mixer and device 1.8."
             )
         );
@@ -1099,250 +894,6 @@ mod tests {
             "2.0 ms for \"x\": 0.0 ms to speech and 2.0 ms to sound, \
              not counting 0.0 ms waiting behind earlier speech. Event: . Speech: . \
              From the last key to speech 3.5, a key that typed text."
-        );
-    }
-
-    /// With verbatim.exe's relay stamps, the listener's stage is split at
-    /// verbatim.exe, the time its fact was held for a starting outpost is
-    /// its own stage, and the way back is split at verbatim.exe's reader.
-    #[test]
-    fn verbatim_exes_stamps_split_the_stages_at_verbatim_exe() {
-        let stages = Stages {
-            event: Some(EventTiming {
-                observed_at_us: 1_000,
-                core_received_at_us: 1_200,
-                core_relay_us: 35_050,
-                core_held_us: 35_000,
-                core_sent_at_us: 36_250,
-                relayed_at_us: 36_400,
-                dequeued_at_us: 36_500,
-                published_at_us: 40_000,
-                core_read_at_us: 40_150,
-                ..EventTiming::default()
-            }),
-            core_received: Some(40_400),
-            ..Stages::default()
-        };
-        let breakdown: Vec<_> = stages
-            .breakdown()
-            .iter()
-            .map(|stage| (stage.kind, stage.duration_us))
-            .collect();
-        assert_eq!(
-            breakdown,
-            [
-                (LatencyStageKind::ListenerToRelay, 200),
-                (LatencyStageKind::OutpostStart, 35_000),
-                (LatencyStageKind::Relay, 50),
-                (LatencyStageKind::RelayToOutpost, 150),
-                (LatencyStageKind::OutpostQueue, 100),
-                (LatencyStageKind::OutpostRead, 3_500),
-                (LatencyStageKind::OutpostToRelay, 150),
-                (LatencyStageKind::ReducerWait, 250),
-            ]
-        );
-        // A request: the reducer's span ends where verbatim.exe took it in,
-        // and a relay under a microsecond is still a stage.
-        let request = Stages {
-            requested: Some(1_000),
-            event: Some(EventTiming {
-                core_received_at_us: 1_100,
-                core_relay_us: 0,
-                core_sent_at_us: 1_100,
-                relayed_at_us: 1_300,
-                ..EventTiming::default()
-            }),
-            ..Stages::default()
-        };
-        let breakdown: Vec<_> = request
-            .breakdown()
-            .iter()
-            .map(|stage| (stage.kind, stage.duration_us))
-            .collect();
-        assert_eq!(
-            breakdown,
-            [
-                (LatencyStageKind::RequestToRelay, 100),
-                (LatencyStageKind::Relay, 0),
-                (LatencyStageKind::RelayToOutpost, 200),
-            ]
-        );
-    }
-
-    /// The duration `stages` gives `kind`, if the announcement passed it.
-    fn duration_of(stages: &Stages, kind: LatencyStageKind) -> Option<u64> {
-        stages
-            .breakdown()
-            .iter()
-            .find(|stage| stage.kind == kind)
-            .map(|stage| stage.duration_us)
-    }
-
-    /// A listener's UIA focus fact with its read, written to the pipe, and
-    /// taken in by verbatim.exe's relay, then answered by its outpost.
-    fn listener_focus() -> Stages {
-        Stages {
-            event: Some(EventTiming {
-                observed_at_us: 1_000,
-                listener_handled_at_us: 13_000,
-                listener_written_at_us: 13_100,
-                core_received_at_us: 13_250,
-                core_relay_us: 50,
-                core_sent_at_us: 13_300,
-                relayed_at_us: 13_400,
-                dequeued_at_us: 13_500,
-                published_at_us: 20_000,
-                written_at_us: 20_030,
-                core_read_at_us: 20_150,
-                ..EventTiming::default()
-            }),
-            core_received: Some(20_400),
-            ..Stages::default()
-        }
-    }
-
-    #[test]
-    fn the_listeners_handling_runs_from_the_observation_to_the_handlings_end() {
-        assert_eq!(
-            duration_of(&listener_focus(), LatencyStageKind::ListenerHandling),
-            Some(12_000)
-        );
-        // A `WinEvent`'s fact, handled in its callback with no read.
-        let win_event = Stages {
-            event: Some(EventTiming {
-                observed_at_us: 1_000,
-                listener_handled_at_us: 1_020,
-                listener_written_at_us: 1_060,
-                core_received_at_us: 1_100,
-                ..EventTiming::default()
-            }),
-            ..Stages::default()
-        };
-        assert_eq!(
-            duration_of(&win_event, LatencyStageKind::ListenerHandling),
-            Some(20)
-        );
-    }
-
-    #[test]
-    fn the_listeners_queue_runs_from_the_handlings_end_or_the_observation_to_the_write() {
-        assert_eq!(
-            duration_of(&listener_focus(), LatencyStageKind::ListenerQueue),
-            Some(100)
-        );
-        // A timeline without the handling stamp waits from the observation.
-        let unread = Stages {
-            event: Some(EventTiming {
-                observed_at_us: 1_000,
-                listener_written_at_us: 1_040,
-                core_received_at_us: 1_100,
-                ..EventTiming::default()
-            }),
-            ..Stages::default()
-        };
-        assert_eq!(
-            duration_of(&unread, LatencyStageKind::ListenerQueue),
-            Some(40)
-        );
-        assert_eq!(
-            duration_of(&unread, LatencyStageKind::ListenerHandling),
-            None
-        );
-    }
-
-    #[test]
-    fn the_listeners_pipe_runs_from_the_write_to_the_relays_receipt() {
-        let stages = listener_focus();
-        assert_eq!(
-            duration_of(&stages, LatencyStageKind::ListenerPipe),
-            Some(150)
-        );
-        assert_eq!(
-            duration_of(&stages, LatencyStageKind::ListenerToRelay),
-            None,
-            "the whole span is left out where the write splits it"
-        );
-    }
-
-    #[test]
-    fn the_outposts_outbound_runs_from_the_publish_to_the_write() {
-        assert_eq!(
-            duration_of(&listener_focus(), LatencyStageKind::OutpostOutbound),
-            Some(30)
-        );
-    }
-
-    #[test]
-    fn the_outposts_pipe_runs_from_the_write_to_verbatim_exes_read() {
-        let stages = listener_focus();
-        assert_eq!(
-            duration_of(&stages, LatencyStageKind::OutpostPipe),
-            Some(120)
-        );
-        assert_eq!(
-            duration_of(&stages, LatencyStageKind::OutpostToRelay),
-            None,
-            "the whole span is left out where the write splits it"
-        );
-    }
-
-    #[test]
-    fn a_record_carries_each_stage_and_the_outpost_reads_calls() {
-        let ledger = ledger();
-        let trace = TraceId::mint();
-        let calls = verbatim_model::CallCounts {
-            uia: 3,
-            msaa: 0,
-            window_messages: 1,
-            connections: 0,
-        };
-        ledger.event_received(
-            trace,
-            EventTiming {
-                observed_at_us: 1_000,
-                dequeued_at_us: 2_000,
-                published_at_us: 9_000,
-                calls,
-                ..EventTiming::default()
-            },
-        );
-        let record = &ledger.recent(1)[0];
-        let kinds: Vec<_> = record.stages.iter().map(|stage| stage.kind).collect();
-        assert_eq!(
-            kinds,
-            [
-                LatencyStageKind::OutpostQueue,
-                LatencyStageKind::OutpostRead,
-                LatencyStageKind::ToCore,
-            ],
-            "only the stages the trace has passed"
-        );
-        let read = record.stages[1];
-        assert_eq!(read.duration_us, 7_000);
-        assert_eq!(read.calls, Some(calls));
-        assert_eq!(record.stages[0].calls, None);
-
-        let stages = Stages {
-            event: Some(EventTiming {
-                observed_at_us: 1_000,
-                dequeued_at_us: 2_000,
-                published_at_us: 9_000,
-                calls,
-                ..EventTiming::default()
-            }),
-            core_received: Some(9_300),
-            queued: Some(9_500),
-            audio_started: Some(10_000),
-            ..Stages::default()
-        };
-        assert_eq!(
-            stages.line().as_deref(),
-            Some(
-                "9.0 ms for \"\": 8.5 ms to speech and 0.5 ms to sound, \
-                 not counting 0.0 ms waiting behind earlier speech. \
-                 Event: outpost queue 1.0, outpost read 7.0 (4 calls), to Core 0.3. \
-                 Speech: ."
-            )
         );
     }
 
@@ -1385,25 +936,7 @@ mod tests {
             key_pressed: Some(1_000),
             last_key: None,
             requested: Some(1_400),
-            event: Some(EventTiming {
-                relayed_at_us: 1_600,
-                dequeued_at_us: 1_700,
-                awaited_at_us: 101_700,
-                published_at_us: 103_700,
-                calls: CallCounts {
-                    uia: 69,
-                    msaa: 0,
-                    window_messages: 0,
-                    connections: 0,
-                },
-                awaited_calls: CallCounts {
-                    uia: 60,
-                    msaa: 0,
-                    window_messages: 0,
-                    connections: 0,
-                },
-                ..EventTiming::default()
-            }),
+            event: Some(EventTiming::default()),
             core_received: Some(104_000),
             reduced: Some(104_100),
             utterance: Some(UtteranceId(1)),
@@ -1423,11 +956,6 @@ mod tests {
             kinds,
             [
                 LatencyStageKind::HookToCore,
-                LatencyStageKind::CoreToOutpost,
-                LatencyStageKind::OutpostQueue,
-                LatencyStageKind::CaretWait,
-                LatencyStageKind::OutpostRead,
-                LatencyStageKind::ToCore,
                 LatencyStageKind::Reducer,
                 LatencyStageKind::ToSpeech,
                 LatencyStageKind::Synthesis,
@@ -1440,9 +968,7 @@ mod tests {
             Some(
                 "105.5 ms for \"alpha beta gamma\": 103.5 ms to speech and 2.0 ms to sound, \
                  not counting 0.0 ms waiting behind earlier speech. \
-                 Event: hook to Core 0.4, Core to outpost 0.2, outpost queue 0.1, \
-                 caret wait 100.0 (60 calls), outpost read 2.0 (9 calls), to Core 0.3, \
-                 reducer 0.1, to speech 0.4. \
+                 Event: hook to Core 0.4, reducer 0.1, to speech 0.4. \
                  Speech: synthesis 1.0, leading silence 0.1, mixer and device 0.9."
             )
         );
@@ -1454,37 +980,22 @@ mod tests {
         let trace = TraceId::mint();
         ledger.key_pressed(trace, 5_000_000);
         ledger.reduced(trace);
-        ledger.event_received(
-            trace,
-            EventTiming {
-                relayed_at_us: now_us(),
-                dequeued_at_us: now_us(),
-                published_at_us: now_us(),
-                ..EventTiming::default()
-            },
-        );
+        ledger.event_received(trace, EventTiming::default());
         ledger.reduced(trace);
         let record = &ledger.recent(1)[0];
         assert_eq!(record.event_observed_at_ms, 5_000, "it starts at the hook");
         let kinds: Vec<_> = record.stages.iter().map(|stage| stage.kind).collect();
         assert_eq!(
             kinds,
-            [
-                LatencyStageKind::HookToCore,
-                LatencyStageKind::CoreToOutpost,
-                LatencyStageKind::OutpostQueue,
-                LatencyStageKind::OutpostRead,
-                LatencyStageKind::ToCore,
-                LatencyStageKind::Reducer,
-            ],
+            [LatencyStageKind::HookToCore, LatencyStageKind::Reducer],
             "the request's reduction and the answer's are separate stages"
         );
     }
 
     /// A text focus is announced as its message is reduced, and its line
     /// when its caret report, a second message on the same trace, is: the
-    /// announcement's line and record keep the focus message's stages, with
-    /// its listener stage, not the caret report's, though the pipeline
+    /// announcement's line and record keep the focus message's stages, not
+    /// the caret report's, though the pipeline
     /// queues the announcement only after Core has received the caret
     /// report.
     #[test]
@@ -1497,9 +1008,6 @@ mod tests {
             trace,
             EventTiming {
                 observed_at_us: 1_000,
-                relayed_at_us: 1_500,
-                dequeued_at_us: 2_000,
-                published_at_us: 9_000,
                 ..EventTiming::default()
             },
         );
@@ -1511,8 +1019,7 @@ mod tests {
         ledger.event_received(
             trace,
             EventTiming {
-                dequeued_at_us: 20_000,
-                published_at_us: 21_000,
+                observed_at_us: 20_000,
                 ..EventTiming::default()
             },
         );
@@ -1535,10 +1042,6 @@ mod tests {
         assert_eq!(
             stages,
             [
-                (LatencyStageKind::ListenerToOutpost, 500),
-                (LatencyStageKind::OutpostQueue, 500),
-                (LatencyStageKind::OutpostRead, 7_000),
-                (LatencyStageKind::ToCore, 300),
                 (LatencyStageKind::Reducer, 100),
                 (LatencyStageKind::ToSpeech, 12_100),
             ]

@@ -541,8 +541,6 @@ impl Context {
     fn pong(&self) -> Urgent {
         Urgent::Pong {
             parked_count: *self.parked.lock(),
-            // The outpost judges no hang.
-            parked_on_hung: 0,
         }
     }
 

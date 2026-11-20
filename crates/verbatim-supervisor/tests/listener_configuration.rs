@@ -94,15 +94,13 @@ fn stand_in(args: &[String]) -> ! {
         };
         send(&ListenerToCore::Ready {
             outpost_pid: own_pid,
-            target_pid: Pid(0),
         });
         send(&report(code(100, launched)));
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
-                Ok(Some(CoreToListener::Ping { .. })) => send(&ListenerToCore::Pong {
-                    parked_count: 0,
-                    written_at_us: 0,
-                }),
+                Ok(Some(CoreToListener::Ping { .. })) => {
+                    send(&ListenerToCore::Pong { written_at_us: 0 })
+                }
                 Ok(Some(CoreToListener::Configuration {
                     report_background_progress_bars,
                 })) => {
@@ -130,7 +128,6 @@ fn stand_in(args: &[String]) -> ! {
                 &mut messages,
                 &OutpostToCore::Pong {
                     parked_count: 0,
-                    parked_on_hung: 0,
                     written_at_us: 0,
                 },
             )

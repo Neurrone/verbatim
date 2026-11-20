@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::settings::ReaderSettings;
 use crate::shell::ShellItemKind;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange, TextPosition};
+use crate::text::{CaretKey, CaretReport, FocusText, SelectionChange};
 use crate::tree::{Backend, NodeSnapshot, StateSet};
-use crate::{KeySeq, NodeId, OutpostId, TraceId};
+use crate::{KeySeq, NodeId, TraceId};
 
 /// A Windows process identifier, used to name the application an outpost
 /// watches and to key supervisor state.
@@ -266,25 +266,6 @@ pub enum EarlierElement {
     Gone,
 }
 
-/// A focus report's place in its outpost's focus group: a run of focus and
-/// foreground events the outpost tries newest first, as NVDA's `pumpAll`
-/// tries a run of events, stopping at the first one processed
-/// (`docs/parity/backends.md`, "How an outpost turns events into focus
-/// reports"). Whether an entry is
-/// processed is Core's verdict, so every report of a group carries its
-/// number and rank, and Core takes a report only when it took no newer
-/// report of the same group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FocusGroup {
-    /// The group's number, counted by its outpost generation from 1: a
-    /// replacement generation counts again, so Core keys a group by the
-    /// generation of the report's node with this number.
-    pub number: u64,
-    /// The entry's rank in the group, 0 for the newest, which is tried and
-    /// reported first.
-    pub rank: u32,
-}
-
 /// An accessibility event, normalized by an outpost from either backend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -334,11 +315,6 @@ pub enum NormalizedEvent {
         /// it held none, or its read was cut before that element's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         earlier: Option<EarlierElement>,
-        /// The report's place in its outpost's focus group, when the
-        /// outpost tried a group's entries for it ([`FocusGroup`]); `None`
-        /// for a report of no group.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        group: Option<FocusGroup>,
     },
     /// A property of a node changed.
     PropertyChanged {
@@ -360,44 +336,6 @@ pub enum NormalizedEvent {
         /// The new value.
         value: Option<String>,
     },
-    /// A node was selected within its container (MSAA `EVENT_OBJECT_SELECTION`
-    /// and its `SELECTIONADD`/`SELECTIONREMOVE`/`SELECTIONWITHIN` siblings;
-    /// UIA `SelectionItem_ElementSelected`). The reducer announces it while
-    /// focus rests on a selection container, once per newly selected item.
-    SelectionChanged {
-        /// Snapshot of the selected node.
-        node: NodeSnapshot,
-    },
-    /// A node was selected inside an element the focus controls (its UIA
-    /// `ControllerFor` relation), such as a search result while the focus
-    /// stays in the search box. The reducer speaks it as a focus and moves
-    /// the navigator to it, while `controller` is still the focus.
-    ControlledSelection {
-        /// The focus that controls the list the node is in.
-        controller: NodeId,
-        /// Snapshot of the selected node.
-        node: NodeSnapshot,
-    },
-    /// A UIA `AutomationNotification` event: an app-initiated announcement
-    /// (for example Windows 11's snap-layout hints) carried through
-    /// verbatim. The reducer speaks its display string, if any, interrupting
-    /// for `MostRecent`/`ImportantMostRecent` processing and queuing
-    /// otherwise (`docs/parity/alerts.md`, "UIA notification events").
-    Notification {
-        /// The node the notification concerns.
-        node_id: NodeId,
-        /// The notification payload.
-        notification: Notification,
-    },
-    /// A toast or other alert: the alerting object, spoken queued and
-    /// accepted from any application (decision D14), as NVDA's notification
-    /// behavior speaks it (`docs/parity/alerts.md`, "Toasts").
-    Alert {
-        /// The alerting object.
-        node: NodeSnapshot,
-        /// What raised it, which says whether a repeat is dropped.
-        origin: AlertOrigin,
-    },
     /// The caret or the selection moved in a node with text (UIA's text
     /// selection changed event, an edit control's caret event), carrying
     /// the line at the caret and the selection (milestone M4). The outpost
@@ -409,31 +347,17 @@ pub enum NormalizedEvent {
     /// (the mouse's or the application's), as NVDA reports any selection
     /// change of the focus after its caret event
     /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes").
-    /// With `facts`, Core may take it as a key's evidence.
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
         /// Where the caret now is.
         caret: CaretReport,
         /// How the selection changed from the one the outpost last reported
-        /// for the node, by the rule of [`CaretChanges`](crate::CaretChanges)'s
-        /// `selection_changes`. Always empty for a terminal, and for the
+        /// for the node, by the rule of
+        /// [`SelectionChange`](crate::SelectionChange). Always empty for a terminal, and for the
         /// first report after Verbatim itself selected or moved the caret.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         selection_changes: Vec<SelectionChange>,
-        /// The node's text changed since the selection compared with was
-        /// reported, so the change is spoken in general terms, as
-        /// [`CaretChanges`](crate::CaretChanges)'s `content_changed` says.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        content_changed: bool,
-        /// With `content_changed`, the whole new selection's text, as
-        /// [`CaretChanges`](crate::CaretChanges)'s `new_selection` says.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        new_selection: Option<SelectionChange>,
-        /// What the read found for a key, present exactly when the read was
-        /// made under a key's note.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        facts: Option<Box<crate::ReadFacts>>,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
@@ -454,73 +378,16 @@ pub enum NormalizedEvent {
         /// The read.
         snapshot: Box<crate::TerminalSnapshot>,
     },
-    /// The place being read in a node's text moved without the caret: the
-    /// application scrolled to it, as a document does to an in-page link's
-    /// target (UIA's active text position changed event). Core speaks
-    /// nothing for it until it has a browse mode, which moves its own caret
-    /// there, as NVDA's does; outside browse mode NVDA does nothing with it
-    /// either (`docs/parity/backends.md`, "The active text position").
-    ActiveTextPositionChanged {
-        /// The node whose text it is.
-        node_id: NodeId,
-        /// The start of the text now active.
-        position: TextPosition,
-    },
 }
 
-impl NormalizedEvent {
-    /// Stamps `outpost` on every node id this event carries, the stamp Core
-    /// applies according to the pipe the event arrived on.
-    pub fn assign_outpost(&mut self, outpost: OutpostId) {
-        match self {
-            NormalizedEvent::FocusChanged {
-                node, ancestors, ..
-            } => {
-                node.assign_outpost(outpost);
-                for ancestor in ancestors {
-                    ancestor.assign_outpost(outpost);
-                }
-            }
-            NormalizedEvent::SelectionChanged { node } | NormalizedEvent::Alert { node, .. } => {
-                node.assign_outpost(outpost);
-            }
-            NormalizedEvent::ControlledSelection { controller, node } => {
-                *controller = controller.with_outpost(outpost);
-                node.assign_outpost(outpost);
-            }
-            NormalizedEvent::PropertyChanged { node_id, .. }
-            | NormalizedEvent::ValueChanged { node_id, .. }
-            | NormalizedEvent::Notification { node_id, .. }
-            | NormalizedEvent::CaretMoved { node_id, .. }
-            | NormalizedEvent::TextChanged { node_id }
-            | NormalizedEvent::TerminalSnapshot { node_id, .. }
-            | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
-                *node_id = node_id.with_outpost(outpost);
-            }
-        }
-    }
-}
+/// A toast's identity: its UIA runtime id, which Core compares with the
+/// last toast's to drop a repeat, as NVDA compares the runtime id itself
+/// (`docs/parity/alerts.md`, "Toasts").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToastId(pub crate::property::RuntimeId);
 
-/// What raised a [`NormalizedEvent::Alert`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AlertOrigin {
-    /// An MSAA alert, or a help balloon's show event.
-    MsaaAlert,
-    /// A Windows toast's UIA window-opened event, with the toast's identity:
-    /// a toast cannot be told without it, since Core compares it with the
-    /// last toast's to drop a repeat.
-    ToastWindowOpened(ToastId),
-}
-
-/// A toast's identity: a hash of its UIA runtime id, computed by the outpost
-/// that reports it, because the node id a toast is reported under is released
-/// with its node, so a repeat would have a new one, and Core needs only
-/// equality.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToastId(pub u64);
-
-/// What kind of change a [`NormalizedEvent::Notification`] reports —
-/// UIA's `NotificationKind`.
+/// What kind of change a UI Automation notification reports: UIA's
+/// `NotificationKind`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NotificationKind {
@@ -536,8 +403,8 @@ pub enum NotificationKind {
     Other,
 }
 
-/// How urgently a [`NormalizedEvent::Notification`] should be processed —
-/// UIA's `NotificationProcessing`.
+/// How urgently a UI Automation notification should be processed: UIA's
+/// `NotificationProcessing`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NotificationProcessing {
@@ -552,22 +419,6 @@ pub enum NotificationProcessing {
     /// Process the current notification, then only the most recent of any
     /// further ones that arrive while it is being processed.
     CurrentThenMostRecent,
-}
-
-/// The payload of a UIA `AutomationNotification` event, normalized
-/// (architecture section 4). Announced by the reducer through
-/// [`NormalizedEvent::Notification`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Notification {
-    /// What kind of change this reports.
-    pub kind: NotificationKind,
-    /// How urgently it should be processed.
-    pub processing: NotificationProcessing,
-    /// The human-readable text the source app supplied, if any.
-    pub display_string: Option<String>,
-    /// An opaque id the source app uses to correlate related notifications,
-    /// if any.
-    pub activity_id: Option<String>,
 }
 
 /// What to fetch: one object-navigation step from a node to a neighbor
@@ -761,13 +612,6 @@ pub enum Input {
         /// As [`Input::CaretKey`]'s: when the hook saw the key.
         pressed_at_ms: u64,
     },
-    /// Playback reached an index mark the reducer placed in an utterance
-    /// ([`crate::SegmentContent::Mark`]), reported by the speech pipeline
-    /// when the device has played the audio before it.
-    MarkReached {
-        /// The mark.
-        mark: SpeechMark,
-    },
     /// The reader settings, at startup and whenever the user changes them.
     Settings(ReaderSettings),
     /// The details the active theme reports ([`crate::ReportedDetails`]),
@@ -781,7 +625,8 @@ pub enum Input {
     /// the reducer waits on is lost by a cut: what waited on it stops.
     UtteranceCancelled {
         /// The marks the utterance carried, in order; those playback had
-        /// already reached were reported as [`Input::MarkReached`] first.
+        /// already reached were reported as
+        /// [`QueueInput::MarkReached`](crate::request::QueueInput::MarkReached) first.
         marks: Vec<SpeechMark>,
         /// When it ended, in milliseconds since the Unix epoch, the clock
         /// outposts stamp events with; 0 when unknown.
@@ -794,7 +639,8 @@ pub enum Input {
     /// manager does when a later index arrives (Dickson, 2026-10-24).
     UtteranceFailed {
         /// The marks the utterance carried, in order; those playback had
-        /// already reached were reported as [`Input::MarkReached`] first.
+        /// already reached were reported as
+        /// [`QueueInput::MarkReached`](crate::request::QueueInput::MarkReached) first.
         marks: Vec<SpeechMark>,
     },
     /// Verbatim has started: its speech pipeline is up and the keyboard

@@ -14,8 +14,7 @@ Public API:
   `SpeechEnded`, `Sound`, `SpeechPaused`, and, since version 2, `InputHandled` and
   `OutpostEnded`); `ReplyPayload`, `StatusInfo` (whose `ready` says Verbatim can take
   input: GUI up, focus listener running, own-window outpost ready, focus
-  known, and, since version 4, `live_re_reads`, Core's count of live
-  re-reads, read only),
+  known),
   `OutpostStatus`, `OutpostState`, `LatencyRecord`, `FocusReport`; `PIPE_NAME`, `PROTOCOL_VERSION`; the
   same newline-JSON framing helpers. Of the two readers, `read_message` is
   for connections whose reads never time out: a read that fails partway
@@ -57,27 +56,13 @@ Public API:
   M2) with the path Core wrote its flight recorder's contents to.
   A `LatencyRecord` carries a timeline's three times and, since protocol
   version 1, its `stages`: one `LatencyStage` per stage it has passed, in
-  pipeline order, each with its `LatencyStageKind` (Windows, hook to Core,
-  listener to outpost, Core to outpost, listener to verbatim.exe, listener
-  handling, listener queue, listener's pipe to verbatim.exe, reducer
-  to verbatim.exe's relay, waiting for the outpost to start, verbatim.exe,
-  verbatim.exe to outpost, outpost queue, caret wait, outpost read, to
-  Core, outpost to verbatim.exe, outpost outbound, outpost's pipe to
-  verbatim.exe, waiting for the reducer, reducer, to
-  speech, synthesis, or for a synthesizer host its parts, synthesizer
-  request, to the synthesizer host, the host's first chunk, and back from
-  the synthesizer host; leading silence, mixer and device, device clock;
-  `label` names each
-  as the latency log does, and `books/dev/src/how-to/inspect.md` says what each covers;
-  listener to outpost, Core to outpost, and to Core are the whole spans a
-  timeline without verbatim.exe's relay stamps has instead of the split
-  ones (`docs/design/communication.md`, section 10.1); listener to
-  verbatim.exe and outpost to verbatim.exe are likewise the whole spans a
-  timeline without the senders' write stamps has, in place of the
-  listener's handling, queue and pipe and the outpost's outbound queue and
-  pipe), its time in
-  microseconds, and, for the caret wait and the outpost read, the
-  cross-process calls made in it. Version 1 only adds fields, which a
+  pipeline order, each with its `LatencyStageKind` (hook to Core,
+  reducer, to speech, synthesis, or for a synthesizer host its parts,
+  synthesizer request, to the synthesizer host, the host's first chunk,
+  and back from the synthesizer host; leading silence, mixer and device,
+  device clock; `label` names each as the latency log does, and
+  `books/dev/src/how-to/inspect.md` says what each covers) and its time in
+  microseconds. Version 1 only adds fields, which a
   version 0 peer ignores and reads as empty, so the server answers every
   client in the same vocabulary.
   Version 2 is the end-to-end harness's barrier and focus report.
@@ -100,6 +85,9 @@ Public API:
   request. Version 3 also added `OpenMenu`, which opens Verbatim's menu
   as a click on the tray icon does, pressing no key, for the NVDA
   capture tool (`books/dev/src/how-to/nvda.md`).
+  Version 5 removed the status reply's count of live re-reads, the
+  latency stages no timeline produced with their call counts, and the
+  event stream's variants and fields no event carried.
   `InputHandled { input }` goes to event subscribers as Core handles each
   numbered input. `OutpostEnded { target_pid, reason }` goes to event
   subscribers once Core has handled an outpost's end, the evidence a test

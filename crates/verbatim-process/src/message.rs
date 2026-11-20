@@ -280,8 +280,7 @@ mod tests {
             OutpostToCore::Pong { .. } => Peeked::Pong,
             OutpostToCore::Fault { .. } => Peeked::Fault,
             OutpostToCore::TargetExited => Peeked::TargetExited,
-            OutpostToCore::NotResponding { .. }
-            | OutpostToCore::IdleAnswer { .. }
+            OutpostToCore::IdleAnswer { .. }
             | OutpostToCore::Tell(_)
             | OutpostToCore::Answer(_) => Peeked::Other,
         };
@@ -308,10 +307,7 @@ mod tests {
             })
             .map(|(message, _)| message.clone());
         let urgent = [
-            Urgent::Pong {
-                parked_count: 0,
-                parked_on_hung: 0,
-            },
+            Urgent::Pong { parked_count: 0 },
             Urgent::Ready {
                 outpost_pid: Pid(1),
                 target_pid: Pid(2),
@@ -343,7 +339,6 @@ mod tests {
         };
         let pong = OutpostToCore::Pong {
             parked_count: 0,
-            parked_on_hung: 0,
             written_at_us: 0,
         };
         assert_eq!(kind_of(&pong).as_deref(), Some("Pong"));
@@ -367,7 +362,6 @@ mod tests {
     fn each_urgent_message_converts_to_the_variant_of_its_name() {
         let pong = OutpostToCore::Pong {
             parked_count: 0,
-            parked_on_hung: 0,
             written_at_us: 0,
         };
         let ready = OutpostToCore::Ready {
@@ -386,13 +380,7 @@ mod tests {
                 outpost_pid: Pid(1)
             }
         );
-        assert_eq!(
-            OutpostToCore::from(Urgent::Pong {
-                parked_count: 0,
-                parked_on_hung: 0
-            }),
-            pong
-        );
+        assert_eq!(OutpostToCore::from(Urgent::Pong { parked_count: 0 }), pong);
         assert_eq!(
             OutpostToCore::from(Urgent::Ready {
                 outpost_pid: Pid(1),
@@ -486,7 +474,6 @@ mod tests {
 
         let expected_pong = OutpostToCore::Pong {
             parked_count: 3,
-            parked_on_hung: 0,
             written_at_us: 4_500,
         };
         let mut buffer = Vec::new();

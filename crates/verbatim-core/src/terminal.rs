@@ -100,7 +100,6 @@ pub(crate) struct TerminalSpeechState {
     /// A release read was sent and its speech is not yet taken: the look at
     /// the backlog waits for it (`docs/design/readers-tell-core-asks-build3.md`,
     /// "Answers and speech").
-    #[serde(default)]
     pub(crate) release_waiting: bool,
     /// When speech was last cut off (milliseconds on the shared clock):
     /// output from a read that began before it was read before the cut,
@@ -918,7 +917,6 @@ fn output_utterance(
             .map(|focus| focus.snapshot.id)
             .map(|node| FocusValidity {
                 node,
-                had_focus: true,
                 window: focus_window(state, node),
             }),
     }

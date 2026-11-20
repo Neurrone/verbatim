@@ -574,15 +574,8 @@ mod tests {
             .add_reader(outpost, Source::Listener, core)
             .expect("added");
         let mut listener = File::from(listener);
-        for parked_count in [1, 2] {
-            write_message(
-                &mut listener,
-                &ListenerToCore::Pong {
-                    parked_count,
-                    written_at_us: 0,
-                },
-            )
-            .expect("written");
+        for written_at_us in [1, 2] {
+            write_message(&mut listener, &ListenerToCore::Pong { written_at_us }).expect("written");
         }
         drop(listener);
         let mut counts = Vec::new();
@@ -601,8 +594,8 @@ mod tests {
                 match read.pipe.take(&completion, &port, |body| {
                     let message: ListenerToCore =
                         verbatim_process::message::decode_message(body).expect("a message");
-                    if let ListenerToCore::Pong { parked_count, .. } = message {
-                        counts.push(parked_count);
+                    if let ListenerToCore::Pong { written_at_us } = message {
+                        counts.push(written_at_us);
                     }
                     Ok(())
                 }) {

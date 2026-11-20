@@ -12,8 +12,6 @@
 //! The outpost keeps nothing of a terminal between reads but the start
 //! anchors Core names, held as text anchors.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
 };
@@ -26,11 +24,6 @@ use verbatim_uia_rops::{
 };
 
 use crate::text::TextError;
-
-/// The reads this process has taken, which number each
-/// ([`TerminalSnapshot::read`]): Core judges nothing by the number, which
-/// the control plane's terminal events carry.
-static READS: AtomicU64 = AtomicU64::new(0);
 
 /// `units`, UTF-16 as a terminal's provider gives its text, as UTF-8
 /// without the spaces that pad its lines, with each line's padded length,
@@ -119,7 +112,6 @@ pub fn snapshot_of(snapshot: &Snapshot, started_ms: u64, waited: bool) -> Termin
         started_ms,
         ended_ms: started_ms,
         waited,
-        read: 0,
         colours: snapshot.colours.as_ref().map(|rows| {
             rows.iter()
                 .map(|runs| {
@@ -269,7 +261,6 @@ pub fn read<'a>(
     );
     let mut wire = snapshot_of(&snapshot, started_ms, false);
     wire.ended_ms = (verbatim_process::clock::now_us() / 1_000).max(started_ms);
-    wire.read = READS.fetch_add(1, Ordering::Relaxed) + 1;
     Ok(ReadAnswer {
         snapshot: wire,
         caret: snapshot.caret.take(),

@@ -1193,48 +1193,6 @@ impl<B: Backlog> Sender<B> {
         self.settled(&mut state)
     }
 
-    /// Sends `items` together. When no write is in flight, their frames are
-    /// put in one buffer and written with one write, each frame whole with
-    /// its own header, so the reader wakes once for all of them; a batch
-    /// larger than the pipe's buffer pends and is finished whole, as one
-    /// large frame is. While a write is in flight they join the backlog, as
-    /// [`send`](Self::send) would add them, and are written after it one by
-    /// one. Never waits for the pipe.
-    ///
-    /// # Errors
-    ///
-    /// As [`send`](Self::send). When the backlog refuses an item, the items
-    /// before it are still sent and the rest are not.
-    ///
-    /// A marker in a batch is reached before the batch is written, so
-    /// markers are sent on their own.
-    pub fn send_all(
-        &self,
-        items: impl IntoIterator<Item = B::Item>,
-    ) -> Result<(), SendError<B::Refused>> {
-        let mut state = self.lock();
-        if state.closed {
-            return Err(SendError::Closed);
-        }
-        let mut refused = None;
-        for item in items {
-            if let Err(refusal) = state.backlog.push(item) {
-                refused = Some(refusal);
-                break;
-            }
-        }
-        if !state.slot.in_flight() {
-            // Nothing is in flight, so nothing waited before these: what
-            // waits now is this batch.
-            state.write_all();
-        }
-        let settled = self.settled(&mut state);
-        match refused {
-            Some(refused) => Err(SendError::Refused(refused)),
-            None => settled,
-        }
-    }
-
     /// Runs `inspect` on the backlog, under the sender's lock, so nothing is
     /// sent or written meanwhile.
     pub fn with_backlog<R>(&self, inspect: impl FnOnce(&mut B) -> R) -> R {
@@ -1313,33 +1271,6 @@ impl<B: Backlog> State<B> {
         let mut length = 0;
         let started = slot.write_with(pipe, |buffer| {
             backlog.encode(item, buffer)?;
-            length = buffer.len();
-            Ok::<(), io::Error>(())
-        });
-        self.started(started, length)
-    }
-
-    /// Writes every item waiting, each frame after the one before it in one
-    /// buffer, with one write. Returns false when the pipe has failed.
-    fn write_all(&mut self) -> bool {
-        let Self {
-            backlog,
-            slot,
-            pipe,
-            ..
-        } = self;
-        let Some(pipe) = pipe else {
-            return false;
-        };
-        let mut length = 0;
-        let started = slot.write_with(pipe, |buffer| {
-            while let Some(item) = backlog.pop() {
-                let before = buffer.len();
-                if let Err(error) = backlog.encode(item, buffer) {
-                    buffer.truncate(before);
-                    tracing::warn!(target: verbatim_model::DEFECT_TARGET, %error, "a frame could not be encoded and is skipped");
-                }
-            }
             length = buffer.len();
             Ok::<(), io::Error>(())
         });
@@ -2068,45 +1999,6 @@ mod tests {
         drop(theirs);
         assert_eq!(sender.send(b"nobody".to_vec()), Err(SendError::Closed));
         assert_eq!(sender.send(b"again".to_vec()), Err(SendError::Closed));
-    }
-
-    #[test]
-    fn frames_sent_together_are_written_with_one_write_and_taken_by_one_read() {
-        let port = Port::new().expect("a port");
-        let (ours, theirs) = pipe(Flow::Inbound, 4096, End::Overlapped).expect("a pipe");
-        let ours = port.associate(ours, 5).expect("associated");
-        // The read waits before anything is written, so it completes with
-        // what the first write brings, and only that.
-        let mut reading = PipeIo::new(4096);
-        assert!(matches!(reading.read(&ours), Started::Pending));
-        let sender = sender(theirs, 8);
-        sender
-            .send_all([b"one".to_vec(), b"two".to_vec()])
-            .expect("sent");
-        let mut completions = Completions::with_capacity(4);
-        assert_eq!(port.wait(&mut completions, None).expect("waited"), 1);
-        let completion = completions.iter().next().expect("one completion");
-        reading.complete(&ours, &completion).expect("read");
-        let mut both = framed(b"one");
-        both.extend(framed(b"two"));
-        assert_eq!(reading.data(), both.as_slice(), "two frames, from one read");
-    }
-
-    #[test]
-    fn a_batch_larger_than_the_pipe_pends_and_is_finished_whole_before_what_follows() {
-        let (ours, theirs) = pipe(Flow::Outbound, 4096, End::Synchronous).expect("a pipe");
-        let sender = sender(ours, 8);
-        let large = vec![3u8; 100_000];
-        sender
-            .send_all([large.clone(), b"second".to_vec()])
-            .expect("sent, and pending");
-        sender.send(b"after".to_vec()).expect("queued");
-        sender.close();
-        let mut reader = BufReader::new(File::from(theirs));
-        assert_eq!(read(&mut reader).expect("read"), Some(large));
-        assert_eq!(read(&mut reader).expect("read"), Some(b"second".to_vec()));
-        assert_eq!(read(&mut reader).expect("read"), Some(b"after".to_vec()));
-        assert_eq!(read(&mut reader).expect("read"), None);
     }
 
     #[test]

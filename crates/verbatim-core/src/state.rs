@@ -482,7 +482,7 @@ impl CellMemory {
 }
 
 /// The last toast spoken (`SrState::last_toast`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastToast {
     /// The toast's identity.
     pub(crate) id: ToastId,

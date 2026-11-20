@@ -226,12 +226,7 @@ Public API:
   only once every write before it has completed), and writes what waits
   at once when no write is in flight, on the sending thread, so in the
   common case no other thread wakes. Every item passes through the
-  backlog, so its policy sees every item in order. `send_all(items)`
-  sends several together: with no write in flight their frames go in one
-  buffer and one `WriteFile`, each whole with its own header, so the
-  reader wakes once for all of them, and a batch larger than the pipe's
-  buffer pends and is finished whole; with one in flight they wait as
-  `send` would add them. `with_backlog(inspect)` runs `inspect` on the
+  backlog, so its policy sees every item in order. `with_backlog(inspect)` runs `inspect` on the
   backlog under the sender's lock. A write that pended is finished by the
   thread serving the sender's port, which writes what waited, in order:
   `Sender::on_port(pipe, backlog, port, key)` shares a port, whose thread

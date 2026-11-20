@@ -29,7 +29,6 @@ fn snapshot(
         started_ms: 5,
         ended_ms: 6,
         waited: true,
-        read: 9,
         colours,
         caret: None,
     }
@@ -138,12 +137,10 @@ fn a_terminals_answers_round_trip_through_the_raw_section() {
         answer(TextReply::TerminalHistory {
             text: cyrillic.clone(),
             above: 2,
-            read: 1,
         }),
         answer(TextReply::TerminalHistory {
             text: String::new(),
             above: 0,
-            read: 0,
         }),
         answer(TextReply::TerminalFound {
             matches: vec![
@@ -160,11 +157,9 @@ fn a_terminals_answers_round_trip_through_the_raw_section() {
                     text: cyrillic,
                 },
             ],
-            read: 2,
         }),
         answer(TextReply::TerminalFound {
             matches: Vec::new(),
-            read: 2,
         }),
     ];
     for message in &messages {
@@ -213,7 +208,6 @@ fn a_terminal_reads_text_and_colours_are_the_raw_section_and_the_body_names_them
                     "started_ms": 5,
                     "ended_ms": 6,
                     "waited": true,
-                    "read": 9,
                     "colours": {"raw": [6, 16], "rows": [1, 0]},
                 },
                 "start": 11,
@@ -236,11 +230,10 @@ fn a_history_and_a_searchs_texts_are_the_raw_section() {
     let (body, raw) = parts_of(&answer(TextReply::TerminalHistory {
         text: "abc".to_owned(),
         above: 1,
-        read: 2,
     }));
     assert_eq!(
         String::from_utf8(body).expect("UTF-8"),
-        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":1,"read":2}}}}}}"#
+        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":1}}}}}}"#
     );
     assert_eq!(raw, Some(b"abc".to_vec()));
     let (body, raw) = parts_of(&answer(TextReply::TerminalFound {
@@ -254,11 +247,10 @@ fn a_history_and_a_searchs_texts_are_the_raw_section() {
                 text: "f".to_owned(),
             },
         ],
-        read: 3,
     }));
     assert_eq!(
         String::from_utf8(body).expect("UTF-8"),
-        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,2]},{"above":-1,"text":[2,1]}],"read":3}}}}}}"#
+        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,2]},{"above":-1,"text":[2,1]}]}}}}}}"#
     );
     assert_eq!(raw, Some(b"def".to_vec()));
 }
@@ -271,7 +263,6 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
     let messages = [
         OutpostToCore::Pong {
             parked_count: 0,
-            parked_on_hung: 0,
             written_at_us: 2,
         },
         answer(TextReply::Location { x: 1, y: 2 }),
@@ -304,7 +295,7 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
 /// `raw` as its raw section.
 fn history(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
     let body = format!(
-        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0,"read":0}}}}}}}}}}}}"#
+        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0}}}}}}}}}}}}"#
     );
     OutpostToCore::from_parts(Parts {
         body: body.as_bytes(),
@@ -319,7 +310,6 @@ fn a_range_the_raw_section_does_not_hold_is_a_protocol_error() {
         answer(TextReply::TerminalHistory {
             text: "abc".to_owned(),
             above: 0,
-            read: 0,
         })
     );
     for range in ["[0,4]", "[2,2]", "[18446744073709551615,2]"] {
@@ -335,7 +325,7 @@ fn a_range_the_raw_section_does_not_hold_is_a_protocol_error() {
 fn ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
     let found = |first: &str, second: &str| {
         let body = format!(
-            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}],"read":0}}}}}}}}}}}}"#
+            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}]}}}}}}}}}}}}"#
         );
         OutpostToCore::from_parts(Parts {
             body: body.as_bytes(),
@@ -354,7 +344,6 @@ fn ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
                     text: second.to_owned(),
                 },
             ],
-            read: 0,
         })
     };
     assert_eq!(

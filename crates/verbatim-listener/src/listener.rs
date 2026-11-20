@@ -589,11 +589,8 @@ impl Outgoing {
             .readiness
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        // The listener has no target application; `target_pid` is a
-        // sentinel the supervisor only logs.
         self.urgent(ListenerToCore::Ready {
             outpost_pid: Pid(std::process::id()),
-            target_pid: Pid(0),
         });
         if let Readiness::Starting(held) = std::mem::replace(&mut *readiness, Readiness::Ready) {
             for round in held {
@@ -839,10 +836,8 @@ impl Listener {
         }
         match command {
             CoreToListener::Ping { .. } => {
-                self.outgoing.urgent(ListenerToCore::Pong {
-                    parked_count: 0,
-                    written_at_us: 0,
-                });
+                self.outgoing
+                    .urgent(ListenerToCore::Pong { written_at_us: 0 });
             }
             // The listener keeps no unasked read to read again: every
             // `WinEvent` is told, and Core asks what it needs. The serving
@@ -2954,7 +2949,6 @@ mod tests {
             [
                 ListenerToCore::Ready {
                     outpost_pid: Pid(std::process::id()),
-                    target_pid: Pid(0),
                 },
                 ListenerToCore::IdleAnswer { round: 9 },
             ]
@@ -3008,10 +3002,7 @@ mod tests {
             },
             EventTiming::default(),
         );
-        outgoing.urgent(ListenerToCore::Pong {
-            parked_count: 0,
-            written_at_us: 0,
-        });
+        outgoing.urgent(ListenerToCore::Pong { written_at_us: 0 });
         outgoing.idle_answer(2);
         let order: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()

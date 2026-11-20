@@ -89,11 +89,7 @@ The subcommands:
   (default 10), newest first: event-observed time, and the millisecond
   deltas to speech-queued and audio-started when each is known, then one
   indented line per stage the timeline passed, the stages the log line
-  below names. The outpost read's line also gives its count of
-  cross-process calls, by kind, and says the ratio to the floor needs
-  calibration: the floor, an operation's minimum call count times the
-  cost of one call, is defined in `books/dev/src/reference/performance.md`, and only the
-  end-to-end suite measures that cost. To compare a UIA application's
+  below names. To compare a UIA application's
   focus reads with and without remote operations, set
   `remote_operations = false` under `[uia]` in `settings.toml` next to
   `verbatim.exe` and restart Verbatim: its outposts then read every UIA
@@ -108,69 +104,15 @@ sits beside the speech it measures; and when playback stopped first, or
 the clock could not be read, when the utterance ends.
 For example:
 
-`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: Windows 0.0, listener queue 0.0, listener's pipe to verbatim.exe 0.1, verbatim.exe 0.0, verbatim.exe to outpost 0.1, outpost queue 3.5, outpost read 5.5 (4 calls), outpost outbound 0.0, outpost's pipe to verbatim.exe 0.1, waiting for the reducer 0.1, reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
+`12.3 ms for "Voice combo box English (Great Britain) collapsed Alt+v": 9.5 ms to speech and 2.8 ms to sound, not counting 0.0 ms waiting behind earlier speech. Event: reducer 0.0, to speech 0.1. Speech: synthesis 0.6, leading silence 0.1, mixer and device 2.0.`
 
-The total is everything from Windows raising the event to the audio engine
-taking the first sample, except time spent waiting behind earlier speech,
-which is reported separately. The stages, in milliseconds:
+The total is everything from the key or the reader's observing the event
+to the audio engine taking the first sample, except time spent waiting
+behind earlier speech, which is reported separately. The stages, in
+milliseconds:
 
-- Windows: how long before the hook saw it Windows raised the event
-  (whole milliseconds, and only for WinEvents).
 - Hook to Core: for a caret key, from the keyboard hook seeing the key to
   the reducer having handled it and asked the outpost for the caret.
-- Listener handling: from the listener observing the event to its having
-  handled the fact. For a UIA focus, menu opening, selection or
-  notification, that is its reading thread's queue and its read or check
-  across processes; for a WinEvent's fact (the text box's, for instance)
-  it is the callback's own local work until the fact is queued.
-- Listener queue: from the listener's handling ending (or, for a
-  timeline without that stamp, its observing the event) to the write of
-  the fact to verbatim.exe's pipe beginning: the thread
-  that produced the fact writes it at once unless a write is in flight,
-  so this is the wait behind a write in flight, if any, and the I/O
-  thread's wake to finish it.
-- Listener's pipe to verbatim.exe: from the write beginning to verbatim.exe's relay thread taking the fact off the pipe:
-  the encoding, the pipe, and the relay thread's wake.
-- Listener to verbatim.exe: the three above taken whole, for a timeline
-  that lacks the listener's write stamp.
-- Reducer to verbatim.exe's relay: for a request Core makes (a caret key's
-  watch, a command's query), from the reducer having handled the input to
-  the request being queued for the outpost.
-- Waiting for the outpost to start: a listener's fact that arrived while
-  its outpost was starting, held until the outpost said it was ready.
-  Reported apart from verbatim.exe's own time.
-- verbatim.exe: verbatim.exe's own time relaying the fact or request, from
-  taking it in to its relay thread beginning the write to the outpost,
-  measured on one clock inside verbatim.exe, the outpost's start aside.
-- verbatim.exe to outpost: from the relay thread beginning the write to
-  the outpost receiving it: the encoding, the pipe, and the outpost
-  reader's wake.
-- Listener to outpost, Core to outpost: the two spans above taken whole,
-  for a timeline that lacks verbatim.exe's relay stamps.
-- Outpost queue: waiting for the outpost's worker, behind the
-  application's other events.
-- Caret wait: for a caret key whose first check found no evidence that
-  the key did something, the time its watch stayed open, from the worker
-  taking the request until it took the event that brought the evidence (a
-  caret, text, or selection change), with the calls the checks before it
-  made. The worker handles everything else meanwhile. A key answered by
-  its first check has no caret wait, and a key that moves nothing is
-  silent, so it has no line.
-- Outpost read: the worker's cross-process UIA and MSAA calls and window
-  messages, after the caret wait for a caret key, with how many it made
-  when it made any (`books/dev/src/reference/performance.md` says what counts).
-- Outpost outbound: from the outpost's worker publishing the event or
-  reply to its write beginning: the worker writes it at
-  once unless a write is in flight, so this is the wait behind a write in
-  flight, if any, and the I/O thread's wake to finish it.
-- Outpost's pipe to verbatim.exe: from the write beginning to verbatim.exe's reader having read and parsed the message: the
-  encoding, the pipe, and the reader.
-- Outpost to verbatim.exe: the two above taken whole, for a timeline that
-  lacks the outpost's write stamp.
-- Waiting for the reducer: from verbatim.exe's reader having the message
-  to the reducer taking it. This is the reducer busy with what came
-  before, not the relay. A timeline without the reader's stamp has one
-  stage, to Core, in place of these two.
 - Reducer, to speech: the reducer, and the hand-off to the speech
   manager.
 - Synthesis: from synthesis starting to the synthesizer's first audio,
@@ -197,9 +139,7 @@ the program's own event caused and one that speaks it for the key. It
 times the key that came last, which in a burst of keys may be a later key
 than the one the speech answers.
 
-A stage is left out when the announcement did not pass it; speech from a
-read Core asked for (the focus after a menu closes, at startup) has no
-outpost stages. A caret key's line starts when the keyboard hook saw the
+A stage is left out when the announcement did not pass it. A caret key's line starts when the keyboard hook saw the
 key, so its total covers everything from the key to the first sample; the
 caret's report in a standard edit control, read through window messages,
 has the same stages as one read through UIA. A caret event with no key

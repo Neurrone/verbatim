@@ -72,8 +72,8 @@ enum WireResult<'a> {
 )]
 enum WireReply<'a> {
     TerminalRead(Box<WireRead<'a>>),
-    TerminalHistory { text: Range, above: u32, read: u64 },
-    TerminalFound { matches: Vec<Match>, read: u64 },
+    TerminalHistory { text: Range, above: u32 },
+    TerminalFound { matches: Vec<Match> },
 }
 
 /// A [`TerminalReadReply`], its snapshot's texts and colours in the raw
@@ -114,7 +114,6 @@ struct Snapshot<'a> {
     started_ms: u64,
     ended_ms: u64,
     waited: bool,
-    read: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     colours: Option<Colours>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,12 +186,11 @@ impl<'a> Terminal<'a> {
                     point: *point,
                 }))
             }
-            TextReply::TerminalHistory { text, above, read } => WireReply::TerminalHistory {
+            TextReply::TerminalHistory { text, above } => WireReply::TerminalHistory {
                 text: layout.text(text),
                 above: *above,
-                read: *read,
             },
-            TextReply::TerminalFound { matches, read } => WireReply::TerminalFound {
+            TextReply::TerminalFound { matches } => WireReply::TerminalFound {
                 matches: matches
                     .iter()
                     .map(|TerminalMatch { above, text }| Match {
@@ -200,7 +198,6 @@ impl<'a> Terminal<'a> {
                         text: layout.text(text),
                     })
                     .collect(),
-                read: *read,
             },
             _ => return None,
         };
@@ -264,7 +261,6 @@ impl<'a> Layout<'a> {
             started_ms,
             ended_ms,
             waited,
-            read,
             colours,
             caret,
         } = snapshot;
@@ -283,7 +279,6 @@ impl<'a> Layout<'a> {
             started_ms: *started_ms,
             ended_ms: *ended_ms,
             waited: *waited,
-            read: *read,
             colours: colours.as_deref().map(|rows| self.colours(rows)),
             caret: caret.as_ref().map(Cow::Borrowed),
         }
@@ -348,12 +343,11 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
                 point,
             }))
         }
-        WireReply::TerminalHistory { text, above, read } => TextReply::TerminalHistory {
+        WireReply::TerminalHistory { text, above } => TextReply::TerminalHistory {
             text: section.text(text)?,
             above,
-            read,
         },
-        WireReply::TerminalFound { matches, read } => TextReply::TerminalFound {
+        WireReply::TerminalFound { matches } => TextReply::TerminalFound {
             matches: matches
                 .into_iter()
                 .map(|Match { above, text }| {
@@ -363,7 +357,6 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
                     })
                 })
                 .collect::<io::Result<_>>()?,
-            read,
         },
     };
     section.finish()?;
@@ -452,7 +445,6 @@ impl<'s> Section<'s> {
             started_ms,
             ended_ms,
             waited,
-            read,
             colours,
             caret,
         } = snapshot;
@@ -471,7 +463,6 @@ impl<'s> Section<'s> {
             started_ms,
             ended_ms,
             waited,
-            read,
             colours: colours.map(|colours| self.colours(colours)).transpose()?,
             caret: caret.map(Cow::into_owned),
         })

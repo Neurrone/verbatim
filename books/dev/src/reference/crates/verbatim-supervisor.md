@@ -176,8 +176,7 @@ How it works:
   own due time and ends it through `end_outpost`; the owner judges the
   listener's and the spares' by their `Liveness`, nine seconds without a
   pong ending one, and ends an outpost whose pong reports eight workers
-  parked on windows the outpost did not judge hung (its `parked_on_hung`
-  never counts), all on the run's shared clock. An outpost says
+  parked, all on the run's shared clock. An outpost says
   `TargetExited` when its application exits.
 - Every ending is a clean shutdown (`retire`, under "Shutting down"); an
   outpost ended for any reason but its pipe's end has `Ended` sent at once,

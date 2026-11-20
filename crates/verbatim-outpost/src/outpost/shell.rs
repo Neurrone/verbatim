@@ -764,19 +764,16 @@ mod tests {
             replacement: dead + 1,
         };
         let counts = |shell: &Shell| match shell.context.pong() {
-            Urgent::Pong {
-                parked_count,
-                parked_on_hung,
-            } => (parked_count, parked_on_hung),
+            Urgent::Pong { parked_count } => parked_count,
             other => panic!("not the ping's pong: {other:?}"),
         };
-        assert_eq!(counts(&shell), (0, 0));
+        assert_eq!(counts(&shell), 0);
         shell.apply(vec![abandon(0)]);
-        assert_eq!(counts(&shell), (1, 0));
+        assert_eq!(counts(&shell), 1);
         shell.apply(vec![abandon(1)]);
-        assert_eq!(counts(&shell), (2, 0), "one more");
+        assert_eq!(counts(&shell), 2, "one more");
         shell.take(Posted::Returned(0));
-        assert_eq!(counts(&shell), (1, 0), "one returned");
+        assert_eq!(counts(&shell), 1, "one returned");
         end_workers(&mut shell);
     }
 }

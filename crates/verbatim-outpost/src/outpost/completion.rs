@@ -14,7 +14,9 @@
 #![forbid(unsafe_code)]
 
 use verbatim_model::property::PropertyValues;
-use verbatim_model::protocol::{UiaAncestorFact, UiaSnapshotFact};
+use verbatim_model::protocol::UiaSnapshotFact;
+
+use super::read::UiaAncestorFact;
 use verbatim_model::request::{
     CompleteUia, CompletionFor, KnownAncestor, ObjectRead, Outcome, Refusal, Reply, RouteEnd,
 };

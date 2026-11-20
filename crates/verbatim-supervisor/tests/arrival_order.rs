@@ -164,7 +164,6 @@ fn stand_in(args: &[String]) -> ! {
             &mut messages,
             &ListenerToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
-                target_pid: Pid(0),
             },
         )
         .expect("a message is written");
@@ -175,14 +174,10 @@ fn stand_in(args: &[String]) -> ! {
                 Err(error) => panic!("the command pipe failed: {error}"),
             };
             match command {
-                CoreToListener::Ping { .. } => write_message(
-                    &mut messages,
-                    &ListenerToCore::Pong {
-                        parked_count: 0,
-                        written_at_us: 0,
-                    },
-                )
-                .expect("a message is written"),
+                CoreToListener::Ping { .. } => {
+                    write_message(&mut messages, &ListenerToCore::Pong { written_at_us: 0 })
+                        .expect("a message is written");
+                }
                 CoreToListener::Shutdown => std::process::exit(0),
                 CoreToListener::IdleQuery { round } => {
                     write_message(&mut messages, &ListenerToCore::IdleAnswer { round })
@@ -211,7 +206,6 @@ fn stand_in(args: &[String]) -> ! {
                     &mut messages,
                     &OutpostToCore::Pong {
                         parked_count: 0,
-                        parked_on_hung: 0,
                         written_at_us: 0,
                     },
                 );

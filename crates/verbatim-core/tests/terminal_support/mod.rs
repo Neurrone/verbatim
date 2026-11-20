@@ -106,8 +106,6 @@ pub struct Outpost {
     anchors: BTreeMap<u64, Range>,
     /// The last anchor minted.
     minted: u64,
-    /// The reads taken, which number each.
-    reads: u64,
 }
 
 impl Outpost {
@@ -118,7 +116,6 @@ impl Outpost {
             width,
             anchors: BTreeMap::new(),
             minted: 0,
-            reads: 0,
         }
     }
 
@@ -172,10 +169,8 @@ impl Outpost {
             at_ms,
             above: usize::try_from(snapshot.above).expect("rows"),
         };
-        self.reads += 1;
         let colours = request.colours.then(|| self.colours());
-        let mut wire = snapshot_of(&read, false, colours.as_deref());
-        wire.read = self.reads;
+        let wire = snapshot_of(&read, false, colours.as_deref());
         let start = self.mint(snapshot.next_start);
         let point = request.starting.map(|_| self.mint(snapshot.next_start));
         let reply = TerminalReadReply {
@@ -200,7 +195,6 @@ impl Outpost {
         TextReply::TerminalHistory {
             text: snapshot.text,
             above: snapshot.above,
-            read: 0,
         }
     }
 
@@ -263,7 +257,6 @@ impl Outpost {
                     text: text_of(row),
                 })
                 .collect(),
-            read: 0,
         }
     }
 
@@ -699,9 +692,6 @@ impl Session {
                         bound: Some(Box::new(binding())),
                     },
                 )
-            }
-            Input::MarkReached { mark } => {
-                self.queued_input(TraceId::from_raw(1), QueueInput::MarkReached(*mark))
             }
             other => other.clone(),
         }

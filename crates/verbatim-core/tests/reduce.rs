@@ -2654,7 +2654,6 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
         .validity
         .expect("focus speech carries its validity");
     assert_eq!(validity.node, TWO.node(10));
-    assert!(validity.had_focus);
 
     let editor = node(
         TWO,
@@ -2689,8 +2688,7 @@ fn a_window_title_is_queued_before_its_control_not_cut_off() {
 }
 
 /// Focus speech for a control the user has left no longer holds, but an
-/// entered container's does while the focus is inside it, and so does
-/// speech for a node that never had the focus.
+/// entered container's does while the focus is inside it.
 #[test]
 fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
     let now = FocusNow {
@@ -2701,27 +2699,16 @@ fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
     };
     let left = FocusValidity {
         node: NodeId::new(2),
-        had_focus: true,
         window: None,
     };
     assert!(!left.holds(&now), "a control the user has left");
     for node in [1, 3, 9] {
         let validity = FocusValidity {
             node: NodeId::new(node),
-            had_focus: true,
             window: None,
         };
         assert!(validity.holds(&now), "node {node}");
     }
-    let never_focused = FocusValidity {
-        node: NodeId::new(2),
-        had_focus: false,
-        window: None,
-    };
-    assert!(
-        never_focused.holds(&now),
-        "a dialog announced on entering it"
-    );
 }
 
 /// An MSAA submenu item's speech stays valid when the application then

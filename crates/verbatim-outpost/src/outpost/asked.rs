@@ -1427,8 +1427,8 @@ fn current_focus(
 }
 
 /// The route's end as the outpost's continuation above it takes it.
-pub(super) fn ancestors_end(end: &RouteEnd) -> verbatim_model::protocol::AncestorsEnd {
-    use verbatim_model::protocol::AncestorsEnd;
+pub(super) fn ancestors_end(end: &RouteEnd) -> super::read::AncestorsEnd {
+    use super::read::AncestorsEnd;
     match end {
         RouteEnd::Known(_) | RouteEnd::ProcessBoundary | RouteEnd::Root => AncestorsEnd::Top,
         RouteEnd::ContinueFrom(window) => AncestorsEnd::ContinueFrom(hwnd_of(*window)),

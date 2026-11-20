@@ -289,9 +289,7 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
         .handle_command(&CoreToOutpost::Ping { sent_at_us: 0 });
     match outpost.next() {
         OutpostToCore::Pong {
-            parked_count: 0,
-            parked_on_hung: 0,
-            ..
+            parked_count: 0, ..
         } => {}
         other => panic!("the outpost said {other:?}, not the pong"),
     }

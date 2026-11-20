@@ -29,7 +29,7 @@ use verbatim_uia_rops::{
 use crate::dialog_text::is_dialog;
 
 use crate::gates;
-use verbatim_model::protocol::DumpedTree;
+use verbatim_model::protocol::{DumpedTree, UiaSnapshotFact};
 use verbatim_model::request::FocusDepth;
 use verbatim_win32::window::window_class_name;
 
@@ -732,6 +732,48 @@ fn window_object_onward(
     ))
 }
 
+/// One raw-view ancestor of a UIA focus, as the route of a completed focus
+/// read gives it: its cached parts, its own native window handle
+/// (0 for an element that is not a window), and whether UIA counts it both
+/// a control and content. The outpost filters what it reports from these
+/// and finds its own elements by the runtime ids below a window
+/// (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own element").
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UiaAncestorFact {
+    /// The ancestor's cached parts.
+    pub(super) snapshot: UiaSnapshotFact,
+    /// Its own native window handle, or 0.
+    pub(super) hwnd: isize,
+    /// Whether it is both a control and content element.
+    pub(super) content: bool,
+}
+
+/// Where the chain above a UIA focus read's ancestors goes on, as the
+/// listener's walk ended (`books/dev/src/reference/adr/0001-focus.md`, "Object identity"),
+/// taken from the route's end (`RouteEnd`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum AncestorsEnd {
+    /// The ancestors reach the desktop root, the process boundary, or a
+    /// known ancestor, and the rest as read before: the outpost goes on
+    /// above the boundary, or from a window it reads through MSAA.
+    #[default]
+    Top,
+    /// A step to a parent failed or found none below the root: the chain
+    /// goes on from this window's own object, the parent window of the
+    /// outermost ancestor's nearest window, as NVDA's parent read falls
+    /// back to the window hierarchy (`Window._get_parent`); 0 for none. Or
+    /// a step reached this window, a ghost's or a hung application's,
+    /// other than the nearest window: the chain goes on from it, which the
+    /// outpost reads as a plain window, as NVDA does after that one step.
+    ContinueFrom(isize),
+    /// The walk was cut by the read's budget or its depth limit: the chain
+    /// is completed by plain windows from this window, included: the
+    /// outermost ancestor's nearest window, or its parent window when that
+    /// ancestor is the window's own element
+    /// ([`verbatim_uia::plain_windows_start`]).
+    PlainFrom(isize),
+}
+
 /// A UIA focus's ancestors, outermost first, from `ancestors`, the
 /// raw-view chain the focus listener read from the event's own element,
 /// nearest first, `nearest`, the focus's nearest window the listener
@@ -753,15 +795,9 @@ fn window_object_onward(
 pub(super) fn uia_chain_from_read(
     context: &RequestContext<'_>,
     client: &mut Client,
-    (ancestors, own_window, nearest, end): (
-        &[verbatim_model::protocol::UiaAncestorFact],
-        isize,
-        Option<isize>,
-        verbatim_model::protocol::AncestorsEnd,
-    ),
+    (ancestors, own_window, nearest, end): (&[UiaAncestorFact], isize, Option<isize>, AncestorsEnd),
     previous: &[NodeSnapshot],
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
-    use verbatim_model::protocol::AncestorsEnd;
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors

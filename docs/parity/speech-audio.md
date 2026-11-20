@@ -25,7 +25,7 @@ Verbatim: **matched (unverified)**. The mixer reports each mark when the
 device has played it, for every synthesizer (D17). Utterances carry
 marks (`SegmentContent::Mark`) and Core's say-all moves the caret or
 review cursor by them; the shell turns each reported mark into
-`Input::MarkReached`. OneCore and eSpeak NG both place marks themselves,
+`QueueInput::MarkReached`. OneCore and eSpeak NG both place marks themselves,
 so both drive say-all.
 
 ### Say-all

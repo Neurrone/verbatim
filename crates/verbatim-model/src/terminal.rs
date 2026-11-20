@@ -56,17 +56,9 @@ pub struct TerminalSnapshot {
     /// key whose effect it can show reached the program by then, and a key
     /// is given to the reading rules before the read when it reached the
     /// program by its end; 0 when not known, the start standing in.
-    #[serde(default)]
     pub ended_ms: u64,
     /// Whether the read waited for Core's speech queue ("Volatile rows").
     pub waited: bool,
-    /// The read's number among the terminal's reads, counted by its
-    /// outpost from 1, by which a search's or a history read's answer
-    /// names the read its rows are counted from
-    /// ([`crate::TextReply::TerminalFound`],
-    /// [`crate::TextReply::TerminalHistory`]); 0 when not numbered.
-    #[serde(default)]
-    pub read: u64,
     /// The screen's colour runs, row by row from the screen's top to the
     /// document's end, when the read took them.
     #[serde(default, skip_serializing_if = "Option::is_none")]

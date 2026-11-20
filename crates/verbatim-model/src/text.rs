@@ -331,6 +331,22 @@ pub struct Selection {
 
 /// Text that became selected or stopped being selected, which Core speaks
 /// as NVDA's "selected" and "unselected" announcements.
+///
+/// The changes from a selection `[old_start, old_end)` to the selection
+/// now `[new_start, new_end)` (each collapsed at the caret when nothing is
+/// selected) are worked out by comparing endpoints, which only the outpost
+/// can do:
+///
+/// - When the two do not overlap or touch (`new_end < old_start` or
+///   `new_start > old_end`), the old text, if any, is unselected and the new
+///   text, if any, is selected, in that order.
+/// - Otherwise, first the start: `[new_start, old_start)` is selected when
+///   the start moved back, `[old_start, new_start)` unselected when it
+///   moved forward; then the end: `[old_end, new_end)` is selected when
+///   the end moved forward, `[new_end, old_end)` unselected when it moved
+///   back.
+///
+/// Empty changes are left out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionChange {
     /// True for text newly selected, false for text no longer selected.
@@ -367,48 +383,9 @@ pub struct CaretReport {
     pub read_at_us: u64,
 }
 
-/// How a read's selection changed from the node's last read.
-///
-/// `selection_changes` describe how the selection changed from the node's
-/// last read. With that selection `[old_start, old_end)` and the selection
-/// now `[new_start, new_end)` (each collapsed at the caret when nothing is
-/// selected), they are worked out by comparing endpoints, which only the
-/// outpost can do:
-///
-/// - When the two do not overlap or touch (`new_end < old_start` or
-///   `new_start > old_end`), the old text, if any, is unselected and the new
-///   text, if any, is selected, in that order.
-/// - Otherwise, first the start: `[new_start, old_start)` is selected when
-///   the start moved back, `[old_start, new_start)` unselected when it
-///   moved forward; then the end: `[old_end, new_end)` is selected when
-///   the end moved forward, `[new_end, old_end)` unselected when it moved
-///   back.
-///
-/// Empty changes are left out.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CaretChanges {
-    /// How the selection changed, by the rule above.
-    #[serde(default)]
-    pub selection_changes: Vec<SelectionChange>,
-    /// The node's text changed since the selection compared with was read,
-    /// so the change is spoken in general terms (`docs/parity/text.md`,
-    /// "TextInfo-equivalent layer"): each of `selection_changes` then says
-    /// only whether something was selected or unselected, with no text, and
-    /// `new_selection` is the whole new selection.
-    #[serde(default)]
-    pub content_changed: bool,
-    /// With `content_changed`, the whole new selection's text.
-    #[serde(default)]
-    pub new_selection: Option<SelectionChange>,
-}
-
 /// What the outpost's caret read found for a focus that may have text,
 /// carried with the focus
 /// ([`NormalizedEvent::FocusChanged`](crate::NormalizedEvent::FocusChanged)).
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a focus's text is held in a box wherever it travels"
-)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FocusText {
     /// The caret: Core speaks its line, or "selected" and the selected text
@@ -423,15 +400,6 @@ pub enum FocusText {
         /// the line is spoken instead.
         #[serde(default)]
         selected_text: Option<String>,
-        /// How the selection changed from the node's last read, for the
-        /// control plane's stream: a focus says no change, new or
-        /// repeated, so Core gives the default.
-        #[serde(default)]
-        changes: CaretChanges,
-        /// What the read found for a key, when a key's note lived on the
-        /// node, so a repeated focus cannot consume its effect.
-        #[serde(default)]
-        facts: Option<Box<ReadFacts>>,
     },
     /// The node has no text the outpost can read (an MSAA object that is
     /// not an edit control, a UIA element with no text pattern): Core
@@ -476,43 +444,6 @@ pub fn had_effect(compared: Compared, motion: CaretMotion) -> bool {
         || compared.beside_changed
         || (motion.compares_unit() && compared.unit_changed)
         || (motion.deletes() && compared.line_changed)
-}
-
-/// How a read compared with the node's last read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Change {
-    /// The node had no last read to compare with.
-    NoPrevious,
-    /// The read compared with the node's last read.
-    Compared {
-        /// What the comparison found.
-        compared: Compared,
-        /// The caret's line in the last read, with the caret at its offset.
-        previous_line: TextChunk,
-        /// The selection in the last read.
-        #[serde(default)]
-        previous_selection: Option<CaretSelection>,
-        /// Whether the caret is on the line it was on in the last read.
-        on_previous_line: bool,
-    },
-}
-
-/// What a read made under a key's note, or asked for one, carries for Core
-/// to judge: present exactly when the read was made for a key, so a report
-/// without it cannot be taken for evidence
-/// (`docs/design/caret-selection-rework.md`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadFacts {
-    /// The key's unit at the caret, the line where the text has no such unit
-    /// or the unit is the line; `None` for a read dispatched before its
-    /// key's note arrived, which fetched no unit.
-    #[serde(default)]
-    pub unit: Option<TextChunk>,
-    /// How the read compared with the node's last read.
-    pub change: Change,
-    /// When the read ended, in microseconds on the clock every process of a
-    /// run shares: Core judges a key's evidence by it.
-    pub read_ended_at_us: u64,
 }
 
 /// A movement by whole units, positive forward and negative back.
@@ -932,8 +863,7 @@ pub struct SelectionRead {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionDifference {
     /// What became selected and unselected, each part's text what its
-    /// range now holds, by the rule [`CaretChanges`] describes for its
-    /// `selection_changes`; empty when the old range and the new selection
+    /// range now holds, by the rule [`SelectionChange`] describes; empty when the old range and the new selection
     /// are both empty.
     pub changes: Vec<SelectionChange>,
     /// The whole new selection's text, its `selected` true; `None` when
@@ -1158,7 +1088,7 @@ pub enum TextReply {
     /// The answer to [`TextOp::Select`]: how the selection changed from
     /// the one the outpost read just before selecting (collapsed at the
     /// caret when nothing was selected) to the one it read just after, by
-    /// the rule [`CaretChanges`] describes for its `selection_changes`.
+    /// the rule [`SelectionChange`] describes.
     Selected(Vec<SelectionChange>),
     /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done: the
     /// move begun at `read_at_us`, as [`TextReply::Moved`], with the
@@ -1183,26 +1113,19 @@ pub enum TextReply {
     /// The answer to [`TextOp::ReadTerminal`].
     TerminalRead(Box<TerminalReadReply>),
     /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
-    /// kept, how many rows it holds above the start the next read takes,
-    /// and the read whose start that is.
+    /// kept, and how many rows it holds above the start the next read
+    /// takes.
     TerminalHistory {
         /// The text.
         text: String,
         /// Rows above the start.
         above: u32,
-        /// The read whose start the rows are counted from
-        /// ([`crate::TerminalSnapshot::read`]); 0 before the first.
-        #[serde(default)]
-        read: u64,
     },
     /// The answer to [`TextOp::TerminalFind`].
     TerminalFound {
         /// The matches, alternately below and above the row sought from,
         /// nearest first in each direction.
         matches: Vec<crate::TerminalMatch>,
-        /// The read whose start the matches' rows are counted from
-        /// ([`crate::TerminalSnapshot::read`]); 0 before the first.
-        read: u64,
     },
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.

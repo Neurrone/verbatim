@@ -302,9 +302,6 @@ fn an_edit_controls_value_change_and_a_caret_read_are_the_control_planes_events(
                 node_id: node(2),
                 caret: caret(1, 3),
                 selection_changes: vec![change(true, "lph")],
-                content_changed: false,
-                new_selection: None,
-                facts: None,
             },
         }]
     );

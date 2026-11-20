@@ -916,7 +916,6 @@ fn focus_speech(
             source: Some(crate::reduce::source_of(&focus.snapshot)),
             validity: Some(FocusValidity {
                 node,
-                had_focus: true,
                 window: verbatim_model::WindowIdentity::of(&focus.snapshot),
             }),
             say_all: false,

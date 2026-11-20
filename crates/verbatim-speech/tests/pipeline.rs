@@ -929,12 +929,11 @@ fn settings_host_get_set_commit_revert() {
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(75)));
 }
 
-fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
+fn about(text: &str, node: u64) -> Utterance {
     Utterance {
         say_all: false,
         validity: Some(FocusValidity {
             node: NodeId::new(node),
-            had_focus,
             window: None,
         }),
         ..queued(text)
@@ -1011,11 +1010,11 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
     let harness = control_manager();
     let first = harness
         .manager
-        .speak(&harness.token, about("first control", 1, true));
+        .speak(&harness.token, about("first control", 1));
     assert_eq!(recv_started(&harness.started), "first control");
     let second = harness
         .manager
-        .speak(&harness.token, about("second control", 2, true));
+        .speak(&harness.token, about("second control", 2));
     let message = harness.manager.speak(&harness.token, queued("a message"));
 
     // Focus is now on node 3, inside nothing: both controls have expired.
@@ -1679,10 +1678,10 @@ fn waiting_focus_speech_is_judged_when_its_turn_comes() {
     assert_eq!(recv_started(&harness.started), "a message");
     let current = harness
         .manager
-        .speak(&harness.token, about("the new focus", 3, true));
+        .speak(&harness.token, about("the new focus", 3));
     let left = harness
         .manager
-        .speak(&harness.token, about("a control left behind", 2, true));
+        .speak(&harness.token, about("a control left behind", 2));
     harness.manager.control().drop_expired(FocusNow {
         focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: Vec::new(),
@@ -1711,13 +1710,11 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
     let harness = control_manager();
     let left = harness
         .manager
-        .speak(&harness.token, about("a control left behind", 1, true));
+        .speak(&harness.token, about("a control left behind", 1));
     assert_eq!(recv_started(&harness.started), "a control left behind");
     let control = harness.manager.control();
     control.cancel();
-    let dialog = harness
-        .manager
-        .speak(&harness.token, about("a dialog", 2, false));
+    let dialog = harness.manager.speak(&harness.token, queued("a dialog"));
     control.drop_expired(FocusNow {
         focus: ObjectKey::of_id(NodeId::new(3)),
         ancestors: vec![ObjectKey::of_id(NodeId::new(2))],

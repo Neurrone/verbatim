@@ -402,8 +402,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   hung window: Core judges a hang. An event's check before its first call
   (`Worker::readable`) still drops an event of a window that cannot be
   read, by the outpost's reader. The pong reports the abandoned workers
-  that have not returned (`parked_count`; `parked_on_hung` is 0, the
-  outpost judging no hang), one value (`Lock<usize>`) written when a
+  that have not returned (`parked_count`), one value (`Lock<usize>`) written when a
   worker is parked or returns and read once per ping.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, Core's request, a watch's check or
@@ -1228,8 +1227,6 @@ provider gives no handle for the window, which the classic walk finds.
   round trip. The caret read is a caret report inside the snapshot.
   Output reads are the worker's own after the event queue's requests; a
   read waits for the worker's current request, up to a search's length.
-- Reads are numbered (`TerminalSnapshot::read`) for the control plane; Core
-  judges nothing by the number.
 - Keys and reading settings are Core's, and so is whether a read takes
   colours. A caret key's starting and final reads in a terminal are
   `ReadTerminal` requests of Core's caret key entry.

@@ -186,7 +186,7 @@ pub enum TextFormat {
 
 /// An index mark the reducer places in an utterance
 /// ([`SegmentContent::Mark`]); the speech pipeline reports it back when
-/// playback reaches it, as `Input::MarkReached`. The reducer numbers its
+/// playback reaches it, as `QueueInput::MarkReached`. The reducer numbers its
 /// marks in increasing order and never reuses a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SpeechMark(pub u64);
@@ -464,16 +464,14 @@ pub struct Utterance {
 /// (`docs/nvda/speech.md`, "Cancellation", and `docs/nvda/events.md`):
 /// queued or playing speech announcing a node stays valid while that node
 /// is the same object as the focus, an ancestor of the focus, or the
-/// foreground window ([`ObjectKey::is_same_object`]), if the node never
-/// had the focus at all, as a dialog announced on entering it never does,
-/// or if it is the menu item the focus just left for a menu above it
-/// ([`FocusNow::menu_item_of_focus`]).
+/// foreground window ([`ObjectKey::is_same_object`]), or if it is the menu
+/// item the focus just left for a menu above it
+/// ([`FocusNow::menu_item_of_focus`]). Speech for a node that never had the
+/// focus, as a dialog announced on entering it, carries none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusValidity {
     /// The node the speech announces.
     pub node: NodeId,
-    /// Whether that node was the focus when the speech was made.
-    pub had_focus: bool,
     /// The window that node is, when it is one, so that another outpost's
     /// node for the same window's object is the same object.
     #[serde(default)]
@@ -489,8 +487,7 @@ impl FocusValidity {
             id: self.node,
             window: self.window,
         };
-        !self.had_focus
-            || key.is_same_object(&now.focus)
+        key.is_same_object(&now.focus)
             || now
                 .ancestors
                 .iter()
@@ -594,7 +591,6 @@ mod tests {
     fn focus_speech_holds_while_the_focus_is_its_object_under_another_node() {
         let spoken = FocusValidity {
             node: NodeId::new(1),
-            had_focus: true,
             window: Some(window(7, Backend::Msaa, false)),
         };
         let now = |focus| FocusNow {
@@ -613,7 +609,6 @@ mod tests {
     fn focus_speech_ends_when_the_focus_is_its_window_through_another_backend() {
         let spoken = FocusValidity {
             node: NodeId::new(1),
-            had_focus: true,
             window: Some(window(7, Backend::Msaa, false)),
         };
         let now = FocusNow {
@@ -631,7 +626,6 @@ mod tests {
     fn focus_speech_holds_while_the_foreground_is_its_window_from_another_outpost() {
         let spoken = FocusValidity {
             node: NodeId::new(1),
-            had_focus: true,
             window: Some(window(7, Backend::Msaa, false)),
         };
         let now = |foreground| FocusNow {

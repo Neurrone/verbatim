@@ -880,7 +880,6 @@ pub(super) fn terminal_history(
         Ok(history) => TextReply::TerminalHistory {
             text: history.text,
             above: history.above,
-            read: 0,
         },
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {
@@ -919,7 +918,6 @@ pub(super) fn terminal_find(
     ) {
         Ok(found) => TextReply::TerminalFound {
             matches: found.matches,
-            read: 0,
         },
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {

@@ -252,7 +252,6 @@ fn expected_effects() -> Vec<Vec<Seen>> {
                 ],
                 Some(FocusValidity {
                     node: slider,
-                    had_focus: true,
                     window: None,
                 }),
             ),

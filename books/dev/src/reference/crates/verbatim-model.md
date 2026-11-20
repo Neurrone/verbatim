@@ -116,18 +116,19 @@ recorder unchanged. What the reducer does with each type is in
   and range, or its text, and the bar's place and whether its window is in
   the foreground. `ListenerToCore::Progress` carries it to Core, as
   `Input::Progress`.
-- `NormalizedEvent`, `PropertyChange`, `Notification`,
-  `NotificationKind`, `NotificationProcessing`, `AlertOrigin`, `ToastId`,
-  `EarlierElement`, `FocusGroup`: an event as Core took it, which
-  `Effect::Observed` carries to the control plane's event stream, its
-  protocol version 4 event: `FocusChanged` (a full snapshot with its
-  ancestor chain, outermost first), `PropertyChanged` with a
-  `PropertyChange` (name, value, description, or the complete new
-  `States` set), `ValueChanged`, `SelectionChanged`,
-  `ControlledSelection`, `Notification`, `Alert` (with its `AlertOrigin`:
-  an MSAA alert, or a Windows toast's window opening carrying its
-  `ToastId`), and the text events under "The text protocol". The readers
-  send none: they tell (`tell`) and answer requests (`request`).
+- `NormalizedEvent`, `PropertyChange` and `EarlierElement`: an event as
+  Core took it, which `Effect::Observed` carries to the control plane's
+  event stream, its protocol version 5 event: `FocusChanged` (a full
+  snapshot with its ancestor chain, outermost first), `PropertyChanged`
+  with a `PropertyChange` (name, value, description, or the complete new
+  `States` set), `ValueChanged`, and the text events under "The text
+  protocol". The readers send none: they tell (`tell`) and answer
+  requests (`request`).
+- `NotificationKind` and `NotificationProcessing`: a UI Automation
+  notification's kind and processing, as Core's announcement of it takes
+  them.
+- `ToastId`: a toast's identity, its runtime id, which Core compares
+  with the last toast's to drop a repeat.
 - `KeySeq`: the number of a user input, ordered by press, which fences
   speech (`books/dev/src/explanation/design/ownership.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
@@ -208,12 +209,12 @@ recorder unchanged. What the reducer does with each type is in
 - `FocusValidity` and `FocusNow`: what focus speech is about, for dropping
   it once the focus has moved on (`docs/parity/focus-events.md`, "When
   speech is cut off, and cancellation of expired focus speech").
-  A `FocusValidity` names the node the speech announces, the window that
-  node is when it is one, and whether it was the focus when the speech was
-  made (`had_focus`); a `FocusNow` names the focus, its ancestors, and the
+  A `FocusValidity` names the node the speech announces and the window
+  that node is when it is one; speech for a node that never had the focus
+  carries none. A `FocusNow` names the focus, its ancestors, and the
   foreground object when known, each an `ObjectKey`.
-  `FocusValidity::holds(now)` is true when the node never had the focus,
-  or is the same object as the focus, an ancestor of it, or the
+  `FocusValidity::holds(now)` is true when the node is the same object as
+  the focus, an ancestor of it, or the
   foreground object.
 - `ObjectKey`: an object's identity as Core and the speech manager compare
   it, a node id and the window the node is when it is one, a
@@ -440,9 +441,7 @@ that carries them on the pipes is
     `ObjectRef::Kept { listener, token }`, the listener's generation
     beside its token, since each listener mints its tokens from 1.
   - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
-    workers not yet returned, less `parked_on_hung`, those parked on a
-    window found hung while their program ran), `NotResponding { window }`,
-    `Fault`, `TargetExited`, `SpareReady`, `IdleAnswer`, `Tell` (a tell its
+    workers not yet returned), `Fault`, `TargetExited`, `SpareReady`, `IdleAnswer`, `Tell` (a tell its
     `Follow` registration or a console host's hook delivered, with the
     value it carried) and `Answer` (one per `Request`; its node ids are
     stamped by `Answer::assign_outpost`, named by `Answer::named`, and it
@@ -452,14 +451,9 @@ that carries them on the pipes is
     `Destroyed { window, process, at_us }` (a window destroyed, with the
     raising thread's process or none, which the supervisor hands to Core
     too), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
-- Every variant has a `Kind` (`kind()`, an exhaustive match): `Ask`,
-  `Answer`, `Report`, `Release`, `Lifecycle` or `Configuration` (a user
-  setting a reader needs before a call, sent at its launch and on every
-  change; `books/dev/src/explanation/design/ownership.md`, "No
-  back-channel"). The module denies
-  wildcard matches over its enums, and a test holds the reviewed list of
-  every variant's kind, built from a chain of samples (`samples`) whose
-  matches name every variant; verbatim.exe sends no report.
+- The module denies wildcard matches over its enums, and `samples` gives
+  one sample of each `OutpostToCore` variant, from a chain whose matches
+  name every variant, for the tests that must cover each.
 - `ListenerToCore::carried_token` names the kept element's token a
   listener tell carries (`carries_tokens`), and the listener and
   verbatim.exe count the positions `ElementsHeld` acknowledges with this
@@ -481,21 +475,16 @@ that carries them on the pipes is
   its disabled style; a hung window with no ghost; a responsive one; or
   one gone. Every other request the shell refuses as hung is
   `QueueInput::RefusedHung`.
-- `OutpostToCore::NotResponding { window }`: a window of the outpost's
-  application began a hang, sent once per hang of the application, in
-  order with its answers and tells; Core plays the "not responding" sound
-  for it only when the window's application holds attention.
-- `EventTiming` records each point of an event's way, in microseconds
-  (`docs/design/communication.md`, section 10.1); `hop_us` is the time
-  between two stamps.
+- `EventTiming` records each point of an event's way through the
+  listener and the outpost, in microseconds; `hop_us` is the time between
+  two stamps.
 - `Responder<T>` answers one in-process request once: `answer` consumes
   it, and its `Drop` answers `None`, "gone", so a request lost anywhere is
   still answered. Across processes a killed child runs no `Drop`, so there
   Core's request table answers.
 
-The completion's types live here too: `UiaSnapshotFact` and
-`UiaAncestorFact`, what the listener read of an element and its
-ancestors, `AncestorsEnd`, where a walk ended, and `DumpedTree`.
+The completion's types live here too: `UiaSnapshotFact`, what a reader
+read of an element, and `DumpedTree`.
 
 ## The text protocol
 
@@ -555,12 +544,9 @@ control plane's event stream; no reader sends them.
 
 - `FocusChanged`'s `text`, a `FocusText`, read while the outpost handled
   with the focus (`FocusCaret`) so the caret's line comes with it:
-  `Caret { caret, selected_text, changes }`, `changes` being how the
-  selection differs from the node's last read, for a repeated focus,
-  `NoText` (Core speaks the value), or
+  `Caret { caret, selected_text }`, `NoText` (Core speaks the value), or
   `NotRead` (Core speaks neither).
-- `CaretMoved { node_id, caret, selection_changes, content_changed,
-  new_selection }`: the caret or selection moved in a node with text. A
+- `CaretMoved { node_id, caret, selection_changes }`: the caret or selection moved in a node with text. A
   `CaretReport` is the line at the caret, with its `offset` at the caret,
   the `CaretSelection` (`None` when nothing is selected), whose start is
   the caret, in that line, and
@@ -571,7 +557,7 @@ control plane's event stream; no reader sends them.
 - `TextChanged { node_id }`: an edit control's text changed; Core says
   nothing of it.
 - `TerminalSnapshot { node_id, snapshot }`: one full read of a focused
-  terminal, the control plane's protocol version 4 event the test harness
+  terminal, the control plane's protocol version 5 event the test harness
   waits on ([verbatim-core](verbatim-core.md), "Core's terminal model"),
   which Core gives as `Effect::Observed` for each read it takes; no
   outpost sends it. A `TerminalSnapshot` is whole by itself: its `text` from the read's start to the document's end, the
@@ -579,16 +565,12 @@ control plane's event stream; no reader sends them.
   `TerminalText`; the flags `from_start`, `shrank`, `at_document_start`
   and `alternate`; `caret_rows_to_end`, `caret_column`, and `above`;
   `started_ms` and `ended_ms` on the shared clock (`ended_ms` 0 when not
-  known); `waited`; `read`, its number among the terminal's reads from 1;
-  the screen's `colours` when taken, rows of `TerminalColourRun`; and the
+  known); `waited`; the screen's `colours` when taken, rows of `TerminalColourRun`; and the
   `caret`. A `TerminalText` is text without the spaces that pad its lines
   and each line's padded length as runs (`lengths`): `unpadded` makes one
   and `padded` gives the text back exactly. The screen is sent beside the
   text, read as the provider's first visible range in a call of its own,
   so it is where the user scrolled the view.
-- `ActiveTextPositionChanged { node_id, position }`: the place being read
-  moved without the caret (UIA's active text position changed event).
-  Core speaks nothing for it; it is browse mode's.
 
 ### Requests and replies
 
@@ -607,10 +589,10 @@ read, its watch, the sentence move and a caret tell's read are under
   end side. A change whose text is empty, its text deleted, is listed
   too, as NVDA lists it. The list's order is where each part lies, not
   the order of speech: Core says every selected part first, then every
-  unselected one, as NVDA does. When the node's text changed since
-  the compared selection was reported, `content_changed` is set, the
-  changes carry no text, and `new_selection` carries the whole new
-  selection's text.
+  unselected one, as NVDA does. A `SelectionDifference` carries both the
+  changes and the whole new selection's text (`new_selection`), so Core
+  speaks the change in general terms when the node's text changed since
+  the compared selection was read.
 - `Read(TextRead { at, movement, unit })`: start at `at`, move by
   `movement` (a `TextMovement`: a unit and a signed count), landing on
   that unit's start, then read the `unit` containing the point reached.
@@ -695,9 +677,9 @@ beside the op's own reply, so no answer of them fails to decode.
   which ends the word being typed.
 - `Input::ClearingKey { trace_id, key_seq, at_ms }`: Escape, Control+C, Control+D,
   or Control+Break passed to the focused application.
-- `Input::MarkReached { mark }`, `Input::UtteranceCancelled { marks,
-  at_ms }`, `Input::UtteranceFailed { marks }`: what the speech pipeline
-  reports of the marks the reducer placed.
+- `Input::UtteranceCancelled { marks, at_ms }`,
+  `Input::UtteranceFailed { marks }`: what the speech pipeline reports of
+  the marks the reducer placed.
 - `Input::Settings(ReaderSettings)` and
   `Input::Reported(ReportedDetails)`: at startup and whenever they
   change.

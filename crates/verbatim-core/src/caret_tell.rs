@@ -291,9 +291,6 @@ fn answered(
                 .as_ref()
                 .map(|difference| difference.changes.clone())
                 .unwrap_or_default(),
-            content_changed: false,
-            new_selection: None,
-            facts: None,
         },
     ));
     let collapsed = read.caret.selection.is_none();

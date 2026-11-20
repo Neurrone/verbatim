@@ -708,11 +708,7 @@ fn focus_speech(
                 segments: unremembered_segments(title, Reason::Focus, positions),
                 source: Some(source_of(title)),
                 say_all: false,
-                validity: Some(FocusValidity {
-                    node: title.id,
-                    had_focus: false,
-                    window: WindowIdentity::of(title),
-                }),
+                validity: None,
             },
             None,
         ));
@@ -745,11 +741,7 @@ fn focus_speech(
                 segments,
                 source: Some(source_of(container)),
                 say_all: false,
-                validity: Some(FocusValidity {
-                    node: container.id,
-                    had_focus: false,
-                    window: WindowIdentity::of(container),
-                }),
+                validity: None,
             },
             None,
         ));
@@ -775,7 +767,6 @@ fn focus_speech(
             say_all: false,
             validity: Some(FocusValidity {
                 node: report.node.id,
-                had_focus: true,
                 window: WindowIdentity::of(report.node),
             }),
         },

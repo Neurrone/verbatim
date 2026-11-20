@@ -984,7 +984,17 @@ impl Request {
                 op: crate::TextOp::ReadTerminal(read),
                 ..
             } => read.output,
-            _ => false,
+            Request::ReadObject(_)
+            | Request::Properties { .. }
+            | Request::Navigate { .. }
+            | Request::Find { .. }
+            | Request::Children { .. }
+            | Request::CompleteUia(_)
+            | Request::MsaaRun(_)
+            | Request::CurrentFocus { .. }
+            | Request::Text { .. }
+            | Request::Activate { .. }
+            | Request::Follow(_) => false,
         }
     }
 }

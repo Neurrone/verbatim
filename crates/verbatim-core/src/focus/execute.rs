@@ -448,8 +448,6 @@ fn focus_text(caret: &FocusCaret) -> FocusText {
         FocusCaret::Read(read) => FocusText::Caret {
             caret: read.caret.clone(),
             selected_text: read.selected_text.clone(),
-            changes: verbatim_model::CaretChanges::default(),
-            facts: None,
         },
     }
 }
@@ -535,7 +533,6 @@ fn observed(report: &Report) -> Effect {
             ancestors: report.ancestors.to_vec(),
             text: report.text.clone().map(Box::new),
             earlier: report.earlier,
-            group: None,
         },
     )
 }

@@ -87,7 +87,6 @@ fn stand_in(args: &[String]) -> ! {
             &mut messages,
             &ListenerToCore::Ready {
                 outpost_pid: Pid(std::process::id()),
-                target_pid: Pid(0),
             },
         )
         .expect("a message is written");
@@ -95,14 +94,10 @@ fn stand_in(args: &[String]) -> ! {
         let mut told = false;
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
-                Ok(Some(CoreToListener::Ping { .. })) => write_message(
-                    &mut messages,
-                    &ListenerToCore::Pong {
-                        parked_count: 0,
-                        written_at_us: 0,
-                    },
-                )
-                .expect("a message is written"),
+                Ok(Some(CoreToListener::Ping { .. })) => {
+                    write_message(&mut messages, &ListenerToCore::Pong { written_at_us: 0 })
+                        .expect("a message is written");
+                }
                 Ok(Some(CoreToListener::ApplicationExited { pid })) => {
                     told = true;
                     write_message(&mut messages, &ListenerToCore::ExitHandled { pid })
@@ -128,7 +123,6 @@ fn stand_in(args: &[String]) -> ! {
         match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(CoreToOutpost::Ping { .. })) => send(&OutpostToCore::Pong {
                 parked_count: 0,
-                parked_on_hung: 0,
                 written_at_us: 0,
             }),
             Ok(Some(CoreToOutpost::Shutdown) | None) => std::process::exit(0),

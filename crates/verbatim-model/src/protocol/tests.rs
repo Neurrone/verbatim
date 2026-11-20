@@ -1,5 +1,5 @@
-//! The wire types' kinds, the count of the messages that carry nodes, and
-//! the pure methods of the messages.
+//! The count of the messages that carry nodes, and the pure methods of the
+//! messages.
 
 use super::*;
 
@@ -27,89 +27,11 @@ fn timing() -> EventTiming {
     EventTiming::default()
 }
 
-/// One sample of each [`CoreToOutpost`] variant, after `previous`.
-fn next_core_to_outpost(previous: Option<&CoreToOutpost>) -> Option<CoreToOutpost> {
-    let Some(previous) = previous else {
-        return Some(CoreToOutpost::Ping { sent_at_us: 0 });
-    };
-    Some(match previous {
-        CoreToOutpost::Ping { .. } => CoreToOutpost::NodesHeld {
-            nodes: Vec::new(),
-            anchors: Vec::new(),
-            acknowledged: 0,
-        },
-        CoreToOutpost::NodesHeld { .. } => CoreToOutpost::IdleQuery { round: 1 },
-        CoreToOutpost::IdleQuery { .. } => CoreToOutpost::Shutdown,
-        CoreToOutpost::Shutdown => CoreToOutpost::Assign { target_pid: Pid(1) },
-        CoreToOutpost::Assign { .. } => CoreToOutpost::Request(Box::new(crate::request::Ask {
-            number: crate::request::RequestNumber(1),
-            window: crate::WindowHandle(8),
-            verdict: crate::request::WindowVerdict::Msaa,
-            request: crate::request::Request::CurrentFocus {
-                hidden: crate::request::HiddenRoot::Check,
-                set: vec![crate::property::PropertyId::Name],
-                known: Vec::new(),
-                details: crate::TextDetails::NONE,
-                depth: crate::request::FocusDepth::Full,
-            },
-        })),
-        CoreToOutpost::Request(_) => CoreToOutpost::Cancel(crate::request::Cancel {
-            number: crate::request::RequestNumber(1),
-            reason: crate::request::CancelReason::Withdrawn,
-        }),
-        CoreToOutpost::Cancel(_) => CoreToOutpost::WindowDestroyed(crate::WindowHandle(8)),
-        CoreToOutpost::WindowDestroyed(_) => return None,
-    })
-}
-
-/// One sample of each [`CoreToListener`] variant, after `previous`.
-fn next_core_to_listener(previous: Option<&CoreToListener>) -> Option<CoreToListener> {
-    let Some(previous) = previous else {
-        return Some(CoreToListener::ApplicationExited { pid: Pid(1) });
-    };
-    Some(match previous {
-        CoreToListener::ApplicationExited { .. } => CoreToListener::Ping { sent_at_us: 0 },
-        CoreToListener::Ping { .. } => CoreToListener::IdleQuery { round: 1 },
-        CoreToListener::IdleQuery { .. } => CoreToListener::Shutdown,
-        CoreToListener::Shutdown => CoreToListener::Request(Box::new(crate::request::Ask {
-            number: crate::request::RequestNumber(1),
-            window: crate::WindowHandle(8),
-            verdict: crate::request::WindowVerdict::Uia,
-            request: crate::request::Request::ReadObject(crate::request::ReadObject {
-                object: crate::request::ObjectRef::Kept {
-                    listener: 1,
-                    token: crate::tell::ElementToken(3),
-                },
-                set: vec![crate::property::PropertyId::Name],
-                relation: None,
-                descendants: false,
-                walk: None,
-                purpose: crate::request::Purpose::Other,
-            }),
-        })),
-        CoreToListener::Request(_) => CoreToListener::Cancel(crate::request::Cancel {
-            number: crate::request::RequestNumber(1),
-            reason: crate::request::CancelReason::Foreground,
-        }),
-        CoreToListener::Cancel(_) => CoreToListener::ElementsHeld {
-            generation: 1,
-            tokens: vec![crate::tell::ElementToken(2)],
-            acknowledged: 4,
-        },
-        CoreToListener::ElementsHeld { .. } => CoreToListener::Configuration {
-            report_background_progress_bars: true,
-        },
-        CoreToListener::Configuration { .. } => return None,
-    })
-}
-
-/// A reply with `outcome`.
 /// One sample of each [`ListenerToCore`] variant, after `previous`.
 fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerToCore> {
     let Some(previous) = previous else {
         return Some(ListenerToCore::Ready {
             outpost_pid: Pid(1),
-            target_pid: Pid(0),
         });
     };
     Some(match previous {
@@ -159,122 +81,13 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             probes: Vec::new(),
             detail: String::new(),
         }),
-        ListenerToCore::Answer(_) => ListenerToCore::Pong {
-            parked_count: 0,
-            written_at_us: 0,
-        },
+        ListenerToCore::Answer(_) => ListenerToCore::Pong { written_at_us: 0 },
         ListenerToCore::Pong { .. } => ListenerToCore::Fault {
             detail: "a fault".to_owned(),
         },
         ListenerToCore::Fault { .. } => ListenerToCore::IdleAnswer { round: 1 },
         ListenerToCore::IdleAnswer { .. } => return None,
     })
-}
-
-/// The reviewed list of every variant's kind, one list per direction: a
-/// new variant changes its enum's `next` function and its list, both
-/// reviewed.
-#[test]
-fn every_variant_has_its_reviewed_kind() {
-    let kinds = |names: Vec<(String, Kind)>| {
-        names
-            .into_iter()
-            .map(|(name, kind)| format!("{name}: {kind:?}"))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        kinds(
-            chain(next_core_to_outpost)
-                .iter()
-                .map(|message| (name(message), message.kind()))
-                .collect()
-        ),
-        [
-            "Ping: Lifecycle",
-            "NodesHeld: Release",
-            "IdleQuery: Ask",
-            "Shutdown: Lifecycle",
-            "Assign: Lifecycle",
-            "Request: Ask",
-            "Cancel: Ask",
-            "WindowDestroyed: Release",
-        ]
-    );
-    assert_eq!(
-        kinds(
-            chain(next_core_to_listener)
-                .iter()
-                .map(|message| (name(message), message.kind()))
-                .collect()
-        ),
-        [
-            "ApplicationExited: Lifecycle",
-            "Ping: Lifecycle",
-            "IdleQuery: Ask",
-            "Shutdown: Lifecycle",
-            "Request: Ask",
-            "Cancel: Ask",
-            "ElementsHeld: Release",
-            "Configuration: Configuration",
-        ]
-    );
-    assert_eq!(
-        kinds(
-            super::samples::outpost_to_core()
-                .iter()
-                .map(|message| (name(message), message.kind()))
-                .collect()
-        ),
-        [
-            "Ready: Lifecycle",
-            "SpareReady: Lifecycle",
-            "Pong: Lifecycle",
-            "NotResponding: Report",
-            "Fault: Report",
-            "TargetExited: Lifecycle",
-            "IdleAnswer: Answer",
-            "Tell: Report",
-            "Answer: Answer",
-        ]
-    );
-    assert_eq!(
-        kinds(
-            chain(next_listener_to_core)
-                .iter()
-                .map(|message| (name(message), message.kind()))
-                .collect()
-        ),
-        [
-            "Ready: Lifecycle",
-            "ExitHandled: Lifecycle",
-            "Progress: Report",
-            "Foreground: Report",
-            "Tell: Report",
-            "Destroyed: Report",
-            "Answer: Answer",
-            "Pong: Lifecycle",
-            "Fault: Report",
-            "IdleAnswer: Answer",
-        ]
-    );
-}
-
-/// verbatim.exe reports nothing to a child: what it observes is judged in
-/// Core, and a child is only asked, told, or given what to release.
-#[test]
-fn core_sends_no_report() {
-    let reports: Vec<String> = chain(next_core_to_outpost)
-        .iter()
-        .filter(|message| message.kind() == Kind::Report)
-        .map(name)
-        .chain(
-            chain(next_core_to_listener)
-                .iter()
-                .filter(|message| message.kind() == Kind::Report)
-                .map(name),
-        )
-        .collect();
-    assert_eq!(reports, Vec::<String>::new());
 }
 
 /// Only an answer with a result carries nodes, as the outpost and
@@ -291,7 +104,6 @@ fn only_an_answer_with_a_result_carries_nodes() {
             ("Ready".to_owned(), false),
             ("SpareReady".to_owned(), false),
             ("Pong".to_owned(), false),
-            ("NotResponding".to_owned(), false),
             ("Fault".to_owned(), false),
             ("TargetExited".to_owned(), false),
             ("IdleAnswer".to_owned(), false),
@@ -351,17 +163,9 @@ fn only_a_tell_naming_a_kept_element_carries_a_token() {
 }
 
 #[test]
-fn a_timing_from_an_older_peer_reads_with_no_calls() {
-    let timing: EventTiming =
-        serde_json::from_str(r#"{"observed_at_us":5}"#).expect("older timing still reads");
-    assert!(timing.calls.is_empty());
-}
-
-#[test]
 fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
     let mut pong = OutpostToCore::Pong {
         parked_count: 0,
-        parked_on_hung: 0,
         written_at_us: 0,
     };
     pong.written(7_000);
