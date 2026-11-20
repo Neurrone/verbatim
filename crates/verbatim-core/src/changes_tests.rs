@@ -197,6 +197,38 @@ fn a_state_change_names_the_focus_and_its_ancestors_and_speaks_on_an_ancestor() 
     );
 }
 
+/// A state change whose read does not answer the states it asked, a
+/// reader's fault, is refused, where it was once taken as every state
+/// removed: the focus keeps its states, so the same states read again say
+/// nothing (keys M11).
+#[test]
+fn a_state_change_read_without_its_states_answered_is_refused() {
+    let mut state = committed();
+    let mut checked = StateSet::default();
+    checked.insert(State::Checked);
+    for (number, values, said) in [
+        (
+            4,
+            one(PropertyId::States, PropertyValue::States(checked)),
+            vec!["State(Checked)"],
+        ),
+        (5, PropertyValues::default(), Vec::new()),
+        (
+            6,
+            one(PropertyId::States, PropertyValue::States(checked)),
+            Vec::new(),
+        ),
+    ] {
+        feed_at(
+            &mut state,
+            4_000,
+            entry(msaa_change(EventKind::StateChange, 5)),
+        );
+        let answered = answer(OUTPOST, number, read(RelationFound::Is(0), values));
+        assert_eq!(feed_at(&mut state, 5_000, answered), said);
+    }
+}
+
 #[test]
 fn a_plain_selection_of_an_item_the_focus_controls_is_spoken_as_a_focus() {
     let mut state = committed();

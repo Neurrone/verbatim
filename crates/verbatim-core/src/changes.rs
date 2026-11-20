@@ -454,12 +454,13 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
                 return;
             };
             let changed = changed.unwrap_or(Changed::States);
-            let value = read
-                .object
-                .values
-                .answer(changed.property())
-                .and_then(|answer| answer.value.as_ref());
-            let Some(property) = changed.change(value) else {
+            // The property asked must be answered, if only with no value:
+            // a read without its answer is a reader's fault, refused
+            // rather than taken as the property having no value.
+            let Some(answer) = read.object.values.answer(changed.property()) else {
+                return;
+            };
+            let Some(property) = changed.change(answer.value.as_ref()) else {
                 return;
             };
             let child_count = match &property {
