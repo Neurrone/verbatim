@@ -1077,7 +1077,6 @@ pub enum Earcon {
 
 /// One effect emitted by the reducer and executed by the imperative shell.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum Effect {
     /// Queue an utterance in the speech pipeline, with the number of the
     /// user input that caused it, if one did: Core stamps it as its last

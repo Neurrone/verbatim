@@ -159,9 +159,7 @@ fn an_ignored_process_gets_no_outpost() {
     assert!(supervisor.is_ignored(ignored_pid));
     assert!(!supervisor.is_ignored(other_pid));
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: false, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
     supervisor.start_outpost(ignored_pid);

@@ -42,8 +42,8 @@ The message layer, the launch arguments and the held processes are
 - `start_outpost(pid)` carries out Core's effect
   (`QueueEffect::StartOutpost`): it gives the application the oldest spare
   waiting, or launches one for it; asked for an application whose
-  generation already runs, it reports that one (`Running`), so Core's
-  record takes it.
+  generation lives, which Core never asks, it logs the logic bug and
+  does nothing.
 - `end_outpost(outpost)` ends a generation as Core's record asks: it
   missed its pings, or its application exited before it was ready. No
   outpost is ended for being idle (Dickson, 2026-11-10 and 2026-11-16).
@@ -77,9 +77,9 @@ The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
 `ListenerEnded`, `Listener` (the current listener's tells, window
 destructions and answers,
-which Core's event queue judges), `Pong` (each child's answer to a ping,
-for Core's liveness), `SpareReady`, `IdleQueried`, `Foreground`,
-`Progress` (a progress bar's change from the listener), `Running`,
+which Core's event queue judges), `Pong` (an outpost's answer to a ping,
+for Core's liveness; the listener's liveness is the owner's alone), `SpareReady`, `IdleQueried`, `Foreground`,
+`Progress` (a progress bar's change from the listener),
 `LaunchFailed` (Core asked for an outpost and none started, saying
 whether the application is gone: exited, not holdable, or ignored),
 `ApplicationExited` (a held process exited, after its outpost's `Ended`
@@ -181,8 +181,7 @@ How it works:
 - Every ending is a clean shutdown (`retire`, under "Shutting down"); an
   outpost ended for any reason but its pipe's end has `Ended` sent at once,
   and the app drops what it wrote after.
-- The listener is supervised the same way; a replacement's `Ready` makes
-  Core ask the attention application for its focus.
+- The listener is supervised the same way.
 - `process` holds the roles' log names, an outpost's named for its
   application's executable; the command lines are
   `verbatim_process::arguments`' `OutpostArguments` and

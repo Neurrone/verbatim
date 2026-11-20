@@ -156,9 +156,7 @@ fn an_outpost_that_ends_after_its_application_exited_ends_as_the_exit_and_none_s
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: false, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -293,9 +291,7 @@ fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: false, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -400,9 +396,7 @@ fn an_application_held_with_no_outpost_running_is_reported_exited() {
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: false, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 

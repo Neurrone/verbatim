@@ -272,20 +272,6 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// Asked to start an outpost for `target_pid`
-    /// ([`Supervisor::start_outpost`]) while one already runs: the
-    /// generation running, and whether it has said it is ready, so Core's
-    /// generation record takes it.
-    Running {
-        /// The generation.
-        outpost: OutpostId,
-        /// The application it watches.
-        target_pid: Pid,
-        /// Whether it sent its `Ready`.
-        ready: bool,
-        /// Only the supervisor sends it.
-        sealed: Sealed,
-    },
     /// A message an outpost sent, tagged with its target pid and the outpost
     /// generation whose pipe it arrived on.
     Event {
@@ -315,14 +301,10 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// The focus listener is ready. When it is a replacement for one that
-    /// ended, facts were lost in the gap, so the app asks the foreground
-    /// application for its current focus.
+    /// The focus listener is ready.
     ListenerReady {
         /// The listener's generation.
         listener: OutpostId,
-        /// Whether this listener replaced one that ended.
-        replacement: bool,
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
@@ -354,17 +336,16 @@ pub enum OutpostMessage {
         /// [`ListenerToCore::Destroyed`] or a [`ListenerToCore::Answer`].
         message: Box<ListenerToCore>,
     },
-    /// A child answered a ping: an outpost of `target_pid`, or the
-    /// listener when `target_pid` is `None`. Core's generation record keeps
-    /// each one's liveness and judges an outpost's abandoned workers.
+    /// An outpost of `target_pid` answered a ping. Core's generation record
+    /// keeps its liveness and judges its abandoned workers; the listener's
+    /// liveness is the owner's alone.
     Pong {
         /// The generation that answered.
         outpost: OutpostId,
-        /// The application its outpost watches; `None` for the listener.
-        target_pid: Option<Pid>,
-        /// How many of the outpost's workers were abandoned and have not
-        /// returned, but for those parked on a window judged hung: the
-        /// pong's `parked_count`; 0 for the listener.
+        /// The application it watches.
+        target_pid: Pid,
+        /// How many of its workers were abandoned and have not returned:
+        /// the pong's `parked_count`.
         abandoned: usize,
     },
     /// A progress bar's value changed, as the focus listener read it: the
@@ -610,8 +591,7 @@ impl Supervisor {
     /// Carries out Core's effect "start an outpost for `target_pid`",
     /// giving it a spare when one waits: the app hears
     /// [`OutpostMessage::Started`] once its process runs, or
-    /// [`OutpostMessage::LaunchFailed`]. One that runs already is reported
-    /// again ([`OutpostMessage::Running`]).
+    /// [`OutpostMessage::LaunchFailed`].
     pub fn start_outpost(&self, target_pid: Pid) {
         let _ = self.owner.send(owner::OwnerEvent::StartOutpost(target_pid));
     }

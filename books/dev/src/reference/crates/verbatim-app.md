@@ -396,7 +396,7 @@ knowing for review:
   (an outpost's, and the listener's `OutpostMessage::Listener`, whose
   window destroyed becomes `QueueInput::WindowDestroyed`), which Core
   judges by generation, dropping a frame of an instance not current; the
-  owner thread's process facts (`Started` and `Running` as
+  owner thread's process facts (`Started` as
   `ProcessFact::OutpostStarted`, an outpost's `Ready` and
   `ListenerReady` as `ReaderReady`, `Ended` and `ListenerEnded` as
   `ReaderEnded`, but an `Ended` for its application's exit, which Core

@@ -289,9 +289,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it() 
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: false, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?} before the listener was ready"),
     }
 
@@ -307,9 +305,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_commands_before_it() 
     }
     queried(&events, 1, &[]);
     match next(&events) {
-        OutpostMessage::ListenerReady {
-            replacement: true, ..
-        } => {}
+        OutpostMessage::ListenerReady { .. } => {}
         other => panic!("the supervisor said {other:?}, not that the listener was replaced"),
     }
 

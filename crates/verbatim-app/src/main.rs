@@ -539,15 +539,7 @@ fn run(
             "the settings were not all saved in time"
         );
     }
-    if let Ok(summary) = shutdown.join() {
-        tracing::info!(
-            clean = summary.clean,
-            exited = summary.exited,
-            killed = summary.killed,
-            killed_on_failure = summary.killed_on_failure,
-            "outposts and the focus listener have ended: how every one that ended while Verbatim ran ended"
-        );
-    } else {
+    if shutdown.join().is_err() {
         tracing::error!("shutting down the outposts failed; their jobs end them");
     }
     Ok(())
@@ -1031,22 +1023,6 @@ impl ReducerThread<'_> {
                     generation: outpost.0,
                 }));
             }
-            OutpostMessage::Running {
-                outpost,
-                target_pid,
-                ready,
-                ..
-            } => {
-                self.queue(QueueInput::Process(ProcessFact::OutpostStarted {
-                    process: target_pid,
-                    generation: outpost.0,
-                }));
-                if ready {
-                    self.queue(QueueInput::ReaderReady(outpost_instance(
-                        target_pid, outpost,
-                    )));
-                }
-            }
             OutpostMessage::Event {
                 pid,
                 outpost,
@@ -1129,12 +1105,8 @@ impl ReducerThread<'_> {
                 target_pid,
                 abandoned,
             } => {
-                let instance = match target_pid {
-                    Some(pid) => outpost_instance(pid, outpost),
-                    None => listener_instance(outpost),
-                };
                 self.queue(QueueInput::Process(ProcessFact::Pong {
-                    instance,
+                    instance: outpost_instance(target_pid, outpost),
                     abandoned,
                 }));
             }
@@ -1652,7 +1624,6 @@ impl ReducerThread<'_> {
                     GuiRequest::ShellList(kind) => GuiCommand::OpenShellItemList(kind),
                 },
             ),
-            _ => {}
         }
     }
 
@@ -1729,11 +1700,9 @@ impl ReducerThread<'_> {
                 self.context.supervisor.start_outpost(process);
             }
             QueueEffect::EndOutpost(instance) => {
-                if matches!(instance.reader, Reader::Outpost(_)) {
-                    self.context
-                        .supervisor
-                        .end_outpost(OutpostId(instance.generation));
-                }
+                self.context
+                    .supervisor
+                    .end_outpost(OutpostId(instance.generation));
             }
             QueueEffect::StaleFrame(instance) => {
                 tracing::debug!(

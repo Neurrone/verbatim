@@ -268,9 +268,6 @@ struct ListenerRecord {
     child: Run<Child<CoreToListener>>,
     /// Its pongs.
     liveness: Liveness,
-    /// Whether this listener replaces an earlier one: tells were lost in
-    /// the gap, so the app asks for the current focus on `Ready`.
-    replacement: bool,
     /// Commands for it, held while its launch is still at work, in order,
     /// and written once it has a writer.
     pending: Vec<CoreToListener>,
@@ -463,7 +460,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         .name("verbatim-relay".to_owned())
         .spawn(move || {
             prioritize_role("relay", RELAY_PRIORITY);
-            owner.start_listener(false);
+            owner.start_listener();
             owner.run(&events);
         })?;
     Ok(())
@@ -814,7 +811,7 @@ impl Owner {
         if let Some(pid) = self.pid_of(outpost) {
             self.outbox.send(OutpostMessage::Pong {
                 outpost,
-                target_pid: Some(pid),
+                target_pid: pid,
                 abandoned,
             });
         } else if let Some(listener) = self
@@ -823,11 +820,6 @@ impl Owner {
             .filter(|listener| listener.outpost == outpost)
         {
             listener.liveness.ponged(now_us());
-            self.outbox.send(OutpostMessage::Pong {
-                outpost,
-                target_pid: None,
-                abandoned: 0,
-            });
         }
     }
 
@@ -844,7 +836,7 @@ impl Owner {
         };
         let query = CoreToListener::IdleQuery { round };
         let reached = if let Some(child) = listener.child.running() {
-            let pushed = child.writer.push(Outgoing::IdleQuery(query));
+            let pushed = child.writer.push(Outgoing::Unbounded(query));
             if let Err(error) = &pushed {
                 tracing::warn!(%error, "the idle query could not reach the listener");
             }
@@ -930,22 +922,15 @@ impl Owner {
     /// the oldest spare waiting, ready or not, whose replacement starts at
     /// once, or, with none, launches one for it. An application whose
     /// process has exited, or cannot be held, or that Verbatim ignores,
-    /// gets none, and Core hears its launch failed. One that runs already
-    /// is reported again ([`OutpostMessage::Running`]), so Core's record
-    /// takes it.
+    /// gets none, and Core hears its launch failed. Core asks for none
+    /// while a generation of the application lives, so one that does is a
+    /// logic bug, logged and left.
     fn start_outpost(&mut self, pid: Pid) {
         if self.shutting_down.is_some() {
             return;
         }
         if let Some(generation) = self.records.get(&pid) {
-            if generation.child().is_some() {
-                self.outbox.send(OutpostMessage::Running {
-                    outpost: generation.outpost(),
-                    target_pid: pid,
-                    ready: generation.is_ready(),
-                    sealed: Sealed::new(),
-                });
-            }
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, %pid, outpost = %generation.outpost(), "Core asked to start an outpost for an application whose generation lives, a logic bug");
             return;
         }
         if self.ignored.contains(pid) {
@@ -996,9 +981,12 @@ impl Owner {
     /// (Table 5, column B).
     fn running(&mut self, pid: Pid, outpost: OutpostId, child: OutpostChild, spare: bool) {
         if spare {
-            if let Err(error) = child.writer.push(Outgoing::HandOver(CoreToOutpost::Assign {
-                target_pid: pid,
-            })) {
+            if let Err(error) = child
+                .writer
+                .push(Outgoing::Unbounded(CoreToOutpost::Assign {
+                    target_pid: pid,
+                }))
+            {
                 // Its pipe's end follows, and is its end.
                 tracing::warn!(%error, %outpost, %pid, "a spare could not be sent its application");
             }
@@ -1130,7 +1118,7 @@ impl Owner {
         };
         match child
             .writer
-            .push(Outgoing::HandOver(CoreToListener::ApplicationExited {
+            .push(Outgoing::Unbounded(CoreToListener::ApplicationExited {
                 pid,
             })) {
             Ok(()) => {
@@ -1172,13 +1160,12 @@ impl Owner {
     /// Records a new listener as starting and hands its launch to a helper,
     /// telling the app first ([`OutpostMessage::ListenerStarted`]), so Core
     /// keeps its first tells.
-    fn start_listener(&mut self, replacement: bool) {
+    fn start_listener(&mut self) {
         let outpost = self.next_outpost_id();
         self.listener = Some(ListenerRecord {
             outpost,
             child: Run::Launching,
             liveness: Liveness::new(now_us()),
-            replacement,
             pending: Vec::new(),
             exits_told: BTreeMap::new(),
         });
@@ -1198,7 +1185,7 @@ impl Owner {
         };
         match listener.child.running() {
             Some(child) => {
-                if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+                if let Err(error) = child.writer.push(Outgoing::Unbounded(command)) {
                     tracing::warn!(%error, "a command could not be told to the listener");
                 }
             }
@@ -1346,7 +1333,7 @@ impl Owner {
                         return;
                     };
                     for command in pending {
-                        if let Err(error) = child.writer.push(Outgoing::HandOver(command)) {
+                        if let Err(error) = child.writer.push(Outgoing::Unbounded(command)) {
                             tracing::warn!(%error, "the hand-over could not be told to the listener");
                         }
                     }
@@ -1453,22 +1440,18 @@ impl Owner {
             }
         }
     }
-    /// A child said `Ready`. The listener's is reported to the app, saying
-    /// whether it is a replacement: tells were then lost in the gap, so the
-    /// app asks for the current focus. An outpost's frame has been handed
-    /// on already; it is marked ready, asked the idle round held for it,
+    /// A child said `Ready`. The listener's is reported to the app. An
+    /// outpost's frame has been handed on already; it is marked ready, asked the idle round held for it,
     /// and, for Verbatim's own, spares are kept from now on.
     fn on_ready(&mut self, outpost: OutpostId) {
-        if let Some(listener) = self
+        if self
             .listener
             .as_ref()
-            .filter(|listener| listener.outpost == outpost)
+            .is_some_and(|listener| listener.outpost == outpost)
         {
             tracing::info!(%outpost, "focus listener ready");
-            let replacement = listener.replacement;
             self.outbox.send(OutpostMessage::ListenerReady {
                 listener: outpost,
-                replacement,
                 sealed: Sealed::new(),
             });
             return;
@@ -1510,7 +1493,7 @@ impl Owner {
             tracing::warn!(%outpost, "focus listener exited; replacing it");
             self.end_listener("its pipe closed; it is replaced");
             self.listener_gone();
-            self.start_listener(true);
+            self.start_listener();
             return;
         }
         if let Some(spare) = self.spare_children.remove(&outpost) {
@@ -1764,12 +1747,12 @@ impl Owner {
             else {
                 continue;
             };
-            let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+            let _ = child.writer.push(Outgoing::Unbounded(ping.clone()));
         }
         self.spare_heartbeat(at_us, &ping);
 
         match &self.listener {
-            None => self.start_listener(true),
+            None => self.start_listener(),
             Some(listener) => {
                 if let Some(child) = listener.child.running() {
                     let decision = listener.liveness.wedged(at_us, limits);
@@ -1777,9 +1760,11 @@ impl Owner {
                         tracing::warn!("focus listener stopped answering; replacing it");
                         self.end_listener("it stopped answering pings; it is replaced");
                         self.listener_gone();
-                        self.start_listener(true);
+                        self.start_listener();
                     } else {
-                        let _ = child.writer.push(Outgoing::Ping(CoreToListener::ping()));
+                        let _ = child
+                            .writer
+                            .push(Outgoing::Unbounded(CoreToListener::ping()));
                     }
                 }
             }
@@ -1798,7 +1783,7 @@ impl Owner {
             if spare.liveness.wedged(now_us, limits).is_some() {
                 wedged.push(outpost);
             } else {
-                let _ = child.writer.push(Outgoing::Ping(ping.clone()));
+                let _ = child.writer.push(Outgoing::Unbounded(ping.clone()));
             }
         }
         for outpost in wedged {
@@ -1840,7 +1825,7 @@ impl Drop for Retirement {
 /// queued for it before. One that has ended answers by its end.
 fn ask_idle(writer: &WriterHandle<CoreToOutpost>, round: u64) {
     let query = CoreToOutpost::IdleQuery { round };
-    if let Err(error) = writer.push(Outgoing::IdleQuery(query)) {
+    if let Err(error) = writer.push(Outgoing::Unbounded(query)) {
         tracing::debug!(%error, "the idle query could not reach an outpost");
     }
 }

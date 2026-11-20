@@ -367,9 +367,7 @@ impl Run {
             spares: RefCell::new(Vec::new()),
         };
         match run.next() {
-            OutpostMessage::ListenerReady {
-                replacement: false, ..
-            } => {}
+            OutpostMessage::ListenerReady { .. } => {}
             other => panic!("the supervisor said {other:?} before the listener was ready"),
         }
         run

@@ -554,7 +554,7 @@ mod tests {
             "the stuck write's completion"
         );
         assert_eq!(
-            stuck.push(Outgoing::Ping(CoreToOutpost::Ping { sent_at_us: 0 })),
+            stuck.push(Outgoing::Unbounded(CoreToOutpost::Ping { sent_at_us: 0 })),
             Err(QueueError::Closed)
         );
         assert!(!relay.is_idle(), "the other child's writer is still open");

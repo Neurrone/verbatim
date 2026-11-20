@@ -101,22 +101,19 @@ impl ToChild for CoreToListener {
 /// to know about it.
 #[derive(Debug)]
 pub(super) enum Outgoing<M: ToChild> {
-    /// A liveness ping.
-    Ping(M),
     /// The shutdown message.
     Shutdown,
-    /// A command that must not be lost: a spare's `Assign`, or any
-    /// command to the listener.
-    HandOver(M),
-    /// The idle barrier's query for a round.
-    IdleQuery(M),
+    /// A command the bound never refuses: a liveness ping, the idle
+    /// barrier's query, a spare's `Assign`, or any command to the
+    /// listener.
+    Unbounded(M),
     /// Anything else: a request, its cancel, or what Core holds.
     Other(M),
 }
 
 impl<M: ToChild> Outgoing<M> {
-    /// The command to write now: a ping or a hand-over with the moment
-    /// its write begins ([`ToChild::stamp_sent`]).
+    /// The command to write now, a ping with the moment its write begins
+    /// ([`ToChild::stamp_sent`]).
     pub(super) fn relayed(self) -> M {
         self.relayed_with(now_us)
     }
@@ -126,8 +123,8 @@ impl<M: ToChild> Outgoing<M> {
     fn relayed_with(self, now: impl FnOnce() -> u64) -> M {
         match self {
             Outgoing::Shutdown => M::shutdown(),
-            Outgoing::Other(command) | Outgoing::IdleQuery(command) => command,
-            Outgoing::Ping(mut command) | Outgoing::HandOver(mut command) => {
+            Outgoing::Other(command) => command,
+            Outgoing::Unbounded(mut command) => {
                 command.stamp_sent(now);
                 command
             }
@@ -177,10 +174,7 @@ impl<M: ToChild> Queue<M> {
     /// Adds `item` under the overload policy for `capacity`.
     pub(super) fn push(&mut self, item: Outgoing<M>, capacity: usize) -> Result<(), QueueError> {
         match item {
-            Outgoing::Ping(_)
-            | Outgoing::Shutdown
-            | Outgoing::HandOver(_)
-            | Outgoing::IdleQuery(_) => {}
+            Outgoing::Shutdown | Outgoing::Unbounded(_) => {}
             Outgoing::Other(..) => {
                 if self.items.len() >= capacity {
                     return Err(QueueError::Full);
@@ -329,16 +323,13 @@ mod tests {
         fn command(&self) -> CoreToOutpost {
             match self {
                 Outgoing::Shutdown => CoreToOutpost::Shutdown,
-                Outgoing::Ping(command)
-                | Outgoing::IdleQuery(command)
-                | Outgoing::HandOver(command)
-                | Outgoing::Other(command) => command.clone(),
+                Outgoing::Unbounded(command) | Outgoing::Other(command) => command.clone(),
             }
         }
     }
 
     fn ping() -> Outgoing<CoreToOutpost> {
-        Outgoing::Ping(CoreToOutpost::Ping { sent_at_us: 0 })
+        Outgoing::Unbounded(CoreToOutpost::Ping { sent_at_us: 0 })
     }
 
     /// A request numbered `id`.
@@ -531,7 +522,7 @@ mod tests {
     #[test]
     fn a_hand_over_message_gets_through_a_full_queue_behind_the_requests_before_it() {
         let assign = || {
-            Outgoing::HandOver(CoreToOutpost::Assign {
+            Outgoing::Unbounded(CoreToOutpost::Assign {
                 target_pid: verbatim_model::Pid(99),
             })
         };
@@ -544,25 +535,9 @@ mod tests {
         assert_eq!(order(&mut queue), ["query 1", "query 2", "assign 99"]);
     }
 
-    /// The idle barrier's query gets through a full queue behind
-    /// everything queued before it.
-    #[test]
-    fn the_idle_query_gets_through_behind_the_requests_before_it() {
-        let idle = || Outgoing::IdleQuery(CoreToOutpost::IdleQuery { round: 3 });
-        let mut queue = Queue::default();
-        queue.push(request(1), 2).expect("queued");
-        queue.push(request(2), 2).expect("queued");
-        queue.push(idle(), 2).expect("gets through the full queue");
-        queue.push(request(4), 8).expect("queued behind it");
-        assert_eq!(
-            order(&mut queue),
-            ["query 1", "query 2", "idle 3", "query 4"]
-        );
-    }
-
     #[test]
     fn a_command_to_the_listener_is_stamped_as_its_write_begins() {
-        let written = Outgoing::Ping(CoreToListener::ping()).relayed_with(|| 5_000);
+        let written = Outgoing::Unbounded(CoreToListener::ping()).relayed_with(|| 5_000);
         assert_eq!(
             verbatim_model::protocol::hop_us(written.sent_at_us(), 5_400),
             Some(400)
