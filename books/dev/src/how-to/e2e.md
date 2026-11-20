@@ -368,8 +368,10 @@ Some scenarios are local-only, marked `local_only` in the registry, because
 GitHub's Windows Server runner cannot run them as this machine does:
 
 - The `notepad_` scenarios, `settings_search_suggestions`,
-  `settings_combo_box_expanded` and `explorer_folder_window`; why each fails on the runner is in
-  [the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md).
+  `settings_search_suggestions_reentered`, `settings_combo_box_expanded`
+  and `toast`; why each but `toast` fails on the runner is in
+  [the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md),
+  and `toast` records no reason.
 
 The registry's `local_only` flag is the one place this is recorded. A
 local-only scenario is part of the suite: every local run and every

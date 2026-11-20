@@ -107,10 +107,11 @@ user is away, from NVDA's capture) and `measure_focus_return`.
 Speech is cut when the two lines differ just below the desktop, sharing
 no entry, NVDA's focus difference level of one or less, which runs its
 foreground event and cancels speech (`eventHandler.doPreGainFocus`); not
-when they meet below it. The readers leave out of a chain the entries
-that are not presentable, which NVDA's line holds, among them an unnamed
-UI Automation top-level window, an MSAA window object and every layout
-container, so a chain can be empty, and the focus's top-level window,
+when they meet below it. The readers leave out of a chain entries
+that NVDA's line holds: the UI Automation reader every entry that is not
+presentable, among them an unnamed top-level window and every layout
+container, and the MSAA reader its window objects only, so a chain can
+be empty, and the focus's top-level window,
 which its window facts name, stands for the entry just below the
 desktop: two chains in one top-level window that share no entry meet
 there, empty chains or not, and speech is not cut, except for a focus whose

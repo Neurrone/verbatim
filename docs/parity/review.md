@@ -106,8 +106,10 @@ a punctuation character spoken on its own or spelled is named from the
 same table ("comma"). Raised pitch for
 capitals (not checked by ear): spelling
 and reading a single character speak an uppercase letter with the pitch
-setting raised by 30 and then restored, for every synthesizer, as NVDA
-does by default ([Speech](../nvda/speech.md), "Capitals when spelling");
+setting raised by 30 and then restored, for every synthesizer, where
+NVDA by default raises it only for a synthesizer that supports pitch
+commands and gives any other no pitch change ([Speech](../nvda/speech.md),
+"Capitals when spelling"; `PitchCommand` in `speech/speech.py`);
 the offset is not yet configurable, and saying "cap" or beeping for
 capitals is not offered. eSpeak NG and OneCore speak the pitch change
 within one synthesis, as SSML prosody written as NVDA's drivers write

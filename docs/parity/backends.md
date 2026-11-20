@@ -338,10 +338,8 @@ registers for it on a focus Core names with text changes (see "Which
 focus takes text-change events"), in the same event handler group as
 its caret and text changes (the range belongs to the application and
 cannot travel to another process, so the focus listener cannot carry
-it), keeps the range's start as a position in the focus's text, and
-sends it to Core (`ActiveTextPositionChanged`), dropping an event whose
-element or range cannot be had, or whose window is hung. Core does
-nothing with it. Not yet (M7): browse mode, which moves its caret there
+it), and hears each such event and drops it, telling Core nothing,
+since Core has no handler for it. Not yet (M7): browse mode, which moves its caret there
 and speaks the line, as NVDA's does; it will need the registration on
 the document a focus is inside, not only a text focus.
 

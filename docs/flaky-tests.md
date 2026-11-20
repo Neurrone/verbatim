@@ -208,7 +208,7 @@ Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
 These are `local_only` in the registry. The `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`), and they pass locally. No fix is planned for them: the runner's image is not ours.
 
 - The `notepad_` scenarios: the runner has classic Notepad, a Win32 edit control, not Windows 11 Notepad. Editing is also covered in the harness's Windows Forms text box.
-- `settings_search_suggestions`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
+- `settings_search_suggestions` and `settings_search_suggestions_reentered`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
 - `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts.
 
 ## `alt_tab_switcher` on a parked local desktop

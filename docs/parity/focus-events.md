@@ -549,8 +549,8 @@ it.
   window's outpost at Core's request. Core refuses it with no read when
   its window is not the foreground record's, or is the window of the
   readers' last focus or of one of its ancestors, or its ids equal that
-  focus's (Core's `a_foreground_candidate_not_in_front_is_refused` and
-  `a_foreground_candidate_of_the_last_focuss_window_or_an_ancestors_is_refused`).
+  focus's (Core's
+  `a_foreground_is_valid_with_no_read_unless_a_foreground_row_refuses_it`).
 - At execution, when the new focus's ancestry shares nothing with the
   old below the desktop, the foreground object is the object the
   answer read for it, the top ancestor only when that could not be read,
@@ -1049,7 +1049,7 @@ window whose backend verdict is UIA, as NVDA's `winEventToNVDAEvent`
 drops it, and reads nothing in its place. It drops a UIA focus whose
 check thread's walk to the nearest window failed or found none, as
 NVDA's handler drops it (Core's
-`a_uia_focus_whose_walk_found_no_window_does_not_count`; the listener
+`a_uia_focus_is_valid_with_no_read_unless_a_row_refuses_it`; the listener
 logic's `a_focus_whose_walk_finds_no_window_makes_no_other_call`), and
 one whose element no longer had the keyboard focus at its delivery. So
 a focus UIA never delivers

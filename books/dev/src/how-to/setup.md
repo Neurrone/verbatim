@@ -176,15 +176,31 @@ finding:
   are not scanned, and tests are scanned like everything else: a test
   reads an element through a shape, declaring one in the shape module if
   none holds what it reads.
-- Pure owners' names (`xtask/src/ownership.rs`): a module whose
-  transitions are replayed in tests, the listener's read scheduler
-  (`crates/verbatim-listener-logic/src/schedule.rs`), may `use` only its
-  allow-list (`std::collections`, `std::time::Duration`, `verbatim_model`
-  and the listener's data types), and fails on any name of a thread, a
-  lock, an atomic, an `Arc`, a channel, a clock read, the file system,
-  I/O, the environment, processes, the network, the Windows bindings, or
-  `unsafe`, imported or written in full. Comments and strings are not
-  scanned; it reads text, so its replay tests are the real check.
+- Owners' rules (`xtask/src/ownership.rs`), four rules over named
+  modules, each module allowed to `use` only its own allow-list:
+  - The pure rule: the listener's read scheduler
+    (`crates/verbatim-listener-logic/src/schedule.rs`) fails on any name
+    of a thread, a lock, an atomic, an `Arc`, a channel, a clock read,
+    the file system, I/O, the environment, processes, the network, the
+    Windows bindings, or `unsafe`, imported or written in full; every
+    file of the outpost's reducer (`crates/verbatim-outpost-logic/src/`),
+    its tests skipped, is held to the same list but `Arc`, with a lock's
+    method and a log added.
+  - The hook rule: the modules whose code runs on the keyboard hook's
+    thread (`crates/verbatim-input-windows/src/hook.rs` and `typed.rs`,
+    `crates/verbatim-app/src/key_reports.rs`, and `hook_thread` in
+    `crates/verbatim-input-windows/src/lib.rs`) may name nothing that
+    takes a lock, waits, logs, does I/O or dispatches sent messages.
+  - The audio rule: the audio thread's pass
+    (`crates/verbatim-audio/src/mixer/run.rs`) may name nothing that takes
+    a lock, waits, allocates, formats or logs.
+  - The determinism rule: every crate on a reducer's path keeps a
+    `clippy.toml` identical to `verbatim-core`'s, so Clippy rejects hash
+    collections, clocks, files, processes, the network, threads, the
+    environment and the platform's floating-point functions.
+
+  Comments and strings are not scanned; it reads text, so the modules'
+  own tests are the real check.
 - Documents' links and paths (`xtask/src/docs.rs`): the documentation
   check below.
 

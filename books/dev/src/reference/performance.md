@@ -261,12 +261,11 @@ Rules that hold for every UIA focus:
   keyboard focus is read plainly because inside a remote program
   Windows Terminal's second focus identity answers that it has the focus
   where NVDA's plain read answers that it has not (section 16.8).
-- A repeated focus on the element that still has the keyboard focus is
-  read in full, 5 UIA calls (`uia_repeated_focus_costs_exactly`): the
-  nearest window, the keyboard focus, and the read, which asks whether the
-  element it read last under the runtime id still has the keyboard focus,
-  refreshes the sender's cache, and steps once up to its known parent.
-  They cost mockapp 149 provider calls. Core drops the repeat; the
+- A repeated focus on the element that still has the keyboard focus
+  costs the listener's check alone, 3 UIA calls
+  (`uia_repeated_focus_costs_exactly`): the nearest window, the kept
+  element's keyboard focus and the sender's. They cost mockapp 37
+  provider calls. Core drops the repeat with no read; the
   window's verdict is kept, so the window is asked nothing.
 - A focus on a console window's own element is dropped after the
   console's provider check, made once per console window by the listener
@@ -300,9 +299,11 @@ Rules that hold for every UIA focus:
   reused. The listener makes no remote operation,
   because only the application's outpost may send one into it
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 2).
-- Today: 4 UIA calls, all the listener's, either way the outpost walks;
-  the minimum, met. 312 provider calls in all with the outpost's remote
-  walk and 306 with its classic walk, of which 9 `GetPatternProvider`
+- Today: 7 UIA calls and 1 connection with the outpost's remote walk
+  and 11 UIA calls and 1 connection with its classic walk: the
+  listener's 4, the minimum, met, and the rest the outpost's completion
+  of the focus. 371 provider calls in all with the outpost's remote
+  walk and 353 with its classic walk, of which 9 `GetPatternProvider`
   calls are the grid item's row and column (3 for each of the three
   elements read alone, one of them the window element of the outpost's
   walk), 2 `GetPropertyValue` calls the ancestors' automation ids, and
@@ -499,12 +500,16 @@ was answered (measured 2026-10-07).
   its lifetime (the outpost's raw probe), the keyboard focus, the cache
   refreshed, and the steps; no comparison, since no focus was taken
   before.
-- Today: the minimum, 6 UIA calls and 1 window message: the listener's
+- Today: 9 UIA calls, 1 connection and 1 window message with the
+  outpost's remote walk and 12 UIA calls, 1 connection and 1 window
+  message with its classic walk, the rest beyond the minimum the
+  outpost's completion of the focus. The minimum, 6 UIA calls and 1
+  window message: the listener's
   nearest window, keyboard focus, cache and three steps (to the group, the
   window and the desktop's root), and the outpost's raw probe of the
   window, the one verdict, before it reports the listener's read
   ([ADR 0001](adr/0001-focus.md), "One judge per fact"), once in the window's lifetime; the listener makes
-  no probe. 354 provider calls with the outpost's remote walk and 345 with
+  no probe. 413 provider calls with the outpost's remote walk and 392 with
   its classic walk, 12 of them the grid item's row and column and the
   ancestors' automation ids, and 5 the outpost's probe.
 - Probes per new window: in a UIA window, the outpost's 1; in an MSAA
@@ -725,9 +730,13 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
 
 ### Arrowing through a list, UIA
 
-- Minimum and today: 4 UIA calls, a steady-state focus on a windowless
-  element; the walk stops at the list; met. 327 provider calls with the
-  outpost's remote walk and 324 with its classic walk, 11 of them the
+- Minimum: 4 UIA calls, a steady-state focus on a windowless element;
+  the walk stops at the list.
+- Today: 7 UIA calls and 1 connection with the outpost's remote walk
+  and 12 UIA calls and 1 connection with its classic walk: the
+  listener's 4, the minimum, met, and the rest the outpost's completion
+  of the focus. 387 provider calls with the outpost's remote walk and
+  372 with its classic walk, 11 of them the
   grid item's row and column and the ancestors' automation ids.
 
 ### A focus change, MSAA, steady state

@@ -13,9 +13,10 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   process was killed or the check failed; the next scenario's start
   closes, by handle, the windows it left.
   [verbatim-e2e](crates/verbatim-e2e.md).
-- **Abandoned worker** — an outpost worker whose call passed its
-  deadline; the outpost's reducer replaces it, since a thread stuck in a hung
-  application's COM call cannot be safely killed. If the call ever
+- **Abandoned worker** — an outpost worker still inside a call when
+  Core cancels its request because the foreground moved away from the
+  request's window; the outpost's reducer starts a replacement, since a
+  thread stuck in a hung application's COM call cannot be safely killed. If the call ever
   returns, the thread publishes nothing and exits. Recovery ladder rung
   2's bounded garbage. [verbatim-outpost](crates/verbatim-outpost.md).
 - **Adapter** — the engine-specific DLL a native synthesizer extension
@@ -88,9 +89,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   manifest, locale files and one or more module folders; NVDA's add-on.
   [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
 - **Fact** (focus fact) — one focus-relevant observation captured by
-  the focus listener from an OS event's own payload and routed to the
-  target's outpost for announcement (D13); a `ListenerFact` becomes a
-  `DeliveredFact` once routed. [verbatim-listener](crates/verbatim-listener.md).
+  the focus listener from an OS event's own payload and told to Core in
+  a tell. [verbatim-listener](crates/verbatim-listener.md).
 - **Flight recorder** — the bounded ring buffer of reducer inputs,
   dumpable to a versioned JSON-lines file and deterministically
   replayable. [verbatim-core](crates/verbatim-core.md).
@@ -157,7 +157,7 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Readers' last focus** — the newest focus a reader read that Core executed, NVDA's last queued focus; empty at startup and after the foreground leaves for an unrelated top-level window.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Recovery ladder** — the escalation for misbehaving outposts:
-  rung 1, per-entry deadlines; rung 2, abandon the stuck worker and
+  rung 1, Core stops waiting for a request; rung 2, abandon the stuck worker and
   start a replacement; rung 3, end a failed outpost, crashed, stuck or
   piling up abandoned workers, and give its application the next one.
   [Architecture](../explanation/architecture.md) section 1.
@@ -232,6 +232,6 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   [verbatim-speech](crates/verbatim-speech.md).
 - **Wedge** — an outpost that is alive but no longer answering
   (missed pongs, called stuck) or accumulating parked workers; the
-  heartbeat's `wedge_decision` ends it and its application is given the
+  generation record in Core ends it and its application is given the
   next outpost (rung 3).
   [verbatim-supervisor](crates/verbatim-supervisor.md).
