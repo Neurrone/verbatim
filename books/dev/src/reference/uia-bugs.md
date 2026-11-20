@@ -604,7 +604,7 @@ No registration prevents the second window's second identity: its rate was the s
 
 #### Workarounds that worked
 
-- The listener registers in NVDA's order (`crates/verbatim-uia/src/subscribe.rs`), drops a focus with no window above it, and drops one whose plain keyboard focus read answers no (see "A remote operation's keyboard focus read can differ from a plain read"). A focus veto in the Windows Terminal built-in drops every focus from a `TermControl` whose runtime id starts 14, planned for M5 ([the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md), M5); until then the scenarios accept one repeated "terminal" as an optional utterance (`books/dev/src/reference/testing.md`).
+- The listener registers in NVDA's order (`crates/verbatim-uia/src/subscribe.rs`), drops a focus with no window above it, and drops one whose plain keyboard focus read answers no (see "A remote operation's keyboard focus read can differ from a plain read"). A focus veto in the Windows Terminal built-in drops every focus from a `TermControl` whose runtime id starts 14, planned for M5 ([the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md), M5); until then the scenarios accept up to two repeats of "terminal" as an optional utterance (`LAUNCH_REPEATS` in `crates/verbatim-e2e/src/scenarios/terminal.rs`; `books/dev/src/reference/testing.md`).
 
 #### Workarounds that didn't work
 

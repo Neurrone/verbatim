@@ -149,11 +149,11 @@
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
 //!   `books/dev/src/how-to/e2e.md` says how to run them.
 //!
-//! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
-//! Windows Server runner lacks: Windows 11 Notepad, a Settings app that
-//! selects the first search suggestion as the suggestions list opens, or
-//! one whose Date and time page opens with its focus on the Region button.
-//! Every local and VM run includes it; GitHub's `e2e` job sets
+//! A scenario marked [`ScenarioDef::local_only`] cannot hold on GitHub's
+//! Windows Server runner, for the reason its entry gives beside the flag
+//! with what would let it run there again, such as Windows 11 Notepad, or
+//! a fault of the runner's that Verbatim accepts. Every local and VM run
+//! includes it; GitHub's `e2e` job sets
 //! [`SKIP_LOCAL_ONLY_ENV`] and leaves it out of its groups
 //! (`cargo xtask e2e-plan` reads this flag), and [`run_named`] fails a
 //! local-only scenario that runs anyway with the variable set, so a skip is
@@ -541,6 +541,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "toast",
         group: Group::Shell,
         settings: None,
+        // No reason was recorded when it was added, and it has never run on
+        // GitHub's runner; a dispatched run of it there gives one, or lets
+        // it run there (`docs/flaky-tests.md`).
         local_only: true,
         document: None,
         comparable: Comparable::Yes,
@@ -738,7 +741,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "explorer_folder_window",
         group: Group::Shell,
         settings: None,
-        local_only: false,
+        // On GitHub's runner its new explorer.exe window sometimes stops
+        // responding, with dwm.exe's window thread blocked too (run
+        // 44344991044); the cause is not named, and the harness does not
+        // wait for the Desktop Window Manager (Dickson, 2026-10-26). It runs
+        // there again once a wait chain names what Explorer's thread waits
+        // on and Verbatim's part, if any, is fixed, or Dickson rules to keep
+        // it there (`docs/flaky-tests.md`).
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: explorer_folder_window::setup,
@@ -762,7 +772,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_system_page",
         group: Group::Shell,
         settings: None,
-        local_only: false,
+        // GitHub's runner fails to deliver the System page's UI Automation
+        // focus to the listener (8 failures, 2026-11-08 to 2026-11-20), a
+        // loss Verbatim accepts as NVDA does (ADR 0001). It runs there
+        // again once a runner image delivers the page's focus, seen in a
+        // dispatched run (`docs/flaky-tests.md`).
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: settings_system_page::setup,
@@ -774,7 +789,8 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         group: Group::Shell,
         settings: None,
         // The runner's Date and time page opens with its focus on its
-        // location settings link, not the Region button.
+        // location settings link, not the Region button. It runs there
+        // again once the runner's Settings opens it on the Region button.
         local_only: true,
         document: None,
         comparable: Comparable::Yes,
@@ -786,8 +802,13 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_search_suggestions",
         group: Group::Shell,
         settings: None,
-        // The runner's Settings raises no selection for a first suggestion
-        // as the list opens.
+        // Settings replaced its suggestions list as it opened, after
+        // raising the first selection, in 2 of 13 local runs (2026-11-09),
+        // so nothing was said of it, as in NVDA; on GitHub's runner
+        // "Suggestions available" played to its end (run 39558690998),
+        // likely the same. Settings' timing is not Verbatim's to control.
+        // It runs there again once dispatched runs show the runner's
+        // Settings keeping its first selection (`docs/flaky-tests.md`).
         local_only: true,
         document: None,
         comparable: Comparable::Yes,
@@ -799,8 +820,13 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_search_suggestions_reentered",
         group: Group::Shell,
         settings: None,
-        // The runner's Settings raises no selection for a first suggestion
-        // as the list opens.
+        // Settings replaced its suggestions list as it opened, after
+        // raising the first selection, in 2 of 13 local runs (2026-11-09),
+        // so nothing was said of it, as in NVDA; on GitHub's runner
+        // "Suggestions available" played to its end (run 39558690998),
+        // likely the same. Settings' timing is not Verbatim's to control.
+        // It runs there again once dispatched runs show the runner's
+        // Settings keeping its first selection (`docs/flaky-tests.md`).
         local_only: true,
         document: None,
         comparable: Comparable::Yes,
@@ -1275,7 +1301,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "windows_terminal_close_tab",
         group: Group::Text,
         settings: None,
-        local_only: false,
+        // GitHub's runner once delivered no UI Automation focus for the new
+        // terminal to the listener (run 44465917467), a loss Verbatim accepts as
+        // NVDA does (ADR 0001). It runs there again once dispatched runs
+        // show the runner delivering the terminal's focus
+        // (`docs/flaky-tests.md`).
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: terminal_windows::setup_close_tab,
@@ -1422,7 +1453,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "windows_terminal_long_lines",
         group: Group::Text,
         settings: None,
-        local_only: false,
+        // GitHub's runner once delivered no UI Automation focus for the new
+        // terminal to the listener (run 44414430624), a loss Verbatim accepts as
+        // NVDA does (ADR 0001). It runs there again once dispatched runs
+        // show the runner delivering the terminal's focus
+        // (`docs/flaky-tests.md`).
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: terminal_screens::setup_windows_terminal,
@@ -1532,7 +1568,14 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "windows_terminal_two_windows",
         group: Group::Text,
         settings: None,
-        local_only: false,
+        // On GitHub's elevated runner the console host's "Administrator: "
+        // title reaches Windows Terminal's window after the harness restores
+        // it, so the first announcement carries the prefix; what sends the
+        // prefixed title is not established. It runs there again once a
+        // dispatched run with the window's title logged at each name change
+        // names the sender, and a harness wait on that evidence is built
+        // (`docs/flaky-tests.md`).
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: terminal_windows::setup_windows_terminal,

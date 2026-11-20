@@ -23,16 +23,13 @@
 //! name and no role, and composing the spoken role word here would copy
 //! Verbatim's role vocabulary into the scenario.
 //!
-//! Settings raises the combo box's expand state change before its item's
-//! focus, but the change reaches the outpost through its own subscription
-//! and the focus through the focus listener, so which the outpost takes in
-//! first varies from press to press; the outpost restores the provider's
-//! order (`books/dev/src/reference/adr/0001-focus.md`, "One route per application, and the
-//! marker"). Since the race is
-//! intermittent, a pass alone proves little: the judge of that order is
-//! the outpost's intake test
-//! `the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first`,
-//! which fixes the order the outpost takes the two in.
+//! The combo box's expand state change reaches Core from its outpost and
+//! the item's focus from the listener, with no order between them, and
+//! Settings raises the change before or after the focus from press to
+//! press. Core's narrow ordering rule speaks it first either way
+//! (`books/dev/src/reference/adr/0003-readers-tell-core-asks.md`, "The
+//! narrow ordering rule"); a pass here alone proves little, and Core's
+//! `changes_tests.rs` pins both orders.
 
 use std::io;
 

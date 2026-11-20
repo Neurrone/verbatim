@@ -365,13 +365,15 @@ Windows Terminal its image ships.
 ## Local-only scenarios
 
 Some scenarios are local-only, marked `local_only` in the registry, because
-GitHub's Windows Server runner cannot run them as this machine does:
-
-- The `notepad_` scenarios, `settings_search_suggestions`,
-  `settings_search_suggestions_reentered`, `settings_combo_box_expanded`
-  and `toast`; why each but `toast` fails on the runner is in
-  [the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md),
-  and `toast` records no reason.
+they cannot hold on GitHub's Windows Server runner: the `notepad_`
+scenarios, `settings_search_suggestions`,
+`settings_search_suggestions_reentered`, `settings_combo_box_expanded`,
+`settings_system_page`, `explorer_folder_window`,
+`windows_terminal_two_windows`, `windows_terminal_long_lines`,
+`windows_terminal_close_tab` and `toast`. Each entry gives its reason
+beside the flag, with what would let it run there again, and
+[the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md)
+say the same for each.
 
 The registry's `local_only` flag is the one place this is recorded. A
 local-only scenario is part of the suite: every local run and every
@@ -381,7 +383,9 @@ its groups (`cargo xtask e2e-plan` and `e2e-group` read the flag) and sets
 rather than report a pass. The skip comes from that setting alone, never
 from detecting the machine, so a local run cannot silently lose a
 scenario. Mark a new scenario local-only only when it needs what the
-runner's Windows Server lacks, such as Windows 11 Notepad.
+runner's Windows Server lacks, such as Windows 11 Notepad, or fails there
+for a cause outside Verbatim, recorded in the known failures, and give the
+reason beside the flag.
 
 ## How CI runs the suite
 
@@ -743,8 +747,8 @@ The scenarios, all named `measure_`:
 - `measure_keys_notepad`: the same typing, caret keys and select then
   Right in Windows 11 Notepad, over the same lines. It needs Windows 11
   Notepad, so it is not in the set `cargo xtask measure` runs by default
-  and is named with `--scenario`; it is not marked local-only, since a
-  local-only scenario's name must start with one of the skip filters.
+  and is named with `--scenario`; it is not marked local-only, since the
+  measure set is not part of the suite.
 - `measure_keys_conhost` and `measure_keys_windows_terminal`: in each
   terminal, three rounds of typing at 150 ms, ten Left and ten Right
   Arrows at 150 ms, then Escape, and typing at 60 ms then Backspace at

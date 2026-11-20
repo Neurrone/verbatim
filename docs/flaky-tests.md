@@ -2,221 +2,114 @@
 
 The one list of tests and scenarios known to fail intermittently, or consistently, for a known reason. Check it before debugging a failure, and before rerunning or running a baseline: a failure that matches an entry is already understood. Leave a listed scenario out of a related-scenario batch, as `CLAUDE.md` says.
 
-Each entry gives the exact name, how it fails, how often and where, the cause when known, and when the fix is expected. Failure counts are from the dates given, on the development machine ("locally") or GitHub's runner. When a fix lands, delete the entry; history lives in git. When a new failure is explained, add an entry here and link to the work that owns the fix.
-
-## Windows Terminal's first focus, ancestor walk past its bound
-
-Scenarios: the `windows_terminal_` scenarios generally, for example `windows_terminal_progress` and `windows_terminal_tabs`.
-
-- How: a new Windows Terminal window's first focus speaks the title without "window". On GitHub's runner (run 41163500778, 2026-10-31) the expected "ready>" was heard as "verbatim-e2e-spoken-password-mvvtyykb terminal".
-- How often: `windows_terminal_progress` and one other scenario failed this way in one full run on GitHub's runner, after the crate split (run 41211072805, 2026-10-31). `windows_terminal_tabs` and two other scenarios failed this way after the caret watch build (run 41225371284, 2026-10-31), and two scenarios after the first determinism build (run 41233417983, 2026-10-31). On 2026-10-31, with the reducer build, two Windows Terminal flood scenarios since retired failed 10 of 10 and 4 of 9 locally.
-- Cause: the listener's ancestor walk for the focus passes its 500 ms bound, so the window's entry is missing from the chain.
-- Fix: built with the focus pipeline rework's third build (115d825f, 2026-11-08), which removed the walk's bound, so a read waits for the application; the entry is deleted once the Windows Terminal scenarios pass on GitHub's runner.
-
-## Windows Terminal launch speech, not this cause
-
-- Scenarios: the `*_up_typing` (since merged into `*_line_key_flood`), `*_typing` and `*_commands` Windows Terminal scenarios.
-- How: the launch focus sometimes speaks "... terminal" without "... window", and the desktop's announcement is sometimes cancelled.
-- Cause: not found; possibly the first entry's.
-- Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
-
-## Windows Terminal's second terminal identity repeats the terminal at launch
-
-- Scenarios: `windows_terminal_editing` (run 42429967492, 2026-11-08).
-- How: the opening's terminal focus came under one identity, the second, then the first again, so it was said three times where the opening accepts one repeat.
-- Cause: Windows Terminal raises focus from a second runtime identity ([UIA faults](../books/dev/src/reference/uia-bugs.md), "Windows Terminal raises focus from a second runtime identity"); Verbatim's rule dropping those repeats is not built, and the scenario accepts one repeat of the terminal.
-- Fix: [M5](roadmap.md#m5--extensions-v1), the Terminal built-in's rule for the second terminal identity.
+Each entry gives the exact name, how it fails, how often and where, the cause when known, and when the fix is expected. Failure counts are from the dates given, on the development machine ("locally") or GitHub's runner. When a fix lands, delete the entry; history lives in git. When a new failure is explained, add an entry here and link to the work that owns the fix. Every entry is fixed, names the build of the simplification phase that reaches its cause, or has its test taken out of GitHub's runs with the reason and what would let it run there again (Dickson, 2026-11-20); a local-only scenario gives the same reason beside its `local_only` flag in `crates/verbatim-e2e/src/registry.rs`.
 
 ## Settings' suggestions list replaced as it opens
 
-- Scenarios: `settings_search_suggestions` (local only), 2 of 13 runs on 2026-11-09.
-- How: "Suggestions available" plays to completion where the scenario expects the first suggestion to cut it off.
-- Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as `docs/parity/changes-and-selection.md` records.
-- Fix: none in Verbatim.
+- Scenarios: `settings_search_suggestions` and `settings_search_suggestions_reentered`, local-only. `settings_search_suggestions` failed 2 of 13 local runs on 2026-11-09.
+- How: "Suggestions available" plays to completion where the scenario expects the first suggestion to cut it off. On GitHub's runner "Suggestions available" played to completion the same way (run 39558690998); the log shows only that.
+- Cause: Settings replaces the list's items as it opens, after raising the selection, so the selected element is in none of the elements the focus controls, and nothing is said, as in NVDA (`docs/parity/changes-and-selection.md`, pinned by mockapp's `a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the_new_item`). The failures' logs are not kept, so this is inferred from the code and the parity record. When Settings replaces its list is outside Verbatim's control, and accepting either outcome would break the exact-assertion rule.
+- Fix: none in Verbatim. Both stay off GitHub until dispatched runs show the runner's Settings keeping its first selection; locally they run in build 6's scheduled run of the local-only scenarios.
 
-## A combo box's "expanded" raised after its item's focus
+## UI Automation focus never delivered on GitHub's runner
 
-- Scenarios: `settings_combo_box_expanded` (local only), 1 of 2 runs on 2026-11-14.
-- How: Alt+Down Arrow on Settings' "Show additional calendars in the taskbar" combo box says the first item without "expanded" first.
-- Cause: Settings raised the combo box's expand and collapse change (property 30070) about 5 ms after the list item's focus was observed. Today's outpost follows only the focused element, so by then it dropped the combo box's change unpublished. In the passing run the change came 10.9 ms before the focus. Neither order is guaranteed.
-- Fix: the event queue and focus build of [Readers tell, Core asks](roadmap.md#readers-tell-core-asks). Core moves the outpost's `Follow` only after committing the new focus, so the combo box is still followed when it raises "expanded"; the change waits in Core's queue while the item's focus is read, and the narrow ordering rule speaks it first. NVDA likewise unregisters the old focus only when it handles the new one (`NVDAObjects/UIA/__init__.py` 1628 to 1630). An NVDA capture of the late order confirms what NVDA speaks before a test asserts it.
+- Scenarios, local-only for this reason: `settings_system_page` (8 failures, runs 42492633218, 42514816068, 42861051487, 43556583340, 44391277251, 44465917467, 44495098916 and 44571401780, 2026-11-08 to 2026-11-20), `windows_terminal_long_lines` (run 44414430624, 2026-11-19) and `windows_terminal_close_tab` (run 44465917467, 2026-11-19).
+- How: in `settings_system_page`, "Settings" is said for the frame, then nothing for 75 s, and "Settings window" is never queued; in the two terminal scenarios nothing is said after the new Windows Terminal window opens.
+- Cause: UI Automation never delivered the focus to the listener's desktop-wide handler. In run 44571401780 and run 44465917467 the frame's focus arrived and was spoken; about 1.6 s later the page's `Windows.UI.Core.CoreWindow` (`SystemSettings.exe`) raised MSAA focus events, which the outpost rightly left to UI Automation, as NVDA does, and the listener's UI Automation layer, upstream of every filter of the listener's, logged no focus event and no window-opened event for 75 s. The terminals' listener logs hold one or two UI Automation events, none on the new terminal. This is the fault "A new process's focus events reach the desktop-wide handler late or not at all" ([UIA faults](../books/dev/src/reference/uia-bugs.md)); a focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits; Dickson, 2026-11-07).
+- Fix: none in Verbatim. They run on GitHub again once a runner image or a UI Automation change delivers these focuses, seen in dispatched runs.
 
-## Settings' page focus never delivered by UI Automation
+## `windows_terminal_control_flood`'s command marks steps
 
-- `settings_system_page` on GitHub's runner (run 42492633218, 2026-11-08)
-- `settings_system_page` on GitHub's runner (run 42514816068, 2026-11-09), the same failure
-- `settings_system_page` on GitHub's runner (run 42861051487, 2026-11-10), the same failure
-- `settings_system_page` on GitHub's runner (run 43556583340, 2026-11-14), the same failure
-- `settings_system_page` on GitHub's runner (run 44391277251, 2026-11-19), the same failure
-- `settings_system_page` on GitHub's runner (run 44571401780, 2026-11-20), the same failure: only the frame's UI Automation focus reached the listener
-- `settings_system_page` on GitHub's runner (run 44495098916, 2026-11-19), the same failure: the listener's log has the frame's UI Automation focus and none for the page
-- `settings_system_page` on GitHub's runner (run 44465917467, 2026-11-19), the same failure: the frame's UI Automation focus was spoken, the page's window (hwnd 328488) raised only MSAA focus events, rightly left to UI Automation, and no UI Automation focus for the page arrived
-  - How: "Settings" was said for the frame, then nothing for 75 s; "Settings window" was never queued.
-  - Cause: the page's `Windows.UI.Core.CoreWindow` (hwnd 328450, `SystemSettings.exe`) raised two MSAA focus events, which the outpost dropped because UI Automation owns the window, as NVDA drops them; UI Automation delivered no focus event for the page to the listener, whose handler had delivered the frame's focus two seconds before. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits).
-  - Fix: none in Verbatim; passed on GitHub's runner in the two runs before it.
-
-## Single failures in the first grouped runs (runs 41693694156 and 41697089785, 2026-11-03)
-
-Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
-
-- `text_box_review_cursor`
-  - How: Verbatim+Alt+Home (review the selection's start) was answered "unanswered" by the outpost's text read, so nothing was said within 15 s.
-  - Cause: the harness's Windows Forms text box (a Windows PowerShell window) did not answer `EM_GETSEL` within the outpost's fixed 500 ms message limit (`MESSAGE_TIMEOUT_MS`, `crates/verbatim-ia2/src/edit.rs`); its interface thread had stalled twice at the scenario's start too. The menu guard changed nothing in the text box. NVDA waits for the same message until its watchdog judges the application hung, so a slow but live application is still read.
-  - Fix: built with the slow applications build (d13eaef2 to d7b2962d, 2026-11-07): a window message has no time limit of its own and is waited for until the application answers or Windows judges its window hung, as NVDA does. Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow read waited for and the speech heard.
-- `windows_terminal_control_flood`'s command marks steps (run 41697089785, when they were `windows_terminal_command_marks`)
-  - How: 2.0 s after the second Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
-  - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`); the search, a remote operation in Windows Terminal (`crates/verbatim-uia-rops/src/terminal_find.rs`), took 3.2 s, past the outpost's 2 s text deadline (`TEXT_DEADLINE`), so the worker was abandoned, and `finish` (`crates/verbatim-app/src/main.rs`) plays the sound for any abandoned query, without asking whether Windows judges the window hung. Windows Terminal was answering throughout. NVDA has no such sound.
-  - Fix: built with the slow applications build (2026-11-07): the 2 s text deadline is gone, a query waits up to the 11 s handling deadline, and the sound plays only when Windows judges the window hung and its application holds attention (Dickson, 2026-11-06). Ten local runs passed, none slow; the entry is deleted once a run's log shows a search past 2 s answered and spoken. Seen again in run 42487419395 (2026-11-08): after the step's Verbatim+Alt+Up, outpost 4 reported Windows Terminal (pid 6224) not responding as Windows judged its window hung, so the sound played as the rule says, where the mark's line was expected; the slow search remains the cause. The search's cost in a real Windows Terminal, never measured, is to be measured and fixed with [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals)' measurements.
-
-## Windows Terminal busy opening its tab switcher
-
-Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
-
-- `windows_terminal_tabs` (run 41859263092)
-  - How: at Control+Shift+Tab, "sound: app-not-responding" was heard where "Tab switcher grouping", "list" and the first tab were expected.
-  - Cause: the key, a caret key in the terminal, opened a caret watch; Windows Terminal did not answer the watch's read for 2 s while it opened its tab switcher, so the outpost abandoned its worker ("a call passed its deadline", 15:43:34.285), and Core plays the sound for any abandoned query, without asking whether Windows judges the window hung.
-  - Fix: whether Control+Shift+Tab opens a caret watch in a terminal at all is settled with [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals) (Dickson, 2026-11-04); the watch now waits the 11 s handling deadline and the sound plays only for a window Windows judges hung, built with the slow applications build (2026-11-07). Ten local runs passed, none slow; the entry is deleted once a run's log shows the slow watch answered.
+- `windows_terminal_control_flood` on GitHub's runner (run 41697089785, 2026-11-03, when the steps were `windows_terminal_command_marks`, and run 42487419395, 2026-11-08)
+  - How: after Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
+  - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`, `crates/verbatim-uia-rops/src/terminal_find.rs`, bounded at 100 calls). In run 42487419395 the search took 6.4 s in Windows Terminal (`elapsed_us=6404203`), Windows judged the window hung, and the sound played as the rule says.
+  - Fix: build 9, the terminal rebuild, whose finding that `terminal_find.rs` is written twice (terminals P14) and whose marks with a find written once (F12) reach the search; its first measurement is one `TerminalFind` in Windows Terminal on the runner against this 6.4 s. The test is not loosened.
 
 ## The caret watch's baseline anchor released while it waits
 
-Recorded by Claude, 2026-11-04.
-
-- `text_box_caret_keys` (run 41848692720)
-  - How: at Control+V on the start of "alpha beta gamma", nothing was said within 15 s where "mangoalpha beta gamma" was expected; the outpost's answer to the key's watch had no `same_line`, so Core, judging a key by where the caret landed, spoke nothing.
-  - Cause: the watch's baseline is the newest caret the outpost reported before the key (`baseline`, `crates/verbatim-outpost/src/text/mod.rs`), here a caret event's anchor that no request names. The paste moved the caret while the watch read it, so the watch waited for the caret event, and the shell released the anchors no live request names, that one among them; when the event came the baseline no longer resolved. A run whose first read is not overtaken answers before the release and passes.
-  - Fix: [the caret and selection rework](roadmap.md#the-caret-and-selection-rework), whose one baseline per text node lives as long as the focus Core holds (Dickson, 2026-11-04).
-  - Again on GitHub's runner (run 44514942878, 2026-11-19), at the Down Arrow after Control+V: "delta epsilon" was never queued; the outpost released anchors 273 and 274 and Core's answers 151 and 152 were not there.
+- `text_box_caret_keys` (run 41848692720, 2026-11-04, and run 44514942878 on GitHub's runner, 2026-11-19)
+  - How: in the first run, at Control+V on the start of "alpha beta gamma", nothing was said within 15 s where "mangoalpha beta gamma" was expected. In run 44514942878, at the Down Arrow after Control+V, "delta epsilon" was never queued.
+  - Cause: in run 44514942878's flight recorder, the paste's start read (answer 150) came back after 332 ms, and Core's answers 151 and 152 for the Down Arrow were not there (`Outcome::NotThere`, from `TextReply::Gone` in `crates/verbatim-outpost/src/outpost/asked.rs`). The outpost's release of the nodes and anchors no live request can name (`crates/verbatim-outpost/src/outpost/store/mod.rs`) ran four times in 1 s, freeing anchors 275 and 276 of answer 150. It frees an anchor once its report position is acknowledged and Core's held set lacks it, and Core's held set (`held_anchors`, `crates/verbatim-core/src/state.rs`) is built only from committed state, so an anchor Core has received but not yet committed can be freed. Which anchor answers 151 and 152 named is not shown.
+  - Fix: build 8, the request list closed, whose study asks how anchors cross and whose first conversions include the caret key; this failure is one of that study's cases. If the study cannot reach it, the scenario is made local-only with this reason.
 
 ## Windows Terminal raises no TextChanged for a typed character
 
-- Scenarios: the Windows Terminal typing scenarios.
-- How: the typed character is not echoed, only caret moves are raised. About 5 percent of runs.
-- Cause: not known whether Windows Terminal or UIA loses the event; settling it takes about 60 runs and a second, independent UIA client.
-- Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals), with the outpost and Core step.
+- Scenarios: `windows_terminal_typing`, locally (about 5 percent of runs, recorded 2026-10-31); it has never failed this way on GitHub's runner.
+- How: the typed character is not echoed; only caret moves are raised.
+- Cause: not yet named. Core reads a terminal on text-changed and console update events, not on caret events, so a lost text-changed event leaves a typed character unread; whether Windows Terminal or UI Automation loses it is not shown, and the terminal read path has been rewritten since (89c36cc8).
+- Fix: one measurement of at most 20 runs of `windows_terminal_typing` at today's code, with `verbatim-event-record` recording Windows Terminal's events as an independent UI Automation client. A missed echo with no TextChanged in the recording is Windows Terminal's, a parity note; one with the TextChanged recorded is Verbatim's, for build 9. If no echo is missed, the entry is deleted.
 
 ## Console host scenarios
 
-- `conhost_leave_flood`
-  - How: fails at "brings the first window back": on 2026-10-31 the harness could not bring the first console window back to the foreground, because its window did not process the restore for 5 s after its flood. 10 of 10 locally. Earlier, it once heard no "blank" for an empty new console window, its first read giving nothing within 15 seconds.
-  - Cause: on the development VM, which renders the desktop in software (WARP), the Desktop Window Manager works through a flooded console's repaints for about 40 seconds after the flood, using up to two cores, and a minimize waits for it in `win32kfull!DwmSyncNotifyMinimizing` while the console's window thread is idle. It happens with no Verbatim running and a restart does not clear it, so it is not Verbatim's to fix. Whether this covers the 2026-10-31 failures on the development machine, and the cause of the empty-console read, are not found.
-  - Fix: no fix planned for the manager's backlog (Dickson decided to leave it unaddressed); the unsettled read is under [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
-  - How (2026-11-19, 2 of 13 runs locally): the second window is said as "... window unavailable" when UI Automation focuses the console window itself before its text area.
-  - Cause: the outpost's remote states read (`focus_states_remote`, `crates/verbatim-uia-rops/src/focus_states.rs`) fills the cache in the provider's process, where a property the provider does not supply is stored as its default; `IsEnabled` is read as a plain flag (`crates/verbatim-uia/src/shape/shapes.rs`), so its default of false becomes Disabled. Ordinary reads of the same window in the same 10 ms say enabled. NVDA reads `IsEnabled` ignoring the default and treats a missing value as enabled (`NVDAObjects/UIA/__init__.py` 2022).
-  - Fix: fixed in "Read a console window's missing IsEnabled as enabled, as NVDA does": the console host's own provider for its window supplies no `IsEnabled` (verbatim-outpost `a_console_window_reads_enabled_remotely_and_classically`), so the remote program leaves it out of the cache when unsupported, and a missing `IsEnabled` reads as enabled.
-- `conhost_editing` on GitHub's runner (run 44399039765, 2026-11-19), and `conhost_commands` (run for 5313bd45, 2026-11-19), the same failure
-  - How: the setup failed with "the shell shows its first prompt": the shell's `prompt-ready` file was not written within 30 s.
-  - Cause: the console's shell (PowerShell) did not reach its first prompt; Verbatim's outpost in the console answered every request within a few milliseconds and then sat idle (the report's flight recorder, lines 41 to 67), so nothing of Verbatim's held the console. Why the shell was slow is not found.
-  - Fix: none planned.
-- `windows_terminal_long_lines` on GitHub's runner (run 44414430624, 2026-11-19)
-  - How: nothing was said after the new Windows Terminal window opened.
-  - Cause: UI Automation never delivered the terminal's focus to the listener: its log has one UI Automation event in the run, before its subscriptions were installed; the terminal's MSAA focus events reached Core and were rightly left to UI Automation. A focus UI Automation never delivers is lost, as in NVDA ([ADR 0001](../books/dev/src/reference/adr/0001-focus.md), its limits), as under "Settings' page focus never delivered by UI Automation".
-  - Fix: none in Verbatim.
-  - Again in `windows_terminal_close_tab` (run 44465917467, 2026-11-19): the listener's log has two UI Automation events, one before its subscriptions were installed and one focus on the desktop, none on the new terminal.
+- `conhost_leave_flood`, on the development VM only; it passes on GitHub's runner and stays there.
+  - How: fails at "brings the first window back": on 2026-10-31 the harness could not bring the first console window back to the foreground, because its window did not process the restore for 5 s after its flood. 10 of 10 locally.
+  - Cause: the VM renders the desktop in software (WARP), so the Desktop Window Manager works through a flooded console's repaints for about 40 seconds after the flood, and a minimize waits for it in `win32kfull!DwmSyncNotifyMinimizing` while the console's window thread is idle. It happens with no Verbatim running ([troubleshooting](../books/dev/src/how-to/troubleshooting.md), "Minimizing a console after a flood takes 30 to 45 seconds").
+  - Fix: none planned for the manager's backlog (Dickson decided to leave it unaddressed); the harness does not wait for the manager (Dickson, 2026-10-26).
 - `outpost::read::tests::only_the_console_host_reads_the_focus_in_its_console_window` under `cargo xtask ci` on GitHub's runner (run 44414430624, 2026-11-19)
-  - How: the test console panicked with "the console's window took its client's title" (`crates/verbatim-test-console/src/lib.rs`), before the test read anything.
-  - Cause: not found; the console window did not take its program's title within the helper's wait on the runner.
-  - Fix: none yet.
-- `conhost_typing`
-  - How: missed a typed "o" in 2 of 6 runs on the base build.
-  - Cause: not found.
-  - Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
-
-## File Explorer
-
-- `explorer_folder_window`, Explorer's folder window not responding (locally 2026-10-31; GitHub run 42654703245, where the window took the foreground and no focus event followed; GitHub run 44123231466, where Explorer's UI thread stopped pumping messages for over 5 s and Verbatim played the application-not-responding sound)
-  - How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, never takes the foreground, its UI thread stops answering about 1.5 s after it opens (an arbitration probe of its `ShellTabWindowClass` window times out at 3 s, an MSAA call waits 13 s), and it does not close within 15 s, so the next scenarios fail at launch on the window left open. Once in 13 runs, with the keep-id fix; the next 10 passed.
-  - Cause: not found. Verbatim's outpost was the one waiting on Explorer; no Verbatim call was found that Explorer waited on.
-  - Fix: none yet. A body that fails after Verbatim played the application-not-responding sound now records, as it fails, the wait chain of each not-responding window's thread and of the foreground window's, in the failure message and in `not-responding-wait-chains.txt` ([the end-to-end guide](../books/dev/src/how-to/e2e.md)); the next failure's artifacts are to be read for what Explorer's thread waits on.
-
-- `explorer_folder_window` opening its folder window (locally, 2026-11-09, at f51b89bb 1 of 3 runs and at 9e4fc9ea 0 of 3 run alone and 6 of 6 run straight after a batch of other scenarios; GitHub run 42602389212)
-  - How: the new window's first focus is sometimes on its `ShellTabWindowClass` child, named without " - File Explorer", rather than on `CabinetWClass`, or the speech that follows differs; the scenario then fails on its opening utterances.
-  - Cause: not found. The order of Explorer's first focus events changes with what ran before; no Verbatim code on the path differs between those runs.
-  - Fix: none yet.
+  - How: the test console panicked with "the console's window took its client's title" (`crates/verbatim-test-console/src/lib.rs`) after its 10 s wait for the console window's name change, before the test read anything.
+  - Cause: not yet named. The panic now names every name the console host's windows took during the wait and each process in the console's job with its image and whether it is running, so the next failure says whether the shell started and what title the window had.
+  - Fix: a measurement of 20 runs of the test alone, then the next failure's message read. The wait is not lengthened.
+- `conhost_typing`, locally
+  - How: missed a typed "o" in 2 of 6 runs on the base build (no artifact kept).
+  - Cause: not yet named.
+  - Fix: one measurement of at most 20 runs of `conhost_typing` at today's code, as for `windows_terminal_typing` above; if no character is missed, the bullet is deleted.
 
 ## Terminal scenarios, single failures on GitHub's runner
 
-- `conhost_long_lines` (run 41333390347)
-  - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected; the snapshot then has the caret on an empty line and "ready>" on the screen's first row.
-  - Cause: not found; the typed-character rules (`crates/verbatim-core/src/terminal_model.rs`) are suspected, not shown. Once in 32 runs.
-  - Fix: [M6.4 terminal reading rebuild and residuals](roadmap.md#m64--terminal-reading-rebuild-and-residuals).
-
-## A new console host not responding at its outpost's first call
-
-Scenarios: `measure_keys_conhost` and `measure_keys_conhost_unmoved` (release build, 2026-10-31, on main's code with temporary log lines), and `conhost_full_history_flood`, since retired (debug build, 2026-11-01, 1 of 3 with the first determinism build; its outpost was killed at shutdown, and the next scenario, `notepad_editing`, found no Notepad window within 30 s, then passed 10 of 10).
-
-- How: setup fails with "no window titled ... opened within 30s"; the PowerShell console's window is hidden and not responding, or not shown at all. The outpost given the new `conhost.exe` starts watching it, and its worker's first call passes its 10 s deadline about 10 s later and finishes only at shutdown, 2 to 35 s after. 3 of 20 runs; in one, a crate split build's unit tests were running on the same desktop.
-- Cause: not found. In two `conhost_full_history_flood` failures on 2026-11-01 whose artifacts were kept, Verbatim waited on the console host and not the reverse: the window never answered the outpost's first message (the arbitration's `WM_GETOBJECT` probe timed out at 3 s, where a healthy console answers in about 0.4 s), the outpost's worker then blocked in an MSAA read until the outpost was killed, and the console host stayed hung after every Verbatim process had exited. Both runs also had Explorer's notification area not answering (`Shell_NotifyIcon` timed out at Verbatim's start) and the Widgets process not responding, which no passing run showed. What the console host's window thread waited on is not in the logs.
-- Fix: none yet. The harness now records, when this wait fails, the wait chain of each not-responding window's thread and of the launched process's threads, in the failure message and in `wait-chains.txt` ([the end-to-end guide](../books/dev/src/how-to/e2e.md)); the next failure's artifacts are to be read for what the thread waits on. A roadmap follow-up under M4.
+- `conhost_long_lines` (run 41333390347, 2026-11-01)
+  - How: after Enter, "r" is heard where "part1 part2 ... part10" is expected. The step sends Enter and then the typed "n" 1 ms later; Core spoke "r" 5 ms after the key, from a snapshot showing "ready> .\grow.ps1" and an empty caret row.
+  - Cause: not yet named. Which rule produced "r" is not shown; the typed-echo rules and the key line's handling were candidates, and that code has since been replaced (dbd39d56, 89c36cc8). It has failed once in about 120 failed-run logs from 2026-10-30 to 2026-11-20.
+  - Fix: build 9, the terminal rebuild, which rewrites the terminal reading rules and the typed-echo rules (terminals P5, P9 and P13) and adds a test of a key arriving 1 ms after an Enter that said nothing, with this run's snapshot.
 
 ## Windows Terminal's two windows, the elevated title at launch
 
-- Scenarios: `windows_terminal_two_windows` on GitHub's runner, most recently run 44073013757 (2026-11-17), after the title handshake of 4f5770c4.
-- How: the first step hears "Administrator: verbatim-e2e-two-a-... window" where "verbatim-e2e-two-a-... window" is expected, then the terminal and "blank" as expected; the step fails on the window's title alone.
-- How often: runs 44562491188 (2026-11-20), 44514942878 and the run for 5313bd45 (2026-11-19); run 44073013757 since 4f5770c4; 3 of 7 code runs before it, at the same step.
-- Cause: the harness saw the window titled exactly with its title, after the shell's "settling" title, before it brought the minimized window forward; Verbatim then read the window's name with the prefix, and the recording's first frame of the restored window shows the tab titled "Administrator: verbatim-e2e-...", the next frame the title without it. The prefix is the console host's, which runs elevated with Windows Terminal on GitHub's runner, so a title the shell sets cannot keep it away: it reaches Windows Terminal's window after the harness's last look at the title. Which of the console host's titles, its first or a later one, the restored window shows is not established.
-- Fix: none yet. Waiting for the title before bringing the window forward cannot hold, since the prefixed title is seen only after the window is restored. Launching it with the desktop shell's token failed every Windows Terminal scenario on the runner (run 44229970650), whose shell is itself elevated and so has no unelevated token; the remaining route is a token restricted to a standard user's rights, not yet tried.
+- Scenario: `windows_terminal_two_windows`, local-only for this reason. It failed in 14 GitHub runs between 2026-11-04 and 2026-11-19, most recently run 44562491188.
+- How: the first step hears "Administrator: verbatim-e2e-two-a-... window" where "verbatim-e2e-two-a-... window" is expected, then the terminal and "blank" as expected.
+- Cause: a harness ordering gap, not wrong speech: Verbatim reads the window's current name. The harness waits for the shell's "settling" title and then its own, then restores the minimized window; the recording of run 44562491188 shows the tab titled "Administrator: verbatim-e2e-..." for about three frames right after the restore, then the plain title, and the listener logged four name changes in that span. The prefix is the elevated console host's; which process sends the prefixed title, and why on the restore, is not established.
+- Fix: it runs on GitHub again after one dispatched run with the agent logging the window's title at each name change names the sender and its trigger, and a harness wait on that evidence is designed. Launching the shell with the desktop shell's token failed every Windows Terminal scenario on the runner (run 44229970650) and is not tried again.
 
-## A new application's window not shown in time
+## File Explorer's folder window not responding on GitHub's runner
 
-Scenarios and tests: `notepad_editing`, `notepad_selection_keys` and `notepad_typed_words` locally; mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` under `cargo xtask ci` on GitHub's runner; and `return_from_a_held_application` and `text_box_page_keys` in one group of run 41693694156 (2026-11-03), where the harness's PowerShell-hosted Windows Forms window never showed (pid 3612) or stayed minimized and not responding (pid 3032), the foreground on Program Manager. A setup that fails this way leaves its host running until the next scenario's start ends it (Claude, 2026-11-04, pending Dickson's acceptance). Also `text_box_password` and `text_box_review_cursor` in group 3 of run 42262303061 (2026-11-06), the PowerShell-hosted Windows Forms window never shown (pid 7088) or minimized and not answering its restore (pid 1584), with no Verbatim log naming either process; and `wpf_password` in group 1 of run 42016960834 (2026-11-05): the harness's PowerShell-hosted WPF window never showed, the foreground on Program Manager. Its wait chain shows the one PowerShell thread blocked with no cycle; the process had loaded WPF's PresentationFramework, then `d3d9.dll` and `dxcore.dll` last, after 437 ms of processor time; and no Verbatim log names the process, so no outpost or the listener had called into it.
-
-- How: setup fails with "no window titled ... opened within 30s" and no Notepad window among the visible ones, before any key is sent; the mockapp test fails with "the window is shown: Timeout". Locally five times on 2026-11-01, in bursts of up to three runs in a row, then passing; on the runner once (run 41254405706). Twelve runs in a row, six idle and six under a release build's load, all passed.
-- Cause: not found. Load from a concurrent build did not reproduce it. The console host entry above, whose kept artifacts show the new window hung on its own with Explorer's notification area also not answering, may be the same; no Notepad failure's artifacts have been kept yet.
-- Fix: none yet. The next harness failure carries the wait chains of the not-responding windows' threads and of the launched Notepad's threads, in the failure message and in `wait-chains.txt`, which say what a hung window's thread waits on; the mockapp test's failure does not. A roadmap follow-up under M4.
-
-## Scrollback scenarios after a long flood, locally
-
-Recorded by Claude, 2026-11-04, pending Dickson's acceptance.
-
-- Scenarios: `windows_terminal_scrollback_overflow_during_group` and `conhost_scrollback_overflow_during_group`, locally, when they run after `conhost_flood`.
-- How: Windows Terminal's window never appears ("no window titled ... opened within 30s"), and the console host's first focus is said without "window". 3 of 3 times each in a round of the terminal scenarios, and once more with `conhost_flood` run alone just before, by a separate command with a fresh agent; both pass run alone.
-- Cause: this machine's display adapter, a VirtIO display-only driver with no 3D acceleration, leaves the Desktop Window Manager to compose the screen on the processor. During `conhost_flood` `dwm.exe` used two whole processors of the twelve (200%), and went on at 190 to 200% for about 60 seconds after the scenario and its recording had ended, working off the flood's redraws, before falling to its idle 12 to 15% (sampled every 2 seconds, 2026-11-04). A scenario started in that minute waits on DWM: the launch evidence (`launched-process-<pid>.txt`, `wait-chains.txt`) shows Windows Terminal's main thread waiting 30 seconds on an ALPC call to `dwm.exe`, having used 155 ms of processor time. GitHub's runner, which passes these scenarios, was not measured.
-- Fix: none yet. A graphics adapter with 3D acceleration for the VM would remove the cause; a harness wait for DWM to be idle before a launch would only hide it.
+- Scenario: `explorer_folder_window`, local-only for this reason (GitHub runs 42654703245, 44123231466 and 44344991044; locally on 2026-10-31).
+- How: nothing is spoken after the desktop's "Recycle Bin 1 of 13"; the folder window, opened in a new `explorer.exe` process, stops answering and Verbatim plays the application-not-responding sound.
+- Cause: not yet named. In run 44344991044, `not-responding-wait-chains.txt` shows both `dwm.exe`'s and the new `explorer.exe`'s window threads blocked, with no cycle; the wait chain does not show what Explorer waits on. A link to the Desktop Window Manager rests on two runs and one wait chain. The harness does not wait for the manager (Dickson, 2026-10-26).
+- Fix: it runs on GitHub again after a local reproduction (on 2026-11-09 it failed 6 of 6 runs straight after a batch of other scenarios) whose kernel wait or wait chain names what Explorer's thread waits on, followed by a fix in Verbatim if the wait is Verbatim's, or after Dickson rules to keep it there.
 
 ## Mockapp tests under `cargo xtask ci`
 
 - `call_counts::uia_focus_chains_stop_below_the_process_boundary`
-  - How: recorded as failing intermittently under `cargo xtask ci`, with no failure message kept; the only failures on record came while the test was being rewritten (2026-10-29 and 2026-10-30). On 2026-11-03, at 29237e17, it passed 456 of 456 runs: 100 alone, 50 with its binary, 6 runs of mockapp's whole suite, 120 as twelve copies at once, 20 binaries as four copies at once, and 160 under twelve busy processes. Its counts also hold with a 1.5 s pause between its steps, so the lapse of UI Automation's copy of an element's runtime id (`books/dev/src/reference/uia-bugs.md`) is not its cause.
+  - How: recorded as failing intermittently under `cargo xtask ci`, with no failure message kept; the only failures on record came while the test was being rewritten (2026-10-29 and 2026-10-30). On 2026-11-03, at 29237e17, it passed 456 of 456 runs, alone, with its binary, as copies at once and under busy processes.
   - Cause: not found, since it does not reproduce.
-  - Fix: none until it fails again; its failure message is to be kept, since which count moved names the call to look at.
 - `call_counts::msaa_form_focus_costs_exactly`, `call_counts::msaa_tree_view_costs_exactly` and `call_counts::uia_combo_box_costs_exactly`, under load
   - How: `msaa_form_focus_costs_exactly` failed 7 of 20 runs with four copies of it running at once (2026-11-03): an extra window-title entry at the top of its chain; under twelve busy processes the other two failed as well. Alone they pass.
-  - Cause, likely but not shown: the MSAA walk passed its bound under load, and the title was doubled when it did.
-  - Fix: the focus pipeline rework's third build removed the outpost's walk bound (b94fa1d8, 2026-11-08); the entry is deleted once the tests pass under load. Until then `cargo xtask ci` runs `call_counts` alone.
+  - Cause, likely but not shown: the MSAA walk passed its bound under load, and the title was doubled when it did. The outpost's walk bound (b94fa1d8, 2026-11-07) and the listener's (115d825f, 2026-11-08) are removed.
 - `focus_reports::an_msaa_client_area_reached_by_a_walk_carries_its_window_and_its_content_none` and `focus_reports::an_msaa_ancestor_reached_with_no_identity_string_is_its_windows_client`, under load
-  - How: both failed in 1 of 4 runs of the whole unit-test suite under cargo-nextest, many tests at once while another build compiled (2026-11-03): the window's title, and in the second the window's client area, above the dialog at the top of the chain. Alone, the binary passed 3 of 3 under nextest and 3 of 3 under its own runner.
+  - How: both failed in 1 of 4 runs of the whole unit-test suite under cargo-nextest, many tests at once while another build compiled (2026-11-03): the window's title, and in the second the window's client area, above the dialog at the top of the chain.
   - Cause, likely but not shown: as for the `call_counts` tests above.
-  - Fix: as for the `call_counts` tests above. Until then `cargo xtask ci` runs `focus_reports` with nothing else beside it (`.config/nextest.toml`).
-
-## Synthesizer host tests on GitHub's runner
-
-- `verbatim-synth-host`'s `hosting` tests `a_hosted_synthesizer_streams_audio_and_marks_in_order`, `a_cancelled_utterance_ends_without_the_hosts_answer_and_the_host_carries_on`, `an_utterance_cancelled_before_any_audio_ends_without_any_and_the_host_carries_on` and `onecore_speaks_a_raised_capital_within_one_utterance`
-  - How: the first three failed together under `cargo xtask ci` with "the synthesizer host sent nothing for 10s" (run 41267826098, 2026-11-01, a documents-only commit), the runs before and after it passing; the second and fourth failed the same way in the x64 job of run 41853488071 (2026-11-04), whose ARM64 job passed them.
-  - Cause: not found. The speech platform's first activation in a fresh runner session can take more than ten seconds, which is why the unit-test jobs run `cargo xtask warm-speech` first; whether that warm-up did not hold here is not known.
-  - Fix: none yet.
+- Fix, for all three: build 6 runs the load recipe once, at most 20 runs (calls F12). If they pass, this entry goes, and with it `mockapp::call_counts` from `SERIAL_TESTS` and `mockapp::focus_reports` from `ALONE_TESTS` (`xtask/src/main.rs`) with their notes in `.config/nextest.toml`; if one fails, its failure message is recorded here. Until then `cargo xtask ci` runs `call_counts` alone and `focus_reports` with nothing beside it.
 
 ## The mixer's allocation test under load
 
 - `verbatim-audio`'s `mixer` test `the_audio_thread_allocates_and_frees_nothing_while_it_plays`
-  - How: times out waiting for a playback event, "a playback event arrives: Timeout", in its warm-up's first utterance, whose end never comes after the harness plays its frames (`exercise` in `crates/verbatim-audio/tests/mixer.rs`).
-  - How often: 1 of 640 runs with eight copies running at once on the 12-core development machine, both before and after f3284cf9 fixed `settle` (2026-11-02); never seen alone.
-  - Cause: not found. The tests run the real audio and delivery threads and judge from outside when the mixer is idle, so it is not known whether this is the harness's guess or a lost wake in the mixer.
-  - Fix: [M6.3](roadmap.md#m63--speech-and-audio-pipeline), the mixer's decision tests driven pass by pass on the test thread, where it is reproduced or ruled out.
+  - How: timed out waiting for a playback event, "a playback event arrives: Timeout", in its warm-up's first utterance (`exercise` in `crates/verbatim-audio/tests/mixer.rs`).
+  - How often: 1 of 640 runs with eight copies running at once on the 12-core development machine (2026-11-02); never seen alone, and never on GitHub, where `cargo xtask ci` runs the mixer tests one at a time (`SERIAL_TESTS`).
+  - Cause: not yet named. The harness's `play` judged from outside that the mixer had nothing more to write and returned early; it now waits for each frame it plays to be written, and a timeout in `Harness::next` reports the device's state and every event received before it, so a failure shows whether the harness or the mixer stopped.
+  - Fix: one measurement, eight copies at once, at most 20 runs. A lost wake in the mixer is a product fix in `crates/verbatim-audio/src/mixer`; if it does not recur, the entry is deleted.
 
-## Scenarios that fail on GitHub's runner, skipped there
+## Scenarios local-only for the runner's image
 
-These are `local_only` in the registry. The `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`), and they pass locally. No fix is planned for them: the runner's image is not ours.
+These are `local_only` in the registry, each with its reason beside the flag; the `e2e` job leaves them out of its groups (`cargo xtask e2e-plan`). The suggestions pair is under "Settings' suggestions list replaced as it opens" above.
 
-- The `notepad_` scenarios: the runner has classic Notepad, a Win32 edit control, not Windows 11 Notepad. Editing is also covered in the harness's Windows Forms text box.
-- `settings_search_suggestions` and `settings_search_suggestions_reentered`: the runner's Settings raises no selection event for a first suggestion as the list opens, so "Suggestions available" plays to completion there, while the scenario expects the first suggestion, which this machine's Settings selects as the list opens, to cut it off.
-- `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts.
+- The `notepad_` scenarios: the runner is said to have classic Notepad, a Win32 edit control, not Windows 11 Notepad; the claim rests on commit messages, not on an artifact. A dispatched run reads the runner's Notepad version, and the reason is corrected or confirmed from it. Editing is also covered in the harness's Windows Forms text box.
+- `settings_combo_box_expanded`: the runner's Settings opens its Date and time page with the focus on "Location Settings link", where this machine's opens it on "Region button", which the scenario's opening speech asserts. It runs on GitHub again when the runner's Settings opens on "Region button"; choosing the expectation from what the application focused is ruled out (`books/dev/src/reference/testing.md`, "One target, one code path").
+- `toast`: no reason was recorded when it was made local-only (81003396), and it has never run on GitHub. A dispatched run, `gh workflow run ci.yml -f scenario=toast -f repeat=3`, gives the reason from its artifacts, or, if it passes, lets it run there.
 
 ## `alt_tab_switcher` on a parked local desktop
 
-- `alt_tab_switcher` locally (10 of 10 runs failed at 6e6c1efa and at bce10932, 2026-11-09)
+- `alt_tab_switcher` locally (10 of 10 runs failed at 6e6c1efa and at bce10932, 2026-11-09); it passes on GitHub's runner (run 44700246402) and stays there.
   - How: the agent's `SwitcherItems` found no item with the focus within 30 s.
-  - Cause: on this Windows build the switcher, class `XamlExplorerHostIslandWindow`, is open with the selection drawn on its first item, while UI Automation focus stays on the host's empty `InputSite` pane; `switcher_items` (`crates/verbatim-agent/src/focus.rs`) accepts only focus on an element whose parent is `SwitchItemListControl`, and a search of the one switcher window's descendants, in the control view and the raw view, finds no such list for 30 s.
-  - Fix: none yet. Why UI Automation exposes no list here is not established. Verbatim is not involved, since the check is the agent's own read.
+  - Cause: not yet named. UI Automation's focus stayed on the switcher host's empty `InputSite` pane (class `XamlExplorerHostIslandWindow`) and never reached an element whose parent is `SwitchItemListControl` (`switcher_items`, `crates/verbatim-agent/src/focus.rs`). Verbatim is not involved, since the check is the agent's own read. The failure now lists the switcher window's raw-view elements.
+  - Fix: one run parked and one with Remote Desktop connected, then, from the raw view, either the agent reads the items from the list found by its automation id, or the scenario is recorded as unable to run on a parked desktop.
 
 ## `table_cells`'s first focus
 
