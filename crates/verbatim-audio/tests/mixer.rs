@@ -539,7 +539,9 @@ fn play(device: &ManualDevice, frames: u32) {
             // unpoisoned.
             let device = state.describe();
             drop(state);
-            panic!("the mixer writes frame {frame} of {frames} to play within {WAIT:?}; device: {device}");
+            panic!(
+                "the mixer writes frame {frame} of {frames} to play within {WAIT:?}; device: {device}"
+            );
         }
         state.queued -= 1;
         state.woken = true;
