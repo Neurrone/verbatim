@@ -140,7 +140,13 @@ pub(crate) fn marker(cx: &mut Cx<Entries>, window: WindowHandle) {
 /// its press, reads nothing, and the show says the dialog, as NVDA's
 /// captures of Right Arrow do. Any other outcome leaves the fact as it was.
 pub(crate) async fn before_press(cx: &mut Cx<Entries>, press: &PressEntry) {
-    let judges = !matches!(press.press.action, PressAction::CaretKey { .. });
+    // A caret key leaves the dialog for its show, as NVDA's captures of
+    // caret keys do; a key passed to the application arrives as a caret key
+    // of the motion `Other` and reads the dialog first, as every other key.
+    let judges = !matches!(
+        press.press.action,
+        PressAction::CaretKey { key, .. } if key.motion != verbatim_model::CaretMotion::Other
+    );
     let Some(postponed) = cx.facts().versions.postponed.filter(|_| judges) else {
         return;
     };

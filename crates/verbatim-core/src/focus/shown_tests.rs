@@ -554,7 +554,19 @@ fn a_typed_key_or_a_command_reads_the_dialog_first_under_the_older_fence() {
         (typed("a"), false, echo),
         (typed("a"), true, echo),
         (command, false, None),
-        (PressAction::Passed, false, None),
+        // A passed key as the app posts it (key_reports.rs, KeyReport::Passed).
+        (
+            PressAction::CaretKey {
+                key: CaretKey {
+                    motion: CaretMotion::Other,
+                    select: false,
+                },
+                held: None,
+                bound: None,
+            },
+            false,
+            None,
+        ),
     ] {
         let mut held = postponed();
         assert_eq!(step(&mut held, 1_150, key(action)), [ASK_AS_IT_IS]);
