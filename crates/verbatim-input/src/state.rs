@@ -687,13 +687,22 @@ impl DecisionMachine {
     /// together. Only modifiers whose press reached the application, or
     /// is deferred to, count.
     fn modifiers_may_act_alone(&self) -> bool {
-        let reached = |vks: &[u16]| {
+        let reached = |name: &str| {
             self.held_modifiers.iter().any(|key| {
-                vks.contains(&key.0) && self.keys_down.get(key).is_some_and(|down| down.reached)
+                generic_modifier_name(key.0) == Some(name)
+                    && self.keys_down.get(key).is_some_and(|down| down.reached)
             })
         };
-        reached(&[0x12, 0xA4, 0xA5, 0x5B, 0x5C])
-            || (reached(&[0x11, 0xA2, 0xA3]) && reached(&[0x10, 0xA0, 0xA1]))
+        reached("alt") || reached("leftwindows") || (reached("control") && reached("shift"))
+    }
+
+    /// Whether either Alt key is down, as the transitions the machine
+    /// decided left it: the hook reports its changes to Core.
+    #[must_use]
+    pub fn alt_down(&self) -> bool {
+        self.held_modifiers
+            .iter()
+            .any(|key| generic_modifier_name(key.0) == Some("alt"))
     }
 
     /// Notes that the key Core passed on with place `place` reached the

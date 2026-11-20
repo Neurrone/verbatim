@@ -54,9 +54,6 @@ pub(crate) struct HookState {
     /// The view's desktop part as last read: how many switches away from
     /// the user's input desktop Core has handled.
     desktop_switches: u32,
-    /// Which Alt keys are down, left and right, as their transitions
-    /// reached the hook.
-    alt: (bool, bool),
 }
 
 impl HookState {
@@ -78,7 +75,6 @@ impl HookState {
                 unsafe { GetForegroundWindow() }
             },
             desktop_switches: 0,
-            alt: (false, false),
         }
     }
 
@@ -299,32 +295,12 @@ fn report_mask(state: &HookState, mask: Option<(u32, u32)>) {
     }
 }
 
-/// The left and right Alt keys' virtual-key codes, and the generic one.
-const VK_LMENU: u16 = 0xA4;
-const VK_RMENU: u16 = 0xA5;
-const VK_MENU: u16 = 0x12;
-
 /// Who sent a key, by its event's extra information.
 fn source_of(extra_info: usize) -> KeySource {
     if extra_info == OWN_INPUT_TAG {
         KeySource::Own
     } else {
         KeySource::User
-    }
-}
-
-/// Reports a change of whether either Alt key is down, which `event`
-/// makes.
-fn report_alt(state: &mut HookState, event: KeyEvent) {
-    let was = state.alt.0 || state.alt.1;
-    match event.vk {
-        VK_LMENU | VK_MENU if !event.extended => state.alt.0 = event.pressed,
-        VK_RMENU | VK_MENU => state.alt.1 = event.pressed,
-        _ => return,
-    }
-    let down = state.alt.0 || state.alt.1;
-    if down != was {
-        (state.reports)(KeyReport::Alt { down });
     }
 }
 
@@ -391,7 +367,9 @@ pub(crate) fn decide(
         state.machine.passed_on(place);
         return KeyDecision::Pass;
     }
-    report_alt(state, event);
+    // Whether either Alt key is down is the machine's to keep; its
+    // change is reported ahead of what the key did.
+    let alt_was = state.machine.alt_down();
     let source = source_of(extra_info);
     // The key's time, which the machine decides by. Only a passed key's
     // report reuses it; the other reports read the time again.
@@ -421,6 +399,10 @@ pub(crate) fn decide(
     } else {
         state.last_key
     };
+    let alt_down = state.machine.alt_down();
+    if alt_down != alt_was {
+        (state.reports)(KeyReport::Alt { down: alt_down });
+    }
     if let Some(effect) = decision.speech {
         (state.speech)(effect, key_seq);
     }
@@ -676,6 +658,8 @@ mod tests {
     /// reports only its typing.
     #[test]
     fn alt_is_reported_as_it_goes_down_and_up_and_only_then() {
+        const VK_LMENU: u16 = 0xA4;
+        const VK_RMENU: u16 = 0xA5;
         let reports = Arc::new(Mutex::new(Vec::new()));
         let mut state = holding_state(&reports);
         let key = |vk, extended, pressed| KeyEvent {
