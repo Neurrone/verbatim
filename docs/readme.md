@@ -126,3 +126,32 @@ harness, NVDA captures and troubleshooting.
   - [m5-build-a.md](design/m5-build-a.md) — M5's build A: snapshot
     properties, application identity, rules as data, the loader, the
     extension lifecycle, configuration at a version and the log.
+
+## The simplification
+
+The phase the roadmap places first (Dickson, 2026-11-20). Working material: a record is deleted when the last build that cites it is built, and the plan when the phase ends.
+
+- [simplification-review/plan.md](simplification-review/plan.md) — where a session starts: why, Dickson's rulings, the rules every build follows, the builds in order and the test of done.
+- [simplification-review/builds.md](simplification-review/builds.md) — each build's inventory by finding, what is captured first, its budget and how it is known to be done.
+- [simplification-review/REPORT.md](simplification-review/REPORT.md) — the review's report: the assessment, the defects confirmed, sizes against NVDA and the questions in full.
+- The verified findings, one record for each area, each with its size table, findings with file and line, test counts and dropped claims:
+  - [simplification-review/merged-access-apis.md](simplification-review/merged-access-apis.md)
+  - [simplification-review/merged-core-focus.md](simplification-review/merged-core-focus.md)
+  - [simplification-review/merged-core-keys.md](simplification-review/merged-core-keys.md)
+  - [simplification-review/merged-core-queue.md](simplification-review/merged-core-queue.md)
+  - [simplification-review/merged-dialog-study.md](simplification-review/merged-dialog-study.md)
+  - [simplification-review/merged-documents.md](simplification-review/merged-documents.md)
+  - [simplification-review/merged-e2e-harness.md](simplification-review/merged-e2e-harness.md)
+  - [simplification-review/merged-e2e-scenarios.md](simplification-review/merged-e2e-scenarios.md)
+  - [simplification-review/merged-listener.md](simplification-review/merged-listener.md)
+  - [simplification-review/merged-mockapp.md](simplification-review/merged-mockapp.md)
+  - [simplification-review/merged-model-protocol.md](simplification-review/merged-model-protocol.md)
+  - [simplification-review/merged-outpost.md](simplification-review/merged-outpost.md)
+  - [simplification-review/merged-reader-call-tests.md](simplification-review/merged-reader-call-tests.md)
+  - [simplification-review/merged-settings-gui.md](simplification-review/merged-settings-gui.md)
+  - [simplification-review/merged-speech-audio.md](simplification-review/merged-speech-audio.md)
+  - [simplification-review/merged-supervisor-app.md](simplification-review/merged-supervisor-app.md)
+  - [simplification-review/merged-terminals.md](simplification-review/merged-terminals.md)
+  - [simplification-review/merged-text.md](simplification-review/merged-text.md)
+  - [simplification-review/merged-tools.md](simplification-review/merged-tools.md)
+  - [simplification-review/merged-uia-facts.md](simplification-review/merged-uia-facts.md)

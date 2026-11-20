@@ -20,21 +20,71 @@ built (2026-11-03). The UIA facts build is built (2026-11-06). The slow
 applications build is built (2026-11-07). The focus pipeline rework's
 third build, the state models, the caret and selection rework and M4.2
 are built (Dickson, 2026-11-10). Next, in this order (Dickson,
-2026-11-05, with the misc fixes added on 2026-11-10 and "Readers tell,
-Core asks" placed first on 2026-11-13):
+2026-11-05, with the misc fixes added on 2026-11-10, "Readers tell,
+Core asks" placed first on 2026-11-13, and the simplification placed
+before everything on 2026-11-20):
 
-1. "Readers tell, Core asks", below;
-2. the exact replay of a paused entry, below (Dickson, 2026-11-19);
-3. the misc fixes below, whose last item lets M5's build A start;
-4. M5;
-5. M6;
-6. M4.3;
-7. M4.8 (Guardian) and M4.7 (Containment);
-8. M4.9 (Lints and unsafe);
-9. M6.2's remaining items, with the rest after.
+1. the simplification, below, with a complete freeze on new
+   functionality until its test of done is met (Dickson, 2026-11-20);
+2. "Readers tell, Core asks", below, whose three builds are built and
+   whose clearing up the simplification takes in;
+3. the exact replay of a paused entry, below (Dickson, 2026-11-19);
+4. the misc fixes below, whose last item lets M5's build A start;
+5. M5;
+6. M6;
+7. M4.3;
+8. M4.8 (Guardian) and M4.7 (Containment);
+9. M4.9 (Lints and unsafe);
+10. M6.2's remaining items, with the rest after.
 
 The published site's homepage, `books/index.html`, carries one line of
 this status per milestone, and changes with it.
+
+## The simplification
+
+Next, before everything else (Dickson, 2026-11-20). Nothing here is
+built. Its plan, which a session starts from, is
+[simplification-review/plan.md](simplification-review/plan.md), with
+each build's inventory in
+[builds.md](simplification-review/builds.md) and the verified findings
+of the review of 2026-11-20 beside them.
+
+At the cost measured that day Verbatim cannot be finished: a behaviour
+costs 20 to 40 times what it costs NVDA, because each behaviour that
+crosses a process boundary builds its own crossing where ADR 0003
+decided "A new command adds no kind of request"; one fact is kept in
+several places; and tests, documents and rules were added for each
+incident and none removed. Dickson's rulings:
+
+- The process layout (D9, D13) and the model of ADR 0003 and ADR 0004
+  are kept, and the generic crossing ADR 0003 decided is finished.
+  There is no rewrite.
+- A complete freeze on new functionality holds until the plan's test
+  of done is met. A defect fix that moves speech to NVDA's is not new
+  functionality.
+- A build that introduces a better form converts everything built the
+  old way and deletes the old form in the same build, because a later
+  session copies whatever old code remains.
+- The goal, to start with: a behaviour on one side of a process
+  boundary within 1.3 times NVDA's lines, and one that crosses a
+  boundary within three times.
+- The dialog read once shown is rebuilt by postponement; progress bars
+  become Core's asks, a background application's bar asked for only
+  when the background setting is on; the terminal's skip count is
+  exact where that is easy and cheap and otherwise an estimate; the
+  Hyper-V harness is removed, and a Verbatim in another machine is
+  driven through the agent's network address.
+
+The builds, in order: defects and tooling with the harness's removal;
+the dialog read once shown, the first proof; Core, one owner for each
+fact; the readers; remote operations and text; the tests and the
+harness; the documents; the request list closed, with every kind that
+serves one behaviour converted and the second proof measured; the
+terminal rebuild, which is M6.4's below; the structural parts of
+M6.2, M6.3, M5, M4.3, M6 and M6.1, which the freeze would otherwise
+strand; and a second pass that measures every area again against the
+goal. The phase takes in the clearing up of "Readers tell, Core
+asks".
 
 ## Readers tell, Core asks
 
