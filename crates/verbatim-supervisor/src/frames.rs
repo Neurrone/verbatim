@@ -142,7 +142,7 @@ impl Frames {
             }
             Err(error) => {
                 let outpost = frame.outpost;
-                tracing::warn!(%outpost, %error, "an outpost's message could not be read");
+                tracing::warn!(target: verbatim_model::DEFECT_TARGET, %outpost, %error, "an outpost's message could not be read");
                 stream.failed = true;
                 let _ = self.owner.send(OwnerEvent::Unreadable(outpost));
                 None

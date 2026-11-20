@@ -1084,7 +1084,7 @@ impl ReducerThread<'_> {
                 }
                 match listener_input(from, *message) {
                     Ok(input) => self.queue(input),
-                    Err(other) => tracing::error!(
+                    Err(other) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
                         ?other,
                         "the supervisor handed on a listener message that is no tell, destroy or answer, a logic bug"
                     ),
@@ -1502,7 +1502,7 @@ impl ReducerThread<'_> {
         let held_tokens = self.state.held_tokens();
         match self.listener_view.after_pass(held_tokens.as_ref()) {
             Ok(verbatim_core::ViewSend::Nothing) => {}
-            Err(mismatch) => tracing::error!(
+            Err(mismatch) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
                 ?mismatch,
                 "Core holds tokens of another listener generation than the shell counts, a logic bug: no view is sent"
             ),
@@ -1678,13 +1678,13 @@ impl ReducerThread<'_> {
                 tracing::debug!(%number, late, "an answer was dropped");
             }
             QueueEffect::Undecodable(number) => {
-                tracing::warn!(
+                tracing::warn!(target: verbatim_model::DEFECT_TARGET,
                     %number,
                     "a malformed answer: its result is no reply its request can have"
                 );
             }
             QueueEffect::Mismatch { replayed, original } => {
-                tracing::error!(
+                tracing::error!(target: verbatim_model::DEFECT_TARGET,
                     replayed,
                     original,
                     "Core's front entry could not be rebuilt from its checkpoint, a defect in Core"
@@ -2038,23 +2038,61 @@ fn reducer_loop(
     thread.apply(Input::Settings(settings));
     thread.send_views();
     loop {
-        // With no deadline outstanding, or none yet passed, nothing is
-        // expired: a command costs no scan of the requests.
         let due = thread.next_deadline();
-        let next = next_command(&mut command_rx, due);
-        let now = Instant::now();
-        if due.is_some_and(|due| now >= due) {
-            thread.expire();
+        if !pass(&mut command_rx, due, &mut thread) {
+            break;
         }
-        match next {
-            Next::Command(command) => thread.on_command(command),
-            Next::Woken => {}
-            Next::Closed => break,
-        }
-        thread.send_views();
         thread.advance_idle_barrier(&mut command_rx);
     }
     thread.token
+}
+
+/// What one pass of the reducer loop asks of its thread: [`ReducerThread`],
+/// or a test's recorder of the order.
+trait Pass {
+    /// Handles one command, then sends the views it changed.
+    fn command(&mut self, command: ShellCommand);
+    /// Judges every deadline past, then sends the views it changed.
+    fn expire(&mut self);
+}
+
+impl Pass for ReducerThread<'_> {
+    fn command(&mut self, command: ShellCommand) {
+        self.on_command(command);
+        self.send_views();
+    }
+
+    fn expire(&mut self) {
+        ReducerThread::expire(self);
+        self.send_views();
+    }
+}
+
+/// One pass of the reducer loop: waits for the next command, or until
+/// `due`, the earliest of the thread's deadlines, and handles what came.
+/// Once `due` has passed, every command already waiting is handled before
+/// the deadlines are judged, since each may carry a fact a judgement
+/// depends on, such as a pong the relay read while the thread was held.
+/// With no deadline outstanding, or none yet passed, nothing is expired: a
+/// command costs no scan of the requests. Returns `false` once the port's
+/// end has gone.
+fn pass(
+    command_rx: &mut PortQueue<ShellCommand>,
+    due: Option<Instant>,
+    thread: &mut impl Pass,
+) -> bool {
+    match next_command(command_rx, due) {
+        Next::Command(command) => thread.command(command),
+        Next::Woken => {}
+        Next::Closed => return false,
+    }
+    if due.is_some_and(|due| Instant::now() >= due) {
+        while let Some(command) = command_rx.try_recv() {
+            thread.command(command);
+        }
+        thread.expire();
+    }
+    true
 }
 
 /// `ms` milliseconds on the run's shared clock, in microseconds.
@@ -2387,6 +2425,41 @@ mod tests {
             next_command(&mut command_rx, Some(due)),
             Next::Closed
         ));
+    }
+
+    /// Records the order a pass hands its thread commands and judgements.
+    #[derive(Default)]
+    struct Order(Vec<String>);
+
+    impl Pass for Order {
+        fn command(&mut self, command: ShellCommand) {
+            self.0.push(match command {
+                ShellCommand::InputHandled(input) => format!("key {input}"),
+                _ => "something else".to_owned(),
+            });
+        }
+
+        fn expire(&mut self) {
+            self.0.push("expire".to_owned());
+        }
+    }
+
+    /// A pass whose deadline has passed handles every command already
+    /// waiting, in arrival order, before it judges the deadline, so a fact
+    /// posted before the judgement, such as an outpost's pong read while
+    /// the thread was held, is in hand when it is made.
+    #[test]
+    fn a_past_deadline_is_judged_after_every_waiting_command() {
+        let (command_tx, mut command_rx) = port_queue().expect("a port");
+        for input in 1..=3 {
+            command_tx
+                .send(ShellCommand::InputHandled(input))
+                .map_err(|_| "refused")
+                .expect("the receiver is held");
+        }
+        let mut order = Order::default();
+        assert!(pass(&mut command_rx, Some(Instant::now()), &mut order));
+        assert_eq!(order.0, ["key 1", "key 2", "key 3", "expire"]);
     }
 
     /// The supervisor's messages and the reducer's other inputs share one

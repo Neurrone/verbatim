@@ -113,29 +113,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ inputs.coverage && 'coverage' || '' }}
-      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
-      # goes to a fixed directory per version and architecture; caching it
-      # spares every run the build. The key follows the recipe file.
-      - name: Point the wxWidgets build at a cached directory
-        shell: pwsh
-        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-wx
-          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
-      # fixed directory per submodule commit and architecture in the same
-      # way; the key follows the commit and the recipe file.
-      - name: Point the eSpeak NG build at a cached directory
-        id: espeak
-        shell: pwsh
-        run: |
-          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-espeak
-          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
+      # wxWidgets' and eSpeak NG's builds, each cached in a directory of
+      # its own (.github/actions/build-caches/action.yml).
+      - uses: ./.github/actions/build-caches
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
@@ -200,29 +180,9 @@ jobs:
             Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
           }
       - uses: Swatinem/rust-cache@v2
-      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
-      # goes to a fixed directory per version and architecture; caching it
-      # spares every run the build. The key follows the recipe file.
-      - name: Point the wxWidgets build at a cached directory
-        shell: pwsh
-        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-wx
-          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
-      # fixed directory per submodule commit and architecture in the same
-      # way; the key follows the commit and the recipe file.
-      - name: Point the eSpeak NG build at a cached directory
-        id: espeak
-        shell: pwsh
-        run: |
-          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-espeak
-          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
+      # wxWidgets' and eSpeak NG's builds, each cached in a directory of
+      # its own (.github/actions/build-caches/action.yml).
+      - uses: ./.github/actions/build-caches
       # `cargo xtask ci` checks the workspace-hack crate with cargo-hakari
       # and runs the unit tests with cargo-nextest.
       - uses: taiki-e/install-action@v2
@@ -375,29 +335,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ inputs.coverage && 'coverage' || '' }}
-      # The GUI's static wxWidgets build (crates/verbatim-gui/build/wx.rs)
-      # goes to a fixed directory per version and architecture; caching it
-      # spares every run the build. The key follows the recipe file.
-      - name: Point the wxWidgets build at a cached directory
-        shell: pwsh
-        run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-wx
-          key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
-      # eSpeak NG's build (crates/verbatim-synth-espeak/build.rs) goes to a
-      # fixed directory per submodule commit and architecture in the same
-      # way; the key follows the commit and the recipe file.
-      - name: Point the eSpeak NG build at a cached directory
-        id: espeak
-        shell: pwsh
-        run: |
-          Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "commit=$(git rev-parse HEAD:third_party/espeak-ng)"
-      - uses: actions/cache@v6
-        with:
-          path: ~/verbatim-espeak
-          key: espeak-ng-${{ steps.espeak.outputs.commit }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}
+      # wxWidgets' and eSpeak NG's builds, each cached in a directory of
+      # its own (.github/actions/build-caches/action.yml).
+      - uses: ./.github/actions/build-caches
       # mockapp is the scripted application the spelling errors scenario
       # reads, since the runner's classic Notepad has no spell checker.
       - name: Build Verbatim, its child processes, the agent, and mockapp (debug)
@@ -513,16 +453,11 @@ jobs:
             # Started by hand: one scenario, run E2E_REPEAT times, each in
             # its own test process as a suite run would run it; a failed
             # run fails the step but the remaining runs still go ahead.
-            # A repeat below 1, or a name that lists no test (a misspelling
-            # runs nothing and passes), fails before any run.
+            # A repeat below 1 fails before any run; a name that names no
+            # test fails each run, since the test binary refuses it.
             $repeat = 0
             if (-not [int]::TryParse($env:E2E_REPEAT, [ref]$repeat) -or $repeat -lt 1) {
               Write-Error "repeat must be a whole number of at least 1, not '$env:E2E_REPEAT'"
-              exit 1
-            }
-            $listed = @(cargo test -p verbatim-e2e --test e2e -- --ignored --list --exact $env:E2E_SCENARIO | Where-Object { $_ -match ': test$' })
-            if ($LASTEXITCODE -ne 0 -or $listed.Count -ne 1) {
-              Write-Error "the scenario '$env:E2E_SCENARIO' must name exactly one test; it lists $($listed.Count): $($listed -join ', ')"
               exit 1
             }
             $status = 0

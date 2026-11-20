@@ -284,7 +284,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         .failed_reads
         .fetch_add(failed_reads, Ordering::Relaxed);
     if handled.is_err() {
-        tracing::error!(?request, "the worker failed running a program");
+        tracing::error!(target: verbatim_model::DEFECT_TARGET, ?request, "the worker failed running a program");
     }
     tracing::debug!(
         item = description.as_deref().unwrap_or_default(),

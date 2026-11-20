@@ -48,7 +48,7 @@ use std::process::{Command, ExitCode};
 use crate::LINUX_CRATES;
 use crate::tiers::{TIERS, Tier, WORKSPACE_HACK};
 #[cfg(windows)]
-use crate::{ALONE_TESTS, FAULT_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
+use crate::{ALONE_TESTS, SERIAL_TESTS, nextest_step, unit_test_filter};
 use crate::{Step, args};
 
 /// The cargo-llvm-cov release this command runs, the one GitHub Actions
@@ -112,32 +112,6 @@ fn output_dir() -> PathBuf {
 #[cfg(windows)]
 const COVERED_NEXTEST: &[&str] = &["llvm-cov", "nextest", "--no-report"];
 
-/// The fault tests of [`FAULT_TESTS`], each target run by `cargo test`
-/// with its package's `faults` feature, as `cargo xtask ci`'s fault step
-/// runs it.
-#[cfg(windows)]
-fn fault_steps() -> Vec<Step> {
-    FAULT_TESTS
-        .iter()
-        .map(|(package, test)| {
-            (
-                "fault tests",
-                args(&[
-                    "llvm-cov",
-                    "test",
-                    "--no-report",
-                    "-p",
-                    package,
-                    "--features",
-                    "faults",
-                    "--test",
-                    test,
-                ]),
-            )
-        })
-        .collect()
-}
-
 /// The levels on Windows: the unit tests, every test but mockapp's, and
 /// mockapp's tests, each through the same nextest runs as `cargo xtask
 /// ci`'s, limited to the level's package, then the fault tests, last
@@ -193,7 +167,7 @@ fn levels() -> Vec<Level> {
         },
         Level {
             name: "faults",
-            steps: fault_steps(),
+            steps: crate::fault_test_steps(&["llvm-cov", "test", "--no-report"]),
         },
     ]
 }

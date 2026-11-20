@@ -161,8 +161,7 @@ checks of its own, each failing the run with the file and line of every
 finding:
 
 - Waits in test code (`xtask/src/waits.rs`): a fixed sleep or a retry
-  counter anywhere in test code fails it, and the sleeps left in
-  production code are listed for review (`books/dev/src/reference/testing.md`, "Waits are
+  counter anywhere in test code fails it (`books/dev/src/reference/testing.md`, "Waits are
   for evidence").
 - UIA cached reads through shapes (`xtask/src/shapes.rs`): every cached
   read of a UIA element goes through a shape
@@ -176,7 +175,7 @@ finding:
   are not scanned, and tests are scanned like everything else: a test
   reads an element through a shape, declaring one in the shape module if
   none holds what it reads.
-- Owners' rules (`xtask/src/ownership.rs`), four rules over named
+- Owners' rules (`xtask/src/ownership.rs`), five rules over named
   modules, each module allowed to `use` only its own allow-list:
   - The pure rule: the listener's read scheduler
     (`crates/verbatim-listener-logic/src/schedule.rs`) fails on any name
@@ -194,6 +193,12 @@ finding:
   - The audio rule: the audio thread's pass
     (`crates/verbatim-audio/src/mixer/run.rs`) may name nothing that takes
     a lock, waits, allocates, formats or logs.
+  - The rule of reads: the four functions of the listener's event path
+    after `on_win_event` (`watch_win_event`, `route_win_event` and
+    `value_change_event` in `crates/verbatim-listener/src/listener.rs`,
+    `tell_win_event` in its `listener/tells.rs`) may read Windows' state
+    only through the event's `EventWindows`, so its call-count test counts
+    every read.
   - The determinism rule: every crate on a reducer's path keeps a
     `clippy.toml` identical to `verbatim-core`'s, so Clippy rejects hash
     collections, clocks, files, processes, the network, threads, the

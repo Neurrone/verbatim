@@ -2,7 +2,7 @@
 
 Baseline commit be5bd5b9, cargo-mutants 27.1.0, run in place in a worktree, each crate's own tests only. Result: the generated tests kill 49 of the 71 target mutants (69%), against a threshold of 22 and at least one in each crate.
 
-Command lines, run from the worktree root (the covered files are the ones named; the nightly workflow `.github/workflows/explore.yml` lists them as its groups):
+Command lines, run from the worktree root (the covered files are the ones named; the nightly workflow `explore.yml`, since retired, listed them as its groups):
 
 - `cargo mutants --in-place -p <crate> -f <covered file>`, once per crate and file, with `-F` limiting `crates/verbatim-core/src/reduce.rs` to `foreground_changed|leaves_focus|observed_before_foreground_change|outpost_ended` and `crates/verbatim-core/src/terminal_model.rs` to `ask_model|model_asks|answered_read|reply|answerable`.
 - `cargo mutants --in-place -p verbatim-outpost-logic --test-package verbatim-outpost-logic --test-package verbatim-outpost --re <alternation of the missed mutants>`

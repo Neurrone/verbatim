@@ -22,6 +22,8 @@
 //!    A path that deliberately names something not there yet is followed
 //!    directly by the text [`PLANNED`], as in `` `crates/verbatim-braille`
 //!    (planned) ``, which exempts that one span and says so to the reader.
+//!    The documents under [`UNCHECKED_PATHS`] are exempt from this rule
+//!    alone.
 //! 3. `docs/readme.md` links every Markdown file under `docs/`, directly or
 //!    through one of [`INDEXES`] that it links directly.
 //! 4. A book's `SUMMARY.md`, `books/<book>/src/SUMMARY.md`, links every
@@ -43,6 +45,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+/// The folder whose documents rule 2 does not read: the simplification's
+/// records, which cite code as it stood when they were written and are
+/// deleted as its builds finish.
+const UNCHECKED_PATHS: &str = "docs/simplification-review/";
 
 /// The first components a backticked span must start with to be read as a
 /// repository path by rule 2.
@@ -257,7 +264,7 @@ fn check_documents(
                     text: span,
                     planned,
                 } => {
-                    if planned {
+                    if planned || path.starts_with(UNCHECKED_PATHS) {
                         continue;
                     }
                     if let Some(named) = repository_path(&span)
@@ -700,6 +707,24 @@ mod tests {
                 "readme.md:2: `crates/gone.rs` names crates/gone.rs, which does not exist"
                     .to_owned(),
                 "readme.md:3: `crates/braille` names crates/braille, which does not exist"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    /// The simplification's records cite code as it stood when they were
+    /// written, so their backticked paths are not checked; their links
+    /// are, as everywhere else.
+    #[test]
+    fn a_simplification_record_s_backticked_path_is_not_checked_but_its_link_is() {
+        let documents = fixture(&[(
+            "docs/simplification-review/builds.md",
+            "Delete `xtask/src/vm/mod.rs` and read [the plan](plan.md).\n",
+        )]);
+        assert_eq!(
+            run_check(&documents, &[]),
+            vec![
+                "docs/simplification-review/builds.md:1: the link (plan.md) names docs/simplification-review/plan.md, which does not exist"
                     .to_owned(),
             ]
         );

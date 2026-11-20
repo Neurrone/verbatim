@@ -104,6 +104,15 @@ fn watch(installed: &mpsc::Sender<Result<(), String>>) {
     }
 }
 
+/// Whether a top-level window of class `class`, whose process's image is
+/// `image` when it can be read, is a Windows Terminal window: its class
+/// is, and its image is Windows Terminal's or cannot be read, so that a
+/// process whose image is denied to the agent is not taken for another
+/// program.
+fn is_foreign_terminal(class: &str, image: Option<&str>) -> bool {
+    class == CLASS && image.is_none_or(|image| image.eq_ignore_ascii_case(IMAGE))
+}
+
 /// Records a top-level Windows Terminal window shown by a process outside
 /// every launched job.
 unsafe extern "system" fn on_show(
@@ -123,7 +132,8 @@ unsafe extern "system" fn on_show(
         return;
     }
     let info = crate::desktop::window_info(window);
-    if !info.image.eq_ignore_ascii_case(IMAGE) || info.class != CLASS {
+    let image = crate::desktop::image_name(info.pid);
+    if !is_foreign_terminal(&info.class, image.as_deref()) {
         return;
     }
     if crate::process::in_launched_job(info.pid) {
@@ -133,4 +143,17 @@ unsafe extern "system" fn on_show(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .push(info);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminal_whose_image_cannot_be_read_counts() {
+        assert!(is_foreign_terminal(CLASS, None));
+        assert!(is_foreign_terminal(CLASS, Some("windowsterminal.EXE")));
+        assert!(!is_foreign_terminal(CLASS, Some("other.exe")));
+        assert!(!is_foreign_terminal("Notepad", None));
+    }
 }

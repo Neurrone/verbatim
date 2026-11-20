@@ -579,7 +579,7 @@ impl Owner {
             (Reading::Ended(Err(error)), Source::Outpost(_) | Source::Spare) => {
                 // A message too large, or not a message: the outpost is
                 // treated as failed, as when its pipe closes.
-                tracing::warn!(%outpost, %error, "an outpost's message could not be read");
+                tracing::warn!(target: verbatim_model::DEFECT_TARGET, %outpost, %error, "an outpost's message could not be read");
                 self.on_pipe_closed(outpost);
             }
         }
@@ -1392,7 +1392,7 @@ impl Owner {
         };
         let Some(Generation::Launching { spare, .. }) = self.records.remove(&pid) else {
             if let Ok(child) = result {
-                tracing::error!(%outpost, %pid, "launched a child for a generation that is not launching, a logic bug");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, %outpost, %pid, "launched a child for a generation that is not launching, a logic bug");
                 self.forget_writer(outpost);
                 self.retire_child(
                     child,

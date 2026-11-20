@@ -173,6 +173,13 @@ impl fmt::Display for TraceId {
 /// another application from hiding its own windows by setting the property.
 pub const HIDDEN_FRAME_WINDOW_PROP: &str = "VerbatimHiddenFrame";
 
+/// The log target of a message that states a defect of Verbatim's own, in
+/// any of its processes: an end-to-end scenario whose logs hold a line of
+/// it fails (`books/dev/src/reference/testing.md`, "Failures are never
+/// hidden"). A warning about an application that misbehaves, or a call
+/// the system refused, is not logged to it.
+pub const DEFECT_TARGET: &str = "verbatim::defect";
+
 /// Names one outpost process generation.
 ///
 /// The supervisor assigns a fresh one at every spawn and never reuses one, so

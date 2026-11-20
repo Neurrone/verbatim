@@ -3553,63 +3553,6 @@ mod tests {
         assert_eq!(facts, [(handle(FLOOD_WINDOW), handle(FLOOD_OWNER), false)]);
     }
 
-    /// The body of the function `name` in `source`, to its closing brace
-    /// at the start of a line, whichever line ending the checkout has
-    /// (GitHub's Windows runners check out with `\r\n`).
-    fn body<'s>(source: &'s str, name: &str) -> &'s str {
-        let start = source
-            .find(&format!("\nfn {name}("))
-            .or_else(|| source.find(&format!("\npub(super) fn {name}(")))
-            .unwrap_or_else(|| panic!("no fn {name}"));
-        let rest = &source[start + 1..];
-        let end = rest
-            .match_indices("\n}")
-            .map(|(at, _)| at)
-            .find(|&at| matches!(rest.as_bytes().get(at + 2), Some(b'\n' | b'\r')))
-            .expect("its end");
-        &rest[..end]
-    }
-
-    /// The event path reads Windows' state only through the event's
-    /// [`EventWindows`], so that its call-count test,
-    /// `a_flood_events_window_facts_are_read_once`, counts every read: no
-    /// function of the path, after `on_win_event` makes the event's
-    /// windows, names a read of its own.
-    #[test]
-    fn the_event_path_reads_windows_only_through_its_event_windows() {
-        let listener = include_str!("listener.rs");
-        let tells = include_str!("listener/tells.rs");
-        let bodies = [
-            ("watch_win_event", body(listener, "watch_win_event")),
-            ("route_win_event", body(listener, "route_win_event")),
-            ("value_change_event", body(listener, "value_change_event")),
-            ("tell_win_event", body(tells, "tell_win_event")),
-        ];
-        let direct = [
-            "verbatim_win32::",
-            "verbatim_ia2::window",
-            "window_class_name(",
-            "window_pid(",
-            "window_hung(",
-            "front_window(",
-            "in_foreground(",
-            "readers.reading()",
-            "SystemReads",
-            " process_of_thread(",
-            "(process_of_thread(",
-        ];
-        let found: Vec<(&str, &str)> = bodies
-            .iter()
-            .flat_map(|(name, body)| {
-                direct
-                    .iter()
-                    .filter(|read| body.contains(*read))
-                    .map(move |read| (*name, *read))
-            })
-            .collect();
-        assert_eq!(found, Vec::<(&str, &str)>::new());
-    }
-
     /// How many times the window in front was read for the hold, by the
     /// one test at a time that holds [`FLOOD_COUNTING`].
     static FLOOD_FRONT_READS: AtomicU32 = AtomicU32::new(0);

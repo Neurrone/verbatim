@@ -226,7 +226,7 @@ impl CommandPipes {
         let Some(writer) = writer else {
             // A writer is let go only once it has finished, with nothing in
             // flight, so every completion has its writer.
-            tracing::error!(
+            tracing::error!(target: verbatim_model::DEFECT_TARGET,
                 key = completion.key,
                 "a write completed for a pipe the relay does not have"
             );

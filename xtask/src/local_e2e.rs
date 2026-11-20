@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Instant;
 
-use crate::agent::{Agent, ENDPOINT};
+use crate::agent::{Agent, ENDPOINT, PORT};
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -90,7 +90,7 @@ fn run_all(scenarios: &[String], runs: u32) -> Result<bool, String> {
     fs::create_dir_all(&logs)
         .map_err(|error| format!("could not create {}: {error}", logs.display()))?;
     let artifacts = verbatim_e2e::artifacts::artifacts_root();
-    let _agent = Agent::start(&root, &logs)?;
+    let _agent = Agent::start(&root, &logs, PORT)?;
     let mut all_passed = true;
     for run in 1..=runs {
         for scenario in scenarios {

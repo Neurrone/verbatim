@@ -147,11 +147,12 @@ Public API:
   frames out to subscribed connections;
   `has_event_subscribers()` and `has_speech_subscribers()` let a caller
   skip copying an event or an utterance's text when nobody is subscribed.
-  Speech frames sent before the first speech subscription (up to 1,024)
-  are kept and replayed to that first subscriber, ahead of anything live,
-  so a test that subscribes once Verbatim is ready still hears its startup
-  speech; while that history is kept, `has_speech_subscribers()` answers
-  true;
+  Speech frames sent before the first speech subscription are kept and
+  replayed to that first subscriber, ahead of anything live, so a test
+  that subscribes once Verbatim is ready still hears its startup speech;
+  while that history is kept, `has_speech_subscribers()` answers true,
+  and once it reaches 1,024 frames with no subscriber it is no longer
+  kept, so a Verbatim no client watches stops copying its speech;
   drop stops accepting and disconnects every client.
 - `send_keys` (public, used by the server's `SendKeys` handler and by the
   agent's request of the same name) — `parse_combo` and `parse_all`

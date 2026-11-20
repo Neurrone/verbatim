@@ -616,10 +616,10 @@ since the agent shuts the connection down when Verbatim's pipe closes;
 after a failed quit, only what has arrived (`take_remaining`); run the
 teardown; clean up; collect the artifacts (`collect_run_artifacts`),
 failing the run on every line of Verbatim's logs, its own and each
-child's, that states a defect of Verbatim's own, a panic or one of
-`artifacts::DEFECT_MESSAGES` (`artifacts::defect_lines`), such as an
-answer that did not decode as its request's reply, while a warning about
-an application misbehaving fails nothing;
+child's, that states a defect of Verbatim's own, a panic or a line
+logged to the `verbatim::defect` target (`artifacts::defect_lines`),
+such as an answer no request can have, while a warning about an
+application misbehaving fails nothing;
 finish the recording; check that no Windows Terminal window the run did
 not open appeared; write `foreground.txt` and the summary, and archive
 the run. The summary's latency lines (`ScenarioSummary::new`) are built

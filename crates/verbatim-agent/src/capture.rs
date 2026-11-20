@@ -56,8 +56,10 @@ use windows::core::Interface;
 ///
 /// # Errors
 ///
-/// Returns an error if the output cannot be duplicated, ffmpeg cannot be
-/// started, or writing to it fails before it was told to stop.
+/// Returns an error if the output cannot be duplicated, or duplicated again
+/// once lost, a frame cannot be copied or is not the size the capture
+/// began at, ffmpeg cannot be started, or writing to it fails before it was
+/// told to stop: a frame is never left stale in silence.
 pub fn run(framerate: u32, ffmpeg: &str, output_args: &[String]) -> io::Result<i32> {
     let mut duplication = Duplication::new()?;
     let (width, height) = duplication.size;
@@ -77,7 +79,10 @@ pub fn run(framerate: u32, ffmpeg: &str, output_args: &[String]) -> io::Result<i
     while !stop.load(Ordering::Relaxed) {
         pacer.wait_for(slot)?;
         // The newest frame the compositor presented since the last slot.
-        duplication.take_newest(&mut frame);
+        if let Err(error) = duplication.take_newest(&mut frame) {
+            let _ = child.kill();
+            return Err(error);
+        }
         if let Err(error) = input.write_all(&frame) {
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -157,7 +162,7 @@ fn exit_code(child: &mut Child) -> io::Result<i32> {
 struct Duplication {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
-    output: Option<IDXGIOutputDuplication>,
+    output: IDXGIOutputDuplication,
     staging: ID3D11Texture2D,
     size: (usize, usize),
 }
@@ -216,7 +221,7 @@ impl Duplication {
         Ok(Self {
             device,
             context,
-            output: Some(duplication),
+            output: duplication,
             staging,
             size,
         })
@@ -224,38 +229,48 @@ impl Duplication {
 
     /// Copies into `frame` the newest frame the compositor presented since
     /// the last call, without waiting, leaving it as it was when none was.
-    /// A duplication lost, as on a switch of desktops, is made again, or
-    /// at the next call when it cannot be yet.
-    fn take_newest(&mut self, frame: &mut [u8]) {
-        if self.output.is_none() {
-            self.output = duplicate(&self.device).ok();
-        }
-        while let Some(duplication) = self.output.clone() {
+    /// A duplication lost, as on a mode change, is made again at once; it
+    /// fails if that cannot be done, a frame cannot be copied, or either is
+    /// another size ([`same_size`]).
+    fn take_newest(&mut self, frame: &mut [u8]) -> io::Result<()> {
+        loop {
             let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut resource: Option<IDXGIResource> = None;
             // SAFETY: the out pointers point at locals that outlive the call.
-            let acquired =
-                unsafe { duplication.AcquireNextFrame(0, &raw mut info, &raw mut resource) };
+            let acquired = unsafe {
+                self.output
+                    .AcquireNextFrame(0, &raw mut info, &raw mut resource)
+            };
             match acquired {
                 Ok(()) => {
-                    if let Some(resource) = resource
-                        && info.LastPresentTime != 0
-                    {
-                        let _ = self.copy(&resource, frame);
-                    }
+                    let copied = match resource {
+                        Some(resource) if info.LastPresentTime != 0 => self.copy(&resource, frame),
+                        _ => Ok(()),
+                    };
                     // SAFETY: a frame was acquired, and is released once.
-                    let _ = unsafe { duplication.ReleaseFrame() };
+                    let _ = unsafe { self.output.ReleaseFrame() };
+                    copied?;
                 }
-                Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => return,
-                Err(_) => self.output = None,
+                Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(()),
+                Err(_) => {
+                    let duplication = duplicate(&self.device)?;
+                    // SAFETY: the duplication is a live interface.
+                    let mode = unsafe { duplication.GetDesc() }.ModeDesc;
+                    same_size(self.size, mode.Width, mode.Height)?;
+                    self.output = duplication;
+                }
             }
         }
     }
 
     /// Copies the acquired frame `resource` into `frame`, row by row.
-    fn copy(&self, resource: &IDXGIResource, frame: &mut [u8]) -> windows::core::Result<()> {
-        let texture: ID3D11Texture2D = resource.cast()?;
-        // SAFETY: both textures are live and alike in size and format.
+    fn copy(&self, resource: &IDXGIResource, frame: &mut [u8]) -> io::Result<()> {
+        let texture: ID3D11Texture2D = resource.cast().map_err(io::Error::other)?;
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: the texture is live and the out pointer points at a local.
+        unsafe { texture.GetDesc(&raw mut desc) };
+        same_size(self.size, desc.Width, desc.Height)?;
+        // SAFETY: both textures are live, and alike in size and format.
         unsafe { self.context.CopyResource(&self.staging, &texture) };
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         // SAFETY: the staging texture is CPU-readable and the out pointer
@@ -263,10 +278,11 @@ impl Duplication {
         unsafe {
             self.context
                 .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))
-        }?;
+        }
+        .map_err(|error| io::Error::other(format!("a frame could not be read: {error}")))?;
         let (width, height) = self.size;
         let row = width * 4;
-        let pitch = usize::try_from(mapped.RowPitch).unwrap_or(row);
+        let pitch = mapped.RowPitch as usize;
         for (y, out) in frame.chunks_exact_mut(row).take(height).enumerate() {
             // SAFETY: the mapping holds `height` rows `pitch` bytes apart,
             // so row `y` starts inside it.
@@ -282,6 +298,18 @@ impl Duplication {
     }
 }
 
+/// Fails unless a frame or duplication of `width` by `height` is the
+/// capture's `size`, which its staging texture and ffmpeg's input have.
+fn same_size(size: (usize, usize), width: u32, height: u32) -> io::Result<()> {
+    if (width as usize, height as usize) == size {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "the desktop became {width}x{height} where the capture began at {}x{}",
+        size.0, size.1
+    )))
+}
+
 /// Duplicates the first output of `device`'s adapter.
 fn duplicate(device: &ID3D11Device) -> io::Result<IDXGIOutputDuplication> {
     let dxgi: IDXGIDevice = device.cast().map_err(io::Error::other)?;
@@ -294,4 +322,21 @@ fn duplicate(device: &ID3D11Device) -> io::Result<IDXGIOutputDuplication> {
     // output's adapter.
     unsafe { output.DuplicateOutput(device) }
         .map_err(|error| io::Error::other(format!("the desktop cannot be duplicated: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A frame or duplication of another size than the capture began at
+    /// fails it, naming both sizes.
+    #[test]
+    fn a_duplication_of_another_size_fails_the_capture() {
+        assert!(same_size((1920, 1080), 1920, 1080).is_ok());
+        let error = same_size((1920, 1080), 1280, 720).expect_err("another size");
+        assert_eq!(
+            error.to_string(),
+            "the desktop became 1280x720 where the capture began at 1920x1080"
+        );
+    }
 }

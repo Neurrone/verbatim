@@ -620,7 +620,7 @@ impl PortReader {
         } else if self.slot.in_flight() && self.slot.owns(completion) {
             Some(self.slot.complete(&self.file, completion))
         } else {
-            tracing::error!(
+            tracing::error!(target: verbatim_model::DEFECT_TARGET,
                 key = completion.key,
                 "a completion that is not this reader's"
             );
@@ -1337,7 +1337,7 @@ impl<B: Backlog> State<B> {
                 let before = buffer.len();
                 if let Err(error) = backlog.encode(item, buffer) {
                     buffer.truncate(before);
-                    tracing::warn!(%error, "a frame could not be encoded and is skipped");
+                    tracing::warn!(target: verbatim_model::DEFECT_TARGET, %error, "a frame could not be encoded and is skipped");
                 }
             }
             length = buffer.len();
@@ -1367,7 +1367,7 @@ impl<B: Backlog> State<B> {
                 false
             }
             Err(error) => {
-                tracing::warn!(%error, "a frame could not be encoded and is skipped");
+                tracing::warn!(target: verbatim_model::DEFECT_TARGET, %error, "a frame could not be encoded and is skipped");
                 true
             }
         }

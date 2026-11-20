@@ -38,33 +38,41 @@ use crate::target::{Target, window_in_target};
 use crate::writer::{Arrivals, EventArrival, Message};
 
 /// The events registered desktop-wide beside focus, so that a new window's
-/// first event is not missed: only the target's are written.
-const DESKTOP_EVENTS: [UIA_EVENT_ID; 3] = [
-    UIA_MenuOpenedEventId,
-    UIA_Window_WindowOpenedEventId,
-    UIA_ToolTipOpenedEventId,
+/// first event is not missed: only the target's are written. Each with the
+/// name a line gives it.
+const DESKTOP_EVENTS: [(UIA_EVENT_ID, &str); 3] = [
+    (UIA_MenuOpenedEventId, "MenuOpened"),
+    (UIA_Window_WindowOpenedEventId, "WindowOpened"),
+    (UIA_ToolTipOpenedEventId, "ToolTipOpened"),
 ];
 
-/// The automation events registered on the target's windows.
-const TARGET_EVENTS: [UIA_EVENT_ID; 18] = [
-    UIA_SelectionItem_ElementSelectedEventId,
-    UIA_SelectionItem_ElementAddedToSelectionEventId,
-    UIA_SelectionItem_ElementRemovedFromSelectionEventId,
-    UIA_MenuClosedEventId,
-    UIA_ToolTipClosedEventId,
-    UIA_Window_WindowClosedEventId,
-    UIA_LiveRegionChangedEventId,
-    UIA_SystemAlertEventId,
-    UIA_LayoutInvalidatedEventId,
-    UIA_Drag_DragStartEventId,
-    UIA_Drag_DragCancelEventId,
-    UIA_Drag_DragCompleteEventId,
-    UIA_DropTarget_DragEnterEventId,
-    UIA_DropTarget_DragLeaveEventId,
-    UIA_DropTarget_DroppedEventId,
-    UIA_Text_TextChangedEventId,
-    UIA_Text_TextSelectionChangedEventId,
-    UIA_AsyncContentLoadedEventId,
+/// The automation events registered on the target's windows, each with the
+/// name a line gives it.
+const TARGET_EVENTS: [(UIA_EVENT_ID, &str); 18] = [
+    (UIA_SelectionItem_ElementSelectedEventId, "ElementSelected"),
+    (
+        UIA_SelectionItem_ElementAddedToSelectionEventId,
+        "ElementAddedToSelection",
+    ),
+    (
+        UIA_SelectionItem_ElementRemovedFromSelectionEventId,
+        "ElementRemovedFromSelection",
+    ),
+    (UIA_MenuClosedEventId, "MenuClosed"),
+    (UIA_ToolTipClosedEventId, "ToolTipClosed"),
+    (UIA_Window_WindowClosedEventId, "WindowClosed"),
+    (UIA_LiveRegionChangedEventId, "LiveRegionChanged"),
+    (UIA_SystemAlertEventId, "SystemAlert"),
+    (UIA_LayoutInvalidatedEventId, "LayoutInvalidated"),
+    (UIA_Drag_DragStartEventId, "DragStart"),
+    (UIA_Drag_DragCancelEventId, "DragCancel"),
+    (UIA_Drag_DragCompleteEventId, "DragComplete"),
+    (UIA_DropTarget_DragEnterEventId, "DropTargetDragEnter"),
+    (UIA_DropTarget_DragLeaveEventId, "DropTargetDragLeave"),
+    (UIA_DropTarget_DroppedEventId, "DropTargetDropped"),
+    (UIA_Text_TextChangedEventId, "TextChanged"),
+    (UIA_Text_TextSelectionChangedEventId, "TextSelectionChanged"),
+    (UIA_AsyncContentLoadedEventId, "AsyncContentLoaded"),
 ];
 
 /// The properties recorded on the target's windows, beyond
@@ -136,7 +144,6 @@ impl UiaEvents {
             event: None,
             object: None,
             child: None,
-            pass: None,
         };
         self.arrivals.arrive(Message::Event(Box::new(EventArrival {
             data,
@@ -167,14 +174,14 @@ pub(crate) fn desktop_parts(events: &UiaEvents) -> Vec<Part> {
             }),
         }),
         Part::shaped::<RecordedEvent>(Subscription::Events {
-            events: DESKTOP_EVENTS.to_vec(),
+            events: DESKTOP_EVENTS.iter().map(|(event, _)| *event).collect(),
             callback: Arc::new(move |element: &Cached<RecordedEvent>, event| {
                 let fields = element.read();
                 if opened_events.in_target(&fields) {
                     opened_events.record(
                         "uia_event",
                         &fields,
-                        (Some(event_name(event).to_owned()), None),
+                        (Some(event_name(event)), None),
                         None,
                     );
                 }
@@ -225,12 +232,12 @@ pub(crate) fn target_parts(events: &UiaEvents) -> Vec<Part> {
             ),
         }),
         Part::shaped::<RecordedEvent>(Subscription::Events {
-            events: TARGET_EVENTS.to_vec(),
+            events: TARGET_EVENTS.iter().map(|(event, _)| *event).collect(),
             callback: Arc::new(move |element: &Cached<RecordedEvent>, event| {
                 for_events.record(
                     "uia_event",
                     &element.read(),
-                    (Some(event_name(event).to_owned()), None),
+                    (Some(event_name(event)), None),
                     None,
                 );
             }),
@@ -366,41 +373,14 @@ fn property_name(id: i32) -> String {
     name.to_owned()
 }
 
-/// The name a line gives automation event `id`.
-fn event_name(id: i32) -> &'static str {
-    const NAMES: [(UIA_EVENT_ID, &str); 21] = [
-        (UIA_MenuOpenedEventId, "MenuOpened"),
-        (UIA_MenuClosedEventId, "MenuClosed"),
-        (UIA_Window_WindowOpenedEventId, "WindowOpened"),
-        (UIA_Window_WindowClosedEventId, "WindowClosed"),
-        (UIA_ToolTipOpenedEventId, "ToolTipOpened"),
-        (UIA_ToolTipClosedEventId, "ToolTipClosed"),
-        (UIA_SelectionItem_ElementSelectedEventId, "ElementSelected"),
-        (
-            UIA_SelectionItem_ElementAddedToSelectionEventId,
-            "ElementAddedToSelection",
-        ),
-        (
-            UIA_SelectionItem_ElementRemovedFromSelectionEventId,
-            "ElementRemovedFromSelection",
-        ),
-        (UIA_LiveRegionChangedEventId, "LiveRegionChanged"),
-        (UIA_SystemAlertEventId, "SystemAlert"),
-        (UIA_LayoutInvalidatedEventId, "LayoutInvalidated"),
-        (UIA_Drag_DragStartEventId, "DragStart"),
-        (UIA_Drag_DragCancelEventId, "DragCancel"),
-        (UIA_Drag_DragCompleteEventId, "DragComplete"),
-        (UIA_DropTarget_DragEnterEventId, "DropTargetDragEnter"),
-        (UIA_DropTarget_DragLeaveEventId, "DropTargetDragLeave"),
-        (UIA_DropTarget_DroppedEventId, "DropTargetDropped"),
-        (UIA_Text_TextChangedEventId, "TextChanged"),
-        (UIA_Text_TextSelectionChangedEventId, "TextSelectionChanged"),
-        (UIA_AsyncContentLoadedEventId, "AsyncContentLoaded"),
-    ];
-    NAMES
+/// The name a line gives automation event `id`, or its number for an event
+/// no list names.
+fn event_name(id: i32) -> String {
+    DESKTOP_EVENTS
         .iter()
+        .chain(&TARGET_EVENTS)
         .find(|(event, _)| event.0 == id)
-        .map_or("Unknown", |(_, name)| name)
+        .map_or_else(|| id.to_string(), |(_, name)| (*name).to_owned())
 }
 
 /// A structure change's name.

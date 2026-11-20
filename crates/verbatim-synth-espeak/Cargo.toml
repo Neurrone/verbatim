@@ -9,6 +9,8 @@ license = "GPL-3.0-or-later"
 [dependencies]
 tracing.workspace = true
 verbatim-audio.workspace = true
+# The defect log target (`verbatim_model::DEFECT_TARGET`).
+verbatim-model.workspace = true
 verbatim-speech.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
@@ -17,7 +19,6 @@ cmake = "0.1"
 
 [dev-dependencies]
 libtest-mimic.workspace = true
-verbatim-model.workspace = true
 
 [lints]
 workspace = true

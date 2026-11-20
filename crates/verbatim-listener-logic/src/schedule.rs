@@ -694,7 +694,7 @@ impl<J, W> Schedule<J, W> {
         tracing::info!(pid = %app.pid, "an abandoned read returned; its result is discarded");
         let reused = self.next_reader();
         let Some((record, _)) = self.record_mut(app) else {
-            tracing::error!(pid = %app.pid, "an abandoned read returned of a record no longer held");
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, pid = %app.pid, "an abandoned read returned of a record no longer held");
             return (
                 Returned {
                     send: false,

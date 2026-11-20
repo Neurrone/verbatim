@@ -1,0 +1,27 @@
+# The caches of the two native builds the workspace makes, shared by the
+# ci, ci-arm64 and e2e jobs of ci.yml. Each build goes to a fixed directory
+# per version and architecture, so caching it spares every run the build:
+# the GUI's static wxWidgets (crates/verbatim-gui/build/wx.rs), keyed by
+# its recipe file, and eSpeak NG (crates/verbatim-synth-espeak/build.rs),
+# keyed by its submodule commit and its recipe file. Run after the
+# checkout.
+name: Native build caches
+description: Points the wxWidgets and eSpeak NG builds at cached directories and restores them.
+runs:
+  using: composite
+  steps:
+    - name: Point the wxWidgets and eSpeak NG builds at cached directories
+      id: point
+      shell: pwsh
+      run: |
+        Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
+        Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_ESPEAK_DIR=$env:USERPROFILE\verbatim-espeak"
+        Add-Content -Path $env:GITHUB_OUTPUT -Value "espeak=$(git rev-parse HEAD:third_party/espeak-ng)"
+    - uses: actions/cache@v6
+      with:
+        path: ~/verbatim-wx
+        key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
+    - uses: actions/cache@v6
+      with:
+        path: ~/verbatim-espeak
+        key: espeak-ng-${{ steps.point.outputs.espeak }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-synth-espeak/build.rs') }}

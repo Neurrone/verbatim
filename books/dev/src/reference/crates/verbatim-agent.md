@@ -282,8 +282,11 @@ Public API:
   newest the compositor presented or the last again, ffmpeg stamping each
   with the wall-clock time it reads it; `q` or the end of its standard
   input closes ffmpeg's input, and it exits with ffmpeg's code once ffmpeg
-  has encoded every frame. A duplication lost, as on a switch of
-  desktops, is made again at the next frame. ffmpeg's `gdigrab` is not
+  has encoded every frame. A duplication lost, as on a mode change, is
+  made again at once; a frame that cannot be copied, a duplication that
+  cannot be made again, or a frame or duplication of another size than
+  the capture began at ends the capture with an error, so a recording is
+  never left frozen in silence. ffmpeg's `gdigrab` is not
   used because its GDI blit of the screen waits while the compositor
   renders, seconds at a time on a machine without 3D graphics while the
   console host draws a flood.

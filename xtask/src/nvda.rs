@@ -120,15 +120,17 @@ fn build() -> io::Result<()> {
     Ok(())
 }
 
-/// Packs every file under `source` into the add-on's zip bytes.
+/// Packs every file under `source` into the add-on's zip bytes, each as it
+/// is checked out, with the line feeds `.gitattributes` gives every
+/// checkout.
 fn package_bytes(source: &Path) -> io::Result<Vec<u8>> {
     let mut files = Vec::new();
     collect_files(source, source, &mut files)?;
     files.sort();
     let mut entries = Vec::with_capacity(files.len());
     for name in files {
-        let text = fs::read_to_string(source.join(&name))?;
-        entries.push((name, text.replace("\r\n", "\n").into_bytes()));
+        let bytes = fs::read(source.join(&name))?;
+        entries.push((name, bytes));
     }
     Ok(stored_zip(&entries))
 }
@@ -472,13 +474,14 @@ impl Source {
                 ..
             } => {
                 let entries = transcript.entries_after(*last_seq)?;
-                Ok(entries
+                entries
                     .into_iter()
                     .map(|entry| {
-                        *last_seq = entry.seq.unwrap_or(*last_seq);
-                        (entry.ms, describe(&entry.event))
+                        *last_seq = entry.seq;
+                        let ms = i64::try_from(entry.ms).map_err(io::Error::other)?;
+                        Ok((ms, describe(&entry.event)))
                     })
-                    .collect())
+                    .collect()
             }
             Self::Verbatim { frames, texts } => {
                 let mut lines = Vec::new();
@@ -653,40 +656,24 @@ fn agent_for(given: Option<&str>) -> io::Result<(String, Option<Agent>)> {
     agent::build(&root).map_err(io::Error::other)?;
     let logs = root.join("target").join("nvda-agent");
     fs::create_dir_all(&logs)?;
-    let started = Agent::start(&root, &logs).map_err(io::Error::other)?;
+    let started = Agent::start(&root, &logs, agent::PORT).map_err(io::Error::other)?;
     Ok((agent::ENDPOINT.to_owned(), Some(started)))
 }
 
 /// Fails unless the running NVDA, whose build is `version`, is the build
-/// the `nvda` submodule pins, since expectations come from captures and
-/// ported code from the pinned source, and both must describe one NVDA.
+/// the `nvda` submodule pins ([`verbatim_e2e::compare::submodule_pin`]),
+/// since expectations come from captures and ported code from the pinned
+/// source, and both must describe one NVDA.
 fn require_pinned_nvda(version: &str) -> io::Result<()> {
-    let output = Command::new("git")
-        .args(["-C", "nvda", "rev-parse", "HEAD"])
-        .current_dir(workspace_root())
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(
-            "could not read the nvda submodule's commit",
-        ));
+    match verbatim_e2e::compare::submodule_pin(&workspace_root(), version) {
+        (_, Some(true)) => Ok(()),
+        (pin, Some(false)) => Err(io::Error::other(format!(
+            "the running NVDA is {version}, not the pinned build {pin}; install the pinned build first"
+        ))),
+        (pin, None) => Err(io::Error::other(format!(
+            "the running NVDA's version, {version}, names no build to compare with the pinned {pin}"
+        ))),
     }
-    let pinned = String::from_utf8_lossy(&output.stdout);
-    if runs_pinned_build(version, pinned.trim()) {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "the running NVDA is {version}, not the pinned build {}; install the pinned build first",
-            pinned.trim()
-        )))
-    }
-}
-
-/// Whether an NVDA build named `version`, such as `alpha-58022,732d1ce2`,
-/// was built from `pinned`, the submodule's full commit.
-fn runs_pinned_build(version: &str, pinned: &str) -> bool {
-    version
-        .rsplit_once(',')
-        .is_some_and(|(_, commit)| commit.len() >= 7 && pinned.starts_with(commit))
 }
 
 /// Deletes `report`, a comparison's report an earlier run left, if there
@@ -989,14 +976,14 @@ impl Entry {
 }
 
 /// The entry for one of the add-on's events: the speech text with its
-/// priority, or another event, such as a cancellation, by its name.
+/// priority, or a cancellation, by its name.
 fn describe(event: &TranscriptEvent) -> Entry {
     match event {
         TranscriptEvent::Speech { priority, text } => Entry::Speech {
             tag: priority.clone(),
             text: text.clone(),
         },
-        TranscriptEvent::Other(name) => Entry::Event(name.clone()),
+        TranscriptEvent::Cancel => Entry::Event("cancel".to_owned()),
     }
 }
 
@@ -1018,16 +1005,17 @@ mod tests {
 
     #[test]
     fn an_entry_reads_the_same_as_a_line_and_as_json() {
-        let speech = describe(&TranscriptEvent::from_json(
-            &json!({"Speech": {"priority": "normal", "text": "a\nb"}}),
-        ));
+        let speech = describe(&TranscriptEvent::Speech {
+            priority: "normal".to_owned(),
+            text: "a\nb".to_owned(),
+        });
         assert_eq!(speech.line(), "[normal] a\nb");
         assert_eq!(
             speech.to_json(3, Some(-5)),
             json!({"kind": "speech", "tag": "normal", "text": "a\nb", "step": 3, "ms": -5})
         );
         assert_eq!(
-            describe(&TranscriptEvent::from_json(&json!("CANCEL"))),
+            describe(&TranscriptEvent::Cancel),
             Entry::Event("cancel".to_owned())
         );
         assert_eq!(
@@ -1109,15 +1097,6 @@ mod tests {
                 Step::WaitFile(r"C:\run\pid".to_owned()),
             ]
         );
-    }
-
-    #[test]
-    fn only_a_build_of_the_pinned_commit_counts_as_pinned() {
-        let pinned = "732d1ce2f0f051da3ef1e6a6247c64cf04596337";
-        assert!(runs_pinned_build("alpha-58022,732d1ce2", pinned));
-        assert!(!runs_pinned_build("alpha-58023,8c41e0a1", pinned));
-        assert!(!runs_pinned_build("2025.3.1", pinned));
-        assert!(!runs_pinned_build("alpha-1,", pinned));
     }
 
     #[test]

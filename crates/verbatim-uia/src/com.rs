@@ -67,7 +67,7 @@ pub(crate) fn guarded(handler: &str, body: impl FnOnce()) {
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         // A failed lock check is never hidden by the catch.
         verbatim_win32::held_locks::abort_if_lock_check(&*payload);
-        tracing::error!(
+        tracing::error!(target: verbatim_model::DEFECT_TARGET,
             handler,
             "a UIA event callback panicked; the event is dropped"
         );

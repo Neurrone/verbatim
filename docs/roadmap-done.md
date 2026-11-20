@@ -125,7 +125,7 @@ Built (2026-11-03), under the design principle that state about an owner lives i
 Complete (2026-11-03). Each generated test is described in its crate's guide ([the crate index](../books/dev/src/reference/crates/readme.md)), and the rest of the judgement is in [the roadmap](roadmap.md), "Follow-ups from M4.6"; the first measure's record is `experiments/logic-tests-study/judgement.md`. Built, with a design review, an implementation review and its fixes, and related scenarios:
 
 - generated tests of the work in flight, the outpost's reducer and its intake, the listener's scheduler and Core's query table, focus and generations, each against a reference model far simpler than the code, plain `proptest` action lists run twice in the gate within its 30 seconds (about 19);
-- a nightly exploration with new seeds and `cargo-mutants` on changed covered code (`.github/workflows/explore.yml`);
+- a nightly exploration with new seeds and `cargo-mutants` on changed covered code (`explore.yml`, since retired);
 - six production defects the tests found, fixed, and the caret watch's rule amended (accepted by Dickson, 2026-11-03).
 
 Exit met: each owner's generated test is in the gate, and the mutation baseline and its second run are recorded: the generated tests kill 49 of the 71 mutants the existing tests missed, against a threshold of 22. The second measure, ordering defects found first in the next three builds, is recorded there as they are built.

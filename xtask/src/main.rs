@@ -18,7 +18,9 @@
 //! the `ci-linux` job. Everything builds for the host's own
 //! architecture.
 //!
-//! On Windows `ci` ends with the fault step, [`faults`].
+//! On Windows `ci` ends with the fault step, [`faults`]. Every step runs
+//! whichever fails before it, and `ci` fails at the end naming each step
+//! that failed.
 //!
 //! `e2e-plan`, on every host, prints how many groups the CI `e2e` job
 //! runs the end-to-end suite in, as the job's matrix. See
@@ -360,47 +362,60 @@ fn windows_terminal() -> ExitCode {
     }
 }
 
+/// `cargo xtask ci`: every step runs, whichever fails, so one run reports
+/// every failure; the run fails at the end, naming each failed step.
 fn ci() -> ExitCode {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask lives in the workspace root");
-    println!("xtask ci: crate tiers");
-    let covered = match tiers::check(root) {
-        Ok(covered) => covered,
-        Err(error) => {
-            eprintln!("xtask ci: step failed: crate tiers\n{error}");
-            return ExitCode::FAILURE;
+    let mut failed: Vec<&'static str> = Vec::new();
+    let mut check = |name: &'static str, result: Result<(), String>| {
+        if let Err(error) = result {
+            eprintln!("xtask ci: step failed: {name}\n{error}");
+            failed.push(name);
         }
     };
 
+    println!("xtask ci: crate tiers");
+    let covered = match tiers::check(root) {
+        Ok((covered, offences)) => {
+            if !offences.is_empty() {
+                check(
+                    "crate tiers",
+                    Err(format!(
+                        "the crate tiers are broken (see the NVDA provenance section of CLAUDE.md):\n  {}",
+                        offences.join("\n  ")
+                    )),
+                );
+            }
+            Some(covered)
+        }
+        Err(error) => {
+            check("crate tiers", Err(error));
+            None
+        }
+    };
     println!("xtask ci: waits in test code");
-    if let Err(error) = waits::check(root) {
-        eprintln!("xtask ci: step failed: waits in test code\n{error}");
-        return ExitCode::FAILURE;
-    }
-
+    check("waits in test code", waits::check(root));
     println!("xtask ci: UIA cached reads through shapes");
-    if let Err(error) = shapes::check(root) {
-        eprintln!("xtask ci: step failed: UIA cached reads through shapes\n{error}");
-        return ExitCode::FAILURE;
-    }
-
+    check("UIA cached reads through shapes", shapes::check(root));
     println!("xtask ci: pure owners' names");
-    if let Err(error) = ownership::check(root) {
-        eprintln!("xtask ci: step failed: pure owners' names\n{error}");
-        return ExitCode::FAILURE;
+    check("pure owners' names", ownership::check(root));
+    // The determinism rule needs the covered crates, which only the graph
+    // the tier step read names.
+    if let Some(covered) = covered {
+        println!("xtask ci: determinism of the crates on a reducer's path");
+        check(
+            "determinism of the crates on a reducer's path",
+            ownership::determinism(root, &covered),
+        );
     }
-
-    println!("xtask ci: determinism of the crates on a reducer's path");
-    if let Err(error) = ownership::determinism(root, &covered) {
-        eprintln!("xtask ci: step failed: determinism of the crates on a reducer's path\n{error}");
-        return ExitCode::FAILURE;
-    }
-
     println!("xtask ci: documents' links and paths");
     if docs::run() != ExitCode::SUCCESS {
-        eprintln!("xtask ci: step failed: documents' links and paths");
-        return ExitCode::FAILURE;
+        check(
+            "documents' links and paths",
+            Err("its findings are printed above".to_owned()),
+        );
     }
 
     // No step names a target: everything builds for the host's own
@@ -412,14 +427,9 @@ fn ci() -> ExitCode {
     } else {
         other_host_steps()
     };
-
-    if run_steps("ci", &steps) != ExitCode::SUCCESS {
-        return ExitCode::FAILURE;
-    }
+    failed.extend(run_steps("ci", &steps, cargo));
     #[cfg(windows)]
-    if run_steps("ci", &fault_steps()) != ExitCode::SUCCESS {
-        return ExitCode::FAILURE;
-    }
+    failed.extend(run_steps("ci", &fault_steps(), cargo));
     // On another host the unit tests run instrumented, as the coverage
     // gate (`xtask/src/coverage.rs`).
     #[cfg(not(windows))]
@@ -427,34 +437,50 @@ fn ci() -> ExitCode {
         println!("xtask ci: unit tests and the coverage gate");
         if coverage::run(&args(&["gate"])) != ExitCode::SUCCESS {
             eprintln!("xtask ci: step failed: unit tests and the coverage gate");
-            return ExitCode::FAILURE;
+            failed.push("unit tests and the coverage gate");
         }
     }
 
-    println!("xtask ci: all steps passed");
-    ExitCode::SUCCESS
+    if failed.is_empty() {
+        println!("xtask ci: all steps passed");
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("xtask ci: failed steps: {}", failed.join(", "));
+        ExitCode::FAILURE
+    }
 }
 
-/// Runs each of `steps` in turn as `command`'s, stopping at the first that
-/// fails.
-fn run_steps(command_name: &str, steps: &[Step]) -> ExitCode {
+/// Runs each of `steps` in turn as `command_name`'s, through `run`, which
+/// returns why a step failed, going on after a failure; returns the name of
+/// each step that failed.
+fn run_steps(
+    command_name: &str,
+    steps: &[Step],
+    mut run: impl FnMut(&[String]) -> Result<(), String>,
+) -> Vec<&'static str> {
+    let mut failed = Vec::new();
     for (name, cargo_args) in steps {
         println!("xtask {command_name}: {name}");
-        let mut command = Command::new(env!("CARGO"));
-        command.args(cargo_args);
-        match command.status() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                eprintln!("xtask {command_name}: step failed: {name} ({status})");
-                return ExitCode::FAILURE;
-            }
-            Err(error) => {
-                eprintln!("xtask {command_name}: could not run cargo for step {name}: {error}");
-                return ExitCode::FAILURE;
-            }
+        if let Err(error) = run(cargo_args) {
+            eprintln!("xtask {command_name}: step failed: {name} ({error})");
+            failed.push(*name);
         }
     }
-    ExitCode::SUCCESS
+    failed
+}
+
+/// Runs cargo with `cargo_args`, failing when it cannot start or exits
+/// with failure.
+fn cargo(cargo_args: &[String]) -> Result<(), String> {
+    let status = Command::new(env!("CARGO"))
+        .args(cargo_args)
+        .status()
+        .map_err(|error| format!("could not run cargo: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(status.to_string())
+    }
 }
 
 /// The crates with a `faults` feature, each linted with it on.
@@ -509,31 +535,43 @@ fn fault_steps() -> Vec<Step> {
             )
         })
         .collect();
-    steps.extend(FAULT_TESTS.iter().map(|(package, test)| {
-        (
-            "fault tests",
-            args(&[
-                "test",
+    steps.extend(fault_test_steps(&["test"]));
+    steps
+}
+
+/// Each of [`FAULT_TESTS`] as a step, cargo's arguments `prefix` and then
+/// the package with its `faults` feature and the test target: `test` for
+/// `ci`, `llvm-cov test` for a coverage run.
+#[cfg(windows)]
+fn fault_test_steps(prefix: &[&str]) -> Vec<Step> {
+    FAULT_TESTS
+        .iter()
+        .map(|(package, test)| {
+            let mut cargo_args = args(prefix);
+            cargo_args.extend(args(&[
                 "-p",
                 package,
                 "--features",
                 "faults",
                 "--test",
                 test,
-            ]),
-        )
-    }));
-    steps
+            ]));
+            ("fault tests", cargo_args)
+        })
+        .collect()
 }
 
 /// `cargo xtask faults`: the fault step on its own.
 #[cfg(windows)]
 fn faults() -> ExitCode {
-    if run_steps("faults", &fault_steps()) != ExitCode::SUCCESS {
-        return ExitCode::FAILURE;
+    let failed = run_steps("faults", &fault_steps(), cargo);
+    if failed.is_empty() {
+        println!("xtask faults: all steps passed");
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("xtask faults: failed steps: {}", failed.join(", "));
+        ExitCode::FAILURE
     }
-    println!("xtask faults: all steps passed");
-    ExitCode::SUCCESS
 }
 
 /// One cargo invocation of `ci`: the step's name and cargo's arguments.
@@ -641,4 +679,30 @@ fn other_host_steps() -> Vec<Step> {
     clippy.extend(packages);
     clippy.extend(args(&["--", "-D", "warnings"]));
     vec![("clippy", clippy)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed step neither stops the run nor hides a later failure.
+    #[test]
+    fn every_step_runs_after_one_fails() {
+        let steps: Vec<Step> = vec![
+            ("rustfmt", args(&["fmt"])),
+            ("clippy", args(&["clippy"])),
+            ("unit tests", args(&["nextest"])),
+        ];
+        let mut ran = Vec::new();
+        let failed = run_steps("ci", &steps, |cargo_args| {
+            ran.push(cargo_args[0].clone());
+            if cargo_args[0] == "nextest" {
+                Ok(())
+            } else {
+                Err("exit code: 1".to_owned())
+            }
+        });
+        assert_eq!(ran, ["fmt", "clippy", "nextest"]);
+        assert_eq!(failed, ["rustfmt", "clippy"]);
+    }
 }

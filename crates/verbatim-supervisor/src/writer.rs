@@ -231,7 +231,7 @@ impl<M: ToChild> Backlog for Queue<M> {
             let before = buffer.len();
             if let Err(error) = put_message(buffer, &held) {
                 buffer.truncate(before);
-                tracing::warn!(%error, "the held nodes could not be encoded; they are dropped");
+                tracing::warn!(target: verbatim_model::DEFECT_TARGET, %error, "the held nodes could not be encoded; they are dropped");
             }
         }
         Ok(())

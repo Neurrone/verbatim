@@ -83,7 +83,7 @@ pub(super) fn complete(
                 .and_then(|place| u32::try_from(place).ok())
             else {
                 // Core names the ancestor the walk met among those it sends.
-                tracing::error!("a route's end names an ancestor the completion does not");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, "a route's end names an ancestor the completion does not");
                 return Outcome::Refused(Refusal::Unsupported);
             };
             Some(place)

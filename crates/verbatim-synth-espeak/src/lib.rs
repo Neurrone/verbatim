@@ -245,7 +245,7 @@ unsafe fn marks_in(events: *const EspeakEvent) -> Vec<(usize, IndexMark)> {
                         IndexMark(number),
                     )),
                     Err(_) => {
-                        tracing::error!(%name, "eSpeak NG reported a mark this driver did not place");
+                        tracing::error!(target: verbatim_model::DEFECT_TARGET, %name, "eSpeak NG reported a mark this driver did not place");
                     }
                 }
             }
@@ -301,7 +301,7 @@ unsafe extern "C" fn on_audio(wav: *mut i16, count: c_int, events: *mut EspeakEv
             1
         }
         Err(_) => {
-            tracing::error!("an eSpeak NG audio sink panicked; the synthesis stops");
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, "an eSpeak NG audio sink panicked; the synthesis stops");
             synthesis.stopped = true;
             1
         }

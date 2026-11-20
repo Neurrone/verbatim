@@ -492,13 +492,13 @@ fn tier_name(tier: Option<Tier>) -> &'static str {
 }
 
 /// Runs the check on the workspace at `root`, returning the crates the
-/// determinism rule covers.
+/// determinism rule covers and every offence against the tiers' rules, each
+/// naming its path.
 ///
 /// # Errors
 ///
-/// When `cargo metadata` fails, or the graph breaks a rule: the error names
-/// every offence and its path.
-pub fn check(root: &Path) -> Result<BTreeSet<String>, String> {
+/// When `cargo metadata` fails or its output cannot be read.
+pub fn check(root: &Path) -> Result<(BTreeSet<String>, Vec<String>), String> {
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1", "--all-features"])
         .current_dir(root)
@@ -521,14 +521,7 @@ pub fn check(root: &Path) -> Result<BTreeSet<String>, String> {
         &covered,
         DETERMINISTIC_THIRD_PARTY,
     ));
-    if offences.is_empty() {
-        Ok(covered)
-    } else {
-        Err(format!(
-            "the crate tiers are broken (see the NVDA provenance section of CLAUDE.md):\n  {}",
-            offences.join("\n  ")
-        ))
-    }
+    Ok((covered, offences))
 }
 
 #[cfg(test)]

@@ -6,8 +6,8 @@
 //! `nvda/source/IAccessibleHandler/internalWinEventHandler.py`). Every
 //! read of Windows' state the event's handling makes goes through it, so
 //! the event path's call-count test sees each one
-//! (`a_flood_events_window_facts_are_read_once`,
-//! `the_event_path_reads_windows_only_through_its_event_windows`).
+//! (`a_flood_events_window_facts_are_read_once`; the ownership scan,
+//! `xtask/src/ownership.rs`, holds the event path to it).
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

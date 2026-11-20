@@ -21,20 +21,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode};
 use std::thread;
 
-use crate::agent::{Agent, ENDPOINT};
+use crate::agent::{Agent, ENDPOINT, PORT};
 use std::time::Duration;
+use verbatim_e2e::registry::{self, Group};
 
-/// The measure set's scenarios a silent run takes; `measure_speech_real`
-/// needs a real device and an audible run, so it is asked for by name.
-const MEASURE_SET: &[&str] = &[
-    "measure_focus_windows_terminal",
-    "measure_focus_windows_terminal_tabs",
-    "measure_focus_text_box",
-    "measure_focus_new_application",
-    "measure_keys_text_box",
-    "measure_keys_conhost",
-    "measure_keys_windows_terminal",
-];
+/// The scenario a silent run leaves out of the measure set: it needs a
+/// real device and an audible run, so it is asked for by name.
+const AUDIBLE_ONLY: &str = "measure_speech_real";
 
 /// The stages summed per announcement into the totals `stages.txt` ends
 /// with: what the user waits on along each way, as named in the latency
@@ -203,17 +196,23 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     )?;
     let mut names = values(args, "--scenario");
     if names.is_empty() {
-        names = MEASURE_SET.iter().map(|&name| name.to_owned()).collect();
+        names = registry::SCENARIOS
+            .iter()
+            .filter(|def| def.group == Group::Measure && def.name != AUDIBLE_ONLY)
+            .map(|def| def.name.to_owned())
+            .collect();
     }
     let label = value(args, "--label")
         .unwrap_or_else(|| format!("measure-{}-{}", build_name(&options), now_label()));
     let folder = output_folder(&label)?;
-    let agent = Agent::start(&workspace(), &folder)?;
+    let agent = Agent::start(&workspace(), &folder, PORT)?;
     let mut results = String::new();
+    let mut outcomes = Vec::new();
     for name in &names {
         let mut test = scenario(name, &options, &folder)?;
         let _ = test.wait();
         let ok = passed(&folder.join(format!("{name}.log")));
+        outcomes.push((name.as_str(), ok));
         let _ = writeln!(results, "{name}: {}", if ok { "passed" } else { "FAILED" });
         println!(
             "xtask measure: {name}: {}",
@@ -240,7 +239,22 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     fs::write(folder.join("stages.txt"), &report).map_err(|error| error.to_string())?;
     println!("{report}");
     println!("xtask measure: written to {}", folder.display());
-    Ok(())
+    verdict(&outcomes)
+}
+
+/// The run's verdict from each scenario's outcome: an error naming every
+/// scenario that failed, since its stages are missing from the report.
+fn verdict(outcomes: &[(&str, bool)]) -> Result<(), String> {
+    let failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|(_, ok)| !ok)
+        .map(|(name, _)| *name)
+        .collect();
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("failed: {}", failed.join(", ")))
+    }
 }
 
 /// Every `verbatim::latency` line under `folder`'s `stderr.log` files, as
@@ -434,7 +448,7 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     let folder = output_folder(&label)?;
     let reader = build_reader()?;
 
-    let agent = Agent::start(&workspace(), &folder)?;
+    let agent = Agent::start(&workspace(), &folder, PORT)?;
     let mut test = scenario(name, &options, &folder)?;
     // The window is time inside the scenario, chosen by the caller: a
     // trace that covers a scenario's start or end can leave File Explorer
@@ -608,6 +622,19 @@ mod tests {
                 .to_vec()
             ))
         );
+    }
+
+    #[test]
+    fn measure_fails_naming_each_failed_scenario() {
+        assert_eq!(
+            verdict(&[
+                ("measure_a", true),
+                ("measure_b", false),
+                ("measure_c", false)
+            ]),
+            Err("failed: measure_b, measure_c".to_owned())
+        );
+        assert_eq!(verdict(&[("measure_a", true)]), Ok(()));
     }
 
     fn arguments(list: &[&str]) -> Vec<String> {

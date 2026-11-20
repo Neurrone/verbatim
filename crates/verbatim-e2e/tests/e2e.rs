@@ -281,6 +281,14 @@ fn main() -> ExitCode {
     // libtest runs its tests in the order of their names, so the session
     // check runs before every scenario.
     trials.sort_by(|a, b| a.name().cmp(b.name()));
+    let names: Vec<&str> = trials.iter().map(Trial::name).collect();
+    let unmatched = command_line::unmatched(&names, &filters, arguments.exact);
+    if !unmatched.is_empty() {
+        for filter in unmatched {
+            eprintln!("no test is named {filter}");
+        }
+        return ExitCode::FAILURE;
+    }
     trials.retain(|trial| command_line::selected(trial.name(), &filters, arguments.exact));
     // A panic a scenario catches is printed once, in its report.
     let default = panic::take_hook();

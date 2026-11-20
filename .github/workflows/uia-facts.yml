@@ -23,7 +23,6 @@ on:
       - "crates/verbatim-uia-rops/**"
       - "crates/verbatim-model/**"
       - "crates/verbatim-text/**"
-      - "crates/verbatim-core/**"
       - "crates/verbatim-reader-rules/**"
       - "crates/verbatim-win32/**"
       - "crates/workspace-hack/**"

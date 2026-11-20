@@ -57,7 +57,8 @@ pub type MakeHandlers = Arc<dyn Fn() -> EventHandlers + Send + Sync>;
 
 /// The `WinEvent` thread's priority: it only moves each event on, for
 /// microseconds per wake (`docs/design/communication.md`, section 6.1).
-const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
+/// The event recorder's `WinEvent` thread runs at it too.
+pub const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 
 /// The event thread: pumps messages so the out-of-context callbacks of its
 /// MSAA hooks are delivered, and installs the requested hooks once, when

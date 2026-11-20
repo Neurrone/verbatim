@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 use verbatim_control::protocol::{Frame, ReplyPayload, Request};
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
@@ -123,28 +124,47 @@ impl Transcript {
     ///
     /// Returns an error if the request fails.
     pub fn entries_after(&mut self, seq: u64) -> io::Result<Vec<TranscriptEntry>> {
-        let payload = self.request(&json!({"Read": {"after": seq}}))?;
-        Ok(payload["Entries"]["entries"]
-            .as_array()
-            .map(|entries| entries.iter().map(TranscriptEntry::from_json).collect())
-            .unwrap_or_default())
+        read_reply(self.request(&json!({"Read": {"after": seq}}))?)
     }
 }
 
-/// One entry of the transcript.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The add-on's answer to a `Read`.
+#[derive(Deserialize)]
+enum ReadReply {
+    /// The entries recorded after the one asked for, oldest first.
+    Entries {
+        /// The entries.
+        entries: Vec<TranscriptEntry>,
+    },
+}
+
+/// The entries of the `Read` reply's payload `payload`.
+///
+/// # Errors
+///
+/// Returns an error if the payload is not a `Read` reply whose every entry
+/// has every field: a missing field is never read as empty or zero.
+fn read_reply(payload: Value) -> io::Result<Vec<TranscriptEntry>> {
+    let ReadReply::Entries { entries } = serde_json::from_value(payload)
+        .map_err(|error| io::Error::other(format!("the add-on's Read reply: {error}")))?;
+    Ok(entries)
+}
+
+/// One entry of the transcript, as the add-on sends it, `{seq, ms,
+/// event}`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct TranscriptEntry {
-    /// Its sequence number, which a later read starts after; `None` when
-    /// the add-on sent none.
-    pub seq: Option<u64>,
+    /// Its sequence number, which a later read starts after.
+    pub seq: u64,
     /// Milliseconds since the `Hello`, on the add-on's clock.
-    pub ms: i64,
+    pub ms: u64,
     /// What NVDA did.
     pub event: TranscriptEvent,
 }
 
-/// What one transcript entry records.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What one transcript entry records: `{"Speech": {text, priority}}`, or
+/// `"Cancel"`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum TranscriptEvent {
     /// A speech sequence NVDA queued: its priority and its text, flattened
     /// by the add-on as NVDA's system tests flatten it.
@@ -154,36 +174,8 @@ pub enum TranscriptEvent {
         /// The flattened text.
         text: String,
     },
-    /// Any other event, such as a cancel, by its name in lower case.
-    Other(String),
-}
-
-impl TranscriptEntry {
-    /// The entry the add-on sent as `entry`, `{seq, ms, event}`.
-    #[must_use]
-    pub fn from_json(entry: &Value) -> Self {
-        Self {
-            seq: entry["seq"].as_u64(),
-            ms: entry["ms"].as_i64().unwrap_or(0),
-            event: TranscriptEvent::from_json(&entry["event"]),
-        }
-    }
-}
-
-impl TranscriptEvent {
-    /// The event the add-on sent as `event`: `{"Speech": {text, priority}}`,
-    /// or another event's name, such as `"Cancel"`.
-    #[must_use]
-    pub fn from_json(event: &Value) -> Self {
-        if let Some(speech) = event.get("Speech") {
-            Self::Speech {
-                priority: speech["priority"].as_str().unwrap_or("?").to_owned(),
-                text: speech["text"].as_str().unwrap_or("").to_owned(),
-            }
-        } else {
-            Self::Other(event.as_str().unwrap_or("?").to_lowercase())
-        }
-    }
+    /// NVDA cancelled its speech.
+    Cancel,
 }
 
 /// The settling rule: speech has settled once nothing new has been
@@ -309,7 +301,7 @@ impl Poller {
         };
         let arrived = !entries.is_empty();
         for entry in entries {
-            self.last_seq = entry.seq.unwrap_or(self.last_seq);
+            self.last_seq = entry.seq;
             if !self.pass(entry) {
                 return false;
             }
@@ -350,9 +342,7 @@ impl Poller {
             TranscriptEvent::Speech { text, .. } => {
                 let utterance = UtteranceId(self.next_utterance);
                 self.next_utterance += 1;
-                let queued_at_ms = self
-                    .hello_unix_ms
-                    .saturating_add(u64::try_from(entry.ms).unwrap_or(0));
+                let queued_at_ms = self.hello_unix_ms.saturating_add(entry.ms);
                 // NVDA's speech carries no trace of Verbatim's: each
                 // utterance gets one of its own, which nothing reads.
                 let queued = Frame::Speech {
@@ -369,7 +359,7 @@ impl Poller {
                 self.items.send(Item::Frame(Box::new(queued))).is_ok()
                     && self.items.send(Item::Frame(Box::new(ended))).is_ok()
             }
-            TranscriptEvent::Other(name) => self.items.send(Item::Event(name)).is_ok(),
+            TranscriptEvent::Cancel => self.items.send(Item::Event("cancel".to_owned())).is_ok(),
         }
     }
 }
@@ -562,9 +552,9 @@ mod tests {
         }
     }
 
-    fn speech(seq: u64, ms: i64, text: &str) -> TranscriptEntry {
+    fn speech(seq: u64, ms: u64, text: &str) -> TranscriptEntry {
         TranscriptEntry {
-            seq: Some(seq),
+            seq,
             ms,
             event: TranscriptEvent::Speech {
                 priority: "normal".to_owned(),
@@ -615,35 +605,53 @@ mod tests {
 
     #[test]
     fn the_add_on_s_json_reads_as_entries() {
-        let entry = TranscriptEntry::from_json(&json!({
-            "seq": 4,
-            "ms": 120,
-            "event": {"Speech": {"priority": "now", "text": "a\nb"}}
-        }));
+        let entries = read_reply(json!({"Entries": {"entries": [
+            {"seq": 4, "ms": 120, "event": {"Speech": {"priority": "now", "text": "a\nb"}}},
+            {"seq": 5, "ms": 130, "event": "Cancel"}
+        ]}}))
+        .expect("entries");
         assert_eq!(
-            entry,
-            TranscriptEntry {
-                seq: Some(4),
-                ms: 120,
-                event: TranscriptEvent::Speech {
-                    priority: "now".to_owned(),
-                    text: "a\nb".to_owned()
+            entries,
+            [
+                TranscriptEntry {
+                    seq: 4,
+                    ms: 120,
+                    event: TranscriptEvent::Speech {
+                        priority: "now".to_owned(),
+                        text: "a\nb".to_owned()
+                    }
+                },
+                TranscriptEntry {
+                    seq: 5,
+                    ms: 130,
+                    event: TranscriptEvent::Cancel
                 }
-            }
+            ]
         );
-        assert_eq!(
-            TranscriptEvent::from_json(&json!("Cancel")),
-            TranscriptEvent::Other("cancel".to_owned())
-        );
+    }
+
+    /// A reply missing any field is an error, never an empty, zero or
+    /// repeated read.
+    #[test]
+    fn a_reply_missing_a_field_is_an_error() {
+        let speech = json!({"Speech": {"priority": "normal", "text": "a"}});
+        for payload in [
+            json!({"Entries": {}}),
+            json!({"Entries": {"entries": [{"ms": 1, "event": speech}]}}),
+            json!({"Entries": {"entries": [{"seq": 1, "event": speech}]}}),
+            json!({"Entries": {"entries": [{"seq": 1, "ms": 1, "event": {"Speech": {"priority": "normal"}}}]}}),
+        ] {
+            assert!(read_reply(payload.clone()).is_err(), "{payload}");
+        }
     }
 
     #[test]
     fn speech_becomes_utterances_heard_in_full_and_a_cancel_goes_on_the_timeline() {
         let timeline = Timeline::new();
         let cancel = TranscriptEntry {
-            seq: Some(2),
+            seq: 2,
             ms: 300,
-            event: TranscriptEvent::Other("cancel".to_owned()),
+            event: TranscriptEvent::Cancel,
         };
         let (mut poller, mut frames, _requests) = scripted(
             vec![vec![

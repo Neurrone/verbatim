@@ -15,7 +15,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, IDispatch,
 };
-use windows::Win32::System::Variant::{VARIANT, VT_I4};
+use windows::Win32::System::Variant::{VARIANT, VT_EMPTY, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromWindow, CUIAutomation, IAccessible, IUIAutomation, IUIAutomationElement,
     IUIAutomationFocusChangedEventHandler, IUIAutomationTreeWalker, TreeScope_Children,
@@ -264,15 +264,10 @@ pub fn focused_element() -> io::Result<FocusedElement> {
     let (object, child, focus) = loop {
         let client = client_of(window)?;
         // SAFETY: a plain cross-process call on a live object.
-        let focus = unsafe { client.accFocus() }.unwrap_or_default();
-        if focus.vt() == VT_I4 {
-            let child = i32::try_from(&focus).unwrap_or(CHILDID_SELF.cast_signed());
-            break (client, child, focus);
-        }
-        let Ok(object) =
-            IDispatch::try_from(&focus).and_then(|dispatch| dispatch.cast::<IAccessible>())
-        else {
-            break (client, CHILDID_SELF.cast_signed(), focus);
+        let object = match focus_answer(unsafe { client.accFocus() })? {
+            FocusAnswer::Child(child) => break (client, child, "a child"),
+            FocusAnswer::Client => break (client, CHILDID_SELF.cast_signed(), "the client"),
+            FocusAnswer::Object(object) => object,
         };
         let mut inner = HWND::default();
         // SAFETY: `object` is a live accessible object; `inner` is a local
@@ -280,13 +275,13 @@ pub fn focused_element() -> io::Result<FocusedElement> {
         let found = unsafe { WindowFromAccessibleObject(&object, Some(&raw mut inner)) };
         hops += 1;
         if found.is_err() || inner.is_invalid() || inner == window {
-            break (object, CHILDID_SELF.cast_signed(), focus);
+            break (object, CHILDID_SELF.cast_signed(), "an object");
         }
         // The object is in `inner`, which its position is read from too.
         window = inner;
         if hops > FOCUS_HOPS {
             hop_limit = true;
-            break (object, CHILDID_SELF.cast_signed(), focus);
+            break (object, CHILDID_SELF.cast_signed(), "an object");
         }
     };
     let child = VARIANT::from(child);
@@ -320,7 +315,7 @@ pub fn focused_element() -> io::Result<FocusedElement> {
     tracing::info!(
         window = window.0 as isize,
         class = class_name(window),
-        focus_type = focus.vt().0,
+        focus,
         name,
         ?position,
         ?selected,
@@ -331,6 +326,48 @@ pub fn focused_element() -> io::Result<FocusedElement> {
         position,
         selected,
     })
+}
+
+/// What a client's `accFocus` names as the focus.
+enum FocusAnswer {
+    /// A child of the client, by its id.
+    Child(i32),
+    /// An object of its own, which may be in a window of its own.
+    Object(IAccessible),
+    /// The client itself, answered as no value (`VT_EMPTY`).
+    Client,
+}
+
+/// The client's `accFocus` answer `focus` as what it names.
+///
+/// # Errors
+///
+/// Returns an error if the call failed, or its answer is neither a child's
+/// id, an accessible object, nor no value: a failed read is never taken
+/// for the client itself.
+fn focus_answer(focus: windows::core::Result<VARIANT>) -> io::Result<FocusAnswer> {
+    let focus = focus.map_err(|error| {
+        io::Error::other(format!(
+            "the focus window's client did not answer accFocus: {error}"
+        ))
+    })?;
+    if focus.vt() == VT_EMPTY {
+        return Ok(FocusAnswer::Client);
+    }
+    if focus.vt() == VT_I4 {
+        return i32::try_from(&focus)
+            .map(FocusAnswer::Child)
+            .map_err(io::Error::other);
+    }
+    IDispatch::try_from(&focus)
+        .and_then(|dispatch| dispatch.cast::<IAccessible>())
+        .map(FocusAnswer::Object)
+        .map_err(|error| {
+            io::Error::other(format!(
+                "accFocus answered no child, object or empty value ({:?}): {error}",
+                focus.vt()
+            ))
+        })
 }
 
 /// `window`'s client object (`AccessibleObjectFromWindow`).
@@ -998,6 +1035,24 @@ fn switcher_items_through_uia(timeout: Duration) -> io::Result<Vec<SwitcherItem>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed `accFocus` is an error, never the client itself, which
+    /// only an empty answer names.
+    #[test]
+    fn a_failed_acc_focus_is_an_error() {
+        let failed = focus_answer(Err(windows::core::Error::from_hresult(
+            windows::Win32::Foundation::E_FAIL,
+        )));
+        assert!(failed.is_err());
+        assert!(matches!(
+            focus_answer(Ok(VARIANT::default())),
+            Ok(FocusAnswer::Client)
+        ));
+        assert!(matches!(
+            focus_answer(Ok(VARIANT::from(3_i32))),
+            Ok(FocusAnswer::Child(3))
+        ));
+    }
 
     #[test]
     fn a_wait_whose_first_read_finds_needs_no_wake() {

@@ -35,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{AgileReference, BOOL};
 
-use crate::hooks::{Hook, PassFailed, RawEvent, Sink, spawn_hook_thread};
+use crate::hooks::{Hook, RawEvent, Sink, spawn_hook_thread};
 use crate::line::{EventData, header};
 use crate::steps::{self, Agent, Step, StepsThread};
 use crate::stop_key::{self, STOP_KEY_ID};
@@ -317,17 +317,13 @@ fn start_hooks(
     let arrivals = Arc::clone(arrivals);
     let early = Arc::clone(early);
     spawn_hook_thread(target.pid(), move || {
-        let failed: PassFailed = {
-            let early = Arc::clone(&early);
-            Box::new(move |error| early.end(Reason::PassMessageFailed(error)))
-        };
         let target_sink = target_sink(target, Arc::clone(&arrivals), early, changes);
         let focus_sink = focus_sink(target, arrivals);
         let sink: Sink = Box::new(move |raw: RawEvent| match raw.hook {
             Hook::Target => target_sink(raw),
             Hook::Focus => focus_sink(raw),
         });
-        (sink, failed)
+        sink
     })
 }
 
@@ -412,7 +408,6 @@ fn msaa_line(raw: RawEvent, in_target: bool, pid: Option<u32>) -> EventData {
         event: Some(raw.event),
         object: Some(raw.object),
         child: Some(raw.child),
-        pass: Some(raw.pass),
         ..EventData::default()
     }
 }

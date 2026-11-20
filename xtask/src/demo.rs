@@ -16,21 +16,16 @@
 //! the desktop while it runs and needs an unlocked one
 //! (`books/dev/src/how-to/e2e.md`).
 
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitCode, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, ExitCode};
 
+use crate::agent::{self, Agent};
 use verbatim_e2e::registry::{Group, ScenarioDef};
 use verbatim_e2e::{artifacts, recording, registry};
 
 /// A port of the demo's own, so an agent a developer already runs on the
 /// default port is left alone.
 const AGENT_PORT: u16 = 44_002;
-
-/// How long the agent is given to start listening.
-const AGENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     let (scenario, name) = match parse(args) {
@@ -130,31 +125,11 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
         .to_path_buf();
 
     println!("xtask demo: building the agent");
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-p", "verbatim-agent"])
-        .current_dir(&repo_root)
-        .status()
-        .map_err(|error| format!("could not run cargo: {error}"))?;
-    if !status.success() {
-        return Err(format!("building the agent failed ({status})"));
-    }
-
-    let agent = Command::new(
-        target_dir(&repo_root, std::env::var_os("CARGO_TARGET_DIR").as_deref())
-            .join("debug/verbatim-agent.exe"),
-    )
-    .args([
-        "--bind-address",
-        "127.0.0.1",
-        "--port",
-        &AGENT_PORT.to_string(),
-    ])
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn()
-    .map_err(|error| format!("could not start the agent: {error}"))?;
-    let mut agent = KillOnDrop(agent);
-    wait_for_port(AGENT_PORT)?;
+    agent::build(&repo_root)?;
+    let logs = repo_root.join("target").join("demo-agent");
+    std::fs::create_dir_all(&logs)
+        .map_err(|error| format!("could not create {}: {error}", logs.display()))?;
+    let agent = Agent::start(&repo_root, &logs, AGENT_PORT)?;
 
     println!("xtask demo: running {scenario}; the desktop belongs to it until it ends");
     let mut command = Command::new(env!("CARGO"));
@@ -179,8 +154,7 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
     let status = command
         .status()
         .map_err(|error| format!("could not run cargo test: {error}"))?;
-    let _ = agent.0.kill();
-    let _ = agent.0.wait();
+    drop(agent);
     if !status.success() {
         return Err(format!("{scenario} failed ({status}); videos is unchanged"));
     }
@@ -202,34 +176,6 @@ fn record(def: &ScenarioDef, name: &str) -> Result<PathBuf, String> {
     Ok(destination)
 }
 
-/// The directory cargo builds into: `target_env`, the `CARGO_TARGET_DIR`
-/// value, when set, resolved against the workspace root as cargo resolves
-/// a relative one from the root it runs in, else `target` under the root.
-fn target_dir(repo_root: &Path, target_env: Option<&std::ffi::OsStr>) -> PathBuf {
-    target_env.map_or_else(|| repo_root.join("target"), |dir| repo_root.join(dir))
-}
-
-fn wait_for_port(port: u16) -> Result<(), String> {
-    let deadline = Instant::now() + AGENT_TIMEOUT;
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    Err(format!("the agent never listened on port {port}"))
-}
-
-/// Ends the agent however the demo ends.
-struct KillOnDrop(Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,20 +194,6 @@ mod tests {
         assert_eq!(name, "reading-settings");
         assert!(parse(&args(&[scenario, "--name", "../escape"])).is_err());
         assert!(parse(&args(&["no_such_scenario"])).is_err());
-    }
-
-    #[test]
-    fn the_agent_comes_from_cargo_target_dir_when_set() {
-        let root = Path::new(r"C:\repo");
-        assert_eq!(target_dir(root, None), root.join("target"));
-        assert_eq!(
-            target_dir(root, Some(std::ffi::OsStr::new(r"D:\builds"))),
-            Path::new(r"D:\builds")
-        );
-        assert_eq!(
-            target_dir(root, Some(std::ffi::OsStr::new("out"))),
-            root.join("out")
-        );
     }
 
     #[test]

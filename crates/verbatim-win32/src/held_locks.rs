@@ -143,7 +143,7 @@ pub fn check(what: &str) {
 #[cfg(debug_assertions)]
 fn fail(message: String) -> ! {
     eprintln!("the lock check failed: {message}");
-    tracing::error!("the lock check failed: {message}");
+    tracing::error!(target: verbatim_model::DEFECT_TARGET, "the lock check failed: {message}");
     std::panic::panic_any(LockHeldAcrossCall { message })
 }
 

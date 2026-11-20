@@ -731,8 +731,9 @@ impl SpeechEvents for LatencyLedger {
             }
             entry.event_observed_at_ms()
         });
-        // The text is copied for the control plane only when some connection
-        // is subscribed to speech.
+        // The text is copied for the control plane only while some
+        // connection is subscribed to speech, or the startup history is
+        // still kept for the first subscriber.
         if let Some(server) = self.server.get()
             && server.has_speech_subscribers()
         {

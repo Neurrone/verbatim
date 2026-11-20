@@ -2690,7 +2690,7 @@ impl Scenario {
     /// crash dumps of Verbatim's processes written during the run. Returns
     /// every artifact that could not be collected, every crash dump, every
     /// line of those logs stating a defect of Verbatim's own
-    /// ([`crate::artifacts::DEFECT_MESSAGES`]), and every outpost started
+    /// ([`crate::artifacts::defect_lines`]), and every outpost started
     /// for a process Verbatim was told to ignore, its log named for that
     /// process, each a failure of the run. In compare
     /// mode, which has no Verbatim, only the timeline.
@@ -3725,9 +3725,19 @@ fn verbatim_stderr_log_path(exe_dir: &Path, remote: bool) -> io::Result<String> 
         .ok_or_else(|| io::Error::other("stderr log path is not valid UTF-8"))
 }
 
-/// Builds `verbatim-app`, `verbatim-outpost` and `verbatim-listener` (debug
-/// profile, the default
-/// source build [`verbatim_exe_path`] resolves to) once per test process.
+/// The packages whose binaries a scenario runs: Verbatim and its child
+/// processes, mockapp and the event recorder.
+pub const SUITE_BINARIES: [&str; 6] = [
+    "verbatim-app",
+    "verbatim-outpost",
+    "verbatim-listener",
+    "verbatim-synth-host",
+    "mockapp",
+    "verbatim-event-record",
+];
+
+/// Builds [`SUITE_BINARIES`] (debug profile, the default source build
+/// [`verbatim_exe_path`] resolves to) once per test process.
 ///
 /// `cargo test -p verbatim-e2e` builds only this crate and its library
 /// dependencies, never Verbatim's executables, so without this a
@@ -3746,23 +3756,14 @@ fn build_default_source_binaries() -> io::Result<()> {
             // Cargo sets CARGO for the processes it runs, tests included.
             use std::os::windows::process::CommandExt as _;
             let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+            let packages: Vec<&str> = SUITE_BINARIES
+                .iter()
+                .flat_map(|package| ["-p", package])
+                .collect();
             let status = std::process::Command::new(cargo)
                 .creation_flags(crate::CREATE_NO_WINDOW)
-                .args([
-                    "build",
-                    "-p",
-                    "verbatim-app",
-                    "-p",
-                    "verbatim-outpost",
-                    "-p",
-                    "verbatim-listener",
-                    "-p",
-                    "verbatim-synth-host",
-                    "-p",
-                    "mockapp",
-                    "-p",
-                    "verbatim-event-record",
-                ])
+                .arg("build")
+                .args(&packages)
                 .current_dir(workspace_root())
                 .status()
                 .map_err(|error| format!("could not launch cargo build: {error}"))?;
@@ -3770,9 +3771,9 @@ fn build_default_source_binaries() -> io::Result<()> {
                 Ok(())
             } else {
                 Err(format!(
-                    "cargo build -p verbatim-app -p verbatim-outpost -p verbatim-listener \
-                     -p verbatim-synth-host -p mockapp -p verbatim-event-record failed ({status}); set \
-                     {VERBATIM_EXE_ENV} to stage an existing build instead"
+                    "cargo build {} failed ({status}); set {VERBATIM_EXE_ENV} to stage an \
+                     existing build instead",
+                    packages.join(" ")
                 ))
             }
         })
@@ -4562,8 +4563,8 @@ fn document_token() -> String {
 }
 
 /// The failures of a run whose log `text`, collected as `path`, states a
-/// defect of Verbatim's own: one for each line holding one of
-/// [`crate::artifacts::DEFECT_MESSAGES`], naming it.
+/// defect of Verbatim's own: one for each line
+/// [`crate::artifacts::defect_lines`] finds, naming it.
 fn defects_logged(path: &Path, text: &str) -> Vec<String> {
     crate::artifacts::defect_lines(&path.display().to_string(), text)
         .into_iter()

@@ -175,7 +175,7 @@ impl UiaReading {
             Start::Read(element) => element,
             Start::NotThere => return (Outcome::NotThere, None),
             Start::NotAsked => {
-                tracing::error!(?token, "a request asked of a kept element already read");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, ?token, "a request asked of a kept element already read");
                 return (Outcome::Refused(Refusal::Unsupported), None);
             }
         };
@@ -705,7 +705,7 @@ fn route_end(
         // the ancestors answered.
         walked.ancestors.pop();
         let Some(known) = known_met(met) else {
-            tracing::error!("a walk met a known ancestor the request did not name");
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, "a walk met a known ancestor the request did not name");
             return Err(Outcome::Refused(Refusal::Unsupported));
         };
         return Ok(RouteEnd::Known(known));

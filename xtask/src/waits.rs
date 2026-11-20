@@ -1,7 +1,6 @@
 //! The `cargo xtask ci` check that test code waits for evidence, never for
 //! time (`books/dev/src/reference/testing.md`, "Waits are for evidence"): it fails on a fixed
-//! sleep or a retry loop anywhere in test code, and lists the sleeps left in
-//! production code for review.
+//! sleep or a retry loop anywhere in test code.
 //!
 //! Test code is every file under a crate's `tests` folder, everything in the
 //! end-to-end suite (`crates/verbatim-e2e`) and its agent
@@ -44,13 +43,12 @@ struct Finding {
 }
 
 /// Runs the check from the workspace root `root`. Returns the findings in
-/// test code as the error; prints the sleeps in production code.
+/// test code as the error.
 pub fn check(root: &Path) -> Result<(), String> {
     let mut files = Vec::new();
     collect_rust_files(&root.join("crates"), &mut files)?;
     collect_rust_files(&root.join("xtask"), &mut files)?;
     let mut in_tests = Vec::new();
-    let mut in_production = Vec::new();
     for file in files {
         // This check names what it looks for, in its own tests too.
         if file.ends_with(Path::new("xtask").join("src").join("waits.rs")) {
@@ -77,20 +75,7 @@ pub fn check(root: &Path) -> Result<(), String> {
             let retries = is_test && names_a_retry(&strip_strings(&code));
             if is_test && (sleeps || retries) {
                 in_tests.push(finding());
-            } else if sleeps {
-                in_production.push(finding());
             }
-        }
-    }
-    if !in_production.is_empty() {
-        println!("xtask ci: fixed sleeps in production code, for review:");
-        for finding in &in_production {
-            println!(
-                "  {}:{}: {}",
-                finding.file.display(),
-                finding.line,
-                finding.text
-            );
         }
     }
     if in_tests.is_empty() {
@@ -140,42 +125,59 @@ pub(crate) fn collect_rust_files(folder: &Path, files: &mut Vec<PathBuf>) -> Res
 }
 
 /// For each line of `source`, whether it lies in an item marked
-/// `#[cfg(test)]`: from the attribute to the brace that closes the item it
-/// marks, counting braces outside comments and strings.
+/// `#[cfg(test)]` ([`cfg_test_marks`]), outside comments and strings.
 pub(crate) fn cfg_test_lines(source: &str) -> Vec<bool> {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut marked = vec![false; lines.len()];
+    let code: Vec<String> = source
+        .lines()
+        .map(|line| strip_strings(&strip_comments(line)))
+        .collect();
+    cfg_test_marks(&code)
+}
+
+/// For each line of `code`, already stripped of comments and strings,
+/// whether it lies in an item marked `#[cfg(test)]`: from the attribute to
+/// the item's end ([`item_end`]).
+pub(crate) fn cfg_test_marks(code: &[String]) -> Vec<bool> {
+    let mut marked = vec![false; code.len()];
     let mut index = 0;
-    while index < lines.len() {
-        if lines[index].trim() != "#[cfg(test)]" {
+    while index < code.len() {
+        if code[index].trim() == "#[cfg(test)]" {
+            let end = item_end(code, index);
+            marked[index..end].fill(true);
+            index = end;
+        } else {
             index += 1;
-            continue;
         }
-        let mut depth = 0i64;
-        let mut opened = false;
-        let mut end = index;
-        while end < lines.len() {
-            marked[end] = true;
-            let code = strip_strings(&strip_comments(lines[end]));
-            for character in code.chars() {
-                match character {
-                    '{' => {
-                        depth += 1;
-                        opened = true;
-                    }
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-            }
-            let ends_item = (opened && depth <= 0) || (!opened && code.trim_end().ends_with(';'));
-            end += 1;
-            if ends_item && end > index + 1 {
-                break;
-            }
-        }
-        index = end;
     }
     marked
+}
+
+/// The line after the end of the item that starts on line `start` of
+/// `code`, already stripped of comments and strings: the line on which the
+/// first brace it opens closes, or, when a line ends in `;` before any
+/// brace opens, that line, as a `mod name;` or a `use` does.
+pub(crate) fn item_end(code: &[String], start: usize) -> usize {
+    let mut depth = 0_i64;
+    let mut opened = false;
+    let mut end = start;
+    while end < code.len() {
+        let line = &code[end];
+        for character in line.chars() {
+            match character {
+                '{' => {
+                    depth += 1;
+                    opened = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        end += 1;
+        if (opened && depth <= 0) || (!opened && line.trim_end().ends_with(';')) {
+            break;
+        }
+    }
+    end
 }
 
 /// `line` without a `//` comment, ignoring `//` inside a string.

@@ -108,11 +108,10 @@ fn msaa(at: &str, kind: &str, line: &Value) -> String {
     let class = text(line, "class").map_or(String::new(), |class| format!(", class {class}"));
     let number = |name: &str| line.get(name).and_then(Value::as_i64).unwrap_or(0);
     format!(
-        "{at}, MSAA {event} on window {window}{class}, object {}, child {}, event {}, pass {}{}{}.",
+        "{at}, MSAA {event} on window {window}{class}, object {}, child {}, event {}{}{}.",
         number("object"),
         number("child"),
         number("event"),
-        number("pass"),
         process(line),
         outside(line)
     )
@@ -160,16 +159,16 @@ fn value(line: &Value) -> String {
 mod tests {
     use super::*;
 
-    const HEADER: &str = r#"{"format_version":2,"started_utc":"2026-11-10T15:30:00Z","windows_build":"26300.1","target":{"pid":4120,"window":null}}"#;
+    const HEADER: &str = r#"{"format_version":3,"started_utc":"2026-11-10T15:30:00Z","windows_build":"26300.1","target":{"pid":4120,"window":null}}"#;
 
     #[test]
     fn each_kind_of_line_reads_as_its_sentence() {
         let lines = [
-            r#"{"t_us":48211,"kind":"uia_focus","in_target":true,"pid":4120,"window":"0x3A0F2","runtime_id":"42.238","name":"Text editor","control_type":"Document","class":"RichEditD2DPT","automation_id":null,"framework":"Win32","property":null,"value":null,"is_focus":true,"event":null,"object":null,"child":null,"pass":null}"#,
-            r#"{"t_us":51004,"kind":"uia_property","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":"Text editor","control_type":"Document","class":null,"automation_id":null,"framework":null,"property":"Name","value":"Untitled","is_focus":false,"event":null,"object":null,"child":null,"pass":null}"#,
-            r#"{"t_us":60000,"kind":"uia_structure","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":null,"control_type":"Pane","class":null,"automation_id":null,"framework":null,"property":null,"value":"ChildAdded","is_focus":false,"event":null,"object":null,"child":null,"pass":null}"#,
-            r#"{"t_us":70000,"kind":"uia_event","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":"File","control_type":"Menu","class":null,"automation_id":null,"framework":null,"property":"MenuOpened","value":null,"is_focus":false,"event":null,"object":null,"child":null,"pass":null}"#,
-            r#"{"t_us":730112,"kind":"msaa_focus","in_target":false,"pid":812,"window":"0x1A","runtime_id":null,"name":null,"control_type":null,"class":"Edit","automation_id":null,"framework":null,"property":null,"value":null,"is_focus":null,"event":32773,"object":-4,"child":0,"pass":3}"#,
+            r#"{"t_us":48211,"kind":"uia_focus","in_target":true,"pid":4120,"window":"0x3A0F2","runtime_id":"42.238","name":"Text editor","control_type":"Document","class":"RichEditD2DPT","automation_id":null,"framework":"Win32","property":null,"value":null,"is_focus":true,"event":null,"object":null,"child":null}"#,
+            r#"{"t_us":51004,"kind":"uia_property","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":"Text editor","control_type":"Document","class":null,"automation_id":null,"framework":null,"property":"Name","value":"Untitled","is_focus":false,"event":null,"object":null,"child":null}"#,
+            r#"{"t_us":60000,"kind":"uia_structure","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":null,"control_type":"Pane","class":null,"automation_id":null,"framework":null,"property":null,"value":"ChildAdded","is_focus":false,"event":null,"object":null,"child":null}"#,
+            r#"{"t_us":70000,"kind":"uia_event","in_target":true,"pid":4120,"window":null,"runtime_id":null,"name":"File","control_type":"Menu","class":null,"automation_id":null,"framework":null,"property":"MenuOpened","value":null,"is_focus":false,"event":null,"object":null,"child":null}"#,
+            r#"{"t_us":730112,"kind":"msaa_focus","in_target":false,"pid":812,"window":"0x1A","runtime_id":null,"name":null,"control_type":null,"class":"Edit","automation_id":null,"framework":null,"property":null,"value":null,"is_focus":null,"event":32773,"object":-4,"child":0}"#,
             r#"{"t_us":1204000,"kind":"behind","source":"uia_focus","late_ms":682}"#,
             r#"{"t_us":1300000,"kind":"behind","source":"msaa","late_ms":150}"#,
             r#"{"t_us":1400000,"kind":"registered","window":"0x3A0F2"}"#,
@@ -181,7 +180,7 @@ mod tests {
              At 0.051 seconds, UI Automation property Name changed to Untitled on Document, Text editor, in process 4120.\n\
              At 0.060 seconds, UI Automation structure changed, ChildAdded on Pane, in process 4120.\n\
              At 0.070 seconds, UI Automation event MenuOpened on Menu, File, in process 4120.\n\
-             At 0.730 seconds, MSAA focus on window 0x1A, class Edit, object -4, child 0, event 32773, pass 3, in process 812, outside the target.\n\
+             At 0.730 seconds, MSAA focus on window 0x1A, class Edit, object -4, child 0, event 32773, in process 812, outside the target.\n\
              At 1.204 seconds, UI Automation focus arrived 682 milliseconds behind.\n\
              At 1.300 seconds, an MSAA event arrived 150 milliseconds behind.\n\
              At 1.400 seconds, the registration of window 0x3A0F2 completed.\n"
@@ -190,10 +189,10 @@ mod tests {
 
     #[test]
     fn another_format_version_is_refused() {
-        let recording = r#"{"format_version":1,"started_utc":"x","windows_build":"y","target":{}}"#;
+        let recording = r#"{"format_version":2,"started_utc":"x","windows_build":"y","target":{}}"#;
         assert_eq!(
             sentences(recording),
-            Err("this recording has format version 1; this program reads version 2".to_owned())
+            Err("this recording has format version 2; this program reads version 3".to_owned())
         );
     }
 }

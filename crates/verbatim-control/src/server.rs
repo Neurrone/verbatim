@@ -145,12 +145,14 @@ type Registry = Arc<Mutex<HashMap<ConnectionId, ConnectionEntry>>>;
 /// speech: Verbatim's startup sound and words, which come before any client
 /// can have connected. The first speech subscription receives them, in
 /// order, just after its reply, and from then on nothing more is kept
-/// (`None`). Held at most [`STARTUP_HISTORY_LIMIT`] frames.
+/// (`None`). Once it reaches [`STARTUP_HISTORY_LIMIT`] frames with no
+/// subscriber, it is no longer kept either, so speech is no longer copied
+/// for a control plane no one uses.
 type SpeechHistory = Arc<Mutex<Option<Vec<Frame>>>>;
 
 /// The most speech frames kept for the first subscriber: far more than
 /// Verbatim says at startup, so a long wait before anyone subscribes cannot
-/// grow the history without bound. Frames past it are not kept.
+/// grow the history without bound.
 const STARTUP_HISTORY_LIMIT: usize = 1024;
 
 /// Live pipe instances, transport-specific and separate from [`Registry`]
@@ -1181,14 +1183,17 @@ impl ControlServer {
                 | Frame::SpeechEnded { .. }
                 | Frame::Sound { .. }
                 | Frame::SpeechPaused { .. }
-        ) && let Some(history) = self
-            .history
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-            && history.len() < STARTUP_HISTORY_LIMIT
-        {
-            history.push(frame.clone());
+        ) {
+            let mut history = self.history.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(frames) = history.as_mut() {
+                frames.push(frame.clone());
+                if frames.len() >= STARTUP_HISTORY_LIMIT {
+                    tracing::debug!(
+                        "the startup speech history is full with no subscriber; it is no longer kept"
+                    );
+                    *history = None;
+                }
+            }
         }
         let mut dead: Vec<ConnectionId> = Vec::new();
         for (&conn_id, entry) in registry.iter() {
@@ -1508,6 +1513,20 @@ mod tests {
     ) -> Frame {
         write_message(client, &RequestEnvelope { id, request }).expect("writes the request");
         read_message(reader).expect("reads").expect("not EOF")
+    }
+
+    /// With no subscriber, the history closes once it holds its limit,
+    /// so no utterance after it is copied for the control plane.
+    #[test]
+    fn the_startup_history_closes_once_full_with_no_subscriber() {
+        let pipe_name = test_pipe_name("history-full");
+        let server = ControlServer::start_on(&pipe_name, test_handlers()).expect("starts");
+        for _ in 1..STARTUP_HISTORY_LIMIT {
+            server.broadcast_speech_ended(UtteranceId(1), UtteranceEnding::Completed);
+        }
+        assert!(server.has_speech_subscribers());
+        server.broadcast_speech_ended(UtteranceId(1), UtteranceEnding::Completed);
+        assert!(!server.has_speech_subscribers());
     }
 
     // Exercises the real named-pipe transport end to end.

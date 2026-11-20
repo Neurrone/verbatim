@@ -1968,7 +1968,6 @@ dependencies = [
 name = "verbatim-core"
 version = "0.1.0"
 dependencies = [
- "proptest",
  "serde",
  "serde_json",
  "verbatim-model",
@@ -1983,6 +1982,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "libtest-mimic",
+ "serde",
  "serde_json",
  "sha2",
  "tracing",

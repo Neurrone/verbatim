@@ -922,7 +922,7 @@ impl Outpost {
             .is_err()
         {
             let detail = format!("the outpost already watches {}", context.target_pid());
-            tracing::error!(
+            tracing::error!(target: verbatim_model::DEFECT_TARGET,
                 target_pid,
                 detail,
                 "the outpost cannot watch another application"

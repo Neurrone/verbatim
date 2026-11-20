@@ -24,12 +24,14 @@
 //!   crate's own device, record and store types. A method that allocates
 //!   inside an allowed type is a review rule, held by the mixer's
 //!   allocation test.
+//! - The rule of reads: the four functions of the listener's event path
+//!   after `on_win_event` may read Windows' state only through the event's
+//!   `EventWindows`, so its call-count test counts every read.
 //!
 //! - The determinism rule (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"), over every crate on a reducer's path, which the tier
 //!   check derives from the dependency graph ([`determinism`]): each keeps
-//!   a `clippy.toml` identical to `verbatim-core`'s, which names every
-//!   entry of [`DETERMINISM_ENTRIES`], so Clippy rejects hash collections,
-//!   clocks, files, processes, the network, threads, the environment, a
+//!   a `clippy.toml` identical to `verbatim-core`'s, with which Clippy
+//!   rejects hash collections, clocks, files, processes, the network, threads, the environment, a
 //!   minted trace id and the platform's floating-point functions; nothing
 //!   silences those lints but an `expect` in a listed exception; and the
 //!   crates name no path in a module of `std` Clippy cannot close function
@@ -43,12 +45,12 @@
 //! for, and a type allowed in could offer a method that locks: a review
 //! rule covers that, and the modules' own tests are the real check.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use crate::waits::{strip_comments, strip_strings};
+use crate::waits::{cfg_test_marks, collect_rust_files, item_end, strip_comments, strip_strings};
 
 /// A module the check reads, a file or, ending in `/`, every file of a
 /// directory, the paths it may `use`, what it may not name, whether its
@@ -57,7 +59,7 @@ use crate::waits::{strip_comments, strip_strings};
 struct Checked {
     path: &'static str,
     allowed: &'static [&'static str],
-    forbidden: &'static [&'static str],
+    forbidden: &'static [&'static [&'static str]],
     skip_tests: bool,
     within: Option<&'static str>,
 }
@@ -65,8 +67,9 @@ struct Checked {
 /// The modules checked: the listener's read scheduler and the outpost's
 /// reducer, by the pure rule, the hook thread's modules, by the hook rule,
 /// the hook thread's body in `lib.rs`, by the hook thread's start-up rule,
-/// and the audio thread's pass, by the audio rule.
-const CHECKED: [Checked; 7] = [
+/// the audio thread's pass, by the audio rule, and the listener's event
+/// path, by its rule of reads.
+const CHECKED: [Checked; 11] = [
     Checked {
         path: "crates/verbatim-listener-logic/src/schedule.rs",
         allowed: &[
@@ -84,49 +87,77 @@ const CHECKED: [Checked; 7] = [
             // The module's own tests.
             "super",
         ],
-        forbidden: &FORBIDDEN,
+        forbidden: &[&FORBIDDEN],
         skip_tests: false,
         within: None,
     },
     Checked {
         path: "crates/verbatim-outpost-logic/src/",
         allowed: &REDUCER_ALLOWED,
-        forbidden: &REDUCER_FORBIDDEN,
+        forbidden: &[&REDUCER_FORBIDDEN],
         skip_tests: true,
         within: None,
     },
     Checked {
         path: "crates/verbatim-input-windows/src/hook.rs",
         allowed: &HOOK_ALLOWED,
-        forbidden: &HOOK_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &HOOK_LOOP_FORBIDDEN],
         skip_tests: true,
         within: None,
     },
     Checked {
         path: "crates/verbatim-input-windows/src/typed.rs",
         allowed: &HOOK_ALLOWED,
-        forbidden: &HOOK_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &HOOK_LOOP_FORBIDDEN],
         skip_tests: true,
         within: None,
     },
     Checked {
         path: "crates/verbatim-app/src/key_reports.rs",
         allowed: &HOOK_ALLOWED,
-        forbidden: &HOOK_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &HOOK_LOOP_FORBIDDEN],
         skip_tests: true,
         within: None,
     },
     Checked {
         path: "crates/verbatim-input-windows/src/lib.rs",
         allowed: &[],
-        forbidden: &HOOK_START_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &["GetMessageW"]],
         skip_tests: true,
         within: Some("hook_thread"),
     },
     Checked {
+        path: "crates/verbatim-listener/src/listener.rs",
+        allowed: &[],
+        forbidden: &[&EVENT_PATH_FORBIDDEN],
+        skip_tests: true,
+        within: Some("watch_win_event"),
+    },
+    Checked {
+        path: "crates/verbatim-listener/src/listener.rs",
+        allowed: &[],
+        forbidden: &[&EVENT_PATH_FORBIDDEN],
+        skip_tests: true,
+        within: Some("route_win_event"),
+    },
+    Checked {
+        path: "crates/verbatim-listener/src/listener.rs",
+        allowed: &[],
+        forbidden: &[&EVENT_PATH_FORBIDDEN],
+        skip_tests: true,
+        within: Some("value_change_event"),
+    },
+    Checked {
+        path: "crates/verbatim-listener/src/listener/tells.rs",
+        allowed: &[],
+        forbidden: &[&EVENT_PATH_FORBIDDEN],
+        skip_tests: true,
+        within: Some("tell_win_event"),
+    },
+    Checked {
         path: "crates/verbatim-audio/src/mixer/run.rs",
         allowed: &AUDIO_ALLOWED,
-        forbidden: &AUDIO_FORBIDDEN,
+        forbidden: &[&AUDIO_FORBIDDEN],
         skip_tests: false,
         within: None,
     },
@@ -254,27 +285,26 @@ const HOOK_ALLOWED: [&str; 14] = [
     "super",
 ];
 
-/// What the hook thread's modules may not name: identifiers, matched whole,
-/// and paths, matched as written. The private message ranges and the
-/// loops that take or dispatch messages one at a time are forbidden
-/// because the thread's one `GetMessageW` loop handles no message but
-/// `WM_QUIT`: another thread hands it no work, so every number it mints is
-/// a key's.
-const HOOK_FORBIDDEN: [&str; 26] = [
+/// What the hook thread's modules and its start-up may not name:
+/// identifiers, matched whole, and paths, matched as written. The private
+/// message ranges and the loops that take or dispatch messages one at a
+/// time are forbidden because the thread's one `GetMessageW` loop handles
+/// no message but `WM_QUIT`: another thread hands it no work, so every
+/// number it mints is a key's. The start-up in `lib.rs`, around the one
+/// loop in `hook.rs`, may also not name `GetMessageW`, since its one loop
+/// is `hook.rs`'s.
+const HOOK_FORBIDDEN: [&str; 23] = [
     "Mutex",
     "RwLock",
     "Condvar",
     "OnceLock",
     "LazyLock",
     "lock",
-    "mpsc",
     "sleep",
     "std::thread",
     "std::fs",
-    "std::io",
     "std::net",
     "std::process",
-    "tracing",
     "SendMessageW",
     "SendMessageTimeoutW",
     "PeekMessageW",
@@ -289,37 +319,28 @@ const HOOK_FORBIDDEN: [&str; 26] = [
     "WM_USER",
 ];
 
-/// What the hook thread's body in `lib.rs`, its start-up around the one
-/// loop in `hook.rs`, may not name: the hook rule's list but `mpsc`,
-/// `std::io` and `tracing`, since it reports its readiness or its error on
-/// a channel and logs a failure to make the text services' profile
-/// manager, each once, before the loop takes a key; and `GetMessageW`,
-/// since its one loop is `hook.rs`'s.
-const HOOK_START_FORBIDDEN: [&str; 24] = [
-    "Mutex",
-    "RwLock",
-    "Condvar",
-    "OnceLock",
-    "LazyLock",
-    "lock",
-    "sleep",
-    "std::thread",
-    "std::fs",
-    "std::net",
-    "std::process",
-    "SendMessageW",
-    "SendMessageTimeoutW",
-    "PeekMessageW",
-    "PeekMessageA",
-    "DispatchMessageW",
-    "DispatchMessageA",
-    "GetMessageW",
-    "GetMessageA",
-    "MsgWaitForMultipleObjects",
-    "MsgWaitForMultipleObjectsEx",
-    "WaitForSingleObject",
-    "WM_APP",
-    "WM_USER",
+/// What the hook thread's modules may not name beside [`HOOK_FORBIDDEN`],
+/// though its start-up may: it reports its readiness or its error on a
+/// channel and logs a failure to make the text services' profile manager,
+/// each once, before the loop takes a key.
+const HOOK_LOOP_FORBIDDEN: [&str; 3] = ["mpsc", "std::io", "tracing"];
+
+/// What the listener's event path may not name, after `on_win_event` makes
+/// the event's windows: every read of Windows' state goes through the
+/// event's `EventWindows`, so that its call-count test,
+/// `a_flood_events_window_facts_are_read_once`, counts every read.
+const EVENT_PATH_FORBIDDEN: [&str; 11] = [
+    "verbatim_win32::",
+    "verbatim_ia2::window",
+    "window_class_name(",
+    "window_pid(",
+    "window_hung(",
+    "front_window(",
+    "in_foreground(",
+    "readers.reading()",
+    "SystemReads",
+    " process_of_thread(",
+    "(process_of_thread(",
 ];
 
 /// What a pure module may not name: identifiers, matched whole, and paths,
@@ -367,9 +388,9 @@ pub fn check(root: &Path) -> Result<(), String> {
 }
 
 /// The sources `path` names under `root`, each with its path: the file, or,
-/// for a path ending in `/`, every `.rs` file of the directory but those a
-/// `#[cfg(test)] mod name;` of one of them declares, which are test modules
-/// in files of their own.
+/// for a path ending in `/`, every `.rs` file of the directory but the test
+/// modules in files of their own its files declare
+/// ([`crate::coverage::test_module_files`]).
 fn sources(root: &Path, path: &str) -> Result<Vec<(String, String)>, String> {
     let read = |file: &Path| {
         fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))
@@ -378,7 +399,7 @@ fn sources(root: &Path, path: &str) -> Result<Vec<(String, String)>, String> {
         return Ok(vec![(path.to_owned(), read(&root.join(path))?)]);
     }
     let directory = root.join(path);
-    let mut files: Vec<(String, String)> = Vec::new();
+    let mut files = BTreeMap::new();
     let entries =
         fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     for entry in entries {
@@ -388,33 +409,12 @@ fn sources(root: &Path, path: &str) -> Result<Vec<(String, String)>, String> {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
         {
-            files.push((name.clone(), read(&entry.path())?));
+            files.insert(format!("{path}{name}"), read(&entry.path())?);
         }
     }
-    let tests: Vec<String> = files
-        .iter()
-        .flat_map(|(_, source)| test_module_files(source))
-        .collect();
-    files.retain(|(name, _)| !tests.contains(name));
-    files.sort();
-    Ok(files
-        .into_iter()
-        .map(|(name, source)| (format!("{path}{name}"), source))
-        .collect())
-}
-
-/// The files of the test modules `source` declares as `#[cfg(test)] mod
-/// name;`, each `name.rs`.
-fn test_module_files(source: &str) -> Vec<String> {
-    let lines: Vec<&str> = source.lines().map(str::trim).collect();
-    lines
-        .windows(2)
-        .filter(|pair| pair[0] == "#[cfg(test)]")
-        .filter_map(|pair| {
-            let name = pair[1].strip_prefix("mod ")?.strip_suffix(';')?;
-            Some(format!("{name}.rs"))
-        })
-        .collect()
+    let tests = crate::coverage::test_module_files(&files);
+    files.retain(|file, _| !tests.contains(file));
+    Ok(files.into_iter().collect())
 }
 
 /// The findings in `source`, checked as `checked` says, each its line
@@ -435,7 +435,7 @@ fn findings(source: &str, checked: &Checked) -> Vec<String> {
     }
     let allowed = checked.allowed;
     for (index, line) in code.iter().enumerate() {
-        for &forbidden in checked.forbidden {
+        for &forbidden in checked.forbidden.iter().copied().flatten() {
             if names(line, forbidden) {
                 found.push(format!("{}: names `{forbidden}`", index + 1));
             }
@@ -452,75 +452,24 @@ fn findings(source: &str, checked: &Checked) -> Vec<String> {
     found
 }
 
-/// Blanks each `#[cfg(test)]` module of `code`, from the attribute to the
-/// brace that closes the `mod` after it, counting the braces of code
-/// already stripped of comments and strings.
+/// Blanks each item of `code` marked `#[cfg(test)]`, a test module inline
+/// or declared in a file of its own, or a test-only function.
 fn blank_test_modules(code: &mut [String]) {
-    let mut index = 0;
-    while index < code.len() {
-        if code[index].trim() != "#[cfg(test)]" {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        // The `mod` the attribute is on, then its braces to the close.
-        while index < code.len() && !code[index].split_whitespace().any(|word| word == "mod") {
-            index += 1;
-        }
-        let mut depth = 0_i32;
-        let mut opened = false;
-        while index < code.len() {
-            for character in code[index].chars() {
-                match character {
-                    '{' => {
-                        depth += 1;
-                        opened = true;
-                    }
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-            }
-            index += 1;
-            if opened && depth <= 0 {
-                break;
-            }
-        }
-        for line in &mut code[start..index] {
+    let marked = cfg_test_marks(code);
+    for (line, marked) in code.iter_mut().zip(marked) {
+        if marked {
             line.clear();
         }
     }
 }
 
 /// Blanks every line of `code` but those of the function `function`, from
-/// its `fn` to the brace that closes its body, counting the braces of code
-/// already stripped of comments and strings. Returns whether the function
+/// its `fn` to the item's end ([`item_end`]). Returns whether the function
 /// was found; when not, every line is blank.
 fn keep_only_function(code: &mut [String], function: &str) -> bool {
     let signature = format!("fn {function}(");
     let start = code.iter().position(|line| line.contains(&signature));
-    let mut end = start.unwrap_or(0);
-    if let Some(start) = start {
-        let mut depth = 0_i32;
-        let mut opened = false;
-        end = start;
-        while end < code.len() {
-            for character in code[end].chars() {
-                match character {
-                    '{' => {
-                        depth += 1;
-                        opened = true;
-                    }
-                    '}' => depth -= 1,
-                    _ => {}
-                }
-            }
-            end += 1;
-            if opened && depth <= 0 {
-                break;
-            }
-        }
-    }
-    let kept = start.map_or(0..0, |start| start..end);
+    let kept = start.map_or(0..0, |start| start..item_end(code, start));
     for (index, line) in code.iter_mut().enumerate() {
         if !kept.contains(&index) {
             line.clear();
@@ -531,8 +480,11 @@ fn keep_only_function(code: &mut [String], function: &str) -> bool {
 
 /// Whether `code` names `forbidden`: a path, with `::`, as written; a
 /// macro, ending in `!`, as its name as a whole word followed by `!`; an
-/// identifier as a whole word, or for `Atomic`, as the start of one.
+/// identifier as a whole word, or for `Atomic`, as the start of one; and
+/// any other text, such as a call `name(` or a field read `a.b()`, as
+/// written.
 fn names(code: &str, forbidden: &str) -> bool {
+    let in_word = |character: char| character.is_ascii_alphanumeric() || character == '_';
     if forbidden.contains("::") {
         return code.contains(forbidden);
     }
@@ -544,7 +496,10 @@ fn names(code: &str, forbidden: &str) -> bool {
                 && after == Some('!')
         });
     }
-    code.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+    if !forbidden.chars().all(in_word) {
+        return code.contains(forbidden);
+    }
+    code.split(|character: char| !in_word(character))
         .any(|word| {
             if forbidden == "Atomic" {
                 word.starts_with(forbidden)
@@ -623,168 +578,27 @@ fn expand(tree: &str) -> Vec<String> {
         .collect()
 }
 
-/// What each covered crate's `clippy.toml` must name, as Clippy's
-/// `disallowed-types` and `disallowed-methods` entries
-/// (`books/dev/src/reference/testing.md`, "The crates on a reducer's path").
-const DETERMINISM_ENTRIES: [&str; 122] = [
-    "std::collections::HashMap",
-    "std::collections::HashSet",
-    "std::hash::RandomState",
-    "std::time::Instant",
-    "std::time::SystemTime",
-    "std::fs::File",
-    "std::fs::OpenOptions",
-    "std::fs::DirBuilder",
-    "std::fs::ReadDir",
-    "std::fs::DirEntry",
-    "std::fs::Metadata",
-    "std::process::Command",
-    "std::process::Child",
-    "std::net::TcpStream",
-    "std::net::TcpListener",
-    "std::net::UdpSocket",
-    "std::thread::Builder",
-    "std::thread::JoinHandle",
-    "std::thread::Thread",
-    "std::time::Instant::now",
-    "std::time::Instant::elapsed",
-    "std::time::SystemTime::now",
-    "std::time::SystemTime::elapsed",
-    "std::time::SystemTime::duration_since",
-    "std::thread::spawn",
-    "std::thread::scope",
-    "std::thread::sleep",
-    "std::thread::current",
-    "std::thread::park",
-    "std::thread::park_timeout",
-    "std::thread::yield_now",
-    "std::thread::available_parallelism",
-    "std::thread::panicking",
-    "std::env::args",
-    "std::env::args_os",
-    "std::env::var",
-    "std::env::var_os",
-    "std::env::vars",
-    "std::env::vars_os",
-    "std::env::current_dir",
-    "std::env::set_current_dir",
-    "std::env::current_exe",
-    "std::env::temp_dir",
-    "std::env::home_dir",
-    "std::env::set_var",
-    "std::env::remove_var",
-    "std::fs::read",
-    "std::fs::read_to_string",
-    "std::fs::read_dir",
-    "std::fs::read_link",
-    "std::fs::metadata",
-    "std::fs::symlink_metadata",
-    "std::fs::canonicalize",
-    "std::fs::exists",
-    "std::fs::write",
-    "std::fs::copy",
-    "std::fs::create_dir",
-    "std::fs::create_dir_all",
-    "std::fs::remove_file",
-    "std::fs::remove_dir",
-    "std::fs::remove_dir_all",
-    "std::fs::rename",
-    "std::fs::hard_link",
-    "std::fs::soft_link",
-    "std::fs::set_permissions",
-    "std::process::id",
-    "std::process::exit",
-    "std::process::abort",
-    "verbatim_model::TraceId::mint",
-    "verbatim_model::TraceId::namespace",
-    "f32::exp",
-    "f32::exp2",
-    "f32::exp_m1",
-    "f32::ln",
-    "f32::log",
-    "f32::log2",
-    "f32::log10",
-    "f32::ln_1p",
-    "f32::powf",
-    "f32::powi",
-    "f32::sin",
-    "f32::cos",
-    "f32::tan",
-    "f32::sin_cos",
-    "f32::asin",
-    "f32::acos",
-    "f32::atan",
-    "f32::atan2",
-    "f32::sinh",
-    "f32::cosh",
-    "f32::tanh",
-    "f32::asinh",
-    "f32::acosh",
-    "f32::atanh",
-    "f32::cbrt",
-    "f32::hypot",
-    "f64::exp",
-    "f64::exp2",
-    "f64::exp_m1",
-    "f64::ln",
-    "f64::log",
-    "f64::log2",
-    "f64::log10",
-    "f64::ln_1p",
-    "f64::powf",
-    "f64::powi",
-    "f64::sin",
-    "f64::cos",
-    "f64::tan",
-    "f64::sin_cos",
-    "f64::asin",
-    "f64::acos",
-    "f64::atan",
-    "f64::atan2",
-    "f64::sinh",
-    "f64::cosh",
-    "f64::tanh",
-    "f64::asinh",
-    "f64::acosh",
-    "f64::atanh",
-    "f64::cbrt",
-    "f64::hypot",
-];
 /// The files that may `expect` `clippy::disallowed_types` and
 /// `clippy::disallowed_methods`, with a reason, and no other file of a
 /// covered crate may (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"): the
 /// two cost measurements, which time with `Instant`;
 /// the replay fixtures' tests, which read their files; the mint's own test;
-/// the conformance corpus's reader and its test; and each generated test's
-/// exploration test, which reads its seed and case count.
-const EXPECT_EXCEPTIONS: [&str; 11] = [
+/// and the conformance corpus's reader and its test. The rule of whole
+/// modules excepts them too, but for the mint's test, which names no module.
+const EXCEPTIONS: [&str; 8] = [
     "crates/verbatim-text/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/terminal_cost.rs",
     "crates/verbatim-core/tests/replay_fixture.rs",
     "crates/verbatim-core/tests/replay_validity.rs",
     "crates/verbatim-core/tests/replay_announcements.rs",
-    "crates/verbatim-model/src/lib.rs",
+    MINT_TEST,
     "crates/verbatim-term-sim/src/conformance.rs",
     "crates/verbatim-term-sim/tests/conformance.rs",
-    "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
-    "crates/verbatim-outpost-logic/src/tests/explore.rs",
-    "crates/verbatim-core/src/queries/explore.rs",
 ];
 
-/// The files the rule of whole modules excepts: the exceptions above but
-/// the mint's test, which names no module.
-const MODULE_EXCEPTIONS: [&str; 10] = [
-    "crates/verbatim-text/tests/terminal_cost.rs",
-    "crates/verbatim-core/tests/terminal_cost.rs",
-    "crates/verbatim-core/tests/replay_fixture.rs",
-    "crates/verbatim-core/tests/replay_validity.rs",
-    "crates/verbatim-core/tests/replay_announcements.rs",
-    "crates/verbatim-term-sim/src/conformance.rs",
-    "crates/verbatim-term-sim/tests/conformance.rs",
-    "crates/verbatim-reader-rules/src/in_flight/tests/explore.rs",
-    "crates/verbatim-outpost-logic/src/tests/explore.rs",
-    "crates/verbatim-core/src/queries/explore.rs",
-];
+/// The mint's own test, in [`EXCEPTIONS`] but held to the rule of whole
+/// modules.
+const MINT_TEST: &str = "crates/verbatim-model/src/lib.rs";
 
 /// The lint names a covered crate may not `allow` or `expect`, since each
 /// silences the two disallowed lints.
@@ -856,9 +670,6 @@ pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String
     };
     let canonical_path = "crates/verbatim-core/clippy.toml";
     let canonical = read(canonical_path)?;
-    for finding in missing_entries(&canonical) {
-        note(format!("{canonical_path}: {finding}"));
-    }
     for name in covered {
         let directory = format!("crates/{name}");
         let clippy = format!("{directory}/clippy.toml");
@@ -897,16 +708,6 @@ pub fn determinism(root: &Path, covered: &BTreeSet<String>) -> Result<(), String
             "a crate on a reducer's path breaks the determinism rule (books/dev/src/reference/testing.md, \"The crates on a reducer's path\"):\n{report}"
         ))
     }
-}
-
-/// The entries of [`DETERMINISM_ENTRIES`] the `clippy.toml` text `toml`
-/// does not name.
-fn missing_entries(toml: &str) -> Vec<String> {
-    DETERMINISM_ENTRIES
-        .iter()
-        .filter(|entry| !toml.contains(&format!("path = \"{entry}\"")))
-        .map(|entry| format!("names no entry for `{entry}`"))
-        .collect()
 }
 
 /// What is wrong with a covered crate's manifest `manifest`: its `[lints]`
@@ -972,30 +773,17 @@ fn workspace_lint_findings(manifest: &str) -> Vec<String> {
 /// with `/` between names, a `target` directory left out.
 fn rust_files(root: &Path, directory: &str) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
-    let mut pending = vec![directory.to_owned()];
-    while let Some(at) = pending.pop() {
-        let entries = fs::read_dir(root.join(&at)).map_err(|error| format!("{at}: {error}"))?;
-        for entry in entries {
-            let entry = entry.map_err(|error| format!("{at}: {error}"))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let path = format!("{at}/{name}");
-            let kind = entry
-                .file_type()
-                .map_err(|error| format!("{path}: {error}"))?;
-            if kind.is_dir() {
-                if name != "target" {
-                    pending.push(path);
-                }
-            } else if Path::new(&name)
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
-            {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
+    collect_rust_files(&root.join(directory), &mut files)?;
+    let mut paths = files
+        .iter()
+        .map(|file| {
+            file.strip_prefix(root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .map_err(|error| format!("{}: {error}", file.display()))
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+    paths.sort();
+    Ok(paths)
 }
 
 /// The determinism rule's findings in the source `source` of the file at
@@ -1007,8 +795,9 @@ fn determinism_findings(path: &str, source: &str) -> Vec<String> {
         .lines()
         .map(|line| strip_strings(&strip_comments(line)))
         .collect();
-    let mut found = silencing_findings(&code, EXPECT_EXCEPTIONS.contains(&path));
-    if !MODULE_EXCEPTIONS.contains(&path) {
+    let excepted = EXCEPTIONS.contains(&path);
+    let mut found = silencing_findings(&code, excepted);
+    if !excepted || path == MINT_TEST {
         for (line, used) in uses(&code) {
             if forbidden_std(&used) {
                 found.push(format!("{line}: uses `{used}`"));
@@ -1149,7 +938,7 @@ mod tests {
     const PURE: Checked = Checked {
         path: "pure.rs",
         allowed: &ALLOWED,
-        forbidden: &FORBIDDEN,
+        forbidden: &[&FORBIDDEN],
         skip_tests: false,
         within: None,
     };
@@ -1158,7 +947,7 @@ mod tests {
     const HOOK: Checked = Checked {
         path: "hook.rs",
         allowed: &HOOK_ALLOWED,
-        forbidden: &HOOK_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &HOOK_LOOP_FORBIDDEN],
         skip_tests: true,
         within: None,
     };
@@ -1167,7 +956,7 @@ mod tests {
     const HOOK_START: Checked = Checked {
         path: "lib.rs",
         allowed: &[],
-        forbidden: &HOOK_START_FORBIDDEN,
+        forbidden: &[&HOOK_FORBIDDEN, &["GetMessageW"]],
         skip_tests: true,
         within: Some("start_up"),
     };
@@ -1257,7 +1046,7 @@ fn after() { GetMessageW(); }
     const AUDIO: Checked = Checked {
         path: "run.rs",
         allowed: &AUDIO_ALLOWED,
-        forbidden: &AUDIO_FORBIDDEN,
+        forbidden: &[&AUDIO_FORBIDDEN],
         skip_tests: false,
         within: None,
     };
@@ -1275,7 +1064,7 @@ fn after() { GetMessageW(); }
     const REDUCER: Checked = Checked {
         path: "reducer/",
         allowed: &REDUCER_ALLOWED,
-        forbidden: &REDUCER_FORBIDDEN,
+        forbidden: &[&REDUCER_FORBIDDEN],
         skip_tests: true,
         within: None,
     };
@@ -1301,10 +1090,27 @@ fn after() { GetMessageW(); }
         assert_eq!(findings(source, &REDUCER), Vec::<String>::new());
     }
 
+    /// A test module in a file of its own ends at its declaration, and a
+    /// test-only function at its closing brace, so the code after either
+    /// is still read.
     #[test]
-    fn a_test_module_in_a_file_of_its_own_is_named_by_its_declaration() {
-        let source = "mod entry;\n#[cfg(test)]\nmod tests;\n";
-        assert_eq!(test_module_files(source), ["tests.rs"]);
+    fn a_test_module_in_its_own_file_blanks_only_its_declaration() {
+        let source = "#[cfg(test)]\nmod tests;\nuse self::charge::{Abandoned, InCharge};\n#[cfg(test)]\nfn helper() {\n}\nfn after() {}\nmod later {}\n";
+        let mut code: Vec<String> = source.lines().map(str::to_owned).collect();
+        blank_test_modules(&mut code);
+        assert_eq!(
+            code,
+            [
+                "",
+                "",
+                "use self::charge::{Abandoned, InCharge};",
+                "",
+                "",
+                "",
+                "fn after() {}",
+                "mod later {}",
+            ]
+        );
     }
 
     #[test]
@@ -1409,21 +1215,6 @@ fn after() { GetMessageW(); }
                 "[workspace.lints.clippy]\npedantic = { level = \"warn\", priority = -1 }\ndisallowed-methods = \"allow\"\n"
             ),
             ["the workspace's lints name `disallowed_methods`"]
-        );
-    }
-
-    /// The canonical `clippy.toml` names every entry the scan lists.
-    #[test]
-    fn a_clippy_toml_missing_an_entry_is_found() {
-        let mut all = String::new();
-        for entry in DETERMINISM_ENTRIES {
-            let _ = writeln!(all, "    {{ path = \"{entry}\", reason = \"r\" }},");
-        }
-        assert_eq!(missing_entries(&all), Vec::<String>::new());
-        let without = all.replace("path = \"f64::exp2\"", "path = \"f64::exp3\"");
-        assert_eq!(
-            missing_entries(&without),
-            ["names no entry for `f64::exp2`"]
         );
     }
 }

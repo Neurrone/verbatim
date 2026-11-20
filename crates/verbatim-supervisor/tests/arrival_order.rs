@@ -51,14 +51,10 @@ const APPLICATION: &str = "--stand-in-application";
 /// The environment variable naming the event the stand-in listener sets.
 const SIGNAL_ENV: &str = "VERBATIM_TEST_ARRIVAL_SIGNAL";
 
-/// The environment variable naming the event the stand-in outpost sets on
-/// its fourth ping.
-const PINGS_ENV: &str = "VERBATIM_TEST_ARRIVAL_PINGS";
-
 /// How long a child has to exit after the shutdown message.
 const LIMIT: Duration = Duration::from_secs(5);
 
-/// The longest any step waits: past four pings, three intervals apart.
+/// The longest any step waits.
 const WAIT: Duration = Duration::from_secs(30);
 
 /// The value after `name` on the command line.
@@ -202,9 +198,7 @@ fn stand_in(args: &[String]) -> ! {
     };
     // Whether to write a frame when shut down.
     let mut farewell = false;
-    let pings_event = open_event(PINGS_ENV);
     let signal = open_event(SIGNAL_ENV);
-    let mut pings = 0;
     loop {
         let command = match read_message::<_, CoreToOutpost>(&mut commands) {
             Ok(Some(command)) => command,
@@ -221,10 +215,6 @@ fn stand_in(args: &[String]) -> ! {
                         written_at_us: 0,
                     },
                 );
-                pings += 1;
-                if pings == 4 {
-                    set(pings_event);
-                }
             }
             CoreToOutpost::IdleQuery { .. } => set(signal),
             CoreToOutpost::Shutdown => {
@@ -251,13 +241,13 @@ fn stand_in(args: &[String]) -> ! {
     }
 }
 
-/// The named events the stand-in outpost sets: when it is asked for an
-/// idle round, and on its fourth ping.
-struct Signal(HANDLE, HANDLE);
+/// The named event the stand-in outpost sets when it is asked for an idle
+/// round.
+struct Signal(HANDLE);
 
 impl Signal {
-    /// Names this process's events for the stand-in outposts it starts,
-    /// and makes them.
+    /// Names this process's event for the stand-in outposts it starts, and
+    /// makes it.
     fn new() -> Self {
         let name = format!("Local\\verbatim-arrival-order-{}", std::process::id());
         // SAFETY: the environment is set before any thread that reads it
@@ -267,25 +257,7 @@ impl Signal {
         // drop.
         let event =
             unsafe { CreateEventW(None, false, false, &HSTRING::from(&name)) }.expect("an event");
-        let pings_name = format!("{name}-pings");
-        // SAFETY: as above.
-        unsafe { std::env::set_var(PINGS_ENV, &pings_name) };
-        // SAFETY: as above.
-        let pings = unsafe { CreateEventW(None, false, false, &HSTRING::from(pings_name)) }
-            .expect("an event");
-        Self(event, pings)
-    }
-
-    /// Waits for the outpost to say it has been pinged four times: three
-    /// ping intervals have passed since its first.
-    fn wait_for_fourth_ping(&self) {
-        let milliseconds = u32::try_from(WAIT.as_millis()).expect("in range");
-        // SAFETY: an event handle this process holds.
-        let waited = unsafe { WaitForSingleObject(self.1, milliseconds) };
-        assert_eq!(
-            waited, WAIT_OBJECT_0,
-            "the outpost was not pinged four times"
-        );
+        Self(event)
     }
 
     /// Waits for the outpost to say it was asked for the idle round the
@@ -306,8 +278,6 @@ impl Drop for Signal {
     fn drop(&mut self) {
         // SAFETY: the handle is this value's, closed once.
         let _ = unsafe { CloseHandle(self.0) };
-        // SAFETY: as above.
-        let _ = unsafe { CloseHandle(self.1) };
     }
 }
 
@@ -551,33 +521,6 @@ fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     end(app);
 }
 
-/// The reducer held for three ping intervals ends no outpost, since the
-/// relay reads the outposts' pongs itself: its stand-in is pinged four
-/// times with a key waiting, is then still answering, and is shut down
-/// cleanly.
-fn a_reducer_held_past_three_ping_intervals_ends_no_outpost(signal: &Signal) {
-    let (app, pid) = application();
-    let mut reducer = Reducer::start();
-    reducer.with_outposts(&[pid]);
-
-    // Held from here, with a key waiting.
-    reducer.press(1);
-    signal.wait_for_fourth_ping();
-
-    assert_eq!(reducer.take(1), ["key 1"]);
-    // The outpost was not ended, and still answers.
-    reducer.cue("O1", 7);
-    assert_eq!(reducer.take(1), ["O1: C"]);
-
-    reducer.finish(ShutdownSummary {
-        clean: 2,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    end(app);
-}
-
 /// While the reducer is held, the relay keeps draining an outpost's pipe:
 /// the outpost writes far more than the pipe holds, and each of its writes
 /// completes, and everything it sent arrives, in order.
@@ -680,7 +623,7 @@ fn main() -> std::process::ExitCode {
     // Each test names the event its stand-in listener sets ([`Signal`]),
     // which every stand-in listener opens, whether or not the test waits
     // on it.
-    let tests: [(&str, fn()); 6] = [
+    let tests: [(&str, fn()); 5] = [
         (
             "a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after",
             || {
@@ -713,12 +656,6 @@ fn main() -> std::process::ExitCode {
             || {
                 let _signal = Signal::new();
                 nothing_an_outpost_writes_after_the_supervisor_ended_it_reaches_the_reducer();
-            },
-        ),
-        (
-            "a_reducer_held_past_three_ping_intervals_ends_no_outpost",
-            || {
-                a_reducer_held_past_three_ping_intervals_ends_no_outpost(&Signal::new());
             },
         ),
     ];

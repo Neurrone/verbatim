@@ -360,11 +360,11 @@ pub fn submodule_pin(root: &Path, nvda_version: &str) -> (String, Option<bool>) 
 
 /// Whether the submodule at `commit`, tagged `tags`, is the build
 /// `nvda_version` names; `None` when the version names neither a commit
-/// nor a release.
+/// of at least seven hex digits nor a release.
 fn pin_matches(commit: &str, tags: &[&str], nvda_version: &str) -> Option<bool> {
     if let Some((_, built)) = nvda_version.rsplit_once(',') {
         let built = built.trim();
-        if !built.is_empty() && built.chars().all(|c| c.is_ascii_hexdigit()) {
+        if built.len() >= 7 && built.chars().all(|c| c.is_ascii_hexdigit()) {
             return Some(commit.starts_with(&built.to_ascii_lowercase()));
         }
         return None;
@@ -753,6 +753,16 @@ mod tests {
         );
         assert_eq!(pin_matches(commit, &[], "2026.3"), Some(false));
         assert_eq!(pin_matches(commit, &[], "source-master"), None);
+    }
+
+    /// A commit of fewer than seven hex digits names no build: one digit
+    /// would match a sixteenth of all commits.
+    #[test]
+    fn a_built_commit_shorter_than_seven_digits_names_no_build() {
+        let commit = "732d1ce2f0123456789abcdef0123456789abcde";
+        assert_eq!(pin_matches(commit, &[], "alpha-1,7"), None);
+        assert_eq!(pin_matches(commit, &[], "alpha-1,732d1c"), None);
+        assert_eq!(pin_matches(commit, &[], "alpha-1,732d1ce"), Some(true));
     }
 
     #[test]

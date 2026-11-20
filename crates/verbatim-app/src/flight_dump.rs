@@ -157,13 +157,13 @@ pub fn install_panic_hook(recorder: Arc<Mutex<ReducerRecorder>>, dumps_dir: Path
             dump_now(&recorder, &dumps_dir)
         })) {
             Ok(Ok(path)) => {
-                tracing::error!(path = %path.display(), "flight-recorder dump written before panic");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, path = %path.display(), "flight-recorder dump written before panic");
             }
             Ok(Err(error)) => {
-                tracing::error!(%error, "flight-recorder dump failed while handling a panic");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, %error, "flight-recorder dump failed while handling a panic");
             }
             Err(_) => {
-                tracing::error!("flight-recorder dump panicked while handling a panic; swallowed");
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, "flight-recorder dump panicked while handling a panic; swallowed");
             }
         }
         previous(info);
