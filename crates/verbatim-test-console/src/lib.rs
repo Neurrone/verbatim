@@ -1,7 +1,8 @@
-//! A console the tests start: `conhost.exe` running PowerShell in a hidden
-//! console window, optionally with a hidden window of the client's own on
-//! another thread, for the tests of a console window's provider process in
-//! `verbatim-win32` and `verbatim-outpost`. A dev-dependency only, so the
+//! A console the tests start: `conhost.exe` running the crate's own client,
+//! `verbatim-console-client`, in a hidden console window, optionally with a
+//! hidden window of the client's own on another thread, for the tests of a
+//! console window's provider process in `verbatim-win32` and
+//! `verbatim-outpost`. A dev-dependency only, so the
 //! crates it serves are built once for their tests and their builds alike.
 //!
 //! The console runs on a desktop made for it, and the test on a thread of
@@ -39,6 +40,10 @@ use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 /// How long the console's client is waited for.
 const WAIT: Duration = Duration::from_secs(10);
+
+/// The console's client, which the build script compiles
+/// (`src/bin/verbatim-console-client.rs`).
+const CLIENT: &str = concat!(env!("OUT_DIR"), "\\verbatim-console-client.exe");
 
 /// Numbers this process's desktops, so each is new.
 static DESKTOPS: AtomicUsize = AtomicUsize::new(0);
@@ -256,17 +261,17 @@ fn job_processes(job: &OwnedHandle) -> String {
         .join(", ")
 }
 
-/// A console host the test starts, `conhost.exe` running PowerShell in
-/// a hidden console window on a desktop of its own, in a job that ends
-/// both when dropped.
+/// A console host the test starts, `conhost.exe` running
+/// `verbatim-console-client` in a hidden console window on a desktop of
+/// its own, in a job that ends both when dropped.
 pub struct Console {
     /// The console host's process id.
     pub host: u32,
     /// The console's window.
     pub window: isize,
-    /// A hidden window of the console's client, PowerShell, made on its
-    /// pipeline thread, another thread than the one Windows names as the
-    /// console window's ([`Console::with_client_window`]); 0 for a
+    /// A hidden window of the console's client, made on a thread of its
+    /// own, another thread than the one Windows names as the console
+    /// window's ([`Console::with_client_window`]); 0 for a
     /// console started with [`Console::with`].
     pub client_window: isize,
     _job: OwnedHandle,
@@ -277,21 +282,20 @@ impl Console {
     /// evidence that its client runs in it, and runs `test` with it on a
     /// thread of that desktop, returning what `test` returns. The evidence
     /// is the window's title changed by the client, raised as a `WinEvent`
-    /// from the console host. The client is PowerShell, whose
-    /// `WindowTitle` sets the title exactly as given; `cmd.exe`'s `title`
-    /// command prefixes "Administrator: " when elevated, as GitHub's
-    /// runner is, so the title waited for never came there.
+    /// from the console host, set by the crate's own client
+    /// (`books/dev/src/reference/crates/verbatim-test-console.md`,
+    /// "verbatim-console-client").
     ///
     /// # Panics
     ///
     /// When the console cannot be started, its client has not set its
     /// title within ten seconds, or `test` panics.
     pub fn with<R: Send>(test: impl FnOnce(&Self) -> R + Send) -> R {
-        on_desktop(|desktop| Self::launch(desktop, ""), test)
+        on_desktop(|desktop| Self::launch(desktop, None), test)
     }
 
     /// Runs `test` as [`Console::with`] does, the console's client having
-    /// a hidden Windows Forms window of its own, made before the client
+    /// a hidden top-level window of its own, made before the client
     /// sets the console's title, so the window exists once the title is
     /// seen and is found by its own title.
     ///
@@ -302,14 +306,7 @@ impl Console {
         on_desktop(
             |desktop| {
                 let marker = format!("verbatim-console-client-window-{}", std::process::id());
-                let mut console = Self::launch(
-                    desktop,
-                    &format!(
-                        "Add-Type -AssemblyName System.Windows.Forms; \
-                         $form=[Windows.Forms.Form]::new(); $form.Text='{marker}'; \
-                         $null=$form.Handle; "
-                    ),
-                );
+                let mut console = Self::launch(desktop, Some(&marker));
                 let marker = HSTRING::from(marker);
                 // SAFETY: no class, a nul-terminated title; answers an
                 // error when no top-level window of this thread's desktop
@@ -324,9 +321,9 @@ impl Console {
     }
 
     /// Starts the console on the desktop named `desktop`, nul-terminated,
-    /// which this thread is on, its client running `prelude` before it
-    /// sets the window's title.
-    fn launch(desktop: &[u16], prelude: &str) -> Self {
+    /// which this thread is on, its client making a hidden window titled
+    /// `window`, when given, before it sets the console window's title.
+    fn launch(desktop: &[u16], window: Option<&str>) -> Self {
         let title = format!("verbatim-console-test-{}", std::process::id());
         TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
         RENAMED.with(|renamed| renamed.set(0));
@@ -348,8 +345,8 @@ impl Console {
         }
         .expect("the job's limit");
         let mut command: Vec<u16> = format!(
-            "conhost.exe powershell.exe -NoLogo -NoProfile -NoExit -Command \
-             {prelude}$Host.UI.RawUI.WindowTitle='{title}'"
+            "conhost.exe \"{CLIENT}\" {title} {}",
+            window.unwrap_or_default()
         )
         .encode_utf16()
         .chain(Some(0))

@@ -9,8 +9,8 @@ tests and their builds compile them once, with the same features.
 Public API:
 
 - `Console::with(test)` makes a desktop of its own in the process's
-  window station, starts `conhost.exe` running PowerShell in a hidden
-  console window on it, in a job that ends both when the `Console` is
+  window station, starts `conhost.exe` running the crate's client,
+  `verbatim-console-client`, in a hidden console window on it, in a job that ends both when the `Console` is
   dropped, and runs `test` with the `Console` on a new thread moved to
   that desktop, returning what `test` returns and raising its panic again.
   The console is on a desktop of its own because a console host started on
@@ -21,23 +21,36 @@ Public API:
   that the client runs in the console arrives: the window's title changed
   by the client to one unique to the test process, raised as a `WinEvent`
   from the console host. It panics when the console cannot be started or
-  the title has not changed within ten seconds. PowerShell is the client
-  because `cmd.exe`'s `title` command prefixes "Administrator: " when
-  elevated, as GitHub's runner is.
+  the title has not changed within ten seconds.
 - `Console::host`, the console host's process id, and `Console::window`,
   the console window, whose owner by `GetWindowThreadProcessId` is the
-  client, PowerShell, while the host serves it.
+  client, while the host serves it.
 - `Console::with_client_window(test)` runs `test` as `with` does, the
-  console's client first making a hidden Windows Forms window of its own
-  on PowerShell's pipeline thread, another thread than the one Windows
-  names as the console window's, found by a title unique to the test
+  console's client first making a hidden top-level window of its own
+  on a thread of its own, another thread than the one Windows names as
+  the console window's, found by a title unique to the test
   process; it panics as `with` does, or when that window is not found.
   `Console::client_window` is that window, 0 for a console started with
   `with`. The moved-on rule's test in `verbatim-win32` uses it.
 
+## verbatim-console-client
+
+The console's client (`src/bin/verbatim-console-client.rs`) takes the
+title and, for `with_client_window`, the client window's title; it makes
+that window, sets the console's title with `SetConsoleTitleW`, and waits
+until the console's job ends it. The build script compiles it alone, with
+no dependencies, into the build's output folder, where the library starts
+it from, since a library cannot name a binary of its own package and the
+crates whose tests use the console do not build this package's binaries;
+as the package's binary it is formatted and linted with the rest. It is
+native because Windows PowerShell, the client before it, did not set the
+title within ten seconds under `cargo xtask ci`'s load on GitHub's runner;
+`cmd.exe` is not used because its `title` command prefixes
+"Administrator: " when elevated, as GitHub's runner is.
+
 ## verbatim-stream-test
 
-The crate's binary, `verbatim-stream-test` (`src/bin/verbatim-stream-test`),
+The crate's other binary, `verbatim-stream-test` (`src/bin/verbatim-stream-test`),
 is a program of Verbatim's own that streams text into the terminal it runs
 in, each way programs stream it, at up to 60 frames a second, beside a
 redrawn status row with Pi's spinner and a timer, and a prompt that takes

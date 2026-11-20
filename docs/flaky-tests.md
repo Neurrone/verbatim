@@ -38,10 +38,6 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - How: fails at "brings the first window back": on 2026-10-31 the harness could not bring the first console window back to the foreground, because its window did not process the restore for 5 s after its flood. 10 of 10 locally.
   - Cause: the VM renders the desktop in software (WARP), so the Desktop Window Manager works through a flooded console's repaints for about 40 seconds after the flood, and a minimize waits for it in `win32kfull!DwmSyncNotifyMinimizing` while the console's window thread is idle. It happens with no Verbatim running ([troubleshooting](../books/dev/src/how-to/troubleshooting.md), "Minimizing a console after a flood takes 30 to 45 seconds").
   - Fix: none planned for the manager's backlog (Dickson decided to leave it unaddressed); the harness does not wait for the manager (Dickson, 2026-10-26).
-- `outpost::read::tests::only_the_console_host_reads_the_focus_in_its_console_window` under `cargo xtask ci` on GitHub's runner (run 44414430624, 2026-11-19)
-  - How: the test console panicked with "the console's window took its client's title" (`crates/verbatim-test-console/src/lib.rs`) after its 10 s wait for the console window's name change, before the test read anything.
-  - Cause: not yet named. The panic now names every name the console host's windows took during the wait and each process in the console's job with its image and whether it is running, so the next failure says whether the shell started and what title the window had.
-  - Fix: a measurement of 20 runs of the test alone, then the next failure's message read. The wait is not lengthened.
 
 ## Terminal scenarios, single failures on GitHub's runner
 
