@@ -919,7 +919,7 @@ private:
 // Gives a slider its position as its MSAA value. A standard trackbar's
 // value is its position as a percentage of its range, which is the
 // position itself only for a range of 0 to 100; a line limit's range is 1
-// to 100, so 30 read as 29. Everything else falls back to the standard
+// to 10,000, so 30 read as 0. Everything else falls back to the standard
 // trackbar's own answers.
 class SliderPositionAccessible : public wxAccessible {
 public:
@@ -1542,6 +1542,15 @@ void synthesizer_switched(const SynthesizerSwitch& outcome) {
                                               : static_cast<wxWindow*>(g_shell->frame);
     }
     wxMessageBox(Text(outcome.error), Text(outcome.error_title), wxOK | wxICON_WARNING, parent);
+}
+
+void show_message(rust::Str title, rust::Str text) {
+    if (g_shell == nullptr || g_shell->shutting_down) {
+        return;
+    }
+    wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
+                 wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
+                 g_shell->frame);
 }
 
 void set_speech_control(std::uint32_t generation, std::size_t control, std::int32_t value) {

@@ -391,7 +391,8 @@ pub fn save_theme(themes_dir: &Path, theme: &Theme) -> Result<PathBuf, ThemeErro
     let dir = themes_dir.join(&theme.id);
     fs::create_dir_all(&dir).map_err(|error| ThemeError::Io(dir.clone(), error))?;
     let text = theme_to_toml(theme).map_err(ThemeError::Serialize)?;
-    write_atomic(&dir.join(MANIFEST), text.as_bytes())?;
+    crate::write_atomic(&dir.join(MANIFEST), text.as_bytes())
+        .map_err(|(path, error)| ThemeError::Io(path, error))?;
     Ok(dir)
 }
 
@@ -646,15 +647,6 @@ fn sound_files(theme: &Theme) -> Vec<String> {
     files.sort();
     files.dedup();
     files
-}
-
-/// Writes `contents` to `path` through a temporary file renamed over it.
-fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), ThemeError> {
-    let mut temp = path.to_path_buf();
-    temp.set_extension("toml.tmp");
-    fs::write(&temp, contents).map_err(|error| ThemeError::Io(temp.clone(), error))?;
-    // On Windows, std::fs::rename replaces an existing destination.
-    fs::rename(&temp, path).map_err(|error| ThemeError::Io(path.to_path_buf(), error))
 }
 
 #[cfg(test)]

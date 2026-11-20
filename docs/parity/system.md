@@ -206,8 +206,27 @@ the end of [Braille](../nvda/braille.md).
 Configuration profiles and triggers (app, say-all, manual;
 queue-synchronized application to speech). NVDA:
 [Configuration and profiles](../nvda/config-and-profiles.md).
-Verbatim: **not yet (M8.3)** — `verbatim-config` covers the base
-store only; the layering and trigger semantics are undesigned.
+Verbatim: **not yet (M8.3)** — `verbatim-config` holds `settings.toml`
+alone; the layering and trigger semantics are undesigned.
+
+### A settings file that fails to load
+
+NVDA: a base configuration file that fails to load is renamed with
+`.corrupted.bak` after its name, replacing an older backup, the error is
+logged, the configuration is reset to factory defaults, and once the GUI
+is up a message box titled "Configuration File Error" says "Your
+configuration file contains errors. Your configuration has been reset
+to factory defaults. More details about the errors can be found in the
+log file." (`nvda/source/config/__init__.py` 536-562, `nvda/source/core.py`
+156-169). Verbatim: **matched**: `settings.toml` is kept as
+`settings.toml.corrupted.bak` and the defaults are used, the error is
+logged as a warning, and the GUI shows the same box in NVDA's words,
+spoken "Configuration File Error dialog", the text, then "OK button", as
+NVDA speaks it (`crates/verbatim-i18n/tests/captures/configuration-file-error.txt`,
+a capture at NVDA alpha-58022). A rename that fails leaves the file, which
+the first saved change overwrites, as NVDA's does. One difference: one
+bad value fails Verbatim's whole file, where NVDA checks a value when it
+is read; keeping the other values is M8.3's.
 
 ### Settings GUI generated from driver descriptors
 
@@ -245,7 +264,8 @@ full" and "Last lines to speak", 1 to 10,000, sliders, more than either
 terminal's history holds, Core's 10 MB bound on waiting output
 protecting memory (Dickson, 2026-10-09)), which NVDA has no equivalent
 of, and "Speak passwords typed in terminals". Its changes wait for OK or
-Apply, as NVDA's do, where the Speech and Theme pages apply live
+Apply, which write all four values, as NVDA's panels write every
+control on save, where the Speech and Theme pages apply live
 (`terminal_settings_page` verifies that an applied change reaches
 Core).
 

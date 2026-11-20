@@ -71,10 +71,10 @@ Public API:
   manager.
 - `TerminalHost` (trait) and `TerminalChange` — what the Terminal page
   needs from the app: `reader_settings`, the reader settings as they are
-  now, and `change`, which applies a `TerminalChange` to Core's reader
-  settings and saves them. A `TerminalChange` carries each terminal
-  setting that changed (`report_output`, `full_lines`, `last_lines`,
-  `speak_passwords`, each an `Option`), and `apply_to` merges it into a
+  now, and `change`, which writes a `TerminalChange` into Core's reader
+  settings and saves them. A `TerminalChange` carries the page's four
+  values (`report_output`, `full_lines`, `last_lines`,
+  `speak_passwords`), and `apply_to` writes them into a
   `ReaderSettings`, leaving the rest alone. The app implements the host
   over its configuration store and the reducer thread.
 
@@ -310,9 +310,10 @@ its position, leaving everything else to the trackbar's own answers. The page is
 from the reader settings as they are when it is first shown, so a
 Verbatim+5 toggle made earlier is shown. Unlike the Speech and Theme
 pages, a change here waits for OK, Apply, or Control+S, as in NVDA's
-panels; applying sends only the settings changed since the page opened
-or was last applied, so a Verbatim+5 pressed while the dialog is open is
-not undone, and Cancel drops what was not applied, which Core never saw.
+panels; applying writes all four values, as NVDA's panels write every
+control on save, so a Verbatim+5 pressed while the dialog is open is
+undone by OK if the page still shows the setting on, and Cancel drops
+what was not applied, which Core never saw.
 The page joins the Control+Tab cycle as the third category.
 
 The systrayList replica (M3): `OpenShellItemList` focuses the existing

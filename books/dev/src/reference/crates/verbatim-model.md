@@ -227,9 +227,13 @@ recorder unchanged. What the reducer does with each type is in
   paragraph, or line (sentence); keeping the display on during say-all
   (on); speaking terminal passwords (off); reporting new terminal output
   (on); and the flood policy's "Lines spoken in full" and "Last lines to
-  speak" (30 each), read through `full_lines` and `last_lines`, which keep
-  them between 1 and `MAX_TERMINAL_LINES`. `TypingEcho::next` is the
-  toggle key's cycle. [verbatim-config](verbatim-config.md) stores them.
+  speak" (30 each), each a `TerminalLines`, brought between 1 and
+  `MAX_TERMINAL_LINES` as it is made or read from a file, so no reader
+  clamps it, and read as counts through `full_lines` and `last_lines`.
+  `TypingEcho::next` is the toggle key's cycle. [verbatim-config](verbatim-config.md) stores them.
+- `VerbatimKeys` and `KeyboardLayout`: the Verbatim modifier keys and
+  the gesture-binding layout, declared once for the configuration, which
+  stores them, and the keyboard hook, which reads them.
 - The theme model, under "Themes".
 - `GestureId` and `GestureParseError`: normalized gesture identifiers,
   NVDA's scheme. `GestureId::parse` splits `source:parts`, lowercases
@@ -774,9 +778,12 @@ is [verbatim-speech](verbatim-speech.md)'s.
   missing or unreadable, a sound file name that is not a plain name, an
   unknown voice style, a gain too high); a theme with problems still
   loads.
-- `ThemeOptions`: the settings that go with a theme: sound volume (0 to
-  100, relative to speech), sounds during say-all, and speaking
-  indications that play a sound.
+- `ThemeOptions`: the settings that go with a theme: sound volume (a
+  `SoundVolume`, 0 to 100 relative to speech, 100 when read past it),
+  sounds during say-all, and speaking indications that play a sound.
+  `sound_gain(theme, setting, options)` is the gain a sound plays at: the
+  theme's, the indication's and the sound volume together, for speech and
+  the Theme page alike.
 - `ReportedDetails`: the details the theme reports, each unless its
   indication is off: the node details (a `NodeDetailSet` of description,
   keyboard shortcut, position, level and a cell's row and column) and the

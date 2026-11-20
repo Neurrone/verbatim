@@ -889,8 +889,8 @@ impl Default for ReportedDetails {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeOptions {
-    /// The volume of sounds relative to speech, from 0 to 100.
-    pub sound_volume: u8,
+    /// The volume of sounds relative to speech.
+    pub sound_volume: SoundVolume,
     /// Whether sounds play during say-all.
     pub sounds_during_say_all: bool,
     /// Whether indications reported by sound alone are spoken as well, to
@@ -901,11 +901,45 @@ pub struct ThemeOptions {
 impl Default for ThemeOptions {
     fn default() -> Self {
         Self {
-            sound_volume: 100,
+            sound_volume: SoundVolume(100),
             sounds_during_say_all: true,
             speak_sounded_indications: false,
         }
     }
+}
+
+/// The volume of sounds relative to speech, from 0 to 100 however it was
+/// written: one past 100 is 100 as it is made or read from a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct SoundVolume(u8);
+
+impl SoundVolume {
+    /// `percent`, 100 when past it.
+    #[must_use]
+    pub fn new(percent: u8) -> Self {
+        Self(percent.min(100))
+    }
+
+    /// The volume in percent.
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SoundVolume {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        u8::deserialize(deserializer).map(Self::new)
+    }
+}
+
+/// The gain a sound of `setting` plays at in `theme`: the theme's gain,
+/// the indication's and the sound volume together, 1.0 for as recorded.
+#[must_use]
+pub fn sound_gain(theme: &Theme, setting: &IndicationSetting, options: ThemeOptions) -> f32 {
+    let percent = |gain: u16| f32::from(gain.min(MAX_GAIN)) / 100.0;
+    percent(theme.gain) * percent(setting.gain) * f32::from(options.sound_volume.get()) / 100.0
 }
 
 #[cfg(test)]

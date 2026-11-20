@@ -55,8 +55,15 @@ use terminal_panel::TerminalPanel;
 use theme_panel::ThemePanel;
 
 /// A command posted to the GUI thread from anywhere in the app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuiCommand {
+    /// Show an OK-only warning box with this title and text.
+    ShowMessage {
+        /// The box's title.
+        title: String,
+        /// Its text.
+        text: String,
+    },
     /// Pop the Verbatim menu at screen centre (the gesture-driven entry point).
     ShowMenu,
     /// Open the settings dialog, or focus it if it is already open.
@@ -296,6 +303,12 @@ impl GuiCore {
             GuiCommand::OpenSettings => self.open_settings(),
             GuiCommand::OpenShellItemList(kind) => self.open_shell_item_list(kind),
             GuiCommand::Shutdown => self.shut_down(),
+            GuiCommand::ShowMessage { title, text } => {
+                self.pre_popup();
+                self.gui.show_message(&title, &text);
+                let after = self.lifecycle.borrow().frame_after_popup();
+                self.post_popup(after);
+            }
         }
     }
 
@@ -534,7 +547,7 @@ impl GuiCore {
                 tracing::warn!(failures, "could not save the theme settings");
             }
         }
-        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
+        if let Some(terminal) = self.terminal.borrow().as_ref() {
             terminal.apply();
         }
     }
@@ -543,9 +556,6 @@ impl GuiCore {
         self.host.revert();
         if let Some(theme) = self.theme.borrow_mut().as_mut() {
             theme.cancel();
-        }
-        if let Some(terminal) = self.terminal.borrow_mut().as_mut() {
-            terminal.cancel();
         }
     }
 

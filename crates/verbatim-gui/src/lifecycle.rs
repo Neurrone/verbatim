@@ -156,7 +156,7 @@ impl Lifecycle {
 
     /// What to do with the frame once a popup, the menu or a dialog, is
     /// gone.
-    fn frame_after_popup(&self) -> Frame {
+    pub(crate) fn frame_after_popup(&self) -> Frame {
         if self.menu_open || self.settings_open || self.shell_list == ShellList::Open {
             Frame::Keep
         } else {

@@ -8,6 +8,9 @@ startup-message = Verbatim is starting.
 # and this one does not start, and the title of the message box that says so.
 replace-failed = Couldn't end the running Verbatim, abandoning start.
 replace-failed-title = Error
+# The box shown at start when the settings file failed to load, in NVDA's words.
+config-error-title = Configuration File Error
+config-error-text = Your configuration file contains errors. Your configuration has been reset to factory defaults. More details about the errors can be found in the log file.
 
 ## The Verbatim menu and tray icon.
 

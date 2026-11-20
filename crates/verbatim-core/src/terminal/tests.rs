@@ -681,7 +681,7 @@ fn a_flood_that_starts_with_a_lost_read_is_counted_as_about() {
 fn terminal_with_full_lines(full: u16) -> SrState {
     let mut state = terminal();
     let mut settings = state.settings();
-    settings.terminal_full_lines = full;
+    settings.terminal_full_lines = verbatim_model::TerminalLines::new(full);
     let _ = reduce(
         &mut state,
         &mut crate::Runtime::default(),

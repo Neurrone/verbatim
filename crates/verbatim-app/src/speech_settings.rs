@@ -32,7 +32,11 @@ impl SpeechSettingsStore for SpeechSettings {
             .filter_map(|(id, value)| {
                 let value = match value {
                     ConfigValue::Integer(number) => {
-                        SettingValue::Number(i32::try_from(*number).ok()?)
+                        let Ok(number) = i32::try_from(*number) else {
+                            tracing::warn!(%synth, setting = id, number, "a saved number is out of range; the synthesizer keeps its own value");
+                            return None;
+                        };
+                        SettingValue::Number(number)
                     }
                     ConfigValue::Text(option) => SettingValue::Choice(option.clone()),
                     ConfigValue::Flag(flag) => SettingValue::Toggle(*flag),

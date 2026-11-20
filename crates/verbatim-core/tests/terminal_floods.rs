@@ -43,8 +43,8 @@ fn terminal(flavor: Flavor, text: &str, limit: u16) -> Session {
         .write(format!("{text}{PROMPT}command").as_bytes());
     let mut session = Session::with(outpost);
     session.input(&Input::Settings(ReaderSettings {
-        terminal_full_lines: limit,
-        terminal_last_lines: limit,
+        terminal_full_lines: verbatim_model::TerminalLines::new(limit),
+        terminal_last_lines: verbatim_model::TerminalLines::new(limit),
         ..ReaderSettings::default()
     }));
     session.manual_play = true;

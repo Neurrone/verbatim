@@ -24,8 +24,8 @@ use verbatim_i18n::{
     negated_state_name, phrase_text, position_in_set, role_name, state_name,
 };
 use verbatim_model::{
-    Earcon, Indication, IndicationSetting, MAX_GAIN, Presentation, ReportedDetails, SegmentContent,
-    SoundSource, TextFormat, Theme, ThemeOptions, ThemeProblem, Utterance, UtteranceId,
+    Earcon, Indication, IndicationSetting, Presentation, ReportedDetails, SegmentContent,
+    SoundSource, TextFormat, Theme, ThemeOptions, ThemeProblem, Utterance, UtteranceId, sound_gain,
 };
 use verbatim_text::{composed, is_capital};
 
@@ -168,7 +168,7 @@ impl ActiveTheme {
         Decision {
             setting,
             sound,
-            gain: self.gain(setting),
+            gain: sound_gain(&self.theme, setting, self.options),
             speak,
         }
     }
@@ -178,16 +178,6 @@ impl ActiveTheme {
         static SPEECH: std::sync::LazyLock<IndicationSetting> =
             std::sync::LazyLock::new(IndicationSetting::default);
         self.settings.get(&indication).unwrap_or(&SPEECH)
-    }
-
-    /// The gain a sound of `setting` plays at: the theme's, the
-    /// indication's, and the sound volume together.
-    fn gain(&self, setting: &IndicationSetting) -> f32 {
-        let percent = |gain: u16| f32::from(gain.min(MAX_GAIN)) / 100.0;
-        percent(self.theme.gain)
-            * percent(setting.gain)
-            * f32::from(self.options.sound_volume.min(100))
-            / 100.0
     }
 
     /// The pitch change of the voice style `setting` names, 0 for none.
@@ -1107,7 +1097,7 @@ mod tests {
         let presenter = presenter_of(
             theme,
             ThemeOptions {
-                sound_volume: 40,
+                sound_volume: verbatim_model::SoundVolume::new(40),
                 ..ThemeOptions::default()
             },
         );

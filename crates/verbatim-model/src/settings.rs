@@ -6,13 +6,66 @@
 //! user toggles one with a key (Verbatim+2, 3, 5, and 6), and reports the new
 //! values as `Effect::SettingsChanged` for the shell to save. The terminal
 //! settings (milestone M4 item 9) are here too: whether new output is
-//! reported, and the flood policy's two limits.
+//! reported, and the flood policy's two limits. The keyboard's settings,
+//! which the hook reads, are here too, so the configuration and the hook
+//! share one declaration of each.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Which keys act as the Verbatim modifier, as NVDA's setting of its
+/// modifier keys does. The
+/// default adds Caps Lock to NVDA's two Insert keys, a deliberate
+/// difference (`docs/parity/input.md`, "NVDA-modifier semantics").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-key toggles plus one behavior flag, not a state machine"
+)]
+pub struct VerbatimKeys {
+    /// Caps lock acts as the Verbatim key.
+    pub caps_lock: bool,
+    /// The extended (navigation-cluster) insert key acts as the Verbatim key.
+    pub insert: bool,
+    /// The numpad insert key acts as the Verbatim key.
+    pub numpad_insert: bool,
+    /// Passes the Verbatim key's own transitions down the hook chain instead
+    /// of swallowing them, so another screen reader running behind Verbatim
+    /// (for example NVDA sharing the same modifier) sees the modifier held
+    /// and can run its own commands for chords Verbatim leaves unbound.
+    /// Only enable while such a screen reader is running: with nothing
+    /// behind Verbatim to swallow the key, caps lock reaches the OS and
+    /// toggles on every use.
+    pub share_modifier: bool,
+}
+
+impl Default for VerbatimKeys {
+    fn default() -> Self {
+        Self {
+            caps_lock: true,
+            insert: true,
+            numpad_insert: true,
+            share_modifier: false,
+        }
+    }
+}
+
+/// Which keyboard layout's gesture bindings are active: NVDA's desktop
+/// (numpad-based) and laptop (no numpad assumed, shift and control chords
+/// on the main key block instead) layouts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyboardLayout {
+    /// The numpad-based layout, and the default.
+    #[default]
+    Desktop,
+    /// The layout for keyboards without a numpad.
+    Laptop,
+}
 
 /// When typed characters or words are echoed: NVDA's "Speak typed
 /// characters" and "Speak typed words" choices.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TypingEcho {
     /// Never.
@@ -20,7 +73,6 @@ pub enum TypingEcho {
     /// Only in edit controls and other places text can be typed.
     EditControls,
     /// Always.
-    #[default]
     Always,
 }
 
@@ -59,7 +111,7 @@ pub enum SayAllUnit {
     reason = "independent settings, each a checkbox the user sets on its own"
 )]
 pub struct ReaderSettings {
-    /// Speak typed characters (NVDA's default: always).
+    /// Speak typed characters (NVDA's default: only in edit controls).
     pub speak_typed_characters: TypingEcho,
     /// Speak typed words (NVDA's default: off).
     pub speak_typed_words: TypingEcho,
@@ -82,14 +134,12 @@ pub struct ReaderSettings {
     /// changes"; this one covers terminals until live regions arrive.
     pub report_terminal_output: bool,
     /// "Lines spoken in full": up to this many lines of terminal output
-    /// waiting to be spoken are all spoken (default 30, at most
-    /// [`MAX_TERMINAL_LINES`]).
-    pub terminal_full_lines: u16,
+    /// waiting to be spoken are all spoken (default 30).
+    pub terminal_full_lines: TerminalLines,
     /// "Last lines to speak": when more terminal output is waiting than
     /// [`Self::terminal_full_lines`], the older lines are replaced by
-    /// "skipped N lines" and this many of the newest are kept (default 30,
-    /// at most [`MAX_TERMINAL_LINES`]).
-    pub terminal_last_lines: u16,
+    /// "skipped N lines" and this many of the newest are kept (default 30).
+    pub terminal_last_lines: TerminalLines,
     /// Indicate a progress bar in a background window as well as one in the
     /// foreground (NVDA's `reportBackgroundProgressBars`, default off;
     /// `docs/parity/changes-and-selection.md`, "Progress bars"). Core decides
@@ -112,17 +162,44 @@ pub const MAX_TERMINAL_LINES: u16 = 10_000;
 /// and still bounds a flood.
 pub const DEFAULT_TERMINAL_LINES: u16 = 30;
 
-impl ReaderSettings {
-    /// "Lines spoken in full", within 1 and [`MAX_TERMINAL_LINES`].
+/// A terminal line limit, within 1 and [`MAX_TERMINAL_LINES`] however it
+/// was written: one outside is brought within as it is made or read from
+/// a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct TerminalLines(u16);
+
+impl TerminalLines {
+    /// `lines`, brought within 1 and [`MAX_TERMINAL_LINES`].
     #[must_use]
-    pub fn full_lines(&self) -> usize {
-        usize::from(self.terminal_full_lines.clamp(1, MAX_TERMINAL_LINES))
+    pub fn new(lines: u16) -> Self {
+        Self(lines.clamp(1, MAX_TERMINAL_LINES))
     }
 
-    /// "Last lines to speak", within 1 and [`MAX_TERMINAL_LINES`].
+    /// The number of lines.
+    #[must_use]
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TerminalLines {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        u16::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl ReaderSettings {
+    /// "Lines spoken in full".
+    #[must_use]
+    pub fn full_lines(&self) -> usize {
+        usize::from(self.terminal_full_lines.get())
+    }
+
+    /// "Last lines to speak".
     #[must_use]
     pub fn last_lines(&self) -> usize {
-        usize::from(self.terminal_last_lines.clamp(1, MAX_TERMINAL_LINES))
+        usize::from(self.terminal_last_lines.get())
     }
 }
 
@@ -136,8 +213,8 @@ impl Default for ReaderSettings {
             keep_display_on: true,
             speak_terminal_passwords: false,
             report_terminal_output: true,
-            terminal_full_lines: DEFAULT_TERMINAL_LINES,
-            terminal_last_lines: DEFAULT_TERMINAL_LINES,
+            terminal_full_lines: TerminalLines(DEFAULT_TERMINAL_LINES),
+            terminal_last_lines: TerminalLines(DEFAULT_TERMINAL_LINES),
             report_background_progress_bars: false,
         }
     }
@@ -161,15 +238,18 @@ mod tests {
         assert_eq!(settings.last_lines(), 30);
     }
 
+    /// Limits out of range in a file are read within it, and so is a sound
+    /// volume past 100.
     #[test]
-    fn the_terminal_limits_stay_in_range() {
-        let settings = ReaderSettings {
-            terminal_full_lines: 0,
-            terminal_last_lines: 20_000,
-            ..ReaderSettings::default()
-        };
+    fn bounded_settings_are_read_within_their_bounds() {
+        let settings: ReaderSettings =
+            serde_json::from_str(r#"{"terminal_full_lines": 0, "terminal_last_lines": 20000}"#)
+                .unwrap();
         assert_eq!(settings.full_lines(), 1);
         assert_eq!(settings.last_lines(), usize::from(MAX_TERMINAL_LINES));
+        let options: crate::ThemeOptions =
+            serde_json::from_str(r#"{"sound_volume": 250}"#).unwrap();
+        assert_eq!(options.sound_volume.get(), 100);
     }
 
     #[test]

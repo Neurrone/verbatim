@@ -54,12 +54,9 @@ pub trait ThemeHost: Send + Sync {
     fn activate(&self, theme: &LoadedTheme, options: ThemeOptions);
     /// Changes only the settings that go with the active theme.
     fn set_options(&self, options: ThemeOptions);
-    /// Saves `id` and `options` as the configuration's theme.
-    ///
-    /// # Errors
-    ///
-    /// Why the configuration could not be saved.
-    fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String>;
+    /// Saves `id` and `options` as the configuration's theme; a failed
+    /// write is the saver's to report.
+    fn persist(&self, id: &str, options: ThemeOptions);
     /// Plays `sound` at once at `gain`, 1.0 for as recorded.
     fn play(&self, sound: &Sound, gain: f32);
     /// Speaks `utterance` through the active theme.
@@ -199,7 +196,7 @@ impl ThemePanel {
             description_label: labels.description.clone(),
             description: self.description(&current),
             volume_label: labels.sound_volume.clone(),
-            volume: i32::from(self.options.sound_volume.min(100)),
+            volume: i32::from(self.options.sound_volume.get()),
             say_all_name: accessible_name(&labels.sounds_during_say_all),
             say_all_label: labels.sounds_during_say_all.clone(),
             say_all: self.options.sounds_during_say_all,
@@ -630,28 +627,26 @@ impl ThemePanel {
             },
         };
         match sound {
-            Ok(sound) => self.host.play(&sound, self.gain(&current.theme, &setting)),
+            Ok(sound) => self.host.play(
+                &sound,
+                verbatim_model::sound_gain(&current.theme, &setting, self.options),
+            ),
             Err(error) => tracing::warn!(%error, "a theme sound cannot be played"),
         }
-    }
-
-    /// The gain a sound of `setting` plays at, as speech plays it.
-    fn gain(&self, theme: &Theme, setting: &IndicationSetting) -> f32 {
-        let percent = |gain: u16| f32::from(gain.min(verbatim_model::MAX_GAIN)) / 100.0;
-        percent(theme.gain) * percent(setting.gain) * f32::from(self.options.sound_volume.min(100))
-            / 100.0
     }
 
     /// The sound volume slider moved: the new volume applies at once, and
     /// a short sample plays at it.
     pub(crate) fn set_volume(&mut self, volume: i32) {
-        self.options.sound_volume = u8::try_from(volume.clamp(0, 100)).unwrap_or(100);
+        self.options.sound_volume =
+            verbatim_model::SoundVolume::new(u8::try_from(volume.clamp(0, 100)).unwrap_or(100));
         self.host.set_options(self.options);
         let theme = self.current().theme;
         match Sound::tone(SAMPLE_TONE.frequency_hz, SAMPLE_TONE.duration_ms) {
-            Ok(sound) => self
-                .host
-                .play(&sound, self.gain(&theme, &IndicationSetting::default())),
+            Ok(sound) => self.host.play(
+                &sound,
+                verbatim_model::sound_gain(&theme, &IndicationSetting::default(), self.options),
+            ),
             Err(error) => tracing::warn!(%error, "the volume sample cannot be played"),
         }
     }
@@ -763,9 +758,7 @@ impl ThemePanel {
         }
         self.edited.clear();
         let id = self.themes[self.selected].theme.id.clone();
-        if let Err(error) = self.host.persist(&id, self.options) {
-            failures.push(error);
-        }
+        self.host.persist(&id, self.options);
         self.reload(&id);
         self.committed = (id, self.options);
         failures.join("\n")
@@ -937,18 +930,19 @@ fn preview_of(indication: Indication) -> Preview {
 
 /// The event an Events indication reports.
 fn earcon_of(indication: Indication) -> Option<Earcon> {
-    Some(match indication {
-        Indication::AppNotResponding => Earcon::AppNotResponding,
-        Indication::Start => Earcon::Start,
-        Indication::Exit => Earcon::Exit,
-        Indication::Error => Earcon::Error,
-        Indication::BrowseMode => Earcon::BrowseMode,
-        Indication::FocusMode => Earcon::FocusMode,
-        Indication::SuggestionsOpened => Earcon::SuggestionsOpened,
-        Indication::SuggestionsClosed => Earcon::SuggestionsClosed,
-        Indication::Progress => Earcon::Progress(50),
-        _ => return None,
-    })
+    [
+        Earcon::AppNotResponding,
+        Earcon::Start,
+        Earcon::Exit,
+        Earcon::Error,
+        Earcon::BrowseMode,
+        Earcon::FocusMode,
+        Earcon::SuggestionsOpened,
+        Earcon::SuggestionsClosed,
+        Earcon::Progress(50),
+    ]
+    .into_iter()
+    .find(|earcon| Indication::of_earcon(*earcon) == indication)
 }
 
 /// A theme file operation's failure in the user's language.
@@ -1086,9 +1080,8 @@ mod tests {
         fn set_options(&self, options: ThemeOptions) {
             self.options.lock().unwrap().push(options);
         }
-        fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String> {
+        fn persist(&self, id: &str, options: ThemeOptions) {
             *self.configured.lock().unwrap() = (id.to_owned(), options);
-            Ok(())
         }
         fn play(&self, _sound: &Sound, _gain: f32) {
             self.played.fetch_add(1, Ordering::Relaxed);
@@ -1264,7 +1257,7 @@ mod tests {
         assert_eq!(panel.apply(), "");
         let (id, options) = host.configured();
         assert_eq!(id, "mine");
-        assert_eq!(options.sound_volume, 40);
+        assert_eq!(options.sound_volume.get(), 40);
         let saved = themes::find_theme(&host.themes_dir, &host.sounds_dir, "mine").unwrap();
         assert_eq!(saved.theme.setting(LINK).report, Presentation::Off);
 

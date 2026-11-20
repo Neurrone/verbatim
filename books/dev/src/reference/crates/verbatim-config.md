@@ -1,20 +1,15 @@
 # verbatim-config
 
-Portable configuration next to `verbatim.exe`. `settings.toml` is the base
-configuration — global settings plus the base profile's sections — and the
-`profiles` folder holds named profiles as sparse overlays, mirroring NVDA's
-base-plus-diffs model. Because the base lives in `settings.toml`, any file
-name in `profiles` is a legitimate user profile. The `themes` folder holds
+Portable configuration next to `verbatim.exe`. `settings.toml` is the
+configuration; configuration profiles are milestone M8.3's. The `themes` folder holds
 the user's themes, one directory each, and the `sounds` folder beside the
 program holds the shared sounds the built-in default theme plays.
 
 Public API:
 
 - `Settings` — the `settings.toml` schema: `locale`, `log_filter`,
-  `verbatim_keys`, `keyboard`, `uia` (all global; profiles cannot carry
-  them), `speech` (the base profile's section), `reader` (milestone M4, the
-  base profile's too until profiles grow it in M8.3), and `theme` (milestone
-  M4, the base profile's theme, see "Themes" below).
+  `verbatim_keys`, `keyboard`, `uia`, `speech`, `reader` (milestone M4),
+  and `theme` (milestone M4, see "Themes" below).
 - `ReaderSettings`, `TypingEcho`, `SayAllUnit` — re-exported from
   `verbatim-model`, which the reducer reads them from; the `[reader]`
   section, every key with NVDA's default:
@@ -43,15 +38,17 @@ Public API:
     spoken.
   - `terminal_last_lines`: "Last lines to speak", 30 by default: when more
     are waiting, the older ones become "skipped N lines" and this many of
-    the newest are kept. Both limits are kept between 1 and 10,000
-    (`MAX_TERMINAL_LINES`), more than either terminal's history holds, so
+    the newest are kept. Both limits are `TerminalLines`, kept between 1
+    and 10,000 (`MAX_TERMINAL_LINES`) as they are made or read from the
+    file, more than either terminal's history holds, so
     "Lines spoken in full" may reach past it; Core's 10 MB bound on output
     waiting protects memory.
 
   These four and `speak_terminal_passwords` are the Terminal settings
   (`docs/parity/system.md`, "The terminal settings"), set on the settings dialog's Terminal page and, for "Report new
   output", with Verbatim+5.
-- `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
+- `VerbatimKeys` — re-exported from `verbatim-model`, which the hook's
+  `DecisionConfig` holds it from: which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
   modifier's own transitions down the hook chain for a screen reader
   running behind Verbatim.
@@ -62,9 +59,8 @@ Public API:
   speech off) and `speech_interrupt_for_enter` (Enter cuts speech off),
   which the app maps to `verbatim-input`'s `DecisionConfig`. Exposed
   only in `settings.toml`; a GUI choice arrives with M8.1's gesture-remapping
-  work. `verbatim-input`'s `bindings_for` consumes the resolved layout
-  through its own decoupled layout enum (the app maps one to the other),
-  the same pattern `DecisionConfig` already follows for `VerbatimKeys`.
+  work. `KeyboardLayout` is `verbatim-model`'s, which `verbatim-input`'s
+  `bindings_for` takes too.
 - `UiaConfig` — the `uia` section, developer settings for the UIA client:
   `remote_operations` (on by default) lets outposts read a UIA focus's
   ancestry with one remote operation inside the application's provider;
@@ -75,29 +71,17 @@ Public API:
 - `SpeechConfig`, `ConfigValue` — active synthesizer plus per-synthesizer
   setting values, keyed by synth id then setting id so switching synths
   never loses the other synth's values.
-- `ThemeConfig` and `ProfileTheme` — the `[theme]` section of the base
-  settings (the theme's `id`, `default` for the built-in default theme,
-  and the `ThemeOptions` flattened beside it) and of a profile (each
-  optional, so a profile overrides only what it sets).
-- `Profile` — one named profile: its `speech` and `theme` sections.
-  Deliberately has no global fields, so a profile file cannot smuggle in
-  modifier keys or a locale; unknown sections are ignored by the schema
-  (tested).
+- `ThemeConfig` — the `[theme]` section (the theme's `id`, `default` for
+  the built-in default theme, and the `ThemeOptions` flattened beside it).
 - `ConfigStore` — `load(root)`, `from_settings(root, settings)`,
   `settings()`, `settings_mut()`, `save_settings()`,
-  `ensure_files_exist()`, `active()`, `themes_dir()`, and `sounds_dir()`
+  `ensure_files_exist()`, `themes_dir()`, and `sounds_dir()`
   (the `THEMES_DIR` and `SOUNDS_DIR` folders beside the executable). In
   Verbatim it is the startup load and the file's format only: nothing
   shares it while Verbatim runs, and the app's saver thread writes the
   file whole with `from_settings` and `save_settings`, each section handed
   to it by the one thread that owns it ([verbatim-app](verbatim-app.md)).
-- `ActiveConfig` — the resolved read-only view: `synthesizer()`,
-  `synth_setting(synth, id)`, and `synth_settings(synth)` resolve each
-  setting through the active overlays (most specific first) down to the
-  base; `theme_id()` is the theme of the most specific layer that names
-  one, else the base's, and `theme_options()` resolves the sound volume
-  and the two checkboxes the same way, each on its own. M1 activates no
-  overlays; the layering is implemented and tested.
+
 - `themes` (a public module) — theme files, described under "Theme
   files" below: `LoadedTheme` (a theme, its directory, and its
   problems; `builtin()` and `sound_path`), `ThemeError`, `MANIFEST`,
@@ -134,17 +118,17 @@ The `[theme]` section of `settings.toml`, each key optional:
 - `id`: the theme in use, `default` for the built-in default theme or
   the id of a theme in the themes folder.
 - `sound_volume`: the volume of sounds relative to speech, from 0 to 100,
-  100 by default.
+  100 by default; a `SoundVolume`, so a value past 100 reads as 100.
 - `sounds_during_say_all`: whether sounds play while say-all reads,
   `true` by default.
 - `speak_sounded_indications`: whether indications reported by a sound
   alone are spoken as well, for learning a theme's sounds, `false` by
   default.
 
-A configuration profile may name a different theme, such as a
+Configuration profiles (M8.3) are to name a different theme, such as a
 proofreading theme for a word processor, and change the three settings
-beside it; a profile that names none uses the theme of `settings.toml`.
-Profiles hold no per-indication settings: to present something
+beside it, a profile that names none using the theme of `settings.toml`.
+They are to hold no per-indication settings: to present something
 differently in one application, make a theme for it and choose it in that
 application's profile.
 
@@ -198,12 +182,14 @@ stray paths in a package are left out.
 
 ## Settings files
 
-Implementation notes: writes are atomic (write a temporary file, rename
-over the target; `std::fs::rename` replaces on Windows).
+Implementation notes: the settings file and a theme's manifest are
+written through one atomic write (a temporary file renamed over the
+target; `std::fs::rename` replaces on Windows).
 `ensure_files_exist` materializes missing files with defaults at startup
-(`settings.toml`, and empty `profiles` and `themes` folders) so
-they are discoverable and hand-editable, but never touches existing files —
-including corrupt ones, which `load` surfaces as errors rather than
-silently replacing. The corollary: fields added to the schema later do not
+(`settings.toml`, and an empty `themes` folder) so
+they are discoverable and hand-editable, but never touches existing files.
+A file that fails to load is an error from `load`; the app keeps it as
+`settings.toml.corrupted.bak` and starts on the defaults, as NVDA does
+([verbatim-app](verbatim-app.md)). The corollary: fields added to the schema later do not
 appear in an existing file; they read as defaults until the file is
 regenerated or saved.

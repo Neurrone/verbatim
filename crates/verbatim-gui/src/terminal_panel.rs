@@ -9,16 +9,14 @@
 //! Verbatim+5 toggle made before it opened is shown.
 //!
 //! Unlike the Speech and Theme pages, a change here waits for Apply or OK,
-//! as NVDA's settings panels do. Apply sends Core only the settings changed
-//! since the page opened or was last applied, so a toggle key pressed while
-//! the dialog is open is not undone by applying another setting. Cancel
-//! drops the changes not yet applied; Core never saw them, so nothing else
-//! needs restoring.
+//! which write all four values, as NVDA's settings panels write every
+//! control on save. Cancel drops the changes not yet applied; Core never
+//! saw them, so nothing else needs restoring.
 
 use std::sync::Arc;
 
 use verbatim_i18n::messages::{self, TerminalLabels};
-use verbatim_model::{MAX_TERMINAL_LINES, ReaderSettings};
+use verbatim_model::{MAX_TERMINAL_LINES, ReaderSettings, TerminalLines};
 
 use crate::bridge::ffi;
 use crate::plan::accessible_name;
@@ -28,87 +26,48 @@ use crate::plan::accessible_name;
 pub trait TerminalHost: Send + Sync {
     /// The reader settings as they are now.
     fn reader_settings(&self) -> ReaderSettings;
-    /// Applies `change` to Core's reader settings and saves the result.
+    /// Writes `change` into Core's reader settings and saves the result.
     fn change(&self, change: TerminalChange);
 }
 
-/// A change to the terminal settings: each field is `Some` when that
-/// setting changed, and is merged into the reader settings by
-/// [`apply_to`](Self::apply_to).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The Terminal page's four values, written together into the reader
+/// settings by [`apply_to`](Self::apply_to).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalChange {
     /// "Report new output".
-    pub report_output: Option<bool>,
+    pub report_output: bool,
     /// "Lines spoken in full".
-    pub full_lines: Option<u16>,
+    pub full_lines: TerminalLines,
     /// "Last lines to speak".
-    pub last_lines: Option<u16>,
+    pub last_lines: TerminalLines,
     /// Speak passwords typed in terminals.
-    pub speak_passwords: Option<bool>,
+    pub speak_passwords: bool,
 }
 
 impl TerminalChange {
-    /// Whether the change changes nothing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// Sets the settings this change carries in `settings`, leaving the
-    /// others as they are.
-    pub fn apply_to(&self, settings: &mut ReaderSettings) {
-        if let Some(on) = self.report_output {
-            settings.report_terminal_output = on;
-        }
-        if let Some(lines) = self.full_lines {
-            settings.terminal_full_lines = lines;
-        }
-        if let Some(lines) = self.last_lines {
-            settings.terminal_last_lines = lines;
-        }
-        if let Some(on) = self.speak_passwords {
-            settings.speak_terminal_passwords = on;
-        }
-    }
-}
-
-/// The page's four settings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Values {
-    report_output: bool,
-    full_lines: u16,
-    last_lines: u16,
-    speak_passwords: bool,
-}
-
-impl Values {
-    /// The terminal settings of `settings`, the limits within range.
+    /// The terminal settings of `settings`.
     fn of(settings: &ReaderSettings) -> Self {
         Self {
             report_output: settings.report_terminal_output,
-            full_lines: settings.terminal_full_lines.clamp(1, MAX_TERMINAL_LINES),
-            last_lines: settings.terminal_last_lines.clamp(1, MAX_TERMINAL_LINES),
+            full_lines: settings.terminal_full_lines,
+            last_lines: settings.terminal_last_lines,
             speak_passwords: settings.speak_terminal_passwords,
         }
     }
 
-    /// What changed from `before` to `self`.
-    fn change_from(self, before: Self) -> TerminalChange {
-        fn changed<T: Copy + PartialEq>(now: T, then: T) -> Option<T> {
-            (now != then).then_some(now)
-        }
-        TerminalChange {
-            report_output: changed(self.report_output, before.report_output),
-            full_lines: changed(self.full_lines, before.full_lines),
-            last_lines: changed(self.last_lines, before.last_lines),
-            speak_passwords: changed(self.speak_passwords, before.speak_passwords),
-        }
+    /// Writes the four values into `settings`, leaving the other reader
+    /// settings as they are.
+    pub fn apply_to(&self, settings: &mut ReaderSettings) {
+        settings.report_terminal_output = self.report_output;
+        settings.terminal_full_lines = self.full_lines;
+        settings.terminal_last_lines = self.last_lines;
+        settings.speak_terminal_passwords = self.speak_passwords;
     }
 }
 
-/// A slider's value as a line limit, within 1 and [`MAX_TERMINAL_LINES`].
-fn line_limit(value: i32) -> u16 {
-    u16::try_from(value.clamp(1, i32::from(MAX_TERMINAL_LINES))).unwrap_or(MAX_TERMINAL_LINES)
+/// A slider's value as a line limit.
+fn line_limit(value: i32) -> TerminalLines {
+    TerminalLines::new(u16::try_from(value.max(1)).unwrap_or(MAX_TERMINAL_LINES))
 }
 
 /// The Terminal page's state.
@@ -116,20 +75,17 @@ pub(crate) struct TerminalPanel {
     host: Arc<dyn TerminalHost>,
     labels: TerminalLabels,
     /// The settings as the controls show them.
-    values: Values,
-    /// The settings as the page opened with them, or last applied.
-    committed: Values,
+    values: TerminalChange,
 }
 
 impl TerminalPanel {
     /// The page with the settings as they are now.
     pub(crate) fn open(host: Arc<dyn TerminalHost>) -> Self {
-        let values = Values::of(&host.reader_settings());
+        let values = TerminalChange::of(&host.reader_settings());
         Self {
             host,
             labels: messages::terminal_labels(),
             values,
-            committed: values,
         }
     }
 
@@ -141,9 +97,9 @@ impl TerminalPanel {
             report_output_name: accessible_name(&labels.report_output),
             report_output: self.values.report_output,
             full_lines_label: labels.full_lines.clone(),
-            full_lines: i32::from(self.values.full_lines),
+            full_lines: i32::from(self.values.full_lines.get()),
             last_lines_label: labels.last_lines.clone(),
-            last_lines: i32::from(self.values.last_lines),
+            last_lines: i32::from(self.values.last_lines.get()),
             min_lines: 1,
             max_lines: i32::from(MAX_TERMINAL_LINES),
             speak_passwords_label: labels.speak_passwords.clone(),
@@ -172,19 +128,9 @@ impl TerminalPanel {
         self.values.speak_passwords = checked;
     }
 
-    /// OK or Apply: sends Core the settings changed since the page opened
-    /// or was last applied, which Cancel then keeps.
-    pub(crate) fn apply(&mut self) {
-        let change = self.values.change_from(self.committed);
-        if !change.is_empty() {
-            self.host.change(change);
-        }
-        self.committed = self.values;
-    }
-
-    /// Cancel: drops the changes not yet applied.
-    pub(crate) fn cancel(&mut self) {
-        self.values = self.committed;
+    /// OK or Apply: writes the page's four values.
+    pub(crate) fn apply(&self) {
+        self.host.change(self.values);
     }
 }
 
@@ -231,8 +177,8 @@ mod tests {
     fn the_page_shows_the_settings_as_they_are_now() {
         let host = FakeHost::new(ReaderSettings {
             report_terminal_output: false,
-            terminal_full_lines: 50,
-            terminal_last_lines: 10,
+            terminal_full_lines: TerminalLines::new(50),
+            terminal_last_lines: TerminalLines::new(10),
             speak_terminal_passwords: true,
             ..ReaderSettings::default()
         });
@@ -254,104 +200,26 @@ mod tests {
         );
     }
 
+    /// OK writes all four of the page's values, as NVDA's panels write
+    /// every control on save: "Report new output", still checked on the
+    /// page, is on again after Verbatim+5 turned it off while the page was
+    /// open, and a reader setting off the page is kept.
     #[test]
-    fn the_limits_stay_between_1_and_10_000() {
+    fn ok_writes_all_four_values() {
         let host = FakeHost::new(ReaderSettings {
-            terminal_full_lines: 0,
-            terminal_last_lines: 20_000,
+            follow_caret: false,
             ..ReaderSettings::default()
         });
-        let mut panel = open(&host);
-        assert_eq!(
-            (panel.page().full_lines, panel.page().last_lines),
-            (1, 10_000)
-        );
-        panel.set_full_lines(-4);
-        panel.set_last_lines(100_000);
-        assert_eq!(
-            (panel.page().full_lines, panel.page().last_lines),
-            (1, 10_000)
-        );
-        panel.set_full_lines(42);
-        assert_eq!(panel.page().full_lines, 42);
-    }
-
-    #[test]
-    fn apply_sends_only_what_changed() {
-        let host = FakeHost::new(ReaderSettings::default());
-        let mut panel = open(&host);
-        panel.apply();
-        assert!(host.changes().is_empty(), "nothing changed, nothing sent");
-
-        panel.set_report_output(false);
-        panel.set_last_lines(12);
-        // A change made and undone before applying is no change.
-        panel.set_speak_passwords(true);
-        panel.set_speak_passwords(false);
-        panel.apply();
-        assert_eq!(
-            host.changes(),
-            [TerminalChange {
-                report_output: Some(false),
-                last_lines: Some(12),
-                ..TerminalChange::default()
-            }]
-        );
-        let settings = host.reader_settings();
-        assert!(!settings.report_terminal_output);
-        assert_eq!(settings.terminal_last_lines, 12);
-        assert_eq!(settings.terminal_full_lines, 30);
-
-        // Applying again sends nothing more.
-        panel.apply();
-        assert_eq!(host.changes().len(), 1);
-    }
-
-    #[test]
-    fn a_toggle_key_pressed_while_the_page_is_open_is_not_undone() {
-        let host = FakeHost::new(ReaderSettings::default());
         let mut panel = open(&host);
         // Verbatim+5 in Core, with the page open.
         host.settings.lock().unwrap().report_terminal_output = false;
         panel.set_full_lines(60);
         panel.apply();
         let settings = host.reader_settings();
-        assert!(!settings.report_terminal_output);
-        assert_eq!(settings.terminal_full_lines, 60);
-    }
-
-    #[test]
-    fn cancel_drops_what_was_not_applied() {
-        let host = FakeHost::new(ReaderSettings::default());
-        let mut panel = open(&host);
-        panel.set_full_lines(5);
-        panel.apply();
-        panel.set_full_lines(80);
-        panel.set_report_output(false);
-        panel.cancel();
-        let page = panel.page();
-        assert_eq!(page.full_lines, 5, "back to the applied value");
-        assert!(page.report_output);
-        assert_eq!(host.changes().len(), 1, "Cancel sends nothing");
-        assert_eq!(host.reader_settings().terminal_full_lines, 5);
-    }
-
-    #[test]
-    fn a_change_merges_only_its_own_settings() {
-        let mut settings = ReaderSettings {
-            follow_caret: false,
-            ..ReaderSettings::default()
-        };
-        TerminalChange {
-            speak_passwords: Some(true),
-            full_lines: Some(7),
-            ..TerminalChange::default()
-        }
-        .apply_to(&mut settings);
-        assert!(settings.speak_terminal_passwords);
-        assert_eq!(settings.terminal_full_lines, 7);
-        assert_eq!(settings.terminal_last_lines, 30);
         assert!(settings.report_terminal_output);
+        assert_eq!(settings.full_lines(), 60);
+        assert_eq!(settings.last_lines(), 30);
+        assert!(!settings.speak_terminal_passwords);
         assert!(!settings.follow_caret, "a setting off the page is kept");
     }
 }

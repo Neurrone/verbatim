@@ -164,9 +164,9 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   thread publishes (`ReaderView`, a copy under a lock never held across a
   call, which the reducer thread alone writes) and sending an applied
   `TerminalChange` to the reducer thread
-  (`ShellCommand::TerminalSettings`). There it is merged into the
-  reducer's own settings (`SrState::settings`), so a toggle key pressed
-  meanwhile is kept, given to the reducer as `Input::Settings`,
+  (`ShellCommand::TerminalSettings`). There its four values are written
+  into the reducer's own settings (`SrState::settings`), the other reader
+  settings left as they are, given to the reducer as `Input::Settings`,
   published, and saved.
 - The saver (`saver.rs`, `books/dev/src/explanation/design/ownership.md`) is the one thread, `verbatim-settings-saver`,
   that owns `settings.toml` and writes it whole. Each section has one
@@ -290,7 +290,7 @@ Milestone M4's themes and earcons are wired here too
 ([verbatim-model](verbatim-model.md), "Themes"):
 
 - `themes` loads the theme the configuration names
-  (`ActiveConfig::theme_id` and `theme_options`, through
+  (the `[theme]` section's `id` and options, through
   `verbatim_config::themes::find_theme`; one that cannot be loaded is
   logged and the built-in default theme used instead) and makes a theme
   ready (`prepare`): its sounds are decoded from its own directory or the

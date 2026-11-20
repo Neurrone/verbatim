@@ -1,22 +1,11 @@
-//! Configuration (milestone M1 layout, amended during M1 review).
+//! Configuration.
 //!
 //! Verbatim is portable: everything lives next to `verbatim.exe`.
-//! `settings.toml` is the configuration — global settings (Verbatim modifier
-//! keys, locale, logging) plus the base profile's sections, speech being the
-//! first. A `profiles` folder holds named profiles: sparse overlays that
-//! override only the keys they mention, mirroring NVDA's model where the
-//! main configuration file is the base and profiles are diffs over it.
-//! Because the base lives in `settings.toml`, every file in `profiles` is a
-//! user profile — a profile named `Base` collides with nothing.
+//! `settings.toml` is the configuration: the Verbatim modifier keys, the
+//! locale, logging, and the speech, reader and theme sections.
+//! Configuration profiles are milestone M8.3's.
 //!
-//! Resolution is layered: an [`ActiveConfig`] view resolves each setting
-//! through the active overlays (most specific first) down to the base in
-//! `settings.toml`. M1 activates no overlays; manual and triggered profiles
-//! later are additive. Global settings are structurally outside the profile
-//! system — [`Profile`] has no fields for them, so no profile can override
-//! the modifier keys or language.
-//!
-//! Writes are atomic — write a temporary file, then rename over the target.
+//! Writes are atomic: a temporary file, then a rename over the target.
 
 #![forbid(unsafe_code)]
 // Non-test code never panics, overflows or truncates silently: arithmetic
@@ -63,69 +52,15 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-pub use verbatim_model::{ReaderSettings, SayAllUnit, ThemeOptions, TypingEcho};
+pub use verbatim_model::{
+    KeyboardLayout, ReaderSettings, SayAllUnit, ThemeOptions, TypingEcho, VerbatimKeys,
+};
 
 mod package;
 pub mod themes;
 
-/// Which keys act as the Verbatim modifier, as NVDA's setting of its
-/// modifier keys does. The
-/// default adds Caps Lock to NVDA's two Insert keys, a deliberate
-/// difference (`docs/parity/input.md`, "NVDA-modifier semantics").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent per-key toggles plus one behavior flag, not a state machine"
-)]
-pub struct VerbatimKeys {
-    /// Caps lock acts as the Verbatim key.
-    pub caps_lock: bool,
-    /// The extended (navigation-cluster) insert key acts as the Verbatim key.
-    pub insert: bool,
-    /// The numpad insert key acts as the Verbatim key.
-    pub numpad_insert: bool,
-    /// Passes the Verbatim key's own transitions down the hook chain instead
-    /// of swallowing them, so another screen reader running behind Verbatim
-    /// (for example NVDA sharing the same modifier) sees the modifier held
-    /// and can run its own commands for chords Verbatim leaves unbound.
-    /// Only enable while such a screen reader is running: with nothing
-    /// behind Verbatim to swallow the key, caps lock reaches the OS and
-    /// toggles on every use.
-    pub share_modifier: bool,
-}
-
-impl Default for VerbatimKeys {
-    fn default() -> Self {
-        Self {
-            caps_lock: true,
-            insert: true,
-            numpad_insert: true,
-            share_modifier: false,
-        }
-    }
-}
-
-/// Which keyboard layout's gesture bindings are active — NVDA's desktop
-/// (numpad-based) and laptop (no numpad assumed, shift/control chords on the
-/// main key block instead) layouts. `verbatim-input`'s `bindings_for` reads
-/// this to choose a binding table; that crate redeclares its own layout
-/// enum to stay decoupled from configuration, the same pattern `VerbatimKeys`
-/// and `DecisionConfig` already follow.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KeyboardLayout {
-    /// The numpad-based layout, and the default.
-    #[default]
-    Desktop,
-    /// The layout for keyboards without a numpad.
-    Laptop,
-}
-
-/// Keyboard configuration within `settings.toml`. Global, like
-/// [`VerbatimKeys`]: [`Profile`] has no field for it, so no profile can
-/// override the active layout. Exposed only in the file for M3; a GUI
-/// choice arrives with M8.1's gesture-remapping work.
+/// Keyboard configuration within `settings.toml`. Exposed only in the file;
+/// a GUI choice arrives with M8.1's gesture-remapping work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyboardConfig {
@@ -153,7 +88,7 @@ impl Default for KeyboardConfig {
 
 /// UIA configuration within `settings.toml`, for developers: the defaults
 /// are what Verbatim should do, and a setting here is for diagnosing a
-/// provider or measuring. Global, like [`KeyboardConfig`]. Read at startup
+/// provider or measuring. Read at startup
 /// and handed to each outpost as it is spawned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -248,149 +183,32 @@ impl Default for ThemeConfig {
     }
 }
 
-/// A profile's theme section: whatever it sets overrides the base, and
-/// what it leaves unset comes from the base. A profile that names no theme
-/// uses the base settings' theme.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ProfileTheme {
-    /// The theme's id.
-    pub id: Option<String>,
-    /// The volume of sounds relative to speech, from 0 to 100.
-    pub sound_volume: Option<u8>,
-    /// Whether sounds play during say-all.
-    pub sounds_during_say_all: Option<bool>,
-    /// Whether indications reported by sound alone are spoken as well.
-    pub speak_sounded_indications: Option<bool>,
-}
-
-/// The contents of `settings.toml`: global settings plus the base profile's
-/// sections.
+/// The contents of `settings.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Requested UI and speech language, a BCP 47 tag such as `de`; `None`
-    /// follows the Windows preferred languages. Global: profiles cannot
-    /// override it.
+    /// is embedded English.
     pub locale: Option<String>,
-    /// Tracing filter override, same syntax as `RUST_LOG`. Global.
+    /// Tracing filter override, same syntax as `RUST_LOG`.
     pub log_filter: Option<String>,
-    /// The Verbatim modifier keys. Global.
+    /// The Verbatim modifier keys.
     pub verbatim_keys: VerbatimKeys,
-    /// The active keyboard layout. Global.
+    /// The active keyboard layout.
     pub keyboard: KeyboardConfig,
-    /// Developer settings for the UIA client. Global.
+    /// Developer settings for the UIA client.
     pub uia: UiaConfig,
-    /// The base profile's speech configuration; named profiles override it
-    /// per setting.
+    /// The speech configuration.
     pub speech: SpeechConfig,
     /// The reader settings the reducer reads, the `[reader]` section:
     /// typing echo, whether the review cursor follows the caret, say-all's
     /// reading unit, keeping the display on during say-all, and the
     /// Terminal settings (speaking passwords, reporting new output, and the
     /// flood policy's two limits), each with NVDA's default where NVDA has
-    /// the setting ([`ReaderSettings`]). The base profile's only, until
-    /// profiles grow them (M8.3).
+    /// the setting ([`ReaderSettings`]).
     pub reader: ReaderSettings,
-    /// The base profile's theme and the settings that go with it.
+    /// The theme and the settings that go with it.
     pub theme: ThemeConfig,
-}
-
-/// One named profile — the contents of one file in the `profiles` folder.
-///
-/// Sparse by design: a profile overrides only what it mentions. This type
-/// deliberately has no global fields, so a profile file cannot change the
-/// modifier keys or language.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Profile {
-    /// Speech configuration carried by this profile.
-    pub speech: SpeechConfig,
-    /// The theme this profile uses, and the settings that go with it.
-    pub theme: ProfileTheme,
-}
-
-/// A resolved, read-only view over the active overlays and the base, most
-/// specific first. M1 activates no overlays.
-#[derive(Clone, Copy, Debug)]
-pub struct ActiveConfig<'a> {
-    /// Active overlays, most specific first.
-    overlays: &'a [Profile],
-    /// The base profile's speech section, from `settings.toml`.
-    base: &'a SpeechConfig,
-    /// The base profile's theme section, from `settings.toml`.
-    base_theme: &'a ThemeConfig,
-}
-
-impl ActiveConfig<'_> {
-    /// Speech sections in resolution order: overlays first, base last.
-    fn speech_layers(&self) -> impl Iterator<Item = &SpeechConfig> {
-        self.overlays
-            .iter()
-            .map(|profile| &profile.speech)
-            .chain(std::iter::once(self.base))
-    }
-
-    /// The active synthesizer id, from the most specific layer that sets one.
-    #[must_use]
-    pub fn synthesizer(&self) -> Option<&str> {
-        self.speech_layers()
-            .find_map(|speech| speech.synthesizer.as_deref())
-    }
-
-    /// One persisted setting value for a synthesizer, from the most
-    /// specific layer that sets it.
-    #[must_use]
-    pub fn synth_setting(&self, synth_id: &str, setting_id: &str) -> Option<&ConfigValue> {
-        self.speech_layers()
-            .find_map(|speech| speech.synth_settings.get(synth_id)?.get(setting_id))
-    }
-
-    /// The id of the theme in use: the most specific layer's that names
-    /// one, and otherwise the base settings' (`default` unless changed).
-    #[must_use]
-    pub fn theme_id(&self) -> &str {
-        self.overlays
-            .iter()
-            .find_map(|profile| profile.theme.id.as_deref())
-            .unwrap_or(&self.base_theme.id)
-    }
-
-    /// The settings that go with the theme, each from the most specific
-    /// layer that sets it.
-    #[must_use]
-    pub fn theme_options(&self) -> ThemeOptions {
-        let base = self.base_theme.options;
-        let themes = || self.overlays.iter().map(|profile| &profile.theme);
-        ThemeOptions {
-            sound_volume: themes()
-                .find_map(|theme| theme.sound_volume)
-                .unwrap_or(base.sound_volume)
-                .min(100),
-            sounds_during_say_all: themes()
-                .find_map(|theme| theme.sounds_during_say_all)
-                .unwrap_or(base.sounds_during_say_all),
-            speak_sounded_indications: themes()
-                .find_map(|theme| theme.speak_sounded_indications)
-                .unwrap_or(base.speak_sounded_indications),
-        }
-    }
-
-    /// All persisted setting values for a synthesizer, resolved across
-    /// layers (most specific layer wins per setting).
-    #[must_use]
-    pub fn synth_settings(&self, synth_id: &str) -> BTreeMap<String, ConfigValue> {
-        let mut resolved = BTreeMap::new();
-        let layers: Vec<&SpeechConfig> = self.speech_layers().collect();
-        for speech in layers.into_iter().rev() {
-            if let Some(settings) = speech.synth_settings.get(synth_id) {
-                for (id, value) in settings {
-                    resolved.insert(id.clone(), value.clone());
-                }
-            }
-        }
-        resolved
-    }
 }
 
 /// Error from loading or saving configuration.
@@ -426,21 +244,16 @@ impl std::error::Error for ConfigError {
     }
 }
 
-/// Loads, holds, and saves `settings.toml` and the active profile overlays.
+/// Loads, holds, and saves `settings.toml`.
 #[derive(Clone, Debug)]
 pub struct ConfigStore {
     root: PathBuf,
     settings: Settings,
-    /// Active overlays, most specific first. M1 activates none; named
-    /// profiles from the `profiles` folder join here later.
-    overlays: Vec<Profile>,
 }
 
 impl ConfigStore {
     /// File name of the settings file next to the executable.
     pub const SETTINGS_FILE: &'static str = "settings.toml";
-    /// Folder name of the named-profiles folder next to the executable.
-    pub const PROFILES_DIR: &'static str = "profiles";
     /// Folder name of the user's themes folder next to the executable: one
     /// directory per theme, named by its id ([`themes`]).
     pub const THEMES_DIR: &'static str = "themes";
@@ -463,11 +276,10 @@ impl ConfigStore {
         Ok(Self {
             root: root.to_path_buf(),
             settings,
-            overlays: Vec::new(),
         })
     }
 
-    /// The settings: global fields plus the base profile's sections.
+    /// The settings.
     #[must_use]
     pub fn settings(&self) -> &Settings {
         &self.settings
@@ -477,16 +289,6 @@ impl ConfigStore {
     /// to persist.
     pub fn settings_mut(&mut self) -> &mut Settings {
         &mut self.settings
-    }
-
-    /// The resolved view over the active overlays and the base.
-    #[must_use]
-    pub fn active(&self) -> ActiveConfig<'_> {
-        ActiveConfig {
-            overlays: &self.overlays,
-            base: &self.settings.speech,
-            base_theme: &self.settings.theme,
-        }
     }
 
     /// The user's themes folder.
@@ -502,7 +304,7 @@ impl ConfigStore {
     }
 
     /// Writes any missing pieces of the on-disk layout with current values —
-    /// `settings.toml` and empty `profiles` and `themes` folders — so users
+    /// `settings.toml` and an empty `themes` folder — so users
     /// can find and edit them without first changing a setting through the
     /// GUI.
     /// Existing files, including corrupt ones, are never touched.
@@ -514,8 +316,7 @@ impl ConfigStore {
         if !self.root.join(Self::SETTINGS_FILE).exists() {
             self.save_settings()?;
         }
-        let profiles_dir = self.root.join(Self::PROFILES_DIR);
-        fs::create_dir_all(&profiles_dir).map_err(|error| ConfigError::Io(profiles_dir, error))?;
+
         let themes_dir = self.themes_dir();
         fs::create_dir_all(&themes_dir).map_err(|error| ConfigError::Io(themes_dir, error))?;
         Ok(())
@@ -527,7 +328,9 @@ impl ConfigStore {
     ///
     /// Returns [`ConfigError::Io`] when writing fails.
     pub fn save_settings(&self) -> Result<(), ConfigError> {
-        write_toml_atomic(&self.root.join(Self::SETTINGS_FILE), &self.settings)
+        let text = toml::to_string_pretty(&self.settings).map_err(ConfigError::Serialize)?;
+        write_atomic(&self.root.join(Self::SETTINGS_FILE), text.as_bytes())
+            .map_err(|(path, error)| ConfigError::Io(path, error))
     }
 
     /// Builds a store from `settings` directly, without reading whatever
@@ -541,7 +344,6 @@ impl ConfigStore {
         Self {
             root: root.to_path_buf(),
             settings,
-            overlays: Vec::new(),
         }
     }
 }
@@ -559,13 +361,14 @@ where
     }
 }
 
-fn write_toml_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), ConfigError> {
-    let text = toml::to_string_pretty(value).map_err(ConfigError::Serialize)?;
+/// Writes `contents` to `path` through a temporary file renamed over it.
+/// A failure gives the file that failed with the error.
+fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), (PathBuf, io::Error)> {
     let mut temp = path.to_path_buf();
     temp.set_extension("toml.tmp");
-    fs::write(&temp, text).map_err(|error| ConfigError::Io(temp.clone(), error))?;
+    fs::write(&temp, contents).map_err(|error| (temp.clone(), error))?;
     // On Windows, std::fs::rename replaces an existing destination.
-    fs::rename(&temp, path).map_err(|error| ConfigError::Io(path.to_path_buf(), error))
+    fs::rename(&temp, path).map_err(|error| (path.to_path_buf(), error))
 }
 
 #[cfg(test)]
@@ -613,17 +416,21 @@ mod tests {
         let root = temp_root("defaults");
         let store = ConfigStore::load(&root).expect("loads");
         assert_eq!(store.settings(), &Settings::default());
-        assert!(store.active().synthesizer().is_none());
     }
 
+    /// Every section survives a save and a reload, and the file names a
+    /// value as its documented word.
     #[test]
     fn save_and_reload_round_trips() {
         let root = temp_root("roundtrip");
         let mut store = ConfigStore::load(&root).expect("loads");
-        store.settings_mut().locale = Some("de".into());
-        store.settings_mut().verbatim_keys.numpad_insert = false;
-        store.settings_mut().speech.synthesizer = Some("onecore".into());
-        store.settings_mut().speech.synth_settings.insert(
+        let settings = store.settings_mut();
+        settings.locale = Some("de".into());
+        settings.verbatim_keys.numpad_insert = false;
+        settings.keyboard.layout = KeyboardLayout::Laptop;
+        settings.keyboard.speech_interrupt_for_enter = false;
+        settings.speech.synthesizer = Some("onecore".into());
+        settings.speech.synth_settings.insert(
             "onecore".into(),
             BTreeMap::from([
                 ("rate".into(), ConfigValue::Integer(60)),
@@ -631,25 +438,24 @@ mod tests {
                 ("rate-boost".into(), ConfigValue::Flag(true)),
             ]),
         );
+        settings.reader.speak_typed_words = TypingEcho::EditControls;
+        settings.reader.say_all_unit = SayAllUnit::Line;
+        settings.reader.follow_caret = false;
+        settings.theme.id = "calm".to_owned();
+        settings.theme.options.sounds_during_say_all = false;
         store.save_settings().expect("saves settings");
 
-        let reloaded = ConfigStore::load(&root).expect("reloads");
-        assert_eq!(reloaded.settings(), store.settings());
-        assert_eq!(reloaded.settings().locale.as_deref(), Some("de"));
-        assert!(!reloaded.settings().verbatim_keys.numpad_insert);
-        let active = reloaded.active();
-        assert_eq!(active.synthesizer(), Some("onecore"));
+        let text =
+            fs::read_to_string(root.join(ConfigStore::SETTINGS_FILE)).expect("reads the file");
+        let file: toml::Table = text.parse().expect("the file is TOML");
         assert_eq!(
-            active.synth_setting("onecore", "rate"),
-            Some(&ConfigValue::Integer(60))
+            file["reader"]["speak_typed_words"],
+            toml::Value::String("edit_controls".to_owned()),
+            "{text}"
         );
         assert_eq!(
-            active.synth_setting("onecore", "rate-boost"),
-            Some(&ConfigValue::Flag(true))
-        );
-        assert_eq!(
-            active.synth_setting("onecore", "voice"),
-            Some(&ConfigValue::Text("Microsoft David".into()))
+            ConfigStore::load(&root).expect("reloads").settings(),
+            store.settings()
         );
     }
 
@@ -659,7 +465,7 @@ mod tests {
         let store = ConfigStore::load(&root).expect("loads");
         store.ensure_files_exist().expect("creates files");
         assert!(root.join(ConfigStore::SETTINGS_FILE).is_file());
-        assert!(root.join(ConfigStore::PROFILES_DIR).is_dir());
+
         assert!(root.join(ConfigStore::THEMES_DIR).is_dir());
 
         // A hand-edited file survives the next startup's ensure call.
@@ -686,22 +492,6 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_file_cannot_carry_global_settings() {
-        // Unknown sections in a profile are ignored by the schema, so a
-        // profile cannot smuggle in modifier keys or a locale.
-        let profile: Profile = toml::from_str(
-            "locale = \"de\"\n[verbatim_keys]\ncaps_lock = false\n[speech]\nsynthesizer = \"onecore\"\n",
-        )
-        .expect("parses, ignoring global keys");
-        assert_eq!(profile.speech.synthesizer.as_deref(), Some("onecore"));
-    }
-
-    #[test]
-    fn keyboard_layout_defaults_to_desktop() {
-        assert_eq!(Settings::default().keyboard.layout, KeyboardLayout::Desktop);
-    }
-
-    #[test]
     fn uia_remote_operations_default_on_and_a_file_can_turn_them_off() {
         assert!(Settings::default().uia.remote_operations);
         let settings: Settings =
@@ -714,174 +504,11 @@ mod tests {
         let settings = Settings::default();
         assert!(settings.keyboard.speech_interrupt_for_characters);
         assert!(settings.keyboard.speech_interrupt_for_enter);
-        assert_eq!(settings.reader, ReaderSettings::default());
         // A file written before these settings existed reads them as the
         // defaults.
         let old: Settings =
             toml::from_str("[keyboard]\nlayout = \"laptop\"\n").expect("parses an older file");
         assert!(old.keyboard.speech_interrupt_for_enter);
         assert_eq!(old.reader.speak_typed_characters, TypingEcho::EditControls);
-    }
-
-    #[test]
-    fn reader_settings_round_trip_through_toml() {
-        let root = temp_root("reader-roundtrip");
-        let mut store = ConfigStore::load(&root).expect("loads");
-        store.settings_mut().reader.speak_typed_words = TypingEcho::EditControls;
-        store.settings_mut().reader.say_all_unit = SayAllUnit::Line;
-        store.settings_mut().reader.follow_caret = false;
-        store.settings_mut().keyboard.speech_interrupt_for_enter = false;
-        store.save_settings().expect("saves settings");
-
-        // The file names the setting's value as the documented word.
-        let text =
-            fs::read_to_string(root.join(ConfigStore::SETTINGS_FILE)).expect("reads the file");
-        let file: toml::Table = text.parse().expect("the file is TOML");
-        assert_eq!(
-            file["reader"]["speak_typed_words"],
-            toml::Value::String("edit_controls".to_owned()),
-            "{text}"
-        );
-        let reloaded = ConfigStore::load(&root).expect("reloads");
-        assert_eq!(reloaded.settings(), store.settings());
-        assert_eq!(
-            reloaded.settings().reader.speak_typed_words,
-            TypingEcho::EditControls
-        );
-        assert_eq!(reloaded.settings().reader.say_all_unit, SayAllUnit::Line);
-        assert!(!reloaded.settings().reader.follow_caret);
-        assert!(!reloaded.settings().keyboard.speech_interrupt_for_enter);
-    }
-
-    #[test]
-    fn terminal_settings_read_from_the_reader_section() {
-        let settings: Settings = toml::from_str(
-            "[reader]\nreport_terminal_output = false\nterminal_full_lines = 50\nterminal_last_lines = 10\n",
-        )
-        .expect("parses");
-        assert!(!settings.reader.report_terminal_output);
-        assert_eq!(settings.reader.full_lines(), 50);
-        assert_eq!(settings.reader.last_lines(), 10);
-        // Left out, each takes its default.
-        let defaults: Settings = toml::from_str("[reader]\n").expect("parses");
-        assert!(defaults.reader.report_terminal_output);
-        assert_eq!(defaults.reader.full_lines(), 30);
-        assert_eq!(defaults.reader.last_lines(), 30);
-    }
-
-    #[test]
-    fn keyboard_layout_round_trips_through_toml() {
-        let root = temp_root("keyboard-roundtrip");
-        let mut store = ConfigStore::load(&root).expect("loads");
-        store.settings_mut().keyboard.layout = KeyboardLayout::Laptop;
-        store.save_settings().expect("saves settings");
-
-        let reloaded = ConfigStore::load(&root).expect("reloads");
-        assert_eq!(reloaded.settings().keyboard.layout, KeyboardLayout::Laptop);
-    }
-
-    #[test]
-    fn a_profile_file_cannot_carry_a_keyboard_section() {
-        // Unknown sections in a profile are ignored by the schema, so a
-        // profile cannot smuggle in a keyboard layout override; Profile has
-        // no field for it at all.
-        let profile: Profile = toml::from_str(
-            "[keyboard]\nlayout = \"laptop\"\n[speech]\nsynthesizer = \"onecore\"\n",
-        )
-        .expect("parses, ignoring the keyboard section");
-        assert_eq!(profile.speech.synthesizer.as_deref(), Some("onecore"));
-    }
-
-    #[test]
-    fn layered_resolution_prefers_overlays_over_the_base() {
-        let mut settings = Settings::default();
-        settings.speech.synthesizer = Some("onecore".into());
-        settings.speech.synth_settings.insert(
-            "onecore".into(),
-            BTreeMap::from([
-                ("rate".into(), ConfigValue::Integer(50)),
-                ("pitch".into(), ConfigValue::Integer(50)),
-            ]),
-        );
-        let mut overlay = Profile::default();
-        overlay.speech.synth_settings.insert(
-            "onecore".into(),
-            BTreeMap::from([("rate".into(), ConfigValue::Integer(90))]),
-        );
-
-        let overlays = vec![overlay];
-        let active = ActiveConfig {
-            overlays: &overlays,
-            base: &settings.speech,
-            base_theme: &settings.theme,
-        };
-        assert_eq!(active.synthesizer(), Some("onecore"));
-        assert_eq!(
-            active.synth_setting("onecore", "rate"),
-            Some(&ConfigValue::Integer(90)),
-            "overlay wins for settings it carries"
-        );
-        let resolved = active.synth_settings("onecore");
-        assert_eq!(resolved.get("pitch"), Some(&ConfigValue::Integer(50)));
-        assert_eq!(resolved.get("rate"), Some(&ConfigValue::Integer(90)));
-    }
-
-    #[test]
-    fn the_theme_resolves_from_the_profile_then_the_base_then_the_default() {
-        let mut settings = Settings::default();
-        let none: Vec<Profile> = Vec::new();
-        let active = ActiveConfig {
-            overlays: &none,
-            base: &settings.speech,
-            base_theme: &settings.theme,
-        };
-        assert_eq!(active.theme_id(), "default", "nothing chosen");
-        assert_eq!(active.theme_options(), ThemeOptions::default());
-
-        settings.theme.id = "calm".to_owned();
-        settings.theme.options.sound_volume = 70;
-        let silent = Profile::default();
-        let proofreading: Profile =
-            toml::from_str("[theme]\nid = \"proofreading\"\nspeak_sounded_indications = true\n")
-                .expect("parses");
-        let overlays = vec![silent.clone()];
-        let active = ActiveConfig {
-            overlays: &overlays,
-            base: &settings.speech,
-            base_theme: &settings.theme,
-        };
-        assert_eq!(
-            active.theme_id(),
-            "calm",
-            "a profile naming none uses the base's"
-        );
-        assert_eq!(active.theme_options().sound_volume, 70);
-
-        let overlays = vec![proofreading, silent];
-        let active = ActiveConfig {
-            overlays: &overlays,
-            base: &settings.speech,
-            base_theme: &settings.theme,
-        };
-        assert_eq!(active.theme_id(), "proofreading");
-        let options = active.theme_options();
-        assert!(options.speak_sounded_indications);
-        assert_eq!(
-            options.sound_volume, 70,
-            "the base's, which the profile leaves"
-        );
-    }
-
-    #[test]
-    fn the_theme_section_round_trips_through_toml() {
-        let mut settings = Settings::default();
-        settings.theme.id = "calm".to_owned();
-        settings.theme.options.sounds_during_say_all = false;
-        let text = toml::to_string_pretty(&settings).expect("serializes");
-        assert!(text.contains("[theme]\nid = \"calm\""), "{text}");
-        let back: Settings = toml::from_str(&text).expect("parses");
-        assert_eq!(back.theme, settings.theme);
-        let old: Settings = toml::from_str("locale = \"de\"\n").expect("an older file parses");
-        assert_eq!(old.theme, ThemeConfig::default());
     }
 }

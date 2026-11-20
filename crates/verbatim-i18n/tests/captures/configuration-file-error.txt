@@ -1,0 +1,4 @@
+Starting NVDA version alpha-58022,732d1ce2 AMD64
+Error loading base configuration; the base configuration file will be reinitialized. A copy of your previous configuration file will be saved at C:\Users\Dickson\AppData\Local\Temp\vbcap\nvda-config-corrupt\nvda.ini.corrupted.bak
+Speaking [LangChangeCommand ('en_US'), 'Configuration File Error', 'dialog', 'Your configuration file contains errors. Your configuration has been reset to\nfactory defaults.\nMore details about the errors can be found in the log file.', CancellableSpeech (still valid)]
+Speaking [LangChangeCommand ('en_US'), 'OK', 'button', CancellableSpeech (still valid)]

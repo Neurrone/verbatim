@@ -145,6 +145,12 @@ impl GuiThread {
         unsafe { ffi::set_speech_control(generation, control, value) }
     }
 
+    /// Shows an OK-only warning box, returning once it is closed.
+    pub(crate) fn show_message(self, title: &str, text: &str) {
+        // SAFETY: `self` shows this is the GUI thread.
+        unsafe { ffi::show_message(title, text) }
+    }
+
     /// Removes the tray icon, destroys the dialogs and the frame, and ends
     /// the event loop.
     pub(crate) fn shut_down(self) {
@@ -770,6 +776,10 @@ pub(crate) mod ffi {
         /// rebuilt and the Select Synthesizer dialog closes; on failure the
         /// message box says so.
         unsafe fn synthesizer_switched(outcome: &SynthesizerSwitch);
+
+        /// Shows an OK-only warning box over the frame, returning once it
+        /// is closed.
+        unsafe fn show_message(title: &str, text: &str);
 
         /// Sets a Speech page control to the driver's value: a slider's
         /// value, a choice's selection, or a check box's state as 1 or 0,

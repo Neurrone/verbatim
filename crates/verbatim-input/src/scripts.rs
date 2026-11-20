@@ -16,26 +16,10 @@
 //! bound action, so this module hands the application data it can adapt: a
 //! list of gesture and action pairs, rather than a ready-built router.
 
+pub use verbatim_model::KeyboardLayout;
 use verbatim_model::{CaretKey, CaretMotion, GestureId, ReviewCommand};
 
 use crate::map::GestureMap;
-
-/// Which physical keyboard layout's gesture bindings are active — NVDA's
-/// desktop (numpad-based) and laptop (no numpad assumed) layouts.
-///
-/// Redeclared here rather than depending on `verbatim_config::KeyboardLayout`
-/// so this crate stays decoupled from configuration, the same pattern
-/// [`crate::DecisionConfig`] already follows for `verbatim_config::VerbatimKeys`;
-/// the application maps one to the other.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyboardLayout {
-    /// The numpad-based layout, and the default.
-    #[default]
-    Desktop,
-    /// The layout for keyboards without a numpad, using shift and control
-    /// chords on the main key block instead.
-    Laptop,
-}
 
 /// Every M3 command a gesture can bind to, abstractly — the vocabulary
 /// object navigation, review-cursor text reading, the time-and-date command,

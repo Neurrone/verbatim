@@ -76,7 +76,8 @@ pub use gesture::{GestureId, GestureParseError};
 pub use key_seq::KeySeq;
 pub use limits::{FOCUS_READ_DEADLINE, HANDLING_DEADLINE, UIA_TRANSACTION_TIMEOUT};
 pub use settings::{
-    DEFAULT_TERMINAL_LINES, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit, TypingEcho,
+    DEFAULT_TERMINAL_LINES, KeyboardLayout, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit,
+    TerminalLines, TypingEcho, VerbatimKeys,
 };
 pub use shell::{ShellCandidate, ShellCandidates, ShellItem, ShellItemKind};
 pub use speech::{
@@ -100,8 +101,8 @@ pub use text::{
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,
-    ReportedDetails, SoundSource, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
-    is_plain_file_name,
+    ReportedDetails, SoundSource, SoundVolume, Theme, ThemeOptions, ThemeProblem, Tone, VoiceStyle,
+    is_plain_file_name, sound_gain,
 };
 pub use tree::{
     Backend, CellPosition, NodeDetails, NodeSnapshot, ObjectKey, Rect, Role, State, StateSet,

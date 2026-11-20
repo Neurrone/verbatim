@@ -33,7 +33,7 @@ Each row is a gesture or feature with a gap still open. Its tests today are list
 | Moving by sentence (Alt+Up, Alt+Down) | Where the application moves nothing the caret moves by sentence and says it; through UI Automation says nothing | verbatim-core event-queue entry `alt_down_with_no_effect_moves_by_sentence_and_says_it`, `alt_down_at_the_texts_end_says_blank_and_at_its_start_the_first_sentence`, `a_sentence_keys_effect_says_the_line`, `a_later_key_during_a_sentence_keys_watch_still_moves_it_silently`, `a_focus_pending_drops_a_sentence_move`, `a_sentence_move_answered_with_a_failure_says_nothing` | n/a | n/a |
 | Clearing keys (Escape, Control+C, Control+D, Control+Break) | Observed and passed; reset a terminal's typing state | verbatim-input `clearing_keys_are_never_bound_nor_caret_keys`; verbatim-core terminal_reading tests | n/a | `text_box_typed_words`, `notepad_typed_words`, the terminal scenarios |
 | Repeated presses | Second and third presses within the window | verbatim-input `second_press_within_window_increments_repeat` | n/a | `notepad_review_cursor`, `text_box_review_cursor`, `notepad_review_words`, `text_box_review_words` |
-| Laptop layout | The key table for keyboards without a numpad | verbatim-input `laptop_table_binds_exactly_the_documented_gestures`, `the_laptop_layout_keeps_the_numpad_bindings`, `every_m4_command_is_bound_in_both_layouts`, `laptop_table_has_no_duplicate_gesture`; verbatim-app `a_laptop_gesture_maps_to_its_command_only_in_the_laptop_layout`; verbatim-config `keyboard_layout_round_trips_through_toml` | n/a | none (the suite uses the desktop layout) |
+| Laptop layout | The key table for keyboards without a numpad | verbatim-input `laptop_table_binds_exactly_the_documented_gestures`, `the_laptop_layout_keeps_the_numpad_bindings`, `every_m4_command_is_bound_in_both_layouts`, `laptop_table_has_no_duplicate_gesture`; verbatim-app `a_laptop_gesture_maps_to_its_command_only_in_the_laptop_layout`; verbatim-config `save_and_reload_round_trips` | n/a | none (the suite uses the desktop layout) |
 
 ## Object navigation
 
@@ -172,7 +172,8 @@ Each row is a gesture or feature with a gap still open. Its tests today are list
 | Item | What it does | Unit | Mockapp | E2E |
 |---|---|---|---|---|
 | Starting and exiting | Start sound and announcement; exit through the menu with its sound | verbatim-core `exiting_cancels_speech_then_plays_the_exit_sound_and_nothing_follows`; verbatim-gui lifecycle `shutdown_ignores_later_requests_and_results` | n/a | `verbatim_lifecycle` |
-| Replacing a running instance | A second start ends the first | verbatim-i18n `the_failed_replacement_box_is_nvdas` | n/a | `verbatim_lifecycle` |
+| Replacing a running instance | A second start ends the first | none | n/a | `verbatim_lifecycle` |
+| A settings file that fails to load | Kept as `settings.toml.corrupted.bak`; the defaults are used and NVDA's Configuration File Error box shown | verbatim-app `a_bad_settings_file_is_kept_as_its_backup_and_the_first_save_leaves_it`; verbatim-i18n `the_configuration_error_box_is_nvdas` | n/a | none: the harness cannot start Verbatim over a raw settings file |
 | Windows' screen reader flag | Set at start, cleared at exit | none | n/a | `verbatim_lifecycle` |
 | Synthesizer host crash | A new host replaces the dead one | verbatim-synth-host `a_host_that_dies_fails_its_utterance_and_the_next_gets_a_new_host_with_the_same_settings` | n/a | `crash_recovery` |
 | Outpost crash recovery | A replacement outpost reads again; until then the dead focus holds no caret key and echoes nothing typed | verbatim-core supervisor policy and generation tests, `a_focus_whose_outpost_ended_holds_no_caret_key_and_echoes_nothing` | failure_paths; child_cleanup | `crash_recovery` |

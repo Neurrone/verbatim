@@ -123,9 +123,21 @@ fn main() -> ExitCode {
     TraceId::namespace(std::process::id());
 
     let exe_dir = exe_dir();
-    let config = load_config(&exe_dir);
+    let (config, config_failed) = load_config(&exe_dir);
     init_tracing(config.settings().log_filter.as_deref());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "verbatim starting");
+    // A warning, not an error, so the error sound does not play before the
+    // message box says what happened.
+    if let Some((error, kept)) = &config_failed {
+        match kept {
+            Ok(()) => {
+                tracing::warn!(%error, "the settings file could not be loaded; it is kept as settings.toml.corrupted.bak and the defaults are used");
+            }
+            Err(rename) => {
+                tracing::warn!(%error, %rename, "the settings file could not be loaded nor kept; the defaults are used and the first saved change overwrites it");
+            }
+        }
+    }
 
     // Checked before replacing a running instance, so a launch that cannot
     // work never stops one that does.
@@ -154,7 +166,7 @@ fn main() -> ExitCode {
     // replacing this one sets it again after it is cleared.
     let _screen_reader = screen_reader_flag::ScreenReaderFlag::raise();
 
-    match run(config, &instance) {
+    match run(config, config_failed.is_some(), &instance) {
         Ok(()) => {
             tracing::info!("verbatim exiting");
             ExitCode::SUCCESS
@@ -194,6 +206,7 @@ fn check_interactive_session() -> Result<(), String> {
 )]
 fn run(
     config: ConfigStore,
+    config_failed: bool,
     instance: &single_instance::InstanceGuard,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let own_pid = std::process::id();
@@ -222,13 +235,8 @@ fn run(
 
     // The keyboard layout selects which review and object-navigation
     // bindings are active (roadmap M3); read it before `config` moves into
-    // the store. File-only in M3, so no live re-read is needed. The config
-    // and input crates each own a `KeyboardLayout` (deliberately decoupled),
-    // so translate here at the seam.
-    let keyboard_layout = match config.settings().keyboard.layout {
-        verbatim_config::KeyboardLayout::Desktop => KeyboardLayout::Desktop,
-        verbatim_config::KeyboardLayout::Laptop => KeyboardLayout::Laptop,
-    };
+    // the store. File-only, so no live re-read is needed.
+    let keyboard_layout = config.settings().keyboard.layout;
     // How every outpost reads UIA, fixed for their lives: a developer
     // setting, read once like the layout.
     let outpost_options = OutpostOptions {
@@ -462,6 +470,14 @@ fn run(
         shell_host,
         gui_event_tx,
         move |handle| {
+            // NVDA's box for a configuration file that failed to load,
+            // once the GUI is up.
+            if config_failed {
+                handle.send(GuiCommand::ShowMessage {
+                    title: verbatim_i18n::t!("config-error-title"),
+                    text: verbatim_i18n::t!("config-error-text"),
+                });
+            }
             let _ = handle_slot.set(handle);
             gui_readiness.notify();
         },
@@ -562,26 +578,40 @@ fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Loads configuration, falling back to defaults (without overwriting the
-/// files) when they are unreadable or corrupt — a screen reader that will
-/// not start is worse than one with default settings.
-fn load_config(exe_dir: &std::path::Path) -> ConfigStore {
-    match ConfigStore::load(exe_dir) {
-        Ok(config) => {
-            // Materialize missing files with defaults so settings.toml and
-            // profiles/base.toml are discoverable and hand-editable from the
-            // first run; existing files are never touched.
-            if let Err(error) = config.ensure_files_exist() {
-                report_error!("verbatim: could not create default config files: {error}");
-            }
-            config
-        }
+/// Loads the configuration. A settings file that fails to load is renamed
+/// to `settings.toml.corrupted.bak`, replacing an older one, and the
+/// defaults are used, as NVDA keeps a bad configuration file
+/// (`docs/parity/system.md`, "A settings file that fails to load"): the
+/// failure is given back, with how the rename went, for the log and the
+/// message box once they exist. Missing files are made with the values in
+/// use, so the settings are discoverable and hand-editable from the first
+/// run.
+fn load_config(
+    exe_dir: &std::path::Path,
+) -> (
+    ConfigStore,
+    Option<(verbatim_config::ConfigError, std::io::Result<()>)>,
+) {
+    let (config, failed) = match ConfigStore::load(exe_dir) {
+        Ok(config) => (config, None),
         Err(error) => {
-            report_error!("verbatim: config error, continuing with defaults: {error}");
-            ConfigStore::load(&std::env::temp_dir().join("verbatim-defaults"))
-                .unwrap_or_else(|fallback| panic!("default config must load: {fallback}"))
+            let file = exe_dir.join(ConfigStore::SETTINGS_FILE);
+            let backup = exe_dir.join(format!("{}.corrupted.bak", ConfigStore::SETTINGS_FILE));
+            let kept = match std::fs::remove_file(&backup) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                _ => std::fs::rename(&file, &backup),
+            };
+            let defaults = verbatim_config::Settings::default();
+            (
+                ConfigStore::from_settings(exe_dir, defaults),
+                Some((error, kept)),
+            )
         }
+    };
+    if let Err(error) = config.ensure_files_exist() {
+        report_error!("verbatim: could not create default config files: {error}");
     }
+    (config, failed)
 }
 
 /// Installs the process-wide tracing subscriber; `RUST_LOG` wins over the
@@ -752,21 +782,19 @@ fn register_test_audio(registry: &mut SynthRegistry) {
 /// fallback, which tries eSpeak NG next because it is registered first.
 fn initial_synth(config: &ConfigStore) -> SynthId {
     config
-        .active()
-        .synthesizer()
+        .settings()
+        .speech
+        .synthesizer
+        .as_deref()
         .map_or_else(|| SynthId::new(synth_ids::ESPEAK), SynthId::new)
 }
 
 /// The hook configuration from global settings: the Verbatim modifier keys
 /// and NVDA's two speech interrupt settings.
 fn decision_config(store: &ConfigStore) -> DecisionConfig {
-    let keys = store.settings().verbatim_keys;
     let keyboard = &store.settings().keyboard;
     DecisionConfig {
-        caps_lock: keys.caps_lock,
-        insert: keys.insert,
-        numpad_insert: keys.numpad_insert,
-        share_modifier: keys.share_modifier,
+        keys: store.settings().verbatim_keys,
         interrupt_for_characters: keyboard.speech_interrupt_for_characters,
         interrupt_for_enter: keyboard.speech_interrupt_for_enter,
         ..DecisionConfig::default()
@@ -1428,9 +1456,9 @@ impl ReducerThread<'_> {
             && self.live.starting() == 0
     }
 
-    /// Merges a change from the settings dialog's Terminal page into the
-    /// reader settings the reducer has now, toggle keys included, so none
-    /// is undone; gives the reducer the result, and saves it.
+    /// Writes the settings dialog's Terminal page's four values into the
+    /// reader settings the reducer has now, leaving the others; gives the
+    /// reducer the result, and saves it.
     fn change_terminal_settings(&mut self, change: verbatim_gui::TerminalChange) {
         let mut settings = self.state.settings();
         change.apply_to(&mut settings);
@@ -2509,6 +2537,46 @@ mod tests {
     }
 
     use verbatim_model::UtteranceId;
+
+    /// A settings file that fails to load is kept as its backup, replacing
+    /// an older one, and Verbatim starts on the defaults rooted at its own
+    /// folder; the saver's first write writes a fresh file and leaves the
+    /// backup alone.
+    #[test]
+    fn a_bad_settings_file_is_kept_as_its_backup_and_the_first_save_leaves_it() {
+        let dir =
+            std::env::temp_dir().join(format!("verbatim-app-bad-settings-{}", std::process::id()));
+        std::fs::create_dir(&dir).expect("a folder of the test's own");
+        let bad = "[keyboard]\nlayout = \"Laptop\"\n";
+        std::fs::write(dir.join("settings.toml"), bad).expect("the bad file");
+        std::fs::write(dir.join("settings.toml.corrupted.bak"), "older").expect("an older backup");
+
+        let (store, failed) = load_config(&dir);
+        assert!(failed.is_some(), "the load failed");
+        let backup = std::fs::read_to_string(dir.join("settings.toml.corrupted.bak"));
+        assert_eq!(backup.expect("the backup"), bad);
+        assert_eq!(store.settings(), &verbatim_config::Settings::default());
+        assert_eq!(store.themes_dir(), dir.join("themes"));
+
+        let (saver, _, reader, _) =
+            saver::Saver::start(saver::DiskFile(dir.clone()), store.settings().clone())
+                .expect("the saver starts");
+        reader.save(verbatim_model::ReaderSettings {
+            follow_caret: false,
+            ..verbatim_model::ReaderSettings::default()
+        });
+        assert!(saver.finish(Instant::now() + Duration::from_secs(5)));
+        let backup = std::fs::read_to_string(dir.join("settings.toml.corrupted.bak"));
+        assert_eq!(backup.expect("the backup"), bad, "the save left the backup");
+        assert!(
+            !verbatim_config::ConfigStore::load(&dir)
+                .expect("the fresh file loads")
+                .settings()
+                .reader
+                .follow_caret
+        );
+        std::fs::remove_dir_all(&dir).expect("remove the test's folder");
+    }
 
     /// Records each ending and each failed utterance's marks, in order.
     #[derive(Default)]

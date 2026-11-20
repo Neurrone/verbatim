@@ -1304,6 +1304,21 @@ mod tests {
         }
     }
 
+    /// The box shown when the settings file fails to load is worded as
+    /// NVDA's, as a capture of NVDA speaking it shows: its title, then its
+    /// text, line breaks not being speech.
+    #[test]
+    fn the_configuration_error_box_is_nvdas() {
+        let capture = include_str!("../tests/captures/configuration-file-error.txt");
+        let spoken = capture.replace("\\n", " ");
+        let title = crate::t!("config-error-title");
+        let text = crate::t!("config-error-text");
+        assert!(
+            spoken.contains(&format!("'{title}', 'dialog', '{text}'")),
+            "{spoken}"
+        );
+    }
+
     #[test]
     fn an_unknown_id_is_none() {
         assert_eq!(message("setting-voice").as_deref(), Some("&Voice"));

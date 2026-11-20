@@ -38,6 +38,7 @@ use std::io;
 use std::time::Duration;
 
 use verbatim_config::Settings;
+use verbatim_model::TerminalLines;
 
 use super::terminal::{self, PROMPT};
 use crate::registry::ScenarioState;
@@ -69,14 +70,14 @@ pub(crate) const HALF: u16 = 15;
 
 /// The settings of a scenario run at [`LOWERED`]: both limits 10.
 pub(crate) fn lowered_limits(settings: &mut Settings) {
-    settings.reader.terminal_full_lines = LOWERED;
-    settings.reader.terminal_last_lines = LOWERED;
+    settings.reader.terminal_full_lines = TerminalLines::new(LOWERED);
+    settings.reader.terminal_last_lines = TerminalLines::new(LOWERED);
 }
 
 /// The settings of a scenario run at [`HALF`]: both limits 15.
 pub(crate) fn half_limits(settings: &mut Settings) {
-    settings.reader.terminal_full_lines = HALF;
-    settings.reader.terminal_last_lines = HALF;
+    settings.reader.terminal_full_lines = TerminalLines::new(HALF);
+    settings.reader.terminal_last_lines = TerminalLines::new(HALF);
 }
 
 /// The flood script; its argument names the run's elapsed-time file, which

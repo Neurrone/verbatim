@@ -1128,10 +1128,8 @@ otherwise.
 
 - `verbatim-model` — normalized tree, events, effects, `NodeId`; no I/O deps.
 - `verbatim-config` — configuration: `settings.toml` next to the executable
-  is the base configuration (global settings plus the base profile's
-  sections, speech first), and a `profiles` folder holds named profiles as
-  sparse overlays, mirroring NVDA's base-plus-diffs model. Profiles cannot
-  carry global settings by construction.
+  is the configuration (the modifier keys, the locale, and the speech,
+  reader and theme sections); configuration profiles are M8.3's.
 - `verbatim-core` — the reducer, modes, review cursor; the browse-mode
   projection is planned (M7).
 - `verbatim-uia` and `verbatim-uia-rops` — UIA client stack; remote

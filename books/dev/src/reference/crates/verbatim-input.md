@@ -73,8 +73,7 @@ Public API:
   only when held, Enter's: not held, the key is reported as an unobserved
   key, the text it types (`holds_only(gesture)`).
 - `scripts` — the M3 script vocabulary. `KeyboardLayout` (`Desktop` or
-  `Laptop`, redeclared here decoupled from `verbatim_config::KeyboardLayout`
-  like `DecisionConfig` already is from `VerbatimKeys`) and `ScriptAction`
+  `Laptop`, `verbatim-model`'s, which the configuration stores) and `ScriptAction`
   (every M3 command: object navigation, review-cursor text reading, speak
   time, show tray list) plus `bindings_for(layout) -> Vec<(GestureId,
   ScriptAction)>`, the complete gesture table for a layout, transcribed from

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
 
-use verbatim_model::{GestureId, TraceId};
+use verbatim_model::{GestureId, TraceId, VerbatimKeys};
 
 use crate::keys;
 use crate::map::GestureMap;
@@ -34,34 +34,11 @@ pub const DEFAULT_MULTI_PRESS_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Which physical keys act as the Verbatim modifier, plus the multi-press
 /// timeout that governs the double-tap passthrough.
-///
-/// The three booleans mirror [`verbatim_config::VerbatimKeys`] but are
-/// redeclared here so this crate stays decoupled from configuration; the
-/// application maps one to the other. All three default to enabled, matching
-/// the configuration crate's defaults.
-///
-/// [`verbatim_config::VerbatimKeys`]: https://docs.rs/verbatim-config
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent per-key toggles plus one behavior flag, not a state machine"
-)]
 pub struct DecisionConfig {
-    /// Caps lock acts as the Verbatim modifier.
-    pub caps_lock: bool,
-    /// The extended (navigation-cluster) insert key acts as the Verbatim
-    /// modifier.
-    pub insert: bool,
-    /// The numpad insert key acts as the Verbatim modifier.
-    pub numpad_insert: bool,
-    /// Passes the Verbatim modifier's own transitions down the hook chain
-    /// instead of swallowing them, so another screen reader hooked behind
-    /// Verbatim sees the modifier held and can run its own commands for
-    /// chords Verbatim leaves unbound. The modifier still works as
-    /// Verbatim's modifier internally. Only sound while such a screen
-    /// reader is running: with nothing behind Verbatim to swallow the key,
-    /// caps lock reaches the OS and toggles on every use.
-    pub share_modifier: bool,
+    /// The keys that act as the Verbatim modifier, and whether its own
+    /// transitions pass down the hook chain.
+    pub keys: VerbatimKeys,
     /// How quickly a lone Verbatim-modifier tap must be repeated to pass the
     /// key through to the operating system (double-tap passthrough).
     pub multi_press_timeout: Duration,
@@ -76,10 +53,7 @@ pub struct DecisionConfig {
 impl Default for DecisionConfig {
     fn default() -> Self {
         Self {
-            caps_lock: true,
-            insert: true,
-            numpad_insert: true,
-            share_modifier: false,
+            keys: VerbatimKeys::default(),
             multi_press_timeout: DEFAULT_MULTI_PRESS_TIMEOUT,
             interrupt_for_characters: true,
             interrupt_for_enter: true,
@@ -857,7 +831,7 @@ impl DecisionMachine {
         // transitions go down the hook chain instead, for the screen reader
         // hooked behind Verbatim to see and swallow in its turn.
         if role == KeyRole::Modifier {
-            if self.config.share_modifier {
+            if self.config.keys.share_modifier {
                 return Decision::pass_shared_modifier();
             }
             self.keys_down.entry(key).or_default().swallowed_gesture = true;
@@ -866,7 +840,7 @@ impl DecisionMachine {
         // A double tap passes the modifier key to the operating system; in
         // share mode the screen reader behind Verbatim decides that press's
         // fate as much as any other.
-        if hands_to_os && self.config.share_modifier {
+        if hands_to_os && self.config.keys.share_modifier {
             return Decision::pass_shared_modifier();
         }
         if let Some(gesture) = gesture
@@ -932,9 +906,9 @@ impl DecisionMachine {
 
     /// Whether the given key is configured to act as the Verbatim modifier.
     fn is_verbatim_modifier(&self, vk: u16, extended: bool) -> bool {
-        (self.config.caps_lock && vk == VK_CAPITAL)
-            || (self.config.insert && vk == VK_INSERT && extended)
-            || (self.config.numpad_insert && vk == VK_INSERT && !extended)
+        (self.config.keys.caps_lock && vk == VK_CAPITAL)
+            || (self.config.keys.insert && vk == VK_INSERT && extended)
+            || (self.config.keys.numpad_insert && vk == VK_INSERT && !extended)
     }
 
     /// Builds the normalized gesture identifier for the key going down, from
@@ -1273,7 +1247,10 @@ mod tests {
         // Verbatim, which decides whether it reaches the operating system.
         let mut m = machine(
             DecisionConfig {
-                share_modifier: true,
+                keys: VerbatimKeys {
+                    share_modifier: true,
+                    ..VerbatimKeys::default()
+                },
                 ..DecisionConfig::default()
             },
             &[],
@@ -1370,7 +1347,10 @@ mod tests {
         // It is told apart from the extended Insert: with only that one a
         // modifier, the numpad Insert passes and V is an ordinary key.
         let config = DecisionConfig {
-            numpad_insert: false,
+            keys: VerbatimKeys {
+                numpad_insert: false,
+                ..VerbatimKeys::default()
+            },
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);
@@ -1383,9 +1363,11 @@ mod tests {
     #[test]
     fn insert_disabled_when_only_numpad_configured() {
         let config = DecisionConfig {
-            caps_lock: false,
-            insert: false,
-            numpad_insert: true,
+            keys: VerbatimKeys {
+                caps_lock: false,
+                insert: false,
+                ..VerbatimKeys::default()
+            },
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);
@@ -1543,7 +1525,10 @@ mod tests {
         // unbound companion key passes so that reader can form the chord,
         // and bound Verbatim chords still fire and are swallowed.
         let config = DecisionConfig {
-            share_modifier: true,
+            keys: VerbatimKeys {
+                share_modifier: true,
+                ..VerbatimKeys::default()
+            },
             ..DecisionConfig::default()
         };
         let mut m = machine(config, &["kb:v+verbatim"]);

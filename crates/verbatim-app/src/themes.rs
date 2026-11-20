@@ -3,8 +3,8 @@
 //! a theme active, which the speech pipeline presents with and Core chooses
 //! its reads' details from.
 //!
-//! The configuration names the theme by id: the base settings' `[theme]`,
-//! or a profile's once M8.3 activates profiles. Making one active decodes its
+//! The configuration names the theme by id in its `[theme]` section.
+//! Making one active decodes its
 //! sounds (a missing or unreadable one is logged, and its indications are
 //! spoken instead), hands it to the speech manager's theme handle, and
 //! tells the reducer the details it reports (`Input::Reported`), from which
@@ -48,8 +48,7 @@ impl ThemeHost for AppThemeHost {
         self.sounds_dir.clone()
     }
 
-    /// The theme section as last saved: the profile the dialog edits until
-    /// M8.3 activates profiles.
+    /// The theme section as last saved.
     fn configured(&self) -> (String, ThemeOptions) {
         let section = self.section.lock().unwrap_or_else(PoisonError::into_inner);
         (section.0.id.clone(), section.0.options)
@@ -64,17 +63,15 @@ impl ThemeHost for AppThemeHost {
         self.manager.themes().set_options(options);
     }
 
-    /// Saves the choice in the base settings, the profile the dialog edits
-    /// until M8.3 activates profiles, through the saver: a failed write is
-    /// logged there.
-    fn persist(&self, id: &str, options: ThemeOptions) -> Result<(), String> {
+    /// Saves the choice in the settings through the saver: a failed write
+    /// is logged there.
+    fn persist(&self, id: &str, options: ThemeOptions) {
         let mut section = self.section.lock().unwrap_or_else(PoisonError::into_inner);
         section.0 = ThemeConfig {
             id: id.to_owned(),
             options,
         };
         section.1.save(section.0.clone());
-        Ok(())
     }
 
     fn play(&self, sound: &Sound, gain: f32) {
@@ -109,9 +106,8 @@ impl ThemeHost for AppThemeHost {
 /// A theme that cannot be loaded is logged, and the built-in default theme
 /// is used in its place, so speech never depends on a theme file.
 pub(crate) fn configured(store: &ConfigStore) -> (LoadedTheme, ThemeOptions) {
-    let active = store.active();
-    let id = active.theme_id().to_owned();
-    let options = active.theme_options();
+    let id = store.settings().theme.id.clone();
+    let options = store.settings().theme.options;
     let loaded = themes::find_theme(&store.themes_dir(), &store.sounds_dir(), &id)
         .unwrap_or_else(|error| {
             tracing::warn!(%error, theme = id, "the configured theme cannot be loaded; using the default theme");
