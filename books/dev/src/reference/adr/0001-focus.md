@@ -2,7 +2,7 @@
 
 Status: decided. First decided 2026-10-10; amended 2026-10-29, 2026-11-02, 2026-11-07, 2026-11-08 and 2026-11-13.
 
-How focus works today is explained in [How focus works](../../explanation/design/focus.md). This record keeps why it works that way: the problem, the options weighed, what was chosen and by whom, and the limits accepted. The sections amended on 2026-11-13 state decisions of [ADR 0003](0003-readers-tell-core-asks.md) that are not built yet: until the builds of its phase replace it, the code works as How focus works and the crate guides describe, and the limits accepted below are those of that code.
+How focus works today is explained in [How focus works](../../explanation/design/focus.md). This record keeps why it works that way: the problem, the options weighed, what was chosen and by whom, and the limits accepted. The sections amended on 2026-11-13 state decisions of [ADR 0003](0003-readers-tell-core-asks.md), which the code follows.
 
 ## The problem
 
@@ -34,7 +34,7 @@ Weighed:
 
 NVDA's focus handler's checks keep NVDA's order: the native check by NVDA's MSAA class list, the duplicate check, the acceptance test on the sender's nearest window, the console window's and the hidden frame's refusals, and the sender's keyboard focus. The acceptance test is judged in Core, a pure rule over the window facts the listener gathers as the event arrives and the tell carries, written from the parity document on focus events ([ADR 0003](0003-readers-tell-core-asks.md), "Acceptance judged in Core"); the checks that make calls into the application are made, for a UI Automation event, by the listener's check thread for its application as the event is delivered, before its tell is sent, and their results are judged in Core, because checks inside the read Core asks for would run behind the previous read and miss focuses in a burst (Dickson, 2026-11-15); the listener makes NVDA's hung test as the event arrives and judges nothing else, except, while background progress bars are not reported, whether to read a value change's classic bar, and a UI Automation bar change after its nearest window, with Core's own function on facts it reads for that purpose (Dickson, 2026-11-19). Reason: three parity defects had one cause, NVDA's handler rebuilt piece by piece with each check placed where it suited Verbatim, and a pure rule makes each verdict testable from its inputs. The earlier element's keyboard focus is read before the sender's, as NVDA reads them (Dickson, 2026-11-02), because Windows Terminal raises its terminal's focus twice at launch, and reading the sender first took the earlier element for another one and said the terminal again.
 
-### One route per application, and the marker (Dickson, 2026-10-10; kept 2026-10-25 and 2026-10-29; amended 2026-11-13)
+### One teller for each kind of event (Dickson, 2026-10-10; kept 2026-10-25 and 2026-10-29; amended 2026-11-13)
 
 Each kind of event has exactly one teller, and every event reaches Core's one event queue in arrival order: the listener holds every desktop-wide WinEvent hook and the UI Automation focus registration, and an outpost holds no WinEvent hook, except a console host's outpost, which keeps the console's five events; an outpost tells Core of the UI Automation property changes of the objects Core has it follow, and of text and caret events ([ADR 0003](0003-readers-tell-core-asks.md), "Who holds what"). Reason: no event reaches Core twice by two routes with no order between them, and an event raised after a focus is not handled before it, as NVDA's one queue guarantees; with one route there is no marker and no hand-over of an application's first events. The listener's events and an outpost's UI Automation events still have no order between them, which only the narrow rule repairs ([ADR 0003](0003-readers-tell-core-asks.md), "The narrow ordering rule").
 
@@ -82,7 +82,7 @@ A `WinEvent` focus in a UI Automation window is dropped, as NVDA drops it. Evalu
 
 ### When an application's call fails (Dickson, 2026-11-07)
 
-A failed or timed-out walk step continues from the parent window of the outermost entry's nearest window, by that window's own object, read live, as NVDA's fallback does, bounded only by the deadline. A failed or timed-out check before the read lets the focus through, as NVDA's handling of a COM error does. A window element that cannot be read drops the focus, as NVDA's unguarded call does. Weighed and rejected: completing the ancestry from Windows' state after a timed-out step, which would speak the focus at about 10 seconds where NVDA keeps calling.
+A failed or timed-out walk step continues from the parent window of the outermost entry's nearest window, by that window's own object, read live, as NVDA's fallback does; the walk has no time limit of its own, each UI Automation call is bounded by UI Automation's transaction timeout, and Core stops waiting for the read at its due time. A failed or timed-out check before the read lets the focus through, as NVDA's handling of a COM error does. A window element that cannot be read drops the focus, as NVDA's unguarded call does. Weighed and rejected: completing the ancestry from Windows' state after a timed-out step, which would speak the focus at about 10 seconds where NVDA keeps calling.
 
 ### Object identity (Dickson, 2026-10-30 and 2026-11-07)
 
@@ -154,19 +154,14 @@ Two outposts are kept started and waiting, and one is given to an application wh
 
 ## Limits accepted
 
-- A focus whose application hangs past the deadline is lost, and nothing marks it.
-- A walk whose application is slow past one UI Automation timeout, but not reported hung, loses its focus at the outpost's deadline, where NVDA waits for every call.
+The limits of the event queue, the frozen-window rule and the readers are in [ADR 0003](0003-readers-tell-core-asks.md), "Limits accepted".
+
+- A focus read whose application is slow but never reported hung loses its focus at Core's 13-second due time, where NVDA waits for every call.
 - A focus UI Automation never delivers is lost, as in NVDA.
 - A focus whose element is gone and whose window cannot be read is lost, as in NVDA.
 - UI Automation's title-bar proxy answers a navigation that passes its 2-second connection timeout as no element and no error (observed under parallel test load, when reading the title-bar buttons' state waited on the Desktop Window Manager), so a walk over a window with a title bar can miss its title-bar buttons without any sign of it.
-- After a return between top-level windows, a focus whose report would speak a cached ancestor costs a live re-read: the reader's partial walk, one round trip and a full walk, where NVDA pays only the full walk. While one live re-read waits, every further focus event of the returned element asks its own, so a window that raises two focus events for its control on a return costs two, and every focus behind it waits for its answer before it is spoken.
-- A held caret key pressed while a report waits for its live re-read reaches the application only after that wait, bounded by the re-read's moved-on rule and its 13-second read deadline, before its own 150-millisecond read bound starts (Dickson, 2026-11-08).
-- Focuses A, B, A from two outpost generations in two top-level windows, reaching Core as A, the repeat of A, then B: nothing is said after the first A and Core ends on A, where NVDA says B then A (Dickson, 2026-11-08).
 - A focus in a window shared by a frame and its content, observed before the other process's ordinary focus report in that window and reaching Core after it, is not spoken. Core ends on the same focus as NVDA, but the containers the earlier report entered are not spoken, where NVDA speaks them before the later focus; matching it would need the reorder buffer rejected above (kept, Dickson, 2026-11-08).
-- An outpost that follows a UI Automation focus the listener read in its application no longer holds its last MSAA read, so a live re-read of that read is answered gone (Dickson, 2026-11-08).
-- A report set aside for a live re-read whose element is gone by the re-read is not spoken, and an answer from a window the user has left by then is refused.
-- A container renamed while the focus was elsewhere is caught only by Core's check, at the cost of a live re-read.
 - A window above the process boundary is a stand-in described from Windows' state, spoken by its title.
 - A window left for a window owned by another process's window, whose own focus never arrives, re-enters the owner on the return, where NVDA would not.
-- The "not responding" sound, which NVDA does not have, plays only when the application holds attention, and while a listener read waits a hang is told only when the hung window is in front.
-- One application's later events wait behind its slow read, up to the deadline each, and one burst can wait about 39 seconds behind abandoned reads; other applications do not wait.
+- The "not responding" sound, which NVDA does not have, plays only when the application holds attention.
+- Every later event, key and command, of every application, waits in Core's event queue behind a slow read until Core stops waiting for it, at most its due time, 13 seconds for a focus read and 11 for others.

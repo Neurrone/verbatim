@@ -192,7 +192,7 @@ Each changes on a fact that has changed: no reader acts on an event itself, no r
 - D14: a reader judges nothing but NVDA's local drops and the listener's drops on an event's own cached class and automation id; every other rule is Core's, the acceptance test included; Core orders by arrival in the event queue. Facts Core carries in a request are used only inside that request's answer. Attention moving only on the listener's foreground change is unchanged.
 - Architecture, section 1: the listener holds every desktop-wide registration; outposts hold no hook but the console host's; the hand-over goes; an extension host's reads go through Core, not over a pipe to the outpost.
 - Architecture, "Bulk reads carry only cheap properties" (2026-10-24): screen review may collect object positions in bulk, an exception (Dickson, 2026-11-12).
-- [ADR 0001](0001-focus.md), "One route per application, and the marker": removed.
+- [ADR 0001](0001-focus.md), "One teller for each kind of event": the marker is removed.
 - ADR 0001, "MSAA focuses stay with the outpost": the listener tells an MSAA focus and the outpost reads it at Core's request.
 - ADR 0001, "Reusing an earlier ancestry": the caches, the title check and the live re-read go; the ancestors Core already knows are the committed focus's ancestors.
 - ADR 0001, "One ordered focus queue" and "One input to Core, in arrival order": kept and widened to every event, key and command; the ordering stamps go.
