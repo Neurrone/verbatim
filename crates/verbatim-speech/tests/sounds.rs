@@ -6,15 +6,15 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use verbatim_audio::{AudioTap, DeviceFormat, MixerBuilder, PcmFormat, SilentDevice, Sound};
+use verbatim_audio::{AudioTap, DeviceFormat, MixerBuilder, SilentDevice};
 use verbatim_model::{
-    Earcon, Indication, SegmentContent, SpeechPriority, Theme, ThemeOptions, TraceId, Utterance,
-    UtteranceEnding, UtteranceId, UtteranceSegment,
+    Earcon, Indication, IndicationSetting, Presentation, SegmentContent, SoundSource,
+    SpeechPriority, TextFormat, Theme, ThemeOptions, TraceId, Utterance, UtteranceEnding,
+    UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SettingId, SettingValue, SoundCue, SpeakToken, SpeechEvents,
-    SpeechItem, SpeechManager, SpeechManagerConfig, SpeechSequence, SpeechSettingsStore,
-    SynthDriver, SynthId, SynthRegistry,
+    ActiveTheme, IndexMark, SettingId, SettingValue, SpeakToken, SpeechEvents, SpeechItem,
+    SpeechManager, SpeechManagerConfig, SpeechSettingsStore, SynthDriver, SynthId, SynthRegistry,
 };
 use verbatim_synth_capture::{CaptureLog, CaptureSynth};
 
@@ -125,36 +125,6 @@ fn loud_count(frames: &[f32]) -> usize {
     frames.iter().filter(|frame| is_loud(**frame)).count()
 }
 
-/// Speaks each text segment, with the sound between the first and the
-/// rest, as a theme places a sound for a span.
-struct SoundingPresenter {
-    sound: Arc<Sound>,
-}
-
-impl Presenter for SoundingPresenter {
-    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
-        let mut items = Vec::new();
-        for (index, segment) in utterance.segments.iter().enumerate() {
-            if index == 1 {
-                items.push(SpeechItem::Sound(SoundCue {
-                    indication: "spelling-error".to_owned(),
-                    sound: Arc::clone(&self.sound),
-                    gain: 1.0,
-                }));
-            }
-            if let SegmentContent::Text(text) = &segment.content {
-                items.push(SpeechItem::Text(text.clone()));
-            }
-        }
-        SpeechSequence {
-            utterance: id,
-            trace_id: utterance.trace_id,
-            language: None,
-            items,
-        }
-    }
-}
-
 /// A speech section with nothing saved, which saves nothing.
 struct NoSettings;
 
@@ -174,7 +144,7 @@ struct Harness {
     tap: Tap,
 }
 
-fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
+fn harness() -> Harness {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
     let mut registry = SynthRegistry::new();
@@ -197,9 +167,8 @@ fn harness(presenter: Option<Box<dyn Presenter>>) -> Harness {
         initial_synth: SynthId::new("capture"),
         settings: Box::new(NoSettings),
         mixer,
-        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: ActiveTheme::new(Theme::builtin_default(), |_| None, ThemeOptions::default()),
-        presenter,
         inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
@@ -225,12 +194,25 @@ fn plain(text: &str) -> Utterance {
 
 #[test]
 fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
-    let format = PcmFormat {
-        sample_rate: 48_000,
-        channels: 1,
-    };
-    let sound = Arc::new(Sound::from_pcm(format, vec![LOUD; SOUND_FRAMES]).expect("a sound"));
-    let harness = harness(Some(Box::new(SoundingPresenter { sound })));
+    // A theme that reports a spelling error by the loud sound alone.
+    let harness = harness();
+    let wav = loud_wav("spelling");
+    let mut theme = Theme::new("sounded", "Sounded");
+    theme.indications.insert(
+        Indication::SpellingError,
+        IndicationSetting {
+            report: Presentation::Sound,
+            sound: Some(SoundSource::File("loud.wav".to_owned())),
+            ..IndicationSetting::default()
+        },
+    );
+    harness.manager.themes().set(ActiveTheme::new(
+        theme,
+        |_| Some(wav.clone()),
+        ThemeOptions::default(),
+    ));
+    std::fs::remove_dir_all(wav.parent().expect("the sound's folder"))
+        .expect("remove the sound's folder");
     let id = harness.manager.speak(
         &harness.token,
         Utterance {
@@ -238,6 +220,7 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
             priority: SpeechPriority::Queued,
             segments: vec![
                 UtteranceSegment::text("the"),
+                UtteranceSegment::new(SegmentContent::Format(TextFormat::SpellingError)),
                 UtteranceSegment::text("wrold"),
             ],
             source: None,
@@ -337,7 +320,7 @@ fn a_sound_plays_at_its_place_between_the_words_and_the_synth_never_sees_it() {
 fn an_event_without_a_sound_to_play_is_spoken_instead() {
     // The harness's theme is the default theme with no sound files found,
     // so browse mode, a sound in the default theme, is spoken.
-    let mut harness = harness(None);
+    let mut harness = harness();
     harness
         .manager
         .play_earcon(&mut harness.token, Earcon::BrowseMode);
@@ -381,7 +364,7 @@ fn loud_wav(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
-    let mut harness = harness(None);
+    let mut harness = harness();
     let wav = loud_wav("exit");
     harness.manager.themes().set(ActiveTheme::new(
         Theme::builtin_default(),
@@ -391,7 +374,8 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
     assert!(
         harness
             .manager
-            .play_earcon_to_end(&mut harness.token, Earcon::Exit, STEP_TIMEOUT),
+            .play_earcon_heard(&mut harness.token, Earcon::Exit)
+            .wait_until(Instant::now() + STEP_TIMEOUT),
         "the exit sound is heard within the bound"
     );
     assert_eq!(
@@ -414,39 +398,14 @@ fn waiting_for_an_event_returns_once_its_sound_has_played_to_its_end() {
 }
 
 #[test]
-fn waiting_past_the_clocks_range_returns_once_the_sound_has_played_to_its_end() {
-    let mut harness = harness(None);
-    let wav = loud_wav("exit-unbounded");
-    harness.manager.themes().set(ActiveTheme::new(
-        Theme::builtin_default(),
-        |_| Some(wav.clone()),
-        ThemeOptions::default(),
-    ));
-    // A timeout no `Instant` can hold: the wait has no deadline.
-    assert!(
-        harness
-            .manager
-            .play_earcon_to_end(&mut harness.token, Earcon::Exit, Duration::MAX),
-        "the exit sound is heard"
-    );
-    assert_eq!(
-        loud_count(&harness.tap.frames.get()),
-        SOUND_FRAMES,
-        "all of the sound played before it returned"
-    );
-    drop(harness);
-    std::fs::remove_dir_all(wav.parent().expect("the sound's folder"))
-        .expect("remove the sound's folder");
-}
-
-#[test]
 fn waiting_for_an_event_without_a_sound_returns_once_its_words_are_heard() {
     // No sounds loaded: the exit sound is spoken instead.
-    let mut harness = harness(None);
+    let mut harness = harness();
     assert!(
         harness
             .manager
-            .play_earcon_to_end(&mut harness.token, Earcon::Exit, STEP_TIMEOUT)
+            .play_earcon_heard(&mut harness.token, Earcon::Exit)
+            .wait_until(Instant::now() + STEP_TIMEOUT)
     );
     let endings: Vec<UtteranceEnding> = harness
         .recorder

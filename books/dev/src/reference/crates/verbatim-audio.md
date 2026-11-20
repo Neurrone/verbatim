@@ -315,7 +315,7 @@ run it dry before the next frames arrive, which is heard as a click. An
 underrun is counted when the device ran dry part-way through an
 utterance and more of that utterance then played: a gap the listener
 hears. The delivery thread logs it as a warning. The device running dry
-while an utterance's trimmed trailing silence is held back is not one.
+at an utterance's end is not one.
 With OneCore and the 40 ms WASAPI buffer, a full audible suite run has no
 underruns.
 

@@ -12,7 +12,7 @@ use std::path::Path;
 use serde_json::{Map, Value};
 use verbatim_core::{DumpContents, replay};
 use verbatim_model::{Effect, Input, SpeechPriority, Theme, ThemeOptions, TraceId, UtteranceId};
-use verbatim_speech::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
+use verbatim_speech::{ActiveTheme, ThemeHandle, ThemePresenter};
 
 /// The file line a dump's first input is on: the header is line 1 and the
 /// state the inputs start from is line 2.

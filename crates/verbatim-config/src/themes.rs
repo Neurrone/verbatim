@@ -106,7 +106,6 @@ impl LoadedTheme {
 
 /// Error from a theme file operation.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum ThemeError {
     /// Reading or writing a file failed.
     Io(PathBuf, io::Error),

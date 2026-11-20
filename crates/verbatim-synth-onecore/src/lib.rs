@@ -25,7 +25,7 @@ use tracing::{debug, info};
 use verbatim_audio::PcmFormat;
 use verbatim_speech::{
     IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem, SpeechSequence, SynthDriver,
-    SynthError, SynthFactory, SynthId, SynthRegistry, SynthSink,
+    SynthError, SynthId, SynthSink,
 };
 
 use verbatim_process::event::{Event, wait_any};
@@ -39,15 +39,6 @@ use windows_future::IAsyncOperation;
 
 /// The stable id of the `OneCore` driver.
 pub const ONECORE_ID: &str = verbatim_speech::hosting::synth_ids::ONECORE;
-
-/// The Fluent message id for the `OneCore` driver's display name.
-const ONECORE_DISPLAY_NAME_KEY: &str = "synth-name-onecore";
-
-/// The localized display name of the `OneCore` driver, resolved through
-/// `verbatim-i18n` (falling back to embedded English).
-fn onecore_display_name() -> String {
-    verbatim_i18n::message(ONECORE_DISPLAY_NAME_KEY)
-}
 
 // NVDA OneCore mapping constants (oneCore.py). Without rate boost, 50 maps to
 // 1.0x exactly; the rate-boost toggle lifts the maximum to 6.0x, matching
@@ -277,10 +268,6 @@ impl SynthDriver for OneCoreSynth {
         SynthId::new(ONECORE_ID)
     }
 
-    fn display_name(&self) -> String {
-        onecore_display_name()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         vec![
             SettingDescriptor::Choice {
@@ -505,7 +492,7 @@ fn ssml(sequence: &SpeechSequence, language: &str, pitch: i32) -> String {
                     open = true;
                 }
             }
-            _ => {}
+            SpeechItem::Sound(_) => {}
         }
     }
     if open {
@@ -677,16 +664,6 @@ fn parse_wav(bytes: &[u8]) -> Result<(PcmFormat, Vec<i16>), SynthError> {
         },
         samples,
     ))
-}
-
-/// A [`SynthFactory`] that builds a fresh `OneCore` driver.
-pub fn factory() -> SynthFactory {
-    Box::new(|| Ok(Box::new(OneCoreSynth::new()?) as Box<dyn SynthDriver>))
-}
-
-/// Registers the `OneCore` driver in a [`SynthRegistry`] under [`ONECORE_ID`].
-pub fn register(registry: &mut SynthRegistry) {
-    registry.register(SynthId::new(ONECORE_ID), onecore_display_name(), factory());
 }
 
 #[cfg(test)]

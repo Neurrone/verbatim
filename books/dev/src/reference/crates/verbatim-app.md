@@ -94,7 +94,9 @@ harness mark `ShellCommand::InputHandled` and `Barrier` the idle waiter
 reducer thread logs each `Command` and `Script` it applies, since the
 hook thread writes no log. The speech queue's inbox is a completion
 port too (`PortInbox` and `PortTaker` over `port_queue::<QueueItem>`), so
-the hook's cancel takes no lock. The supervisor's sink is
+the hook's cancel takes no lock; a unit test refuses an utterance's post
+through the `SpeechPostRefused` fault point and checks that it ends
+failed with its marks. The supervisor's sink is
 `EventSink::posting` over the reducer's port.
 
 The end-to-end harness's hooks (private `harness` module):

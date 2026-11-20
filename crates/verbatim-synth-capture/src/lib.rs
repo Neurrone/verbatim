@@ -107,11 +107,6 @@ impl SynthDriver for CaptureSynth {
         SynthId::new(CAPTURE_ID)
     }
 
-    fn display_name(&self) -> String {
-        // Test-only driver: this name never reaches the production synth list.
-        "Capture synth".to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         vec![
             SettingDescriptor::Choice {

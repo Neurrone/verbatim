@@ -469,10 +469,6 @@ impl SynthDriver for HostedSynth {
         self.synth.clone()
     }
 
-    fn display_name(&self) -> String {
-        self.description.display_name.clone()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         self.description.settings.clone()
     }

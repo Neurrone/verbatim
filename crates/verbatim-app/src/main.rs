@@ -699,9 +699,8 @@ fn build_speech_manager(
         initial_synth,
         settings: Box::new(settings),
         mixer,
-        events: Some(events),
+        events,
         theme,
-        presenter: None,
         inbox: (Arc::new(PortInbox(inbox)), Box::new(PortTaker(taker))),
     })?;
     Ok((Arc::new(manager), token, gui_sounds))
@@ -713,6 +712,13 @@ struct PortInbox(Poster<QueueItem>);
 
 impl SpeechInbox for PortInbox {
     fn post(&self, item: QueueItem) -> Result<(), QueueItem> {
+        #[cfg(test)]
+        if item
+            .speaks()
+            .is_some_and(|id| verbatim_faults::hit(verbatim_faults::Fault::SpeechPostRefused, &id))
+        {
+            return Err(item);
+        }
         self.0.send(item)
     }
 
@@ -2500,5 +2506,127 @@ mod tests {
             arrived,
             ["outpost message for 1", "key 7", "outpost message for 2"]
         );
+    }
+
+    use verbatim_model::UtteranceId;
+
+    /// Records each ending and each failed utterance's marks, in order.
+    #[derive(Default)]
+    struct Endings(Mutex<Vec<String>>);
+
+    impl verbatim_speech::SpeechEvents for Endings {
+        fn utterance_queued(&self, _: UtteranceId, _: TraceId, _: &str, _: Instant) {}
+
+        fn audio_started(&self, _: UtteranceId, _: TraceId, _: bool, _: Instant) {}
+
+        fn utterance_ended(
+            &self,
+            id: UtteranceId,
+            _: TraceId,
+            ending: &verbatim_model::UtteranceEnding,
+            _: Instant,
+        ) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{id} ended {ending:?}"));
+        }
+
+        fn marks_failed(
+            &self,
+            id: UtteranceId,
+            _: TraceId,
+            marks: &[verbatim_speech::IndexMark],
+            _: Instant,
+        ) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{id} marks failed {marks:?}"));
+        }
+    }
+
+    /// A speech section with nothing saved.
+    struct NothingSaved;
+
+    impl verbatim_speech::SpeechSettingsStore for NothingSaved {
+        fn saved(
+            &self,
+            _: &SynthId,
+        ) -> Vec<(verbatim_speech::SettingId, verbatim_speech::SettingValue)> {
+            Vec::new()
+        }
+
+        fn persist(
+            &mut self,
+            _: &SynthId,
+            _: bool,
+            _: &[(verbatim_speech::SettingId, verbatim_speech::SettingValue)],
+        ) {
+        }
+    }
+
+    /// An utterance the speech queue's port refuses ends at once, failed,
+    /// with its marks reported failed, so say-all reads on; and a wait for
+    /// an event whose words are refused returns at once.
+    #[test]
+    fn a_refused_utterance_ends_failed_with_its_marks() {
+        use verbatim_model::{
+            SegmentContent, SpeechMark, SpeechPriority, Utterance, UtteranceSegment,
+        };
+
+        let refusal = verbatim_faults::arm(
+            verbatim_faults::Fault::SpeechPostRefused,
+            |_: &UtteranceId| true,
+            2,
+        );
+        let mut registry = SynthRegistry::new();
+        register_test_audio(&mut registry);
+        let (inbox, taker) = port_queue::<QueueItem>().expect("a port");
+        let endings = Arc::new(Endings::default());
+        let (manager, mut token, _) = SpeechManager::new(SpeechManagerConfig {
+            registry,
+            initial_synth: SynthId::new("capture"),
+            settings: Box::new(NothingSaved),
+            mixer: MixerBuilder::new(Box::new(SilentDevice::new())),
+            events: Arc::clone(&endings) as Arc<dyn verbatim_speech::SpeechEvents>,
+            // No sound files, so the exit sound is spoken.
+            theme: verbatim_speech::ActiveTheme::new(
+                verbatim_model::Theme::builtin_default(),
+                |_| None,
+                verbatim_model::ThemeOptions::default(),
+            ),
+            inbox: (Arc::new(PortInbox(inbox)), Box::new(PortTaker(taker))),
+        })
+        .expect("the pipeline starts");
+
+        let id = manager.speak(
+            &token,
+            Utterance {
+                trace_id: TraceId::mint(),
+                priority: SpeechPriority::Queued,
+                segments: vec![
+                    UtteranceSegment::text("a line"),
+                    UtteranceSegment::new(SegmentContent::Mark(SpeechMark(7))),
+                ],
+                source: None,
+                say_all: true,
+                validity: None,
+            },
+        );
+        assert_eq!(
+            *endings.0.lock().unwrap(),
+            [
+                format!("{id} ended Failed(\"the speech queue refused the utterance\")"),
+                format!("{id} marks failed [IndexMark(7)]"),
+            ]
+        );
+
+        let heard = manager.play_earcon_heard(&mut token, Earcon::Exit);
+        assert!(
+            heard.wait_until(Instant::now()),
+            "the refused words have ended before the wait begins"
+        );
+        drop(refusal);
     }
 }

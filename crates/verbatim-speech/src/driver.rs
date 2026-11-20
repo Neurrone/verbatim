@@ -30,7 +30,6 @@ pub struct IndexMark(pub u64);
 
 /// One item of a [`SpeechSequence`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum SpeechItem {
     /// Text to speak.
     Text(String),
@@ -163,23 +162,6 @@ impl SpeechSequence {
         self.items
             .iter()
             .any(|item| matches!(item, SpeechItem::Pitch(_)))
-    }
-
-    /// Splits the sequence at its marks, for a driver that cannot place
-    /// marks in its audio: each piece is followed by the mark that ended
-    /// it, and the last piece by none.
-    #[must_use]
-    pub fn split_at_marks(&self) -> Vec<(Self, Option<IndexMark>)> {
-        self.split(true, false)
-            .into_iter()
-            .map(|(piece, after)| {
-                let mark = match after {
-                    Some(SpeechItem::Mark(mark)) => Some(mark),
-                    _ => None,
-                };
-                (piece, mark)
-            })
-            .collect()
     }
 
     /// Splits the sequence at its marks when `at_marks`, and at its pitch
@@ -380,9 +362,6 @@ pub trait SynthDriver: Send {
     /// Stable identifier, used in config and the synthesizer list.
     fn id(&self) -> SynthId;
 
-    /// Human-readable name for the synthesizer list.
-    fn display_name(&self) -> String;
-
     /// The settings this driver supports, in display order — the source the
     /// settings GUI generates its controls from.
     fn supported_settings(&self) -> Vec<SettingDescriptor>;
@@ -445,16 +424,16 @@ mod tests {
                 SpeechItem::Mark(IndexMark(2)),
             ],
         };
-        let pieces: Vec<(String, Option<IndexMark>)> = sequence
-            .split_at_marks()
+        let pieces: Vec<(String, Option<SpeechItem>)> = sequence
+            .split(true, false)
             .into_iter()
             .map(|(piece, mark)| (piece.text(), mark))
             .collect();
         assert_eq!(
             pieces,
             vec![
-                ("one".to_owned(), Some(IndexMark(1))),
-                ("two".to_owned(), Some(IndexMark(2))),
+                ("one".to_owned(), Some(SpeechItem::Mark(IndexMark(1)))),
+                ("two".to_owned(), Some(SpeechItem::Mark(IndexMark(2)))),
                 (String::new(), None),
             ]
         );

@@ -54,9 +54,9 @@ Public API:
   reported as queued, so the control plane and the end-to-end suite see
   sounds like words; `has_text` says whether there is text to speak;
   `has_marks` and `has_pitch_changes` report
-  whether any mark or pitch change is present, `split_at_marks` cuts the
-  sequence into pieces each followed by the mark that ended it, and
-  `split(at_marks)` cuts at pitch changes, and at marks too when asked.
+  whether any mark or pitch change is present, and
+  `split(at_marks, at_pitch)` cuts the sequence into pieces each followed
+  by the mark or pitch change that ended it.
 - `SpeechItem`, `IndexMark`, `SynthError`.
 - `SettingDescriptor` (`Numeric` with range and steps, `Choice` with option
   pairs, `Toggle`), `SettingId`, `SettingValue`, `SynthId`, `SynthChoice` —
@@ -72,8 +72,8 @@ Public API:
   and `settle(deadline)`, which cancels speech, as a key does, and waits
   until the synth thread has carried out everything posted before, a
   commit included, for Verbatim's exit. `speak` and `speak_for_key` take
-  `&SpeakToken`, and `play_earcon`, `play_earcon_heard` and
-  `play_earcon_to_end` take `&mut SpeakToken`, which holds the speaking
+  `&SpeakToken`, and `play_earcon` and `play_earcon_heard` take
+  `&mut SpeakToken`, which holds the speaking
   thread's lane to the mixer's events' source; its fields are private to
   this crate; it is not `Clone` and holds a `PhantomData<Cell<()>>`, so
   it is `Send` but not `Sync` and only the thread that owns it, the
@@ -84,13 +84,13 @@ Public API:
   `MixerBuilder` speech plays through, not yet started (the manager adds
   the speech source, with the synth thread's `SpeechLane` and the queue
   thread's `SourceControl`, and the events' source, with the token's lane
-  and the GUI's, then starts it), an optional observer,
+  and the GUI's, then starts it), the observer (`events`),
   the `ActiveTheme` to start with (`theme`: the configured theme, its
-  sounds loaded, so the manager never holds a stand-in), an optional
-  presenter (`presenter`), and the queue thread's inbox (`inbox`, below).
+  sounds loaded, so the manager never holds a stand-in), and the queue
+  thread's inbox (`inbox`, below).
   `control()` returns a `SpeechControl`.
   `themes()` returns the manager's `ThemeHandle`, holding that theme,
-  which the default presenter and `play_earcon` read and the settings
+  which the presenter and `play_earcon` read and the settings
   dialog switches.
   `play_earcon(token, earcon)` reports an event at once (`Effect::PlayEarcon`)
   as the active theme says: its sound plays now on the events' own mixer
@@ -106,9 +106,13 @@ Public API:
   its end, or at once when it cannot play, and its words, if any, are
   spoken to their end. Verbatim plays its exit sound this way, on the
   reducer thread, which never waits for the mixer, while the main thread
-  waits before it exits. `play_earcon_to_end(token, earcon, timeout)` plays and waits
-  in one call. Every ending passes the manager's own waiters on its way to the
-  configured observer.
+  waits before it exits. Every ending passes the manager's own waiters on
+  its way to the configured observer. `speak`, `speak_for_key` and
+  `play_earcon_heard`'s words post through one function: an utterance
+  the inbox gives back (the port gone at shutdown, or refused) ends there,
+  on the caller's thread, `Failed`, followed by `marks_failed` with its
+  marks when it has any, so say-all reads on past it and a waiter for it
+  returns at once; it is never reported queued.
 - `SpeechInbox`, `SpeechInboxTaker` and `QueueItem` — the queue thread's
   inbox (`books/dev/src/explanation/design/ownership.md`):
   every event the queue thread takes, from the manager, `SpeechControl`,
@@ -126,7 +130,9 @@ Public API:
   whether a post given back was refused for now or the queue has gone;
   the channel inbox's is always true, as it cannot see its taker go;
   `QueueItem::cancels_through()` names the key a key
-  press's cancel carries, for a test that reads what was posted.
+  press's cancel carries, for a test that reads what was posted, and
+  `QueueItem::speaks()` the utterance a `Speak` carries, the subject of
+  the app's `SpeechPostRefused` fault point.
 - `SpeechControl` — a cheap, cloneable handle for cutting speech off from
   any thread without blocking, which the keyboard hook and the reducer's
   effects use: `cancel()` cancels current and queued speech and ends a
@@ -137,10 +143,7 @@ Public API:
   `toggle_pause()` pauses speech where it is, or resumes it when paused,
   and returns, as `cancel_through` does, whether the inbox took it; `drop_expired(now)` drops focus speech whose `FocusValidity` no
   longer holds for the `FocusNow` given (see "When speech is cut off"
-  below). `SpeechManager::paused()` says whether speech is paused, as
-  the manager last applied it: it changes only after the mixer has been
-  told, so audio arriving afterwards is ordered after the pause or
-  resume.
+  below).
 - `SpeechSettingsHost` (trait) and `SettingsHost` (implementation) — the
   GUI's live handle (`books/dev/src/explanation/design/ownership.md`): list synthesizers, switch the active one
   (`switch_synthesizer`, which returns at once and hands the outcome to a
@@ -207,13 +210,11 @@ Public API:
   cancelled before synthesis, are called on the queue thread; the rest on
   the mixer's delivery thread, so every implementation must be cheap and
   non-blocking.
-- `Presenter` and `ThemePresenter` — the presentation stage (decision
-  D12, [verbatim-model](verbatim-model.md), "Themes"): a presenter flattens each structured utterance to the
+- `ThemePresenter` — the presentation stage (decision
+  D12, [verbatim-model](verbatim-model.md), "Themes"): it flattens each structured utterance to the
   `SpeechSequence` handed to the synthesizer, with `flatten(utterance,
-  id)`, on the queue thread when the utterance is accepted.
-  `ThemePresenter` is the default (selected when
-  `SpeechManagerConfig::presenter` is `None`) and resolves each span through
-  the active theme of a `ThemeHandle`. Content is always spoken: labels,
+  id)`, on the queue thread when the utterance is accepted, and resolves
+  each span through the active theme of a `ThemeHandle`. Content is always spoken: labels,
   values, and text as their text, messages and phrases with values
   through `verbatim-i18n`, a character spoken on its own
   (`SegmentContent::Character`) by its name from the character table of
@@ -316,8 +317,11 @@ threads. A commit reads every value from the driver and saves them, as
 NVDA saves the driver's own values; a switch that succeeds makes the new
 synthesizer the user's choice, with its values as it started as the
 committed ones. The active synthesizer's name is the registry's, which
-verbatim.exe builds in the user's language, not the name its driver
-reports from a synthesizer host, which never loads the user's locale.
+verbatim.exe builds in the user's language: a driver has no name of its
+own, and one whose id is not registered fails its start or switch. The
+synth thread builds the mirror from the first synthesizer it starts and
+hands it back at startup, so the mirror always describes a running
+synthesizer.
 
 Starting a synthesizer, at startup or on a switch, builds it from the
 registry and then applies its saved values, read from the
@@ -404,17 +408,18 @@ three things end speech early, all carried to the queue thread as events:
 Silence trimming (`trim.rs`). Every driver's PCM passes through a trimmer
 before reaching the mixer. Quiet frames (every sample within 64 of zero,
 about -54 dBFS) before the first audible frame are dropped, so the first
-word is not delayed. After that, each run of quiet frames is held back:
-released when audible audio follows, so pauses between words stay, and
-dropped when the utterance ends, so trailing silence does not delay the
-ending or the next utterance. At most two seconds of quiet audio is held;
-a longer run is released as it is. Marks reached during held audio keep
-their place relative to it.
+word is not delayed; everything after it is passed on, so pauses between
+words and the synthesizer's own trailing audio play as it made them, as
+NVDA trims only leading silence (`docs/nvda/audio.md`). With eSpeak NG an
+utterance's trailing silence is only the tail of its last sound, a few
+milliseconds, since neither NVDA nor Verbatim asks it for the last
+clause's pause. A mark reached during the leading silence is placed
+before the first audio.
 
 Sounds in the speech stream (decision D17). Before a job is synthesized,
 each sound item is replaced by a mark whose top bit is set and whose
-other bits are the sound's index; the mark fallback below and the
-silence trimmer treat it like any mark, so the sound keeps its exact place
+other bits are the sound's index; the mark fallback below treats it like
+any mark, so the sound keeps its exact place
 whatever the driver does with marks. When such a mark arrives at the
 sink, it is placed in the mixer as a sound of the utterance
 (`SpeechLane::sound`) instead of as a mark, so it starts when playback reaches
@@ -427,7 +432,7 @@ under it and none of that word after it, without the synthesizer
 seeing it, and that an event with no sound to play is spoken.
 
 Mark fallback. When the active driver's `places_marks` is `false` and the
-sequence has marks, the synth thread splits it with `split_at_marks` and
+sequence has marks, the synth thread splits it at them with `split` and
 speaks the pieces one after another into the same utterance, placing each
 mark after the piece it ended. Every mark is then exact at the cost of a
 synthesis boundary at each mark. No built-in driver needs it: OneCore and

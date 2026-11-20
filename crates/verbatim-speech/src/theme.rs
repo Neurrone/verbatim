@@ -1,5 +1,5 @@
 //! The presentation stage (decision D12): the pipeline boundary where a
-//! [`Presenter`] flattens a structured [`Utterance`] into a flat
+//! [`ThemePresenter`] flattens a structured [`Utterance`] into a flat
 //! [`SpeechSequence`], as the active theme says (`books/dev/src/reference/crates/verbatim-model.md`,
 //! "Themes").
 //!
@@ -30,18 +30,6 @@ use verbatim_model::{
 use verbatim_text::{composed, is_capital};
 
 use crate::driver::{IndexMark, SoundCue, SpeechItem, SpeechSequence};
-
-/// The presentation stage: flattens structured utterances at the end of the
-/// speech pipeline.
-///
-/// Implementations run on the pipeline's queue thread (hence `Send`) and
-/// must be cheap: this sits between "utterance queued" and "synthesis
-/// starts" on every spoken announcement, inside the latency budget.
-pub trait Presenter: Send {
-    /// Flattens one structured utterance, which the pipeline has numbered
-    /// `id`, to the sequence handed to the synthesizer.
-    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence;
-}
 
 /// How far the pitch setting is raised for a capital letter spelled out:
 /// NVDA's default capital pitch change (`docs/nvda/speech.md`, "Capitals
@@ -311,9 +299,12 @@ impl ThemePresenter {
     pub fn new(themes: ThemeHandle) -> Self {
         Self { themes }
     }
-}
 
-impl Presenter for ThemePresenter {
+    /// Flattens one structured utterance, which the pipeline has numbered
+    /// `id`, to the sequence handed to the synthesizer. It runs on the
+    /// pipeline's queue thread, between "utterance queued" and "synthesis
+    /// starts", so it must be cheap.
+    ///
     /// The sequence is text items, or none when nothing is spoken; a sound
     /// item before the words of an indication that plays one; a raised
     /// capital is a text item between two pitch changes, the second back to
@@ -321,7 +312,8 @@ impl Presenter for ThemePresenter {
     /// voice style that changes the pitch; an index mark is a mark item.
     /// The language tag is taken from the first segment that overrides it,
     /// if any.
-    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
+    #[must_use]
+    pub fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
         let active = self.themes.get();
         let mut out = Output {
             sounds: !utterance.say_all || active.options().sounds_during_say_all,
@@ -574,7 +566,7 @@ fn words_of(content: &SegmentContent, language: Option<&str>) -> Option<String> 
         SegmentContent::CharacterDescription(text) => character_description(text, language)
             .or_else(|| character_name(text, language))
             .or_else(|| (!text.is_empty()).then(|| text.clone())),
-        _ => None,
+        SegmentContent::Mark(_) | SegmentContent::SpelledCapital(_) => None,
     }
 }
 

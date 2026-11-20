@@ -9,9 +9,7 @@ builds it when started with `--synth onecore`, and
 [verbatim-synth-hosted](verbatim-synth-hosted.md) rather than linking
 this crate. The driver itself is unchanged by that move.
 
-Public API: `OneCoreSynth::new()`, `ONECORE_ID`, and `factory()` plus
-`register(registry)` conveniences, which build the driver in the calling
-process; nothing in Verbatim calls the two conveniences now.
+Public API: `OneCoreSynth::new()` and `ONECORE_ID`.
 `OneCoreSynth::interrupted_by(event)` has the driver also wait on an
 event set when its utterance may have been cancelled, asking the sink
 each time: the synthesizer host gives it its command event.

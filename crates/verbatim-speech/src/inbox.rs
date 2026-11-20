@@ -29,6 +29,16 @@ impl QueueItem {
             _ => None,
         }
     }
+
+    /// The utterance an item speaks, `None` for any other event: the
+    /// subject of a fault point that refuses an utterance's post.
+    #[must_use]
+    pub fn speaks(&self) -> Option<verbatim_model::UtteranceId> {
+        match self.0 {
+            QueueEvent::Speak(id, ..) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// Where the speech queue thread's events are posted, from any thread.

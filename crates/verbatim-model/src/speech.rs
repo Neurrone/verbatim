@@ -60,7 +60,6 @@ pub enum SpeechPriority {
 /// exactly these span kinds. The reducer never pre-flattens: a control's
 /// label travels as [`Label`](Self::Label), never as anonymous text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum SegmentContent {
     /// Literal text with no more specific meaning: typed characters, a
     /// spoken time, free-form message text.
@@ -138,7 +137,6 @@ pub enum SegmentContent {
 /// `docs/nvda/document-formatting.md` describes: "spelling error" where an
 /// error starts and "out of spelling error" where it ends.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum TextFormat {
     /// A spelling error starts here.
     SpellingError,
@@ -210,7 +208,6 @@ pub enum SelectionText {
 /// [`SegmentContent::Phrase`] and worded at the presentation stage, like
 /// [`Message`]. Wording matches NVDA's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum Phrase {
     /// A table's row and column counts, for Report Current Object:
     /// NVDA's "with 3 rows and 2 columns" (`speech.py`, `_rowAndColumnCountText`);
@@ -295,7 +292,6 @@ pub enum Phrase {
 /// A fixed reader message a [`SegmentContent::Message`] segment names.
 /// Localization happens at the presentation stage, like every other span.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum Message {
     /// Object navigation found no next sibling — NVDA's "No next".
     NoNextObject,
@@ -642,12 +638,5 @@ mod tests {
         };
         assert!(spoken.holds(&now(key(2, Some(7)))));
         assert!(!spoken.holds(&now(key(2, None))));
-    }
-
-    #[test]
-    fn text_segment_defaults_to_utterance_language() {
-        let segment = UtteranceSegment::text("Settings");
-        assert_eq!(segment.content, SegmentContent::Text("Settings".into()));
-        assert!(segment.language.is_none());
     }
 }

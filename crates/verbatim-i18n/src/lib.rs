@@ -760,9 +760,6 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::TerminalLineCut => i18n_embed_fl::fl!(loader, "message-terminal-line-cut"),
         Message::SelectionRemoved => i18n_embed_fl::fl!(loader, "message-selection-removed"),
         Message::UnableToCopy => i18n_embed_fl::fl!(loader, "clipboard-copy-failed"),
-        // `Message` is non_exhaustive; an unmapped future message speaks
-        // nothing rather than crashing the pipeline.
-        _ => String::new(),
     }
 }
 
@@ -905,9 +902,6 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::CopiedToClipboard(text) => messages::clipboard_copied(text),
         Phrase::ShellItemGone(name) => messages::tray_list_gone(name),
         Phrase::ShellItemUnclickable(name) => messages::tray_list_unclickable(name),
-        // `Phrase` is non_exhaustive; an unmapped future phrase speaks
-        // nothing rather than crashing the pipeline.
-        _ => String::new(),
     }
 }
 
@@ -1093,7 +1087,7 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::DropDownButtonGrid => i18n_embed_fl::fl!(loader, "role-drop-down-button-grid"),
         Role::HelpBalloon => i18n_embed_fl::fl!(loader, "role-help-balloon"),
         Role::BusyIndicator => i18n_embed_fl::fl!(loader, "role-busy-indicator"),
-        _ => i18n_embed_fl::fl!(loader, "role-unknown"),
+        Role::Unknown => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
 }
 
@@ -1256,9 +1250,6 @@ pub fn indication_name(indication: verbatim_model::Indication) -> String {
             i18n_embed_fl::fl!(loader, "indication-suggestions-closed")
         }
         Indication::Progress => i18n_embed_fl::fl!(loader, "indication-progress"),
-        // `Indication` is non_exhaustive; a future indication is listed by
-        // its id until it is given a name here.
-        other => other.id(),
     }
 }
 
@@ -1322,9 +1313,6 @@ pub fn format_text(format: &verbatim_model::TextFormat) -> String {
         TextFormat::Bullet(style) => bullet_text(*style),
         TextFormat::Link => i18n_embed_fl::fl!(loader, "format-link"),
         TextFormat::NotLink => i18n_embed_fl::fl!(loader, "format-not-link"),
-        // `TextFormat` is non_exhaustive; an unmapped future format speaks
-        // nothing rather than crashing the pipeline.
-        _ => String::new(),
     }
 }
 
@@ -1393,9 +1381,6 @@ pub fn earcon_text(earcon: verbatim_model::Earcon) -> String {
         Earcon::Progress(percent) => {
             i18n_embed_fl::fl!(loader, "earcon-progress", percent = percent.to_string())
         }
-        // `Earcon` is non_exhaustive; an unmapped future earcon speaks
-        // nothing rather than crashing the pipeline.
-        _ => String::new(),
     }
 }
 
@@ -1453,9 +1438,6 @@ pub fn theme_problem_text(problem: &verbatim_model::ThemeProblem) -> String {
         ThemeProblem::GainTooHigh { indication: None } => {
             i18n_embed_fl::fl!(loader, "theme-problem-theme-gain-too-high")
         }
-        // `ThemeProblem` is non_exhaustive; a future problem is described
-        // in its diagnostic English until it is given wording here.
-        other => other.to_string(),
     }
 }
 

@@ -159,7 +159,6 @@ fn speak(
 /// What the host's synthesizer is, for Core.
 fn describe(driver: &dyn SynthDriver) -> HostDescription {
     HostDescription {
-        display_name: driver.display_name(),
         places_marks: driver.places_marks(),
         changes_pitch: driver.changes_pitch(),
         settings: driver.supported_settings(),

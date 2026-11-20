@@ -181,7 +181,7 @@ which is reported separately. The stages, in milliseconds:
   synthesizer to its first audio), and back from the synthesizer host
   (from the host beginning to write that audio until the synth thread,
   which reads the host's pipe itself, handles it).
-- Leading silence: audio the trimmer held back as leading silence.
+- Leading silence: the leading silence the trimmer dropped.
 - Mixer and device: until the audio engine took the first sample.
 - Device clock: from the engine taking the first sample until the
   device's own clock passed it, read from the audio device's clock; only

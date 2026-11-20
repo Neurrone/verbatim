@@ -68,7 +68,7 @@ pub use inbox::{QueueItem, SpeechInbox, SpeechInboxTaker, channel_inbox};
 pub use manager::{EarconHeard, SpeakToken, SpeechControl, SpeechManager, SpeechManagerConfig};
 pub use registry::{SynthFactory, SynthRegistry};
 pub use settings::{SettingDescriptor, SettingId, SettingValue, SynthChoice, SynthId};
-pub use theme::{ActiveTheme, Presenter, ThemeHandle, ThemePresenter};
+pub use theme::{ActiveTheme, ThemeHandle, ThemePresenter};
 
 /// Takes the outcome of [`SpeechSettingsHost::switch_synthesizer`]: a
 /// responder, so that a path that drops the request still answers it, as

@@ -106,10 +106,6 @@ impl SynthDriver for Scripted {
         SynthId::new("scripted")
     }
 
-    fn display_name(&self) -> String {
-        "Scripted".to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         vec![SettingDescriptor::standard_numeric("rate", "setting-rate")]
     }

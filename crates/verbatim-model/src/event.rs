@@ -1198,7 +1198,6 @@ pub enum ReviewCommand {
 /// nothing (`books/dev/src/reference/crates/verbatim-model.md`, "Themes"). Each is an indication of the
 /// catalogue's Events category ([`crate::Indication::of_earcon`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum Earcon {
     /// A deadline expired inside a cross-process accessibility call: the
     /// application is not responding and the reducer proceeded with stale

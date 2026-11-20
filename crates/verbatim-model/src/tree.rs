@@ -21,7 +21,6 @@ pub enum Backend {
 /// M1 carries the roles that appear in Verbatim's own menu and settings
 /// dialog plus common shell roles; the set grows with later milestones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum Role {
     /// A top-level window.
     Window,

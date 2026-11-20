@@ -17,7 +17,7 @@ use verbatim_model::{
     UtteranceSegment,
 };
 use verbatim_speech::{
-    ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SettingsAnswer,
+    ActiveTheme, IndexMark, SettingDescriptor, SettingId, SettingValue, SettingsAnswer,
     SettingsHost, SpeakToken, SpeechEvents, SpeechItem, SpeechManager, SpeechManagerConfig,
     SpeechSequence, SpeechSettingsHost, SpeechSettingsStore, SynthChoice, SynthDriver, SynthError,
     SynthFactory, SynthId, SynthRegistry, SynthSink,
@@ -261,10 +261,6 @@ impl SynthDriver for ControlSynth {
         SynthId::new("control")
     }
 
-    fn display_name(&self) -> String {
-        "Control synth".to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
         Vec::new()
     }
@@ -440,9 +436,8 @@ fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
         initial_synth: SynthId::new("control"),
         settings: Box::new(TestStore::default()),
         mixer,
-        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: theme_without_sounds(),
-        presenter: None,
         inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
@@ -487,9 +482,7 @@ fn recv_started(started: &Receiver<String>) -> String {
     started.recv_timeout(STEP_TIMEOUT).expect("synth started")
 }
 
-fn capture_manager(
-    presenter: Option<Box<dyn Presenter>>,
-) -> (SpeechManager, SpeakToken, CaptureLog, Arc<Recorder>) {
+fn capture_manager() -> (SpeechManager, SpeakToken, CaptureLog, Arc<Recorder>) {
     let log: CaptureLog = CaptureSynth::new().log();
     let log_for_factory = Arc::clone(&log);
     let mut registry = SynthRegistry::new();
@@ -509,9 +502,8 @@ fn capture_manager(
         initial_synth: SynthId::new("capture"),
         settings: Box::new(TestStore::default()),
         mixer: mixer(),
-        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: theme_without_sounds(),
-        presenter,
         inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
@@ -613,18 +605,19 @@ fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
         &harness.token,
         utterance("urgent", SpeechPriority::Interrupt),
     );
-    let mut reported = vec![
+    // The waiting one is ended by the queue thread as the cut is made, the
+    // current one when the mixer has stopped it.
+    let reported = vec![
         cut_rx.recv_timeout(STEP_TIMEOUT).expect("a cut reported"),
         cut_rx
             .recv_timeout(STEP_TIMEOUT)
             .expect("a second cut reported"),
     ];
-    reported.sort_by_key(|(utterance, _, _)| *utterance);
     assert_eq!(
         reported,
         vec![
-            (current, vec![IndexMark(1), IndexMark(2)], false),
             (waiting, vec![IndexMark(3), IndexMark(4)], false),
+            (current, vec![IndexMark(1), IndexMark(2)], false),
         ]
     );
     assert_eq!(recv_started(&harness.started), "urgent");
@@ -692,7 +685,7 @@ fn failed_synthesis_ends_the_utterance_as_failed_and_speech_carries_on() {
 
 #[test]
 fn renders_tokens_through_capture_synth() {
-    let (manager, token, log, recorder) = capture_manager(None);
+    let (manager, token, log, recorder) = capture_manager();
 
     let id = manager.speak(
         &token,
@@ -723,42 +716,24 @@ fn renders_tokens_through_capture_synth() {
     assert_eq!(texts, ["Settings menu item", "marker"]);
 }
 
-/// A theme that puts a mark after each segment.
-struct MarkingTheme;
-
-impl Presenter for MarkingTheme {
-    fn flatten(&self, utterance: &Utterance, id: UtteranceId) -> SpeechSequence {
-        let mut items = Vec::new();
-        for (index, segment) in utterance.segments.iter().enumerate() {
-            if let SegmentContent::Text(text) = &segment.content {
-                items.push(SpeechItem::Text(text.clone()));
-            }
-            items.push(SpeechItem::Mark(IndexMark(index as u64 + 1)));
-        }
-        SpeechSequence {
-            utterance: id,
-            trace_id: utterance.trace_id,
-            language: None,
-            items,
-        }
+/// "one", mark 1, "two", mark 2, queued.
+fn one_two_marked() -> Utterance {
+    Utterance {
+        segments: vec![
+            UtteranceSegment::text("one"),
+            UtteranceSegment::new(SegmentContent::Mark(SpeechMark(1))),
+            UtteranceSegment::text("two"),
+            UtteranceSegment::new(SegmentContent::Mark(SpeechMark(2))),
+        ],
+        ..queued("unused")
     }
 }
 
 #[test]
 fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact() {
-    let (manager, token, log, recorder) = capture_manager(Some(Box::new(MarkingTheme)));
+    let (manager, token, log, recorder) = capture_manager();
 
-    let id = manager.speak(
-        &token,
-        Utterance {
-            trace_id: TraceId::mint(),
-            priority: SpeechPriority::Queued,
-            segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
-            source: None,
-            say_all: false,
-            validity: None,
-        },
-    );
+    let id = manager.speak(&token, one_two_marked());
 
     let marker = manager.speak(&token, queued("marker"));
     assert_eq!(
@@ -778,11 +753,7 @@ fn a_synth_that_cannot_place_marks_gets_the_sequence_split_and_marks_stay_exact(
     );
     assert_eq!(
         *recorder.marks.lock().unwrap(),
-        vec![
-            (id, IndexMark(1)),
-            (id, IndexMark(2)),
-            (marker, IndexMark(1))
-        ]
+        vec![(id, IndexMark(1)), (id, IndexMark(2))]
     );
 }
 
@@ -796,10 +767,6 @@ struct MarkPlacingSynth {
 impl SynthDriver for MarkPlacingSynth {
     fn id(&self) -> SynthId {
         SynthId::new("marks")
-    }
-
-    fn display_name(&self) -> String {
-        "Mark-placing synth".to_owned()
     }
 
     fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
@@ -860,20 +827,13 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
         initial_synth: SynthId::new("marks"),
         settings: Box::new(TestStore::default()),
         mixer: mixer(),
-        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: theme_without_sounds(),
-        presenter: Some(Box::new(MarkingTheme)),
         inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");
 
-    let id = manager.speak(
-        &token,
-        Utterance {
-            segments: vec![UtteranceSegment::text("one"), UtteranceSegment::text("two")],
-            ..queued("unused")
-        },
-    );
+    let id = manager.speak(&token, one_two_marked());
 
     let marker = manager.speak(&token, queued("marker"));
     assert_eq!(
@@ -889,19 +849,12 @@ fn a_synth_that_places_marks_gets_the_whole_sequence_in_one_call() {
                 SpeechItem::Text("two".to_owned()),
                 SpeechItem::Mark(IndexMark(2)),
             ],
-            vec![
-                SpeechItem::Text("marker".to_owned()),
-                SpeechItem::Mark(IndexMark(1)),
-            ]
+            vec![SpeechItem::Text("marker".to_owned())]
         ]
     );
     assert_eq!(
         *recorder.marks.lock().unwrap(),
-        vec![
-            (id, IndexMark(1)),
-            (id, IndexMark(2)),
-            (marker, IndexMark(1))
-        ]
+        vec![(id, IndexMark(1)), (id, IndexMark(2))]
     );
 }
 
@@ -986,24 +939,6 @@ fn about(text: &str, node: u64, had_focus: bool) -> Utterance {
         }),
         ..queued(text)
     }
-}
-
-#[test]
-fn a_cancel_ends_current_and_queued_speech() {
-    let harness = control_manager();
-    let current = harness.manager.speak(&harness.token, queued("current"));
-    assert_eq!(recv_started(&harness.started), "current");
-    let waiting = harness.manager.speak(&harness.token, queued("waiting"));
-
-    harness.manager.control().cancel();
-
-    assert_eq!(
-        harness.endings_before_a_marker(),
-        vec![
-            (current, UtteranceEnding::Cancelled),
-            (waiting, UtteranceEnding::Cancelled),
-        ]
-    );
 }
 
 /// A cancel wakes a driver waiting for its synthesizer, which has pushed no
@@ -1238,10 +1173,6 @@ impl SynthDriver for SettingsSynth {
         SynthId::new(self.id)
     }
 
-    fn display_name(&self) -> String {
-        self.id.to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         let options = ["default", "other", "refused"]
             .map(|voice| (voice.to_owned(), voice.to_owned()))
@@ -1302,9 +1233,8 @@ fn settings_manager(
         initial_synth: SynthId::new(initial),
         settings: Box::new(store.clone()),
         mixer: mixer(),
-        events: None,
+        events: Arc::new(Recorder::default()),
         theme: theme_without_sounds(),
-        presenter: None,
         inbox: verbatim_speech::channel_inbox(),
     })
     .map(|(manager, _token, _sounds)| manager)
@@ -1640,10 +1570,6 @@ impl SynthDriver for PitchSynth {
         SynthId::new("pitch")
     }
 
-    fn display_name(&self) -> String {
-        "Pitch synth".to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<verbatim_speech::SettingDescriptor> {
         vec![verbatim_speech::SettingDescriptor::standard_numeric(
             "pitch",
@@ -1706,9 +1632,8 @@ fn a_spelled_capital_is_spoken_at_a_raised_pitch() {
         initial_synth: SynthId::new("pitch"),
         settings: Box::new(TestStore::default()),
         mixer: mixer(),
-        events: Some(Arc::clone(&recorder) as Arc<dyn SpeechEvents>),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: theme_without_sounds(),
-        presenter: None,
         inbox: verbatim_speech::channel_inbox(),
     })
     .expect("pipeline starts");

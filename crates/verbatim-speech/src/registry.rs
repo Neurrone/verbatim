@@ -88,12 +88,6 @@ impl SynthRegistry {
             })
     }
 
-    /// Whether a synthesizer with this id is registered.
-    #[must_use]
-    pub fn contains(&self, id: &SynthId) -> bool {
-        self.entries.iter().any(|entry| &entry.id == id)
-    }
-
     /// Builds the driver registered under `id`.
     ///
     /// # Errors

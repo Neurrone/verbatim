@@ -43,7 +43,7 @@ pub trait SpeechSettingsStore: Send {
 /// thread; a reader copies what it needs under the lock, which is never
 /// held across a call.
 pub(crate) struct Mirror {
-    state: Mutex<MirrorState>,
+    state: Mutex<Description>,
     /// Where the synth thread's answers go, once the GUI has said.
     answered: Mutex<Option<Answered>>,
 }
@@ -51,45 +51,35 @@ pub(crate) struct Mirror {
 /// Where answers go, shared so it is called outside the mirror's lock.
 type Answered = Arc<dyn Fn(SettingsAnswer) + Send + Sync>;
 
-#[derive(Default)]
-struct MirrorState {
-    synths: Vec<SynthChoice>,
-    active: Option<SynthChoice>,
-    descriptors: Vec<SettingDescriptor>,
-    values: Vec<(SettingId, SettingValue)>,
+/// The active synthesizer, among the registered ones, with its settings'
+/// descriptors and values.
+pub(crate) struct Description {
+    pub(crate) synths: Vec<SynthChoice>,
+    pub(crate) active: SynthChoice,
+    pub(crate) descriptors: Vec<SettingDescriptor>,
+    pub(crate) values: Vec<(SettingId, SettingValue)>,
 }
 
 impl Mirror {
-    pub(crate) fn new() -> Self {
+    /// The mirror of the synthesizer the synth thread started first.
+    pub(crate) fn new(description: Description) -> Self {
         Self {
-            state: Mutex::new(MirrorState::default()),
+            state: Mutex::new(description),
             answered: Mutex::new(None),
         }
     }
 
-    fn read<R>(&self, read: impl FnOnce(&MirrorState) -> R) -> R {
+    fn read<R>(&self, read: impl FnOnce(&Description) -> R) -> R {
         read(&self.state.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
-    fn write(&self, write: impl FnOnce(&mut MirrorState)) {
+    fn write(&self, write: impl FnOnce(&mut Description)) {
         write(&mut self.state.lock().unwrap_or_else(PoisonError::into_inner));
     }
 
-    /// The synth thread: `active` is now the active synthesizer, among
-    /// `synths`, with these descriptors and values.
-    pub(crate) fn set_driver(
-        &self,
-        synths: Vec<SynthChoice>,
-        active: SynthChoice,
-        descriptors: Vec<SettingDescriptor>,
-        values: Vec<(SettingId, SettingValue)>,
-    ) {
-        self.write(|state| {
-            state.synths = synths;
-            state.active = Some(active);
-            state.descriptors = descriptors;
-            state.values = values;
-        });
+    /// The synth thread: the synthesizer switched to, described.
+    pub(crate) fn set_driver(&self, description: Description) {
+        self.write(|state| *state = description);
     }
 
     /// The synth thread: the driver's values, as just read from it.
@@ -176,12 +166,7 @@ impl SpeechSettingsHost for SettingsHost {
     }
 
     fn active_synthesizer(&self) -> SynthChoice {
-        self.mirror.read(|state| {
-            state.active.clone().unwrap_or_else(|| SynthChoice {
-                id: SynthId::new(""),
-                display_name: String::new(),
-            })
-        })
+        self.mirror.read(|state| state.active.clone())
     }
 
     fn switch_synthesizer(&self, id: &SynthId, done: SwitchDone) {

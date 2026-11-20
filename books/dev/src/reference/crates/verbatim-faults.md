@@ -13,6 +13,7 @@ Public API:
 - `Fault` — each point, and the subject it passes: `PortRefusesPost`
   (the item a port queue's `Poster::send` posts), `RelayWake` (the item
   the relay's mailbox sends), `KeyPostRefused` (the keyboard hook's post),
+  `SpeechPostRefused` (the id of an utterance the app's speech inbox posts),
   `ThreadStart` (a reading thread's `(name, pid, generation)`, a worker's
   `(name, generation)`), `RemoveGroup` (`(registration, runtime id)`),
   `AddFocusHandler` and `RemoveFocusHandler` (`(registration, handler

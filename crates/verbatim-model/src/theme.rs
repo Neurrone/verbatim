@@ -91,7 +91,6 @@ const NEGATED_STATES: [State; 3] = [State::Checked, State::Selected, State::Pres
 /// catalogue. Each has a stable id ([`id`](Self::id)), which theme files
 /// use, and a category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Indication {
     /// A role, such as "link"; id `role-link`.
     Role(Role),
@@ -772,7 +771,6 @@ pub fn is_plain_file_name(name: &str) -> bool {
 /// theme panel and the log. A theme with problems still loads; an
 /// indication whose sound is unavailable is spoken instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum ThemeProblem {
     /// The theme names an indication this version does not know.
     UnknownIndication {

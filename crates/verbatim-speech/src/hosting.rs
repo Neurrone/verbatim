@@ -51,8 +51,6 @@ pub enum ToHost {
 /// What a host's synthesizer is, sent once when it is ready.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostDescription {
-    /// The synthesizer's display name.
-    pub display_name: String,
     /// Whether it places index marks itself
     /// ([`SynthDriver::places_marks`](crate::SynthDriver::places_marks)).
     pub places_marks: bool,
@@ -354,7 +352,6 @@ mod tests {
         ];
         let from_host = vec![
             FromHost::Ready(HostDescription {
-                display_name: "Test".to_owned(),
                 places_marks: true,
                 changes_pitch: false,
                 settings: vec![SettingDescriptor::standard_numeric("rate", "setting-rate")],

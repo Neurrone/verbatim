@@ -2314,7 +2314,6 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "verbatim-audio",
- "verbatim-i18n",
  "verbatim-model",
  "verbatim-process",
  "verbatim-speech",

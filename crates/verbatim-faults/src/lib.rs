@@ -35,6 +35,9 @@ pub enum Fault {
     /// A port refuses one of the keyboard hook's posts (`verbatim-app`'s
     /// `key_reports`). Subject: the post.
     KeyPostRefused,
+    /// The speech queue's port refuses an utterance (`verbatim-app`'s
+    /// `PortInbox`). Subject: the utterance's id.
+    SpeechPostRefused,
     /// A thread on a request's path cannot be started: the listener's
     /// reading thread, subject `(name, pid, generation)`, and the outpost's
     /// worker, subject `(name, generation)`.

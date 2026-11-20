@@ -594,10 +594,6 @@ impl SynthDriver for EspeakSynth {
         SynthId::new(ESPEAK_ID)
     }
 
-    fn display_name(&self) -> String {
-        "eSpeak NG".to_owned()
-    }
-
     fn supported_settings(&self) -> Vec<SettingDescriptor> {
         let options = |choices: &[Choice]| {
             choices
@@ -856,7 +852,7 @@ fn ssml(items: &[SpeechItem], pitch: i32) -> String {
                     open = true;
                 }
             }
-            _ => {}
+            SpeechItem::Sound(_) => {}
         }
     }
     if open {
