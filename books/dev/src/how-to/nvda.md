@@ -61,7 +61,10 @@ for its session id to find NVDA's port. It refuses to run when the NVDA
 there is not the build the `nvda` submodule pins (the build it prints
 first, such as `alpha-58022,732d1ce2`, must name the submodule's
 commit), since expectations come from captures and ported code from the
-pinned source.
+pinned source. Before its first step it prints the header compare mode's
+report starts with, the lines "NVDA: \<build>" and "Submodule pin:
+\<pin>", or with `--json` one object of kind `header` with `nvda` and
+`pin`, so every capture names the build it was made with and the pin.
 
 A step is a key to press, or one of these:
 
@@ -77,10 +80,12 @@ A step is a key to press, or one of these:
   `--front` to bring it forward as the harness does.
 - `--launch-minimized <program>`, with its `--arg`s, starts the program
   exactly as the end-to-end harness starts a terminal
-  (`Scenario::launch_owning_window`, through the agent's
-  `launch_minimized`): its first window opens minimized and inactive
-  (`SW_SHOWMINNOACTIVE`), and the agent's right to the foreground is not
-  withheld. The harness then waits for the window's shell to write its
+  (`Scenario::launch_owning_window`) and mockapp, through the agent's
+  `launch_minimized_with_stdin`: its first window opens minimized and
+  inactive (`SW_SHOWMINNOACTIVE`), the agent's right to the foreground is
+  not withheld, and its standard input is a pipe the agent holds, so
+  mockapp, which quits when its input closes, stays open until the
+  capture's agent ends. The harness then waits for the window's shell to write its
   process id and brings the window forward; `--wait-file <path>` waits,
   through the agent, for a file to exist, and `--front` brings the
   window forward as the harness does.
@@ -92,8 +97,11 @@ A step is a key to press, or one of these:
   title, for a window whose program is not obvious, such as a console
   window, which belongs to the console host or to the shell it runs
   depending on how it was started. If no such window takes the
-  foreground, the capture stops with an error. Just before every key,
-  each key of a comma-joined batch on its own, and every character
+  foreground, the capture stops with an error. When the window was
+  already in front, so that the step did nothing, the step notes "the
+  window was already in front": speech NVDA gave when the window took the
+  foreground came before the step. Just before every key,
+  each key of a comma-joined step on its own, each `--batch` once, and every character
   typed, the capture checks that the window in front is the window the
   last `--front` brought forward or `--await-front` found (or, before
   any, the one in front when the capture started), by its handle, and
@@ -116,6 +124,10 @@ A step is a key to press, or one of these:
   shown, and every key or character then sent to a window not yet shown
   notes whether the window was still not shown once the key was sent,
   the evidence that the key came before the show.
+- `--batch <key>,<key>...` presses its keys in one injection, the window
+  checked once before it, for a race only keys sent together make, such
+  as F6 with End right behind it; a key step joined by commas, such as
+  `numpad8,numpad8`, sends each key as its own checked injection instead.
 - `--then` before a step runs that step at once after the step before,
   with no wait for speech to settle between them; the speech after both
   is printed after the later one, timed from it, so speech queued between
@@ -199,6 +211,7 @@ dialogs with plain keys, which both screen readers let through.
 
 A capture that an expectation cites is committed beside the test that
 cites it (`CLAUDE.md`, standing rules); other captures are working
+
 material, not kept: they serve exploratory testing and comparing what
 Verbatim says with what NVDA says.
 
@@ -249,6 +262,18 @@ To run it:
    `--agent <address>` names an agent already running in place of the
    one the command starts, and `--quiet-ms <ms>` sets the quiet period,
    by default 1000 and never less than 500.
+3. To keep the report as the scenario's capture, add `--keep`. It
+   writes the report to `crates/verbatim-e2e/captures/<scenario>.txt` and
+   prints "--keep wrote" and the path. It refuses, keeping nothing,
+   printing "--keep kept nothing:" and the reason, and exiting with code
+   2, when the run did not end with exit code 0 (a run that stopped on a
+   harness error still writes its report), when the report does not say
+   the pin is the installed build, when a step is judged "differs", and
+   when NVDA's speech did not settle in a step, since the quiet period
+   may have cut speech from a step that still reads "same". So a
+   committed capture agrees with the scenario's expectations, or names
+   each difference as a declared deviation.
+
 
 The command starts its own agent as a capture does, checks that the
 NVDA running is the pinned build, deletes the report an earlier

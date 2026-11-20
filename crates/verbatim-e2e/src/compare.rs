@@ -75,6 +75,16 @@ pub const QUIET_FLOOR: Duration = Duration::from_millis(500);
 /// The report's file name in the run's artifacts.
 pub const REPORT_FILE_NAME: &str = "compare.txt";
 
+/// The folder, relative to the workspace root, that holds each scenario's
+/// capture: its compare report, kept by `cargo xtask nvda compare --keep`.
+pub const CAPTURES_DIR: &str = "crates/verbatim-e2e/captures";
+
+/// The capture of `scenario` under the workspace `root`.
+#[must_use]
+pub fn capture_path(root: &Path, scenario: &str) -> std::path::PathBuf {
+    root.join(CAPTURES_DIR).join(format!("{scenario}.txt"))
+}
+
 /// Whether a run of `scenario` is in compare mode, [`ENV`] being `setting`:
 /// `Ok(true)` when it names `scenario`, `Ok(false)` when it is unset or
 /// empty.
@@ -480,6 +490,28 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
     out
 }
 
+/// Why a report [`render_report`] wrote cannot be kept as the scenario's
+/// capture, or `None` when it can: its pin is not the installed build, a
+/// step is judged `differs`, or NVDA's speech did not settle in a step, since
+/// the quiet period may have cut speech from a step that still reads `same`.
+#[must_use]
+pub fn keep_refusal(report: &str) -> Option<String> {
+    let mut step = "the header";
+    for line in report.lines() {
+        if let Some(rest) = line.strip_prefix("Step ") {
+            step = rest;
+        } else if line == "Verdict: differs" {
+            return Some(format!("step {step} differs from NVDA"));
+        } else if line.starts_with("Note: NVDA's speech did not settle") {
+            return Some(format!("NVDA's speech did not settle in step {step}"));
+        }
+    }
+    (!report
+        .lines()
+        .any(|line| line == "The pin is the installed build."))
+    .then(|| "the report does not say the pin is the installed build".to_owned())
+}
+
 /// `text` on one line of the report: an empty utterance named, and a line
 /// break inside one shown as a slash between its lines.
 fn readable(text: &str) -> String {
@@ -821,6 +853,36 @@ mod tests {
              \x20 declared deviation: 1\n\
              \x20 declared, but NVDA agrees: 0\n\
              \x20 not compared: 1\n"
+        );
+    }
+
+    #[test]
+    fn keep_refuses_a_differing_or_unsettled_step_and_an_unmatched_pin() {
+        let matched = ReportHeader {
+            pin_matches: Some(true),
+            ..header()
+        };
+        let same = step(&["Name edit"], &[speech("Name edit")]);
+        assert_eq!(
+            keep_refusal(&render_report(&matched, std::slice::from_ref(&same))),
+            None
+        );
+        assert_eq!(
+            keep_refusal(&render_report(&header(), std::slice::from_ref(&same))),
+            Some("the report does not say the pin is the installed build".to_owned())
+        );
+        let differs = step(&["Name edit"], &[speech("Name")]);
+        assert_eq!(
+            keep_refusal(&render_report(&matched, &[same.clone(), differs])),
+            Some("step 2: keys [tab] differs from NVDA".to_owned())
+        );
+        let mut unsettled = same;
+        unsettled
+            .notes
+            .push("NVDA's speech did not settle within 15s".to_owned());
+        assert_eq!(
+            keep_refusal(&render_report(&matched, &[unsettled])),
+            Some("NVDA's speech did not settle in step 1: keys [tab]".to_owned())
         );
     }
 }

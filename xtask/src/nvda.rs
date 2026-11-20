@@ -69,14 +69,21 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("build") => build(),
         Some("capture") => capture(&args[1..]),
-        Some("compare") => compare(&args[1..]),
+        Some("compare") => match compare(&args[1..]) {
+            Ok(Some(refusal)) => {
+                println!("--keep kept nothing: {refusal}");
+                return ExitCode::from(2);
+            }
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        },
         _ => {
             eprintln!("usage: cargo xtask nvda <verb>");
             eprintln!("verbs:");
             eprintln!("  build    write {PACKAGE} from {SOURCE_DIR}");
             eprintln!(
                 "  capture  [--agent <address>, or one it starts] [--quiet-ms <ms>] [--timeout-ms <ms>] [--verbatim] \
-                 [--json] <step>...: run each step through the agent and print what NVDA (or, \
+                 [--json] <step>...: print NVDA's build and the nvda submodule's pin, then run each step through the agent and print what NVDA (or, \
                  with --verbatim, the local Verbatim) speaks after it, as JSON lines with \
                  --json; a step is a key, --launch <program> [--arg <arg>]... (or \
                  --launch-minimized, as the end-to-end harness launches a terminal, or \
@@ -84,17 +91,21 @@ pub fn run(args: &[String]) -> ExitCode {
                  --wait-file <path>, --front \
                  <image>[=<title>] (* for any image), --await-front <image>=<title> (waits \
                  for that window to take the foreground by itself, shown or not yet \
-                 shown, and presses the next keys in it), --type <text>, --hold <key> or \
+                 shown, and presses the next keys in it), --batch <key>,<key>... (the \
+                 keys in one injection, the window checked once before it), --type <text>, --hold <key> or \
                  --release <key> (a key held down across the steps between them, released \
                  when the capture ends or fails), or --open-menu (opens the local \
                  Verbatim's menu, as a click on its tray icon does); --then before a step \
                  runs it at once after the step before, without waiting for speech to settle"
             );
             eprintln!(
-                "  compare  [--agent <address>, or one it starts] [--quiet-ms <ms>] <scenario>: run an end-to-end \
-                 scenario against the NVDA running in the agent's session, asserting nothing, and \
-                 print what the scenario expects Verbatim to say beside what NVDA said, step by \
-                 step"
+                "  compare  [--agent <address>, or one it starts] [--quiet-ms <ms>] [--keep] <scenario>: \
+                 run an end-to-end scenario against the NVDA running in the agent's session, \
+                 asserting nothing, and print what the scenario expects Verbatim to say beside \
+                 what NVDA said, step by step; with --keep, write the report as the scenario's \
+                 capture under {}, or keep nothing and exit with code 2 when the run did not \
+                 end with code 0, a step differs, or NVDA's speech did not settle in a step",
+                compare_mode::CAPTURES_DIR
             );
             return ExitCode::from(2);
         }
@@ -256,8 +267,12 @@ enum LaunchKind {
 #[derive(Debug, PartialEq, Eq)]
 enum Step {
     /// Press a key combination through the agent, or several joined by
-    /// commas in one batch, so `numpad8,numpad8` is a double press.
+    /// commas, each checked and pressed on its own, so `numpad8,numpad8`
+    /// is a double press.
     Key(String),
+    /// Press several keys in one injection, the window checked once
+    /// before it, for a race only keys sent together make.
+    Batch(Vec<String>),
     /// Start a program through the agent, in its session, as `how` says.
     Launch {
         program: String,
@@ -297,6 +312,7 @@ impl Step {
     fn label(&self) -> String {
         match self {
             Self::Key(key) => key.clone(),
+            Self::Batch(keys) => format!("batch {}", keys.join(",")),
             Self::OpenMenu => "open Verbatim's menu".to_owned(),
             Self::Type(text) => format!("type {text:?}"),
             Self::Hold(key) => format!("hold {key}"),
@@ -401,7 +417,11 @@ fn parse_capture_args(args: &[String]) -> io::Result<CaptureOptions> {
                     }
                 }
             }
+            "--batch" => options.steps.push(Step::Batch(
+                value()?.split(',').map(str::to_owned).collect(),
+            )),
             "--open-menu" => options.steps.push(Step::OpenMenu),
+
             "--type" => options.steps.push(Step::Type(value()?.clone())),
             "--hold" => options.steps.push(Step::Hold(value()?.clone())),
             "--release" => options.steps.push(Step::Release(value()?.clone())),
@@ -461,20 +481,25 @@ enum Source {
 }
 
 impl Source {
-    fn nvda(agent: &mut AgentClient) -> io::Result<Self> {
+    /// NVDA's transcript in the agent's session, with NVDA's build, which
+    /// must be the pinned one.
+    fn nvda(agent: &mut AgentClient) -> io::Result<(Self, String)> {
         let session_id = agent.session_info()?.session_id;
         let (transcript, hello) = Transcript::connect(session_port(session_id)?)?;
         let started = Instant::now();
         let version = hello["nvda_version"]
             .as_str()
-            .unwrap_or("(unknown version)");
-        println!("NVDA {version} in session {}", hello["session_id"]);
-        require_pinned_nvda(version)?;
-        Ok(Self::Nvda {
-            transcript,
-            last_seq: 0,
-            started,
-        })
+            .unwrap_or("(unknown version)")
+            .to_owned();
+        require_pinned_nvda(&version)?;
+        Ok((
+            Self::Nvda {
+                transcript,
+                last_seq: 0,
+                started,
+            },
+            version,
+        ))
     }
 
     fn verbatim() -> io::Result<Self> {
@@ -594,12 +619,15 @@ struct CompareOptions {
     /// The agent to run through, or none for one the command starts.
     agent: Option<String>,
     quiet_ms: Option<u64>,
+    /// Write the report as the scenario's capture.
+    keep: bool,
     scenario: String,
 }
 
 fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
     let mut agent = None;
     let mut quiet_ms = None;
+    let mut keep = false;
     let mut scenario = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -609,6 +637,7 @@ fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
         };
         match arg.as_str() {
             "--agent" => agent = Some(value()?.clone()),
+            "--keep" => keep = true,
             "--quiet-ms" => {
                 let text = value()?;
                 quiet_ms = Some(text.parse::<u64>().map_err(|_| {
@@ -625,6 +654,7 @@ fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
     Ok(CompareOptions {
         agent,
         quiet_ms,
+        keep,
         scenario,
     })
 }
@@ -632,8 +662,10 @@ fn parse_compare_args(args: &[String]) -> io::Result<CompareOptions> {
 /// Runs `compare`: checks the scenario can be compared and the agent is
 /// reachable, deletes the report an earlier run left, runs the scenario's
 /// test in compare mode, and prints the report when the run wrote one;
-/// otherwise only the error.
-fn compare(args: &[String]) -> io::Result<()> {
+/// otherwise only the error. With `--keep`, writes the report as the
+/// scenario's capture, or returns why it kept nothing, leaving the capture
+/// as it was.
+fn compare(args: &[String]) -> io::Result<Option<String>> {
     let options = parse_compare_args(args)?;
     let def = verbatim_e2e::registry::find(&options.scenario)
         .ok_or_else(|| io::Error::other(format!("no scenario named {:?}", options.scenario)))?;
@@ -675,11 +707,31 @@ fn compare(args: &[String]) -> io::Result<()> {
         def.name
     );
     let status = command.status()?;
-    if let Ok(text) = fs::read_to_string(&report) {
+    let text = fs::read_to_string(&report).ok();
+    if let Some(text) = &text {
         println!("\n{}:\n{text}", report.display());
     }
+    if options.keep {
+        // A run that stopped on a harness error still writes its report,
+        // for the steps it reached.
+        let refusal = match &text {
+            _ if !status.success() => {
+                Some(format!("the run did not end with exit code 0 ({status})"))
+            }
+            None => Some("the run wrote no report".to_owned()),
+            Some(text) => compare_mode::keep_refusal(text),
+        };
+        if refusal.is_some() {
+            return Ok(refusal);
+        }
+        let capture = compare_mode::capture_path(&workspace_root(), def.name);
+        fs::create_dir_all(capture.parent().expect("a capture sits in a folder"))?;
+        fs::write(&capture, text.unwrap_or_default())?;
+        println!("--keep wrote {}", capture.display());
+        return Ok(None);
+    }
     if status.success() {
-        Ok(())
+        Ok(None)
     } else {
         Err(io::Error::other(format!(
             "the comparison of {} stopped on a harness error ({status})",
@@ -739,7 +791,16 @@ fn capture(args: &[String]) -> io::Result<()> {
     let mut source = if options.verbatim {
         Source::verbatim()?
     } else {
-        Source::nvda(&mut agent)?
+        // The header compare mode's report starts with, so that every
+        // capture names the build it was made with and the pin it matched.
+        let (source, version) = Source::nvda(&mut agent)?;
+        let (pin, _) = verbatim_e2e::compare::submodule_pin(&workspace_root(), &version);
+        if options.json {
+            println!("{}", json!({"kind": "header", "nvda": version, "pin": pin}));
+        } else {
+            println!("NVDA: {version}\nSubmodule pin: {pin}");
+        }
+        source
     };
     let print = |step: usize, ms: Option<i64>, entry: &Entry| {
         if options.json {
@@ -836,12 +897,18 @@ fn run_step(
     let mut notes = Vec::new();
     match step {
         Step::Key(keys) => {
-            // Each key of a batch is checked and pressed on its own.
+            // Each key of a comma-joined step is checked and pressed on
+            // its own.
             for key in keys.split(',') {
                 send_checked(agent, *target, step, key, &mut notes, |agent| {
                     agent.send_keys(&[key.to_owned()]).map(drop)
                 })?;
             }
+        }
+        Step::Batch(keys) => {
+            send_checked(agent, *target, step, &keys.join(","), &mut notes, |agent| {
+                agent.send_keys(keys).map(drop)
+            })?;
         }
         Step::Launch { program, args, how } => {
             match how {
@@ -849,7 +916,11 @@ fn run_step(
                     agent.launch_process(program, args, None, &[], None)?;
                 }
                 LaunchKind::Minimized => {
-                    agent.launch_minimized(program, args)?;
+                    // With its standard input a pipe the agent holds, as
+                    // the harness launches mockapp, which quits when its
+                    // input closes: when the capture's agent ends.
+                    let output = std::env::temp_dir().join("verbatim-capture-stderr.txt");
+                    agent.launch_minimized_with_stdin(program, args, &output.to_string_lossy())?;
                 }
                 LaunchKind::WithoutForeground => {
                     agent.launch_without_foreground_right(program, args)?;
@@ -866,7 +937,11 @@ fn run_step(
             }
         }
         Step::Front { image, title } => {
-            *target = Some(bring_forward(agent, image, title.as_deref())?);
+            let (window, already) = bring_forward(agent, image, title.as_deref())?;
+            if already {
+                notes.push("the window was already in front".to_owned());
+            }
+            *target = Some(window);
         }
         Step::AwaitFront { image, title } => {
             let window = await_front(agent, image, title)?;
@@ -908,9 +983,14 @@ fn run_step(
 }
 
 /// Brings the window of `image` titled with `title`, if given, to the
-/// foreground through the agent, and returns its handle; fails when there
+/// foreground through the agent, and returns its handle and whether it was
+/// already in front, when bringing it forward did nothing; fails when there
 /// is none or it does not take the foreground.
-fn bring_forward(agent: &mut AgentClient, image: &str, title: Option<&str>) -> io::Result<u64> {
+fn bring_forward(
+    agent: &mut AgentClient,
+    image: &str,
+    title: Option<&str>,
+) -> io::Result<(u64, bool)> {
     // A window named by its title is waited for until it is present, as
     // the harness waits before it brings one forward
     // (`Scenario::bring_forward`).
@@ -925,8 +1005,9 @@ fn bring_forward(agent: &mut AgentClient, image: &str, title: Option<&str>) -> i
     // The window, found by its image and title, is brought forward with
     // SetForegroundWindow, which injects no input; Windows allows it when
     // the agent injected the last input.
-    let window = agent
-        .foreground_info()?
+    let desktop = agent.foreground_info()?;
+    let already = desktop.foreground.map(|front| front.window);
+    let window = desktop
         .windows
         .into_iter()
         .find(|window| named(window, image, title));
@@ -949,7 +1030,7 @@ fn bring_forward(agent: &mut AgentClient, image: &str, title: Option<&str>) -> i
             outcome.describe()
         )));
     }
-    Ok(window.window)
+    Ok((window.window, already == Some(window.window)))
 }
 
 /// Waits for the window of `image` titled with `title` to take the
@@ -1314,6 +1395,23 @@ mod tests {
                 Step::Release("control".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn a_batch_is_one_step_and_keep_is_a_comparison_s_option() {
+        let args = ["--batch", "f6,end", "tab"].map(str::to_owned);
+        assert_eq!(
+            parse_capture_args(&args).unwrap().steps,
+            [
+                Step::Batch(vec!["f6".to_owned(), "end".to_owned()]),
+                Step::Key("tab".to_owned()),
+            ]
+        );
+        for (args, keep) in [(&["--keep", "toast"][..], true), (&["toast"], false)] {
+            let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+            let options = parse_compare_args(&args).unwrap();
+            assert_eq!((options.keep, options.scenario.as_str()), (keep, "toast"));
+        }
     }
 
     #[test]
