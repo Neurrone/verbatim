@@ -595,7 +595,6 @@ is kept in the repository.
 
 Tests and tooling:
 
-- `call_counts::uia_focus_chains_stop_below_the_process_boundary` was recorded as failing intermittently under `cargo xtask ci`, a defect by `books/dev/src/reference/testing.md`, but did not fail in 456 runs on 2026-11-03, alone, with its binary and under load ([the known failures](flaky-tests.md)). Its next failure's message is to be kept and its cause found from the count that moved.
 - Audit every end-to-end scenario for timing races, each fixed by waiting for evidence, not a longer bound; find why the agent's bring-forward always takes its slowest path (up to 1.4 s).
 - Root-cause, from the GitHub run logs, the ARM64 unit test `the_codeview_record_read_is_the_one_dbghelp_reports` (`verbatim-trace-waits`), which failed on main before 2026-10-15 and does not reproduce here.
 - The trace tool's symbol lookup for ARM64X images, such as ntdll, needs a fix testable only on the ARM64 runner (deferred, Dickson, 2026-10-21).

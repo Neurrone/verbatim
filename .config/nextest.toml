@@ -7,8 +7,7 @@
 # - `verbatim-synth-host`'s `hosting` and `protocol`, which activate the
 #   real Windows speech platform and time its answers.
 # - `verbatim-audio`'s `mixer`, whose real audio thread missed a playback
-#   event under load (`docs/flaky-tests.md`, "The mixer's allocation test
-#   under load").
+#   event once in 640 runs of eight copies at once (2026-11-02).
 # - mockapp's `remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read`,
 #   which starts a Windows PowerShell hosting Windows Forms: under the
 #   whole run's load, that cold start passed the test's 15 s wait for the
