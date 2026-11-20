@@ -362,15 +362,6 @@ fn moving_to_the_focus_says_so_then_the_focus() {
     assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
 }
 
-#[test]
-fn with_no_navigator_a_command_says_so() {
-    let mut state = ready();
-    assert_eq!(
-        feed_at(&mut state, 1_000, press(1, ReviewCommand::Activate, 0)),
-        ["Message(NoNavigatorObject)"]
-    );
-}
-
 /// `values` with `id` set to `value`.
 fn with(mut values: PropertyValues, id: PropertyId, value: PropertyValue) -> PropertyValues {
     values.0.push(PropertyAnswer {

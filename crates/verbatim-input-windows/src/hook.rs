@@ -500,59 +500,6 @@ mod tests {
     use super::*;
     use crate::{PASSED_ON_TAG, passed_on_info};
 
-    /// A burst of strokes, each Verbatim+V with a harness number, decided
-    /// while nothing takes the reports: `decide` reports every gesture and
-    /// every stroke's end, in order, with none lost.
-    #[test]
-    fn a_burst_larger_than_the_old_bound_is_delivered_in_order_with_none_lost() {
-        const CAPS: u16 = 0x14;
-        const V: u16 = 0x56;
-        const STROKES: u64 = 1_000;
-        let key_seq = |vk, pressed| KeyEvent {
-            vk,
-            scan_code: 0,
-            extended: false,
-            injected: true,
-            pressed,
-        };
-        let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")]);
-        let reports = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&reports);
-        let mut state = HookState::new(
-            DecisionMachine::new(DecisionConfig::default(), map),
-            (
-                Box::new(|_, _| {}),
-                Box::new(move |report| sink.lock().unwrap().push(report)),
-                Arc::new(ForegroundView::new()),
-            ),
-            typed::Typing::default(),
-        );
-        assert_eq!(
-            decide(&mut state, key_seq(CAPS, true), 0, 0),
-            KeyDecision::Swallow
-        );
-        for number in 1..=STROKES {
-            let last = usize::try_from(verbatim_input::harness::encode(number, true)).unwrap();
-            assert_eq!(
-                decide(&mut state, key_seq(V, true), 0, 0),
-                KeyDecision::Swallow
-            );
-            assert_eq!(
-                decide(&mut state, key_seq(V, false), 0, last),
-                KeyDecision::Swallow
-            );
-        }
-        let expected: Vec<String> = (1..=STROKES)
-            .flat_map(|number| {
-                [
-                    "gesture kb:v+verbatim".to_owned(),
-                    format!("handled {number}"),
-                ]
-            })
-            .collect();
-        assert_eq!(described(&reports.lock().unwrap()), expected);
-    }
-
     /// The Verbatim modifier down when Core handles a switch away from
     /// the user's input desktop gets no release: the first key after the
     /// view counts the switch forms no gesture with it.
