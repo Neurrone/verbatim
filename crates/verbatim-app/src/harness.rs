@@ -7,8 +7,9 @@
 //! the first time it is ready for input, as the control plane's status
 //! reports readiness, so the harness waits on the event instead of asking
 //! for the status over and over. The reducer thread gives it Core's
-//! readiness after each step ([`Readiness::core`]); the GUI's handle
-//! calls [`Readiness::notify`].
+//! readiness after each step ([`Readiness::core`]) until Verbatim has been
+//! ready, then lets go of it, so its steps take no lock after that; the
+//! GUI's handle calls [`Readiness::notify`].
 //!
 //! Idleness: `AwaitIdle` posts a waiter to the reducer's port, where it
 //! waits until the harness's numbered input it names has been handled, and
@@ -107,38 +108,41 @@ impl Readiness {
     }
 
     /// Sets the parts Core's state gives, after each step: its record's
-    /// readiness and whether it has committed a focus.
-    pub(crate) fn core(&self, (readiness, focus_known): (verbatim_core::Readiness, bool)) {
+    /// readiness and whether it has committed a focus. Returns whether
+    /// Verbatim has now been ready, after which the reducer gives no more.
+    #[must_use]
+    pub(crate) fn core(&self, (readiness, focus_known): (verbatim_core::Readiness, bool)) -> bool {
         self.record(|parts| {
             parts.listener_ready = readiness.listener_ready;
             parts.own_outpost_ready = readiness.own_outpost_ready;
             parts.spares_ready = readiness.spares_ready >= verbatim_supervisor::SPARES;
             parts.focus_known = focus_known;
-        });
+        })
     }
 
     /// Sets the harness's event the first time Verbatim is ready, after the
     /// GUI's handle, which stays outside the lock, has been set.
     pub(crate) fn notify(&self) {
-        self.record(|_| {});
+        let _ = self.record(|_| {});
     }
 
     /// Records a part with `set`, and in the same hold decides whether
     /// every part is ready and the event not yet set; sets the event after
-    /// letting go of the lock.
-    fn record(&self, set: impl FnOnce(&mut Parts)) {
-        let signal = {
+    /// letting go of the lock. Returns whether Verbatim has been ready.
+    fn record(&self, set: impl FnOnce(&mut Parts)) -> bool {
+        let (signal, signalled) = {
             let mut parts = self.lock();
             set(&mut parts);
             let signal = !parts.signalled && self.ready_with(&parts);
             if signal {
                 parts.signalled = true;
             }
-            signal
+            (signal, parts.signalled)
         };
         if signal && let Some(name) = &self.event {
             set_event(name);
         }
+        signalled
     }
 }
 

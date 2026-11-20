@@ -122,7 +122,9 @@ The end-to-end harness's hooks (private `harness` module):
   reports, so a test waits on the event rather than asking again and
   again; once ready, it stays ready. The reducer thread sets the
   listener, own-outpost, spares and focus parts from Core's state after
-  each step (`SrState::readiness`, `SrState::focus_committed`); those
+  each step (`SrState::readiness`, `SrState::focus_committed`) until
+  `Readiness::core` answers that Verbatim has been ready, when it drops
+  its handle, so later steps take no lock; those
   parts and whether Verbatim has been ready are under one lock, and each
   setter records its parts and decides in that hold whether to set the
   event, so two setters cannot each miss the other's part.

@@ -367,10 +367,10 @@ fn run(
                 writer: reader_writer,
                 view: Arc::clone(&reader_view),
             },
-            readiness: Arc::clone(&readiness),
             idle_line: Arc::clone(&idle_line),
             gui_handle: Arc::clone(&gui_handle),
         };
+        let core_readiness = Arc::clone(&readiness);
         // The only thread that speaks: it holds the speaking token, which
         // the loop hands back when it ends. It runs at `Highest`, so a
         // message into Core is not starved by the readers' and the speech
@@ -382,7 +382,13 @@ fn run(
                     "the reducer",
                     verbatim_process::scheduling::ThreadPriority::Highest,
                 );
-                let _token = reducer_loop(command_rx, &context, reader_settings, speak_token);
+                let _token = reducer_loop(
+                    command_rx,
+                    &context,
+                    core_readiness,
+                    reader_settings,
+                    speak_token,
+                );
             })?;
     }
 
@@ -877,9 +883,6 @@ struct ReducerContext {
     /// settings changed by a toggle key or the Terminal page are published
     /// for the page and handed to the saver.
     reader: terminal_settings::ReaderSection,
-    /// What the control plane reports as readiness, and the harness's
-    /// readiness event.
-    readiness: Arc<harness::Readiness>,
     /// The control plane's `AwaitIdle` waiters.
     idle_line: Arc<harness::IdleLine>,
     /// The GUI's handle, once the GUI thread is up, which the menu and the
@@ -981,6 +984,10 @@ struct ReducerThread<'a> {
     follow_ups: Vec<Input>,
     /// The right to speak, which only this thread holds.
     token: SpeakToken,
+    /// What the control plane reports as readiness, and the harness's
+    /// readiness event, given Core's parts after each step until Verbatim
+    /// has been ready and dropped then, so later steps take no lock.
+    readiness: Option<Arc<harness::Readiness>>,
 }
 
 impl ReducerThread<'_> {
@@ -1437,9 +1444,11 @@ impl ReducerThread<'_> {
     fn apply(&mut self, input: Input) {
         let trace_id = input.trace_id().unwrap_or_else(TraceId::mint);
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
-        self.context
-            .readiness
-            .core((self.state.readiness(), self.state.focus_committed()));
+        if let Some(readiness) = &self.readiness
+            && readiness.core((self.state.readiness(), self.state.focus_committed()))
+        {
+            self.readiness = None;
+        }
         self.context.ledger.reduced(trace_id);
         self.context.foreground.set(self.state.hook_foreground());
         {
@@ -1995,6 +2004,7 @@ fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {
 fn reducer_loop(
     mut command_rx: PortQueue<ShellCommand>,
     context: &ReducerContext,
+    readiness: Arc<harness::Readiness>,
     settings: ReaderSettings,
     token: SpeakToken,
 ) -> SpeakToken {
@@ -2014,6 +2024,7 @@ fn reducer_loop(
         last_press: None,
         follow_ups: Vec::new(),
         token,
+        readiness: Some(readiness),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
