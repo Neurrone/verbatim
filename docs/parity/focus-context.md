@@ -191,6 +191,13 @@ to `-3`, `import-control-1` to `-3`). The differences from NVDA:
   owner dialog is said at its show, up to the show's delay later than
   NVDA, which says it at once (`owned-box`, stand-in order). Approved by
   Dickson, 2026-11-20;
+- a state change of the old focus (the opener, such as the "Import..."
+  button) reaching its turn while the dialog is postponed is judged
+  against it and can be spoken before the dialog; NVDA says nothing, its
+  focus already being the hidden dialog's field, and it speaks a state
+  change only for the focus or an ancestor (`NVDAObjects/__init__.py`
+  1341 to 1353; from source, no capture). Approved by Dickson,
+  2026-11-20, since matching needs a rule;
 - a postponement made before any key in the session carries no key
   number, so a key's read of it is heard;
 - a dialog is said with its text where NVDA says it without, whenever
