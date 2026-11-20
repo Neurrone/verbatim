@@ -88,17 +88,11 @@ named `<way>:<placement>`:
   row between the output and the prompt, as Pi draws it). `scroll-region`
   has no header phase: every way draws its header above a scroll region.
 
-`verbatim-stream-test [--run <phase>]... [--pipe <name>] [--fps <n>]
-[--write-log <path>]` runs the `--run` phases in order at its own rate,
-60 frames a second unless `--fps` says otherwise, on a high-resolution
-waitable timer. With `--pipe` it then takes commands, one a line, from
-the pipe `\.\pipe\<name>-commands`, which its driver creates, and
-answers on `\.\pipe\<name>-replies` (two pipes, since a synchronous pipe
-handle read on one thread blocks writes on another): `run <phase>` runs a
-phase and answers `done <phase>` once its last frame is written; `paced
-<phase>` starts one whose frames come one for each `frame` command, each
-answered `frame <number>`, and `done <phase>` after the last; `busy` while
-a phase runs; `quit` ends the program. It writes to `CONOUT$` and reads
+`verbatim-stream-test [--run <phase>]... [--fps <n>] [--write-log
+<path>]` runs the `--run` phases in order at its own rate, 60 frames a
+second unless `--fps` says otherwise, on a high-resolution waitable
+timer. It writes to `CONOUT$` and reads
+
 keys from `CONIN$` as they are typed, unechoed; typing shows at the
 prompt in the next frame while a phase runs and at once between phases,
 Backspace and Enter edit it, and Control+C ends the program. Its output
