@@ -281,8 +281,9 @@ fn emit_check(
     }
     let uniform = b.new_bool(false);
     b.if_(numbers, |b| {
-        let same_foreground = b.equal(foreground, last_foreground);
-        let same_background = b.equal(background, last_background);
+        // All four were proven integers by `numbers`; equality takes no `Any`.
+        let same_foreground = b.equal(foreground.assume::<kind::Int>(), last_foreground.assume());
+        let same_background = b.equal(background.assume::<kind::Int>(), last_background.assume());
         let same = b.and(same_foreground, same_background);
         b.set(uniform, same);
     });

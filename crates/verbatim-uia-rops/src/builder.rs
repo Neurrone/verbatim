@@ -114,6 +114,18 @@ impl Ordered for Uint {}
 impl Ordered for Double {}
 impl Ordered for Char {}
 
+/// The kinds `equal` and `not_equal` take: only those a program run
+/// against UI Automation in this repository's tests has compared. UI
+/// Automation's remote operations rejected a `Compare` of two booleans
+/// with `E_UNEXPECTED` and ended the program (found on 2026-11-20 measuring
+/// a generated focus read; NVDA's library allows it but NVDA never emits
+/// one), so a kind joins this list only with a test that runs its
+/// comparison. Test a boolean directly, or its `not`; take an `Any` as
+/// its type once a `TypeTest` has proven it.
+pub trait Equatable: sealed::Sealed {}
+impl Equatable for Int {}
+impl Equatable for Uint {}
+impl Equatable for Str {}
 /// The kinds arithmetic works on.
 pub trait Numeric: sealed::Sealed {}
 impl Numeric for Int {}
@@ -132,6 +144,7 @@ mod sealed {
     impl Sealed for super::Double {}
     impl Sealed for super::Char {}
     impl Sealed for super::Any {}
+    impl Sealed for super::Str {}
 }
 
 /// A register holding a value of kind `K`. Copyable; it only names the
@@ -496,13 +509,13 @@ impl Builder {
 
     /// Whether `left` equals `right`.
     #[track_caller]
-    pub fn equal<K>(&mut self, left: Reg<K>, right: Reg<K>) -> Reg<Bool> {
+    pub fn equal<K: Equatable>(&mut self, left: Reg<K>, right: Reg<K>) -> Reg<Bool> {
         self.compare_unchecked(left.id, right.id, Comparison::Equal)
     }
 
     /// Whether `left` differs from `right`.
     #[track_caller]
-    pub fn not_equal<K>(&mut self, left: Reg<K>, right: Reg<K>) -> Reg<Bool> {
+    pub fn not_equal<K: Equatable>(&mut self, left: Reg<K>, right: Reg<K>) -> Reg<Bool> {
         self.compare_unchecked(left.id, right.id, Comparison::NotEqual)
     }
 
