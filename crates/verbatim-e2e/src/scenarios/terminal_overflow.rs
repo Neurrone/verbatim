@@ -164,7 +164,7 @@ fn go_while_paused(scenario: &mut Scenario, directory: &str) {
         .send_keys(&["shift"])
         .expect("presses Shift to pause");
     scenario.speech().expect_paused();
-    scenario.begin_action("let the script write its second part");
+    scenario.begin_action("let the script write its second part", "");
     scenario
         .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
         .expect("lets the script write its second part");

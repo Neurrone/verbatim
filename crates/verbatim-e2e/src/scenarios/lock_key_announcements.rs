@@ -66,6 +66,14 @@ fn announcement(name: &str, on: bool) -> String {
 /// `keys`, asserting its announcement and its new state.
 fn toggle_twice(scenario: &mut Scenario, key: &str, name: &str, keys: &[&str]) {
     let started_on = scenario.key_toggled(key).expect("reads the key's state");
+    scenario.read_value(
+        &format!("{name} first toggled"),
+        announcement(name, !started_on),
+    );
+    scenario.read_value(
+        &format!("{name} toggled back"),
+        announcement(name, started_on),
+    );
     for expected_on in [!started_on, started_on] {
         scenario.send_keys(keys).expect("sends the keys");
         scenario

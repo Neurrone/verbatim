@@ -210,7 +210,10 @@ its menu with `--open-menu`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 
 A capture that an expectation cites is committed beside the test that
-cites it (`CLAUDE.md`, standing rules); other captures are working
+cites it (`CLAUDE.md`, standing rules), and a unit test in `cargo xtask
+ci` fails on a committed capture without the header, made at a pin that
+is not the submodule's, or that nothing cites ([the end-to-end
+guide](e2e.md), "The check against the capture"); other captures are working
 
 material, not kept: they serve exploratory testing and comparing what
 Verbatim says with what NVDA says.
@@ -272,7 +275,13 @@ To run it:
    when NVDA's speech did not settle in a step, since the quiet period
    may have cut speech from a step that still reads "same". So a
    committed capture agrees with the scenario's expectations, or names
-   each difference as a declared deviation.
+   each difference as a declared deviation. The report writes the run's
+   own values as labels: `{run}` for the token in every harness title, and
+   `{<label>}` for each value the scenario registered with
+   `Scenario::read_value`. Each run of the scenario then checks its
+   expectations against it ([the end-to-end guide](e2e.md), "The check
+   against the capture"). A step's input names a harness action by its
+   kind, with what it acted on in a "Detail:" line.
 
 
 The command starts its own agent as a capture does, checks that the

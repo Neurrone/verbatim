@@ -172,6 +172,7 @@ mod tests {
                 name: def.name.to_string(),
                 group: format!("{:?}", def.group),
                 local_only: def.local_only.is_some(),
+                capture: def.speech == registry::Speech::Capture,
             })
             .collect();
         assert_eq!(planned, registered);

@@ -327,6 +327,10 @@ pub struct Scenario {
     /// played the application-not-responding sound, one a line, for the
     /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
     not_responding_chains: Option<Vec<String>>,
+    /// The values the scenario read from the system for this run, each
+    /// with its label ([`Scenario::read_value`]), which the check against
+    /// the scenario's capture replaces by their labels.
+    values: Vec<(String, String)>,
     /// Each Verbatim a second start replaced, by its process id, with the
     /// path of its stderr log, whose artifacts are collected with the
     /// run's.
@@ -632,6 +636,7 @@ impl Scenario {
                 held: Vec::new(),
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
+                values: Vec::new(),
                 replaced: Vec::new(),
             });
         }
@@ -750,6 +755,7 @@ impl Scenario {
             held: Vec::new(),
             launch_evidence: Vec::new(),
             not_responding_chains: None,
+            values: Vec::new(),
             replaced: Vec::new(),
         })
     }
@@ -771,6 +777,29 @@ impl Scenario {
         }
     }
 
+    /// Records `value`, read from the system for this run, such as a lock
+    /// key's state or a suggestion's name, under `label`, and returns it:
+    /// the check of the run against the scenario's capture, and compare
+    /// mode's report, which becomes the capture, write `{label}` in its
+    /// place, so neither depends on the machine
+    /// (`books/dev/src/how-to/e2e.md`, "The check against the capture").
+    /// Register a whole utterance or a distinctive name, never a short
+    /// word that other speech may hold.
+    pub fn read_value(&mut self, label: &str, value: String) -> String {
+        self.values.push((label.to_owned(), value.clone()));
+        value
+    }
+
+    /// The values of this run that its capture names by label: the run's
+    /// token in every harness title ([`harness_marker`]), as `{run}`, and
+    /// each value [`Scenario::read_value`] recorded.
+    #[must_use]
+    pub fn substitutions(&self) -> Vec<(String, String)> {
+        let mut values = vec![("run".to_owned(), run_token().to_owned())];
+        values.extend(self.values.iter().cloned());
+        values
+    }
+
     /// Declares that the step under way, begun by the last input,
     /// deliberately differs from NVDA, as the parity ledger's entry headed
     /// `entry` in `file` (such as `docs/parity/review.md`) records: a note
@@ -781,23 +810,27 @@ impl Scenario {
         self.timeline.push_deviation(file, entry);
     }
 
-    /// In compare mode, closes the step under way, as an input does, and
-    /// starts one whose input is `action`, an action of the harness's that
-    /// changes what is in front, such as launching a window or bringing
-    /// one forward, recorded on the timeline: so what NVDA says about the
-    /// window is not counted with the step before. A normal run is
-    /// unchanged by it.
+    /// Closes the step under way, as an input does, and starts one whose
+    /// input is an action of the harness's that changes what is in front,
+    /// such as launching a window or bringing one forward, of `kind`, acting
+    /// on `detail`, recorded on the timeline: so what is said about the
+    /// window is not counted with the step before. A step is compared by
+    /// the action's kind alone, which is the same in every run, and its
+    /// detail, such as a title or a process id, is only reported. In
+    /// compare mode it first requires everything said to be asserted, as an
+    /// input does.
     ///
     /// # Panics
     ///
     /// Panics, in compare mode, as
     /// [`SpeechCollector::require_all_asserted`] does.
-    pub(crate) fn begin_action(&mut self, action: &str) {
+    pub(crate) fn begin_action(&mut self, kind: &str, detail: &str) {
         if self.is_comparing() {
-            self.speech
-                .require_all_asserted(&format!("before {action}"));
-            self.timeline.push_action(action);
+            self.speech.require_all_asserted(&format!("before {kind}"));
+        } else {
+            self.speech.close_step();
         }
+        self.timeline.push_action(kind, detail);
     }
 
     /// Verbatim's process id, or, in compare mode, an error saying there is
@@ -1265,7 +1298,7 @@ impl Scenario {
     /// Returns an error if the scenario launched no window so titled, or
     /// anything did not close or exit.
     pub fn close_launched(&mut self, title: &str) -> io::Result<()> {
-        self.begin_action(&format!("close the application titled {title:?}"));
+        self.begin_action("close an application", &format!("titled {title:?}"));
         let index = self
             .launched
             .iter()
@@ -1390,7 +1423,7 @@ impl Scenario {
         launch: Launch<'_>,
     ) -> io::Result<WindowInfo> {
         let title = launch.title;
-        self.begin_action(&launch_action(command, title));
+        self.begin_action("launch a window", &launch_action(command, title));
         let started = match launch.start {
             Start::Minimized => self.agent.launch_minimized(command, args)?,
             Start::WithStdin { output_to } => self
@@ -1426,7 +1459,10 @@ impl Scenario {
     /// Returns an error if the request fails, including when the process
     /// has no stdin pipe or has exited.
     pub fn write_stdin(&mut self, pid: u32, line: &str) -> io::Result<()> {
-        self.begin_action(&format!("write {line:?} to the standard input of {pid}"));
+        self.begin_action(
+            "write to a standard input",
+            &format!("{line:?} to process {pid}"),
+        );
         self.agent.write_stdin(pid, &format!("{line}\n"))
     }
 
@@ -1635,7 +1671,7 @@ impl Scenario {
     /// Returns an error if a request fails or the desktop does not take the
     /// foreground, naming what kept it, as the start does.
     pub fn return_to_desktop(&mut self) -> io::Result<()> {
-        self.begin_action("bring the desktop back to the foreground");
+        self.begin_action("bring the desktop back to the foreground", "");
         let (taskbar, outcome, desktop) = self.agent.minimize_all(MINIMIZE_TIMEOUT)?;
         match minimize_failure(&taskbar, outcome, &desktop) {
             Some(failure) => Err(io::Error::other(failure)),
@@ -1653,7 +1689,7 @@ impl Scenario {
     /// Returns an error if a request fails, no window is titled with
     /// `marker`, or it does not take the foreground in time.
     pub fn bring_window_forward(&mut self, marker: &str) -> io::Result<()> {
-        self.begin_action(&format!("bring forward the window titled {marker:?}"));
+        self.begin_action("bring a window forward", &format!("titled {marker:?}"));
         let marker = marker.to_owned();
         let desktop = self.agent.foreground_info()?;
         let window = desktop
@@ -1753,9 +1789,10 @@ impl Scenario {
         for file in files {
             self.agent.write_file(&format!(r"{folder}\{file}"), b"")?;
         }
-        self.begin_action(&format!(
-            "open the folder {marker:?} in File Explorer, brought forward"
-        ));
+        self.begin_action(
+            "open a folder in File Explorer, brought forward",
+            &format!("{marker:?}"),
+        );
         let launch = self
             .agent
             .launch_without_foreground_right("explorer.exe", std::slice::from_ref(&folder))?;
@@ -1778,7 +1815,10 @@ impl Scenario {
     /// fails, or the window does not take the foreground.
     pub fn open_settings_page(&mut self, uri: &str) -> io::Result<WindowInfo> {
         self.require_absent(SETTINGS_TITLE)?;
-        self.begin_action(&launch_action("explorer.exe", SETTINGS_TITLE));
+        self.begin_action(
+            "open a Settings page",
+            &launch_action("explorer.exe", SETTINGS_TITLE),
+        );
         let launch = self
             .agent
             .launch_minimized("explorer.exe", &[uri.to_owned()])?;
@@ -1912,7 +1952,7 @@ impl Scenario {
     /// Returns an error if the agent cannot start it or it does not exit
     /// within the window timeout.
     pub fn run_handing_off(&mut self, command: &str, args: &[String]) -> io::Result<()> {
-        self.begin_action(&format!("run {command} {}", args.join(" ")));
+        self.begin_action("run a program", &format!("{command} {}", args.join(" ")));
         let launch = self.agent.launch_process(command, args, None, &[], None)?;
         match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
             ProcessState::Exited { .. } => Ok(()),
@@ -1930,7 +1970,7 @@ impl Scenario {
     /// Returns an error if the agent cannot start it, it does not exit
     /// within the window timeout, or it exits with any other code.
     pub fn run_to_success(&mut self, command: &str, args: &[String]) -> io::Result<()> {
-        self.begin_action(&format!("run {command} {}", args.join(" ")));
+        self.begin_action("run a program", &format!("{command} {}", args.join(" ")));
         let launch = self.agent.launch_process(command, args, None, &[], None)?;
         match self.agent.wait_for_exit(launch.pid, WINDOW_TIMEOUT)? {
             ProcessState::Exited { exit_code: Some(0) } => Ok(()),
@@ -2074,11 +2114,8 @@ impl Scenario {
     pub fn focus_by_automation_id(&mut self, automation_id: &str) -> io::Result<u32> {
         self.speech
             .require_all_asserted(&format!("before focusing {automation_id:?}"));
-        if self.is_comparing() {
-            self.timeline.push_action(&format!(
-                "focus the element with the automation id {automation_id:?}"
-            ));
-        }
+        self.timeline
+            .push_action("focus an element by its automation id", automation_id);
         self.agent.focus_by_automation_id(automation_id)
     }
 
@@ -2303,7 +2340,7 @@ impl Scenario {
     pub fn replace_verbatim(&mut self) -> io::Result<()> {
         let replaced = self.pid("replace (replace_verbatim)")?;
         self.speech.expect_nothing_more(self.last_input);
-        self.timeline.push_action("start a second Verbatim");
+        self.timeline.push_action("start a second Verbatim", "");
         let agent_addr =
             endpoint().ok_or_else(|| io::Error::other(format!("{ENDPOINT_ENV} is not set")))?;
         let ready_event = ready_event_name();
@@ -3560,7 +3597,7 @@ fn close_documents(agent: &mut AgentClient, opened: &[Launched]) -> io::Result<(
 /// with `title` brought forward.
 fn launch_action(command: &str, title: &str) -> String {
     let program = command.rsplit(['\\', '/']).next().unwrap_or(command);
-    format!("launch {program}, its window titled {title:?} brought forward")
+    format!("{program}, its window titled {title:?} brought forward")
 }
 
 /// The error compare mode gives for what needs Verbatim: there is no
@@ -4525,11 +4562,15 @@ fn describe_foreground(info: &ForegroundInfo) -> String {
 /// identifies it ([`sweep_leftovers`]).
 #[must_use]
 pub fn harness_marker(name: &str) -> String {
+    format!("{DOCUMENT_MARKER}{name}-{}", run_token())
+}
+
+/// The token unique to this run of the test binary that every
+/// [`harness_marker`] ends with.
+#[must_use]
+pub fn run_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
-    format!(
-        "{DOCUMENT_MARKER}{name}-{}",
-        TOKEN.get_or_init(document_token)
-    )
+    TOKEN.get_or_init(document_token)
 }
 
 /// A token unique to this run of the test binary: the milliseconds since the Unix epoch, in

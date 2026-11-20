@@ -25,6 +25,8 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let (time, date) = scenario
         .local_clock(TURN_WITHIN)
         .expect("reads the local clock");
+    let time = scenario.read_value("the time", time);
+    let date = scenario.read_value("the date", date);
     scenario
         .send_keys(&["insert+f12", "insert+f12"])
         .expect("sends Verbatim+F12 twice");

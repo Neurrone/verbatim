@@ -947,6 +947,34 @@ it before any other run. [The NVDA transcript
 guide](nvda.md), "Comparing a scenario", says how, and
 which scenarios cannot be compared.
 
+## The check against the capture
+
+A scenario whose speech source is `Capture` has its NVDA capture
+committed beside it, `crates/verbatim-e2e/captures/<scenario>.txt`, the
+report `cargo xtask nvda compare <scenario> --keep` wrote. Every run of
+it keeps its steps as compare mode divides them, each with the texts it
+expects, and after the body compares them with the capture's: the same
+steps, each with the same input, an action of the harness's (a launch, a
+window brought forward, a write to a standard input) by its kind alone,
+and the same expected texts. Values the run reads from the system, such
+as a lock key's state, a suggestion's name or the time, are registered
+with `Scenario::read_value` under a label, and both the run and compare
+mode's report write the label in their place, as they write `{run}` for
+the token in every harness title. So the check compares the scenario's
+expectations with the ones its capture was made with, not Verbatim's
+speech with NVDA's: it needs no NVDA, and runs on GitHub's runner too.
+
+A difference fails the scenario after its body, naming the step and
+both sides. When the change is meant, capture the scenario again with
+`--keep` and commit the new capture with the change. Until build 6
+commits the captures, a scenario whose capture is missing is not
+checked; once they are committed, a missing capture fails the run, and a
+unit test fails `cargo xtask ci` for any such scenario without one. A
+unit test in xtask also fails on a committed capture without the header
+naming NVDA's build and the pin, made at a pin that is not the
+submodule's, or cited by nothing, and on a cited capture that does not
+exist.
+
 ## Running against another machine
 
 `cargo xtask e2e <scenario>... --endpoint <address>:44001 --verbatim-dir

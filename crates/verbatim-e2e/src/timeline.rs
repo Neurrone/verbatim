@@ -58,9 +58,16 @@ enum TimelineKind {
         entry: String,
     },
     /// An action of the harness's that changes what is in front, such as
-    /// launching a window or bringing one forward, in compare mode, where
-    /// it starts a step as an input does: what it was.
-    Action(String),
+    /// launching a window or bringing one forward, which starts a step as
+    /// an input does: its kind, which a step is compared by, and its
+    /// detail, such as the window's title or a process id, which only the
+    /// report shows.
+    Action {
+        /// What kind of action it was, the same in every run.
+        kind: String,
+        /// What it acted on in this run.
+        detail: String,
+    },
 }
 
 /// What one step of the timeline holds, for compare mode's report
@@ -77,6 +84,8 @@ pub(crate) struct StepEntries {
     pub(crate) deviations: Vec<(String, String)>,
     /// The harness's remarks about the step.
     pub(crate) notes: Vec<String>,
+    /// The details of the step's actions, which its inputs name by kind.
+    pub(crate) details: Vec<String>,
 }
 
 /// One thing a screen reader said in a step: an utterance's text, or an
@@ -230,10 +239,13 @@ impl Timeline {
     }
 
     /// Records an action of the harness's that changes what is in front,
-    /// `what` saying which, as compare mode records it at the start of the
-    /// step the action begins.
-    pub fn push_action(&self, what: &str) {
-        self.push(TimelineKind::Action(what.to_owned()));
+    /// of `kind`, acting on `detail`, at the start of the step the action
+    /// begins.
+    pub fn push_action(&self, kind: &str, detail: &str) {
+        self.push(TimelineKind::Action {
+            kind: kind.to_owned(),
+            detail: detail.to_owned(),
+        });
     }
 
     /// What the entries from the one numbered `from` to the newest hold,
@@ -249,6 +261,12 @@ impl Timeline {
                 TimelineKind::Note(note) => step.notes.push(note.clone()),
                 TimelineKind::Deviation { file, entry } => {
                     step.deviations.push((file.clone(), entry.clone()));
+                }
+                TimelineKind::Action { kind, detail } => {
+                    step.inputs.push(kind.clone());
+                    if !detail.is_empty() {
+                        step.details.push(detail.clone());
+                    }
                 }
                 kind => {
                     if let Some(input) = kind.input() {
@@ -316,7 +334,7 @@ impl Timeline {
                 | TimelineKind::NvdaEvent(_)
                 | TimelineKind::Note(_)
                 | TimelineKind::Deviation { .. }
-                | TimelineKind::Action(_) => None,
+                | TimelineKind::Action { .. } => None,
             })
             .collect()
     }
@@ -405,7 +423,7 @@ impl TimelineKind {
     fn is_input(&self) -> bool {
         matches!(
             self,
-            Self::Gesture(_) | Self::Keys(_) | Self::Text(_) | Self::Action(_)
+            Self::Gesture(_) | Self::Keys(_) | Self::Text(_) | Self::Action { .. }
         )
     }
 
@@ -416,7 +434,8 @@ impl TimelineKind {
             Self::Gesture(identifier) => Some(format!("gesture {identifier}")),
             Self::Keys(keys) => Some(format!("keys [{}]", keys.join(", "))),
             Self::Text(text) => Some(format!("text {text:?}")),
-            Self::Action(what) => Some(what.clone()),
+            Self::Action { kind, detail } if detail.is_empty() => Some(kind.clone()),
+            Self::Action { kind, detail } => Some(format!("{kind}: {detail}")),
             Self::Utterance(..)
             | Self::AudioStarted(_)
             | Self::Ended(..)

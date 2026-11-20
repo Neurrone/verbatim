@@ -96,6 +96,7 @@ use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
 // The portable modules, built on every host.
+mod captures;
 mod coverage;
 mod docs;
 mod ownership;

@@ -349,6 +349,18 @@ shorter (`compare::QuietPeriod`).
 - `ScenarioDef::speech`: compare mode runs only a scenario whose speech
   source is `Speech::Capture`, and refuses any other with its source
   (`Speech::not_comparable`).
+- The check against the capture (`registry::check_capture`,
+  `compare::check_against_capture`). The collector keeps the steps in
+  every mode (`SpeechCollector::take_steps`), each action of the harness
+  on the timeline as its kind and its detail (`Scenario::begin_action`),
+  and a scenario whose speech is its capture has its steps compared with
+  the capture's after the body: input, an action by its kind, and the
+  expected texts, the run's values (`Scenario::read_value`, and the run's
+  token, `scenario::run_token`) replaced by their labels
+  (`compare::substituted`), as compare mode's report writes them.
+  `registry::CAPTURES_REQUIRED` turns a missing capture into a failure
+  once the captures are committed. `xtask/src/captures.rs` tests the
+  committed captures' headers, pins and citations.
 - The run (`registry::run`, in its compare mode). It hears the desktop as an ordinary
   step, runs setup, the body and the end of the speech, the teardown and
   the cleanup, writes the timeline, the report, the foreground record and

@@ -789,13 +789,16 @@ fn run(def: &ScenarioDef, mode: Mode) {
     // with a modifier down.
     problems.extend(scenario.release_held_keys());
 
-    let steps = match mode {
-        Mode::Compare => Some(scenario.speech().take_comparison()),
-        Mode::Verbatim => {
-            problems.extend(check_and_quit(&mut scenario, &dir));
-            None
+    // The steps as compare mode divides them, each with its expected
+    // texts: compare mode's report, or the run's to check against the
+    // scenario's capture.
+    let steps = scenario.speech().take_steps();
+    if mode == Mode::Verbatim {
+        if def.speech == Speech::Capture {
+            problems.extend(check_capture(def, &steps, &scenario.substitutions()));
         }
-    };
+        problems.extend(check_and_quit(&mut scenario, &dir));
+    }
     let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
     if let Some(Err(payload)) = &teardown_outcome {
         problems.push(format!(
@@ -805,8 +808,8 @@ fn run(def: &ScenarioDef, mode: Mode) {
     }
     problems.extend(scenario.clean_up());
     problems.extend(scenario.collect_run_artifacts(&dir));
-    let outpost_crashes = if let Some(steps) = &steps {
-        problems.extend(write_comparison(def, &scenario, &dir, steps));
+    let outpost_crashes = if mode == Mode::Compare {
+        problems.extend(write_comparison(def, &scenario, &dir, &steps));
         None
     } else {
         verbatim_artifacts(def, &mut scenario, &dir, body_end_ms, &mut problems)
@@ -977,6 +980,43 @@ fn verbatim_artifacts(
     outpost_crashes
 }
 
+/// Whether a scenario whose speech is its capture fails when the capture
+/// is missing: not until build 6 commits the captures its scenarios are
+/// checked against, which turns this on in the same commit.
+const CAPTURES_REQUIRED: bool = false;
+
+/// Against Verbatim, for a scenario whose speech is its capture: checks
+/// the run's expectations, `steps`, against the capture
+/// ([`compare::check_against_capture`]), the run's `values` replaced by
+/// their labels. Returns the problem, if any, naming the step and how to
+/// capture the scenario again.
+fn check_capture(
+    def: &ScenarioDef,
+    steps: &[compare::CompareStep],
+    values: &[(String, String)],
+) -> Option<String> {
+    let path = compare::capture_path(&crate::scenario::workspace_root(), def.name);
+    let again = format!(
+        "capture it again with `cargo xtask nvda compare {} --keep`",
+        def.name
+    );
+    match std::fs::read_to_string(&path) {
+        Ok(capture) => compare::check_against_capture(&capture, steps, values)
+            .err()
+            .map(|why| {
+                format!(
+                    "the scenario's expectations are not its capture's, {}: {why}; if the change is meant, {again}",
+                    path.display()
+                )
+            }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !CAPTURES_REQUIRED => None,
+        Err(error) => Some(format!(
+            "could not read the scenario's capture {}: {error}; {again}",
+            path.display()
+        )),
+    }
+}
+
 /// In compare mode, writes the report of `steps` as `compare.txt` in
 /// `dir` and prints it. Returns the problems it met.
 fn write_comparison(
@@ -999,7 +1039,13 @@ fn write_comparison(
         pin_matches,
         quiet,
     };
-    let report = compare::render_report(&header, steps);
+    // The run's own values, such as the harness titles' token, written as
+    // their labels, so the report kept as the capture is the same on
+    // every machine.
+    let report = compare::substituted(
+        &compare::render_report(&header, steps),
+        &scenario.substitutions(),
+    );
     // Written to the handle itself, past the test harness's capture, so
     // the report shows for a run that passes.
     let _ = io::stdout().write_all(format!("{report}\n").as_bytes());
@@ -1348,6 +1394,22 @@ mod tests {
                 "{source} names the entry {heading:?}, which is no ### heading in {file}"
             );
         }
+    }
+
+    #[test]
+    fn once_captures_are_required_every_scenario_whose_speech_is_its_capture_has_one() {
+        let root = crate::scenario::workspace_root();
+        let missing: Vec<&str> = SCENARIOS
+            .iter()
+            .filter(|def| {
+                def.speech == Speech::Capture && !compare::capture_path(&root, def.name).exists()
+            })
+            .map(|def| def.name)
+            .collect();
+        assert!(
+            !CAPTURES_REQUIRED || missing.is_empty(),
+            "scenarios whose speech is their capture, with none committed: {missing:?}; make each with `cargo xtask nvda compare <name> --keep`"
+        );
     }
 
     #[test]

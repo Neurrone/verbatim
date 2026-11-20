@@ -169,6 +169,9 @@ pub struct CompareStep {
     pub deviations: Vec<(String, String)>,
     /// The harness's remarks, such as NVDA's speech not settling.
     pub notes: Vec<String>,
+    /// What the step's actions acted on in this run, such as a window's
+    /// title, which its input names by the actions' kinds.
+    pub details: Vec<String>,
     /// Whether the step is the run's start: its first step, with no input.
     /// It is not compared, since NVDA says nothing about a desktop already
     /// in front.
@@ -205,6 +208,9 @@ impl Verdict {
         }
     }
 }
+
+/// A step's input when it has none.
+const NO_INPUT: &str = "no input since the step before";
 
 /// The word that starts a sound in an utterance's text, followed by the
 /// sound's name, one word: `sound: spelling-error`.
@@ -252,7 +258,7 @@ impl CompareStep {
         } else if first {
             "start".to_owned()
         } else {
-            "no input since the step before".to_owned()
+            NO_INPUT.to_owned()
         };
         Some(Self {
             input,
@@ -260,6 +266,7 @@ impl CompareStep {
             heard: step.said,
             deviations: step.deviations,
             notes: step.notes,
+            details: step.details,
             start,
         })
     }
@@ -429,6 +436,9 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
             Verdict::NotCompared => 4,
         }] += 1;
         let _ = writeln!(out, "\nStep {}: {}", index + 1, step.input);
+        for detail in &step.details {
+            let _ = writeln!(out, "Detail: {detail}");
+        }
         out.push_str("Verbatim:\n");
         if step.expected.is_empty() {
             out.push_str("  (nothing)\n");
@@ -490,6 +500,125 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
     out
 }
 
+/// `text` with each value of `values`, a label and the value this run
+/// read, replaced by its label in braces, the longest value first, so
+/// that what a run read from the system does not make it differ from its
+/// capture.
+#[must_use]
+pub fn substituted(text: &str, values: &[(String, String)]) -> String {
+    let mut values: Vec<&(String, String)> = values
+        .iter()
+        .filter(|(_, value)| !value.is_empty())
+        .collect();
+    values.sort_by_key(|(_, value)| std::cmp::Reverse(value.len()));
+    values
+        .into_iter()
+        .fold(text.to_owned(), |text, (label, value)| {
+            text.replace(value.as_str(), &format!("{{{label}}}"))
+        })
+}
+
+/// One step as the check against a capture compares it: its input, an
+/// action by its kind alone, and its expected texts as the report writes
+/// them, joined with single spaces.
+type Checked = (String, String);
+
+/// The steps of a run the check compares, the run's values replaced by
+/// their labels: every step but the start and those with neither an input
+/// nor an expected text, as compare mode's report lists them.
+fn checked_run(steps: &[CompareStep], values: &[(String, String)]) -> Vec<Checked> {
+    steps
+        .iter()
+        .filter(|step| !step.start && (step.input != NO_INPUT || !step.expected.is_empty()))
+        .map(|step| {
+            let texts: Vec<String> = step
+                .expected
+                .iter()
+                .map(|text| readable(&substituted(text, values)))
+                .collect();
+            (
+                substituted(&step.input, values),
+                normalized(texts.iter().map(String::as_str)),
+            )
+        })
+        .collect()
+}
+
+/// The steps of a capture, a report [`render_report`] wrote, as
+/// [`checked_run`] gives a run's.
+fn checked_capture(capture: &str) -> Vec<Checked> {
+    let mut steps: Vec<(String, Vec<String>)> = Vec::new();
+    let mut in_expected = false;
+    for line in capture.lines() {
+        if let Some((_, input)) = line
+            .strip_prefix("Step ")
+            .and_then(|rest| rest.split_once(": "))
+        {
+            steps.push((input.to_owned(), Vec::new()));
+            in_expected = false;
+        } else if line == "Verbatim:" {
+            in_expected = true;
+        } else if !line.starts_with("  ") {
+            in_expected = false;
+        } else if in_expected && let Some((_, texts)) = steps.last_mut() {
+            let text = line.trim_start();
+            if text != "(nothing)" {
+                texts.push(
+                    text.strip_suffix(" (not compared)")
+                        .unwrap_or(text)
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    steps
+        .into_iter()
+        .filter(|(input, texts)| input != "start" && !(input == NO_INPUT && texts.is_empty()))
+        .map(|(input, texts)| (input, normalized(texts.iter().map(String::as_str))))
+        .collect()
+}
+
+/// Checks a run's expectations, `steps`, against the scenario's capture,
+/// a report [`render_report`] wrote and `cargo xtask nvda compare --keep`
+/// kept: the same steps, each with the same input, an action compared by
+/// its kind alone, and the same expected texts, once the run's `values`
+/// are replaced by their labels. It compares expectations with
+/// expectations, not speech with NVDA's, so it needs no NVDA.
+///
+/// # Errors
+///
+/// Returns the first step that differs, with both sides, or the steps
+/// one side has beyond the other.
+pub fn check_against_capture(
+    capture: &str,
+    steps: &[CompareStep],
+    values: &[(String, String)],
+) -> Result<(), String> {
+    let run = checked_run(steps, values);
+    let kept = checked_capture(capture);
+    for (index, pair) in run.iter().zip(&kept).enumerate() {
+        let (ours, theirs) = pair;
+        if ours != theirs {
+            return Err(format!(
+                "step {} differs from the capture: the run expects {:?} after {:?}, the capture {:?} after {:?}",
+                index + 1,
+                ours.1,
+                ours.0,
+                theirs.1,
+                theirs.0
+            ));
+        }
+    }
+    if run.len() != kept.len() {
+        return Err(format!(
+            "the run has {} compared steps and the capture {}",
+            run.len(),
+            kept.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Why a report [`render_report`] wrote cannot be kept as the scenario's
 /// capture, or `None` when it can: its pin is not the installed build, a
 /// step is judged `differs`, or NVDA's speech did not settle in a step, since
@@ -533,6 +662,7 @@ mod tests {
             heard: heard.to_vec(),
             deviations: Vec::new(),
             notes: Vec::new(),
+            details: Vec::new(),
             start: false,
         }
     }
@@ -883,6 +1013,80 @@ mod tests {
         assert_eq!(
             keep_refusal(&render_report(&matched, &[unsettled])),
             Some("NVDA's speech did not settle in step 1: keys [tab]".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_check_compares_actions_by_kind_and_expectations_with_read_values_as_labels() {
+        let mut start = step(&["sound: start", "Desktop list"], &[]);
+        start.input = "start".to_owned();
+        start.start = true;
+        let mut action = step(&["x-abc window"], &[]);
+        action.input = "launch a window".to_owned();
+        action.details = vec!["mockapp.exe, its window titled \"x-abc\"".to_owned()];
+        let keys = |name: &str| step(&[&format!("{name} 1 of 22")], &[speech("whatever")]);
+        let values = |run: &str, name: &str| {
+            vec![
+                ("run".to_owned(), run.to_owned()),
+                ("first suggestion".to_owned(), name.to_owned()),
+            ]
+        };
+        let capture = substituted(
+            &render_report(
+                &header(),
+                &[start.clone(), action.clone(), keys("Sound settings")],
+            ),
+            &values("abc", "Sound settings"),
+        );
+        assert!(capture.contains("x-{run} window"), "{capture}");
+        assert!(capture.contains("{first suggestion} 1 of 22"), "{capture}");
+
+        // Another run, with its own token, title and suggestion, each
+        // registered, is the same.
+        let mut other_action = action.clone();
+        other_action.expected = vec!["x-def window".to_owned()];
+        other_action.details = vec!["another title, another process".to_owned()];
+        assert_eq!(
+            check_against_capture(
+                &capture,
+                &[start.clone(), other_action, keys("Sound mixer")],
+                &values("def", "Sound mixer"),
+            ),
+            Ok(())
+        );
+
+        // A changed expectation, an unregistered value, an action of
+        // another kind and a missing step each fail.
+        let changed = step(&["Sound settings 1 of 21"], &[]);
+        assert!(
+            check_against_capture(
+                &capture,
+                &[start.clone(), action.clone(), changed],
+                &values("abc", "Sound settings"),
+            )
+            .is_err()
+        );
+        assert!(
+            check_against_capture(
+                &capture,
+                &[start.clone(), action.clone(), keys("Sound mixer")],
+                &values("abc", "Sound settings"),
+            )
+            .is_err()
+        );
+        let mut other_kind = action.clone();
+        other_kind.input = "bring a window forward".to_owned();
+        assert!(
+            check_against_capture(
+                &capture,
+                &[start.clone(), other_kind, keys("Sound settings")],
+                &values("abc", "Sound settings"),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            check_against_capture(&capture, &[start, action], &values("abc", "Sound settings")),
+            Err("the run has 1 compared steps and the capture 2".to_owned())
         );
     }
 }

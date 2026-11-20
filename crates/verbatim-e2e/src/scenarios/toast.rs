@@ -99,7 +99,7 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
     scenario
         .write_agent_file(&script, RAISE_TOAST.as_bytes())
         .expect("writes the script that raises the toast");
-    scenario.begin_action("raise a toast");
+    scenario.begin_action("raise a toast", "");
     run(scenario, &script, &[TITLE, BODY]).expect("raises the toast");
     scenario.speech().expect_sequence(&[heard(&toast_speech())]);
 }

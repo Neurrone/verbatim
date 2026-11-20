@@ -59,6 +59,8 @@ pub struct Entry {
     pub group: String,
     /// Whether it is marked `.local_only`.
     pub local_only: bool,
+    /// Whether its speech source is `Capture`, its committed NVDA capture.
+    pub capture: bool,
 }
 
 /// The test the binary adds outside the registry: the agent's session
@@ -211,6 +213,7 @@ pub fn registry_entries(source: &str) -> Result<Vec<Entry>, String> {
                 name: name.to_string(),
                 group: group.to_string(),
                 local_only: false,
+                capture: line.contains(", Capture)"),
             });
         }
         if line.contains(".local_only(")
@@ -453,14 +456,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         assert_eq!(
             registry_entries(registry).map(|entries| entries
                 .into_iter()
-                .map(|entry| (entry.name, entry.group, entry.local_only))
+                .map(|entry| (entry.name, entry.group, entry.local_only, entry.capture))
                 .collect::<Vec<_>>()),
             Ok(vec![
-                ("kept".to_string(), "Suite".to_string(), false),
-                ("named".to_string(), "Suite".to_string(), false),
-                ("only_here".to_string(), "Suite".to_string(), true),
-                ("demo_kind".to_string(), "Demo".to_string(), false),
-                ("measure_kind".to_string(), "Measure".to_string(), false),
+                ("kept".to_string(), "Suite".to_string(), false, false),
+                ("named".to_string(), "Suite".to_string(), false, true),
+                ("only_here".to_string(), "Suite".to_string(), true, true),
+                ("demo_kind".to_string(), "Demo".to_string(), false, false),
+                (
+                    "measure_kind".to_string(),
+                    "Measure".to_string(),
+                    false,
+                    false
+                ),
             ])
         );
         assert!(
