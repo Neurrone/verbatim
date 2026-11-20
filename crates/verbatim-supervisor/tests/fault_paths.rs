@@ -1,6 +1,5 @@
 //! The relay's failure paths, each run through its fault point
 //! (`books/dev/src/reference/crates/verbatim-faults.md`, "Failure paths"): a
-//! message the app's port refuses is delivered again, in order, and a
 //! shutdown whose mailbox wake the relay's port refuses still ends.
 //!
 //! This test binary runs itself as a stand-in for the outpost binary, which
@@ -19,7 +18,6 @@ use verbatim_model::Pid;
 use verbatim_model::protocol::{CoreToListener, CoreToOutpost, ListenerToCore, OutpostToCore};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
-use verbatim_process::port_queue::port_queue;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use verbatim_supervisor::{
     EventSink, Executables, OutpostMessage, SPARES, ShutdownSummary, Supervisor,
@@ -78,7 +76,7 @@ fn stand_in(args: &[String]) -> ! {
             match read_message::<_, CoreToListener>(&mut commands) {
                 Ok(Some(CoreToListener::Ping { .. })) => {
                     write_message(&mut messages, &ListenerToCore::Pong { written_at_us: 0 })
-                        .expect("a message is written")
+                        .expect("a message is written");
                 }
                 Ok(Some(CoreToListener::Shutdown) | None) => std::process::exit(0),
                 Ok(Some(_)) => {}
@@ -136,23 +134,6 @@ fn next(events: &Delivered) -> OutpostMessage {
         .unwrap_or_else(|error| panic!("the supervisor said nothing: {error}"))
 }
 
-/// What a message is, for the order asserted: the listener's readiness, an
-/// outpost's start or its `Ready`, or a spare's readiness with how many
-/// wait.
-fn name(message: &OutpostMessage) -> String {
-    match message {
-        OutpostMessage::ListenerReady { .. } => "listener ready".to_owned(),
-        OutpostMessage::Started { .. } => "started".to_owned(),
-        OutpostMessage::Event { message, .. }
-            if matches!(**message, OutpostToCore::Ready { .. }) =>
-        {
-            "ready".to_owned()
-        }
-        OutpostMessage::SpareReady { waiting, .. } => format!("spare ready {waiting}"),
-        other => format!("{other:?}"),
-    }
-}
-
 /// Every child ended cleanly: the listener, Core's own outpost, and the
 /// spares.
 const ALL_CLEAN: ShutdownSummary = ShutdownSummary {
@@ -161,62 +142,6 @@ const ALL_CLEAN: ShutdownSummary = ShutdownSummary {
     killed: 0,
     killed_on_failure: 0,
 };
-
-/// The app's port refuses the post of `ListenerReady`, of which a run has
-/// exactly one: the relay keeps it and, once the refusal has happened,
-/// delivers it again at its next send, Core's own outpost's start, or at a
-/// heartbeat before that, so the app takes it before that start and every
-/// spare's readiness, each message once, and the shutdown ends.
-fn a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends() {
-    let refusal = verbatim_faults::arm(
-        verbatim_faults::Fault::PortRefusesPost,
-        |message: &OutpostMessage| matches!(message, OutpostMessage::ListenerReady { .. }),
-        1,
-    );
-    let (poster, mut queue) = port_queue::<OutpostMessage>().expect("a port queue");
-    let (events_tx, events) = unbounded();
-    let forwarder = std::thread::spawn(move || {
-        while let Some(message) = queue.recv() {
-            if events_tx.send(message).is_err() {
-                return;
-            }
-        }
-    });
-    let supervisor = supervisor(EventSink::posting(
-        poster,
-        std::convert::identity,
-        std::convert::identity,
-    ));
-    let events = Delivered::new(events, &supervisor);
-    assert!(
-        refusal.wait_fired(WAIT),
-        "the port refused ListenerReady, which the relay keeps"
-    );
-    // Core's own outpost's start is the relay's next send, behind the kept
-    // message, unless a heartbeat delivered that first.
-    supervisor.start_outpost(Pid(std::process::id()));
-    let taken: Vec<String> = (0..3 + SPARES).map(|_| name(&next(&events))).collect();
-    assert_eq!(
-        taken,
-        [
-            "listener ready",
-            "started",
-            "ready",
-            "spare ready 1",
-            "spare ready 2"
-        ],
-        "the refused message first, then the rest in order, each once"
-    );
-
-    assert_eq!(supervisor.shutdown(), ALL_CLEAN);
-    drop(supervisor);
-    forwarder
-        .join()
-        .expect("the taker ends once the sink has gone");
-    let rest: Vec<String> = events.try_iter().map(|message| name(&message)).collect();
-    assert!(rest.is_empty(), "nothing more was delivered: {rest:?}");
-    drop(refusal);
-}
 
 /// A shutdown whose mailbox wake the relay's port refuses still ends: once
 /// every spare is ready, every launch has been taken and no thread sends
@@ -251,16 +176,10 @@ fn main() -> std::process::ExitCode {
     // since the table of armed fault points is the process's.
     let mut arguments = libtest_mimic::Arguments::from_args();
     arguments.test_threads = Some(1);
-    let tests: [(&str, fn()); 2] = [
-        (
-            "a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends",
-            a_message_the_port_refuses_is_delivered_again_in_order_and_shutdown_ends,
-        ),
-        (
-            "a_shutdown_whose_wake_the_port_refuses_still_ends",
-            a_shutdown_whose_wake_the_port_refuses_still_ends,
-        ),
-    ];
+    let tests: [(&str, fn()); 1] = [(
+        "a_shutdown_whose_wake_the_port_refuses_still_ends",
+        a_shutdown_whose_wake_the_port_refuses_still_ends,
+    )];
     let trials = tests
         .into_iter()
         .map(|(name, test)| {

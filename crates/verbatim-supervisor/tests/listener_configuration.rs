@@ -99,7 +99,7 @@ fn stand_in(args: &[String]) -> ! {
         loop {
             match read_message::<_, CoreToListener>(&mut commands) {
                 Ok(Some(CoreToListener::Ping { .. })) => {
-                    send(&ListenerToCore::Pong { written_at_us: 0 })
+                    send(&ListenerToCore::Pong { written_at_us: 0 });
                 }
                 Ok(Some(CoreToListener::Configuration {
                     report_background_progress_bars,

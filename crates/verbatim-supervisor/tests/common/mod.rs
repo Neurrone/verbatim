@@ -1,6 +1,8 @@
 //! What the supervisor's tests share: the app's side of what the
 //! supervisor delivers.
 
+#![allow(dead_code, reason = "each test binary uses part of what is shared")]
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

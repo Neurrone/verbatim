@@ -2200,7 +2200,6 @@ dependencies = [
  "simdutf8",
  "tracing",
  "tracing-subscriber",
- "verbatim-faults",
  "verbatim-model",
  "windows",
  "workspace-hack",

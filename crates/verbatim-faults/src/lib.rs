@@ -25,10 +25,6 @@ use std::time::Duration;
 /// Each fault point, and the subject it passes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
-    /// A completion port refuses a queue's packet
-    /// (`verbatim_process::port_queue::Poster::send`): the item is given
-    /// back. Subject: the item.
-    PortRefusesPost,
     /// The relay's port refuses its mailbox's wake
     /// (`verbatim-supervisor`'s `Mailbox::send`). Subject: the item sent.
     RelayWake,

@@ -3,10 +3,8 @@
 //! exited ends as the application's exit (`TargetExited`), the exit
 //! follows (`ApplicationExited`), and Core's start of an outpost for it
 //! afterwards starts none and says so (`LaunchFailed`, the application
-//! gone); an application held with no outpost running is reported exited
-//! by the heartbeat. And an outpost's end that the app refuses for now,
-//! as a completion port refusing its packet does, is not lost: it reaches
-//! the app later, still before its replacement's start.
+//! gone); and an application held with no outpost running is reported
+//! exited by the heartbeat.
 //!
 //! This test binary runs itself three ways: as the application, a process
 //! with no windows that runs until its standard input closes; as a stand-in
@@ -20,8 +18,6 @@
 
 use std::io::{BufReader, Read as _};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 
@@ -35,7 +31,6 @@ use verbatim_model::{OutpostId, Pid};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_process::message::{read_message, write_message};
 use verbatim_supervisor::{EndReason, Executables, OutpostMessage, ShutdownSummary, Supervisor};
-use verbatim_supervisor::{EventSink, Undelivered};
 
 /// The application's argument.
 const APPLICATION: &str = "--stand-in-application";
@@ -260,100 +255,6 @@ fn started_and_ready(events: &Delivered, target_pid: Pid) -> OutpostId {
     outpost
 }
 
-/// An outpost's end that the app refuses for now is delivered again, and
-/// nothing about its application overtakes it. The sink refuses the first
-/// `Ended` once, giving it back as a port that refuses a packet does, and
-/// says so. The outpost crashes, and Core's start of its replacement
-/// arrives with the end still undelivered; the app hears the end, then the
-/// replacement's start and its `Ready`, in that order.
-fn an_end_the_app_refuses_for_now_still_comes_before_its_replacement() {
-    let (events_tx, events) = unbounded();
-    let refused = Arc::new(AtomicBool::new(false));
-    let refusing = Arc::clone(&refused);
-    let (refusal_tx, refusal) = unbounded();
-    let sink = EventSink::new(move |message| {
-        if matches!(message, OutpostMessage::Ended { .. }) && !refusing.swap(true, Ordering::SeqCst)
-        {
-            let _ = refusal_tx.send(());
-            return Err(Undelivered::Refused(message));
-        }
-        events_tx.send(message).map_err(|_| Undelivered::Gone)
-    });
-    let exe = std::env::current_exe().expect("this test binary's path");
-    let supervisor = Supervisor::with_executables(
-        sink,
-        OutpostOptions::default(),
-        Executables::both(exe.clone()),
-        LIMIT,
-        std::sync::Arc::default(),
-        false,
-    )
-    .expect("the supervisor starts");
-    let events = Delivered::new(events, &supervisor);
-    match next(&events) {
-        OutpostMessage::ListenerReady { .. } => {}
-        other => panic!("the supervisor said {other:?} before the listener was ready"),
-    }
-
-    let mut application = Command::new(&exe)
-        .arg(APPLICATION)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .expect("the application starts");
-    let target_pid = Pid(application.id());
-    supervisor.start_outpost(target_pid);
-    let outpost = started_and_ready(&events, target_pid);
-
-    supervisor
-        .send_to_outpost(
-            outpost,
-            CoreToOutpost::Cancel(Cancel {
-                number: RequestNumber(0),
-                reason: CancelReason::Withdrawn,
-            }),
-        )
-        .expect("the command that crashes the stand-in is queued");
-    refusal
-        .recv_timeout(WAIT)
-        .expect("the sink refused the outpost's end");
-    supervisor.start_outpost(target_pid);
-    match next(&events) {
-        OutpostMessage::Ended {
-            outpost: ended,
-            target_pid: ended_pid,
-            reason: EndReason::Exited,
-            ..
-        } if ended == outpost && ended_pid == target_pid => {}
-        other => panic!("the supervisor said {other:?}, not that the outpost ended"),
-    }
-    assert!(
-        refused.load(Ordering::SeqCst),
-        "the sink refused the end once"
-    );
-    let replacement = started_and_ready(&events, target_pid);
-    assert_ne!(replacement, outpost, "a new generation replaced it");
-
-    assert_eq!(
-        supervisor.shutdown(),
-        ShutdownSummary {
-            clean: 2,
-            exited: 1,
-            killed: 0,
-            killed_on_failure: 0,
-        },
-        "the listener and the replacement shut down cleanly and the crashed outpost had exited"
-    );
-    let rest: Vec<OutpostMessage> = events.try_iter().collect();
-    assert!(
-        rest.is_empty(),
-        "the supervisor said nothing more: {rest:?}"
-    );
-    drop(application.stdin.take());
-    let status = application.wait().expect("the application exits");
-    assert!(status.success(), "the application exited with {status}");
-}
-
 /// Crashes `outpost`, the stand-in, and waits for its end.
 fn crash(supervisor: &Supervisor, events: &Delivered, outpost: OutpostId, target_pid: Pid) {
     supervisor
@@ -455,14 +356,10 @@ fn main() -> std::process::ExitCode {
     // since each test's children inherit this process's environment.
     let mut arguments = libtest_mimic::Arguments::from_args();
     arguments.test_threads = Some(1);
-    let tests: [(&str, fn()); 3] = [
+    let tests: [(&str, fn()); 2] = [
         (
             "an_outpost_that_ends_after_its_application_exited_ends_as_the_exit_and_none_starts",
             an_outpost_that_ends_after_its_application_exited_ends_as_the_exit_and_none_starts,
-        ),
-        (
-            "an_end_the_app_refuses_for_now_still_comes_before_its_replacement",
-            an_end_the_app_refuses_for_now_still_comes_before_its_replacement,
         ),
         (
             "an_application_held_with_no_outpost_running_is_reported_exited",

@@ -90,16 +90,11 @@ pub struct EventSink {
 pub enum Undelivered {
     /// The app has gone: nothing it is sent is taken any more.
     Gone,
-    /// The app is there, but the message could not be put in line now,
-    /// such as a completion port refusing the packet, which only a system
-    /// out of memory does; it is given back, and a later attempt may
-    /// succeed.
-    Refused(OutpostMessage),
 }
 
 impl EventSink {
     /// A sink that hands each message to `deliver`, which says whether the
-    /// app took it, has gone, or refused it for now ([`Undelivered`]).
+    /// app took it or has gone ([`Undelivered`]).
     #[must_use]
     pub fn new(
         deliver: impl Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync + 'static,
@@ -111,20 +106,17 @@ impl EventSink {
 
     /// A sink that posts each message, wrapped by `wrap`, to a completion
     /// port's queue through `poster`, as the app's reducer takes its
-    /// inputs: a post given back while the queue is still taken is
-    /// [`Undelivered::Refused`], the port having refused the packet, and
-    /// the message is had back with `unwrap`, which is given only an item
-    /// `wrap` made; one given back once the queue is gone is
-    /// [`Undelivered::Gone`].
+    /// inputs: a post the port refuses while the queue is still taken,
+    /// which only a system out of memory does, is logged and dropped; one
+    /// given back once the queue is gone is [`Undelivered::Gone`].
     #[must_use]
-    pub fn posting<T: Send + 'static>(
-        poster: Poster<T>,
-        wrap: fn(OutpostMessage) -> T,
-        unwrap: fn(T) -> OutpostMessage,
-    ) -> Self {
+    pub fn posting<T: Send + 'static>(poster: Poster<T>, wrap: fn(OutpostMessage) -> T) -> Self {
         Self::new(move |message| match poster.send(wrap(message)) {
             Ok(()) => Ok(()),
-            Err(item) if poster.is_open() => Err(Undelivered::Refused(unwrap(item))),
+            Err(_) if poster.is_open() => {
+                tracing::error!("a message to the app could not be put in line; it is dropped");
+                Ok(())
+            }
             Err(_) => Err(Undelivered::Gone),
         })
     }

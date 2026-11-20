@@ -28,7 +28,7 @@ lifecycle-for-tests = []
 # The fault points of the relay's mailbox and of the port queue the app's
 # sink posts to, for the `fault_paths` tests; only `cargo xtask faults`
 # turns it on.
-faults = ["dep:verbatim-faults", "verbatim-process/faults"]
+faults = ["dep:verbatim-faults"]
 
 [lints]
 workspace = true

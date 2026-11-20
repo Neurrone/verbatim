@@ -22,7 +22,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io;
 use std::os::windows::io::OwnedHandle;
 use std::sync::Arc;
@@ -276,62 +276,16 @@ struct ListenerRecord {
 }
 
 /// The relay's messages to the app, delivered through its sink in the
-/// order the relay sends them. One the app refuses for now
-/// ([`Undelivered::Refused`]: its port refusing the packet, which only a
-/// system out of memory does) is kept, and so is every message sent after
-/// it, behind it, and they are delivered again, in order, at the relay's
-/// next send and at every heartbeat, as the relay's own mailbox is taken
-/// again then after a wake its port refused. So nothing the relay sends is
-/// lost, and nothing overtakes a message before it: an outpost's `Ended`
-/// still comes before its replacement's `Started`. Everything is dropped
-/// once the app has gone, since Verbatim is exiting.
-struct Outbox {
-    sink: EventSink,
-    /// Refused and not yet delivered, in order.
-    refused: VecDeque<OutpostMessage>,
-}
+/// order the relay sends them. One the app's port refuses, which only a
+/// system out of memory does, is logged and dropped by the sink; everything
+/// is dropped once the app has gone, since Verbatim is exiting.
+struct Outbox(EventSink);
 
 impl Outbox {
-    fn new(sink: EventSink) -> Self {
-        Self {
-            sink,
-            refused: VecDeque::new(),
-        }
-    }
-
-    /// Delivers `message`, behind any refused before it.
-    fn send(&mut self, message: OutpostMessage) {
-        if !self.refused.is_empty() {
-            self.refused.push_back(message);
-            self.retry();
-            return;
-        }
-        match self.sink.send(message) {
+    /// Delivers `message`.
+    fn send(&self, message: OutpostMessage) {
+        match self.0.send(message) {
             Ok(()) | Err(Undelivered::Gone) => {}
-            Err(Undelivered::Refused(message)) => {
-                tracing::error!(
-                    "a message to the app could not be put in line; it and every later one are tried again at each send and heartbeat"
-                );
-                self.refused.push_back(message);
-            }
-        }
-    }
-
-    /// Delivers again, in order, what was refused, stopping at the first
-    /// message refused again.
-    fn retry(&mut self) {
-        while let Some(message) = self.refused.pop_front() {
-            match self.sink.send(message) {
-                Ok(()) => {}
-                Err(Undelivered::Gone) => {
-                    self.refused.clear();
-                    return;
-                }
-                Err(Undelivered::Refused(message)) => {
-                    self.refused.push_front(message);
-                    return;
-                }
-            }
         }
     }
 }
@@ -434,7 +388,7 @@ pub(super) fn start(setup: Setup) -> io::Result<()> {
         retiring: 0,
         summary: ShutdownSummary::default(),
         shutting_down: None,
-        outbox: Outbox::new(events_tx),
+        outbox: Outbox(events_tx),
         writers,
         own_tx,
         port: Arc::clone(relay.port()),
@@ -520,12 +474,10 @@ impl Owner {
             }
             let now = Instant::now();
             if now >= heartbeat_due {
-                // What was sent while the port refused the mailbox's wake,
-                // and what the app's port refused.
+                // What was sent while the port refused the mailbox's wake.
                 for event in events.take() {
                     self.handle(event);
                 }
-                self.outbox.retry();
                 self.heartbeat();
                 heartbeat_due = next_due(heartbeat_due, now, ping_interval);
             }

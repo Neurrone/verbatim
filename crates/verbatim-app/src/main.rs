@@ -1984,12 +1984,7 @@ fn window_handle(window: WindowHandle) -> isize {
 /// with its keys and commands, so the reducer takes them all in the order
 /// they arrived (`docs/design/communication.md`, section 4.5).
 fn outpost_sink(command_tx: Commands) -> verbatim_supervisor::EventSink {
-    verbatim_supervisor::EventSink::posting(command_tx, ShellCommand::Outpost, |command| {
-        let ShellCommand::Outpost(message) = command else {
-            unreachable!("the sink is given back only the command it posted")
-        };
-        message
-    })
+    verbatim_supervisor::EventSink::posting(command_tx, ShellCommand::Outpost)
 }
 
 /// The reducer thread body: takes outpost messages and commands from other

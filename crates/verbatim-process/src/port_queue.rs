@@ -127,11 +127,6 @@ impl<T: Send + 'static> Poster<T> {
         if !self.shared.open.load(Ordering::SeqCst) {
             return Err(item);
         }
-        // A refused packet gives the item back, as below.
-        #[cfg(any(test, feature = "faults"))]
-        if verbatim_faults::hit(verbatim_faults::Fault::PortRefusesPost, &item) {
-            return Err(item);
-        }
         let item = Box::into_raw(Box::new(item));
         // SAFETY: the port is open; the pointer is carried, never read by
         // the system, and comes back to the queue's taker (the module's
