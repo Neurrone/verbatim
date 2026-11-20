@@ -510,17 +510,14 @@ More follow-ups:
   list item. If it is heard again, check with an NVDA capture first.
 - A new console host's window can stay hidden and not responding while
   the outpost's first call into it passes its deadline (3 of 20 measure
-  runs on 2026-10-31; [the flaky tests](flaky-tests.md), "A new console
-  host not responding at its outpost's first call"). The kept artifacts
+  runs on 2026-10-31). The kept artifacts
   show the console host hung on its own. The harness now records the wait
   chain of each not-responding window's thread and of the launched
   process's threads when its window wait fails (`wait-chains.txt`); read
   the next failure's chains to find what holds the window's thread.
 - A new application's window sometimes does not appear within the
   harness's 30 seconds: Notepad five times locally and a mockapp Windows
-  Forms window once on GitHub's runner, on 2026-11-01 ([the flaky
-  tests](flaky-tests.md), "A new application's window not shown in
-  time"). Find, from a failed run's kept artifacts and its
+  Forms window once on GitHub's runner, on 2026-11-01. Find, from a failed run's kept artifacts and its
   `wait-chains.txt`, whether an outpost's first call holds the new window,
   as the console host entry above may.
 - `verbatim-model`'s comment on `DeliveredFact::key` cites NVDA source
