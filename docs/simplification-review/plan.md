@@ -98,8 +98,8 @@ The session fills in a row when its build is pushed and its GitHub run is read. 
 | Build | State | Commits | Product lines against budget | Test lines against budget | Records deleted |
 | --- | --- | --- | --- | --- | --- |
 | 1. Defects and tooling | pushed 2026-11-20 (a734622e), GitHub run read: passed | 75f7f106, d628370f, f68618f5, dd6bae83, 2faff85c, c60ae1e3 to a734622e | about 4,700 removed against a floor of 3,950; about 535 new added against 450, over by the review's modal-box fix | about 530 new added against 500 | none: every record build 1 cites is cited by a later build |
-| 2. The dialog read once shown | design cleared its review in three rounds (a round-two fix reverted); building | | | | |
-| 3. Core: one owner per fact | not started | | | | |
+| 2. The dialog read once shown | pushed 2026-11-20 (6e4ac482), GitHub run read: failed only on text_box_caret_keys, its known anchor cause, which is now local-only (c7cfd6fc) | 8141d0fa, bdec81ea, 31248cb2, 6e4ac482 | 387 new added against 400 | 501 new added, accepted by Dickson over 500 | none: every record build 2 cites is cited by a later build |
+| 3. Core: one owner per fact | building | | | | |
 | 4. The readers | not started | | | | |
 | 5. Remote operations and text | not started | | | | |
 | 6. The tests and the harness | flaky list triaged (23 entries) and its fixes pushed (5713c64d and after); the measurements closed four more entries; the test console's cause named and being fixed | | | | |
