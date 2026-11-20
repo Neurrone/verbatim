@@ -111,12 +111,15 @@ The end-to-end harness's hooks (private `harness` module):
   names the owner's own Windows Terminal (`books/dev/src/how-to/e2e.md`).
 - Readiness: when launched with `VERBATIM_READY_EVENT` naming an event,
   Verbatim sets that event once it is ready for input (the GUI up, the
-  focus listener running, its own window's outpost ready, and the focus
-  known), the same condition `StatusInfo::ready` reports, so a test waits
-  on the event rather than asking again and again. The listener, focus
-  and spares parts and whether the event is set are under one lock, and
-  each setter records its part and decides in that hold whether to set
-  the event, so two setters cannot each miss the other's part.
+  focus listener running, its own window's outpost ready, the spares
+  ready, and the focus known), the same condition `StatusInfo::ready`
+  reports, so a test waits on the event rather than asking again and
+  again; once ready, it stays ready. The reducer thread sets the
+  listener, own-outpost, spares and focus parts from Core's state after
+  each step (`SrState::readiness`, `SrState::focus_committed`); those
+  parts and whether Verbatim has been ready are under one lock, and each
+  setter records its parts and decides in that hold whether to set the
+  event, so two setters cannot each miss the other's part.
 - The idle barrier: the keyboard hook reports each numbered key stroke
   handled (`KeyReport::Handled`), posted to the reducer thread behind
   whatever the stroke caused (`ShellCommand::InputHandled`), which records
@@ -480,9 +483,11 @@ knowing for review:
   tree dump's on its reply channel, a shell read's to its dialog, `None`
   for any failure. A dump given up is withdrawn
   (`QueueInput::WithdrawOutside`), its one answer going to a receiver
-  dropped. `LiveOutposts` keeps each live
-  generation as `Starting` or `Ready`; `mark_ready` consumes the starting
-  one.
+  dropped. `LiveOutposts` keeps the app's own facts of each generation
+  started and not ended: the position of its last message handled and
+  the held nodes last left for it. Which generation is current, starting
+  or ready is Core's record's; the idle conditions count the generations
+  starting there (`SrState::outposts_starting`).
 - `latency::LatencyLedger` — the bounded ring of timelines keyed by trace
   ID, bounded both by count (`DEFAULT_CAPACITY`, 256) and by an estimate of
   the bytes they hold (`DEFAULT_MAX_BYTES`, 1 MiB; each timeline counts its

@@ -323,11 +323,7 @@ fn run(
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // The GUI's handle, once the GUI thread is up; part of readiness.
     let gui_handle: Arc<OnceLock<GuiHandle>> = Arc::new(OnceLock::new());
-    let readiness = Arc::new(harness::Readiness::new(
-        own_pid,
-        Arc::clone(&gui_handle),
-        Arc::clone(&outposts),
-    ));
+    let readiness = Arc::new(harness::Readiness::new(Arc::clone(&gui_handle)));
     let idle_line = Arc::new(harness::IdleLine::default());
 
     // Core's generation record takes the harness's ignored processes, and
@@ -949,15 +945,14 @@ struct ReducerThread<'a> {
     /// The askers of Core's requests from outside the event queue, each by
     /// the token Core answers it under.
     outside: requests::Outside,
-    /// Outpost generations that have started and not yet ended. A message
-    /// from an outpost that has ended is dropped before the reducer sees it.
+    /// The app's own facts of the outpost generations that have started
+    /// and not yet ended.
     live: LiveOutposts,
     /// The running listener's count of its messages carrying tokens that
     /// Core handled, and the last view of the tokens Core holds sent to
     /// it ([`verbatim_core::ListenerView`]).
     listener_view: verbatim_core::ListenerView,
-    /// Whether Core has known a focus, which readiness was told once.
-    focus_known: bool,
+
     /// The highest numbered harness key handled so far.
     handled_input: u64,
     /// Turns the outposts' frames, which the supervisor's relay posts
@@ -1029,12 +1024,10 @@ impl ReducerThread<'_> {
                 position,
                 message,
             } => {
-                // A tell or an answer goes to Core, which drops one of a
-                // generation not current; anything else from a generation
-                // the supervisor has ended is dropped here. An accepted one
-                // is handled from here on: anything the reducer keeps from
-                // it is in the held nodes sent after this input.
-                let accepted = self.live.accept(outpost, position);
+                // Core drops a tell or an answer of a generation not
+                // current. Handled from here on: anything the reducer keeps
+                // from it is in the held nodes sent after this input.
+                self.live.handled(outpost, position);
                 match *message {
                     OutpostToCore::Tell(tell) => {
                         // The latency timeline starts when the event was
@@ -1052,8 +1045,7 @@ impl ReducerThread<'_> {
                             answer,
                         });
                     }
-                    message if accepted => self.on_outpost_input(pid, outpost, message),
-                    _ => {}
+                    message => self.on_outpost_input(pid, outpost, message),
                 }
             }
             OutpostMessage::Ended {
@@ -1064,9 +1056,6 @@ impl ReducerThread<'_> {
             } => self.on_outpost_ended(outpost, target_pid, reason),
             OutpostMessage::SpareReady { spare, waiting, .. } => {
                 tracing::debug!(%spare, waiting, "spare outpost ready");
-                if waiting >= verbatim_supervisor::SPARES {
-                    self.context.readiness.spares_ready();
-                }
                 self.queue(QueueInput::Process(ProcessFact::SparesReady(waiting)));
             }
             OutpostMessage::ListenerStarted { listener, .. } => {
@@ -1076,7 +1065,6 @@ impl ReducerThread<'_> {
                 )));
             }
             OutpostMessage::ListenerReady { listener, .. } => {
-                self.context.readiness.listener_ready();
                 self.queue(QueueInput::ReaderReady(listener_instance(listener)));
             }
             OutpostMessage::ListenerEnded { listener, .. } => {
@@ -1250,7 +1238,6 @@ impl ReducerThread<'_> {
                 target_pid,
             } => {
                 tracing::info!(%outpost, %outpost_pid, %target_pid, "outpost ready");
-                self.live.mark_ready(outpost);
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
                     OutpostStatus {
@@ -1259,7 +1246,6 @@ impl ReducerThread<'_> {
                         state: OutpostState::Ready,
                     },
                 );
-                self.context.readiness.notify();
                 self.queue(QueueInput::ReaderReady(outpost_instance(
                     target_pid, outpost,
                 )));
@@ -1393,7 +1379,7 @@ impl ReducerThread<'_> {
         if let Some(round) = self.barrier.start(self.handled_input, clear) {
             self.context.supervisor.query_idle(round);
         }
-        let starting = self.live.starting();
+        let starting = self.state.outposts_starting();
         let standing = match self.barrier.standing() {
             idle::Standing::NoRound => "no round under way".to_owned(),
             idle::Standing::AwaitingRelay(round) => {
@@ -1433,7 +1419,7 @@ impl ReducerThread<'_> {
     fn idle_conditions_clear(&self) -> bool {
         self.state.queue_idle()
             && self.state.terminal_timer_due().is_none()
-            && self.live.starting() == 0
+            && self.state.outposts_starting() == 0
     }
 
     /// Writes the settings dialog's Terminal page's four values into the
@@ -1456,10 +1442,9 @@ impl ReducerThread<'_> {
             tracing::info!(%trace_id, ?script, "gesture");
         }
         let effects = reduce(&mut self.state, &mut self.runtime, &input);
-        if !self.focus_known && self.state.focus_committed() {
-            self.focus_known = true;
-            self.context.readiness.focus_known();
-        }
+        self.context
+            .readiness
+            .core((self.state.readiness(), self.state.focus_committed()));
         self.context.ledger.reduced(trace_id);
         self.context.foreground.set(self.state.hook_foreground());
         {
@@ -2030,7 +2015,6 @@ fn reducer_loop(
         outside: requests::Outside::default(),
         live: LiveOutposts::default(),
         listener_view: verbatim_core::ListenerView::default(),
-        focus_known: false,
         handled_input: 0,
         frames: context.supervisor.frames(),
         barrier: idle::IdleBarrier::default(),

@@ -262,9 +262,9 @@ application exits, when it fails or stops answering pings, or when
 Verbatim exits. A frame of
 an instance that is not its reader's current one, a tell of an ended
 generation or of a listener other than the newest started, is dropped
-(`QueueEffect::StaleFrame`). `SrState::readiness` and `ready_outposts`
-give the test harness's readiness and the control plane's outpost list
-from the record. A process Core reads nothing from (`Logic::watched`) is
+(`QueueEffect::StaleFrame`). `SrState::readiness`, `outposts_starting`
+and `ready_outposts` give the test harness's readiness, the shell's idle
+conditions and the control plane's outpost list from the record. A process Core reads nothing from (`Logic::watched`) is
 never started, and a request for it is answered "not there".
 
 ## The flight recorder

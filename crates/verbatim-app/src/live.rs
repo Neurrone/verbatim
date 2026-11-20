@@ -1,12 +1,7 @@
-//! The outpost generations the reducer thread treats as live (outpost
-//! redesign, "The app shell"): started and not yet ended, whether it is
-//! ready, and the bookkeeping for the nodes held in it.
-//!
-//! This is the one owner of the rule that a message from an outpost that
-//! has ended never reaches the reducer, even when it arrives after its
-//! replacement for the same application has started: the supervisor can
-//! still deliver messages the old generation wrote before it ended, and
-//! its node ids are dead.
+//! The app's own facts of each outpost generation started and not yet
+//! ended: the position of its last message handled and the nodes held in
+//! it last left for it. Which generation is current, starting or ready is
+//! Core's record's alone.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -47,34 +42,6 @@ impl Live {
     }
 }
 
-/// A live generation, before its `Ready` and after it: only
-/// [`Generation::ready`] makes a ready one, consuming the one starting.
-pub(crate) enum Generation {
-    /// Started, and not yet `Ready`.
-    Starting(Live),
-    /// It has sent `Ready`.
-    Ready(Live),
-}
-
-impl Generation {
-    fn live_mut(&mut self) -> &mut Live {
-        match self {
-            Generation::Starting(live) | Generation::Ready(live) => live,
-        }
-    }
-
-    fn is_ready(&self) -> bool {
-        matches!(self, Generation::Ready(_))
-    }
-
-    /// It sent `Ready`.
-    fn ready(self) -> Self {
-        match self {
-            Generation::Starting(live) | Generation::Ready(live) => Generation::Ready(live),
-        }
-    }
-}
-
 /// What changed of what the state holds in an outpost since it was last
 /// left for it ([`Live::held_changed`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +58,7 @@ pub(crate) enum HeldChange {
 /// The live outpost generations, by outpost id.
 #[derive(Default)]
 pub(crate) struct LiveOutposts {
-    outposts: HashMap<OutpostId, Generation>,
+    outposts: HashMap<OutpostId, Live>,
 }
 
 impl LiveOutposts {
@@ -99,31 +66,25 @@ impl LiveOutposts {
     pub(crate) fn started(&mut self, outpost: OutpostId) {
         self.outposts.insert(
             outpost,
-            Generation::Starting(Live {
+            Live {
                 position: 0,
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
-            }),
+            },
         );
     }
 
-    /// Whether a message from `outpost` may reach the reducer: only while
-    /// that generation is live. An accepted message's `position` is
-    /// recorded as handled.
-    pub(crate) fn accept(&mut self, outpost: OutpostId, position: u64) -> bool {
-        match self.outposts.get_mut(&outpost).map(Generation::live_mut) {
-            Some(live) => {
-                live.position = position;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Records that `outpost` sent `Ready`: its starting generation is
-    /// consumed for a ready one.
-    pub(crate) fn mark_ready(&mut self, outpost: OutpostId) {
-        if let Some(generation) = self.outposts.remove(&outpost) {
-            self.outposts.insert(outpost, generation.ready());
+    /// Records `position` as the last of `outpost`'s messages handled. The
+    /// supervisor reports a generation started before any of its messages
+    /// and ended after the last, so a message of one not started here is
+    /// a logic bug, logged.
+    pub(crate) fn handled(&mut self, outpost: OutpostId, position: u64) {
+        if let Some(live) = self.outposts.get_mut(&outpost) {
+            live.position = position;
+        } else {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET,
+                %outpost,
+                "a message of an outpost generation not started or already ended, a logic bug"
+            );
         }
     }
 
@@ -132,19 +93,9 @@ impl LiveOutposts {
         self.outposts.remove(&outpost).is_some()
     }
 
-    /// How many live generations have not sent `Ready` yet.
-    pub(crate) fn starting(&self) -> usize {
-        self.outposts
-            .values()
-            .filter(|generation| !generation.is_ready())
-            .count()
-    }
-
     /// Every live generation, for sending the nodes held in each.
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&OutpostId, &mut Live)> {
-        self.outposts
-            .iter_mut()
-            .map(|(outpost, generation)| (outpost, generation.live_mut()))
+        self.outposts.iter_mut()
     }
 }
 
@@ -153,27 +104,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_message_from_a_replaced_generation_never_reaches_the_reducer() {
-        let mut live = LiveOutposts::default();
-        live.started(OutpostId(3));
-        live.mark_ready(OutpostId(3));
-        assert!(live.accept(OutpostId(3), 1));
-        assert!(live.ended(OutpostId(3)));
-        live.started(OutpostId(4));
-
-        assert!(
-            !live.accept(OutpostId(3), 2),
-            "written before it ended, delivered after its replacement started"
-        );
-        assert!(live.accept(OutpostId(4), 1));
-        assert!(!live.ended(OutpostId(3)), "already gone");
-    }
-
-    #[test]
-    fn an_accepted_message_records_its_position() {
+    fn a_handled_message_records_its_position() {
         let mut live = LiveOutposts::default();
         live.started(OutpostId(2));
-        live.accept(OutpostId(2), 41);
+        live.handled(OutpostId(2), 41);
         let (_, record) = live.iter_mut().next().expect("one live outpost");
         assert_eq!(record.position, 41);
     }
@@ -191,7 +125,7 @@ mod tests {
         let mut step =
             |live: &mut LiveOutposts, position: Option<u64>, held: &[u64], anchors: &[u64]| {
                 if let Some(position) = position {
-                    live.accept(OutpostId(2), position);
+                    live.handled(OutpostId(2), position);
                 }
                 let (_, record) = live.iter_mut().next().expect("one live outpost");
                 changes.push(record.held_changed(&nodes(held), &nodes(anchors)));

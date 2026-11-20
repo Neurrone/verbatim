@@ -807,6 +807,24 @@ impl SrState {
         }
     }
 
+    /// How many outpost generations have started and are not ready yet,
+    /// as the generation record has them: the shell's idle conditions
+    /// wait for none.
+    #[must_use]
+    pub fn outposts_starting(&self) -> usize {
+        self.queue
+            .record
+            .applications
+            .values()
+            .filter(|application| {
+                matches!(
+                    application.stage,
+                    crate::supervisor::record::Stage::Starting(_)
+                )
+            })
+            .count()
+    }
+
     /// The outpost generations ready now, by application: the control
     /// plane's outpost list.
     #[must_use]

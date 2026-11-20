@@ -6,22 +6,20 @@
 //! [`READY_EVENT_ENV`], which it created before the launch. Verbatim sets it
 //! the first time it is ready for input, as the control plane's status
 //! reports readiness, so the harness waits on the event instead of asking
-//! for the status over and over. Every change readiness depends on calls
-//! [`Readiness::notify`].
+//! for the status over and over. The reducer thread gives it Core's
+//! readiness after each step ([`Readiness::core`]); the GUI's handle
+//! calls [`Readiness::notify`].
 //!
 //! Idleness: `AwaitIdle` posts a waiter to the reducer's port, where it
 //! waits until the harness's numbered input it names has been handled, and
 //! the reducer answers it once a round through every child has found
 //! everything idle (see [`IdleWaiter`] and [`crate::idle`]).
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use crossbeam_channel::{Sender, bounded};
-use verbatim_control::protocol::{OutpostState, OutpostStatus};
 use verbatim_gui::GuiHandle;
-use verbatim_model::Pid;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 use windows::core::HSTRING;
@@ -33,16 +31,15 @@ pub(crate) const READY_EVENT_ENV: &str = "VERBATIM_READY_EVENT";
 /// The pieces of Verbatim whose readiness the control plane's status
 /// reports, and the harness's event, set the first time they are all ready.
 ///
-/// The parts the reducer and the supervisor's report set, and whether the
-/// event has been set, are under one lock: each setter records its part and
+/// The parts the reducer sets from Core's state, and whether Verbatim has
+/// been ready, are under one lock: each setter records its parts and
 /// decides in the same hold whether every part is ready and the event not
 /// yet set, so no two setters can each miss the other's part. The GUI's
-/// handle and the outposts' map stay outside it, written before their
-/// setter takes this lock.
+/// handle stays outside it, written before its setter takes this lock.
+/// Once ready, Verbatim stays ready: a listener or outpost replaced later
+/// does not take readiness back.
 pub(crate) struct Readiness {
-    pub(crate) own_pid: u32,
     pub(crate) gui_handle: Arc<OnceLock<GuiHandle>>,
-    pub(crate) outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
     parts: Mutex<Parts>,
     /// The harness's event, when one was named.
     event: Option<String>,
@@ -55,28 +52,26 @@ pub(crate) struct Readiness {
 )]
 #[derive(Default)]
 struct Parts {
-    /// The focus listener has reported ready.
+    /// The focus listener is ready, as Core's record has it.
     listener_ready: bool,
+    /// Verbatim's own outpost is ready, as Core's record has it.
+    own_outpost_ready: bool,
     /// Core has known a focus.
     focus_known: bool,
-    /// The supervisor's spare outposts are all ready.
+    /// The supervisor's spare outposts are all ready, as Core's record
+    /// last counted them.
     spares_ready: bool,
-    /// The harness's event has been set.
+    /// Verbatim has been ready, and the harness's event, if one was
+    /// named, has been set.
     signalled: bool,
 }
 
 impl Readiness {
     /// Readiness over these pieces, with the event [`READY_EVENT_ENV`]
     /// names, if any.
-    pub(crate) fn new(
-        own_pid: u32,
-        gui_handle: Arc<OnceLock<GuiHandle>>,
-        outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>>,
-    ) -> Self {
+    pub(crate) fn new(gui_handle: Arc<OnceLock<GuiHandle>>) -> Self {
         Self {
-            own_pid,
             gui_handle,
-            outposts,
             parts: Mutex::new(Parts::default()),
             event: std::env::var(READY_EVENT_ENV)
                 .ok()
@@ -98,43 +93,32 @@ impl Readiness {
     /// straight away. With no foreground window at all there is no focus to
     /// wait for.
     pub(crate) fn is_ready(&self) -> bool {
-        self.ready_with(&self.lock())
+        let parts = self.lock();
+        parts.signalled || self.ready_with(&parts)
     }
 
     /// Whether every part is ready, `parts` read under the lock.
     fn ready_with(&self, parts: &Parts) -> bool {
         self.gui_handle.get().is_some()
             && parts.listener_ready
+            && parts.own_outpost_ready
             && parts.spares_ready
             && (parts.focus_known || crate::foreground_pid().is_none())
-            && self
-                .outposts
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-                .any(|outpost| {
-                    outpost.target_pid == Pid(self.own_pid) && outpost.state == OutpostState::Ready
-                })
     }
 
-    /// Notes that the focus listener has reported ready.
-    pub(crate) fn listener_ready(&self) {
-        self.record(|parts| parts.listener_ready = true);
-    }
-
-    /// Notes that Core knows a focus.
-    pub(crate) fn focus_known(&self) {
-        self.record(|parts| parts.focus_known = true);
-    }
-
-    /// Notes that the supervisor's spares are all ready.
-    pub(crate) fn spares_ready(&self) {
-        self.record(|parts| parts.spares_ready = true);
+    /// Sets the parts Core's state gives, after each step: its record's
+    /// readiness and whether it has committed a focus.
+    pub(crate) fn core(&self, (readiness, focus_known): (verbatim_core::Readiness, bool)) {
+        self.record(|parts| {
+            parts.listener_ready = readiness.listener_ready;
+            parts.own_outpost_ready = readiness.own_outpost_ready;
+            parts.spares_ready = readiness.spares_ready >= verbatim_supervisor::SPARES;
+            parts.focus_known = focus_known;
+        });
     }
 
     /// Sets the harness's event the first time Verbatim is ready, after the
-    /// GUI's handle or the outposts' map, which stay outside the lock, has
-    /// changed. Never called while the outposts' lock is held.
+    /// GUI's handle, which stays outside the lock, has been set.
     pub(crate) fn notify(&self) {
         self.record(|_| {});
     }
@@ -146,7 +130,7 @@ impl Readiness {
         let signal = {
             let mut parts = self.lock();
             set(&mut parts);
-            let signal = self.event.is_some() && !parts.signalled && self.ready_with(&parts);
+            let signal = !parts.signalled && self.ready_with(&parts);
             if signal {
                 parts.signalled = true;
             }
