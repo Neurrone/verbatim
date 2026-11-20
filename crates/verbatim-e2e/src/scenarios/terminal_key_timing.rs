@@ -69,7 +69,7 @@
 
 use std::io;
 
-use super::terminal::{self, PROMPT};
+use super::terminal::{self, FILE_SIGNALS, PROMPT};
 use super::terminal_flood::{FLOOD_STEP, line};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
@@ -77,16 +77,6 @@ use crate::speech::Ending;
 use verbatim_model::UtteranceEnding;
 
 pub(crate) use super::no_teardown as teardown;
-
-/// PowerShell functions a script uses to wait for a file the scenario
-/// writes into its folder, on the folder's change notifications, never
-/// polling, and to write one the scenario waits for.
-pub(crate) const FILE_SIGNALS: &str = "function Wait-For([string]$Name) {\r\n\
-\x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $Name)\r\n\
-\x20   if (-not (Test-Path -LiteralPath \"$PSScriptRoot\\$Name\")) { $null = $watcher.WaitForChanged('Created') }\r\n\
-\x20   $watcher.Dispose()\r\n\
-}\r\n\
-function Mark([string]$Name) { [IO.File]::WriteAllText(\"$PSScriptRoot\\$Name\", '') }\r\n";
 
 /// The flood that waits for Control, then writes a few lines more, for
 /// the Control scenarios.

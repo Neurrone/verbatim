@@ -21,7 +21,7 @@
 
 use std::io;
 
-use super::terminal::{self, PROMPT};
+use super::terminal::{self, FILE_SIGNALS, PROMPT};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
@@ -30,22 +30,25 @@ pub(crate) use super::no_teardown as teardown;
 /// The steps, in percent.
 const STEPS: [u32; 10] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
-/// The script: each step waits for its file, then rewrites the line.
-const SCRIPT: &str = "foreach ($percent in 10, 20, 30, 40, 50, 60, 70, 80, 90, 100) {\r\n\
-\x20   $step = \"progress-$percent\"\r\n\
-\x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $step)\r\n\
-\x20   if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $step))) { $null = $watcher.WaitForChanged('Created') }\r\n\
-\x20   $watcher.Dispose()\r\n\
+/// The script after [`FILE_SIGNALS`]: each step waits for its file, then
+/// rewrites the line.
+const STEPS_SCRIPT: &str = "foreach ($percent in 10, 20, 30, 40, 50, 60, 70, 80, 90, 100) {\r\n\
+\x20   Wait-For \"progress-$percent\"\r\n\
 \x20   [Console]::Write(\"`rDownloading $percent%\")\r\n\
 }\r\n\
 [Console]::WriteLine()\r\n";
 
+/// The script: [`FILE_SIGNALS`], then [`STEPS_SCRIPT`].
+fn script() -> String {
+    format!("{FILE_SIGNALS}{STEPS_SCRIPT}")
+}
+
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_windows_terminal(scenario, "progress", &[("progress.ps1", SCRIPT)])
+    terminal::open_windows_terminal(scenario, "progress", &[("progress.ps1", &script())])
 }
 
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    terminal::open_console_host(scenario, "progress", &[("progress.ps1", SCRIPT)])
+    terminal::open_console_host(scenario, "progress", &[("progress.ps1", &script())])
 }
 
 /// `windows_terminal_progress`.

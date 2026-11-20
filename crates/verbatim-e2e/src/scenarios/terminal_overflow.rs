@@ -67,7 +67,7 @@
 use std::io;
 use std::time::Duration;
 
-use super::terminal::{self, PROMPT};
+use super::terminal::{self, FILE_SIGNALS, PROMPT};
 use super::terminal_flood::HALF;
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
@@ -93,12 +93,7 @@ const SCRIPT_PARAMETERS: &str = "param([int]$After)\r\n";
 
 /// The script after its parameter and `$Before`: `$Before` lines in one
 /// `WriteFile`, the go file, then `$After` lines in chunks of whole lines.
-const SCRIPT: &str = "function Wait-Go($name) {\r\n\
-\x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $name)\r\n\
-\x20   if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name))) { $null = $watcher.WaitForChanged('Created') }\r\n\
-\x20   $watcher.Dispose()\r\n\
-}\r\n\
-function Write-After($from, $to) {\r\n\
+const SCRIPT: &str = "function Write-After($from, $to) {\r\n\
 \x20   $chunks = New-Object Collections.Generic.List[string]\r\n\
 \x20   $chunk = ''\r\n\
 \x20   foreach ($line in $from..$to) {\r\n\
@@ -116,12 +111,12 @@ function Write-After($from, $to) {\r\n\
 $before = foreach ($line in 1..$Before) { \"before line $line\" }\r\n\
 $bytes = [Console]::OutputEncoding.GetBytes(($before -join \"`r`n\") + \"`r`n\")\r\n\
 [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n\
-Wait-Go 'phased-go'\r\n\
+Wait-For 'phased-go'\r\n\
 Write-After 1 $After\r\n";
 
 /// The script, its first part a group's worth of lines at [`HALF`].
 fn script() -> String {
-    format!("{SCRIPT_PARAMETERS}$Before = {HALF}\r\n{SCRIPT}")
+    format!("{SCRIPT_PARAMETERS}{FILE_SIGNALS}$Before = {HALF}\r\n{SCRIPT}")
 }
 
 /// "before line `first`" to "before line `last`".

@@ -126,9 +126,8 @@
 use std::io;
 use std::time::Instant;
 
-use super::terminal::{self, PROMPT};
+use super::terminal::{self, FILE_SIGNALS, PROMPT};
 use super::terminal_flood::{FLOOD_STEP, line};
-use super::terminal_key_timing::FILE_SIGNALS;
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 use crate::speech::Ending;

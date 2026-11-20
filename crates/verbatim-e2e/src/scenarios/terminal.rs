@@ -107,6 +107,25 @@ const SHELL_PID_FILE: &str = "shell-pid";
 /// ([`start_script`]).
 const SETTLED_FILE: &str = "title-settled";
 
+/// PowerShell functions a script uses to wait for a file the scenario
+/// writes into the script's folder, on the folder's change notifications,
+/// never polling, and to write one the scenario waits for. The watcher
+/// queues its events from before the check that the file exists, so a file
+/// created at any time after the watcher is made is seen:
+/// `FileSystemWatcher.WaitForChanged` turns the watcher on only when it is
+/// called, after that check, and missed a file created between the two.
+pub(crate) const FILE_SIGNALS: &str = "function Wait-For([string]$Name) {\r\n\
+\x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $Name)\r\n\
+\x20   $id = [guid]::NewGuid().ToString()\r\n\
+\x20   $null = Register-ObjectEvent -InputObject $watcher -EventName Created -SourceIdentifier $id\r\n\
+\x20   $watcher.EnableRaisingEvents = $true\r\n\
+\x20   if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $Name))) { $null = Wait-Event -SourceIdentifier $id }\r\n\
+\x20   Unregister-Event -SourceIdentifier $id\r\n\
+\x20   Get-Event -SourceIdentifier $id -ErrorAction Ignore | Remove-Event\r\n\
+\x20   $watcher.Dispose()\r\n\
+}\r\n\
+function Mark([string]$Name) { [IO.File]::WriteAllText((Join-Path $PSScriptRoot $Name), '') }\r\n";
+
 /// The window class only the console host registers.
 const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
@@ -300,19 +319,11 @@ fn prepare_shell(
         scenario.write_agent_file(&format!(r"{directory}\{file}"), contents.as_bytes())?;
     }
     let ready = format!(r"{directory}\{READY_FILE}");
-    let go = format!(r"{directory}\{GO_FILE}");
     let shell_pid = format!(r"{directory}\{SHELL_PID_FILE}");
-    let settled = shell_titles.then(|| format!(r"{directory}\{SETTLED_FILE}"));
     let start = format!(r"{directory}\start.ps1");
     scenario.write_agent_file(
         &start,
-        start_script(
-            title,
-            &directory,
-            (&go, &ready, &shell_pid),
-            settled.as_deref(),
-        )
-        .as_bytes(),
+        start_script(title, &directory, (&ready, &shell_pid), shell_titles).as_bytes(),
     )?;
     Ok((directory, start))
 }
@@ -599,13 +610,14 @@ fn shell_command(start: &str, terminal: Terminal) -> Vec<String> {
 /// `shell_pid`, the run's folder made current, and the prompt, which writes
 /// `ready` the first time it runs. The prompt removes `PSReadLine` again,
 /// in case the shell loaded it after the script ran. The script ends, and
-/// the shell shows its first prompt, once `go` exists: it waits on the
-/// folder's change notifications, never polling.
+/// the shell shows its first prompt, once [`GO_FILE`] exists, and a shell
+/// that titles its tab (`settled`) sets its title once [`SETTLED_FILE`]
+/// exists: it waits with [`FILE_SIGNALS`], in its own folder, `directory`.
 fn start_script(
     title: &str,
     directory: &str,
-    (go, ready, shell_pid): (&str, &str, &str),
-    settled: Option<&str>,
+    (ready, shell_pid): (&str, &str),
+    settled: bool,
 ) -> String {
     // A shell that titles its tab first shows a title of its own and waits:
     // the console host's "Administrator: " prefix on an elevated runner has
@@ -613,29 +625,26 @@ fn start_script(
     // forward only after the title that follows.
     let write_title =
         |title: &str| format!("[Console]::Write([char]27 + ']0;' + {title} + [char]7)");
-    let (first_title, after_pid) = match settled {
-        Some(settled) => (
+    let (first_title, after_pid) = if settled {
+        (
             write_title(&quoted(&format!("{title} settling"))),
             format!(
-                "$settled = New-Object IO.FileSystemWatcher({}, {})\r\n\
-                 if (-not (Test-Path -LiteralPath {})) {{ $null = $settled.WaitForChanged('Created') }}\r\n\
-                 $settled.Dispose()\r\n{}\r\n",
-                quoted(directory),
+                "Wait-For {}\r\n{}\r\n",
                 quoted(SETTLED_FILE),
-                quoted(settled),
                 write_title(&quoted(title))
             ),
-        ),
-        None => (write_title(&quoted(title)), String::new()),
+        )
+    } else {
+        (write_title(&quoted(title)), String::new())
     };
     let title = quoted(title);
     let directory_text = quoted(directory);
     let go_name = quoted(GO_FILE);
-    let go = quoted(go);
     let ready = quoted(ready);
     let shell_pid = quoted(shell_pid);
     format!(
         "param([switch]$ConsoleHost)\r\n\
+         {FILE_SIGNALS}\
          Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n\
          if ($ConsoleHost) {{\r\n\
          \x20   mode con cols=120 lines=30 | Out-Null\r\n\
@@ -651,9 +660,7 @@ fn start_script(
          \x20   if (-not (Test-Path -LiteralPath {ready})) {{ [IO.File]::WriteAllText({ready}, '') }}\r\n\
          \x20   'ready> '\r\n\
          }}\r\n\
-         $watcher = New-Object IO.FileSystemWatcher({directory_text}, {go_name})\r\n\
-         if (-not (Test-Path -LiteralPath {go})) {{ $null = $watcher.WaitForChanged('Created') }}\r\n\
-         $watcher.Dispose()\r\n"
+         Wait-For {go_name}\r\n"
     )
 }
 
@@ -940,15 +947,15 @@ mod tests {
         let script = start_script(
             "it's",
             r"C:\run's",
-            (r"C:\run's\go", r"C:\run's\ready", r"C:\run's\pid"),
-            None,
+            (r"C:\run's\ready", r"C:\run's\pid"),
+            false,
         );
         assert!(script.contains("WindowTitle = 'it''s'"));
         assert!(script.contains(r"Set-Location -LiteralPath 'C:\run''s'"));
         assert!(script.contains(r"WriteAllText('C:\run''s\ready', '')"));
         assert!(script.contains("    'ready> '\r\n"));
         assert!(script.contains(r"WriteAllText('C:\run''s\pid', "));
-        assert!(script.contains(r"New-Object IO.FileSystemWatcher('C:\run''s', 'prompt-go')"));
+        assert!(script.contains("Wait-For 'prompt-go'\r\n"));
         assert!(!script.contains("Sleep"));
     }
 
