@@ -256,7 +256,7 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report) {
     );
     state.focus.execute(new_focus);
     if state.navigator.is_none() {
-        state.navigator = Some(Navigator::on(report.node.clone()));
+        state.navigator = Some(Navigator::on(report.node.clone(), None));
     }
     editing::keep_focus_caret(state, report.node.id, report.text);
 }
@@ -330,7 +330,7 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
         // user already heard, so take its ids without speaking.
         state.focus.execute(new_focus);
         if state.navigator.is_none() {
-            state.navigator = Some(Navigator::on(report.node.clone()));
+            state.navigator = Some(Navigator::on(report.node.clone(), None));
         }
         editing::keep_focus_caret(state, report.node.id, report.text);
         return Vec::new();
@@ -339,7 +339,7 @@ pub(crate) fn execute_report(state: &mut SrState, owned: &Report, left: bool) ->
     // The review cursor follows focus (roadmap M3): every focus change snaps
     // the navigator object to the new focus and resets the review cursor to
     // its start.
-    let navigator = Navigator::on(report.node.clone());
+    let navigator = Navigator::on(report.node.clone(), None);
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
     // focus line that differs from the previous one just below the desktop
@@ -1241,14 +1241,14 @@ pub(crate) fn flat_review_command(
 }
 
 /// A node selected inside an element the focus controls ("Selection in a
-/// list the focus controls" in `docs/nvda/events.md`): spoken as a focus,
-/// interrupting, with the navigator moved to it, while `controller` is
-/// still the live focus. The focus itself does not move.
+/// list the focus controls" in `docs/nvda/events.md`), read in `window`:
+/// spoken as a focus, interrupting, with the navigator moved to it, while
+/// `controller` is still the live focus. The focus itself does not move.
 pub(crate) fn reduce_controlled_selection(
     state: &mut SrState,
     trace_id: TraceId,
     controller: NodeId,
-    node: &NodeSnapshot,
+    (node, window): (&NodeSnapshot, crate::event_queue::RequestWindow),
 ) -> Vec<Effect> {
     if state
         .live_focus()
@@ -1256,7 +1256,7 @@ pub(crate) fn reduce_controlled_selection(
     {
         return Vec::new();
     }
-    state.navigator = Some(Navigator::on(node.clone()));
+    state.navigator = Some(Navigator::on(node.clone(), Some(window)));
     let positions = speaks_positions(state);
     let effects = vec![Effect::Speak(
         announce_node(

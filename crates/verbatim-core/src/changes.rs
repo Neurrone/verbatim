@@ -507,17 +507,9 @@ pub(crate) fn controlled_selection(
     };
     let said = {
         let mut facts = cx.facts_mut();
-        let said = crate::reduce::reduce_controlled_selection(&mut facts, trace_id, focus, &item);
         // The navigator moved to the item names the window its read
         // found, so the navigator's commands can ask it.
-        if let Some(navigator) = facts
-            .navigator
-            .as_mut()
-            .filter(|navigator| navigator.object.id == item.id)
-        {
-            navigator.window = Some(window);
-        }
-        said
+        crate::reduce::reduce_controlled_selection(&mut facts, trace_id, focus, (&item, window))
     };
     for said in said {
         cx.emit(said);

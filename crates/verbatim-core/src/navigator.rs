@@ -8,9 +8,9 @@
 //! finish.
 //!
 //! The navigator object's window is the committed focus's when the object
-//! is that focus's node, else the one the navigation answer that reached
-//! it read. An object with neither, put there by the old focus path, is
-//! read by no command until that path is deleted.
+//! is that focus's node, else the one the read that put the navigator
+//! there found. An object with neither, the focus executed and no longer
+//! the committed focus's node, is read by no command.
 
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{FocusNode, NodeRead, Reply, Request as Wire};
@@ -268,10 +268,7 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
             let Some(reached) = snapshot(read, &on.object) else {
                 return;
             };
-            cx.facts_mut().navigator = Some(Navigator {
-                window: Some(window),
-                ..Navigator::on(reached.clone())
-            });
+            cx.facts_mut().navigator = Some(Navigator::on(reached.clone(), Some(window)));
             announce(&mut cx, trace_id, (&reached, window), Reason::Focus).await;
         }
         // A tree edge or a node not there: the navigator stays put and the
@@ -412,7 +409,7 @@ pub(crate) async fn to_focus(mut cx: Cx<Entries>, trace_id: TraceId) {
     };
     let said = {
         let mut facts = cx.facts_mut();
-        facts.navigator = Some(Navigator::on(object.clone()));
+        facts.navigator = Some(Navigator::on(object.clone(), Some(window)));
         reduce::focus_spoken_now(&mut facts, &object);
         reduce::navigator_utterance(&mut facts, trace_id, &object, Reason::Focus)
     };

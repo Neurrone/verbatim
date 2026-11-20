@@ -149,22 +149,25 @@ pub(crate) struct Navigator {
     pub(crate) review_offset: usize,
     /// How the review cursor reviews the object's text (milestone M4).
     pub(crate) text: ReviewText,
-    /// The object's window, as the navigation answer that reached it read
-    /// it; `None` for an object the navigator was put on otherwise, whose
-    /// window is the committed focus's when it is that focus's node
+    /// The object's window, as the read that put the navigator there
+    /// found it; `None` for the focus, put there as it was executed, whose
+    /// window is the committed focus's while it is that focus's node
     /// (`crate::navigator`).
     pub(crate) window: Option<crate::event_queue::RequestWindow>,
 }
 
 impl Navigator {
-    /// A navigator on `object`, its review cursor at the start, how its text
-    /// is reviewed not yet known.
-    pub(crate) fn on(object: NodeSnapshot) -> Self {
+    /// A navigator on `object` in `window` ([`Navigator::window`]), its
+    /// review cursor at the start, how its text is reviewed not yet known.
+    pub(crate) fn on(
+        object: NodeSnapshot,
+        window: Option<crate::event_queue::RequestWindow>,
+    ) -> Self {
         Self {
             object,
             review_offset: 0,
             text: ReviewText::Unknown,
-            window: None,
+            window,
         }
     }
 }
