@@ -1022,8 +1022,8 @@ fn batch_object_shapes_execute_exactly() {
             vec![205],
             // The list's hundred items fill no run alone, and are read by
             // a call between the first program and the second.
-            vec![3200, 3089, 1829],
-            vec![3015, 3031, 3161, 2010],
+            vec![3386, 3473, 2045],
+            vec![3213, 3217, 3554, 2250],
         ],
         "navigation, a read, the controlled selection, the tree dump"
     );

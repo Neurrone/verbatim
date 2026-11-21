@@ -672,15 +672,21 @@ which ends after it. By calls, each element's
 children are read in one call for the raw view, as NVDA reads an
 object's children (a cache request scoped to the children, then
 `GetCachedChildren`), or a walker step a child for the control view; an
-element whose read answers gone is left childless and leaves the walk
+element whose read answers gone is left childless, and a child gone as
+the walk steps to it ends its parent's children there, those before it
+kept (in the raw view, whose one call fails for it, the children are
+read again a walker step a child to find them), each leaving the walk
 incomplete. A program's run reads up to `CHILDREN_PER_RUN` (60) children
-from up to 64 waiting elements, each element's children read in a try
-block, and at the run's end reads every element it answers live for its
-name, because a gone element among a run's results fails the whole run:
-an element whose read failed, or found gone at the end, is given back as
-none, left out with its subtree, and leaves the walk incomplete, its
-later siblings kept. A read that failed other than by its element being
-gone falls back to calls, logged as any remote failure is. An element with more children than a run has room
+from up to 64 waiting elements, each element's step to its first child
+and each child's read and step on in a try block of its own, and at the
+run's end reads every element it answers live for its name, because a
+gone element among a run's results fails the whole run: an element whose
+step to its first child failed, or found gone at the end, is given back
+as none and left out with its subtree; a child whose read or step on
+failed ends its parent's children there, as by calls, those before it
+kept; each leaves the walk incomplete, its later siblings kept. A read
+that failed other than by its element being gone falls back to calls,
+logged as any remote failure is. An element with more children than a run has room
 for is read by calls, and a later run that fails as a whole leaves the
 rest of the walk to calls.
 

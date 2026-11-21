@@ -271,19 +271,28 @@ fn ancestry(
     }))
 }
 
-/// The children of `parent` in `view`, each filled by `fill`: one call for
-/// the raw view, one call a child for the control view.
+/// The children of `parent` in `view`, each filled by `fill`, and whether
+/// they are all of them: one call for the raw view, one call a child for
+/// the control view. A child gone ends the children there, those before
+/// it kept, as a program's run ends them; in the raw view, where the one
+/// call fails for it, they are read again one call a child to find them
+/// (Claude, 2026-11-22).
 pub(super) fn children(
     uia: &verbatim_uia::Uia,
     parent: &IUIAutomationElement,
     view: View,
     fill: &Fill<Node>,
-) -> Result<Vec<Cached<Node>>, Error> {
+) -> Result<(Vec<Cached<Node>>, bool), Error> {
     let parent = Live::new(parent.clone());
-    if view == View::Raw {
-        return Ok(uia.children(&parent, fill.request())?);
-    }
-    let walker = uia.control_view_walker()?;
+    let walker = if view == View::Raw {
+        match uia.children(&parent, fill.request()) {
+            Ok(children) => return Ok((children, true)),
+            Err(error) if !verbatim_uia::element_is_gone(&error) => return Err(Error::Uia(error)),
+            Err(_) => uia.raw_view_walker()?,
+        }
+    } else {
+        uia.control_view_walker()?
+    };
     let mut children = Vec::new();
     let mut next = parent.walk(&walker, Direction::FirstChild, fill.request());
     // The null element `windows` reports as an error with no failure code
@@ -295,8 +304,10 @@ pub(super) fn children(
         children.push(child);
     }
     match next {
+        // The parent gone, or a child as the walk steps to it.
+        Err(error) if verbatim_uia::element_is_gone(&error) => Ok((children, false)),
         Err(error) if error.code().is_err() => Err(Error::Uia(error)),
-        _ => Ok(children),
+        _ => Ok((children, true)),
     }
 }
 

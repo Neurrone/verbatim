@@ -7,9 +7,12 @@
 //!
 //! An element gone during a run is left out with its subtree and leaves
 //! the walk incomplete, its later siblings kept: a run catches a failed
-//! read of an element's children, and reads every element it answers
-//! alive at its end, giving a gone one back as none, since a gone element
-//! in a run's answer fails the whole run.
+//! step to an element's first child as the element's, and a failed read
+//! of a child or step on from it as the child's, which ends its parent's
+//! children there, those read before it kept, as a walk by calls ends
+//! them. It reads every element it answers alive at its end, giving a
+//! gone one back as none, since a gone element in a run's answer fails
+//! the whole run.
 
 use std::collections::VecDeque;
 
@@ -36,9 +39,10 @@ pub(super) const ELEMENTS_PER_RUN: usize = 64;
 pub(super) fn run_cost(walk: &Descend<'_>, starts: u32, room: u32) -> u32 {
     let (setup, each) = RemoteCache::costs(walk.fill);
     let start = 12 + if walk.include_subject { each + 1 } else { 0 };
-    // Each element of the queue costs its check, its caught read of its
-    // children and its last step, and its read alive at the run's end,
-    // each child its read: the queue holds the starts and every child.
+    // Each element of the queue costs its check, its caught step to its
+    // first child and its last step, and its read alive at the run's end,
+    // each child its caught read and step on: the queue holds the starts
+    // and every child.
     50 + setup + starts * start + (starts + room) * 50 + room * (20 + each)
 }
 
@@ -215,8 +219,9 @@ impl<'w, 'a> Walk<'w, 'a> {
         Some(at)
     }
 
-    /// Reads the next waiting element's children by calls; a gone one
-    /// leaves the walk incomplete.
+    /// Reads the next waiting element's children by calls; a gone one, or
+    /// a gone child, which ends the children there, leaves the walk
+    /// incomplete.
     ///
     /// # Errors
     ///
@@ -232,7 +237,10 @@ impl<'w, 'a> Walk<'w, 'a> {
             self.descend.fill,
         );
         let children = match read {
-            Ok(children) => children,
+            Ok((children, all)) => {
+                self.complete &= all;
+                children
+            }
             Err(error) if matches!(super::failed(&error), super::Ran::Gone) => {
                 self.complete = false;
                 return Ok(());
@@ -327,6 +335,7 @@ impl<'w, 'a> Walk<'w, 'a> {
             if !is_gone(&error) {
                 return Err(error);
             }
+            self.complete = false;
         }
         // A place the run gave back as none held an element gone.
         let gone = |index: usize| matches!(queue.get(index), Some(Value::Null));
@@ -435,7 +444,8 @@ pub(super) struct RunRegisters {
     done: Reg<kind::Uint>,
     /// The run stopped inside an element's children.
     overflowed: Reg<kind::Bool>,
-    /// The failure of each caught read of an element's children.
+    /// The failure of each caught step or read, every one leaving the walk
+    /// incomplete.
     statuses: Reg<kind::Array>,
     /// Whether the run filled and answered its starts.
     filled_starts: bool,
@@ -454,8 +464,10 @@ impl RunRegisters {
 /// queue in turn above the walk's depth, each filled inside the provider
 /// and appended to it, read on into when the walk does not prune, until
 /// `room` children are read; an element whose children do not all fit
-/// stops the run. A failed read of an element's children is caught, its
-/// failure answered and the element given back as none; at the run's end
+/// stops the run. A failed step to an element's first child is caught,
+/// its failure answered and the element given back as none; a failed read
+/// of a child or step on from it is caught, its failure answered, and the
+/// element's children end there; at the run's end
 /// every element of the queue is read alive, by its name, and one gone is
 /// given back as none.
 #[expect(clippy::too_many_lines, reason = "one run, top to bottom as it runs")]
@@ -535,9 +547,28 @@ pub(super) fn emit_run(
                 |b| {
                     let element = b.array_get_at(queue, done).assume::<kind::Element>();
                     let below = b.add(depth, one);
+                    let child = b.new_null_element();
+                    let reached = b.new_bool(false);
+                    // The step to the first child fails as its element's:
+                    // the element is given back as none.
                     b.try_catch(
                         |b| {
-                            let child = b.navigate(element, NavigationDirection::FirstChild);
+                            let first = b.navigate(element, NavigationDirection::FirstChild);
+                            b.set(child, first);
+                            let yes = b.bool(true);
+                            b.set(reached, yes);
+                        },
+                        |b, status| {
+                            b.array_append(statuses, status);
+                            let none = b.new_null_element();
+                            b.array_set_at(queue, done, none);
+                        },
+                    );
+                    let unreached = b.not(reached);
+                    b.if_else(
+                        unreached,
+                        |b| b.add_assign(done, one),
+                        |b| {
                             b.while_(
                                 |b| {
                                     let null = b.is_null(child);
@@ -546,14 +577,30 @@ pub(super) fn emit_run(
                                     b.and(some, fits)
                                 },
                                 |b| {
-                                    let absent = cache.populate(b, child);
-                                    b.array_append(queue, child);
-                                    b.array_append(absents, absent);
-                                    b.array_append(parents, done);
-                                    b.array_append(depths, below);
-                                    b.add_assign(read, one);
-                                    let next = b.navigate(child, NavigationDirection::NextSibling);
-                                    b.set(child, next);
+                                    // A child's read or its step on fails
+                                    // as the child's: it is left out if
+                                    // unread, and the element's children
+                                    // end there, as a walk by calls,
+                                    // which steps on from each child,
+                                    // ends them (Claude, 2026-11-22).
+                                    b.try_catch(
+                                        |b| {
+                                            let absent = cache.populate(b, child);
+                                            b.array_append(queue, child);
+                                            b.array_append(absents, absent);
+                                            b.array_append(parents, done);
+                                            b.array_append(depths, below);
+                                            b.add_assign(read, one);
+                                            let next =
+                                                b.navigate(child, NavigationDirection::NextSibling);
+                                            b.set(child, next);
+                                        },
+                                        |b, status| {
+                                            b.array_append(statuses, status);
+                                            let none = b.new_null_element();
+                                            b.set(child, none);
+                                        },
+                                    );
                                 },
                             );
                             let null = b.is_null(child);
@@ -566,14 +613,6 @@ pub(super) fn emit_run(
                                     b.set(stop, yes);
                                 },
                             );
-                        },
-                        // The element is given back as none, which leaves
-                        // the children read before the failure out.
-                        |b, status| {
-                            b.array_append(statuses, status);
-                            let none = b.new_null_element();
-                            b.array_set_at(queue, done, none);
-                            b.add_assign(done, one);
                         },
                     );
                 },

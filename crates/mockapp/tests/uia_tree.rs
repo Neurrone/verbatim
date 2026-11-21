@@ -627,6 +627,49 @@ fn a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it() {
     );
 }
 
+/// A tree dump of mockapp's list (`small.json`), `remote` naming the
+/// path, whose second item is gone where it stands (`disconnect`) before
+/// the dump reaches it: its parent still lists it, so the step to it from
+/// the first item finds it, and the read of it fails. The tree dumped,
+/// and whether the dump was complete.
+fn dump_with_a_child_gone_before_its_read(remote: bool) -> (Named, bool) {
+    let title = common::unique_title("mockapp-uia-gone-child");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = many_nodes(&uia);
+    let list = Live::new(common::named_element(&uia, hwnd, "Options"))
+        .refresh(&nodes)
+        .expect("the list, read as a node");
+    app.send("disconnect item2");
+    let fill = Fill::new(&nodes);
+    let (dumped, _, complete) = dump(&uia, list.live().element(), (&fill, 64), remote);
+    app.quit();
+    (dumped, complete)
+}
+
+/// The dump's start and the child read before the gone one are kept and
+/// the dump is incomplete, by programs and by calls alike.
+fn a_dump_keeps_its_start_and_earlier_children_when_a_child_is_gone() {
+    let kept = (
+        Named {
+            name: Some("Options".to_owned()),
+            children: vec![item("First")],
+        },
+        false,
+    );
+    assert_eq!(
+        dump_with_a_child_gone_before_its_read(true),
+        kept,
+        "by programs"
+    );
+    assert_eq!(
+        dump_with_a_child_gone_before_its_read(false),
+        kept,
+        "by calls"
+    );
+}
+
 /// The dump of mockapp's whole window (`small.json`) as the outposts make
 /// it, by remote programs, with locations not asked for: no element's
 /// location or off-screen state is read, so the title bar UIA adds for the
@@ -915,6 +958,10 @@ fn main() {
         (
             "a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it",
             a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it,
+        ),
+        (
+            "a_dump_keeps_its_start_and_earlier_children_when_a_child_is_gone",
+            a_dump_keeps_its_start_and_earlier_children_when_a_child_is_gone,
         ),
         (
             "a_dump_reads_nothing_the_title_bar_asks_the_window_for",
