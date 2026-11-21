@@ -382,21 +382,36 @@ the same one-percent interval, where NVDA's speech mode speaks every
 ten percent.
 
 Progress bars that are not the focus: NVDA follows every UIA range value
-change desktop-wide and drops all but a progress bar's. Verbatim: the
-same, and no outpost reports a progress bar. The listener also takes every bar's change, foreground or background,
-as NVDA's one hook does (`docs/design/progress-bars.md`, approved by
-Dickson on 2026-11-09): a UIA bar's range value change in its
-desktop-wide group, filtered by its cached control type and provider on
-the callback thread, and a classic window's `EVENT_OBJECT_VALUECHANGE` on
-its global hook, recognised by its normalised class or, through a capped
-memo per application, its role, with its percentage read on the
-application's reading thread and no outpost started. Core keeps every
-change at one place to one percent, and drops a bar outside the foreground
-window unless `report_background_progress_bars` is on, false by default
-and with no place in the dialog until M4.3. A focused bar's ordinary
-value change is silent when its value is a number and it is on screen,
-heard only as a bar; off screen or with no number it is an ordinary value
-change.
+change desktop-wide and drops all but a progress bar's, makes an object
+for every classic value change, and beeps for a bar in the foreground
+(its window the foreground window or beneath it, asked of Windows as the
+event is handled) or, with `reportBackgroundProgressBars` on, anywhere
+(`NVDAObjects/behaviors.py` 41 to 86, `NVDAObjects/window/__init__.py`
+295 to 297). Verbatim: the same, decided in Core at the change's turn in
+the event queue (ADR 0003, "Progress bars"). The listener tells every
+classic value change, and Core, for one read through MSAA, accepted and
+in the foreground by its tell's own relation or with the setting on,
+asks the listener to read the object's role, value, states and place,
+outside the queue, under its ordinary due time; a UI Automation bar's
+change, kept by its cached control type and provider and dropped off
+screen in the listener's callback, is told with its percentage and place
+from its event's cache and played at its turn when Core judges its
+window native. Core keeps every change at one place to one percent.
+`report_background_progress_bars` is false by default and has no place
+in the dialog until M4.3. A focused bar's ordinary value change is
+silent when its value is a number and it is on screen, heard only as a
+bar; off screen or with no number it is an ordinary value change.
+Verbatim does not read a value change on the readers' last focus whose
+role is known and is no progress bar, where NVDA makes the object and
+then redirects the event to its focus object; the speech is the same.
+A bar read of an application that hangs during the read holds that
+application's reading thread, so its next focus can be announced up to
+11 seconds late, where NVDA's one thread waits on every read; "not
+responding" plays if it is the application in use (Dickson, 2026-11-21).
+A UI Automation bar in a window of a class NVDA reads through MSAA is
+heard once, from its classic value change, as NVDA's native-element test
+drops its UI Automation event (source-derived, approved by Dickson on
+2026-11-21).
 
 ### A combo box's value from its selected item
 

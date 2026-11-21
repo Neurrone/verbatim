@@ -678,14 +678,7 @@ listener's drops on an event's own cached class and automation id, which
 make no call; every other rule, the acceptance test included, is judged
 in Core on the facts the tells carry and the answers return. No state of
 Core is sent for a reader to judge against: facts Core carries in a
-request are used only inside that request's answer. The one exception is
-a user setting that a reader needs before a call, which changes only by
-the user's hand. Core sends it at the reader's launch and on every
-change, and a reader judges under the value one message old, the
-one-message window stated in the design that uses it; the first is
-whether background progress bars are reported, which the listener
-applies to skip reading a value change whose window the acceptance test
-refuses (Dickson, 2026-11-19).
+request are used only inside that request's answer.
 
 Events from every reader join Core's one event queue in the order they
 arrive, with every key and command, and Core judges them in that order,

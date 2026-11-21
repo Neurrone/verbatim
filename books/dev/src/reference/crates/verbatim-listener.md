@@ -32,8 +32,7 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   it (`_shouldSkipEventForHungWindow`); a sender with no cached window is
   not tested. A terminal text area's notifications and a window opened
   that is no toast candidate are dropped by their cached class and
-  automation id. Every other event but a progress bar's range-value
-  change goes to its application's check thread (`listener::checking`,
+  automation id. Every other event goes to its application's check thread (`listener::checking`,
   `Checks`), which makes the calls NVDA's handler for the event's kind
   makes at delivery (`verbatim_listener_logic::check`), with its own UI
   Automation client, then places the tell under the check threads' lock
@@ -41,7 +40,10 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   idle barrier's answer follows the tells of every event handed before it.
   A check ends at a window read through MSAA, as NVDA's handler returns
   when its native-element test fails. A thread exits after 30 seconds with
-  nothing to check; at shutdown one inside a call is let go.
+  nothing to check; at shutdown one inside a call is let go. A progress
+  bar's change keeps no element: its tell names it by its cached runtime
+  id alone (`EventObject::Followed`), and the check thread lets the
+  element go at the end of its check.
 - Kept elements (Table 6). Each told element is kept behind the token its
   tell names, in `Kept`, one record per application
   (`verbatim_listener_logic::kept`), until Core's held view leaves it out
@@ -85,13 +87,15 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   `verbatim_win32::window_facts::node_window`) and the properties of the
   request's set; the listener answers none for a keyboard focus or an
   object's text, which are the check's and the outpost's. An MSAA object
-  is read only for its name at the event's address
-  (`verbatim_ia2::acquire::name_at_event`), the desktop window's name, on
-  the reading thread of the window's process. A token released, or never
-  kept, is answered not there at once.
+  at an event's address is read for the set asked of its name, role,
+  value, states and place, any other set refused, on the reading thread of
+  the window's process (`verbatim_ia2::acquire::read_at_event`): the
+  desktop window's name, and a classic progress bar's role, value, states
+  and place, which Core asks at its value change. A token released, or
+  never kept, is answered not there at once.
 - Reading threads (`reading`, the shell of
   `verbatim_listener_logic::schedule`): one per application process
-  generation, Core's requests ahead of bar reads and releases, an idle
+  generation, Core's requests ahead of releases, an idle
   thread letting its record go after 30 seconds. Each request is answered
   once (`ListenerToCore::Answer`): by its read, or for one ended unrun
   cancelled, not there at its process's exit, or dropped unanswered at
@@ -100,16 +104,16 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   a fresh thread for what waits and its late result discarded, within
   `ABANDONED_LIMIT` (two) abandoned threads, past which jobs wait for the
   first to return, and left alone for any other reason, its answer sent
-  late. A thread makes its calls with no lock held; the schedule, the
-  threads' wakes and the alarm sit under one lock, so a request's answer
-  goes ahead of the idle barrier's answer its end lets run. The watchdog
-  thread sleeps on an alarm set only while a bar read runs.
+  late. A thread makes its calls with no lock held; the schedule and the
+  threads' wakes sit under one lock, so a request's answer goes ahead of
+  the idle barrier's answer its end lets run.
 - Calls. Every call waits for the application, up to UIA's transaction
   timeout. A call over a second is logged at info
   (the private `call_log` module's `CallLog`).
 - `read_object` is the listener's answer to Core's generic read of an
   element, the read a reading thread makes for a kept element, for a test
-  that stands in for the listener holding the element itself;
+  that stands in for the listener holding the element itself, and
+  `read_msaa_object` its read of an MSAA object at an event's address;
   `read_object_observed` is the same read, telling a test the name of
   each call before it makes it (`CallObserver`), so the test can change
   the application's windows between two of them.
@@ -127,90 +131,27 @@ waiter or record for it.
 
 ## Progress bars
 
-The listener is the one owner of every progress bar's changes,
-foreground and background, classic and UI Automation
-(`docs/design/progress-bars.md`), and Core judges whether each is heard.
-A UIA bar's range value change arrives in the desktop-wide group with its
-range cached; `bar_percent` drops anything but a progress bar, with no
-call, as it does UIA's proxy for a classic window, and the reading thread
-of the bar's application finds its nearest window, memoised by runtime
-id, then reads its place, once per change, and sends a `BarChange`; a bar
-that reports no rectangle is placed at (0, 0), as NVDA places one whose
-location it cannot read, and only an off-screen bar is dropped. A classic
-window's `EVENT_OBJECT_VALUECHANGE` reaches the global hook.
+The listener reads no bar unasked; Core judges every bar's change at its
+turn and asks what it needs ([ADR
+0003](../adr/0003-readers-tell-core-asks.md), "Progress bars"). A classic
+bar's `EVENT_OBJECT_VALUECHANGE` is told like any other `WinEvent`, and
+Core asks the listener to read the object at its address (role, value,
+states and place), an ordinary request on the application's reading
+thread. A UIA bar's range value change arrives in the desktop-wide group
+shaped as `verbatim_uia::ListenerProgress`, its range, rectangle and
+off-screen state cached; the callback's `bar_of` keeps only an on-screen
+progress bar whose provider is its own, not UIA's proxy for a classic
+window, and whose range is a number, and parses its percentage and the
+centre of its rectangle, (0, 0) with none, with no call. The bar is then
+handed to its application's check thread as every UIA event is
+(`UiaProgress`, NVDA's automation-event handler's calls: the nearest
+window, its probe and its acceptance facts) and told with the percentage
+and place (`Payload::Progress`).
 
-While background progress bars are not reported, the listener skips the
-read of a value change whose window the acceptance test refuses, as NVDA's
-acceptance drops a background value change before it makes the object
-(Dickson, 2026-11-19), judged by Core's own function
-(`verbatim_core::accepts`, with background bars not reported), so the
-rule is written once; Core still judges every tell and every
-`BarChange` against its own setting. The setting is the listener's
-configuration (`listener::configuration`): `BackgroundBars`, reported or
-not, from its launch argument (`--background-bars`), then replaced by
-each `CoreToListener::Configuration` the I/O thread handles, held by a
-monitor in `Outgoing` with one setter and one getter, neither running a
-caller's code; the `WinEvent` thread reads it once per value change and
-the UI Automation callback once per bar change, and a UI Automation bar's
-job carries the value read for its change to the reading thread. A classic value change is judged
-on the `WinEvent` thread right after `knowledge.drain()`, before any lock,
-job or call, on the facts of its own tell as it was sent in this event's
-step (`Told`, which `tell_win_event` returns: `Tells::place_seen` and
-`Tells::foreground` give the facts of the tell whose trace id is the
-event's, whatever else the step releases): one sent is read while
-background bars are reported, and otherwise only when acceptance takes
-its window; one the foreground hold keeps is read, its facts not yet
-read; one not told is never read, so Windows Live Messenger's hidden
-window is sent no `WM_GETOBJECT` (`reads_value_change`). The tell is kept
-either way, so Core's acceptance, its limiter's count and the caret's
-count of a waiting value change are unchanged. A UIA bar with its own
-window is judged in the callback, after the hang check and before it is
-queued, on its window's facts read then with local calls and none into
-the application (`uia_bar_changed`, over `admits_bar`); a windowless bar
-is judged on the reading thread, under the value its job carries, once
-its nearest window is found and before its place is read
-(`uia_bar_place`). While the setting is reported, neither path reads a
-window fact for the gate. Limits: a change judged before Core's command
-reaches the I/O thread is judged under the value one message old, so
-right after the setting is turned on one change of each background bar
-may go unread (accepted by Dickson, 2026-11-19); and an off-screen
-windowless bar's first change costs its window lookup, in both states. A window of
-a class NVDA names as a bar, visible, is read by its window messages. Any
-other is judged on the event thread by `value_change.rs`, the one record of
-what each application's windows and objects were found to be, which
-nothing else reads or writes, so an event dropped there takes no lock and
-makes no call. A window with a provider NVDA uses is dropped; a window with
-no answer has one job that judges it (its class lists, then the raw probe
-and the checks after it, as the outposts' arbitrator does) and reads the
-event's object if it has none; a change arriving while that first answer is
-awaited is dropped, as Dickson decided. A kept "no" past its 500 ms is
-asked again, and its old answer used meanwhile. A window with no provider
-goes on to the object's memo: known not to be a bar it is dropped with no
-call, known to be one its value is read through MSAA, and otherwise its role
-is read first. A reading thread's answers come back over an unbounded
-channel, drained at the start of each value change's callback. A job
-carries a token whose drop tells the record the window is no longer being
-asked, so a job dropped on any path answers it. The record holds up to 64
-applications, the least recently used forgotten first, as no exit is
-reported for a process with no outpost, and an answer is kept with its
-window's owning thread, so a reused handle has none. The last MSAA focus's
-object is exempt from the limits below, as NVDA's is.
-
-Limits: a console window with a provider is answered as using UIA with no
-check, because the check needs a UIA connection or a held element and the
-listener makes no connection and holds none on this path, so an old
-console with an incomplete provider differs from NVDA's test
-(`nvda/source/UIAHandler/__init__.py` 1344 to 1345); its value changes
-reach no bar. A bar's read, classic or UI Automation, runs behind Core's
-requests on its application's reading thread, has a deadline of 1 second
-and does not count towards `ABANDONED_LIMIT`, so it cannot starve a
-request; it has its own count of abandoned reads still in their calls, at
-most `BAR_READS_ABANDONED_LIMIT` (2) per application: at 2, the
-application's waiting and further bar changes are dropped with no thread
-started, clearing as each abandoned call returns. A focus read of the
-application drops its waiting classic value changes. Neither path starts
-an outpost or asks one. An outpost's own hook keeps the value change for
-text and reports no bar.
+Limit: a bar read of an application that hangs during the read holds
+that application's reading thread until the call returns, so its later
+requests wait up to Core's due time; other applications have their own
+threads.
 
 ## Public API
 
@@ -275,19 +216,17 @@ section 6.3).
   of the window in front (`Tells::front`). The facts of the event's
   windows are read once for the event (`EventWindows`, over
   `verbatim_win32::window_facts::ReadOnce`), its window's class not at
-  all when the hook's filter read it, and shared by the watch, the tell
-  and the progress path; every read of the path goes through it
-  (`EventReads`). The foreground's part of a tell's facts is read live
-  under the tells' lock as the tell is placed, and a value change's hang
-  judged again by the listener's one judge after its tell is sent. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
+  all when the hook's filter read it, and shared by the watch and the tell; every read of the path goes
+  through it (`EventReads`). The foreground's part of a tell's facts is
+  read live under the tells' lock as the tell is placed. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
   it starts with a console window in front, until one of that window's
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's
   check thread and moves its reading record to the exited generations,
   then answers `ExitHandled`), `IdleQuery`, `Request`, `Cancel`,
-  `Configuration` (the listener's configuration, above) and `Shutdown`.
-  `run_listener` takes the launch's `report_background_progress_bars`
-  with the ignored processes, set before any value change is handled. It makes no remote operation, so takes no `--classic-uia`.
+  `ElementsHeld` and `Shutdown`. `run_listener` takes the ignored
+  processes, held open for its life. It makes no remote operation, so
+  takes no `--classic-uia`.
 - The idle barrier's answer goes behind every event delivered to the
   `WinEvent` thread before it, every job queued for the reading threads,
   every event handed to the check threads, and every tell placed before
@@ -297,8 +236,5 @@ section 6.3).
   subscriptions are installed.
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
-  element, and `listener::bar_percent`, `listener::uia_bar_place` (with
-  the configuration a windowless bar is judged under, `BackgroundBars`,
-  and the window reads its gate makes, as its last argument) and
-  `listener::read_classic_bar` what the progress path reads, public so mockapp's tests make them as the
-  listener does.
+  element, and `listener::bar_of` what the progress callback makes of a
+  bar's event, public so mockapp's tests make them as the listener does.

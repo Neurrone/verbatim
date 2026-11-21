@@ -285,9 +285,8 @@ Public API:
   without reading again the role and state words the checks read;
   `snapshot_from_focus_event` is a candidate read at once),
   `event_object` (an event's object acquired and nothing read: its
-  `bar_reading` gives the listener a progress bar's value and place,
-  and the crate's `classic_bar_percent` a bar's percentage by its window
-  messages, with no object built;
+  `role`, `states`, `value` and `location` read one property each, as a
+  full read gives it;
   `which_of(nodes, registry)` tells whether it is one of the given nodes by
   the address the node was issued for or by the same COM object and child
   id, reading no property; `is_equal_to(node, registry)` tells whether it
@@ -318,9 +317,10 @@ Public API:
   acquired and not yet read (`FocusedObject`), so a fake focus can make
   NVDA's focused-state test on it first (`has_focused_state`, the walk a
   focus event's candidate gets) before it is read (`read`);
-  `name_at_event(hwnd, id_object,
-  id_child)` (an event address's `accName` alone, the virtual desktop's
-  name); and the
+  `read_at_event(hwnd, id_object, id_child, set)` (the listener's read of
+  an event address's name, role, value, states and place, each property of
+  the set one call: the virtual desktop's name, and a classic progress
+  bar's read at its value change); and the
   node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from
   local window data, which has no object, is acquired at its address).

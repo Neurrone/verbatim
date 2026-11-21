@@ -19,8 +19,7 @@ The message layer, the launch arguments and the held processes are
 
 `Supervisor`:
 
-- `new(events, options, ignored, report_background_progress_bars)`
-  starts the relay, which
+- `new(events, options, ignored)` starts the relay, which
   starts the listener at once, launching each role from its executable
   beside the current one (`Executables::beside_current`:
   `verbatim-outpost.exe` and `verbatim-listener.exe`); a missing one fails
@@ -51,18 +50,6 @@ The message layer, the launch arguments and the held processes are
   outpost is ended for being idle (Dickson, 2026-11-10 and 2026-11-16).
 - `send_to_listener(command)` sends the listener a request or cancel of
   Core's event queue, behind every command sent to it before.
-- `configure_listener(report_background_progress_bars)` carries out
-  Core's `Effect::ListenerConfiguration`: the owner thread keeps the
-  value, which it starts with from `new`'s argument, the settings loaded
-  before the supervisor is made, and launches every listener generation
-  with it (`--background-bars`), since it relaunches the listener without
-  Core; it writes the command (`CoreToListener::Configuration`) to the
-  running listener behind every command before, or holds it in the
-  launching listener's pending commands, written after the launch. Only
-  Core's commands set the value, in Core's order, so a launch and a later
-  change cannot cross (`tests/listener_configuration.rs`, a fault test
-  that holds a relaunch at `Fault::ListenerLaunchReported` to send a
-  command while it is at work).
 - `send_to_outpost(outpost, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.
@@ -78,8 +65,7 @@ The message layer, the launch arguments and the held processes are
 The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
 `ListenerEnded`, `Listener` (the current listener's tells, window
-destructions, answers, foreground reports and progress bars' changes,
-handed on whole for the app to give Core), `Pong` (an outpost's answer to a ping,
+destructions, answers and foreground reports, handed on whole for the app to give Core), `Pong` (an outpost's answer to a ping,
 for Core's liveness; the listener's liveness is the owner's alone), `SpareReady`, `IdleQueried`,
 `LaunchFailed` (Core asked for an outpost and none started, saying
 whether the application is gone: exited, not holdable, or ignored),

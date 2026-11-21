@@ -105,12 +105,11 @@ recorder unchanged. What the reducer does with each type is in
   clicked item's runtime id or name, whether it is off screen, and its
   rectangle, and `ShellCandidates` says whether the walk read every
   button.
-- `Percent` and `BarChange`: what a progress bar's change is, parsed at
-  the boundary so nothing receiving one checks it again: a percentage held
-  between 0 and 100 in hundredths, made only from a bar's range, its position
-  and range, or its text, and the bar's place and whether its window is in
-  the foreground. `ListenerToCore::Progress` carries it to Core, as
-  `Input::Progress`.
+- `Percent`: a progress bar's percentage, parsed at the boundary so
+  nothing receiving one checks it again: held between 0 and 100 in
+  hundredths, made only from a UI Automation bar's range or a bar's text.
+  A UI Automation bar's tell carries it (`tell::Payload::Progress`); Core
+  parses a classic bar's from the value its read answers.
 - `NormalizedEvent`, `PropertyChange` and `EarlierElement`: an event as
   Core took it, which `Effect::Observed` carries to the control plane's
   event stream, its protocol version 5 event: `FocusChanged` (a full
@@ -142,7 +141,7 @@ recorder unchanged. What the reducer does with each type is in
     press time), timer ticks, the speech inputs under "The text protocol",
     `Settings` and `Reported` (the reader settings, and the details the
     active theme reports, from which Core chooses each read's details),
-    `Progress` (a bar's change from the listener), and what the
+    and what the
     shell's threads learn, since only the reducer speaks: `Started`,
     `Exiting { replaced }`, `ErrorLogged`, `LockKeyToggled` (a `LockKey`
     and its state), `ClockRead` (with the gesture's key number),
@@ -155,10 +154,7 @@ recorder unchanged. What the reducer does with each type is in
     `CopyToClipboard` (routed through the shell's clipboard helper, its
     result back as `Input::ClipboardCopied`); `KeepDisplayOn` (while
     say-all reads); `SettingsChanged` (a toggle key changed a reader
-    setting, which the shell saves); `ListenerConfiguration {
-    report_background_progress_bars }` (at every `Input::Settings`,
-    whatever its value, which the shell passes to the supervisor for the
-    listener); `ForKey` (an effect on behalf of
+    setting, which the shell saves); `ForKey` (an effect on behalf of
     another key's trace); `ReadClock { repeat, key }` (read the time and
     date into `Input::ClockRead`, with the gesture's key number); `Show(GuiRequest)` (the menu, or the list of
     a `ShellItemKind`'s items); and `Observed` (an event Core took, with
@@ -274,14 +270,17 @@ them yet.
 - `event_kind`: the event-kind table. `EventKind::entry` gives each kind's
   `EventKindEntry`: its name, its `Teller` (the listener's hook, focus
   handler or global group, an outpost's `Follow` group, or the console
-  host), its `Source` (the `WinEvent` constant or UI Automation event id)
-  and the properties its tell carries from the event's cache.
+  host), its `Source` (the `WinEvent` constant, the UI Automation event
+  id, or for a progress bar's range value change, `UiaProgress`, the one
+  property's id) and the properties its tell carries from the event's
+  cache.
 - `tell`: `Event`, the one tell for both readers: its kind, process,
   raising thread, callback time, object (`EventObject`, a kept element's
-  `ElementToken` with its runtime id, a followed element's runtime id
-  alone, which Core names back by its committed node, or MSAA ids),
-  cached properties, a
-  kind's `Payload`, the window it is judged by (`TellWindow`, found with
+  `ElementToken` with its runtime id, the runtime id alone of an element
+  its reader keeps nothing for, a followed element Core names back by its
+  committed node or a progress bar, or MSAA ids), cached properties, a
+  kind's `Payload` (a property's new value, a notification, a desktop
+  switch, or a progress bar's percentage and place), the window it is judged by (`TellWindow`, found with
   its `AcceptanceFacts`, none, or failed; the facts mark Verbatim's
   hidden frame and a window it owns through its owner chain, and
   `AcceptanceFacts::in_foreground` is the one test of their relation to
@@ -438,8 +437,7 @@ that carries them on the pipes is
     `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
     `ElementsHeld { generation, tokens, acknowledged }`, the told elements
     Core holds, with the position of the last message carrying tokens it
-    handled, and `Configuration { report_background_progress_bars }`, what
-    the listener judges its own reads under, set by Core alone; a request names a kept element by
+    handled; a request names a kept element by
     `ObjectRef::Kept { listener, token }`, the listener's generation
     beside its token, since each listener mints its tokens from 1.
   - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
@@ -448,7 +446,7 @@ that carries them on the pipes is
     value it carried) and `Answer` (one per `Request`; its node ids are
     stamped by `Answer::assign_outpost`, named by `Answer::named`, and it
     counts toward `NodesHeld`'s positions when it carries a result).
-  - `ListenerToCore`: `Ready`, `ExitHandled`, `Progress`, `Foreground`,
+  - `ListenerToCore`: `Ready`, `ExitHandled`, `Foreground`,
     `Tell` (a tell, `tell::Event`, which the supervisor hands to Core),
     `Destroyed { window, process, at_us }` (a window destroyed, with the
     raising thread's process or none, which the supervisor hands to Core
@@ -692,10 +690,6 @@ beside the op's own reply, so no answer of them fails to decode.
   every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
   setting; save it.
-- `Effect::ListenerConfiguration { report_background_progress_bars }`:
-  configure the listener with the setting as it stands; emitted at every
-  `Input::Settings`, the first included, so the last the listener gets is
-  current.
 
 ## Themes
 

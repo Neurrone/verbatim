@@ -640,10 +640,37 @@ code is in `reduce.rs` unless named.
   deduplicated against the focus's own child. A selection in a list the
   focus controls is spoken as a focus, interrupting, and moves the navigator, only while
   its controller is the live focus.
-- Progress bars (`docs/nvda/object-model.md`, "How a progress bar reports
-  its value"): the listener's `Input::Progress` plays `Earcon::Progress`
-  once the value moves a percent from the last one indicated at the same
-  place on screen (`SrState::progress_reported`, the last 32 places).
+- Progress bars (`progress.rs`; ADR 0003, "Progress bars";
+  `docs/parity/changes-and-selection.md`, "Progress bars"): a bar's change
+  is a tell judged at its turn, heard when its tell's own relation to the
+  foreground window is equal or under, or with background progress bars
+  reported. An MSAA value change, past acceptance and read through MSAA
+  by its window's verdict, asks the listener for the object's role,
+  value, states and place at once outside the queue (`msaa_changed`, run
+  first in `changes::msaa`, before its early returns), as Core's facts'
+  own request under a token in `SrState::bar_reads`, with Core's ordinary
+  due time and endings; its answer (`answered`, parsed once as a property
+  set) plays for a progress bar not invisible or off screen whose value
+  `Percent::parse` takes, at the centre of its rectangle, (0, 0) with
+  none; every other ending says nothing, the hang check's "not
+  responding" aside. A value change on the readers' last focus, its
+  ids those its MSAA read carried and its role known and no progress bar,
+  is not read (Claude, 2026-11-21), so typing costs no read. A UI
+  Automation bar is `Entry::Progress` (`ProgressTell`, from a `UiaProgress`
+  tell with `Payload::Progress`): accepted at arrival as a value change
+  is, placed as a UI Automation change, merged with a waiting one of the
+  same runtime id and process, asking nothing, and at its turn played
+  from its tell when Core's backend cache does not drop it for UI
+  Automation. A bar plays `Earcon::Progress` once the value moves a
+  percent from the last one indicated at the same place on screen
+  (`indicate_progress`, `SrState::progress_reported`, the last 32
+  places).
+- Core's facts' own requests (`wants.rs`): one want list and one token
+  counter (`SrState::wants`) for every request Core's facts send outside
+  the queue, the focused terminal's and a bar's, taken whole by
+  `Logic::wanted` as the queue settles or by `Cx::send_wanted`;
+  `Logic::facts_answered` routes an ending by its token to the bar
+  (`bar_reads`) or the terminal.
 - Announcements (`announcements/`; NVDA's behaviour is in
   `docs/parity/alerts.md` and `docs/parity/changes-and-selection.md`).
   Each kind is an event-queue entry, one `Announcement` with what its kind
@@ -1093,13 +1120,7 @@ background progress bars were reported among them, is exempt from the
 foreground stop, so a foreground change neither stops its request out
 nor ends it waiting (`entries::exempt_from_foreground`).
 `AcceptanceFacts::in_foreground` is the one test of the foreground
-relation, for acceptance and for the window facts a focus keeps. `verbatim_core::accepts` is
-the acceptance test's answer alone, public so that the listener judges
-with Core's own function whether to read a value change while background
-progress bars are not reported (Dickson, 2026-11-19). Every
-`Input::Settings`, the first included and whatever its value, emits
-`Effect::ListenerConfiguration`, so the listener's configuration and the
-supervisor's launch copy follow Core's setting.
+relation, for acceptance and for the window facts a focus keeps.
 
 ### Caret tells and Core's text facts
 

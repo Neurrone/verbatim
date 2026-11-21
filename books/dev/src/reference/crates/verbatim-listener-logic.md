@@ -19,16 +19,15 @@ Public API:
   `Schedule<J, W>`, each returning the `Effects` the shell applies in
   order under its lock: threads to start, threads to wake, records let
   go, jobs ended unrun (`Ended`, with its `Ending`), requests abandoned,
-  idle waiters to run, and the alarm. One record per application process
+  and idle waiters to run. One record per application process
   generation (`AppKey`): `running`, one per process id, which a job looks
   in alone, and `exited`, by `AppKey`, for records with a thread still in
   charge or abandoned. A record's reader is one value: `Idle` with at
   least one abandoned thread out, `InCharge` with its `Charge` (its thread
   number, its abandoned count, the job running, when it was last idle and
   the jobs waiting), or `Starved` at `ABANDONED_LIMIT` (two) with the jobs
-  waiting. A job (`JobKind`) is Core's request, a classic or UI Automation
-  bar's change, or a release of kept elements; requests wait in a lane
-  ahead of the rest. `push` queues a job, starting a thread when none is in
+  waiting. A job (`JobKind`) is Core's request or a release of kept
+  elements; requests wait in a lane ahead of releases. `push` queues a job, starting a thread when none is in
   charge and fewer than two are abandoned; `next` hands the thread its
   next job, or has it wait for the idle time the check threads use
   (`IDLE_US`, 30 seconds), then lets its record go, at once for an exited
@@ -37,23 +36,11 @@ Public API:
   an abandoned thread's return at the limit reused for what waits;
   `cancel` ends a queued request cancelled for any reason, abandons a
   running one for the foreground with a fresh thread for what waits, and
-  leaves it alone for any other reason; `tick` abandons a bar read past its
-  deadline (`BAR_READ_DEADLINE`, 1 s), counted apart per process
-  (`BAR_READS_ABANDONED_LIMIT`, 2, at which the application's bar changes
-  are dropped), never towards `ABANDONED_LIMIT`; `application_exited`
+  leaves it alone for any other reason; `application_exited`
   moves the record to `exited`, a starved record's jobs ended "not
-  there"; `spawn_failed`, `when_idle` and `stop` end the rest. A bar's
-  change replaces a waiting one of its object, a classic one is limited to
-  the newest `EVENTS_PER_THREAD` of its raising thread and
-  `BARS_PER_APPLICATION` (64) in all, the focused object's always kept, and
-  a focus read drops its application's waiting classic changes. An idle
+  there"; `spawn_failed`, `when_idle` and `stop` end the rest. An idle
   waiter runs once every job queued before it is no longer waiting or
-  running; abandoned threads do not count. The alarm is set only while a
-  bar read runs.
-- `focus` — the progress path's vocabulary (`classic_value_change`,
-  `BarObject`, `BarVerdict`, `ClassicBarRead`, `BarRaiser`,
-  `WindowAnswer`, `BAR_VERDICTS_KEPT`, the bar limits) and
-  `ABANDONED_LIMIT`.
+  running; abandoned threads do not count.
 - `foreground` — what the listener learns of each window that came to
   the foreground, for Core: `ForegroundWatch` takes the window in front at
   the start (`start`), each foreground event with whether its window was

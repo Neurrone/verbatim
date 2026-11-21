@@ -332,9 +332,9 @@ Automation focus came before Windows named it the foreground, the
 foreground arriving during the check's last calls, is refused, as NVDA
 refuses it; no recording has shown that order. Core judges
 the test once for each tell, before any request, so a background
-window's event costs no call into its application. An MSAA change and a
-UI Automation change, the two whose answer the background progress bars
-setting enters, are judged as their entry is made at the tell's arrival,
+window's event costs no call into its application. An MSAA change, a
+UI Automation change and a UI Automation progress bar's change, the three
+whose answer the background progress bars setting enters, are judged as their entry is made at the tell's arrival,
 with the setting as it stands then, and keep that verdict, as NVDA
 judges an event as it queues it: a value change from a background window
 whose setting is turned on or off while it waits is judged as at its
@@ -617,8 +617,9 @@ acceptance", above). Verbatim: **partial**.
   from belong to one application or input method (Internet Explorer's
   notification bar, a chat application's tray alert, IME candidate
   windows) and are deferred with application support.
-- Background progress bars are not yet reported (M4.3); NVDA's are
-  silent by default (Dickson, 2026-10-10).
+- The setting that reports background progress bars has no place in
+  the settings dialog until M4.3; NVDA's are silent by default (Dickson,
+  2026-10-10).
 
 ### A slow read the user has moved on from
 

@@ -142,9 +142,8 @@ Not yet, or known limitations:
 - A window nameless when focus enters it is not announced later, and a
   window that takes the foreground well after Windows announces it is not
   announced either; NVDA behaves the same.
-- The per-source cap on background events, tooltip and notification-bar
-  windows are not implemented, and background progress bars are not yet
-  reported (M4.3) ([parity ledger](https://github.com/Neurrone/verbatim/blob/main/docs/parity/focus-events.md), "Event
+- The per-source cap on background events and tooltip and
+  notification-bar windows are not implemented ([parity ledger](https://github.com/Neurrone/verbatim/blob/main/docs/parity/focus-events.md), "Event
   acceptance").
 - The latency stages and their figures are in [performance](../reference/performance.md).
 

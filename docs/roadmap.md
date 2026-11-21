@@ -369,10 +369,8 @@ NVDA's capture.
 
 Where each starts in the code, as the audits found it at 04268b78:
 
-- Progress bars: the listener's own verdicts in
-  `crates/verbatim-listener/src/value_change.rs`. The outpost's bar
-  watch, its `ProgressChanged` and `CoreToOutpost::Front` no longer
-  exist (34af17a2).
+- Progress bars: Core's asks in `crates/verbatim-core/src/progress.rs`;
+  the listener keeps no verdict of its own.
 - The fake focus: the check after a menu or switcher end in
   `crates/verbatim-core/src/focus/menus.rs`, judged by the menu-check
   rows of `crates/verbatim-core/src/focus/validity.rs`, which give a

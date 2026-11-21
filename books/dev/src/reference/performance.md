@@ -336,71 +336,24 @@ application"): the classic walk of the element at full depth, about 6 to
 Each `EVENT_OBJECT_VALUECHANGE` wakes the listener's WinEvent thread
 once, a typed character in a classic edit control included, as NVDA's one
 hook does, for local calls only: each fact of the event's windows read
-once for the event, and the window in front, the active window, the
-relations to them and whether the window is hung read when each is
-judged. That is 22 calls to Windows for a value change on a custom
-object of a top-level window in the background while background progress
-bars are reported, and 19 for a tooltip's show, the hook's class read
-included and a hang test counted as its calls
-(`a_flood_events_window_facts_are_read_once` counts them by read); while
-they are not, the default, a value change whose tell's window acceptance
-refuses costs the show's 19 and nothing more: its read is skipped on the
-tell's facts, with no lock, job or reading-thread wake
-(`a_flood_events_background_value_changes_are_not_read`; Dickson,
-2026-11-19). Measured on `msaa_flood_then_focus` (release, 13-second
-windows, the build before the skip, da47552b, and the build with it,
-ccdb2a7a, traced alternately five times each, 2026-11-19): the
-listener's reading thread went from 14,465 to 16,078 wakes and 495 to
-570 ms to 59 to 185 wakes and 9 to 12 ms; its WinEvent thread from 26,600
-to 28,000 wakes to 6,500 to 9,800 in the traces with little outpost
-activity, and from 41,800 to 44,700 to 20,700 to 22,400 in those with the
-outpost's 9,000 to 13,000 wakes; and the whole listener's processor time
-from 1.50 to 2.11 s to 0.57 to 1.20 s. Before the skip,
-measured on `msaa_flood_then_focus` (release, 13-second windows over
-its three floods of 4,000 events, five traces of each build
-alternately, 2026-11-19), reading each fact once took the WinEvent
-thread from 35,100 to 55,800 wakes to 28,400 to 47,400, and its
-processor time from 1.00 to 1.67 s to 0.92 to 1.37 s, about 14 percent
-less in traces of like workload (the outpost woke about 12,000 times
-in some traces of both builds and about 700 in others, and the
-listener's figures follow it); the reading thread from 16,300 to
-19,100 wakes to 15,400 to 17,300;
-a bar then adds one wake of a reading
-thread and three window messages, or about four MSAA calls when it is
-known only by its role. Any other value change is judged on the
-WinEvent thread from what it knows of each window and object, taking no
-lock and making no call into the application when dropped; one that is
-queued takes the readers' lock once. A window's first answer costs one
-wake of a reading thread and one read, its class lists and the raw probe,
-and is asked again every 500 ms while a change comes for a window with
-none; each object costs one role read, the memo capped per application
-and the record kept across an idle process. An application's waiting
-classic value changes are at most 10 per raising thread and 64 in all, so
-a flood of new objects does not grow the queue. Each UIA range value
-change anywhere wakes the listener's UIA thread, and a progress bar's adds
-a reading thread and its place's read. While background progress bars are
-not reported, the default, a bar with its own window is judged by
-acceptance on the UIA callback thread before it is queued, on local
-Windows reads of its window and none into the application: 11 calls for a
-window in front, 15 for one in the background and 19 for one under a
-topmost root (`the_gate_admits_a_bar_by_its_windows_acceptance`,
-`a_uia_bar_with_its_own_window_is_queued_by_its_windows_acceptance`),
-paid by every change of such a bar, accepted or refused; a refused one
-then costs no reading-thread wake and no cross-process `Place` read. If
-UI Automation delivers this subscription on the thread that delivers the
-focus, a foreground bar changing quickly delays those events by these
-calls; that is inferred, not measured. A windowless bar's nearest window
-is found before its place, in both states, so a refused one costs its
-window lookup once, memoised, and no `Place` read, and an off-screen one's
-first change costs a lookup it did not before
-(`uia_windowless_bar_reads_its_window_before_its_place`). While the
-setting is reported, the gate reads only the setting. Reading it takes
-the configuration's lock, once per value change on the WinEvent thread and
-once per bar change on the UI Automation callback thread; its one writer
-is the I/O thread, at a settings change, so the lock is uncontended, and
-it is never held across a call. A UI Automation bar's job carries the
-value read for its change, so the reading thread takes no lock for it. The wake-up and processor time
-figures are from the design's first step, still to be measured.
+once for the event, and the window in front, the active window and the
+relations to them read when each is judged. A value change costs what a
+tooltip's show costs, the hook's class read included and a hang test
+counted as its calls (`a_flood_events_window_facts_are_read_once` counts
+them by read), and the listener reads nothing for it unasked. Core asks
+the listener to read a classic bar's value change that is accepted, read
+through MSAA and in the foreground or reported in the background: one
+request and answer, one wake of the application's reading thread and
+about five MSAA calls, the acquisition, role, value, states and location;
+a value change on the readers' last focus whose role is known and no bar
+asks nothing (call_counts `msaa_focus_changes_cost_exactly`). Each UIA
+range value change anywhere wakes the listener's UIA thread, and its
+cache holds two properties more for a bar, its rectangle and whether it
+is off the screen; a progress bar's then wakes its application's check
+thread for NVDA's native-element calls, the nearest window, its probe and
+the window's acceptance facts, and costs no call to read it. The wake-up,
+processor time and flood figures of this path are the progress-bar
+build's measurement series, recorded with that build.
 
 ### The listener's reads in a window the outpost judges MSAA
 
@@ -926,13 +879,13 @@ NVDA speaks a name, value, description or state change only for the
 focus, so the outpost tells the object from the focus by identity before
 reading anything.
 
-- Today: the acquisition and its role only, the role to know whether it
-  is a progress bar, whose value changes are reported off the focus
-  (mockapp answers `get_accChild`, `accParent` and `get_accRole` once
-  each); a progress bar then has its states, value and location read,
-  what NVDA's progress bar behavior reads. The focus's own change costs 2
-  MSAA calls, the acquisition and its value. mockapp answers a
-  `WM_GETOBJECT` for each acquisition, 2.
+- Today: the outpost's acquisition and nothing more for an object that
+  is none of the focus's line; for a value change, the listener's read of
+  the object's role, value, states and location at Core's ask, what
+  NVDA's progress bar behavior reads, unless the object is the readers'
+  last focus whose role is known and no bar. The focus's own change costs
+  2 MSAA calls, the acquisition and its value
+  (call_counts `msaa_focus_changes_cost_exactly`).
 - Bound: one property per event.
 
 ### A name, description, or state change on the focus, MSAA
@@ -1111,9 +1064,10 @@ A foreground window's progress bar that is not the focus
 (`docs/parity/changes-and-selection.md`, "Progress bars that are not the
 focus"), in the attended application only.
 
-- Per change: one call, the bar's `Place`, which no event's cache holds.
-  The focused bar is read again by its own subscription, and Core's
-  one-percent rule keeps the second silent.
+- Per change: no call to read it, its `Place` held in its event's
+  cache; its check thread's native-element calls, as for every UI
+  Automation event. The focused bar is read again by its own
+  subscription, and Core's one-percent rule keeps the second silent.
 - Per foreground change: one element lookup in a worker program and one
   registration, paid by a window with no progress bar too.
 - From the design's costs; not measured.

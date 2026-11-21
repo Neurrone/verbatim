@@ -430,10 +430,13 @@ Settled by Dickson on 2026-10-13 unless dated otherwise.
   time across the desktop, about 6 ms alone and seconds under load. The
   two are the `Place` group, gated in `Node`: on for a focus, a
   navigation step's neighbour, a selected item, a window; off for
-  ancestors and the tree dump unless it is asked for locations. No event
-  registration's cache holds either, `PropertyEvent`'s among them, so a
-  state change's set, which replaces the focus's, is never off the
-  screen. The shell's tray and taskbar list reads `IsOffscreen` for every
+  ancestors and the tree dump unless it is asked for locations. One event
+  registration's cache holds both, the listener's progress bars'
+  (`ListenerProgress`), so that a bar's change is told with its place
+  and no call, at the cost of two properties in every range value
+  change's cache (Claude, 2026-11-21, measured by the build's flood
+  series); no other's does, `PropertyEvent`'s among them, so a state
+  change's set, which replaces the focus's, is never off the screen. The shell's tray and taskbar list reads `IsOffscreen` for every
   button, to leave hidden ones out, and, for a click, the position of each
   button with the clicked item's runtime id or name, normally one, never
   in the list (Dickson, 2026-10-24).

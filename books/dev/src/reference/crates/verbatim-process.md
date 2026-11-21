@@ -262,8 +262,7 @@ Public API:
   exhaustively and a test pins every variant's name.
 
   Each message is stamped as its write begins, by whichever thread writes
-  it: `written_at_us` on an outpost's `Pong`,
-  `listener_written_at_us` on the listener's progress changes, and
+  it: `written_at_us` on an outpost's or the listener's `Pong`, and
   verbatim.exe's `sent_at_us` on a ping it writes.
 
   Framing. Each message is one frame of `transport`, a `Content-Length`
@@ -303,9 +302,7 @@ Public API:
   `remote_operations` is off. `ListenerArguments` is the focus listener's,
   `--listener` first (`LISTENER_ARG`), then the pipes, its generation
   (`--generation`, required: the launch's id, which Core's views and
-  requests name), whether background progress bars are reported
-  (`--background-bars on|off`, required: the configuration the listener
-  judges its reads under until Core's first command), and the ignored
+  requests name), and the ignored
   pids (`--ignore-pids`, `IGNORE_PIDS_ARG`).
   Each executable's `main` parses its own and refuses the other's: an
   outpost refuses `--listener`, and the listener refuses an outpost's
@@ -338,8 +335,7 @@ Public API:
 - `alarm` — `Alarm`, a high-resolution waitable timer and an event waited
   on together by one thread (`books/dev/src/explanation/design/wake-ups.md`, item 3): `set`,
   `cancel`, `wake`, `wait` (whether the timer ended it) and
-  `wait_for_event`. An outpost's mailbox and worker inbox and the
-  listener's watchdog wait on one.
+  `wait_for_event`. An outpost's mailbox and worker inbox wait on one.
 - `session::current()` — the calling process's `Session`: its session
   `id`, whether its window station is interactive
   (`interactive_window_station`), and the input desktop's name when it can

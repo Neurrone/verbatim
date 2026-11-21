@@ -15,8 +15,6 @@ judged on.
 Public API:
 
 - `class` — window classes as NVDA judges them.
-  `is_progress_bar_class(normalized)` is
-  whether a normalised name is one NVDA recognises as a progress bar.
   `WindowClasses::new(raw, root)` holds a
   window's raw class, the one `verbatim_model::class::normalize` gives
   and its root ancestor's; the
@@ -41,9 +39,6 @@ Public API:
   verdict before the newest for one observed before the newest's probe
   began, `newest` the latest whether or not its keep has ended, and
   `len` and `evict_oldest` keep a record to a cap.
-- `NewestPerThread`, `EVENTS_PER_THREAD` — NVDA's limit of 10 events per
-  raising thread, walked from the newest: the listener's waiting classic
-  value changes use it.
 - `Window` — a window's handle that is never 0. The protocol and the
   system's calls carry a handle as an `isize`, 0 for none; the logic
   crates parse one where it enters them, `Window::new(handle)` giving
