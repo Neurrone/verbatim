@@ -259,8 +259,8 @@ pub const CONSOLE_SUBSCRIPTIONS: &[WinEventKind] =
 /// keeps them. The desktop window's name change is hooked again scoped to
 /// csrss's process ([`WinEventKind::DesktopName`]) for today's news of the
 /// desktop. A text selection change, which NVDA takes from no `WinEvent`,
-/// is not hooked. A value change is also the listener's for every progress
-/// bar, foreground or background (`docs/design/progress-bars.md`).
+/// is not hooked. A value change is told like any other, and Core asks the
+/// listener to read a classic progress bar's from it.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,

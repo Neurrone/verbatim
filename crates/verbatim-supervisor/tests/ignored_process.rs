@@ -152,7 +152,6 @@ fn an_ignored_process_gets_no_outpost() {
         Executables::both(exe),
         LIMIT,
         Arc::new(IgnoredProcesses::hold([ignored_pid])),
-        false,
     )
     .expect("the supervisor starts");
     let events = Delivered::new(events, &supervisor);

@@ -146,7 +146,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("TextEvent", TextEvent::PROPERTIES, 3),
         ("PropertyEvent", PropertyEvent::PROPERTIES, 25),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
-        ("ListenerProgress", ListenerProgress::PROPERTIES, 18),
+        ("ListenerProgress", ListenerProgress::PROPERTIES, 20),
         // A node's, without its place, with the rest of the listener's.
         ("ListenerSelection", ListenerSelection::PROPERTIES, 40),
         ("Node", Node::PROPERTIES, 37),

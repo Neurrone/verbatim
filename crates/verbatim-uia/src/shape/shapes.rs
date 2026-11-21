@@ -227,7 +227,8 @@ impl States {
 uia_shape! {
     /// Where an element is: its bounding rectangle and whether it is off
     /// the screen. Read only for the one element that needs them, never by
-    /// a read of many: for some elements UIA answers either only by asking
+    /// a read of many, and cached with one event only, a progress bar's
+    /// range value change ([`ListenerProgress`]): for some elements UIA answers either only by asking
     /// the application's UI thread, a top-level window's title bar and its
     /// buttons among them, for which it sends `WM_GETTITLEBARINFOEX`, which
     /// Windows answers for one window at a time across the desktop, about
@@ -368,14 +369,16 @@ impl ListenerEvent {
 uia_shape! {
     /// A progress bar's range value changed, as the focus listener's
     /// desktop-wide registration delivers it: a [`ListenerEvent`], with the
-    /// range its percentage is made from (`docs/design/progress-bars.md`).
-    /// Its place and off-screen state are not here: a desktop-wide cache
-    /// would fill them for every range change (decision 9).
+    /// range its percentage is made from and its [`Place`], so that the
+    /// listener tells the bar with no call into its application, at the
+    /// cost of two properties more in every range change's cache.
     pub struct ListenerProgress {
         gates: none;
         groups {
             /// What every desktop-wide event of the listener carries.
             event: ListenerEvent,
+            /// Where it is, and whether it is off the screen.
+            place: Place,
         }
         properties {
             /// The value.
@@ -386,7 +389,7 @@ uia_shape! {
             maximum: UIA_RangeValueMaximumPropertyId => f64,
         }
         prefetch {}
-        covers {}
+        covers { ListenerEvent }
     }
 }
 
@@ -397,9 +400,10 @@ uia_shape! {
     /// value, states, description, keyboard shortcut, row and column in a
     /// grid, position in its set, and level. UIA fills them inside the
     /// application with the event, so the item is reported with no call
-    /// (Dickson, 2026-10-29). Not its [`Place`], which is never in an
-    /// event's cache (`books/dev/src/explanation/design/uia-shapes.md`, decision 9) and is not
-    /// spoken, so a state set it carries is never off the screen.
+    /// (Dickson, 2026-10-29). Not its [`Place`], which is in no other
+    /// event's cache (`books/dev/src/explanation/design/uia-shapes.md`,
+    /// decision 9) and is not spoken, so a state set it carries is never
+    /// off the screen.
     pub struct ListenerSelection {
         gates: none;
         groups {

@@ -318,9 +318,8 @@ impl Playback {
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::ForKey(_, effect) => self.take(state, vec![*effect]),
                 // The event queue's own effects as it settles, the
-                // outpost's start and the next wake, and the listener's
-                // configuration, at every settings input.
-                Effect::Queue(_) | Effect::ListenerConfiguration { .. } => {}
+                // outpost's start and the next wake.
+                Effect::Queue(_) => {}
                 other => panic!("unexpected effect: {other:?}"),
             }
         }
@@ -330,7 +329,7 @@ impl Playback {
     /// Answers the output read Core has out, as the outpost's worker
     /// makes it, until none is new.
     fn serve(&mut self, state: &mut SrState) {
-        let _ = super::reading::wanted_for_tests(state);
+        let _ = state.wants.take_for_tests();
         loop {
             let Some((token, read)) = out_read(state) else {
                 return;
@@ -546,7 +545,7 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         console: false,
     };
     super::reading::committed(&mut state, Some(other), Vec::new(), 0);
-    let _ = super::reading::wanted_for_tests(&mut state);
+    let _ = state.wants.take_for_tests();
     let before = state.clone();
     let mut said = Vec::new();
     let entries = super::reading::answered(

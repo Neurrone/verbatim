@@ -7,16 +7,6 @@
 
 use verbatim_model::class::{BAD, GOOD, SHELL_ROOTS, normalize};
 
-/// Whether `normalized`, a class name `verbatim_model::class::normalize`
-/// gave, is one
-/// NVDA recognises as a progress bar by its class: the common control, and
-/// Delphi's `TProgressBar` (`NVDAObjects/IAccessible/__init__.py` 2887,
-/// `UIAHandler/__init__.py` 115).
-#[must_use]
-pub fn is_progress_bar_class(normalized: &str) -> bool {
-    matches!(normalized, "msctls_progress32" | "TProgressBar")
-}
-
 /// The classification a window's class name yields before any probe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClassVerdict {
@@ -177,21 +167,6 @@ impl WindowClasses {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The normalised name decides, so a Windows Forms bar's long class name
-    /// and the common control's are the same; an edit control's is not.
-    #[test]
-    fn a_bar_is_recognised_by_its_normalised_class() {
-        use super::is_progress_bar_class;
-        for class in [
-            "msctls_progress32",
-            "WindowsForms10.msctls_progress32.app.0.141b42a_r9_ad1",
-            "TProgressBar",
-        ] {
-            assert!(is_progress_bar_class(normalize(class)), "{class}");
-        }
-        assert!(!is_progress_bar_class(normalize("Edit")));
-    }
 
     #[test]
     fn consoles_and_list_views_are_checked_after_the_probe() {

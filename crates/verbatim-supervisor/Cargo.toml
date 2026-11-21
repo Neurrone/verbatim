@@ -74,14 +74,6 @@ harness = false
 name = "listener_destroyed"
 harness = false
 
-# Runs itself as a stand-in listener and spares, which its own `main`
-# recognizes; holds a launch at a fault point, so only `cargo xtask
-# faults` builds it.
-[[test]]
-name = "listener_configuration"
-harness = false
-required-features = ["faults"]
-
 # Runs itself as stand-in applications, listener, and outposts, which its
 # own `main` recognizes; arms fault points, so only `cargo xtask faults`
 # builds it.

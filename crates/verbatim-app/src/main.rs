@@ -318,7 +318,6 @@ fn run(
         outpost_sink(command_tx.clone()),
         outpost_options,
         ignored,
-        reader_settings.report_background_progress_bars,
     )?);
     let outposts: Arc<Mutex<HashMap<Pid, OutpostStatus>>> = Arc::new(Mutex::new(HashMap::new()));
     // The GUI's handle, once the GUI thread is up; part of readiness.
@@ -1097,15 +1096,11 @@ impl ReducerThread<'_> {
                         integrity,
                         ..
                     } => self.foreground(window, root_owner, process, thread, console, integrity),
-                    ListenerToCore::Progress { change, .. } => self.apply(Input::Progress {
-                        trace_id: TraceId::mint(),
-                        change,
-                    }),
                     message => match listener_input(from, message) {
                         Ok(input) => self.queue(input),
                         Err(other) => tracing::error!(target: verbatim_model::DEFECT_TARGET,
                             ?other,
-                            "the supervisor handed on a listener message that is no tell, destroy, answer, foreground report or progress change, a logic bug"
+                            "the supervisor handed on a listener message that is no tell, destroy, answer or foreground report, a logic bug"
                         ),
                     },
                 }
@@ -1588,12 +1583,6 @@ impl ReducerThread<'_> {
             Effect::CopyToClipboard(text) => self.context.clipboard.copy(trace_id, text),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
             Effect::SettingsChanged(settings) => self.context.reader.changed(settings),
-            Effect::ListenerConfiguration {
-                report_background_progress_bars,
-            } => self
-                .context
-                .supervisor
-                .configure_listener(report_background_progress_bars),
             // The exit sound is heard before Verbatim exits: the main thread
             // waits for it ([`ShellCommand::Exiting`]). A preview of it is
             // played as any other earcon.

@@ -7,28 +7,7 @@ use super::*;
 type Under = Schedule<u64, u64>;
 
 fn request(number: u64) -> JobKind {
-    JobKind::Request {
-        number: RequestNumber(number),
-        focus: false,
-    }
-}
-
-fn focus_read(number: u64) -> JobKind {
-    JobKind::Request {
-        number: RequestNumber(number),
-        focus: true,
-    }
-}
-
-/// A classic value change raised by `raised_by`, of object `key`.
-fn bar(raised_by: u32, key: i32) -> JobKind {
-    JobKind::ClassicBar {
-        raiser: BarRaiser {
-            raised_by,
-            focused: false,
-        },
-        key: vec![key],
-    }
+    JobKind::Request(RequestNumber(number))
 }
 
 fn app(pid: u32, generation: u64) -> AppKey {
@@ -60,8 +39,6 @@ fn run(schedule: &mut Under, app: AppKey, reader: u64, now: u64) -> Option<u64> 
     }
 }
 
-const BAR_DEADLINE: u64 = 1_000_000;
-
 /// Application 1 with both its threads abandoned to requests 1 and 2,
 /// request 3 waiting.
 fn at_the_limit(schedule: &mut Under) {
@@ -79,23 +56,22 @@ fn at_the_limit(schedule: &mut Under) {
 }
 
 /// An application's jobs run in order on one thread, Core's requests
-/// ahead of bar reads and releases queued before them.
+/// ahead of releases queued before them.
 #[test]
-fn requests_run_ahead_of_bar_reads_and_releases() {
+fn requests_run_ahead_of_releases() {
     let mut schedule = Under::default();
     push(&mut schedule, 1, 1, request(1), 0);
     assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    push(&mut schedule, 1, 2, bar(7, 2), 0);
     push(&mut schedule, 1, 3, JobKind::Release, 0);
     push(&mut schedule, 1, 4, request(4), 0);
     push(&mut schedule, 1, 5, request(5), 0);
     let mut order = Vec::new();
-    for now in 1..=5 {
-        let (returned, _) = schedule.returned(app(1, 1), 1, false, now);
+    for now in 1..=4 {
+        let (returned, _) = schedule.returned(app(1, 1), 1, now);
         assert_eq!(returned.reader, Some(1));
         order.extend(run(&mut schedule, app(1, 1), 1, now));
     }
-    assert_eq!(order, [4, 5, 2, 3]);
+    assert_eq!(order, [4, 5, 3]);
 }
 
 /// Each application has a thread of its own: one whose thread is held in
@@ -128,7 +104,7 @@ fn a_queued_request_is_cancelled_for_every_reason() {
         let effects = schedule.cancel(RequestNumber(2), reason, 1);
         assert_eq!(ended(&effects), [(2, Ending::Cancelled)], "{reason:?}");
         assert_eq!(effects.abandoned, [], "{reason:?}");
-        let _ = schedule.returned(app(1, 1), 1, false, 2);
+        let _ = schedule.returned(app(1, 1), 1, 2);
         assert_eq!(run(&mut schedule, app(1, 1), 1, 2), Some(3), "{reason:?}");
     }
 }
@@ -147,7 +123,7 @@ fn a_running_request_cancelled_for_the_foreground_is_abandoned() {
     assert_eq!(effects.start, [(app(1, 1), 2)]);
     assert!(!schedule.in_charge(app(1, 1), 1));
     assert_eq!(run(&mut schedule, app(1, 1), 2, 1), Some(2));
-    let (returned, _) = schedule.returned(app(1, 1), 1, false, 2);
+    let (returned, _) = schedule.returned(app(1, 1), 1, 2);
     assert_eq!(
         returned,
         Returned {
@@ -173,7 +149,7 @@ fn a_running_request_cancelled_for_another_reason_is_left_alone() {
         assert_eq!(effects.abandoned, [], "{reason:?}");
         assert_eq!(effects.start, [], "{reason:?}");
         assert!(schedule.in_charge(app(1, 1), 1), "{reason:?}");
-        let (returned, _) = schedule.returned(app(1, 1), 1, false, 2);
+        let (returned, _) = schedule.returned(app(1, 1), 1, 2);
         assert_eq!(
             returned,
             Returned {
@@ -192,7 +168,7 @@ fn a_cancel_of_an_answered_request_does_nothing() {
     let mut schedule = Under::default();
     push(&mut schedule, 1, 1, request(1), 0);
     assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    let _ = schedule.returned(app(1, 1), 1, false, 1);
+    let _ = schedule.returned(app(1, 1), 1, 1);
     let effects = schedule.cancel(RequestNumber(1), CancelReason::Foreground, 2);
     assert_eq!(ended(&effects), Vec::new());
     assert_eq!(effects.abandoned, []);
@@ -205,7 +181,7 @@ fn a_cancel_of_an_answered_request_does_nothing() {
 fn a_job_at_the_abandoned_limit_is_run_by_a_returning_thread() {
     let mut schedule = Under::default();
     at_the_limit(&mut schedule);
-    let (returned, _) = schedule.returned(app(1, 1), 1, false, 4);
+    let (returned, _) = schedule.returned(app(1, 1), 1, 4);
     assert_eq!(
         returned,
         Returned {
@@ -224,7 +200,7 @@ fn a_return_at_the_limit_with_nothing_waiting_lets_the_next_job_start_a_thread()
     at_the_limit(&mut schedule);
     let effects = schedule.cancel(RequestNumber(3), CancelReason::Withdrawn, 4);
     assert_eq!(ended(&effects), [(3, Ending::Cancelled)]);
-    let (returned, _) = schedule.returned(app(1, 1), 1, false, 5);
+    let (returned, _) = schedule.returned(app(1, 1), 1, 5);
     assert_eq!(returned.reader, None);
     let effects = push(&mut schedule, 1, 4, request(4), 6);
     assert_eq!(effects.start, [(app(1, 1), 3)]);
@@ -239,7 +215,7 @@ fn an_idle_record_is_let_go_once_its_last_abandoned_thread_returns() {
     assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
     let effects = schedule.cancel(RequestNumber(1), CancelReason::Foreground, 1);
     assert_eq!(effects.start, [], "nothing waits: no fresh reader");
-    let (_, effects) = schedule.returned(app(1, 1), 1, false, 2);
+    let (_, effects) = schedule.returned(app(1, 1), 1, 2);
     assert_eq!(effects.forget, [app(1, 1)]);
 }
 
@@ -250,7 +226,7 @@ fn a_thread_waits_the_idle_time_then_lets_its_record_go() {
     let mut schedule = Under::default();
     push(&mut schedule, 1, 1, JobKind::Release, 0);
     assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    let _ = schedule.returned(app(1, 1), 1, false, 10);
+    let _ = schedule.returned(app(1, 1), 1, 10);
     assert_eq!(
         schedule.next(app(1, 1), 1, 10).0,
         Next::Wait {
@@ -260,7 +236,7 @@ fn a_thread_waits_the_idle_time_then_lets_its_record_go() {
     let effects = push(&mut schedule, 1, 2, request(2), 20);
     assert_eq!(effects.wake, [app(1, 1)]);
     assert_eq!(run(&mut schedule, app(1, 1), 1, 20), Some(2));
-    let _ = schedule.returned(app(1, 1), 1, false, 30);
+    let _ = schedule.returned(app(1, 1), 1, 30);
     let (next, effects) = schedule.next(app(1, 1), 1, 30 + IDLE_US);
     assert_eq!(next, Next::Exit);
     assert_eq!(effects.forget, [app(1, 1)]);
@@ -275,7 +251,7 @@ fn an_idle_waiter_runs_with_later_jobs_queued() {
     assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
     assert_eq!(schedule.when_idle(7).waiters, Vec::<u64>::new());
     push(&mut schedule, 1, 2, request(2), 1);
-    let (_, effects) = schedule.returned(app(1, 1), 1, false, 2);
+    let (_, effects) = schedule.returned(app(1, 1), 1, 2);
     assert_eq!(effects.waiters, [7]);
 }
 
@@ -311,9 +287,9 @@ fn every_request_is_answered_once() {
     let effects = schedule.cancel(RequestNumber(1), CancelReason::Foreground, 2);
     answered.extend(effects.abandoned.iter().map(|number| number.0));
     assert_eq!(run(&mut schedule, app(1, 1), 2, 2), Some(3));
-    let (late, _) = schedule.returned(app(1, 1), 1, false, 3);
+    let (late, _) = schedule.returned(app(1, 1), 1, 3);
     assert!(!late.send);
-    let (current, _) = schedule.returned(app(1, 1), 2, false, 4);
+    let (current, _) = schedule.returned(app(1, 1), 2, 4);
     assert!(current.send);
     answered.push(3);
     answered.sort_unstable();
@@ -335,9 +311,9 @@ fn an_exit_drains_its_thread_and_a_reused_id_has_a_record_of_its_own() {
     push(&mut schedule, 1, 5, request(5), 5);
     let effects = schedule.application_exited(Pid(1));
     assert_eq!(ended(&effects), Vec::new());
-    let _ = schedule.returned(app(1, 2), 3, false, 6);
+    let _ = schedule.returned(app(1, 2), 3, 6);
     assert_eq!(run(&mut schedule, app(1, 2), 3, 6), Some(5));
-    let _ = schedule.returned(app(1, 2), 3, false, 7);
+    let _ = schedule.returned(app(1, 2), 3, 7);
     let (next, effects) = schedule.next(app(1, 2), 3, 7);
     assert_eq!(next, Next::Exit);
     assert_eq!(effects.forget, [app(1, 2)]);
@@ -369,216 +345,11 @@ fn the_stop_ends_what_waits_and_drops_a_running_answer() {
     let effects = schedule.stop();
     assert_eq!(ended(&effects), [(2, Ending::Stopped)]);
     assert_eq!(effects.wake, [app(1, 1)]);
-    let (returned, _) = schedule.returned(app(1, 1), 1, false, 1);
+    let (returned, _) = schedule.returned(app(1, 1), 1, 1);
     assert!(!returned.send);
     assert_eq!(schedule.next(app(1, 1), 1, 1).0, Next::Exit);
     assert_eq!(
         ended(&push(&mut schedule, 1, 3, request(3), 2)),
         [(3, Ending::Stopped)]
-    );
-}
-
-/// A bar's read is abandoned at its own deadline, which the alarm is set
-/// to and moved off as the read ends; a bar-only record goes with it, the
-/// abandoned call returning to no record.
-#[test]
-fn a_bar_read_is_abandoned_at_its_deadline_and_returns_to_no_record() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    let (_, effects) = schedule.next(app(1, 1), 1, 0);
-    assert_eq!(effects.alarm, Some(Some(BAR_DEADLINE)));
-    let effects = schedule.tick(BAR_DEADLINE - 1);
-    assert_eq!(effects.alarm, Some(Some(BAR_DEADLINE)), "set again");
-    let effects = schedule.tick(BAR_DEADLINE);
-    assert_eq!(effects.forget, [app(1, 1)]);
-    assert_eq!(effects.alarm, None, "spent, and nothing more due");
-    let (returned, effects) = schedule.returned(app(1, 1), 1, true, BAR_DEADLINE + 1);
-    assert_eq!(
-        returned,
-        Returned {
-            send: false,
-            reader: None
-        }
-    );
-    assert_eq!(effects.forget, []);
-}
-
-/// A bar read's end before its deadline cancels the alarm.
-#[test]
-fn a_bar_reads_end_cancels_its_alarm() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    let _ = schedule.next(app(1, 1), 1, 0);
-    let (_, effects) = schedule.returned(app(1, 1), 1, true, 5);
-    assert_eq!(effects.alarm, Some(None));
-}
-
-/// A bar's read abandoned beside a request's abandoned thread does not
-/// count towards the request's limit: a fresh thread still takes over.
-#[test]
-fn a_bar_read_is_not_counted_towards_the_requests_limit() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, request(1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    push(&mut schedule, 1, 2, bar(7, 2), 0);
-    let effects = schedule.cancel(RequestNumber(1), CancelReason::Foreground, 0);
-    assert_eq!(effects.start, [(app(1, 1), 2)]);
-    assert_eq!(run(&mut schedule, app(1, 1), 2, 0), Some(2));
-    let effects = schedule.tick(BAR_DEADLINE);
-    assert_eq!(effects.start, [], "nothing waits");
-    let effects = push(&mut schedule, 1, 3, request(3), BAR_DEADLINE);
-    assert_eq!(effects.start, [(app(1, 1), 3)], "not starved");
-}
-
-/// With two of an application's abandoned bar reads in their calls, its
-/// waiting bars and its further ones are dropped with no thread started,
-/// until one returns.
-#[test]
-fn two_abandoned_bar_reads_stop_its_value_changes_until_one_returns() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    push(&mut schedule, 1, 2, bar(7, 2), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    let effects = schedule.tick(BAR_DEADLINE);
-    assert_eq!(effects.start, [(app(1, 1), 2)]);
-    assert_eq!(run(&mut schedule, app(1, 1), 2, BAR_DEADLINE), Some(2));
-    push(&mut schedule, 1, 3, bar(7, 3), BAR_DEADLINE);
-    let effects = schedule.tick(2 * BAR_DEADLINE);
-    assert_eq!(ended(&effects), [(3, Ending::Limited)]);
-    assert_eq!(
-        ended(&push(&mut schedule, 1, 4, bar(7, 4), 2 * BAR_DEADLINE)),
-        [(4, Ending::Limited)]
-    );
-    let _ = schedule.returned(app(1, 1), 1, true, 2 * BAR_DEADLINE);
-    assert_eq!(
-        push(&mut schedule, 1, 5, bar(7, 5), 2 * BAR_DEADLINE).start,
-        [(app(1, 2), 3)],
-        "queued again, the bar-only record having gone"
-    );
-}
-
-/// A newer change of a bar replaces the waiting one, and an idle waiter
-/// waiting only on it runs as it is replaced.
-#[test]
-fn a_newer_bar_change_replaces_the_waiting_one_and_runs_a_waiter() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, request(1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    let _ = schedule.returned(app(1, 1), 1, false, 0);
-    let uia_bar = || JobKind::UiaBar { key: vec![42] };
-    push(&mut schedule, 1, 2, uia_bar(), 0);
-    assert_eq!(schedule.when_idle(9).waiters, Vec::<u64>::new());
-    let effects = push(&mut schedule, 1, 3, uia_bar(), 1);
-    assert_eq!(ended(&effects), [(2, Ending::Limited)]);
-    assert_eq!(effects.waiters, [9]);
-}
-
-/// A thread's waiting value changes keep its newest ten, another thread
-/// counting apart, and the limit is per application.
-#[test]
-fn a_threads_waiting_value_changes_keep_the_newest_ten() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    for job in 2..=11 {
-        assert_eq!(
-            ended(&push(
-                &mut schedule,
-                1,
-                job,
-                bar(7, i32::try_from(job).unwrap()),
-                0
-            )),
-            [],
-            "{job}"
-        );
-    }
-    assert_eq!(
-        ended(&push(&mut schedule, 1, 12, bar(7, 12), 0)),
-        [(2, Ending::Limited)]
-    );
-    assert_eq!(ended(&push(&mut schedule, 1, 13, bar(8, 13), 0)), []);
-    assert_eq!(
-        push(&mut schedule, 2, 20, bar(7, 20), 0).start,
-        [(app(2, 2), 2)]
-    );
-}
-
-/// The focused object's value change is kept past the limit, while it
-/// counts towards the others'.
-#[test]
-fn the_focused_objects_value_change_is_kept_past_the_limit() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    let focused = JobKind::ClassicBar {
-        raiser: BarRaiser {
-            raised_by: 7,
-            focused: true,
-        },
-        key: vec![2],
-    };
-    push(&mut schedule, 1, 2, focused, 0);
-    for job in 3..=12 {
-        assert_eq!(
-            ended(&push(
-                &mut schedule,
-                1,
-                job,
-                bar(7, i32::try_from(job).unwrap()),
-                0
-            )),
-            [],
-            "{job}"
-        );
-    }
-    assert_eq!(
-        ended(&push(&mut schedule, 1, 13, bar(7, 13), 0)),
-        [(3, Ending::Limited)]
-    );
-}
-
-/// Value changes from a pool of raising threads are capped per
-/// application, the oldest dropped.
-#[test]
-fn an_applications_waiting_value_changes_are_capped_across_threads() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, bar(7, 1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    for job in 2..=65 {
-        let raised_by = u32::try_from(job).unwrap();
-        assert_eq!(
-            ended(&push(
-                &mut schedule,
-                1,
-                job,
-                bar(raised_by, i32::try_from(job).unwrap()),
-                0
-            )),
-            [],
-            "{job}"
-        );
-    }
-    assert_eq!(
-        ended(&push(&mut schedule, 1, 66, bar(66, 66), 0)),
-        [(2, Ending::Limited)]
-    );
-}
-
-/// A focus read drops its application's waiting classic value changes and
-/// nothing else, so it does not wait behind them.
-#[test]
-fn a_focus_read_drops_its_applications_waiting_value_changes() {
-    let mut schedule = Under::default();
-    push(&mut schedule, 1, 1, request(1), 0);
-    assert_eq!(run(&mut schedule, app(1, 1), 1, 0), Some(1));
-    push(&mut schedule, 1, 2, bar(7, 2), 0);
-    push(&mut schedule, 1, 3, bar(7, 3), 0);
-    push(&mut schedule, 1, 4, JobKind::UiaBar { key: vec![4] }, 0);
-    push(&mut schedule, 1, 5, request(5), 0);
-    assert_eq!(ended(&push(&mut schedule, 1, 6, request(6), 0)), []);
-    assert_eq!(
-        ended(&push(&mut schedule, 1, 7, focus_read(7), 0)),
-        [(2, Ending::Limited), (3, Ending::Limited)]
     );
 }

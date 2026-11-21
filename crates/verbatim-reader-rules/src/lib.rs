@@ -2,8 +2,7 @@
 //! apply before reading: NVDA's class verdict and the class name
 //! normalization it is judged on ([`class`]), a window's handle that is
 //! never 0 ([`Window`]), the kept verdicts on a window's provider
-//! ([`verdicts`]), NVDA's limit on a thread's events ([`NewestPerThread`]),
-//! and the console window's class. A
+//! ([`verdicts`]), and the console window's class. A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
 //! D14, "Where the rules run"). Pure: no Windows dependency, no call and
@@ -48,11 +47,9 @@
 )]
 
 pub mod class;
-mod newest_per_thread;
 pub mod verdicts;
 mod window;
 
-pub use newest_per_thread::{EVENTS_PER_THREAD, NewestPerThread};
 pub use window::Window;
 
 /// The console host's window class. A console window's provider is the

@@ -35,8 +35,9 @@
 //!   verdict and judges NVDA's native-element test (887 to 899), so the
 //!   check makes the keyboard-focus reads whatever it found and carries
 //!   any probe it made;
-//! - an element selected, a window opened and a property change, NVDA's
-//!   automation-event and property-change handlers: the walk and the probe
+//! - an element selected, a window opened, a property change and a
+//!   progress bar's range value change, NVDA's automation-event and
+//!   property-change handlers: the walk and the probe
 //!   of its native-element test (819 to 824), then the window's acceptance
 //!   facts, as the handler judges acceptance next (832);
 //! - a notification, NVDA's notification handler: the walk alone, a walk
@@ -76,7 +77,7 @@ pub enum Handler {
     Focus,
     /// The native-element test of NVDA's automation-event and
     /// property-change handlers: an element selected, a window opened, a
-    /// property change.
+    /// property change, a progress bar's range value change.
     Native,
     /// NVDA's notification handler.
     Notification,
@@ -92,7 +93,8 @@ impl Handler {
             EventKind::UiaFocus | EventKind::UiaMenuOpened => Self::Focus,
             EventKind::UiaElementSelected
             | EventKind::UiaWindowOpened
-            | EventKind::UiaPropertyChanged => Self::Native,
+            | EventKind::UiaPropertyChanged
+            | EventKind::UiaProgress => Self::Native,
             EventKind::UiaNotification => Self::Notification,
             _ => Self::None,
         }

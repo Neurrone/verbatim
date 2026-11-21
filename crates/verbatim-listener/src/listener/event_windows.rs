@@ -1,6 +1,6 @@
 //! The window facts one `WinEvent` is handled with ([`EventWindows`]):
 //! made as the event's handling starts and dropped as it ends, so that
-//! the foreground's watch, the tell and the progress path each see the one
+//! the foreground's watch and the tell each see the one
 //! answer read for the event, and none is read twice, as NVDA's
 //! `WinEvent` callback reads a window's class once (`winEventCallback`,
 //! `nvda/source/IAccessibleHandler/internalWinEventHandler.py`). Every
@@ -17,13 +17,10 @@ use verbatim_win32::window_facts::{ReadOnce, SystemReads, WindowReads};
 
 /// What the listener reads of Windows' own state as it handles a
 /// `WinEvent`, beside a window's facts: whether a window exists, whether
-/// it is visible, whether an existing window is hung, and the process of
-/// a thread.
+/// an existing window is hung, and the process of a thread.
 pub(super) trait EventReads: WindowReads {
     /// Whether `window` is a window that exists (`IsWindow`).
     fn exists(&self, window: isize) -> bool;
-    /// Whether `window` is visible (`IsWindowVisible`).
-    fn visible(&self, window: isize) -> bool;
     /// Whether `window`, a window found to exist, is ghosted or hung
     /// ([`verbatim_win32::window::hang_state`]).
     fn hang_state(&self, window: isize) -> Readability;
@@ -37,10 +34,6 @@ pub(super) trait EventReads: WindowReads {
 impl EventReads for SystemReads {
     fn exists(&self, window: isize) -> bool {
         verbatim_win32::window::window_exists(window)
-    }
-
-    fn visible(&self, window: isize) -> bool {
-        verbatim_win32::window::window_is_visible(window)
     }
 
     fn hang_state(&self, window: isize) -> Readability {
@@ -67,21 +60,14 @@ impl EventReads for SystemReads {
 pub(super) struct EventWindows<'r, R> {
     facts: ReadOnce<'r, R>,
     reads: &'r R,
-    readability: &'r dyn Fn(isize) -> Readability,
     existing: RefCell<BTreeMap<isize, bool>>,
     processes: RefCell<BTreeMap<u32, Option<u32>>>,
 }
 
 impl<'r, R: EventReads> EventWindows<'r, R> {
     /// Nothing read yet for the event but the class of its window, `hook`,
-    /// when the hook's filter read it; facts read from `reads`, and the
-    /// progress path's readability judged by `readability`, the
-    /// listener's one judge of it.
-    pub(super) fn new(
-        reads: &'r R,
-        readability: &'r dyn Fn(isize) -> Readability,
-        hook: Option<(isize, &str)>,
-    ) -> Self {
+    /// when the hook's filter read it; facts read from `reads`.
+    pub(super) fn new(reads: &'r R, hook: Option<(isize, &str)>) -> Self {
         let facts = ReadOnce::new(reads);
         Self {
             facts: match hook {
@@ -89,7 +75,6 @@ impl<'r, R: EventReads> EventWindows<'r, R> {
                 None => facts,
             },
             reads,
-            readability,
             existing: RefCell::new(BTreeMap::new()),
             processes: RefCell::new(BTreeMap::new()),
         }
@@ -127,20 +112,9 @@ impl<'r, R: EventReads> EventWindows<'r, R> {
         self.reads.hang_state(window)
     }
 
-    /// Whether `window` can be read, judged now by the listener's one
-    /// judge, as the progress path judges it after the tell is sent.
-    pub(super) fn readability_now(&self, window: isize) -> Readability {
-        (self.readability)(window)
-    }
-
     /// Whether this process can open the input desktop, read now.
     pub(super) fn input_desktop_opens(&self) -> bool {
         self.reads.input_desktop_opens()
-    }
-
-    /// Whether `window` is visible, read now.
-    pub(super) fn visible(&self, window: isize) -> bool {
-        self.reads.visible(window)
     }
 
     /// The process `thread` belongs to, read once for the event.

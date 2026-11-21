@@ -358,7 +358,6 @@ impl Run {
             Executables::both(exe()),
             LIMIT,
             Arc::new(IgnoredProcesses::hold(ignored.iter().copied())),
-            false,
         )
         .expect("the supervisor starts");
         let events = Delivered::new(events, &supervisor);

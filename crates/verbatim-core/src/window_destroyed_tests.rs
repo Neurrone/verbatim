@@ -121,7 +121,7 @@ fn terminal_followed() -> Held {
         Vec::new(),
         500,
     );
-    let _ = crate::terminal::reading::wanted_for_tests(&mut state.state);
+    let _ = state.state.wants.take_for_tests();
     state
 }
 
@@ -265,9 +265,6 @@ fn the_follow_naming_nothing_answered_changes_no_terminal_state() {
             NOTHING
         );
         assert_eq!(state.state.terminal_focus.focused, before);
-        assert_eq!(
-            crate::terminal::reading::wanted_for_tests(&mut state.state),
-            []
-        );
+        assert_eq!(state.state.wants.take_for_tests(), []);
     }
 }

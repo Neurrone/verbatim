@@ -27,7 +27,7 @@ use verbatim_model::{
 };
 
 use crate::entries::{Entries, Entry};
-use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow};
 use crate::keys::entry::Fence;
 use crate::state::SrState;
 use crate::terminal::{Said, SaidItem, TerminalItem};
@@ -125,15 +125,6 @@ pub(crate) enum Reading {
     Stalled { holding: bool },
 }
 
-/// A request Core's terminal reading wants sent outside the queue: awaited
-/// under its token, or by nothing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Wanted {
-    token: Option<u64>,
-    window: RequestWindow,
-    request: Wire,
-}
-
 /// What Core keeps of the focused terminal's reading.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TerminalFocus {
@@ -142,8 +133,6 @@ pub(crate) struct TerminalFocus {
     /// Whether an entry's full read of the focused terminal is out (a
     /// caret key's or a review command's).
     entry_read: bool,
-    /// The last token given to a request.
-    tokens: u64,
     /// The time of the queue input being handled, in microseconds on the
     /// shared clock, at which the flood policy's requests are sent.
     pub(crate) now_us: u64,
@@ -151,9 +140,6 @@ pub(crate) struct TerminalFocus {
     /// its pass, each with when the hook saw it, in milliseconds, and its
     /// trace (`crate::keys::terminal`).
     pub(crate) deferred: Vec<(crate::terminal::TerminalKeyKind, u64, TraceId)>,
-    /// The requests wanted, taken as the queue settles.
-    #[serde(skip)]
-    wanted: Vec<Wanted>,
 }
 
 /// The modelled focused terminal, whose quiet-period timer counts.
@@ -169,29 +155,17 @@ pub(crate) fn focused(state: &SrState) -> Option<Terminal> {
     state.terminal_focus.focused.terminal()
 }
 
-/// The requests wanted, taken.
-pub(crate) fn wanted(state: &mut SrState) -> Vec<CoreRequest> {
-    std::mem::take(&mut state.terminal_focus.wanted)
-        .into_iter()
-        .map(|wanted| CoreRequest {
-            token: wanted.token,
-            reader: Reader::Outpost(wanted.window.process),
-            window: wanted.window,
-            request: wanted.request,
-            due_after_us: OTHER_DUE_US,
-        })
-        .collect()
-}
-
-/// Whether requests are wanted.
-pub(crate) fn wants(state: &SrState) -> bool {
-    !state.terminal_focus.wanted.is_empty()
-}
-
-/// A new token.
+/// A new token, from the facts' one counter.
 fn token(state: &mut SrState) -> u64 {
-    state.terminal_focus.tokens = state.terminal_focus.tokens.saturating_add(1);
-    state.terminal_focus.tokens
+    state.wants.token()
+}
+
+/// Wants `request` of the outpost of `window`'s application, naming
+/// `window`, awaited under `token` or by nothing.
+fn want(state: &mut SrState, token: Option<u64>, window: RequestWindow, request: Wire) {
+    state
+        .wants
+        .want(token, (Reader::Outpost(window.process), window), request);
 }
 
 /// The `Follow` request naming `terminal`.
@@ -211,11 +185,12 @@ fn follow_request(terminal: &Terminal) -> Wire {
 /// when `resent`.
 fn want_follow(state: &mut SrState, terminal: &Terminal, resent: bool) -> FollowOut {
     let token = token(state);
-    state.terminal_focus.wanted.push(Wanted {
-        token: Some(token),
-        window: terminal.window,
-        request: follow_request(terminal),
-    });
+    want(
+        state,
+        Some(token),
+        terminal.window,
+        follow_request(terminal),
+    );
     FollowOut { token, resent }
 }
 
@@ -272,14 +247,15 @@ fn want_output(
 ) -> Reading {
     let read = full_read(state, terminal, (None, true), now_us);
     let token = token(state);
-    state.terminal_focus.wanted.push(Wanted {
-        token: Some(token),
-        window: terminal.window,
-        request: Wire::Text {
+    want(
+        state,
+        Some(token),
+        terminal.window,
+        Wire::Text {
             node: terminal.node,
             op: TextOp::ReadTerminal(read),
         },
-    });
+    );
     if mark == (Mark::Waited { release: true }) {
         state.terminal.release_waiting = true;
     }
@@ -296,14 +272,15 @@ fn want_output(
 fn want_baseline(state: &mut SrState, terminal: &Terminal, now_us: u64) -> u64 {
     let read = full_read(state, terminal, (None, false), now_us);
     let token = token(state);
-    state.terminal_focus.wanted.push(Wanted {
-        token: Some(token),
-        window: terminal.window,
-        request: Wire::Text {
+    want(
+        state,
+        Some(token),
+        terminal.window,
+        Wire::Text {
             node: terminal.node,
             op: TextOp::ReadTerminal(read),
         },
-    });
+    );
     token
 }
 
@@ -327,11 +304,7 @@ pub(crate) fn committed(
     }
     let Some(terminal) = to else {
         for (window, request) in follows {
-            state.terminal_focus.wanted.push(Wanted {
-                token: None,
-                window,
-                request,
-            });
+            want(state, None, window, request);
         }
         state.terminal_focus.focused = FocusedTerminal::None;
         return;
@@ -349,11 +322,7 @@ pub(crate) fn committed(
                 resent: false,
             });
         }
-        state.terminal_focus.wanted.push(Wanted {
-            token,
-            window,
-            request,
-        });
+        want(state, token, window, request);
     }
     if let Some(model) = terminal_model::model_mut(state, terminal.node) {
         model.focused(now_us / 1_000);
@@ -1400,16 +1369,6 @@ pub(crate) fn answered_with(
         Entry::TerminalSpeech(entry) => Some(*entry),
         _ => None,
     })
-}
-
-/// The requests wanted, taken, each with its token and what it asks, for
-/// the tests.
-#[cfg(test)]
-pub(crate) fn wanted_for_tests(state: &mut SrState) -> Vec<(Option<u64>, Wire)> {
-    std::mem::take(&mut state.terminal_focus.wanted)
-        .into_iter()
-        .map(|wanted| (wanted.token, wanted.request))
-        .collect()
 }
 
 #[cfg(test)]

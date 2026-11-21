@@ -500,6 +500,7 @@ pub(crate) fn judge_alone(entry: &Entry, view: &View<'_>) -> Option<(Validity, T
         | Entry::CurrentFocus(_)
         | Entry::MsaaChange(_)
         | Entry::UiaChange(_)
+        | Entry::Progress(_)
         | Entry::Caret(_)
         | Entry::ForegroundMarker { .. }
         | Entry::Press(_)

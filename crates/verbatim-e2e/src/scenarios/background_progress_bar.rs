@@ -1,8 +1,9 @@
 //! A UIA and a classic progress bar in background windows
-//! (`docs/design/progress-bars.md`, "Rules"): with
+//! (`docs/parity/changes-and-selection.md`, "Progress bars"): with
 //! `report_background_progress_bars` on each change is indicated, and off
 //! each says nothing, shown by the tone of a foreground bar that changes
-//! after it. The listener reports both bars, with no outpost asked. A
+//! after it. The listener tells both bars' changes, and Core asks it to
+//! read the classic bar, with no outpost asked. A
 //! change raised before a client has registered for it reaches nobody, so
 //! each UIA window is waited on for a registration of property changes, as
 //! in `foreground_progress_bar`; a classic bar's event needs none.

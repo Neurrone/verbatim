@@ -14,10 +14,9 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    ActionName, BarChange, Earcon, EarlierElement, Effect, Input, Message, NodeId, NodeSnapshot,
-    Percent, Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent,
-    SpeechPriority, State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource,
-    WindowFacts,
+    ActionName, Earcon, EarlierElement, Effect, Input, Message, NodeId, NodeSnapshot, Percent,
+    Phrase, Pid, PropertyChange, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority,
+    State, StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
 use verbatim_model::{
     Backend, FocusNow, FocusText, FocusValidity, ObjectKey, WindowHandle, WindowIdentity,
@@ -99,20 +98,13 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::Settings(settings) => {
-            let mut effects =
+            let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
                     crate::terminal::drop_waiting(state)
                 } else {
                     Vec::new()
                 };
             state.settings = *settings;
-            // The listener's configuration, at every `Input::Settings`
-            // whatever its value, the first included, so the supervisor's
-            // launch copy is corrected from Core's first input even if the
-            // two loads ever differed (Dickson, 2026-11-19).
-            effects.push(Effect::ListenerConfiguration {
-                report_background_progress_bars: settings.report_background_progress_bars,
-            });
             effects
         }
         Input::Reported(reported) => {
@@ -1341,9 +1333,9 @@ fn reduce_value_changed(
     spoken.value.clone_from(&value);
     focus.snapshot.value.clone_from(&value);
     // A focused progress bar with a number, on screen, is heard only as a
-    // bar, from the listener's change (`docs/design/progress-bars.md`,
-    // "Rules"); off screen, or with no number, it is an ordinary value
-    // change, as NVDA's behaviour falls through.
+    // bar, by its read at its value change (`crate::progress`); off
+    // screen, or with no number, it is an ordinary value change, as NVDA's
+    // behaviour falls through.
     if focus.snapshot.role == Role::ProgressBar
         && !focus.snapshot.states.contains(State::Offscreen)
         && value.as_deref().and_then(Percent::parse).is_some()
@@ -1370,22 +1362,15 @@ fn reduce_value_changed(
     )]
 }
 
-/// A progress bar's value changed, reported by the listener
-/// (`docs/design/progress-bars.md`, "Rules"): heard when its window is the
-/// foreground window or beneath it, or anywhere when the setting asks for
-/// background bars.
-pub(crate) fn reduce_bar_change(state: &mut SrState, change: &BarChange) -> Vec<Effect> {
-    if !change.in_foreground && !state.settings.report_background_progress_bars {
-        return Vec::new();
-    }
-    indicate_progress(state, change.place, change.percent)
-}
-
 /// The theme's progress indication for the bar at `place` at `percent`,
 /// once the percentage has moved by at least a percent from the last one
 /// indicated at that place (`docs/nvda/object-model.md`, "How a progress
 /// bar reports its value").
-fn indicate_progress(state: &mut SrState, place: (i32, i32), percent: Percent) -> Vec<Effect> {
+pub(crate) fn indicate_progress(
+    state: &mut SrState,
+    place: (i32, i32),
+    percent: Percent,
+) -> Vec<Effect> {
     let hundredths = percent.hundredths();
     let last = state
         .progress_reported

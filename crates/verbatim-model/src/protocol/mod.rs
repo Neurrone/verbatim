@@ -227,15 +227,6 @@ pub enum CoreToListener {
         /// The position of the last message carrying tokens Core handled.
         acknowledged: u64,
     },
-    /// What the listener judges its own reads under, set by Core alone: at
-    /// its launch through its arguments, then on every change. While
-    /// `report_background_progress_bars` is false, the listener skips the
-    /// read of a value change whose window the acceptance test refuses,
-    /// as NVDA's acceptance drops it (Dickson, 2026-11-19).
-    Configuration {
-        /// Whether background progress bars are reported.
-        report_background_progress_bars: bool,
-    },
 }
 
 impl CoreToListener {
@@ -249,8 +240,7 @@ impl CoreToListener {
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_)
-            | CoreToListener::ElementsHeld { .. }
-            | CoreToListener::Configuration { .. } => {}
+            | CoreToListener::ElementsHeld { .. } => {}
         }
     }
 
@@ -265,8 +255,7 @@ impl CoreToListener {
             | CoreToListener::Shutdown
             | CoreToListener::Request(_)
             | CoreToListener::Cancel(_)
-            | CoreToListener::ElementsHeld { .. }
-            | CoreToListener::Configuration { .. } => 0,
+            | CoreToListener::ElementsHeld { .. } => 0,
         }
     }
 }
@@ -341,18 +330,6 @@ pub enum ListenerToCore {
     ExitHandled {
         /// The process that exited.
         pid: Pid,
-    },
-    /// A progress bar's value changed, on the listener's one path for
-    /// every bar (`docs/design/progress-bars.md`), read with no node since
-    /// the bar need not be held to be heard. The supervisor passes it to
-    /// the app, which gives it to Core.
-    Progress {
-        /// What changed.
-        change: crate::BarChange,
-        /// When the listener observed it and queued it, and when its writer
-        /// began writing this message; verbatim.exe logs the listener's
-        /// stages from them.
-        timing: EventTiming,
     },
     /// A window came to the system's foreground: the only report of one,
     /// from which Core takes the keyboard hook's view of the foreground
@@ -624,7 +601,6 @@ impl ListenerToCore {
             ListenerToCore::Ready { .. }
             | ListenerToCore::Pong { .. }
             | ListenerToCore::Fault { .. }
-            | ListenerToCore::Progress { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Destroyed { .. }
             | ListenerToCore::Answer(_)
@@ -640,15 +616,10 @@ impl ListenerToCore {
         self.carried_token().is_some()
     }
 
-    /// Records, in the timing the message carries, when its writer began
-    /// writing it to verbatim.exe's pipe: a bar's change's
-    /// (`EventTiming::listener_written_at_us`), or a pong's. Nothing for
-    /// any other message.
+    /// Records when its writer began writing it to verbatim.exe's pipe: a
+    /// pong's. Nothing for any other message.
     pub fn written(&mut self, at_us: u64) {
         match self {
-            ListenerToCore::Progress { timing, .. } => {
-                timing.listener_written_at_us = at_us;
-            }
             ListenerToCore::Pong { written_at_us, .. } => *written_at_us = at_us,
             ListenerToCore::Ready { .. }
             | ListenerToCore::ExitHandled { .. }

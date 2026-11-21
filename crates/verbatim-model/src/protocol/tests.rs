@@ -23,10 +23,6 @@ fn name(message: &impl std::fmt::Debug) -> String {
         .to_owned()
 }
 
-fn timing() -> EventTiming {
-    EventTiming::default()
-}
-
 /// One sample of each [`ListenerToCore`] variant, after `previous`.
 fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerToCore> {
     let Some(previous) = previous else {
@@ -36,15 +32,7 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
     };
     Some(match previous {
         ListenerToCore::Ready { .. } => ListenerToCore::ExitHandled { pid: Pid(1) },
-        ListenerToCore::ExitHandled { .. } => ListenerToCore::Progress {
-            change: crate::BarChange {
-                percent: crate::Percent::parse("41").expect("a number"),
-                place: (10, 20),
-                in_foreground: true,
-            },
-            timing: timing(),
-        },
-        ListenerToCore::Progress { .. } => ListenerToCore::Foreground {
+        ListenerToCore::ExitHandled { .. } => ListenerToCore::Foreground {
             window: 1,
             root_owner: 1,
             process: 2,
@@ -133,7 +121,6 @@ fn only_a_tell_naming_a_kept_element_carries_a_token() {
         [
             ("Ready".to_owned(), false),
             ("ExitHandled".to_owned(), false),
-            ("Progress".to_owned(), false),
             ("Foreground".to_owned(), false),
             ("Tell".to_owned(), false),
             ("Destroyed".to_owned(), false),
@@ -173,23 +160,6 @@ fn a_pongs_trip_back_runs_from_its_write_to_verbatim_exes_read() {
         unreachable!("a pong stays a pong");
     };
     assert_eq!(hop_us(written_at_us, 7_250), Some(250));
-}
-
-#[test]
-fn a_bar_changes_trip_runs_from_the_listeners_write_to_verbatim_exes_read() {
-    let mut changed = ListenerToCore::Progress {
-        change: crate::BarChange {
-            percent: crate::Percent::parse("41").expect("a number"),
-            place: (10, 20),
-            in_foreground: true,
-        },
-        timing: EventTiming::default(),
-    };
-    changed.written(7_000);
-    let ListenerToCore::Progress { timing, .. } = changed else {
-        unreachable!("a bar's change stays a bar's change");
-    };
-    assert_eq!(hop_us(timing.listener_written_at_us, 7_250), Some(250));
 }
 
 /// A terminal's change tell arriving on an outpost's pipe names its node by

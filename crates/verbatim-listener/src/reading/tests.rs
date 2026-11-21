@@ -43,10 +43,6 @@ impl Reading for Script {
 
     fn thread(&self, _pid: Pid) {}
 
-    fn bar(&self, _job: &Job) -> bool {
-        false
-    }
-
     fn run(&self, (): &mut (), job: Job, _number: Option<RequestNumber>) -> u64 {
         let _ = self
             .ran_on
@@ -109,10 +105,7 @@ impl Fixture {
     fn push(&self, pid: u32, id: u64, gate: Option<Receiver<()>>) {
         self.readers.push(
             Pid(pid),
-            JobKind::Request {
-                number: RequestNumber(id),
-                focus: false,
-            },
+            JobKind::Request(RequestNumber(id)),
             Job { id, gate },
         );
     }

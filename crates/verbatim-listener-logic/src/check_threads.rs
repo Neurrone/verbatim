@@ -105,8 +105,8 @@ impl<E, W> Default for CheckThreads<E, W> {
 }
 
 impl<E, W> CheckThreads<E, W> {
-    /// An event of `pid`'s arrived, of any kind the listener hears but the
-    /// progress path's range-value changes (column A).
+    /// An event of `pid`'s arrived, of any UI Automation kind the
+    /// listener hears (column A).
     pub fn push(&mut self, pid: Pid, event: E) -> Pushed<E> {
         if self.stopping {
             return Pushed::Dropped(event);

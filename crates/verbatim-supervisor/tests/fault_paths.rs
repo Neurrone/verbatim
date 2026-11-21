@@ -122,7 +122,6 @@ fn supervisor(sink: EventSink) -> Supervisor {
         Executables::both(exe),
         LIMIT,
         std::sync::Arc::default(),
-        false,
     )
     .expect("the supervisor starts")
 }

@@ -69,7 +69,7 @@ struct Checked {
 /// the hook thread's body in `lib.rs`, by the hook thread's start-up rule,
 /// the audio thread's pass, by the audio rule, and the listener's event
 /// path, by its rule of reads.
-const CHECKED: [Checked; 11] = [
+const CHECKED: [Checked; 9] = [
     Checked {
         path: "crates/verbatim-listener-logic/src/schedule.rs",
         allowed: &[
@@ -132,20 +132,6 @@ const CHECKED: [Checked; 11] = [
         forbidden: &[&EVENT_PATH_FORBIDDEN],
         skip_tests: true,
         within: Some("watch_win_event"),
-    },
-    Checked {
-        path: "crates/verbatim-listener/src/listener.rs",
-        allowed: &[],
-        forbidden: &[&EVENT_PATH_FORBIDDEN],
-        skip_tests: true,
-        within: Some("route_win_event"),
-    },
-    Checked {
-        path: "crates/verbatim-listener/src/listener.rs",
-        allowed: &[],
-        forbidden: &[&EVENT_PATH_FORBIDDEN],
-        skip_tests: true,
-        within: Some("value_change_event"),
     },
     Checked {
         path: "crates/verbatim-listener/src/listener/tells.rs",

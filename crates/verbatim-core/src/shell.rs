@@ -59,7 +59,6 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::BlockedByMessageBox { trace_id } => blocked_by_message_box(*trace_id),
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
-        Input::Progress { change, .. } => crate::reduce::reduce_bar_change(state, change),
         _ => Vec::new(),
     }
 }

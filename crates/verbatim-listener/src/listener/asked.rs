@@ -5,34 +5,32 @@
 //! event's, read up its ancestors until it reaches one Core already knows,
 //! answering what it read and the element's route; a menu opening's; any
 //! other event's object, by property set) or an MSAA object at an event's
-//! address (the desktop window's name). Each request is answered once, with
-//! one of the five outcomes, by the job that runs it or, for one cancelled
-//! or abandoned, by the reading threads' shell.
+//! address (the desktop window's name, a classic progress bar's role,
+//! value, states and place). Each request is answered once, with one of the
+//! five outcomes, by the job that runs it or, for one cancelled or
+//! abandoned, by the reading threads' shell.
 //!
-//! The progress path's bar reads and the releases of kept elements run on
-//! the same threads, behind Core's requests.
+//! The releases of kept elements run on the same threads, behind Core's
+//! requests.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::sync::Arc;
 
-use verbatim_listener_logic::focus::{BarObject, BarVerdict, ClassicBarRead, WindowAnswer};
 use verbatim_listener_logic::kept::Start;
 use verbatim_listener_logic::schedule::{Ended, Ending};
 use verbatim_model::property::{
     Number, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
-use verbatim_model::protocol::Responder;
 use verbatim_model::request::{
     Answer, Ask, KnownAncestor, NodeRead, ObjectRead, ObjectRef, Outcome, Purpose, ReadObject,
     Refusal, Reply, Request, RequestNumber, Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::ElementToken;
-use verbatim_model::{BarChange, Percent, Pid, State, WindowHandle};
+use verbatim_model::{Pid, State, WindowHandle};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
-    Agile, Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent,
-    ListenerProgress, Node, NodeGates, Place, Shape, Uia,
+    Agile, Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
+    NodeGates, Shape, Uia,
 };
 use verbatim_uia_rops::{FocusAncestry, FocusQuery, Progress, focus_ancestry_classic};
 use verbatim_win32::window::{Readability, WindowReadabilityReader};
@@ -41,38 +39,14 @@ use windows::Win32::UI::Accessibility::UIA_LegacyIAccessibleStatePropertyId;
 
 use super::Outgoing;
 use super::checking::Kept;
-use super::configuration::BackgroundBars;
 use super::tells::SystemReads;
 use crate::call_log::{CallLog, MAX_ANCESTORS};
 use crate::reading::Reading;
-use verbatim_win32::window_facts::WindowReads;
 
 /// One job of a reading thread.
 pub(crate) enum UiaJob {
     /// Core's request, on an object of the thread's application.
     Request(Box<Ask>),
-    /// A value change the hook let through, read as `read` says; a bar's
-    /// change is sent to Core through `report`, what a read found the
-    /// object to be through `learn`, and what a [`ClassicBarRead::Probe`]
-    /// found its window to be through `window`.
-    ClassicBar {
-        object: BarObject,
-        read: ClassicBarRead,
-        report: Responder<BarChange>,
-        learn: Responder<BarVerdict>,
-        window: Responder<WindowAnswer>,
-    },
-    /// A UIA progress bar's range value changed: `percent` from its event's
-    /// cache; its place and window are read here, a windowless bar judged
-    /// under `bars`, the configuration the callback read for the change,
-    /// and its change sent through `report`.
-    UiaBar {
-        element: Agile<ListenerProgress>,
-        hwnd: isize,
-        percent: Percent,
-        bars: BackgroundBars,
-        report: Responder<BarChange>,
-    },
     /// The elements kept for tells and let go, released here, on their
     /// application's reading thread, since a release can call into the
     /// application.
@@ -83,15 +57,7 @@ pub(crate) enum UiaJob {
 pub(crate) struct ReadingThread {
     /// Its UI Automation client, `None` when none could be made.
     uia: Option<Uia>,
-    /// The nearest window of each windowless progress bar read so far on
-    /// this thread, by runtime id, oldest first, at most
-    /// [`BAR_WINDOWS_KEPT`], so a Settings page's bar is walked to its
-    /// window once.
-    bar_windows: VecDeque<(Vec<i32>, isize)>,
 }
-
-/// How many windowless bars' nearest windows a reading thread remembers.
-const BAR_WINDOWS_KEPT: usize = 32;
 
 /// A request's read of a kept element, handed back so its end judges the
 /// element under the lock (Table 6, column B).
@@ -101,18 +67,18 @@ pub(crate) struct KeptRead {
     element: Agile<ListenerEvent>,
 }
 
-/// The listener's reading: Core's requests, bar reads and releases.
+/// The listener's reading: Core's requests and releases.
 pub(crate) struct UiaReading {
     pub(super) outgoing: Arc<Outgoing>,
     pub(super) kept: Arc<Kept>,
     /// The one judge of whether a window is hung or ghosted, which the
     /// walks and the UIA callbacks are given.
     pub(super) readability: WindowReadabilityReader,
-    /// What reads an MSAA object's name at an event's address:
-    /// `AccessibleObjectFromEvent` then `accName`
-    /// ([`verbatim_ia2::acquire::name_at_event`]), unless a test gives its
+    /// What reads an MSAA object's properties at an event's address:
+    /// `AccessibleObjectFromEvent` then one call for each of the set
+    /// ([`verbatim_ia2::acquire::read_at_event`]), unless a test gives its
     /// own.
-    pub(super) name_at_event: fn(isize, i32, i32) -> Option<String>,
+    pub(super) read_at_event: MsaaReads,
 }
 
 impl UiaReading {
@@ -122,7 +88,7 @@ impl UiaReading {
             outgoing: Arc::clone(outgoing),
             kept: Arc::clone(kept),
             readability: Arc::new(verbatim_win32::window::readability),
-            name_at_event: verbatim_ia2::acquire::name_at_event,
+            read_at_event: verbatim_ia2::acquire::read_at_event,
         }
     }
 }
@@ -151,7 +117,7 @@ impl UiaReading {
                 object,
                 child,
             } => (
-                read_msaa(self.name_at_event, (*window, *object, *child), read),
+                read_msaa(self.read_at_event, (*window, *object, *child), read),
                 None,
             ),
             ObjectRef::Node(_) => (Outcome::Refused(Refusal::Unsupported), None),
@@ -213,14 +179,7 @@ impl Reading for UiaReading {
                 |error| tracing::warn!(%pid, %error, "a reading thread could not create a UIA client"),
             )
             .ok();
-        ReadingThread {
-            uia,
-            bar_windows: VecDeque::new(),
-        }
-    }
-
-    fn bar(&self, job: &UiaJob) -> bool {
-        matches!(job, UiaJob::ClassicBar { .. } | UiaJob::UiaBar { .. })
+        ReadingThread { uia }
     }
 
     fn run(
@@ -241,39 +200,6 @@ impl Reading for UiaReading {
                     },
                     kept,
                 ))
-            }
-            UiaJob::ClassicBar {
-                object,
-                read,
-                report,
-                learn,
-                window,
-            } => {
-                super::read_classic_bar(object, read, report, learn, window);
-                None
-            }
-            UiaJob::UiaBar {
-                element,
-                hwnd,
-                percent,
-                bars,
-                report,
-            } => {
-                if let (Some(uia), Ok(sender)) = (thread.uia.as_ref(), element.resolve())
-                    && let Some((place, window)) = uia_bar_place(
-                        uia,
-                        &mut thread.bar_windows,
-                        (&sender, hwnd),
-                        (bars, &SystemReads),
-                    )
-                {
-                    report.answer(BarChange {
-                        percent,
-                        place,
-                        in_foreground: super::in_foreground(window),
-                    });
-                }
-                None
             }
             UiaJob::Release(elements) => {
                 drop(elements);
@@ -304,9 +230,8 @@ impl Reading for UiaReading {
             Ending::Cancelled => self.answer(number, Outcome::Ended, "cancelled"),
             Ending::Exited => self.answer(number, Outcome::NotThere, "its process exited"),
             Ending::NoThread => self.answer(number, Outcome::Ended, "no reading thread"),
-            // Dropped unanswered at the shutdown; a request is never
-            // limited.
-            Ending::Stopped | Ending::Limited => {}
+            // Dropped unanswered at the shutdown.
+            Ending::Stopped => {}
         }
     }
 
@@ -334,78 +259,54 @@ pub(super) fn handle(window: isize) -> WindowHandle {
     WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
 }
 
-/// Where the UIA progress bar `sender` is, by one read of its [`Place`],
-/// and its nearest window: its own, `hwnd`, when it has one, or else by
-/// UIA's lookup, remembered by runtime id in `bar_windows`. A windowless
-/// bar's window is found first, then judged by acceptance under `bars`,
-/// its facts read through `reads` ([`super::configuration::admits_bar`]),
-/// and only an admitted bar's [`Place`] is read, NVDA's order of nearest
-/// window, acceptance, object (Dickson, 2026-11-19); a bar with its own
-/// window was judged in the UI Automation callback, before it was queued. A bar that
-/// reports no rectangle is placed at (0, 0), as NVDA places a bar whose
-/// location it cannot read (`nvda/source/NVDAObjects/behaviors.py` 62 to
-/// 67) and as the classic path does. `None` when it has no window above
-/// it, is not admitted, cannot be read, or is off screen. Public so that
-/// mockapp's tests place mockapp's own bars as the listener's reading
-/// thread does.
-pub fn uia_bar_place(
-    uia: &Uia,
-    bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
-    (sender, hwnd): (&Cached<ListenerProgress>, isize),
-    (bars, reads): (BackgroundBars, &impl WindowReads),
-) -> Option<((i32, i32), isize)> {
-    let window = if hwnd == 0 {
-        let window = bar_window(bar_windows, sender)?;
-        if !super::configuration::admits_bar(bars, reads, window) {
-            return None;
-        }
-        window
-    } else {
-        hwnd
-    };
-    let request = uia.request_fixed::<Place>().ok()?;
-    let place = sender.live().refresh(&request).ok()?.read();
-    if place.offscreen {
-        return None;
+/// What reads an MSAA object's properties at an event's address, the
+/// window, object and child ids, for the set asked; `None` when the object
+/// cannot be acquired.
+pub(super) type MsaaReads = fn(isize, i32, i32, &[PropertyId]) -> Option<PropertyValues>;
+
+/// The properties an MSAA object at an event's address is read for: its
+/// name, as the desktop window's name is read for the virtual desktop's
+/// (`eventHandler.py` 338 to 346), and its role, value, states and place,
+/// as a classic progress bar's are read at its value change
+/// (`NVDAObjects/behaviors.py` 41 to 86); anything more is the outpost's.
+const MSAA_SET: [PropertyId; 5] = [
+    PropertyId::Name,
+    PropertyId::Role,
+    PropertyId::Value,
+    PropertyId::States,
+    PropertyId::Rect,
+];
+
+/// The read of an MSAA object at an event's address `read` names, as a
+/// reading thread makes it for Core's request ([`read_msaa`], through
+/// [`verbatim_ia2::acquire::read_at_event`]); a read of any other object is
+/// refused. Public so that a test standing in for the listener reads
+/// mockapp's objects as the listener reads them.
+#[must_use]
+pub fn read_msaa_object(read: &ReadObject) -> Outcome {
+    match read.object {
+        ObjectRef::Msaa {
+            window,
+            object,
+            child,
+        } => read_msaa(
+            verbatim_ia2::acquire::read_at_event,
+            (window, object, child),
+            read,
+        ),
+        ObjectRef::Kept { .. } | ObjectRef::Node(_) => Outcome::Refused(Refusal::Unsupported),
     }
-    let centre = place.rect.map_or((0, 0), |rect| {
-        (
-            rect.left.saturating_add(rect.width / 2),
-            rect.top.saturating_add(rect.height / 2),
-        )
-    });
-    Some((centre, window))
 }
 
-/// The nearest window of the windowless bar `sender`: remembered by its
-/// runtime id in `bar_windows`, or found by UIA's lookup and remembered;
-/// `None` when it has none.
-fn bar_window(
-    bar_windows: &mut VecDeque<(Vec<i32>, isize)>,
-    sender: &Cached<ListenerProgress>,
-) -> Option<isize> {
-    let runtime_id = sender.runtime_id();
-    if let Some(&(_, window)) = bar_windows.iter().find(|(id, _)| *id == runtime_id) {
-        return Some(window);
-    }
-    let window = verbatim_uia::nearest_window_handle(sender.live().element())?;
-    bar_windows.push_back((runtime_id, window));
-    if bar_windows.len() > BAR_WINDOWS_KEPT {
-        bar_windows.pop_front();
-    }
-    Some(window)
-}
-
-/// The read of an MSAA object at an event's address: the listener reads
-/// only its name, as the desktop window's name is read for the virtual
-/// desktop's (`eventHandler.py` 338 to 346); anything more is the
-/// outpost's.
+/// The read of an MSAA object at an event's address, through `reads`: of
+/// the properties [`MSAA_SET`] holds, with no relation, walk or
+/// descendants; any other read is refused.
 fn read_msaa(
-    name_at_event: fn(isize, i32, i32) -> Option<String>,
+    reads: MsaaReads,
     (window, object, child): (WindowHandle, i32, i32),
     read: &ReadObject,
 ) -> Outcome {
-    if read.set.iter().any(|id| *id != PropertyId::Name)
+    if read.set.iter().any(|id| !MSAA_SET.contains(id))
         || read.walk.is_some()
         || read.relation.is_some()
         || read.descendants
@@ -413,18 +314,9 @@ fn read_msaa(
         return Outcome::Refused(Refusal::Unsupported);
     }
     let hwnd = hwnd_of(window);
-    let Some(name) = name_at_event(hwnd, object, child) else {
+    let Some(values) = reads(hwnd, object, child, &read.set) else {
         return Outcome::NotThere;
     };
-    let values = PropertyValues(
-        read.set
-            .iter()
-            .map(|&id| PropertyAnswer {
-                id,
-                value: Some(PropertyValue::Text(name.clone())),
-            })
-            .collect(),
-    );
     Outcome::Result(Reply::Object(Box::new(ObjectRead {
         object: NodeRead {
             node: None,

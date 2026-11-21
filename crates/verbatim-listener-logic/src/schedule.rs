@@ -2,7 +2,7 @@
 //! `docs/design/readers-tell-core-asks-build1.md`, "The listener in this
 //! build" and Table 9): one reading thread per application process
 //! generation, which runs that application's jobs, Core's requests ahead
-//! of the progress path's bar reads and the releases of kept elements.
+//! of the releases of kept elements.
 //!
 //! A request is answered once. Core's Cancel drops a queued request,
 //! answered cancelled; a running one is abandoned with a fresh thread when
@@ -10,10 +10,7 @@
 //! threads, and left alone for any other reason, its answer sent when its
 //! call returns. At the limit the application has no thread until an
 //! abandoned one returns, and its jobs wait; Core's due time and Cancel
-//! bound a request's wait. A bar read is unasked, so it keeps the progress
-//! path's own deadline ([`BAR_READ_DEADLINE`]), its abandoned threads
-//! counted apart ([`BAR_READS_ABANDONED_LIMIT`]), and its limits per
-//! raising thread and application.
+//! bound a request's wait.
 //!
 //! A thread with nothing to run waits for the idle time the check threads
 //! use ([`IDLE_US`]), then lets its record go, unless abandoned threads of
@@ -24,20 +21,22 @@
 //! The listener is idle when no job queued before the idle barrier's
 //! waiter is waiting or running ([`Schedule::when_idle`]); abandoned
 //! threads do not count. The schedule makes no call, reads no clock and
-//! holds no lock: the shell (`verbatim_listener::reading`) keeps the lock,
-//! the threads and the alarm, and applies each [`Effects`] under the lock.
+//! holds no lock: the shell (`verbatim_listener::reading`) keeps the lock
+//! and the threads, and applies each [`Effects`] under the lock.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 
 use verbatim_model::Pid;
 use verbatim_model::request::{CancelReason, RequestNumber};
-use verbatim_reader_rules::NewestPerThread;
 
 use crate::check_threads::IDLE_US;
-use crate::focus::{
-    ABANDONED_LIMIT, BAR_READ_DEADLINE, BAR_READS_ABANDONED_LIMIT, BARS_PER_APPLICATION, BarRaiser,
-};
+
+/// How many of an application's reading threads may be abandoned to
+/// requests and still in their calls before it gets no new thread: its
+/// jobs then wait for the first of those threads whose call returns, Core's
+/// due time and Cancel bounding a request's wait.
+pub const ABANDONED_LIMIT: usize = 2;
 
 /// One run of one process: a process id reused by a new process is a new
 /// generation.
@@ -50,55 +49,20 @@ pub struct AppKey {
 }
 
 /// What a job is, for the schedule's rules.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
-    /// Core's request `number`; `focus` for a focus read, whose arrival
-    /// drops its application's waiting classic value changes, which are
-    /// not to delay it.
-    Request {
-        /// The request's number.
-        number: RequestNumber,
-        /// Whether it is a focus read.
-        focus: bool,
-    },
-    /// A classic value change's read, limited per raising thread and per
-    /// application, a newer change of its object, `key`, replacing it.
-    ClassicBar {
-        /// The thread that raised it.
-        raiser: BarRaiser,
-        /// Its object, for the replacement.
-        key: Vec<i32>,
-    },
-    /// A UI Automation progress bar's change, a newer change of its
-    /// element, `key`, replacing it.
-    UiaBar {
-        /// Its element's runtime id.
-        key: Vec<i32>,
-    },
+    /// Core's request `number`.
+    Request(RequestNumber),
     /// A release of kept elements.
     Release,
 }
 
 impl JobKind {
-    /// Whether it is a bar's read, under the bar deadline.
-    fn bar(&self) -> bool {
-        matches!(self, Self::ClassicBar { .. } | Self::UiaBar { .. })
-    }
-
     /// The request it is, if it is one.
-    fn number(&self) -> Option<RequestNumber> {
+    fn number(self) -> Option<RequestNumber> {
         match self {
-            Self::Request { number, .. } => Some(*number),
-            Self::ClassicBar { .. } | Self::UiaBar { .. } | Self::Release => None,
-        }
-    }
-
-    /// Whether a waiting job of this kind is replaced by one of `newer`.
-    fn replaced_by(&self, newer: &Self) -> bool {
-        match (self, newer) {
-            (Self::ClassicBar { key, .. }, Self::ClassicBar { key: newer, .. })
-            | (Self::UiaBar { key }, Self::UiaBar { key: newer }) => key == newer,
-            _ => false,
+            Self::Request(number) => Some(number),
+            Self::Release => None,
         }
     }
 }
@@ -113,9 +77,6 @@ pub enum Ending {
     Exited,
     /// No thread could be started for it.
     NoThread,
-    /// A bar's change replaced by a newer one of its object, dropped by a
-    /// bar limit, or by a focus read of its application.
-    Limited,
     /// The listener is stopping: a request is dropped unanswered.
     Stopped,
 }
@@ -133,8 +94,7 @@ pub struct Ended<J> {
 
 /// What a transition asks the shell to do, in this order: start the
 /// threads, wake the waiting ones, forget the records let go, end the jobs
-/// not run, answer the requests abandoned, run the idle waiters, and set
-/// the alarm.
+/// not run, answer the requests abandoned, and run the idle waiters.
 #[derive(Debug)]
 pub struct Effects<J, W> {
     /// Threads to start, each in charge of its application's jobs as its
@@ -152,8 +112,6 @@ pub struct Effects<J, W> {
     pub abandoned: Vec<RequestNumber>,
     /// Idle waiters to run, in order.
     pub waiters: Vec<W>,
-    /// The alarm, when it changed: when it is to go off, or never.
-    pub alarm: Option<Option<u64>>,
 }
 
 impl<J, W> Default for Effects<J, W> {
@@ -165,7 +123,6 @@ impl<J, W> Default for Effects<J, W> {
             ended: Vec::new(),
             abandoned: Vec::new(),
             waiters: Vec::new(),
-            alarm: None,
         }
     }
 }
@@ -270,24 +227,6 @@ impl<J> Waiting<J> {
             .position(|queued| queued.kind.number() == Some(number))?;
         self.requests.remove(at)
     }
-
-    /// Ends every job other than a request that `keep` refuses, in order,
-    /// as limited.
-    fn limit(&mut self, ended: &mut Vec<Ended<J>>, mut keep: impl FnMut(&Queued<J>) -> bool) {
-        let mut kept = VecDeque::with_capacity(self.rest.len());
-        for queued in self.rest.drain(..) {
-            if keep(&queued) {
-                kept.push_back(queued);
-            } else {
-                ended.push(Ended {
-                    number: None,
-                    job: queued.job,
-                    ending: Ending::Limited,
-                });
-            }
-        }
-        self.rest = kept;
-    }
 }
 
 /// The job a thread in charge is running.
@@ -295,8 +234,6 @@ impl<J> Waiting<J> {
 struct Running {
     place: u64,
     number: Option<RequestNumber>,
-    /// For a bar's read, when it is abandoned.
-    bar_due: Option<u64>,
 }
 
 /// A thread in charge, fewer than [`ABANDONED_LIMIT`] abandoned.
@@ -381,11 +318,6 @@ const BELOW_LIMIT: NonZeroUsize = match NonZeroUsize::new(ABANDONED_LIMIT - 1) {
     None => panic!("the abandoned limit is above 1"),
 };
 
-/// The bar deadline in microseconds.
-fn bar_deadline_us() -> u64 {
-    u64::try_from(BAR_READ_DEADLINE.as_micros()).unwrap_or(u64::MAX)
-}
-
 /// The reading threads' schedule ([module docs](self)): `J` is a job, `W`
 /// an idle waiter.
 #[derive(Debug)]
@@ -404,12 +336,6 @@ pub struct Schedule<J, W> {
     queued: u64,
     /// The idle waiters, each with the count of jobs queued when it came.
     waiters: VecDeque<(u64, W)>,
-    /// When the alarm is set to go off.
-    alarm_due: Option<u64>,
-    /// How many of each process's bar reads are abandoned and still in
-    /// their calls, kept by process id, since a record may be let go while
-    /// one is out.
-    bars_out: BTreeMap<Pid, usize>,
     stopping: bool,
 }
 
@@ -422,8 +348,6 @@ impl<J, W> Default for Schedule<J, W> {
             readers: 0,
             queued: 0,
             waiters: VecDeque::new(),
-            alarm_due: None,
-            bars_out: BTreeMap::new(),
             stopping: false,
         }
     }
@@ -477,9 +401,7 @@ impl<J, W> Schedule<J, W> {
 
     /// A job of `pid`'s arrived at `now_us`: queued for its application's
     /// thread, starting one when none is in charge and fewer than
-    /// [`ABANDONED_LIMIT`] are abandoned; a bar's change replacing a
-    /// waiting one of its object and kept within the bar limits; a focus
-    /// read dropping the application's waiting classic value changes.
+    /// [`ABANDONED_LIMIT`] are abandoned.
     pub fn push(&mut self, pid: Pid, kind: JobKind, job: J, now_us: u64) -> Effects<J, W> {
         let mut effects = Effects::default();
         if self.stopping {
@@ -489,25 +411,6 @@ impl<J, W> Schedule<J, W> {
                 ending: Ending::Stopped,
             });
             return effects;
-        }
-        if kind.bar() && self.bars_out.get(&pid) >= Some(&BAR_READS_ABANDONED_LIMIT) {
-            effects.ended.push(Ended {
-                number: None,
-                job,
-                ending: Ending::Limited,
-            });
-            return effects;
-        }
-        let focus = matches!(kind, JobKind::Request { focus: true, .. });
-        if let Some(waiting) = self.running.get_mut(&pid).and_then(Record::waiting_mut) {
-            waiting.limit(&mut effects.ended, |waiting| {
-                let classic = matches!(waiting.kind, JobKind::ClassicBar { .. });
-                let dropped = waiting.kind.replaced_by(&kind) || (focus && classic);
-                !dropped
-            });
-            if let JobKind::ClassicBar { raiser, .. } = &kind {
-                limit_bars(waiting, *raiser, &mut effects.ended);
-            }
         }
         self.queued = self.queued.saturating_add(1);
         let queued = Queued {
@@ -599,10 +502,6 @@ impl<J, W> Schedule<J, W> {
             charge.running = Some(Running {
                 place: queued.place,
                 number,
-                bar_due: queued
-                    .kind
-                    .bar()
-                    .then(|| now_us.saturating_add(bar_deadline_us())),
             });
             self.settle(&mut effects);
             return (
@@ -648,15 +547,8 @@ impl<J, W> Schedule<J, W> {
         effects.forget.push(app);
     }
 
-    /// Thread `thread` of `app` returned at `now_us` from its job, a bar's
-    /// read when `bar`.
-    pub fn returned(
-        &mut self,
-        app: AppKey,
-        reader: u64,
-        bar: bool,
-        now_us: u64,
-    ) -> (Returned, Effects<J, W>) {
+    /// Thread `thread` of `app` returned at `now_us` from its job.
+    pub fn returned(&mut self, app: AppKey, reader: u64, now_us: u64) -> (Returned, Effects<J, W>) {
         let mut effects = Effects::default();
         let stopping = self.stopping;
         let in_charge = self
@@ -676,21 +568,6 @@ impl<J, W> Schedule<J, W> {
             );
         }
         // Abandoned while it ran: its result is discarded.
-        if bar {
-            if let Some(out) = self.bars_out.get_mut(&app.pid) {
-                *out = out.saturating_sub(1);
-                if *out == 0 {
-                    self.bars_out.remove(&app.pid);
-                }
-            }
-            return (
-                Returned {
-                    send: false,
-                    reader: None,
-                },
-                effects,
-            );
-        }
         tracing::info!(pid = %app.pid, "an abandoned read returned; its result is discarded");
         let reused = self.next_reader();
         let Some((record, _)) = self.record_mut(app) else {
@@ -849,73 +726,6 @@ impl<J, W> Schedule<J, W> {
         }
     }
 
-    /// The alarm went off at `now_us`: each bar read past its deadline is
-    /// abandoned, counted apart, and a fresh thread takes what waits.
-    pub fn tick(&mut self, now_us: u64) -> Effects<J, W> {
-        let mut effects = Effects::default();
-        // The alarm's timer goes off once: it is set again below.
-        self.alarm_due = None;
-        if self.stopping {
-            return effects;
-        }
-        let due: Vec<AppKey> = self
-            .running
-            .iter()
-            .map(|(pid, record)| AppKey {
-                pid: *pid,
-                generation: record.generation,
-            })
-            .chain(self.exited.keys().copied())
-            .filter(|app| {
-                self.record(*app)
-                    .and_then(Record::charge)
-                    .and_then(|charge| charge.running)
-                    .and_then(|running| running.bar_due)
-                    .is_some_and(|due| due <= now_us)
-            })
-            .collect();
-        for app in due {
-            self.abandon_bar_read(app, now_us, &mut effects);
-        }
-        self.settle(&mut effects);
-        effects
-    }
-
-    /// `app`'s bar read was abandoned at its deadline: counted among its
-    /// application's own, never towards [`ABANDONED_LIMIT`]; at
-    /// [`BAR_READS_ABANDONED_LIMIT`] its waiting bars are dropped; a fresh
-    /// thread takes what waits, or the thread's charge is over.
-    fn abandon_bar_read(&mut self, app: AppKey, now_us: u64, effects: &mut Effects<J, W>) {
-        let out = self.bars_out.entry(app.pid).or_default();
-        *out = out.saturating_add(1);
-        let at_limit = *out >= BAR_READS_ABANDONED_LIMIT;
-        tracing::warn!(pid = %app.pid, abandoned = *out, "a bar's read did not return in time; its reader is abandoned");
-        let fresh = self.next_reader();
-        let Some((record, _)) = self.record_mut(app) else {
-            return;
-        };
-        let Some(charge) = record.charge_mut() else {
-            return;
-        };
-        if at_limit {
-            charge
-                .waiting
-                .limit(&mut effects.ended, |queued| !queued.kind.bar());
-        }
-        if charge.waiting.is_empty() {
-            charge.running = None;
-            self.charge_over(app, effects);
-        } else {
-            charge.reader = fresh;
-            charge.running = None;
-            charge.idle_since = now_us;
-            effects.start.push((app, fresh));
-        }
-        if effects.start.last() == Some(&(app, fresh)) {
-            self.took_reader(fresh);
-        }
-    }
-
     /// The process running under `pid` has exited: its record leaves the
     /// running applications, what waits with no thread ended "not there",
     /// and a thread in charge runs what waits, then ends with no idle time.
@@ -999,14 +809,11 @@ impl<J, W> Schedule<J, W> {
             }
             effects.wake.push(app);
         }
-        if self.alarm_due.take().is_some() {
-            effects.alarm = Some(None);
-        }
         effects
     }
 
     /// After a transition: runs each idle waiter whose earlier jobs have
-    /// all ended, and sets the alarm to the soonest bar deadline.
+    /// all ended.
     fn settle(&mut self, effects: &mut Effects<J, W>) {
         let oldest = self
             .running
@@ -1021,60 +828,7 @@ impl<J, W> Schedule<J, W> {
                 effects.waiters.push(waiter);
             }
         }
-        let due = self
-            .running
-            .values()
-            .chain(self.exited.values())
-            .filter_map(Record::charge)
-            .filter_map(|charge| charge.running.and_then(|running| running.bar_due))
-            .min();
-        if due != self.alarm_due {
-            self.alarm_due = due;
-            effects.alarm = Some(due);
-        }
     }
-}
-
-/// Applies the limits to `waiting` as a classic value change of `raiser`
-/// arrives behind it, walked with no stored count: the newest
-/// [`verbatim_reader_rules::EVENTS_PER_THREAD`] of each thread stay, the
-/// newcomer among them, then the oldest are dropped down to
-/// [`BARS_PER_APPLICATION`]. The focused object's are always kept, as
-/// NVDA's limiter keeps them.
-fn limit_bars<J>(waiting: &mut Waiting<J>, raiser: BarRaiser, ended: &mut Vec<Ended<J>>) {
-    let raiser_of = |queued: &Queued<J>| match queued.kind {
-        JobKind::ClassicBar { raiser, .. } => Some(raiser),
-        _ => None,
-    };
-    let mut per_thread = NewestPerThread::default();
-    let _ = per_thread.within(raiser.raised_by);
-    let mut keep: Vec<bool> = waiting
-        .rest
-        .iter()
-        .rev()
-        .map(|queued| {
-            raiser_of(queued).is_none_or(|waiter| {
-                let within = per_thread.within(waiter.raised_by);
-                within || waiter.focused
-            })
-        })
-        .collect();
-    keep.reverse();
-    let bars = waiting
-        .rest
-        .iter()
-        .zip(&keep)
-        .filter(|(queued, kept)| **kept && raiser_of(queued).is_some())
-        .count();
-    let mut over = bars.saturating_add(1).saturating_sub(BARS_PER_APPLICATION);
-    for (queued, kept) in waiting.rest.iter().zip(keep.iter_mut()) {
-        if over > 0 && *kept && raiser_of(queued).is_some_and(|waiter| !waiter.focused) {
-            *kept = false;
-            over = over.saturating_sub(1);
-        }
-    }
-    let mut keep = keep.into_iter();
-    waiting.limit(ended, |_| keep.next() == Some(true));
 }
 
 #[cfg(test)]

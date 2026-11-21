@@ -64,8 +64,6 @@ mod registry;
 pub mod uniscribe;
 mod window;
 
-pub use window::classic_bar_percent;
-
 pub use com::CHILDID_SELF;
 pub use hook::{
     APP_SUBSCRIPTIONS, CONSOLE_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker,

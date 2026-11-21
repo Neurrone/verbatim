@@ -72,6 +72,7 @@ pub mod held_tokens;
 mod input_desktop;
 mod keys;
 mod navigator;
+mod progress;
 mod proven;
 mod recorder;
 mod reduce;
@@ -87,6 +88,7 @@ mod terminal_model;
 mod text;
 mod text_facts;
 mod text_request;
+mod wants;
 
 pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, UNKNOWN_COMMIT, read_dump,
@@ -94,7 +96,6 @@ pub use dump::{
 };
 pub use entries::Runtime;
 pub use flight_recorder::{FlightRecorder, FlightSnapshot};
-pub use focus::acceptance::accepts;
 pub use held_tokens::{HeldTokens, ListenerView, View, ViewSend};
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};

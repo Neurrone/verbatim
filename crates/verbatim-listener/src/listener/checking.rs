@@ -1,8 +1,8 @@
 //! The listener's check threads (design
 //! `docs/design/readers-tell-core-asks-build1.md`, "Focus and foreground",
 //! "The listener in this build" and Tables 6 and 11): every UI Automation
-//! event the listener hears, but the progress path's range-value changes,
-//! goes from its callback, which makes no call, to its application's check
+//! event the listener hears goes from its callback, which makes no call,
+//! to its application's check
 //! thread, which makes every call NVDA's handler for that event's kind
 //! makes at delivery ([`verbatim_listener_logic::check`]), then tells Core
 //! of it with their answers, one application's events in their order.
@@ -12,7 +12,8 @@
 //! is placed under it, and under the lock that orders the listener's tells
 //! ([`Tells`]), so no tell of an ended application is sent and the idle
 //! barrier's answer follows every tell of an event pushed before it. The
-//! element of each told event is kept behind the token the tell names
+//! element of each told event but a progress bar's is kept behind the
+//! token the tell names
 //! ([`verbatim_listener_logic::kept`]) until Core's held view leaves it
 //! out, and every element a view lets go is released on its application's
 //! check thread while one runs, which has a UI Automation client, else as
@@ -513,18 +514,32 @@ impl Checks {
     /// The end of `pid`'s thread `generation`'s check of `event`, which
     /// found `window` and `checked`: told, its element kept behind a new
     /// token, while the record is the thread's own; else its element
-    /// released here, at its check's end.
+    /// released here, at its check's end. A progress bar's change keeps no
+    /// element: its tell carries all Core reads of it, and names the
+    /// element by its runtime id alone.
     fn checked(&self, (pid, generation): (Pid, u64), event: CheckEvent, told: Told) {
         let mut state = self.lock();
         let (own, waiters) = state.threads.checked(pid, generation);
         let mut unplaced = None;
         if own {
-            let token = ElementToken(self.tokens.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
-            self.kept.keep(
-                (pid, token),
-                (event.element, event.runtime_id.clone()),
-                event.kind,
-            );
+            let object = if event.kind == EventKind::UiaProgress {
+                unplaced = Some(event.element);
+                EventObject::Followed {
+                    runtime_id: event.runtime_id,
+                }
+            } else {
+                let token =
+                    ElementToken(self.tokens.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
+                self.kept.keep(
+                    (pid, token),
+                    (event.element, event.runtime_id.clone()),
+                    event.kind,
+                );
+                EventObject::Uia {
+                    token,
+                    runtime_id: event.runtime_id,
+                }
+            };
             let application = self
                 .applications
                 .lock()
@@ -537,10 +552,7 @@ impl Checks {
                 application,
                 thread: told.thread,
                 at_us: event.at_us,
-                object: EventObject::Uia {
-                    token,
-                    runtime_id: event.runtime_id,
-                },
+                object,
                 cached: with_answer(event.cached, told.parent),
                 payload: event.payload,
                 window: told.window,

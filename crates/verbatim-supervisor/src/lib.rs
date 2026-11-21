@@ -245,15 +245,15 @@ pub enum OutpostMessage {
         /// Only the supervisor sends it.
         sealed: Sealed,
     },
-    /// A tell, a window's destruction, an answer, a foreground report or a
-    /// progress bar's change the listener of generation `listener` sent,
+    /// A tell, a window's destruction, an answer or a foreground report the
+    /// listener of generation `listener` sent,
     /// for the app to give Core.
     Listener {
         /// The listener's generation.
         listener: OutpostId,
         /// The message: a [`ListenerToCore::Tell`], a
-        /// [`ListenerToCore::Destroyed`], a [`ListenerToCore::Answer`], a
-        /// [`ListenerToCore::Foreground`] or a [`ListenerToCore::Progress`].
+        /// [`ListenerToCore::Destroyed`], a [`ListenerToCore::Answer`] or a
+        /// [`ListenerToCore::Foreground`].
         message: Box<ListenerToCore>,
     },
     /// An outpost of `target_pid` answered a ping. Core's generation record
@@ -392,10 +392,7 @@ impl Supervisor {
     /// the current executable ([`Executables::beside_current`]).
     /// Every outpost is launched with `options`. The processes `ignored`
     /// holds are ignored entirely: the listener drops their facts, and no
-    /// outpost is ever started for them. The first listener is launched
-    /// with `report_background_progress_bars`, the setting loaded before
-    /// Core's first configuration command ([`Self::configure_listener`]).
-    /// Every period and limit is Core's
+    /// outpost is ever started for them. Every period and limit is Core's
     /// ([`verbatim_core::supervisor::PING_INTERVAL`],
     /// [`verbatim_core::supervisor::MISSED_PONGS`] and
     /// [`verbatim_core::supervisor::BACKOFF`]).
@@ -408,7 +405,6 @@ impl Supervisor {
         events: impl Into<EventSink>,
         options: verbatim_process::arguments::OutpostOptions,
         ignored: Arc<IgnoredProcesses>,
-        report_background_progress_bars: bool,
     ) -> io::Result<Self> {
         let executables = Executables::beside_current()?;
         Self::start(
@@ -416,7 +412,7 @@ impl Supervisor {
             options,
             executables,
             retire::SHUTDOWN_LIMIT,
-            (ignored, report_background_progress_bars),
+            ignored,
         )
     }
 
@@ -424,8 +420,7 @@ impl Supervisor {
     /// `executables` and giving
     /// each `shutdown_limit` to exit after the shutdown message before it is
     /// killed, ignoring the processes
-    /// `ignored` holds, and launching the first listener with
-    /// `report_background_progress_bars`. For tests that launch stand-ins for the outpost and listener
+    /// `ignored` holds. For tests that launch stand-ins for the outpost and listener
     /// binaries ([`Executables::both`]); Verbatim uses
     /// [`Supervisor::new`].
     ///
@@ -439,15 +434,8 @@ impl Supervisor {
         executables: Executables,
         shutdown_limit: Duration,
         ignored: Arc<IgnoredProcesses>,
-        report_background_progress_bars: bool,
     ) -> io::Result<Self> {
-        Self::start(
-            events,
-            options,
-            executables,
-            shutdown_limit,
-            (ignored, report_background_progress_bars),
-        )
+        Self::start(events, options, executables, shutdown_limit, ignored)
     }
 
     /// The supervisor of `executables`, as
@@ -457,7 +445,7 @@ impl Supervisor {
         options: verbatim_process::arguments::OutpostOptions,
         executables: Executables,
         shutdown_limit: Duration,
-        (ignored, report_background_progress_bars): (Arc<IgnoredProcesses>, bool),
+        ignored: Arc<IgnoredProcesses>,
     ) -> io::Result<Self> {
         // The launch's log directory was prepared by the app at startup,
         // before any child (the synthesizer host first) began writing to it.
@@ -475,7 +463,6 @@ impl Supervisor {
             events: owner_rx,
             relay,
             ignored: Arc::clone(&ignored),
-            report_background_progress_bars,
         })?;
         Ok(Self {
             owner: owner_tx,
@@ -627,16 +614,6 @@ impl Supervisor {
     /// answered its requests.
     pub fn send_to_listener(&self, command: CoreToListener) {
         let _ = self.owner.send(owner::OwnerEvent::ToListener(command));
-    }
-
-    /// Carries out Core's effect "configure the listener"
-    /// ([`CoreToListener::Configuration`]): kept for every later launch of
-    /// the listener, and sent to it behind every command sent before, or
-    /// held, in order, while it launches. With none, only kept.
-    pub fn configure_listener(&self, report_background_progress_bars: bool) {
-        let _ = self.owner.send(owner::OwnerEvent::ConfigureListener {
-            report_background_progress_bars,
-        });
     }
 
     /// Writes Core's held view of the listener's told elements

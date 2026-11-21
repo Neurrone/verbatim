@@ -28,10 +28,12 @@ pub enum EventObject {
         /// The element's runtime id, from the event's cache.
         runtime_id: RuntimeId,
     },
-    /// An element of a node `Follow` names, or of one of its ancestors,
-    /// whose event an outpost's `Follow` registration delivered, by its
-    /// cached runtime id: Core names it back by the node it committed with
-    /// that runtime id, so the outpost keeps nothing for the tell.
+    /// A UI Automation element its reader keeps nothing for, named by its
+    /// cached runtime id: an element of a node `Follow` names, or of one of
+    /// its ancestors, whose event an outpost's `Follow` registration
+    /// delivered, which Core names back by the node it committed with that
+    /// runtime id; or a progress bar whose range value change the listener
+    /// tells with its percentage and place, which nothing reads again.
     Followed {
         /// The element's runtime id, from the event's cache.
         runtime_id: RuntimeId,
@@ -202,6 +204,16 @@ pub enum Payload {
         processing: NotificationProcessing,
         /// Its activity id.
         activity: String,
+    },
+    /// A UI Automation progress bar's range value changed, as its event's
+    /// cache gave it: parsed once by the listener's callback, which tells
+    /// only an on-screen progress bar whose range is a number.
+    Progress {
+        /// Its percentage.
+        percent: crate::Percent,
+        /// The centre of its rectangle, by which its last percentage is
+        /// kept; (0, 0) when it reports none.
+        place: (i32, i32),
     },
     /// The input desktop changed.
     DesktopSwitch {

@@ -46,7 +46,9 @@ enum Want {
 
 /// The requests wanted since the last call, each with its token.
 fn wants(state: &mut SrState) -> Vec<(Want, u64)> {
-    wanted_for_tests(state)
+    state
+        .wants
+        .take_for_tests()
         .into_iter()
         .map(|(token, request)| {
             let want = match request {

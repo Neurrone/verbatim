@@ -537,14 +537,6 @@ pub enum Input {
         /// a run shares.
         at_ms: u64,
     },
-    /// A progress bar's value changed, from the focus listener, which is
-    /// the one owner of every bar's changes.
-    Progress {
-        /// A trace the shell mints for it, which its indication carries.
-        trace_id: TraceId,
-        /// What changed.
-        change: BarChange,
-    },
 }
 
 /// A progress bar's percentage, 0 to 100, kept in hundredths of a percent
@@ -613,18 +605,6 @@ impl Percent {
         Self::of_fraction(percentage.round() / 100.0)
     }
 
-    /// The percentage `position` is along the integers from `low` to `high`,
-    /// as a classic progress bar reports its range; `None` for an empty or
-    /// reversed range.
-    #[must_use]
-    pub fn of_position(position: i32, low: i32, high: i32) -> Option<Self> {
-        if high <= low {
-            return None;
-        }
-        let span = f64::from(high) - f64::from(low);
-        Self::of_fraction((f64::from(position) - f64::from(low)) / span)
-    }
-
     /// The percentage a bar's text value says, as NVDA reads it: a number
     /// once any percent signs and null characters at either end are
     /// removed, held between 0 and 100. `None` for anything else.
@@ -655,20 +635,6 @@ impl Percent {
         let whole = (self.0 / 100) as u8;
         whole
     }
-}
-
-/// A progress bar's value changed, as the focus listener reports it
-/// (`docs/design/progress-bars.md`): the bar is on screen and its value a
-/// number, since a report is made of nothing else, and Core judges only
-/// whether it is heard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BarChange {
-    /// Its percentage.
-    pub percent: Percent,
-    /// The centre of the bar, by which its last percentage is kept.
-    pub place: (i32, i32),
-    /// Whether its window is the foreground window or beneath it.
-    pub in_foreground: bool,
 }
 
 /// What a [`PressAction::Script`](crate::request::PressAction::Script) runs.
@@ -706,7 +672,6 @@ impl Input {
             | Self::ShellItemUnclickable { trace_id, .. }
             | Self::BlockedByMessageBox { trace_id }
             | Self::PreviewSpeech { trace_id, .. }
-            | Self::Progress { trace_id, .. }
             | Self::Queue { trace_id, .. } => Some(*trace_id),
             _ => None,
         }
@@ -896,17 +861,6 @@ pub enum Effect {
     /// The reducer changed a reader setting itself, by a toggle key; the
     /// shell saves the new settings.
     SettingsChanged(ReaderSettings),
-    /// The listener's configuration: what it judges its own reads under,
-    /// sent at every [`Input::Settings`] whatever its value, carrying the
-    /// value as it stands, so the last to arrive is current. No toggle key
-    /// changes the setting it carries; one that did would have to emit it
-    /// too. Whether background progress bars are
-    /// reported, by which the listener skips the read of a value change
-    /// whose window the acceptance test refuses (Dickson, 2026-11-19).
-    ListenerConfiguration {
-        /// [`ReaderSettings::report_background_progress_bars`].
-        report_background_progress_bars: bool,
-    },
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or
@@ -980,13 +934,6 @@ mod percent_tests {
         assert_eq!(of(500.0, 0.0, 1000.0), Percent::parse("50"));
         assert_eq!(of(50.0, 50.0, 50.0), Percent::parse("50"));
         assert_eq!(of(f64::NAN, 0.0, 100.0), None);
-    }
-
-    /// A classic bar's position and range, an empty one dropped.
-    #[test]
-    fn a_classic_position_is_made_a_percentage() {
-        assert_eq!(Percent::of_position(30, 10, 50), Percent::parse("50"));
-        assert_eq!(Percent::of_position(10, 10, 10), None);
     }
 
     /// A value's text, within its percent signs, held between 0 and 100,

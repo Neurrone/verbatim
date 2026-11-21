@@ -120,6 +120,9 @@ pub(crate) enum Entry {
     MsaaChange(Box<crate::changes::MsaaChange>),
     /// A UI Automation property change.
     UiaChange(Box<crate::changes::UiaChange>),
+    /// A UI Automation progress bar's change, with its percentage and
+    /// place.
+    Progress(Box<crate::progress::ProgressTell>),
     /// A caret tell: the system caret's, or a UI Automation text-selection
     /// change.
     Caret(Box<crate::caret_tell::CaretTell>),
@@ -190,6 +193,13 @@ impl fmt::Debug for Entry {
                 formatter,
                 "UiaChange({:?} {:?} of {})",
                 change.property, change.runtime_id, change.tell.process.0
+            ),
+            Self::Progress(bar) => write!(
+                formatter,
+                "Progress({:?} {} of {})",
+                bar.runtime_id,
+                bar.percent.whole(),
+                bar.tell.process.0
             ),
             Self::Caret(caret) => write!(
                 formatter,
@@ -334,6 +344,11 @@ impl Entry {
                 crate::caret_tell::CaretTell::of_tell(tell)
                     .map(|caret| Self::Caret(Box::new(caret)))
             }
+            (EventKind::UiaProgress, EventObject::Followed { runtime_id }) => {
+                let runtime_id = runtime_id.clone();
+                crate::progress::ProgressTell::of_tell(tell, runtime_id, background)
+                    .map(|bar| Self::Progress(Box::new(bar)))
+            }
             (
                 EventKind::UiaPropertyChanged,
                 EventObject::Uia { runtime_id, .. } | EventObject::Followed { runtime_id },
@@ -362,6 +377,7 @@ impl Entry {
         match self {
             Self::MsaaChange(change) => Some(change.accepted),
             Self::UiaChange(change) => Some(change.accepted),
+            Self::Progress(bar) => Some(bar.accepted),
             other => other.tell().map(acceptance::accepted),
         }
     }
@@ -373,6 +389,7 @@ impl Entry {
             Self::Candidate(candidate) | Self::Menu(candidate) => Some(&candidate.tell),
             Self::MsaaChange(change) => Some(&change.tell),
             Self::UiaChange(change) => Some(&change.tell),
+            Self::Progress(bar) => Some(&bar.tell),
             Self::Caret(caret) => Some(&caret.tell),
             Self::Announcement(announcement) => Some(&announcement.tell),
             Self::Run(_)
@@ -400,6 +417,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence,
             Self::MsaaChange(change) => change.fence,
             Self::UiaChange(change) => change.fence,
+            Self::Progress(bar) => bar.fence,
             Self::Caret(caret) => caret.fence,
             Self::ForegroundMarker { fence, .. }
             | Self::Mark(_, fence)
@@ -424,6 +442,7 @@ impl Entry {
             Self::CurrentFocus(read) => read.fence = set,
             Self::MsaaChange(change) => change.fence = set,
             Self::UiaChange(change) => change.fence = set,
+            Self::Progress(bar) => bar.fence = set,
             Self::Caret(caret) => caret.fence = set,
             Self::ForegroundMarker { fence, .. }
             | Self::Mark(_, fence)
@@ -527,6 +546,7 @@ impl Logic for Entries {
             | Entry::CurrentFocus(_)
             | Entry::MsaaChange(_)
             | Entry::UiaChange(_)
+            | Entry::Progress(_)
             | Entry::Caret(_)
             | Entry::ForegroundMarker { .. }
             | Entry::Press(_)
@@ -556,6 +576,10 @@ impl Logic for Entries {
             }
             Entry::MsaaChange(change) => Box::pin(crate::changes::msaa(cx, *change)),
             Entry::UiaChange(change) => Box::pin(crate::changes::uia_entry(cx, *change)),
+            Entry::Progress(bar) => Box::pin(async move {
+                let mut cx = cx;
+                crate::progress::uia(&mut cx, &bar);
+            }),
             Entry::Caret(caret) => Box::pin(crate::caret_tell::run(cx, *caret)),
             Entry::Press(press) => Box::pin(crate::keys::entry::run(cx, *press)),
             Entry::Mark(mark, _) => Box::pin(crate::say_all::mark_entry(cx, mark)),
@@ -580,7 +604,7 @@ impl Logic for Entries {
     }
 
     fn asks_nothing(entry: &Entry) -> bool {
-        matches!(entry, Entry::TerminalSpeech(_))
+        matches!(entry, Entry::TerminalSpeech(_) | Entry::Progress(_))
     }
 
     fn ends(
@@ -697,7 +721,7 @@ impl Logic for Entries {
     }
 
     fn wanted(facts: &mut SrState) -> Vec<crate::event_queue::CoreRequest> {
-        crate::terminal::reading::wanted(facts)
+        facts.wants.take()
     }
 
     fn facts_answered(
@@ -707,6 +731,10 @@ impl Logic for Entries {
         (now_us, _): (u64, Option<Foreground>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
+        if crate::progress::ended(facts, token) {
+            said.extend(crate::progress::answered(facts, outcome));
+            return Vec::new();
+        }
         let trace = facts.queue_trace.0;
         crate::terminal::reading::answered(facts, token, outcome, (now_us, trace), said)
     }
@@ -868,7 +896,9 @@ impl Logic for Entries {
                     ends_run: false,
                 },
             },
-            Entry::UiaChange(_) => Place::Other {
+            // A UI Automation change is placed as NVDA's limiter places
+            // it, with no thread cap: it counts `WinEvent`s only.
+            Entry::UiaChange(_) | Entry::Progress(_) => Place::Other {
                 merges: true,
                 focus_kind: false,
                 ends_run: false,
@@ -905,6 +935,7 @@ impl Logic for Entries {
             (Entry::Caret(waiting), Entry::Caret(arriving)) => {
                 crate::caret_tell::merges(waiting, arriving)
             }
+            (Entry::Progress(waiting), Entry::Progress(arriving)) => waiting.merges(arriving),
             (Entry::UiaChange(waiting), Entry::UiaChange(arriving)) => {
                 (&waiting.runtime_id, waiting.property, waiting.tell.thread)
                     == (
@@ -968,6 +999,7 @@ impl Logic for Entries {
             | Entry::ForegroundMarker { .. }
             | Entry::MenuCheck(_)
             | Entry::UiaChange(_)
+            | Entry::Progress(_)
             | Entry::Press(_)
             | Entry::Mark(..)
             | Entry::SayAllRead(..)
@@ -985,6 +1017,7 @@ impl Logic for Entries {
         match entry {
             Entry::UiaFocus(focus) => focus.tell.checked.as_ref()?.probe,
             Entry::Announcement(announcement) => announcement.probe(),
+            Entry::Progress(bar) => bar.tell.checked.as_ref()?.probe,
             Entry::Candidate(_)
             | Entry::Run(_)
             | Entry::ForegroundMarker { .. }
@@ -1290,7 +1323,7 @@ fn desktop_switched(
 /// say-all wants its next read, or stopped while its read was out
 /// ([`settle`]).
 pub(crate) fn unsettled(state: &SrState) -> bool {
-    crate::terminal::reading::wants(state)
+    state.wants.any()
         || state
             .say_all
             .as_ref()

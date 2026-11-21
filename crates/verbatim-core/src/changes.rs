@@ -395,6 +395,9 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     if !judged(&mut cx, &change) {
         return;
     }
+    // A progress bar's value change is read whether or not a focus is
+    // committed (`crate::progress`).
+    crate::progress::msaa_changed(&mut cx, &change);
     let Some(process) = cx
         .facts()
         .versions

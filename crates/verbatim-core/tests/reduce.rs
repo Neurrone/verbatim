@@ -21,7 +21,7 @@ use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, Relation, TellWindow,
 };
 use verbatim_model::{
-    Backend, CellPosition, Earcon, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeId,
+    Backend, CellPosition, Effect, FocusNow, FocusValidity, Input, NodeDetails, NodeId,
     NodeSnapshot, NotificationKind, NotificationProcessing, ObjectKey, OutpostId, Phrase,
     ReviewCommand, Role, SegmentContent, SpeechPriority, State, StateSet, TraceId,
     UtteranceSegment, WindowHandle,
@@ -718,54 +718,6 @@ fn notification_without_text_is_silent() {
         [],
         "a notification with no display text says nothing"
     );
-}
-
-/// A listener's report of a bar at `left`, `percent` along, in the foreground or not.
-fn bar_change(left: i32, percent: &str, in_foreground: bool) -> Input {
-    Input::Progress {
-        trace_id: TraceId::from_raw(7),
-        change: verbatim_model::BarChange {
-            percent: verbatim_model::Percent::parse(percent).expect("a number"),
-            place: (left, 0),
-            in_foreground,
-        },
-    }
-}
-
-fn background_setting_on() -> Input {
-    Input::Settings(verbatim_model::ReaderSettings {
-        report_background_progress_bars: true,
-        ..verbatim_model::ReaderSettings::default()
-    })
-}
-
-/// Runs the reducer on a copy of `state`, as the progress path feeds it.
-fn reduce(state: &SrState, input: &Input) -> (SrState, Vec<Effect>) {
-    let mut next = state.clone();
-    let effects = verbatim_core::reduce(&mut next, &mut Runtime::default(), input);
-    (next, effects)
-}
-
-/// A bar in the foreground is heard whether or not the setting is on, and
-/// a background one only with it, by one percent at one place.
-#[test]
-fn a_listeners_bar_change_is_judged_by_the_foreground_and_the_setting() {
-    let progress = |percent: u8| vec![Effect::PlayEarcon(Earcon::Progress(percent))];
-    let (off, effects) = reduce(&SrState::new(), &bar_change(0, "20", true));
-    assert_eq!(effects, progress(20), "a foreground bar, setting off");
-    let (off, effects) = reduce(&off, &bar_change(10, "30", false));
-    assert_eq!(effects, [], "a background bar, setting off");
-    let (off, effects) = reduce(&off, &bar_change(0, "20", true));
-    assert_eq!(
-        effects,
-        [],
-        "less than a percent from the last at its place"
-    );
-    let (on, _) = reduce(&off, &background_setting_on());
-    let (on, effects) = reduce(&on, &bar_change(20, "40", false));
-    assert_eq!(effects, progress(40), "a background bar, setting on");
-    let (_, effects) = reduce(&on, &bar_change(30, "50", true));
-    assert_eq!(effects, progress(50), "a foreground bar, setting on");
 }
 
 // ---- Windows, menus, and name changes ----
@@ -3642,35 +3594,4 @@ fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selecte
         ),
         heard
     );
-}
-
-/// Every settings input configures the listener with the value it
-/// carries, the first included and whatever the value, changed or not, so
-/// the supervisor's launch copy is corrected from Core's first input and
-/// the last command the listener gets is current.
-#[test]
-fn every_settings_input_configures_the_listener() {
-    let settings = |report_background_progress_bars| {
-        Input::Settings(verbatim_model::ReaderSettings {
-            report_background_progress_bars,
-            ..verbatim_model::ReaderSettings::default()
-        })
-    };
-    let configured = |report_background_progress_bars| {
-        vec![Effect::ListenerConfiguration {
-            report_background_progress_bars,
-        }]
-    };
-    let (state, effects) = reduce(&SrState::new(), &settings(false));
-    assert_eq!(effects, configured(false), "the first, off");
-    let (state, effects) = reduce(&state, &settings(false));
-    assert_eq!(effects, configured(false), "off again, unchanged");
-    let (state, effects) = reduce(&state, &settings(true));
-    assert_eq!(effects, configured(true), "turned on");
-    let (state, effects) = reduce(&state, &settings(true));
-    assert_eq!(effects, configured(true), "on again, unchanged");
-    let (_, effects) = reduce(&state, &settings(false));
-    assert_eq!(effects, configured(false), "turned off");
-    let (_, effects) = reduce(&SrState::new(), &settings(true));
-    assert_eq!(effects, configured(true), "the first, on");
 }

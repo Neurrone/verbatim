@@ -91,32 +91,19 @@ pub(crate) enum Refused {
 /// The test's answer.
 pub(crate) type Acceptance = Result<Accepted, Refused>;
 
-/// Whether an event of `kind`, whose tell window has `facts` (`None` when
-/// it has no window), is accepted, with background progress bars reported
-/// or not: [`accept`]'s answer alone. The listener judges with it whether
-/// to read a value change while background progress bars are not reported,
-/// on the facts it gathered for the change's tell, or for a UI Automation
-/// bar's nearest window, so that the rule is written once (Dickson,
-/// 2026-11-19).
-#[must_use]
-pub fn accepts(
-    kind: EventKind,
-    facts: Option<&AcceptanceFacts>,
-    background_progress: bool,
-) -> bool {
-    accept(kind, facts, background_progress).is_ok()
-}
-
 /// Whether `tell` is accepted on its own facts, with no setting: the
-/// verdict of every tell but an MSAA change and a UI Automation value
-/// change, which their entry stores as it is made.
+/// verdict of every tell but an MSAA change, a UI Automation value change
+/// and a UI Automation progress bar's change, which their entry stores as
+/// it is made.
 pub(crate) fn accepted(tell: &Event) -> Acceptance {
     accept(tell.kind, crate::entries::window_facts(tell), false)
 }
 
 /// Whether an event of `kind`, whose tell window has `facts` (`None` when
 /// it has no window), is accepted, with background progress bars reported
-/// or not.
+/// or not: a value change, or a UI Automation progress bar's change, which
+/// NVDA maps to its value change event, is accepted from any window with
+/// them reported.
 pub(crate) fn accept(
     kind: EventKind,
     facts: Option<&AcceptanceFacts>,
@@ -126,7 +113,7 @@ pub(crate) fn accept(
         return Ok(Accepted::NoWindow);
     };
     match kind {
-        EventKind::ValueChange if background_progress => {
+        EventKind::ValueChange | EventKind::UiaProgress if background_progress => {
             return Ok(Accepted::BackgroundProgress);
         }
         EventKind::Hide => return Err(Refused::Hide),

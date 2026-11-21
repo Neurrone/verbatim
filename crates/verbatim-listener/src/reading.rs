@@ -3,16 +3,14 @@
 //! build" and Table 9): the shell of the pure schedule
 //! ([`verbatim_listener_logic::schedule`]), one thread per application
 //! process generation, running that application's jobs, Core's requests
-//! ahead of the progress path's bar reads and the releases of kept
-//! elements.
+//! ahead of the releases of kept elements.
 //!
 //! The schedule and the threads' wakes sit under one lock; every
 //! transition's effects are applied under it, so a request's answer, sent
 //! as its job ends, goes ahead of the idle barrier's answer that its end
 //! lets run. A thread makes its calls with no lock held. A thread whose
 //! request Core cancels for the foreground is abandoned, and its result
-//! discarded when its call returns; the alarm, which wakes only the
-//! watchdog thread, abandons a bar read at its deadline. Threads are not
+//! discarded when its call returns. Threads are not
 //! joined at the listener's shutdown: one inside a call is let go, as the
 //! check threads are.
 
@@ -27,7 +25,6 @@ use verbatim_listener_logic::schedule::{
 };
 use verbatim_model::Pid;
 use verbatim_model::request::{Cancel, RequestNumber};
-use verbatim_process::alarm::Alarm;
 
 /// What the idle barrier runs once the jobs queued before it have ended.
 pub(crate) type IdleWaiter = Box<dyn FnOnce() + Send>;
@@ -45,8 +42,6 @@ pub(crate) trait Reading: Send + Sync + 'static {
     type Leftover;
     /// Makes a thread's state for `pid`'s jobs, on that thread.
     fn thread(&self, pid: Pid) -> Self::Thread;
-    /// Whether `job` is a bar's read, under the bar deadline.
-    fn bar(&self, job: &Self::Job) -> bool;
     /// Runs `job`, the request `number` when it is one, with no lock held.
     fn run(
         &self,
@@ -84,8 +79,6 @@ struct Shared<R: Reading> {
     /// The time the schedule's microseconds count from.
     origin: Instant,
     state: Mutex<State<R::Job>>,
-    /// The alarm the watchdog sleeps on, set to the soonest bar deadline.
-    alarm: Alarm,
     /// The failed cached reads the threads have made
     /// (`verbatim_uia::calls`).
     failed_reads: AtomicU32,
@@ -104,11 +97,6 @@ impl<R: Reading> Shared<R> {
                 .as_micros(),
         )
         .unwrap_or(u64::MAX)
-    }
-
-    /// The system's time at which the schedule's clock reaches `us`.
-    fn alarm_at(&self, us: u64) -> Instant {
-        Instant::now() + Duration::from_micros(us.saturating_sub(self.now()))
     }
 
     /// Applies `effects` under the lock, in the schedule's order; a thread
@@ -137,11 +125,6 @@ impl<R: Reading> Shared<R> {
         }
         for waiter in effects.waiters {
             waiter();
-        }
-        match effects.alarm {
-            Some(Some(due)) => self.alarm.set(self.alarm_at(due)),
-            Some(None) => self.alarm.cancel(),
-            None => {}
         }
         for (app, thread) in failed {
             let effects = state.schedule.spawn_failed(app, thread);
@@ -181,14 +164,13 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, app: AppKey, thread: u64, wake: &Arc
     let mut own = shared.reading.thread(app.pid);
     let mut thread = thread;
     while let Some((job, number)) = next(shared, app, thread, wake) {
-        let bar = shared.reading.bar(&job);
         let done = shared.reading.run(&mut own, job, number);
         shared
             .failed_reads
             .fetch_add(verbatim_uia::calls::take_failed_reads(), Ordering::Relaxed);
         let (returned, leftover) = {
             let mut state = shared.lock();
-            let (returned, effects) = state.schedule.returned(app, thread, bar, shared.now());
+            let (returned, effects) = state.schedule.returned(app, thread, shared.now());
             let leftover = shared.reading.done(done, returned.send);
             shared.apply(&mut state, effects);
             (returned, leftover)
@@ -233,36 +215,13 @@ fn next<R: Reading>(
     }
 }
 
-/// The watchdog: each time its alarm goes off, abandons the bar reads past
-/// their deadline; it sleeps on the alarm otherwise, which is set only
-/// while a bar read runs.
-fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
-    loop {
-        {
-            let mut state = shared.lock();
-            if state.schedule.stopping() {
-                return;
-            }
-            let effects = state.schedule.tick(shared.now());
-            shared.apply(&mut state, effects);
-        }
-        shared.alarm.wait();
-    }
-}
-
-/// The reading threads and their watchdog.
+/// The reading threads.
 pub(crate) struct Readers<R: Reading> {
     shared: Arc<Shared<R>>,
-    watchdog: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl<R: Reading> Readers<R> {
     /// Readers doing `reading` on the system's clock.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the watchdog's thread cannot be spawned, which means the
-    /// process is out of OS thread resources.
     pub(crate) fn new(reading: R) -> Self {
         Self::with_clock(reading, Arc::new(Instant::now))
     }
@@ -278,18 +237,9 @@ impl<R: Reading> Readers<R> {
                 wakes: HashMap::new(),
                 threads: Vec::new(),
             }),
-            alarm: Alarm::default(),
             failed_reads: AtomicU32::new(0),
         });
-        let watched = Arc::clone(&shared);
-        let watchdog = thread::Builder::new()
-            .name("verbatim-listener-read-watchdog".to_owned())
-            .spawn(move || watchdog(&watched))
-            .expect("spawn the reading threads' watchdog");
-        Self {
-            shared,
-            watchdog: Mutex::new(Some(watchdog)),
-        }
+        Self { shared }
     }
 
     /// The reading the threads do.
@@ -337,8 +287,8 @@ impl<R: Reading> Readers<R> {
     }
 
     /// Stops the readers for the listener's shutdown: every waiting job is
-    /// ended unrun, every waiting thread woken to end, and the watchdog
-    /// joined; a thread inside a call is let go. Returns how many threads
+    /// ended unrun and every waiting thread woken to end; a thread inside
+    /// a call is let go. Returns how many threads
     /// were started and not yet seen to end.
     pub(crate) fn stop(&self) -> usize {
         let threads = {
@@ -347,15 +297,6 @@ impl<R: Reading> Readers<R> {
             self.shared.apply(&mut state, effects);
             std::mem::take(&mut state.threads)
         };
-        self.shared.alarm.wake();
-        let watchdog = self
-            .watchdog
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(watchdog) = watchdog {
-            let _ = watchdog.join();
-        }
         threads
             .into_iter()
             .filter(|thread| !thread.is_finished())

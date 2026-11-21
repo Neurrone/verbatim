@@ -10,13 +10,12 @@
 //!   and the idle barrier's wait for them.
 //! - [`kept`]: the UI Automation elements the listener keeps for its tells.
 //! - [`schedule`]: the reading threads' schedule, which thread runs which
-//!   of Core's requests and bar reads, and Cancel.
+//!   of Core's requests, and Cancel.
 //! - [`foreground`]: what the listener learns of the window in the
 //!   foreground for the keyboard hook.
 //! - [`tell`]: what the listener decides of a `WinEvent` before it tells
 //!   Core of it: NVDA's local drops, the window a tell names and its
 //!   facts, and the foreground hold.
-//! - [`focus`]: the reading threads' and the progress path's vocabulary.
 
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through
@@ -57,7 +56,6 @@
 
 pub mod check;
 pub mod check_threads;
-pub mod focus;
 pub mod foreground;
 pub mod kept;
 pub mod schedule;

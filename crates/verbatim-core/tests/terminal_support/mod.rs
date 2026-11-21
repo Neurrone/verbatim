@@ -961,9 +961,7 @@ impl Session {
                     | QueueEffect::AnswerDropped { .. }
                     | QueueEffect::StartOutpost(_),
                 )
-                | Effect::DropExpiredSpeech(_)
-                // The listener's configuration, at every settings input.
-                | Effect::ListenerConfiguration { .. } => {}
+                | Effect::DropExpiredSpeech(_) => {}
                 Effect::PlayEarcon(earcon) => self.earcons.push(earcon),
                 Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = wake,
                 Effect::Queue(QueueEffect::CheckHung(windows)) => self.checks.extend(windows),

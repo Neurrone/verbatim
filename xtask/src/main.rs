@@ -513,7 +513,6 @@ const FAULT_CRATES: &[&str] = &[
 const FAULT_TESTS: &[(&str, &str)] = &[
     ("verbatim-audio", "mixer"),
     ("verbatim-supervisor", "fault_paths"),
-    ("verbatim-supervisor", "listener_configuration"),
     ("mockapp", "failure_paths"),
     ("mockapp", "shutdown"),
     ("mockapp", "time_limits"),

@@ -532,6 +532,13 @@ pub struct SrState {
     /// (`docs/nvda/object-model.md`, "How a progress bar reports its
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
+    /// The tokens of the progress bars' reads out, each from its want to
+    /// its one ending, so that an ending is routed to the bar
+    /// ([`crate::progress`]).
+    pub(crate) bar_reads: std::collections::BTreeSet<u64>,
+    /// The requests Core's facts want sent outside the queue, and their
+    /// tokens ([`crate::wants`]).
+    pub(crate) wants: crate::wants::Wants,
     /// The last toast spoken, which a repeat within a second is compared
     /// with (`docs/parity/alerts.md`, "Toasts"). A toast dropped as a repeat
     /// leaves it, so a third is measured from the spoken one; only a toast

@@ -66,6 +66,10 @@ pub enum EventKind {
     UiaWindowOpened,
     /// A UI Automation notification.
     UiaNotification,
+    /// A UI Automation progress bar's range value changed, anywhere on the
+    /// desktop: its tell carries the percentage and place its event's cache
+    /// gave ([`crate::tell::Payload::Progress`]).
+    UiaProgress,
     /// A property of a followed UI Automation element changed.
     UiaPropertyChanged,
     /// The text of a followed UI Automation element changed.
@@ -123,6 +127,7 @@ impl EventKind {
             Self::UiaElementSelected => &UIA_ELEMENT_SELECTED,
             Self::UiaWindowOpened => &UIA_WINDOW_OPENED,
             Self::UiaNotification => &UIA_NOTIFICATION,
+            Self::UiaProgress => &UIA_PROGRESS,
             Self::UiaPropertyChanged => &UIA_PROPERTY_CHANGED,
             Self::UiaTextChanged => &UIA_TEXT_CHANGED,
             Self::UiaTextSelectionChanged => &UIA_TEXT_SELECTION_CHANGED,
@@ -169,6 +174,9 @@ pub enum Source {
     },
     /// A UI Automation event, by its event id.
     Uia(i32),
+    /// A UI Automation property change of one property only, by its
+    /// property id: a progress bar's range value.
+    UiaPropertyOf(i32),
     /// Any change signal of a followed terminal: the console host's five
     /// console events, or Windows Terminal's text-changed and caret
     /// events of its element.
@@ -234,6 +242,8 @@ mod uia_event {
     pub(super) const TEXT_CHANGED: i32 = 20015;
     pub(super) const WINDOW_OPENED: i32 = 20016;
     pub(super) const NOTIFICATION: i32 = 20035;
+    /// `UIA_RangeValueValuePropertyId`.
+    pub(super) const RANGE_VALUE_VALUE: i32 = 30047;
 }
 
 /// What a UI Automation focus or menu opening carries: what Core's
@@ -455,6 +465,19 @@ const UIA_NOTIFICATION: EventKindEntry = kind(
     ],
 );
 
+const UIA_PROGRESS: EventKindEntry = kind(
+    EventKind::UiaProgress,
+    "UI Automation progress",
+    Teller::ListenerGlobalGroup,
+    Source::UiaPropertyOf(uia_event::RANGE_VALUE_VALUE),
+    &[
+        PropertyId::ClassName,
+        PropertyId::AutomationId,
+        PropertyId::NativeWindow,
+        PropertyId::Process,
+    ],
+);
+
 const UIA_PROPERTY_CHANGED: EventKindEntry = kind(
     EventKind::UiaPropertyChanged,
     "UI Automation property changed",
@@ -546,6 +569,7 @@ pub const EVENT_KINDS: &[EventKindEntry] = &[
     UIA_ELEMENT_SELECTED,
     UIA_WINDOW_OPENED,
     UIA_NOTIFICATION,
+    UIA_PROGRESS,
     UIA_PROPERTY_CHANGED,
     UIA_TEXT_CHANGED,
     UIA_TEXT_SELECTION_CHANGED,
@@ -563,7 +587,7 @@ mod tests {
 
     /// Every kind, listed by hand, so that a kind added to the enum and
     /// not to the table fails here.
-    const ALL: [EventKind; 36] = [
+    const ALL: [EventKind; 37] = [
         EventKind::MsaaFocus,
         EventKind::Foreground,
         EventKind::ShellForeground,
@@ -591,6 +615,7 @@ mod tests {
         EventKind::UiaElementSelected,
         EventKind::UiaWindowOpened,
         EventKind::UiaNotification,
+        EventKind::UiaProgress,
         EventKind::UiaPropertyChanged,
         EventKind::UiaTextChanged,
         EventKind::UiaTextSelectionChanged,
