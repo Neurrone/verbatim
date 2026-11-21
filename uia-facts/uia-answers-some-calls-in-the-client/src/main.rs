@@ -145,7 +145,7 @@ fn window_after(before: impl FnOnce(u32)) -> Window {
 type Touch = Box<dyn Fn(&Window)>;
 
 fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
-    verbatim_uia::runtime_id(element)
+    verbatim_uia::runtime_id(element).expect("the element's runtime id")
 }
 
 #[expect(clippy::too_many_lines, reason = "one block per call, read in turn")]
