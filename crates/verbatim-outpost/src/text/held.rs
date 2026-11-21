@@ -256,6 +256,37 @@ pub fn read_focus<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
 ) -> TextResult<(CaretReport, Option<SelectionChange>, TextAnchor)> {
+    let (report, selected) = caret_and_selected(source, anchors, read_at_us)?;
+    let baseline = anchors.hold_last()?;
+    Ok((report, selected, baseline))
+}
+
+/// What a node's text says of it, as NVDA's object speech reads it for
+/// report focus: the selected text when the selection is not empty, else
+/// the line at the caret. It holds no baseline.
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn summary<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read_at_us: u64,
+) -> TextResult<verbatim_model::property::TextSummary> {
+    let (report, selected) = caret_and_selected(source, anchors, read_at_us)?;
+    Ok(match selected {
+        Some(selected) => verbatim_model::property::TextSummary::Selected(selected.text),
+        None => verbatim_model::property::TextSummary::Line(report.line.text),
+    })
+}
+
+/// The caret's report with its line's formatting, and the selection as a
+/// change from nothing when it holds text.
+fn caret_and_selected<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    read_at_us: u64,
+) -> TextResult<(CaretReport, Option<SelectionChange>)> {
     let CaretFound {
         state,
         report,
@@ -274,8 +305,7 @@ pub fn read_focus<S: TextSource>(
         (None, _) => None,
     }
     .filter(|selected| !selected.text.is_empty());
-    let baseline = anchors.hold_last()?;
-    Ok((report, selected, baseline))
+    Ok((report, selected))
 }
 
 /// A held caret key's starting read: the caret and the selection, held

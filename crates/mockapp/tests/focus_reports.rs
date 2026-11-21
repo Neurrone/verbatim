@@ -2920,6 +2920,61 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
     app.quit();
 }
 
+/// Report focus's read of the committed text field answers its text
+/// summary, as NVDA's object speech reads an object's text: the line at
+/// the caret with nothing selected, the selected text otherwise
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Verbatim+Tab").
+fn report_focus_reads_the_text_summary() {
+    use verbatim_model::property::TextSummary;
+    let title = common::unique_title("mockapp-text-summary");
+    let mut app = common::spawn_visible("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus doc");
+    let reported = outpost.uia_focus_answer(&client.focused());
+    let node = reported.read.focus.read.node.expect("the focus's node");
+    let summary = |outpost: &OutpostUnderTest| {
+        outpost
+            .requested(
+                hwnd,
+                verbatim_model::request::Request::Properties {
+                    node,
+                    set: vec![PropertyId::TextSummary],
+                },
+            )
+            .outcome
+    };
+    let answered = |summary: TextSummary| {
+        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Properties(
+            verbatim_model::property::PropertyValues(vec![
+                verbatim_model::property::PropertyAnswer {
+                    id: PropertyId::TextSummary,
+                    value: Some(PropertyValue::TextSummary(summary)),
+                },
+            ]),
+        ))
+    };
+    assert_eq!(
+        summary(&outpost),
+        answered(TextSummary::Line(
+            "alpha beta
+"
+            .to_owned()
+        ))
+    );
+    app.send("caret doc 0 5");
+    assert_eq!(
+        summary(&outpost),
+        answered(TextSummary::Selected("alpha".to_owned()))
+    );
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// mockapp's MSAA dialog of `save_as.json`, titled after `label`, its
 /// window and a child window of it that answers for the dialog's nodes at
 /// their object ids (`child-window`), as a control's window is inside a
@@ -3853,6 +3908,10 @@ fn main() {
         (
             "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",
             an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
+        ),
+        (
+            "report_focus_reads_the_text_summary",
+            report_focus_reads_the_text_summary,
         ),
         (
             "a_protected_fields_focus_comes_with_its_caret_and_selected_text",

@@ -935,14 +935,17 @@ consult the verdict themselves, and every other request probes its
 window before it is handled.
 
 - The shared list: `Properties` (the node's live read, made only when
-  the set names a property a snapshot holds; the four no snapshot holds
+  the set names a property a snapshot holds; those no snapshot holds
   are read apart: `Suggestions` by one refresh reading the node's
   `ControllerFor` live, absent for a node that is neither editable text
   nor a search field; `HasValuePattern` and `ComboBoxList` by one
   refresh, the latter by `GetComboBoxInfo` on the node's window when the
   refresh finds NVDA's classic .NET Framework Windows Forms combo box;
-  and `WindowClass` from the node's own or nearest window, with no
-  call into the application), `Navigate`,
+  `WindowClass` from the node's own or nearest window, with no
+  call into the application; and `TextSummary`, for report focus, by a
+  caret read of the node's text, the selected text when there is any,
+  else the caret's line, holding no baseline (`text::held::summary`)),
+  `Navigate`,
   `Children` (first child, then next siblings, at most 1000), `Find`
   (children, or descendants depth first, at most 1000 visited), `Text`
   (today's text answers) and `Activate`.

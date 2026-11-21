@@ -662,6 +662,21 @@ fn watch_outcome(
     }
 }
 
+/// The text summary of `node_id` for report focus
+/// ([`text::held::summary`]): `None` when it has no text or the read
+/// failed, as NVDA then speaks no text.
+pub(super) fn text_summary(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+) -> Option<verbatim_model::property::TextSummary> {
+    let read_at_us = context.observed_now();
+    on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
+        text::held::summary(source, text, read_at_us)
+    })
+    .ok()?
+    .ok()
+}
+
 /// A focus's caret, read after its states (Table 17, columns A to C): the
 /// line at the caret, with the formatting `details` names, and the
 /// selection, the next baseline held from the read, compared with nothing

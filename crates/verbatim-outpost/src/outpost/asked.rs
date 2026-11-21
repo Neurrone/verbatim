@@ -417,6 +417,7 @@ fn is_read_apart(id: PropertyId) -> bool {
             | PropertyId::WindowClass
             | PropertyId::ComboBoxList
             | PropertyId::ChildCount
+            | PropertyId::TextSummary
     )
 }
 
@@ -509,6 +510,9 @@ fn read_apart(
                         verbatim_win32::window::combo_box_list(read.hwnd)
                             .map(|list| PropertyValue::Window(window_handle(list)))
                     }),
+                    PropertyId::TextSummary => {
+                        text_reads::text_summary(context, node_id).map(PropertyValue::TextSummary)
+                    }
                     PropertyId::ChildCount => context
                         .store
                         .key_of(node_id)
