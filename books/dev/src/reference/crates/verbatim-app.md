@@ -471,11 +471,12 @@ knowing for review:
   is full.
 - `requests` — who asks Core's requests from outside the event queue,
   and where each outcome goes (`docs/design/readers-tell-core-asks-build1.md`,
-  "Requests in Core"): the control plane's tree dump
-  (`Request::DumpTree`, naming the attention application's main window,
-  `verbatim_win32::window::main_window_of`) and the notification area
-  list's two reads (`Request::ShellItems` and
-  `Request::ShellItemPosition`, naming `Shell_TrayWnd`). Each is entered
+  "Requests in Core"): the control plane's tree dump (a batch
+  `verbatim_core::outside::dump` builds, naming the attention
+  application's main window, `verbatim_win32::window::main_window_of`)
+  and the notification area list's two reads (batches of walks of the
+  taskbar's windows, naming `Shell_TrayWnd`), each answer built by the
+  same module. Each is entered
   into Core's event queue as `QueueInput::AskOutside` under a token
   `requests::Outside` keeps its `Asker` by; Core sends it to the outpost
   of its window's process once that outpost is ready, starting one when
@@ -635,8 +636,8 @@ knowing for review:
   a click button acts on, come through `AppShellItemsHost`, which posts
   `ShellCommand::ShellItems` with the dialog's `ShellAsk` to the reducer
   thread: it finds the taskbar window (`Shell_TrayWnd`, a local call) and
-  asks Core for `Request::ShellItems` under `Asker::ShellItems`, or
-  `Request::ShellItemPosition` under `Asker::ShellItemPosition`, from
+  asks Core for the item list under `Asker::ShellItems`, or the chosen
+  item's position under `Asker::ShellItemPosition`, from
   outside the event queue (`requests`, above), and hands the outcome to
   the dialog's delivery callback, exactly once, through its responder:
   the items or the candidates, or `None` for any failure, no taskbar

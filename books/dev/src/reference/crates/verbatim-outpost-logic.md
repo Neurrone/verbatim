@@ -29,15 +29,17 @@ Public API:
   replaced (`Effect::Abandon`), its later answer refused; for any other
   reason it runs on and its answer is sent. At the close the queued
   requests are dropped unanswered.
-- A caret key's watch (`Watches`, the `watch` module; the design's "The
-  watch" and Table 15): an `Input::Ask` naming `TextOp::Watch` waits in
-  the table instead of the queue, its first check due at once, then one
-  a poll after each polled check began, the check due at the bound the
-  last. Each check is a `Work::Watch` (`WatchProgram`, its `WatchWork` a
-  `Check` with whether to compare the word and whether it is the last;
-  the table never asks for the `Final` read), dispatched ahead of every
-  other program, the earliest due first, on the shell's timer
-  (`Reducer::next_timer`). A check that shows the effect, and the last
+- A caret key's wait (`Watches`, the `watch` module; the design's "The
+  watch" and Table 15): an `Input::Ask` of a batch whose first step is
+  `WaitForCaret` on a node (`watch::caret_wait`) waits in the table
+  instead of the queue, its first check due at once, then one a poll
+  after each polled check began, the check due at the bound the last.
+  Each check is a `Work::Watch` (`WatchProgram`, holding the batch, its
+  `WatchWork` a `Check` with whether to compare the word and whether it
+  is the last), dispatched ahead of every other program, the earliest
+  due first, on the shell's timer (`Reducer::next_timer`); a check that
+  shows the effect, and the last whatever it shows, runs the batch's
+  later steps and answers it. A check that shows the effect, and the last
   check, makes the final read in the same program and answers through
   `Input::Answered`; a check that answers nothing showed no effect, or
   failed, and the watch goes on; a last check that answers nothing is

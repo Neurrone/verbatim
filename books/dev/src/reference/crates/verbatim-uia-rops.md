@@ -14,15 +14,22 @@ ported file; where it follows Microsoft's MIT-licensed
 `RemoteOperationInstructions.h`, that file carries Microsoft's notice.
 
 The crate has three layers: the instruction set and a typed builder,
-execution, and algorithms. Each algorithm is a named operation with a
-remote program, a classic implementation of the same signature (a type
-named `...Fn`, with `..._remote` and `..._classic` functions), and an
-entry point that chooses between them and answers with a `Path`. Every
-UIA path in the outpost that makes a sequence of calls to the application
-runs through one of them; "Where remote operations are not used" lists
-the rest.
+execution, and what runs on them. The request list's fusable operations
+(`verbatim_model::batch`) each have an emitter, which writes the
+operation's part of a program and declares its worst case; one program
+builder puts a run of a batch's steps into programs from those emitters;
+and one executor of ordinary calls runs the same operations call by call,
+for the fallback rule, which is per operation. The reads that are not
+operations of the list keep a remote program and a classic
+implementation of the same signature behind one entry point that
+chooses between them and answers with a `Path`: the focus ancestry, an
+element found by its path, a focus's states after its registration, the
+caret read, and a terminal's snapshot, colours and search. Every UIA
+path in the outpost that makes a sequence of calls to the application
+runs through one or the other; "Where remote operations are not used"
+lists the rest.
 
-## The request list's executors
+## The program builder and the ordinary-calls executor
 
 `batch` runs the request list's fusable operations on UI Automation
 subjects (`Read`, `Related`, `Ancestors`, `Descendants`, `Caret`,
@@ -84,20 +91,14 @@ again is logged through `remote_fell_back`, the one fallback log, to
 longer than a program reads (16) runs by calls with what follows it, a
 size limit and no fallback.
 
-A walk down the tree (`batch::walk`) reads breadth first: each run the
-children of up to 64 waiting elements, at most 60 children and what the
-rest of the limit holds, the walk's first run fused into its program;
-the outpost's matchers judge each node between runs, a pruned subtree is
-not read, and a walk that prunes reads one level a run so that each node
-is judged before its children are read. An element whose children no
-run can hold is read by one call. The walk stops once nothing waiting
-could come before the last node its limit answers, and answers in tree
-order, each node with its parent's place and its start's.
+A walk down the tree has a section of its own, "The walk down the
+tree", below.
 
-`run_calls` runs each step through the classic calls the twins made,
-re-cut per operation and shared with them (`text::classic_units`,
-`classic_range`, `classic_location`, `classic_caret`, the walk's
-`Uia::children`, `Uia::ancestors`). The developer setting with remote
+`run_calls` runs each step through the classic calls, cut per operation
+and shared with the reads outside the list where they make the same
+calls (`text::classic_units`, `classic_range`, `classic_location`,
+`classic_caret`, `watch_check_classic`, the walk's `Uia::children`,
+`Uia::ancestors`). The developer setting with remote
 operations off, a window marked for classic reading, and the fallback's
 reruns use it. mockapp's `batch.rs` runs every converted shape through
 both executors and requires the same answer, and `batch_faults.rs`
@@ -185,13 +186,14 @@ counted. `Operation::bytecode`, `len`, `is_empty`, and `instruction`
 expose the program for tests.
 
 A program is built per call, with that call's values as constants, but
-for the two a typing user runs most, a terminal's screen and the caret
-read, whose building costs 22 to 78 microseconds against 0.4 to 1.1
-milliseconds for `Execute`. Those are kept per thread (`ProgramCache`, at
-most 16 of each, all forgotten when full) by a key naming everything the
-program was built from but its imports, and a query with the same key
-runs the kept program bound to its own imports (`Program::bind`, which
-checks they are as many and of the same kinds). The cache is per thread
+for those a typing user runs most: a batch's programs, keyed by their
+shape, a terminal's screen and colours, and the caret read, whose
+building costs 22 to 78 microseconds against 0.4 to 1.1 milliseconds for
+`Execute`. Those are kept per thread (`ProgramCache`, at most 16 of each
+kind, all forgotten when full) by a key naming everything the program was
+built from but its imports, and a query with the same key runs the kept
+program bound to its own imports (`Program::bind`, which checks they are
+as many and of the same kinds). The cache is per thread
 because a remote operation and its imports are per client and thread. A
 program whose run on the thread found every opcode supported skips the
 support check on later runs; any failed run has the next check again.
@@ -205,10 +207,10 @@ A failed run is an `Error`:
   (UIA's MSAA proxy inside Verbatim's own process) fails with
   `E_UNEXPECTED`, since there is no provider process to run in. A
   window's title bar is such an element inside a window whose provider is
-  the application's, so `navigation_step` takes the classic step from an
-  element that a tree-walker step fetched and whose cached provider
-  description names only UIA's proxies
-  (`Cached::served_only_by_uia_proxies`), rather than fail the import and
+  the application's, so a step whose subject a tree-walker step fetched
+  and whose cached provider description names only UIA's proxies
+  (`Cached::served_only_by_uia_proxies`) is marked by the outpost for the
+  ordinary calls (`Fused::calls_only`), rather than fail the import and
   fall back (Claude, 2026-11-21).
 - `Unsupported(opcode)`: the provider lacks an instruction.
 - `Execute`: the call itself failed.
@@ -516,176 +518,109 @@ documentation).
 
 ## Layer 3: the caret read
 
-`caret_read(query, remote)` (`CaretReadFn`) is one round trip remotely,
-the formatting the theme asks for included. A `CaretQuery` gives:
+`caret_read(query, remote)` (`CaretReadFn`, with `caret_read_remote` and
+`caret_read_classic`) reads the caret and the selection, whether they
+moved from where they were known to be, the caret's line with the
+caret's offset in it, the formatting the theme asks for, and how the
+selection changed from one known before, in one round trip remotely. Two
+reads use it: a focus read's caret, which holds the next selection
+baseline, and report focus's text summary (`verbatim-outpost`'s
+`text::held`). Every other caret read is a batch's `Caret`, `ReadText`
+and `CompareSelection`, whose emitters the program builder takes from
+this module (`emit_caret`, `emit_runs`, `emit_changes`), so one program
+text serves both. The query and answer fields are in rustdoc
+(`CaretQuery`, `CaretAnswer`).
 
-- the element (a program starts from it) and its text pattern (the
-  classic reads use it);
-- `since`, where the caret was known to be, a `RangeEnd`: a range and
-  which of its ends; the selection's known ends; and `previous_collapsed`,
-  whether that selection held nothing (a caret report sets it; a caret
-  key's watch leaves it false, a moved caret being its evidence);
-- `formats`, whether to read the caret line's formatting;
-- `attributes`, an `Attributes` set of `TextAttribute`s: the annotation
-  types for spelling and grammar errors, the font's name, size, and
-  weight, italic, the underline and strikethrough styles, the foreground
-  and background colors, the bullet style, and the link attribute; and
-  `learning`, those whose support the caller does not know yet;
-- `recheck`, to read the caret again at the end (a caret key's watch asks
-  for it);
-- `read_selection_text` and `read_previous_text`, for the texts the
-  outpost compares to tell whether the text changed under the selection,
-  each up to `MAX_COMPARED_TEXT`, 513 UTF-16 code units, one more than
-  the 512 characters from which a selection is spoken as a count; and
-  `max_change_text`, the limit for each stretch of a selection change.
-
-The `CaretAnswer`:
-
-- `caret`, a range whose start is the caret, and whether it is known to
-  be collapsed; `selection`, the selected range when text is selected.
-  The caret is the start of the selection's first range, as NVDA's caret
-  is (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
-  selection the provider's own caret is at.
-- `moved`: the caret is not where `since` says; `selection_moved`: the
-  selection's ends are not the known ones.
-- `line`: a `UnitRead`, the range, its text, and how many UTF-16 code
-  units of it come before the caret.
-- `runs`: the formatting, stretch by stretch, each a `Run`, a length in
-  UTF-16 code units and its `RunAttributes`: spelling or grammar error
-  (`ANNOTATION_SPELLING_ERROR`, 60001, `ANNOTATION_GRAMMAR_ERROR`,
-  60002), font name, size, weight, italic, underline style,
-  strikethrough style, color, background color, bullet style, and link,
-  each `None` when not read, not supported, mixed, or of another type.
-- `unsupported`: the `learning` attributes the span answered "not
-  supported" for; `None` when the span said too little to learn from.
-- `moved_while_read`: with `recheck`, the caret read last is not where it
-  was first read, since a program is not atomic and an application can
-  write between its calls.
-- `selection_text` and `previous_text`: the selection's text when its
-  ends changed, and the old ends' text now, each only when asked.
-- `since_place`: where `since` lies against the caret's line, its order
-  against the line's start and against its end, so a key's baseline being
-  on that line costs no further round trip.
-- `selection_start` and `start_first`: where the selection starts in the
-  caret's line, the caret's own offset, and whether that line is the
-  text's first, so a Backspace over the selection can say what comes
-  before it.
-- `changes`: with a previous selection that moved, the
-  `SelectionTextChange`s by the text protocol's rule, read inside the
-  provider, so a selecting key's answer is one round trip with the text
-  of what changed.
-
-The program gets its text pattern with `GetTextPattern` (opcode 10014),
-reads the selection with `GetSelection`, whose first range's start is the
-caret. It compares the caret and the selection
-with the imported known ones, expands copies of the caret to the line and
-the unit, and reads their text and the text before the caret, whose
-length is the offset. Formatting is read by UIA's format unit, as NVDA
-reads it, until the span's end or `MAX_RUNS` (64) stretches. A stretch
-with an attribute that answers "mixed" (`IsMixedAttribute` in the
-program, `verbatim_uia::is_mixed` classically) is walked again by words,
-and a mixed word by characters, as NVDA walks a mixed stretch by finer
-units, so a provider whose format unit does not end where an attribute
-changes, such as both terminals' for italics, still has each part read
-with its own value. Values are appended as the provider gave them and
-typed by the caller, so the program spends no instructions on testing
-types. The annotation types are asked of the stretches only when the
-span has some.
+The caret is the start of the selection's first range, as NVDA's caret
+is (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
+selection the provider's own caret is at. The program gets its text
+pattern with `GetTextPattern` (opcode 10014), reads the selection with
+`GetSelection`, compares the caret and the selection with the imported
+known ones, expands a copy of the caret to the line, and reads its text
+and the text before the caret, whose length is the offset. Formatting is
+read by UIA's format unit, as NVDA reads it, until the span's end or
+`MAX_RUNS` (64) stretches. A stretch with an attribute that answers
+"mixed" (`IsMixedAttribute` in the program, `verbatim_uia::is_mixed`
+classically) is walked again by words, and a mixed word by characters,
+as NVDA walks a mixed stretch by finer units, so a provider whose format
+unit does not end where an attribute changes, such as both terminals'
+for italics, still has each part read with its own value. Values are
+appended as the provider gave them and typed by the caller, so the
+program spends no instructions on testing types. The annotation types
+are asked of the stretches only when the span has some. A selection
+that moved is compared inside the provider by the text protocol's rule,
+each change with its text up to the query's limit, and the new
+selection's text is read up to `MAX_COMPARED_TEXT` (513 UTF-16 code
+units, one more than the 512 characters from which a selection is
+spoken as a count).
 
 The classic implementation makes the same reads one call at a time, a
 stretch's attributes together in one
 `IUIAutomationTextRange3::GetAttributeValues` call as NVDA reads a
 range's formatting (`verbatim_uia::text::TextRangeExt::attributes`). An
-attribute whose read fails is not supported on both paths. Both read the
-whole answer on every call, so each check of a caret key's watch costs
-one round trip remotely (`books/dev/src/reference/performance.md`, "A caret move, UIA").
+attribute whose read fails is not supported on both paths.
 
 ## Layer 3: a caret wait's check
 
-A caret wait's check (`src/watch.rs`; `docs/design/readers-tell-core-asks-build1.md`,
-"The watch") is the first step of each poll's program, `Input::WaitCheck`
-of `batch`, emitted by `watch::emit_check`, with `watch_check_classic`
-the same reads call by call for `run_calls`. A `WatchQuery` names the
-text element, the caret and the selection's ends at the key's starting
-point, and whether to read the word at the caret (a deleting key's check,
-30 ms after its pass). A `WatchAnswer` says whether the caret and the
-selection's ends moved from the starting point, a compare the provider
-refuses counting as a move, gives the caret's line with the caret's
-offset, the word when asked, and whether the caret read again at the end
-moved while the check read. The check's result (`batch::Checked`) is
-found when the caret or the selection moved or at the bound, so the
-batch's later reads, gated on it in the same program, run then and cost
-the poll no round trip of its own. The comparisons of text (the
-characters beside the caret, the line, the word) are the caller's, made
-on the texts returned. The poll's instructions are pinned by
-`crates/mockapp/tests/instruction_limit.rs` (`wait_polls_execute_exactly`).
+A caret wait's check (`src/watch.rs`; the request list's
+`WaitForCaret`) is the first step of each poll's program,
+`batch::Input::WaitCheck`, emitted by `watch::emit_check`, with
+`watch_check_classic` the same reads call by call for `run_calls`. A
+`WatchQuery` names the text element, the caret and the selection's ends
+at the key's starting point, and whether to read the word at the caret
+(a deleting key's check, 30 ms after its pass). A `WatchAnswer` says
+whether the caret and the selection's ends moved from the starting
+point, a compare the provider refuses counting as a move, gives the
+caret's line with the caret's offset, the word when asked, and whether
+the caret read again at the end moved while the check read. The check's
+result (`batch::Checked`) is found when the caret or the selection
+moved or at the bound, so the batch's later reads, gated on it in the
+same program, run then and cost the poll no round trip of its own. The
+comparisons of text (the characters beside the caret, the line, the
+word) are the caller's, made on the texts returned. The poll's
+instructions are pinned by `crates/mockapp/tests/instruction_limit.rs`
+(`wait_polls_execute_exactly`).
 
-## Layer 3: the text protocol's other reads
+## The text emitters
 
-`text_units`, `text_range`, and `text_location` (`TextUnitsFn`,
-`TextRangeFn`, `TextLocationFn`) answer the rest of the text protocol.
-Each takes a `TextTarget`, the element and its text patterns, and starts
-from a `TextFrom`:
+The text operations' emitters and their classic calls live in
+`src/text.rs`, shared by the two executors. A text step starts from a
+`TextFrom`, which the outpost resolves from the step's point:
 
-- `Caret`, `SelectionStart`, `SelectionEnd`: read as the caret read reads
-  them, once however many points use them.
+- `Caret`, `SelectionStart`, `SelectionEnd`: read as the caret read
+  reads them, once however many points of a program use them.
 - `Start` and `End`: the document range collapsed to one end.
-- `At(Position)`: a range and the end of it the caller holds.
+- `At(Position)`: a range and the end of it the outpost holds.
 - `After { from, prefix, counts }`: a point some text after a held one,
   the text between them being `prefix`. Each of `counts` (UTF-16 code
-  units, code points, grapheme clusters) is tried in turn, moving a copy's
-  end by that many characters and comparing the text passed with `prefix`
-  inside the provider; the last tried is kept when none matches. This is
-  how a position Core found inside a chunk is resolved in one round trip.
+  units, code points, grapheme clusters) is tried in turn, moving a
+  copy's end by that many characters and comparing the text passed with
+  `prefix` inside the provider; the last tried is kept when none
+  matches. This is how a position Core found inside a chunk is resolved
+  in one round trip.
 
-Every point is returned (`FoundPoint`) so the caller can remember it.
+Every point is returned (`FoundPoint`) so the outpost can hold it.
 
-- `text_units` (`UnitsQuery`, `UnitsAnswer`, each unit a `UnitText`):
-  from the point, an optional `Movement` (`By(unit, count)` from the
-  unit's start, its count negative for a backward move even from a
-  provider that answers a positive one, as NVDA corrects it; or
-  `Document(count)`, to an end), then the unit containing the point
-  reached: its range, its text up to `max_text`, the point's offset, and
-  its language (`Culture`, as a BCP 47 tag from
-  `verbatim_uia::text::locale_name`). With a `count` above one it reads
-  on until it has `count`, the text reaches `max_total`, or a move does
-  not move (`ended`): say-all's batch, twenty lines in one round trip. A
-  batch's language is read once over the whole batch, and unit by unit
+- `ReadText` (`emit_units`, `classic_units`): from the point, an
+  optional `Movement` (`By(unit, count)` from the unit's start, its count
+  negative for a backward move even from a provider that answers a
+  positive one, as NVDA corrects it; or `Document(count)`, to an end),
+  then the unit containing the point reached: its range, its text up to
+  the step's limit, the point's offset, and its language (`Culture`, as a
+  BCP 47 tag from `verbatim_uia::text::locale_name`). With a count above
+  one it reads on until it has the count, the text reaches its total
+  limit, or a move does not move: say-all's twenty lines in one round
+  trip. The language is read once over the whole read, and unit by unit
   only when that answers "mixed" (`verbatim_uia::text::Language`). A unit
   is expanded from a copy whose start is the point, never collapsed
   first, since `ExpandToEnclosingUnit` normalizes a range from its start.
-- `text_range` (`RangeQuery`, `RangeAnswer`, `RangeAction`): two points
-  (or one, for moving the caret), ordered by comparing them, and the text
-  between them read up to a limit or selected; with `RangeQuery::through`,
-  through the character at the later. A refused selection is caught
-  inside the program and answered as not selected.
-  `RangeAction::SelectReporting` also reads the selection before and
-  after selecting and answers how it changed (`RangeAnswer::changes`) by
-  the caret read's rule: the review copy's first press in one round trip.
-  When a read after the select fails, the program answers with the
-  selection it read before (`RangeAnswer::unread`, `ChangesUnread`), and
-  `text_range` reads the selection again classically and compares, rather
-  than selecting a second time. With the changes read, the answer carries
-  the selection after (`RangeAnswer::selection_after`, `SelectionAfter`):
-  its range, whether something is selected, and its text up to
-  `MAX_COMPARED_TEXT`.
-- `text_location` (`LocationQuery`, `LocationAnswer`): the character at
-  the point and its bounding rectangles.
-
-## Layer 3: an object-navigation step
-
-`navigation_step(uia, query, remote)` (`NavigationStepFn`) takes one
-raw-view step (parent, next or previous sibling, first child) from
-`StepQuery::element`, a `Cached<Kept>` the outpost's node registry keeps
-(decision 2 of `books/dev/src/explanation/design/uia-shapes.md`), and finds that element's
-nearest window, as the outpost's navigation needs to correct the
-neighbor's backend. The answer, a `Step`, holds the neighbor as a
-`Cached<Node>` filled by `StepQuery::fill`, with its absent record, its
-table when it is a cell (`neighbor_table`), and the window. The classic implementation is `nearest_window_handle` and a
-tree walker step, one call each; a step from a gone element is an error,
-any other failure no neighbor. A program reports a top-level window's
-parent as null where a tree walker reports the desktop, so the outpost
-takes a step from a top-level window classically.
+- `ReadRange` and `Select` (`emit_between`, `classic_range`): two
+  points, ordered by comparing them, and the text between them read up
+  to a limit, or selected; with `Ends::through`, through the character at
+  the later. Two equal points selected move the caret. A selection the
+  provider refuses is caught inside the program and answered refused.
+- `Locate` (emitted in the program, `classic_location` by calls): the
+  character at the point and its bounding rectangles.
 
 ## Layer 3: an element found by its path
 
@@ -725,8 +660,15 @@ call each.
 
 A `Descendants` step (`batch::Input::Descendants`, `batch/walk.rs`)
 walks breadth first from its starts, capped at its depth and node count,
-answering its nodes in tree order with whether the walk was complete;
-the tree dump is one, of the raw view. By calls, each element's
+answering its nodes in tree order, each with its parent's place and its
+start's, and whether the walk was complete; the tree dump, the tray
+list and the controlled selection's search are each one on a UI
+Automation subject (an MSAA subject's walk is the outpost's own). The outpost's matchers (`Descend::judge`) judge each node
+between runs: a pruned subtree is not read, and a walk that prunes reads
+one level a run, so that each node is judged before its children are
+read. The walk stops once nothing waiting could come before the last
+node its limit answers. The walk's first run is fused into its program,
+which ends after it. By calls, each element's
 children are read in one call for the raw view, as NVDA reads an
 object's children (a cache request scoped to the children, then
 `GetCachedChildren`), or a walker step a child for the control view; an
@@ -742,50 +684,32 @@ gone falls back to calls, logged as any remote failure is. An element with more 
 for is read by calls, and a later run that fails as a whole leaves the
 rest of the walk to calls.
 
-## Layer 3: a selection the focus controls
-
-`controlled_selection(uia, query, remote)` (`ControlledSelectionFn`)
-answers NVDA's test for a selection inside an element the focus controls,
-whose behavior is `docs/parity/changes-and-selection.md`, "Selection in a
-list the focus controls". The `Controlled` answer holds `controlled`, the
-runtime ids (as `runtime_id_key` writes them) of the elements the focus's
-`ControllerFor` relation names, which the outpost logs, and `selected`, a
-`Cached<Node>`: the element the selection event named
-(`ControlledQuery::selected`) when it is one of them or a descendant of
-one, and otherwise nothing. The program compares each controlled element
-itself, then walks its raw-view descendants depth first comparing runtime
-ids, since there is no
-`FindFirst` instruction; at about 35 instructions an element, a list of
-more than about 280 is answered classically. The classic implementation
-is `Uia::controlled`, a `FindFirstBuildCache` under each controlled
-element.
-
 ## Fallback rules
 
-How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
-`read.rs`), and the same way for every other named operation:
+A batch's steps fall back by the rule of "The program builder and the
+ordinary-calls executor" above, step by step. The reads outside the
+list choose by their entry point, the same way for each:
 
 - A window without a native UIA provider is read through MSAA, so its
   focus never reaches this choice.
 - An import that fails (`Error::Import`, a client-side proxy) marks the
   window for its lifetime, and the outpost then reads it classically
-  without trying; the mark is forgotten when the window is destroyed. The
-  window marked is the one the operation already holds: the window with
-  the keyboard focus for a focus-now query, the path's window for an
-  element found by its path, the top-level window of the step's answer
-  for a navigation step, the top-level window of the tracked focus's
-  window for a controlled selection, and the tracked focus's window for
-  the caret read, the text reads and a terminal's screen.
+  without trying, a batch's segments by `run_calls` included; the mark
+  is forgotten when the window is destroyed. The window marked is the
+  one the read already holds: the window with the keyboard focus for a
+  focus-now read, the path's window for an element found by its path,
+  the top-level window of a batch segment's subjects, and the tracked
+  focus's window for the caret read and a terminal's screen.
 - A run that fails otherwise is answered classically for that call
-  (`Path::Fallback`) and logged as a warning with the failing instruction
-  and its source line.
+  (`Path::Fallback`) and logged as a warning with the failing
+  instruction and its source line.
 - A gone provider and one that times out (`UIA_E_ELEMENTNOTAVAILABLE`,
-  `UIA_E_TIMEOUT`) are returned by every entry point without the classic
-  calls, which would fail the same way after a second wait; the outpost
-  answers them as it answers a gone or unresponsive element.
+  `UIA_E_TIMEOUT`) are returned by every entry point without the
+  classic calls, which would fail the same way after a second wait; the
+  outpost answers them as it answers a gone or unresponsive element.
 - A developer setting (`uia.remote_operations` in `settings.toml`, on by
-  default) forces the classic walk; the supervisor passes it to each
-  outpost as `--classic-uia`.
+  default) forces the classic calls everywhere; the supervisor passes it
+  to each outpost as `--classic-uia`.
 
 Not implemented: marking a window after repeated run failures, and
 retrying a run that exceeds the instruction limit with a smaller bound.
@@ -807,11 +731,16 @@ so the jump lands on the `Add` before its target; it executes twice as
 many instructions and two more, so it counts only programs under half the
 limit. It is never on in Verbatim itself.
 
-Programs are not resumable: their work is bounded by their queries. Every
-program's worst case stays under half the limit (`books/dev/src/reference/performance.md`,
-"The instruction limit") except the caret read's walk of a span whose
-every stretch is mixed, about 7,700, which still runs under it. A run
-that exceeded the limit would be answered classically for that call.
+Programs are not resumable: their work is bounded by their queries. The
+program builder sums its emitters' declared worst cases and ends a
+program where the next step would pass the limit, so a batch's program
+that overruns is a defect, as "The program builder and the
+ordinary-calls executor" says. Every program's worst case stays under
+half the limit (`books/dev/src/reference/performance.md`, "The
+instruction limit") except the caret read's walk of a span whose every
+stretch is mixed, about 8,000, which still runs under it. A read outside
+the list that exceeded the limit would be answered classically for that
+call.
 
 ## Where remote operations are not used
 
@@ -822,10 +751,13 @@ that exceeded the limit would be answered classically for that call.
   lazy, so a remote read never makes it, is a possible follow-up.
 - Activation (`Uia::activate`): the pattern methods (`Invoke`, `Toggle`,
   `Select`) have no instructions.
-- The menu item's legacy checked state for the focus-now answer and a
-  navigation step's neighbor: one call.
+- The menu item's legacy checked state for the focus-now answer and an
+  object reached by navigation: one call.
 - A dialog's own text through UIA: already one call.
-- The ancestors query (`Query::Ancestors`): nothing sends it.
+- A batch's `Ancestors`, whose stops before each hop are calls to
+  Windows no program can make (`Uia::ancestors`), and a `Descendants`
+  walk of the control view, since a program's `Navigate` walks the raw
+  view.
 - The arbitration probe and the checks of a console's and a Windows Forms
   window's provider: window messages and one-time checks made before the
   window's backend is known.
@@ -859,15 +791,19 @@ The caret and say-all reads are in `books/dev/src/reference/performance.md`,
 ## Tests
 
 Unit tests cover each instruction's bytes and the builder's offsets,
-constants, and source locations. The mockapp tests run both
-implementations of each operation against real providers and assert that
-they agree: `remote_ops.rs` (the focus ancestry, the navigation step,
-cached properties, a stalled and an exited provider), `call_counts.rs`
-(the calls of each read), `text.rs` (the caret read and the
-text reads), `terminal.rs` and `terminal_snapshot.rs`,
-`controller_for.rs`, `uia_tree.rs` and `time_limits.rs` (the tree dump),
-and `instruction_limit.rs` (the platform's limit and every program's
-count), all under `crates/mockapp/tests/`. `cargo xtask
+constants, and source locations. The mockapp tests run both executors,
+or both implementations of a read outside the list, against real
+providers and assert that they agree: `batch.rs` (every converted batch
+shape, a shape's program bound again, absent properties),
+`batch_faults.rs` (each case of the fallback rule at a fault point),
+`remote_ops.rs` (the focus ancestry, a navigation step, cached
+properties, a stalled and an exited provider), `call_counts.rs` (the
+calls of each read), `text.rs` (the caret read and the text steps),
+`watch_checks.rs` (a wait's polls), `terminal.rs` and
+`terminal_snapshot.rs`, `controller_for.rs`, `uia_tree.rs` and
+`time_limits.rs` (the tree dump), and `instruction_limit.rs` (the
+platform's limit and every program's count, a batch's shapes at their
+caps among them), all under `crates/mockapp/tests/`. `cargo xtask
 regenerate-terminal-conformance-expectations` checks the colour read
 against both real terminals, failing when its runs differ from the cells'
 read one by one.

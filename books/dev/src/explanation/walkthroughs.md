@@ -182,22 +182,25 @@ while focus is in Notepad's text area.
    records and awaits, holding the queue until it ends. Nothing is spoken
    yet.
 4. **Core's thread sends the request.** The queue's `Send` effect names
-   the outpost generation and the request (`Request::Navigate`, with the
-   properties to read of the node reached). The shell checks the window
+   the outpost generation and the request, a batch of one `Related` step
+   from the navigator's node with the properties to read of the node
+   reached. The shell checks the window
    for a hang first, and answers a request to a hung window "not
    responding" unsent; otherwise it sends it to the outpost
    (`CoreToOutpost::Request`). If the generation has ended, the request is
    answered at once as ended.
-5. **The outpost answers.** The outpost's worker runs `read::navigate`:
-   one raw-view tree walker step for a UIA node, `accNavigate` for an
-   MSAA node, with a neighbour in a window the other backend owns re-read
+5. **The outpost answers.** The outpost's worker parses the batch and
+   runs its step by `read::navigate`: one raw-view step for a UIA node,
+   one remote program or a tree walker call, `accNavigate` for an MSAA
+   node, with a neighbour in a window the other backend owns re-read
    through it (`corrected_backend`, NVDA's `correctAPIForRelation`). It
-   answers once: the neighbour, no neighbour (a real edge), gone, or
-   failed.
+   answers once, the step's outcome: the neighbour, no neighbour (a real
+   edge), gone, or failed.
 6. **The answer re-enters the queue.** The answer names its request's
    number; the queue takes it only from the generation asked and only
    while the request is out, and drops a late one. The paused navigation
-   resumes with the outcome, decoded once as the request's reply type.
+   resumes with the outcome, parsed once against the batch sent and read
+   by the step's handle.
 7. **Core acts on it.** A node moves the navigator and is announced; no
    neighbour speaks NVDA's edge message ("No next" and the like); gone
    speaks the same message and leaves the navigator where it is; no
@@ -332,7 +335,8 @@ every query follows.
    and a second for the way back).
 2. **Recorded.** `ReducerThread::dump_tree` finds the main window of the
    application holding attention, records the asker, and gives Core's
-   event queue `QueueInput::AskOutside` with `Request::DumpTree`. It is a
+   event queue `QueueInput::AskOutside` with the dump's batch, a
+   `Descendants` of that window (`verbatim_core::outside::dump`). It is a
    request from outside the event queue: it holds no key, it has the
    queue's due time, 11 seconds, and its live hang check, and Core does
    not stop waiting for it when the foreground changes. Request numbers
@@ -342,7 +346,8 @@ every query follows.
    (`CoreToOutpost::Request`), or answers it "not responding" unsent. The
    outpost's worker takes the event queue's requests ahead of every
    queued request from outside it, so keys never wait behind the dump.
-4. **Run.** The worker walks the tree within its depth and node limits.
+4. **Run.** The worker walks the tree within its depth and node limits,
+   sixty children a remote program.
    The outpost keeps no deadline of its own: only Core stops waiting.
    While the request is out, the shell asks Windows every half second
    whether the window is hung.

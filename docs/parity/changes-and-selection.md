@@ -303,10 +303,10 @@ list opens, is spoken by NVDA with the name its event's element carried,
 which Settings has not set yet ("list item 1 of 22"), and by Verbatim
 with the name read when the selection is handled ("Sound settings 1 of
 22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
-Core asks the listener's read of a selection's item for that name
-(`Purpose::Selection`), which the read's fresh cache request already
-carries, so it costs no call; every other read keeps its event's cached
-name. mockapp's
+Core takes, for a selection's item, the name the listener's read
+reads afresh as it walks the item's ancestors, which the read's fresh
+cache request already carries, so it costs no call; every other read
+Core speaks keeps its event's cached name. mockapp's
 `a_selection_whose_event_carried_no_name_is_said_with_the_name_read`
 (`crates/mockapp/tests/controller_for.rs`) pins it in the recorded order:
 the event's cache without a name, the listener's check, the name set,

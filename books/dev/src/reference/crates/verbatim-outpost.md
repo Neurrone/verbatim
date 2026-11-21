@@ -119,9 +119,9 @@ not step from a window's own window object into a parent window it reads
 as plain (`read::reads_as_plain`) and does not read a parent an
 `accParent` named in one, and a focus route through one is not followed
 (`Context::focus_route`). The accepted exception is object navigation's
-raw-view step (`verbatim_uia_rops::navigation_step_classic` when the
-program is not run), which reads such a neighbor through UIA
-before `read::corrected_backend` switches it to MSAA.
+raw-view step (a `Related` step by the ordinary calls when no program
+runs), which reads such a neighbor through UIA before
+`read::corrected_backend` switches it to MSAA.
 
 Where a walk ends below the desktop, the chain goes on from a window
 (`read::window_onward`), as NVDA's `Window._get_parent` does: after an
@@ -517,8 +517,8 @@ and the inherited pipe handles.
 
 - `text` is the outpost's side of the text protocol
   (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol"), public so mockapp
-  drives it. `perform(source, anchors, op)` answers a `TextOp` over a
-  `TextSource`, a backend's view of one node's text in UTF-16:
+  drives it. A batch's text steps run over a `TextSource`, a backend's
+  view of one node's text in UTF-16:
   `uia::UiaText` over a text pattern (positions are `UiaPos`; `new` takes
   the element for remote operations; `remote`, `details`, `support`, and
   `known_support` say whether caret reads try a remote operation, which
@@ -530,23 +530,29 @@ and the inherited pipe handles.
   character is Uniscribe's in every edit control, as NVDA's
   `EditTextInfo` forces both; the plain edit
   control alone answers `TextSource::measure`, a point's offset and the
-  text's length, so a location there is answered `OffsetLocation`, and a
-  rich edit's is answered `Location`, as NVDA reads a rich edit through
-  its text object model).
-  `caret_report_from` reads the caret and its line; `held` reads a caret
-  key's starting point (`held::starting_from`), a focus's caret read
-  (`held::read_focus`) and report focus's text summary (`held::summary`);
-  `ops` a batch's `Caret` and `CompareSelection`; and `check` a watch's
-  checks. `Anchors` keeps a backend's anchors by node for a reader that
+  text's length, so a `Locate` there answers the offset and length
+  (`Located::offset`), and a rich edit's the screen point
+  (`Located::screen`), as NVDA reads a rich edit through its text object
+  model).
+  `fused` runs a run of a batch's text steps on a UI Automation node as
+  one segment of the program builder (`fused::run`) and a wait's poll
+  (`fused::poll`); `by_calls` runs one text step call by call
+  (`CallStep`), and `ops` a `Caret` and a `CompareSelection`, through an
+  edit control's messages; `check` makes a wait's check call by call;
+  `held` reads a focus's caret read (`held::read_focus`), report focus's
+  text summary (`held::summary`) and a terminal key's starting point
+  (`held::starting_from`); `caret_report_from` reads the caret and its
+  line. `Anchors` keeps a backend's anchors by node for a reader that
   holds them for the whole read, a test or mockapp, until
-  `forget_anchors`; `NodeText` is one node's,
-  borrowed from it or from the crate's `NodeTextCopy`, the copy a
-  program's text call works on (`position_at`, `reported_point`). Both hold the reducer's `NodeAnchors` with each
-  position a `Slot`: the source's position and the key it was kept under,
-  so a call's result names a position it was given by the same key and
-  only one it made is given a new one (`NodeTextCopy::finish`);
-  `named_anchors(op)` lists the anchors of the positions an operation
-  names, which a copy must hold.
+  `forget_anchors`; `NodeText` is one node's, borrowed from it or from
+  the crate's `NodeTextCopy`, the copy a program's text call works on
+  (`position_at`, `reported_point`). Both hold the reducer's
+  `NodeAnchors` with each position a `Slot`: the source's position and
+  the key it was kept under, so a call's result names a position it was
+  given by the same key and only one it made is given a new one
+  (`NodeTextCopy::finish`); `fused::named` lists the anchors of the
+  positions a run of steps names, which a copy must hold, from the
+  batch's one list (`Batch::anchors`).
 - `dialog_text(&dialog)` gathers a dialog's own text by NVDA's rules
   (`docs/nvda/object-model.md`, "A dialog's own text") over a
   `DialogParent` whose children are `DialogObject`s: MSAA through
@@ -699,11 +705,13 @@ and the inherited pipe handles.
   (`verbatim_uia::map::with_legacy_checked_state`), for its focus and for
   each state change the `Follow` group tells of it, read from the event's
   element (`verbatim_uia::map::with_legacy_checked_states`).
-- A UIA navigation step (`read::uia_remote_step`) is one remote operation
-  (`verbatim_uia_rops::navigation_step`) from the kept element, but classic
-  from a top-level window (a program's walk ends there), with remote
-  operations off, or in a window marked classic. A gone element is found
-  by the focus's route and stepped from classically, or answered gone.
+- A UIA navigation step (`read::related_step`) is one `Related` step of
+  the program builder from the kept element, one program, but by calls
+  from a top-level window (a program's walk ends there) or from an
+  element only UI Automation's proxies inside the outpost serve, with
+  remote operations off, or in a window marked classic. A gone element
+  is found by the focus's route and stepped from by calls, or answered
+  gone.
 - A dialog's own text (`read::describe_dialogs`) is given as the
   description of every dialog in the chain below the ancestors Core
   already knows, and of a dialog focus, while descriptions are read. A UIA
@@ -786,9 +794,8 @@ as NVDA's handlers read them.
 ### What to read
 
 Each program reads the node details its request names and nothing more
-([verbatim-model](verbatim-model.md), "Themes"): a request of the shared
-list by its property set (`asked::node_details`), a legacy query by the
-details it carries, a tree dump every detail, an event's own reads, which
+([verbatim-model](verbatim-model.md), "Themes"): a batch by its steps'
+property sets (`batch::node_details`), an event's own reads, which
 no request names, every detail (Core's theme decides what is spoken), and
 a text read or a release none. The store's handle for the program carries
 them, so the MSAA reads see them too (`Interning::details`). UIA requests
@@ -800,8 +807,8 @@ a node's place only for an element read alone (`node_gates`,
 an ancestor's description always (decision 4). MSAA reads skip what is
 not named. The subscriptions' cache requests are fixed, so a listener's
 selection is reported with every detail its cache holds. Text formatting
-is read only for the details the request names (`TextDetails`, from the
-text op) and attributes the control supports,
+is read only for the details the step names (`TextDetails`) and
+attributes the control supports,
 learned from its answers and kept per node (`TextSupport`); spelling and
 grammar annotation types are never learned, since Notepad answers "not
 supported" without annotations, so the caret read asks a line first
@@ -810,35 +817,38 @@ read.
 
 ### Text and caret
 
-Core's `Request::Text` (`text_reads::answer_asked`, `text::held`) holds
-reads behind ids Core names, released as anchors are (Table 16):
+A batch's text steps (`outpost/batch.rs`, `text_reads`, `text`) read a
+node's text and hold reads behind the anchors Core names, released as
+anchors are (Table 16 of
+`docs/design/readers-tell-core-asks-build1.md`):
 
-- `StartingRead`: the caret and the selection held as the starting point,
-  with the key's unit where its `StartingUnit` says: at the caret (the
-  line where the text has none), with the word at the caret for Delete,
-  or, for Backspace and Control+Backspace, around the character before
-  the caret, as NVDA's Backspace scripts read what they delete: the
-  caret moved back a character and expanded to the unit, nothing at the
-  text's start (`held::unit_before_caret`). Through UI Automation that
-  unit is read in the caret read's own program (`CaretUnit::BeforeCaret`);
-  an edit control moves back and reads it by its messages. It compares
-  no selection.
-- A focus's caret read (`held::read_focus`): the caret, its line with
-  the formatting the focus request's `details` name, and the selection
-  with its text, held as the next baseline, compared with nothing.
-- `ReadSelection`, a caret tell's read: the caret and the selection,
-  compared with the named baseline when the node holds it, as its range
-  now is (through UI Automation a range follows the edits), in specific
-  terms with each part's text, nothing when both are empty, and with the
-  whole new selection beside it; an edit control's selection offsets; the
-  next baseline held. A baseline no longer held is no baseline.
-- `MoveCaret` and `Select` answer `CaretPlaced` and `SelectionPlaced` with
-  the next baseline, the read the move kept, or a fresh read of the caret
-  when it kept none.
-- A focus answer's caret (`FocusCaret::Read`): the same read as
-  `ReadSelection`, after the node's states, with the request's baseline;
-  `NoText` for a node with no text, `NotRead` when the read failed and for
-  a terminal, whose baseline read is its first.
+- A run of consecutive text steps (`Caret`, `ReadText`, `ReadRange`,
+  `CompareSelection`, `Select`, `Locate`) on one UI Automation node is
+  one segment of the program builder (`text_reads::fused_steps`,
+  `text::fused::run`): points the run names in an earlier segment are
+  resolved to the positions held, a condition or reference on an earlier
+  segment is decided before it runs, and each result is made the
+  model's, a `Caret`'s points held as anchors and its read held as the
+  next selection baseline (`NodeText::hold_caret`), with the selection's
+  text a `CompareSelection` of the run read, a `ReadText`'s chunks minted
+  with the formatting its details name, the control's support of each
+  attribute learned as the caret read learns it. An edit control's text
+  steps run one at a time by its messages (`text::by_calls`, `text::ops`).
+  A step the text refuses answers its refusal as the step's outcome
+  (no text, no such unit, unsupported), and an anchor no longer held
+  answers not there, naming the anchor lost.
+- A `Caret` compares nothing; a `CompareSelection` compares the selection
+  of the `Caret` it names with a baseline anchor's range as it now is
+  (through UI Automation a range follows the edits), or with an earlier
+  `Caret`'s selection, in specific terms with each part's text, nothing
+  when both are empty, and with the whole new selection beside it, plus
+  an edit control's selection offsets. A baseline no longer held answers
+  not there.
+- A focus's caret read (`held::read_focus`, inside `FocusRead`): the
+  caret, its line with the formatting the read's `details` name, and the
+  selection with its text, held as the next baseline, compared with
+  nothing; `NoText` for a node with no text, `NotRead` when the read
+  failed and for a terminal, whose baseline read is its first.
 - `MoveBySentence` (`text::sentence`), run whole: from the starting
   point, the caret's paragraph is read, the next or previous sentence
   found in it by Unicode's rules, the paragraph beside it read when the
@@ -849,14 +859,17 @@ reads behind ids Core names, released as anchors are (Table 16):
   there, by its anchor.
 - A batch whose first step is `WaitForCaret`, a caret key's wait, waits
   in the reducer's table (`verbatim-outpost-logic`'s `watch`), whose
-  polls run as programs of their own (`batch::poll`,
-  `text_reads::watch`): through UI Automation each poll is one program,
-  the check of the caret, its line and the word at it against the
-  starting point followed by the batch's later reads, gated on the caret
-  or the selection having moved or the bound (`text::fused::poll`); an
-  edit control's check is made by parts (`text::check`), and the later
-  steps run after it (`docs/design/readers-tell-core-asks-build1.md`,
-  "The watch" and Table 15).
+  polls run as programs of their own (`batch::poll`): through UI
+  Automation each poll is one program, the check of the caret, its line
+  and the word at it against the starting point followed by the batch's
+  later reads, gated on the caret or the selection having moved or the
+  bound (`text::fused::poll`); an edit control's check is made by parts
+  (`text::check`), and the later steps run after it
+  (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and Table
+  15). The starting texts the effect test compares come with the wait,
+  from Core.
+- A terminal's three text operations (`Question::Terminal`) are the
+  terminal's own, under "Terminals" below.
 
 - A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event
@@ -872,24 +885,21 @@ reads behind ids Core names, released as anchors are (Table 16):
   so the reader never waits on the worker) are kept; others go after 64
   newer ones, and a step naming one is not there, by that anchor.
 - Chunks are at most 64 KB of UTF-8, cut between grapheme clusters; UIA
-  chunks carry the range's `Culture`. Reads move first when asked, by whole
-  units, saying how far; a missing unit is refused as no such unit
-  (`StepRefusal::NoSuchUnit`). `ReadRange`
-  reads up to 1 MB; `Select` and `MoveCaret` select, `Select` answering the
-  selection's change; `Location` gives a character's screen position;
-  `ReadAhead` reads units up to 32 K UTF-16 code units and marks the last
-  chunk.
-- Through UIA every request but the caret watch is one remote operation
-  where the provider runs them (`TextSource::read_units`, `range`,
-  `point_location`, with `verbatim_uia_rops::text_units`, `text_range`,
-  `text_location`), finding a `PointFrom` (caret, selection end, text end,
-  kept position, or text after one, matched in the provider) and reading
-  from it. Edit controls are read message by message.
-- The caret read (`TextSource::caret_read`, `verbatim_uia_rops::caret_read`)
-  reads, in one remote operation where possible, the caret and selection,
-  whether they moved, the caret's line and the key's unit with offsets,
-  and the formatting the request names. It
-  travels as `FormatRun`s: bold at weight 700 or more, underline and
+  chunks carry the range's `Culture`. A `ReadText` moves first when
+  asked, by whole units, saying how far, and reads up to 32 units, up to
+  32 K UTF-16 code units, marking the last chunk; a missing unit is
+  refused as no such unit (`StepRefusal::NoSuchUnit`). A `ReadRange`
+  reads up to 1 MB; a `Select` selects, or moves the caret with two
+  equal points, answering when it began; a `Locate` gives a character's
+  screen position, or an offset and length where the text counts by
+  offsets.
+- A point is found as a `PointFrom` (caret, selection end, text end, kept
+  position, or text after one, matched in the provider) and read from.
+- The caret read for a focus and for report focus's text summary
+  (`TextSource::caret_read`, `verbatim_uia_rops::caret_read`) reads, in
+  one remote operation where possible, the caret and selection, the
+  caret's line with the caret's offset, and the formatting the read
+  names. Formatting travels as `FormatRun`s: bold at weight 700 or more, underline and
   strikethrough as `LineStyle`, size as "11.0 pt", colors by NVDA's named
   hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,
   and links.
@@ -936,123 +946,120 @@ judges nothing of it: Core postpones a hidden dialog to its show. Tests:
 `outpost::hidden_root_tests`, the check's cost pinned at no call for a
 shown root and two for a hidden one.
 
-A batch (`outpost/batch.rs`) is parsed once as it arrives and refused
-whole when it does not parse. Each subject is resolved once, at its
-first use: a node held or an earlier result's, an MSAA object acquired
-once with or without NVDA's redirect after its window's verdict (a
-window read through UI Automation refuses the whole batch
-`ReadThroughUia`), a window by handle, top-level window, class path
-(`shell_items::class_path_window`), focus or foreground, of the
-outpost's application and shown when `visible` asks, and the focus
-window, taken before any call that can block. Each step runs under its
-gate (`Step::gate`) on the code the kinds of request run on: `Read` by
-`properties` with the reported properties (an MSAA object's each read
-alone, `FocusCandidate::property`), `Test` lazily in its matcher's order,
-each property read once and kept in its result in the order read,
-`Related` by the navigation step (controller-for and the first selected
-item through `verbatim_uia_rops::batch::run_batch`), `Ancestors` and
-`Descendants` by the ancestor and children walks, `IsOneOf` by NVDA's
-equality for the equal node and by address for the others, `FocusRead`
-as `asked::candidate_read` or `asked::focus_now`, and the text
-operations through the node's text. A run of consecutive text steps
-(`Caret`, `ReadText`, `ReadRange`, `CompareSelection`, `Select`,
-`Locate`) on one UI Automation node is one segment of
-`verbatim_uia_rops::batch::run_batch` (`text_reads::fused_steps`,
-`text::fused`): points the run names in an earlier segment are resolved
-to the positions held, a condition or reference on an earlier segment is
-decided before it runs, and each result is made the model's, a `Caret`'s
-points held as anchors and its read held as the next selection baseline
-with no line (`NodeText::hold_caret`), with the selection's text a
-`CompareSelection` of the run read, a `ReadText`'s chunks minted with
-the formatting its details name, the control's support of each
-attribute learned as the caret read learns it. An edit control's text
-steps run one at a time by its messages (`text::ops` for `Caret` and
-`CompareSelection`, today's text requests for the rest). A `Route`
-subject, whose completion needs what the listener read of each step, is
-refused, and `WaitForCaret` is refused until the caret keys convert to
-it. Tests: `mockapp`'s `batch_readers`.
-
 Each `CoreToOutpost::Request` is one program on the worker
-(`outpost/asked.rs`), answered once with one of the five outcomes, each
-node read with its nearest window's facts (`NodeWindow`, read from
-Windows with no call into the application) and its properties by the
-request's set, from the snapshot the outpost's reads make. A window with
-no verdict in force in Core is probed first, always, and the probe
-carried in the answer, by every request: a completion, an MSAA run and a read of an MSAA object
-consult the verdict themselves, and every other request probes its
-window before it is handled.
+(`outpost/asked.rs`), answered once with one of the five outcomes: a
+batch (`outpost/batch.rs`), or one of a terminal's three text
+operations. A window with no verdict in force in Core is probed first,
+once per batch, and the probe carried in the answer. Each node read
+carries its nearest window's facts (`NodeWindow`, read from Windows with
+no call into the application) and its properties by the step's set.
 
-- The shared list: `Properties` (the node's live read, made only when
-  the set names a property a snapshot holds; those no snapshot holds
-  are read apart: `Suggestions` by one refresh reading the node's
-  `ControllerFor` live, absent for a node that is neither editable text
-  nor a search field; `HasValuePattern` and `ComboBoxList` by one
-  refresh, the latter by `GetComboBoxInfo` on the node's window when the
-  refresh finds NVDA's classic .NET Framework Windows Forms combo box;
-  `WindowClass` from the node's own or nearest window, with no
-  call into the application; and `TextSummary`, for report focus, by a
-  caret read of the node's text, the selected text when there is any,
-  else the caret's line, holding no baseline (`text::held::summary`)),
-  `Navigate`,
-  `Children` (first child, then next siblings, at most 1000), `Find`
-  (children, or descendants depth first, at most 1000 visited), `Text`
-  (today's text answers) and `Activate`.
-- `ReadObject` of an MSAA object at an event's address, refused "read
-  through UI Automation" when its window is, or of a node it holds: its
-  relation to the nodes Core names by NVDA's equality, its ancestors up to
-  the first Core already knows, the walk stopping at a known node of this
-  outpost, and with `descendants` its recursive descendants depth first,
-  at most 1000. The relation to what the committed focus controls is
-  read live from the focus's `ControllerFor` (`controlled_by`, one remote
-  program where the window allows), the object itself (`Controlled`) or
-  inside one (`InsideControlled`); an MSAA object, or a focus that is not
-  a UI Automation node, controls nothing; a relation read that fails
-  answers the whole read not there. A selection's relation falls
-  back to its place among the nodes Core names.
-- A candidate's batch is refused "read through UI Automation" when its
-  window is; its object not at its address is not there; its
-  `FocusRead` reads it in full with its ancestors up to the first Core
-  already knows.
-- The application's focus (`Subject::Focus`): the focus-now read, its
-  walk up through either API stopping at the first ancestor Core already
-  knows. The window with the keyboard focus is taken first, before any
-  call that can block, the request's probe included, as NVDA's fake focus
-  takes it when its timer fires. A `Test` of it, the check after a menu
-  end, reads an MSAA focus's focused state over it and every ancestor up
-  to the desktop, and the focus in full only when it has it, kept for
-  the `FocusRead` after it.
-- A route (`Subject::Route`, `outpost/completion.rs`): refused "read
-  through MSAA" when its window is; else the outpost's own copy of the
-  element is found
-  by the route, which goes on, when the listener's walk met an ancestor
-  Core already knows, from that ancestor: a window's own element, or the
-  route kept for its node (`FocusPath::above`); a text focus whose walk
-  the listener cut, which no route finds, as the application's focused
-  element when its runtime id is the focus's; an element kept under the
-  focus's runtime id is judged stale when it is gone or lacks the keyboard
-  focus, whether or not the focus's own was found; an element kept under its runtime id that is gone or
-  lost the keyboard focus is evicted with its text, and the answer says
-  the id was reused; a focus's event registration is moved to the
-  element on the registering thread and waited for, keeping the node
-  `Follow` named, then the node's states are read; the ancestors are the listener's reads, completed
-  above as a focus read's are (`completion::focus`); a `Read` of a route,
-  a selection's item, mints the element alone (`completion::object`).
-  Where the listener's walk met an ancestor
-  Core already knows, the route's end names it, and the completion makes
-  no read to find it.
+A batch is parsed once as it arrives and refused whole when it does not
+parse. A batch whose MSAA subject's window has a UI Automation verdict
+is refused whole `ReadThroughUia`, and one whose `Route` subject's window
+has an MSAA verdict `ReadThroughMsaa`, before any step runs. Each
+subject is resolved once, at its first use: a node held or an earlier
+result's, an MSAA object acquired once with or without NVDA's redirect,
+a window by handle, top-level window, class path
+(`outpost/class_path.rs`), focus or foreground, of the outpost's
+application and shown when `visible` asks (the shell's windows looked up
+without the proxy rule, `any_window_element`), and the focus window,
+taken before any call that can block. Each step runs under its gate
+(`Step::gate`):
+
+- `Read` by the node's properties (`asked::properties`), an MSAA
+  object's each read alone (`FocusCandidate::property`). Those no
+  snapshot holds are read apart: `Suggestions` by one refresh reading
+  the node's `ControllerFor` live, absent for a node that is neither
+  editable text nor a search field; `HasValuePattern` and
+  `ComboBoxList` by one refresh, the latter by `GetComboBoxInfo` on the
+  node's window when the refresh finds NVDA's classic .NET Framework
+  Windows Forms combo box; `WindowClass` from the node's own or nearest
+  window, with no call into the application; and `TextSummary`, for
+  report focus, by a caret read of the node's text, the selected text
+  when there is any, else the caret's line, holding no baseline
+  (`text::held::summary`). A dead element answers not there. A lone
+  `Read` of a listener's kept element is the listener's.
+- `Test` lazily in its matcher's order, each property read once and kept
+  in its result in the order read. A `Test` of the application's focus,
+  the check after a menu end, reads an MSAA focus's focused state over
+  it and every ancestor up to the desktop, and the focus in full only
+  when it has it, kept for the `FocusRead` after it.
+- `Related`: parent, siblings and first child by object navigation
+  (`read::navigate`; through UI Automation a `Related` step of the
+  program builder, `read::related_step`), the last child by the
+  children walk, and the controller-for relation and the first selected
+  item through the program builder alone, since an MSAA object controls
+  nothing. A UI Automation node that is dead or gone answers not there,
+  except that `Parent` answers the parent of the element's window
+  (NVDA's fall back, `known_window_of`): the nearest window recorded in
+  the store when the node was built, and its parent read by the object
+  `window_object` chooses as NVDA does, the desktop carried as
+  `NodeDetails::desktop_window` for Core to name.
+- `Ancestors` by the ancestor walk, stopping at the first ancestor Core
+  already knows, its end answered as the walk's.
+- `Descendants` of a UI Automation node by the program builder's walk
+  (`verbatim_uia_rops::batch::run_batch`), its matchers judged between
+  runs; of an MSAA object by the children walk
+  (`batch::descend_by_children`), at most 1000 children of a node. A
+  child gone during the MSAA walk is passed over and the walk still
+  reports itself complete. The tree dump is a `Descendants` of the main window's own
+  object read through UI Automation, the shell's lists one of the
+  taskbar's windows by class path in the control view.
+- `IsOneOf` by NVDA's equality for the equal node and by address for the
+  others.
+- `Activate` goes to the issuing registry: UIA's patterns, or MSAA's
+  `accDoDefaultAction`. An activation tries the node, then up to 1,024
+  parents (`ACTIVATION_PARENT_HOPS`), stopping at a node it has visited
+  before, by runtime id or by an MSAA object's address where it was
+  acquired at it (`Store::address_of`), and answers "nothing activated"
+  past either.
+- `FocusRead` of an MSAA candidate (`asked::candidate_read`): its object
+  not at its address is not there; it reads it in full with its
+  ancestors up to the first Core already knows.
+- `FocusRead` of the application's focus (`Subject::Focus`,
+  `asked::focus_now`): the focus-now read, its walk up through either
+  API stopping at the first ancestor Core already knows. The window with
+  the keyboard focus is taken first, before any call that can block,
+  the request's probe included, as NVDA's fake focus takes it when its
+  timer fires.
+- `FocusRead` of a route (`Subject::Route`, `outpost/completion.rs`):
+  the outpost's own copy of the element is found by the route, which
+  goes on, when the listener's walk met an ancestor Core already knows,
+  from that ancestor: a window's own element, or the route kept for its
+  node (`FocusPath::above`); a text focus whose walk the listener cut,
+  which no route finds, as the application's focused element when its
+  runtime id is the focus's. An element kept under the focus's runtime id
+  that is gone or lost the keyboard focus is evicted with its text, and
+  the answer says the id was reused; a focus's event registration is
+  moved to the element on the registering thread and waited for, keeping
+  the node `Follow` named, then the node's states are read; the
+  ancestors are the listener's reads, which the route carries
+  (`Route::read`), completed above as a focus read's are
+  (`completion::focus`); a `Read` of a route, a selection's item, mints
+  the element alone (`completion::object`). Where the listener's walk
+  met an ancestor Core already knows, the route's end names it, and the
+  completion makes no read to find it.
 - `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
-  its group and any extra object, or nothing, is recorded when the worker
-  takes it, then the registration is moved on the registering thread to
-  that node alone, the extra object given the value group (its element
-  found again by its route when the outpost keeps none, as an ancestor
-  the completion minted), and waited
-  for; a node whose element the outpost no longer holds answers not
-  there, with nothing registered. A console host's terminal takes the
-  extended group without its text and caret events, and is the console
-  terminal the console's events are routed to. A `Follow` still queued is
-  replaced by a newer one, answered "ended or stopped"
+  its group and any extra object, or nothing, is recorded when the
+  worker takes it, then the registration is moved on the registering
+  thread to that node alone, the extra object given the value group (its
+  element found again by its route when the outpost keeps none, as an
+  ancestor the completion minted), and waited for; a node whose element
+  the outpost no longer holds answers not there, with nothing
+  registered. A console host's terminal takes the extended group
+  without its text and caret events, and is the console terminal the
+  console's events are routed to. A batch of `Follow` steps alone still
+  queued is replaced by a newer one, answered "ended or stopped"
   (`Asks::push`). The registering thread is the only one that registers:
   the reducer's own subscription moves are dropped.
+- The text operations, under "Text and caret" above.
+
+Tests: `mockapp`'s `batch_readers`, `focus_reports` and `controller_for`;
+`outpost::hidden_root_tests`.
+
+Besides answering Core:
+
 - A UI Automation property change the registration delivers is told
   to Core (`OutpostToCore::Tell`, `Worker::property_tell`) with no
   judging: its kind, the element's runtime id (`EventObject::Followed`),
@@ -1064,52 +1071,41 @@ window before it is handled.
   (`UiaKind::Property`), so Core plays the suggestions-closed sound for
   an element that is no longer the focus only when it is a suggestions
   field, with no call added.
-- `WindowDestroyed`: the queued reads whose MSAA ids name the window, a
-  read by ids and a run's candidate, are answered not there at once
-  (`Asks::destroyed`), with the watches waiting on it; every other request
-  stays queued, whatever window it was asked on. The reducer owes the
-  window a forget, and the windows destroyed in one drain of the mailbox
-  are forgotten by one program (`Work::Forget`, `worker::forget`) ahead of
-  every later program: each window's classic-read mark,
-  and its MSAA nodes with their text facts, so a reused handle inherits
-  none. A followed node's registration is Core's to end, with a `Follow`
-  naming nothing, which runs after the forget. `Outpost::holds` says
-  whether the store holds a node, for the harness's test of the forget.
+- `WindowDestroyed`: the queued batches whose MSAA subjects name the
+  window are answered not there at once (`Asks::destroyed`), with the
+  waits on it; every other request stays queued, whatever window it was
+  asked on. The reducer owes the window a forget, and the windows
+  destroyed in one drain of the mailbox are forgotten by one program
+  (`Work::Forget`, `worker::forget`) ahead of every later program: each
+  window's classic-read mark, and its MSAA nodes with their text facts,
+  so a reused handle inherits none. A followed node's registration is
+  Core's to end, with a `Follow` naming nothing, which runs after the
+  forget. `Outpost::holds` says whether the store holds a node, for the
+  harness's test of the forget.
 
 ### Requests from outside the event queue
 
-- `ShellItems` (`outpost/shell_items.rs`) reads the notification area
-  (`TrayNotifyWnd`, with the overflow flyout) or the taskbar
-  (`Shell_TrayWnd` without it) in the control view as `ShellButton`s, and
-  answers every named, on-screen button as a `ShellItem` (name and runtime
-  id). `ShellItemPosition { kind, item }` walks the same way and answers
-  `ShellCandidates` with each matching button's `Place` and whether every
-  button was read; Core picks (`verbatim-gui`'s `refind`). Both read only
-  their application's windows, look the shell windows up without the proxy
-  rule (`any_window_element`), have no time budget of their own, and read
-  a failed step as no more items, logged as a warning. Core bounds each
-  by its due time, as every request.
-- `DumpTree { locations }` walks the foreground window (or the first
-  visible top-level window): UIA with `verbatim_uia_rops::tree_dump`, MSAA
-  with `verbatim_ia2::acquire::walk_tree`, capped at depth 64 and 4096
-  nodes, saying whether incomplete. Locations are read only with
-  `locations`, since a title bar's are asked of the UI thread
+Core asks the tree dump and the taskbar's two lists from outside the
+event queue, each a batch (`verbatim_core::outside` builds them and
+reads their answers):
+
+- The tree dump: a `Descendants` of the attention application's main
+  window read through UI Automation, raw view, capped at depth 64 and
+  4096 nodes, saying whether incomplete; an application read only
+  through MSAA dumps as UI Automation's view of it. Locations are read
+  only when asked, since a title bar's are asked of the UI thread
   (`WM_GETTITLEBARINFOEX`).
-- `Properties` reads a node live for a review command, its table's row
-  and column counts included when the set names them; a dead element
-  answers not there. A UI Automation node that is dead or gone answers not
-  there to `Navigate` too, except that `Parent` answers the parent of the
-  element's window (NVDA's fall back, `known_window_of`): the nearest
-  window recorded in the store when the node was built, and its parent
-  read by the object `window_object` chooses as NVDA does, the desktop
-  carried as `NodeDetails::desktop_window` for Core to name.
-- `Navigate` and `Activate` go to the issuing registry: UIA's raw-view
-  walker with the base cache, or MSAA's `accParent`, `accNavigate`, and
-  `accDoDefaultAction`. An unknown or unreachable node answers not there.
-  An activation tries the node, then up to 1,024 parents
-  (`ACTIVATION_PARENT_HOPS`), stopping at a node it has visited before, by
-  runtime id or by an MSAA object's address where it was acquired at it
-  (`Store::address_of`), and answers "nothing activated" past either.
+- The notification area (`TrayNotifyWnd`, with the overflow flyout) or
+  the taskbar (`Shell_TrayWnd` without the notification area, pruned by
+  its class name): a `Descendants` of each window by class path in the
+  control view, matching buttons, from which Core lists every named,
+  on-screen button as a `ShellItem` (name and runtime id), or, for the
+  position of a chosen item, the matching buttons as `ShellCandidates`
+  with whether every button was read; Core picks (`verbatim-gui`'s
+  `refind`). A list is complete or nothing: a walk the node cap or a
+  failed read cut, or a taskbar window not there, fails the list; an
+  overflow flyout not shown is not there and adds nothing. Core bounds
+  each by its due time, as every request.
 
 ### Selection and notification events
 
@@ -1117,8 +1113,8 @@ The outpost raises none of these: selections, UI Automation notifications
 and toasts are the listener's tells, which Core's event queue judges
 (`docs/design/readers-tell-core-asks-build1.md`). What Core reads for a
 controlled selection, an element of the focus's ControllerFor relation or
-inside one, the relation and the search are one remote operation
-(`verbatim_uia_rops::controlled_selection`) made on Core's request.
+inside one, is a batch's `Related` controller-for and a `Descendants` of
+every node it found, one program where the window allows.
 
 ## Messages to Core## Messages to Core
 

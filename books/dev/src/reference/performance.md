@@ -971,22 +971,18 @@ as the `Kept` shape, of which nothing is read
 ### The shell's tray and taskbar list, UIA
 
 File Explorer's outpost walks the notification area or the taskbar for
-Core's list dialog (`outpost/shell_items.rs`): one call for the window's
-element and one per walk step, each element filled with the `ShellButton`
-shape, which holds whether it is off the screen but not its rectangle
-(`books/dev/src/explanation/architecture.md`, "Bulk reads carry only cheap properties"). A
-click walks again and reads `Place` for each button with the item's
-runtime id or name, normally one. Measured on 2026-10-25 against this
-machine's taskbar, from a separate process running the outpost's walk,
-100 runs each:
+Core's list dialog, one `Descendants` of each window in the control view
+(`verbatim_core::outside::shell`), by calls, since a program's walk is of
+the raw view: one call for each window's element and one per walker
+step, each element filled with the `ShellButton` shape, which holds
+whether it is off the screen, the rectangle only for a click
+(`books/dev/src/explanation/architecture.md`, "Bulk reads carry only
+cheap properties"). A button's own subtree is walked too, one more call
+per button, and the taskbar's walk leaves out the notification area's
+subtree by its class name. A click walks again and reads the place of
+each button with the item's runtime id or name, normally one.
 
-- A taskbar list: 23 calls, 19 elements filled, 14 buttons listed; 20.1
-  ms at the median and 22.5 at the 95th percentile.
-- A click: 24 calls with one candidate, 25 with two; the `Place` read 0.4
-  ms at the median (0.5 at the 95th percentile).
-- A tray list: 2 calls listing nothing, since this build shows its icons
-  under the taskbar's element.
-- Bound: the surface's elements.
+- Bound: the surface's elements, at most the walk's node cap.
 
 ### A key through the keyboard hook
 
@@ -1098,19 +1094,16 @@ formatting under the default theme, which reports spelling and grammar
 errors and links, against mockapp's `tests/fixtures/text.json`, whose
 "beta" is a spelling error.
 
-- Minimum and today: 1 UIA call, one program
-  (`verbatim_uia_rops::caret_read`); met. The program makes inside the
-  provider the classic reads' provider calls, one copy more, and the
-  import of the element and its text pattern.
-- Classically 15: the selection, whether it is empty, the evidence (a
-  comparison with the caret Core knew), the line (a copy,
-  `ExpandToEnclosingUnit`, `GetText`), the offset (a copy,
-  `MoveEndpointByRange`, `GetText`), the character's annotation types and
-  link (a copy, `ExpandToEnclosingUnit`, one `GetAttributeValues`), and
-  the caret read again with its comparison, because the application can
-  move the caret between classic calls (the console host writes a typed
-  character between them). A theme with font, its attributes or colour on
-  adds one attribute read each classically and nothing remotely.
+- Minimum and today: 1 UIA call, the wait's poll that finds the caret
+  moved, one program: the check, then the batch's later steps, the caret
+  and its line with its formatting (`watch_checks_cost_exactly`); met.
+  The program makes inside the provider the classic reads' provider
+  calls and the import of the element and its text pattern.
+- Classically each step's calls, the check's caret read again with its
+  comparison among them, because the application can move the caret
+  between classic calls (the console host writes a typed character
+  between them). A theme with font, its attributes or colour on adds one
+  attribute read each classically and nothing remotely.
 - Bound: one line per key.
 
 ### A caret key's reads, UIA
@@ -1119,7 +1112,8 @@ A caret key at its turn asks one starting read, then its watch
 (`books/dev/src/explanation/design/key-holding.md`): the outpost checks
 the caret against the starting point at once and then every 10 ms, every
 5 ms in the console host, until the key's effect shows or its bound
-passes, then makes one final read. Core alone judges what the key says.
+passes, then reads the caret, its line and the key's unit, the wait
+batch's later steps. Core alone judges what the key says.
 
 - Minimum and today: one round trip per check; met
   (`watch_checks_cost_exactly`, `wait_polls_execute_exactly`). Through UI
@@ -1516,10 +1510,14 @@ selected.
 Reading mockapp's three lines from the caret and moving the caret as each
 is reached.
 
-- Minimum and today: 1 UIA call for every batch read ahead
-  (`TextOp::ReadAhead`, twenty units), its end found in the same program,
-  and 1 per caret move; met. Classically 24 for the three lines, and 4 per
-  caret move.
+- Minimum and today: 1 UIA call for every twenty units read ahead (one
+  `ReadText` of count 20), its end found in the same program, and 2 per
+  caret move, a program ends after its act, `Select`, and the `Caret`
+  that holds the next baseline is read in the next
+  (`uia_text_requests_cost_exactly`, `uia_say_all_batches_cost_exactly`).
+  The minimum for a caret move is 1; the second run is the cost of a
+  program ending at its act (Claude, 2026-11-21, the request list's
+  fallback rule).
 - A batch of twenty lines classically, against mockapp's text replaced by
   forty-five short lines (`uia_say_all_batches_cost_exactly`): 109 for the
   first batch and 108 for each later one. Each line after the first costs
@@ -2101,22 +2099,23 @@ first, the share of the limit in brackets:
   a level beyond the depth limit.
 - The outpost's path walk 1,219 down sixty-two levels, 233 down one, and
   218 to an element not found.
-- The navigation step: 967 (10 percent) sixty-two levels below its window,
-  235 right under it, about 12 a level.
-- The tree dump: 4,635 (46 percent) for a run reading its sixty children
-  (`CHILDREN_PER_RUN`) down `deep.json`'s sixty-two nested groups, then
-  876; `wide.json`'s hundred items 3,083, then 719, 645 for each sixteen
-  items, and 413.
+- Object navigation, a `Related` step with its nearest window, and a
+  node's `Read`: `batch_object_shapes_execute_exactly`, about 10 percent
+  at its worst, sixty-two levels below its window.
+- The tree dump, a `Descendants` walk of the raw view, each run at its
+  sixty children (`CHILDREN_PER_RUN`) or sixty-four waiting elements:
+  `batch_object_shapes_execute_exactly`, about a third of the limit a
+  run, each element read alive at the run's end.
 - A focus's states with its dialogs' children: 2,233 (22 percent) for a
   run stopped at its sixty children (`DIALOG_CHILDREN_PER_RUN`) in
   `wide.json`'s hundred items, 442 for a button with its dialog window's
   four children.
-- The controlled selection: 255 inside a group of the controlled list, 287
-  for its second child, 291 for an item outside it, about 35 an element
-  passed, plus 11 to read the current selection of an element not found
-  and 4 for each further controlled element. About 280 elements fit under
-  the limit; the controlled list is the one bound the application sets
-  (Settings' search suggestions were 25).
+- The controlled selection, a `Related` controller-for and a
+  `Descendants` of every node it found, fused: pinned by
+  `batch_object_shapes_execute_exactly` for a controlled list of a
+  hundred items, its runs about a third of the limit each. The
+  controlled list is the one bound the application sets (Settings'
+  search suggestions were 25).
 - The caret read: 4,446 (44 percent) for a line of 64 stretches reached by
   walking a mixed stretch by words and characters, eleven attributes, and
   every selection text up to 513 units; 91 for the report after a focus on
@@ -2125,10 +2124,18 @@ first, the share of the limit in brackets:
   so 64 come to about 8,000 (80 percent), under the limit but uncountable.
   It is the one program that can come within a factor of two of the limit,
   bounded by the 64 stretches.
-- Say-all's batch of twenty lines: 683 (7 percent) in three languages from
-  a held position; 704 for a first batch from the caret. It does not grow
-  with the lines' length.
-- The review copy's selection: 159.
+- Say-all's twenty lines (`say_all_batches_execute_exactly`), about 7
+  percent, in three languages from a held position or from the caret. It
+  does not grow with the lines' length.
+- The review copy's selection, two programs, the reads before the act
+  with the act, then the reads after it
+  (`range_selections_execute_exactly`).
+- A batch's text shapes at their caps
+  (`batch_text_shapes_execute_exactly`): the caret tell with 64 format
+  stretches and every attribute, the largest at about 45 percent, a
+  caret key's starting read for Delete, review's next word, review
+  select, a copy and say-all's 32 lines, each under a tenth of the limit
+  but the caret tell.
 - A terminal's snapshot: 50 for a first read, 90 with a start and the caret
   and its line; no loop, so it does not grow with the history.
 - A terminal's colours on a 120 by 30 screen: 1,349 for a plain screen; in

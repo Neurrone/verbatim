@@ -315,7 +315,7 @@ Each kind is an event-queue entry, judged at its turn (Table 12). NVDA's sources
 - A value change that a caret answer's general terms counted while it waited does not set the flag again at its turn; Core marks that entry as counted. NVDA runs the pending value change inside `event_caret` before detecting (`NVDAObjects/window/edit.py` 1075, 1079 to 1080), so its flag is clear afterwards.
 - The silent re-take after a reader's replacement mints a baseline in the new generation, says no change and keeps the flag; the old baseline's anchor died with its generation.
 - A focus's answer, new or repeated, mints the baseline and says no change (Dickson, 2026-11-17); a focus answer with no caret, or a failed focus read, clears the baseline and the flag. NVDA: `editableText.py` 417 to 427.
-- The answers to `MoveCaret`, a sentence move, `Select` on the focused text object and the selection read after a copy mint the next baseline and say no change. Verbatim-only, today's `keep_made`: Verbatim's own moves are not spoken as selection changes.
+- A `Caret` read after a `Select` on the focused text object (a caret move is a `Select` of two equal points), a sentence move and the selection read after a copy mint the next baseline and say no change. Verbatim-only, today's `keep_made`: Verbatim's own moves are not spoken as selection changes.
 - Core takes each caret answer as the caret in arrival order. The rule taking the newest by read time goes (`editing.rs` 892 to 931): one worker answers the event queue's requests one at a time, and an abandoned worker's commits are refused.
 
 #### Held anchors

@@ -99,14 +99,14 @@ recorder unchanged. What the reducer does with each type is in
   Everything in `NodeDetails` defaults
   to "not reported", and its serde default keeps older recordings
   deserializing.
-- `TreeNode`: a `NodeSnapshot` plus its children in tree order, carried
-  unchanged by the outpost protocol's and the control protocol's
-  `DumpTree` replies, so a tree dump travels to `verbatim-inspect` without
-  translation.
+- `TreeNode`: a `NodeSnapshot` plus its children in tree order, which
+  Core builds from a tree dump's `Descendants` answer
+  (`verbatim_core::outside`) and the control protocol's `DumpTree` reply
+  carries unchanged to `verbatim-inspect`.
 - `ShellItemKind`, `ShellItem`, `ShellCandidate`, `ShellCandidates`: the
   system tray or taskbar surface and one of its buttons (a name and a UIA
-  runtime id), for the outpost protocol's `ShellItems` and
-  `ShellItemPosition` queries; a `ShellCandidate` is a button with the
+  runtime id), which Core builds from the walks of the taskbar's windows
+  (`verbatim_core::outside`); a `ShellCandidate` is a button with the
   clicked item's runtime id or name, whether it is off screen, and its
   rectangle, and `ShellCandidates` says whether the walk read every
   button.
@@ -172,7 +172,7 @@ recorder unchanged. What the reducer does with each type is in
   mode, suggestions opened and closed, and progress with its percentage.
   The theme decides how each is presented.
 - `ActionName`: the action an activation performed, in its answer
-  (`Reply::Activated`): `Invoke` (spoken "invoke") or `Named` (an
+  (`Done::Activate`): `Invoke` (spoken "invoke") or `Named` (an
   application's own name, spoken as is).
 - `ReviewCommand`: the review and object-navigation vocabulary the
   keyboard layer's scripts map onto, so the reducer never depends on
@@ -254,11 +254,10 @@ recorder unchanged. What the reducer does with each type is in
   [verbatim-uia](verbatim-uia.md) and [verbatim-ia2](verbatim-ia2.md)
   count them.
 
-## Tells, requests and the tables (built beside today's protocol)
+## Tells, requests and the tables
 
 The types of [ADR 0003](../adr/0003-readers-tell-core-asks.md), "Readers
-tell, Core asks", built beside the protocol below; no reader or Core uses
-them yet.
+tell, Core asks", which the protocol below carries.
 
 - `property`: the property table. `PropertyId` names each property once,
   and `PropertyId::entry` gives its `PropertyEntry`: its name, its value
@@ -333,35 +332,26 @@ them yet.
   decides. The property table holds the four a batch's reads add:
   `FocusedWithin`, `MsaaAddress` (`PropertyValue::MsaaAddress`, a
   `HeldIds`), `WindowShown` and `IsContent`.
-- `request`: the shared request list. `Ask` is a request as Core sends it,
-  numbered (`RequestNumber`) and naming its window, asking a `Question`: a
-  `Batch`, or, until each is converted, one of the kinds of request
-  before the list closed (`Question::Legacy`), answered with
-  `Reply::Steps` for a batch, one outcome per step, and refused
-  `Refusal::Malformed` when it does not parse; `Request` holds the
-  generic read of the object an event names (`ReadObject`, with its
-  property set, relation to nodes Core names, descendants and its
-  purpose), and the properties, navigation, find, children, text and
-  activate requests. The focus reads are batches: a `FocusRead` of an
-  MSAA candidate, the application's focus or a `Route`, the outpost's
-  own copy of an element the listener read, which carries the route's
-  steps, where its walk ended and what the listener read of each
-  element (`Route::read`). Each answers a `FocusRead`, which carries what Core keeps with the
+- `request`: the shared request list's envelope. `Ask` is a request as
+  Core sends it, numbered (`RequestNumber`) and naming its window,
+  asking a `Question`: a `Batch`, answered `Reply::Steps`, one outcome
+  per step, and refused `Refusal::Malformed` when it does not parse; or
+  one of a terminal's three text operations (`Question::Terminal`, a
+  `TerminalAsk` of its node and `TextOp`), answered `Reply::Text`. The
+  focus reads are batches: a `FocusRead` of an MSAA candidate, the
+  application's focus or a `Route`, the outpost's own copy of an element
+  the listener read, which carries the route's steps, where its walk
+  ended and what the listener read of each element (`Route::read`).
+  Each answers a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the
   caret read (`FocusCaretRead`), its line with the formatting the
-  request's `details` name, and the selection baseline the outpost
-  minted from it, which a focus read becomes silently. A read's `RelationQuery` asks whether the object is one
-  of the nodes Core names, inside an object the focus controls, or, for a
-  selected item, either. `Follow` names the committed focus's node to its
-  outpost (`Followed`, with its `FollowGroup` and an extra object), or
-  nothing, answered `Followed`. From outside the event queue only,
-  `DumpTree` reads the application's tree from the main window it names,
-  answered `Tree`, and `ShellItems` and `ShellItemPosition` read the
-  taskbar's tray icons or buttons and where a chosen one is, naming
-  `Shell_TrayWnd`, answered `ShellItems` and `ShellItemPosition`. Each `Ask` carries its window's `WindowVerdict`, "probe
-  first" when Core has none in force, and each `Answer` the `Probe`s the
-  request made. `Answer` carries
-  one of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
+  read's `details` name, and the selection baseline the outpost minted
+  from it, which a focus read becomes silently. A `Follow` step names
+  the committed focus's node to its outpost (`Followed`, with its
+  `FollowGroup` and an extra object), or nothing. Each `Ask` carries its
+  window's `WindowVerdict`, "probe first" when Core has none in force,
+  and each `Answer` the `Probe`s the request made. `Answer` carries one
+  of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
   `Refusal`, not there, not responding, or the reader ended) and a
   diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
   due time or withdrawn; only the first abandons a running call.
@@ -408,34 +398,16 @@ them yet.
   reported once, however many of its windows' events arrive.
   The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
   and `SentTransition`.
-- A caret key's text requests (`TextOp`): `StartingRead`, answered
-  `Started` with the starting point the outpost holds, the caret, the
-  key's unit where its `StartingUnit` says (at the caret, with the word
-  for Delete, or around the character before the caret for Backspace and
-  Control+Backspace, `StartingUnit::for_motion`); `Watch`, naming the starting
-  point, the key's motion, the pass time, the poll interval, whether a UI
-  Automation event within 60 ms brings a check forward, the bound and the
-  `WatchFinalRead`, answered `Watched` (the effect or the bound, with a
-  `WatchedRead`, or the bound unread); and `SentenceMove`, answered
-  `SentenceMoved`, each answer with the selection baseline it minted and
-  the caret's line. Each names its `TextProvider` and `TextDetails`: the
-  format attributes to read (a `FormatSet` of `FormatAttribute`s, one per
-  attribute the theme switches), spelling and grammar errors, and links,
-  which the outpost reads exactly; a read that names none fetches nothing
-  beyond the text.
-- A caret tell's read (`TextOp::ReadSelection`, a `SelectionRead` naming
-  the provider, Core's selection baseline, if any, and the tell's element
-  for the outpost to adopt when the node's own answered it has no text
-  pattern), answered
-  `TextReply::SelectionRead`: the caret, the next baseline the outpost
-  minted, the `SelectionDifference` from the named baseline's range as it
-  now is (what became selected and unselected, and the whole new
-  selection, so that Core can speak it in specific or general terms), or
-  none when no baseline was named or the outpost no longer holds it, and,
-  through an edit control's messages, the selection's `EditSelection`
-  offsets. `MoveCaret` and `Select` asked by an event-queue entry are
-  answered `TextReply::CaretPlaced` and `TextReply::SelectionPlaced`, each
-  with the baseline it minted.
+- The text types a batch's text operations carry (`text`): a step names
+  its `TextDetails`, the format attributes to read (a `FormatSet` of
+  `FormatAttribute`s, one per attribute the theme switches), spelling
+  and grammar errors, and links, which the outpost reads exactly; a read
+  that names none fetches nothing beyond the text. A `WaitForCaret`
+  carries the starting texts and the effect test's two parts
+  (`batch::EffectTest`), which `had_effect` judges against what a check
+  found (`Compared`). `SentenceMoved` is `MoveBySentence`'s result,
+  `SelectionDifference` `CompareSelection`'s, and `EditSelection` an edit
+  control's selection offsets.
 
 ## Time limits
 
@@ -485,8 +457,8 @@ that carries them on the pipes is
     `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
     `ElementsHeld { generation, tokens, acknowledged }`, the told elements
     Core holds, with the position of the last message carrying tokens it
-    handled; a request names a kept element by
-    `ObjectRef::Kept { listener, token }`, the listener's generation
+    handled; a batch names a kept element by the subject
+    `Subject::Kept { listener, token, keep }`, the listener's generation
     beside its token, since each listener mints its tokens from 1.
   - `OutpostToCore`: `Ready`, `Pong` (with `parked_count`, the abandoned
     workers not yet returned), `Fault`, `TargetExited`, `SpareReady`, `IdleAnswer`, `Tell` (a tell its
@@ -541,7 +513,8 @@ read of an element, and `DumpedTree`.
 ## The text protocol
 
 How an outpost sends text to Core, and how Core asks an outpost to read
-text, wait for the caret, select, or move the caret. The types are in
+text, wait for the caret, select, or move the caret, by the request
+list's text operations (`batch`). The types are in
 `text.rs` and `terminal.rs`; this section is the contract the Windows side
 implements. What each answer says is in `docs/parity/text.md`,
 "TextInfo-equivalent layer".
@@ -628,12 +601,11 @@ control plane's event stream; no reader sends them.
 
 ### Requests and replies
 
-A text request is a request of the shared list, `Request::Text` naming
-the node and a `TextOp`, which Core's event queue sends to the node's
-outpost (`QueueEffect::Send`); its answer reaches Core as
-`QueueInput::Answer` carrying a `TextReply`. The caret key's starting
-read, its watch, the sentence move and a caret tell's read are under
-"Tells, requests and the tables" above; the other operations:
+A text request is a batch of the request list's text operations,
+which Core's event queue sends to the node's outpost
+(`QueueEffect::Send`); its answer reaches Core as `QueueInput::Answer`
+carrying one outcome per step. A terminal's three reads are its own
+`TextOp`s, answered with a `TextReply`. The operations:
 
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
@@ -675,17 +647,18 @@ read, its watch, the sentence move and a caret tell's read are under
   (`docs/design/readers-tell-core-asks-build3.md`).
 - `TerminalHistory { above, whole, start, height }`: the text from `above`
   rows above the start anchor Core names to the document's end, or the whole
-  document, answered `TerminalHistory { text, above, read }`.
+  document, answered `TerminalHistory { text, above }`.
 - `TerminalFind { needle, from, rows, start }`: a command mark's line sought
   by its first row's text outward from `from` rows above the start anchor,
   at most 20 matches, `rows` rows read from each, answered
-  `TerminalFound { matches, read }` with a `TerminalMatch` for each.
+  `TerminalFound { matches }` with a `TerminalMatch` for each.
 
-Any of these can also be answered `NoText` (no text interface), `Gone`
-(the node no longer exists) or `Unanswered` (no answer in time, or the
-read failed). These three are the `TextFailure`s
-(`TextReply::into_failure`), which Core's typed text requests decode
-beside the op's own reply, so no answer of them fails to decode.
+A terminal's three reads can also be answered `NoText` (no text
+interface), `Gone` (the node no longer exists) or `Unanswered` (no answer
+in time, or the read failed). These three are the `TextFailure`s
+(`TextReply::into_failure`), which Core decodes beside the operation's
+own reply, so no answer of them fails to decode. A batch's text step
+answers its refusals and failures as its own outcome (`StepOutcome`).
 
 ### Inputs from the shell
 

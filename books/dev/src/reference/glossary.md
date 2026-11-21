@@ -39,6 +39,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Backend** — one client stack over an accessibility API: UIA
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
   [Architecture](../explanation/architecture.md) section 4.
+- **Batch** — a request of the request list: at most four steps, each
+  an operation on a subject with an optional condition, answered with
+  one outcome per step. Core builds one with `cx.batch`; each reader
+  parses it once on arrival and refuses one that does not parse, whole.
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Built-in** — a module folder shipped with Verbatim under
   `extensions/builtin/` (planned), loaded by the same host as an installed module
   but never bundled, listed, installed or disabled.
@@ -68,6 +73,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   [verbatim-outpost](crates/verbatim-outpost.md).
 - **Committed focus** — the focus Core has executed, NVDA's focus object; commands, the narrow rule and typed echo judge it.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
+- **Condition** — a step's test of one earlier step: matched (of a
+  `Test`), found, or the negation of either. A condition on a skipped
+  step skips its step too; on a refused, missing or failed one, the test
+  is false and its negation true.
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Control plane** — the one authenticated protocol (JSON over the
   control pipe) serving dev tooling now and remote support later
   (D8). [verbatim-control](crates/verbatim-control.md).
@@ -122,6 +132,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Lowest common ancestor** — the innermost ancestor a new focus
   answer shares with Core's focus ancestry, where Core joins the two.
   [How focus works](../explanation/design/focus.md).
+- **Matcher** — a test on one node's properties (a value, absent, one of
+  a list, a state, all, any, not), evaluated in Rust on the values a
+  reader read, lazily in its order; the node subset of the extension
+  matcher grammar. `verbatim_model::matcher`.
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Menu slot** — the one waiting entry of Core's event queue for MSAA
   menu start, menu end, popup start, popup end and switch end, which keeps
   the newest (`crates/verbatim-core/src/event_queue/limiter.rs`).
@@ -133,7 +148,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Outcome** — one of the ways an answer to a request ends: a result;
   refused, with a reason; not there; not responding; the reader ended or
   stopped; and, inside Core alone, no longer awaited. Core's rules branch
-  on the outcome, not its diagnostic detail.
+  on the outcome, not its diagnostic detail. A batch's result holds a
+  step outcome for each step: done with its result, refused, not there,
+  failed, or skipped.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Module** — one contribution inside an extension: an app module bound
   to applications by identity, or a synthesizer; a folder with
@@ -145,6 +162,18 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Object store** — the outpost's monitor that owns node identity,
   the application objects it keeps, and releases a node only between
   programs, when no program and no message can still name it. [verbatim-outpost](crates/verbatim-outpost.md).
+- **Operation** — one of the request list's seventeen kinds of step:
+  `Read`, `Test`, `Related`, `Ancestors`, `Descendants`, `IsOneOf`,
+  `Activate`, `Follow`, `FocusRead`, `Caret`, `ReadText`, `ReadRange`,
+  `CompareSelection`, `Select`, `Locate`, `MoveBySentence` and
+  `WaitForCaret`. A new behaviour writes a batch of them and adds no
+  kind of request (ADR 0003).
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
+- **Ordinary-calls executor** — `run_calls`: a batch's fusable
+  operations run call by call through the backend's adapter, for the
+  setting with remote operations off, a window marked for classic
+  reading, a step no program can take, and a failed program's steps.
+  [verbatim-uia-rops](crates/verbatim-uia-rops.md), "The program builder and the ordinary-calls executor".
 - **Outpost** — the per-application process owning that app's event
   hooks, queries, and announcements (D9); also the binary
   `verbatim-outpost.exe` it runs. Each process generation has an
@@ -158,6 +187,12 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   focus-entry announcement under the NVDA-parity exclusion filter.
   [verbatim-core](crates/verbatim-core.md); NVDA's rule is in
   [Object model](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/object-model.md).
+- **Program builder** — `run_batch`: one builder of UI Automation remote
+  programs, which puts a run of a batch's consecutive fusable steps into
+  programs from each operation's emitter, each step in its own try block
+  with its own status. Not a call program, which is a worker's sequence
+  of calls.
+  [verbatim-uia-rops](crates/verbatim-uia-rops.md), "The program builder and the ordinary-calls executor".
 - **Reader** — a process that calls into applications for Core and hears their events: the focus listener, which holds every desktop-wide registration, and one outpost per application.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Readers' last focus** — the newest focus a reader read that Core executed, NVDA's last queued focus; empty at startup and after the foreground leaves for an unrelated top-level window.
@@ -167,6 +202,13 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   start a replacement; rung 3, end a failed outpost, crashed, stuck or
   piling up abandoned workers, and give its application the next one.
   [Architecture](../explanation/architecture.md) section 1.
+- **Reference** — a step's naming of an earlier step of its batch by its
+  place, as its subject (that step's node or list, or one item of the
+  list) or as a text point (that step's caret, a selection's end or a
+  chunk's start); a step whose referenced step is not done is skipped.
+  In Core a reference is a handle typed by its result's kind and branded
+  by its batch (`batch::Ref`).
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Request table** — Core's record of every request it makes of a
   reader, from its asking to its one ending.
   [verbatim-core](crates/verbatim-core.md), "Core's requests".
@@ -199,13 +241,19 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   under: the newest key given to the reading rules whose window holds
   the read, so a later key's cut treats that speech as the key's.
   [verbatim-core](crates/verbatim-core.md), "Core's terminal model".
-- **Starting point** — the text anchor a caret key's starting read
+- **Starting point** — the text anchor a caret key's starting batch
   mints, held by the outpost, with the key's unit, word, line and
   selection read beside it, which the key's watch compares the caret with.
   [verbatim-core](crates/verbatim-core.md), "The caret key on the event
   queue".
 - **Ancestors Core already knows** — the committed focus's ancestors, sent with a focus request. The reader's walk reads up the ancestor chain until it reaches one of them.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
+- **Subject** — the object a step's operation acts on: a node a reader
+  holds, a listener's kept element, an MSAA object at its event's ids, a
+  route to the outpost's own copy of an element the listener read, a
+  window, the application's focus, or an earlier step's result. Each is
+  resolved once per batch, at its first use.
+  [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Tell** — a message a reader sends Core when an event arrives, carrying what came with the event and reads of Windows' own state that cannot hang; a UI Automation event's tell also carries the results of its check thread's calls, and no other tell makes a call into the application.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Terminal snapshot** — one read of a terminal as its outpost sends it
@@ -250,8 +298,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   [verbatim-speech](crates/verbatim-speech.md).
 - **Watch** — the outpost's waiting request that looks for a caret key's
   effect by comparing the application's caret with the key's starting
-  point until its bound; each comparison is a **check**, and the one full
-  read that ends it its final read.
+  point until its bound: a batch whose first step is `WaitForCaret`.
+  Each comparison is a **check**; the batch's later reads run in the
+  poll that ends it.
   [verbatim-outpost-logic](crates/verbatim-outpost-logic.md).
 - **Wedge** — an outpost that is alive but no longer answering
   (missed pongs, called stuck) or accumulating parked workers; the

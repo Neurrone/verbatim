@@ -23,6 +23,13 @@ guide maps those behaviors onto the crate's types and modules.
   results notification, the one UIA notification spoken from an
   application without the focus; the supervisor starts an outpost for no
   other notification.
+- `batch`: Core's builder of batches and the parse of their answers
+  (below, "Batches"), public so that `outside` is built from it.
+- `outside`: the batches the shell asks from outside the event queue and
+  the answers it builds from them: the control plane's tree dump
+  (`dump`, `dumped`, a `DumpedTree`) and the notification area list's walks
+  of the taskbar's windows (`shell`, `items`, `candidates`). A list is
+  complete or nothing.
 - `focus_rules`: the focus rules the reducer applies after an event is
   read, each defined once (`docs/parity/changes-and-selection.md` and
   `docs/parity/focus-context.md`).
@@ -165,12 +172,13 @@ a token (a terminal's output reads and baseline).
 - Only the front entry may have a request out; its function is paused at
   the request and resumed with the outcome, decoded once as the request's
   reply type, so no paused function outlives its entry. A reply type
-  holds every result a correct reader can give the request: a text
-  request's is the op's own reply or a `TextFailure`
+  holds every result a correct reader can give the request: a batch's is
+  one outcome per step (`batch::Answers`), a terminal's text operation's
+  the operation's own reply or a `TextFailure`
   (`text_request::decode_text`), each handled where the request is made.
-  A result that still does not decode, one of another request's kind, is
-  a malformed answer: refused as undecodable and logged, the reader not
-  replaced.
+  A result that still does not decode, one of another request's kind or
+  a batch's answer that does not fit the batch sent, is a malformed
+  answer: refused as undecodable and logged, the reader not replaced.
 - The table also keeps the recovery set, the windows found hung, which the
   shell checks every half second until each answers again. A window
   joins it by a refusal or a stop as hung, or by a reader's report
@@ -203,7 +211,28 @@ through the driver's ledger. A batch on Core's want list takes a brand
 named for its one call site (`Builder::named`, a constant `Ref::named`
 handle), and its answer is parsed against the batch held with the want.
 A batch whose first step reads the focused window or the application's
-focus alone takes what the shell read in front (`Answers::in_front`).
+focus alone takes what the shell read in front (`Answers::in_front`). A
+batch whose answer is judged once as it is decoded, as a focus
+candidate's is, is asked through `Asked::judged`, its function given the
+judgement rather than the answers. Core judges each text batch once into
+its own `text_request::TextAnswer`, which never travels.
+
+Every behaviour that crosses to a reader writes a batch from the list
+and adds no request kind, reply, reader arm or decoder. Three are the
+examples to copy:
+
+- An object read: the MSAA run (`focus/msaa_run.rs`), each candidate's
+  batch the hidden-dialog check, a `Test` of its focused state and
+  identity, and the `FocusRead` unless the test matched, built in a loop
+  with `cx.batch_numbered`.
+- A caret key: Control+Backspace (`keys/caret_key.rs`, `starting_read`
+  and `wait`), a starting batch of the caret, its line and the word
+  around the character before the caret, then a wait batch of
+  `WaitForCaret` with the starting texts and the caret, line and unit
+  read after it.
+- A text command: review's word move (`text_request.rs`, `word`), one
+  batch a press of `ReadText` steps by the provider's word, judged into
+  the word said.
 
 Tests: `crates/verbatim-core/src/batch_tests.rs` and the queue's tests of
 a batch asked, refused as undecodable, answered in front and numbered.
@@ -769,9 +798,10 @@ code is in `reduce.rs` unless named.
     which says nothing.
   - An MSAA alert is moved once behind the entries waiting after it when a
     focus that counts as pending is among them, as NVDA runs its whole
-    queue first, and its acceptance is checked. Its one request asks
-    whether it is one of the focus line's objects
-    (`RelationQuery::OneOf`), and else its snapshot with its descendants.
+    queue first, and its acceptance is checked. Its one batch asks
+    whether it is one of the focus line's objects (`IsOneOf`), and else
+    its read with its descendants (`Descendants` of the object and
+    itself, at most 1,000).
     It is dropped when it is on the focus line, not of role alert, or has
     no name, description or child; else it is spoken, then each
     descendant NVDA speaks: one that is focusable, or, when the alert has
@@ -922,8 +952,9 @@ only, so a UI Automation answer of the focus Core holds is spoken again.
 The check notes which end made it (`menus::CheckedEnd`), the first end's
 for ends that share it.
 
-A read of the focus Core makes itself (`retake::CurrentFocusRead`) that
-the shell answered unsent, its window hung or, for the check after an
+A read of the focus Core makes itself (a batch whose first step reads
+the focused window, `retake::read_current`) that the shell answered
+unsent, its window hung or, for the check after an
 end, no window in front, is answered with what is in front
 (`retake::Focused::InFront`), and its entry decides by `focus::plain::decide`
 (Dickson, 2026-11-19). For the reads NVDA makes itself, the menu or
@@ -985,8 +1016,8 @@ whether it is pending, and answers `Validity`: valid (read in full, or the
 committed focus executed again), a duplicate (valid, nothing read or
 said, ending a run), refused with a `Reason`, or needing a read (`Need`:
 the focused state or a menu start's role). Its rows take the facts as
-`Result<&CandidateFacts, M>`: with facts, `judge_read` instantiates `M`
-uninhabited, so its answer is `Settled`, which has no needed read.
+`Result<&CandidateFacts, M>`: with facts, `M` is uninhabited, so the
+answer is `Settled`, which has no needed read.
 `depth` says how far the turn's read goes. `pending` maps an answer to
 `Pending` (counts, unconfirmed, no).
 
@@ -1007,13 +1038,14 @@ agree by construction. The other callers are the UI Automation focus
 recovered read (`focus/retake.rs`), the caret key, the caret tell and the
 alert. `duplicate.rs`'s tests are its private primitives.
 
-Each read of a candidate is a request typed by its depth
-(`msaa_run::RunRequest<D>`: `FactsOnly`, `FullIfFocused`, `Full`,
-`UnlessSame`; and `retake::CurrentFocusRead<D>`), whose answer is parsed
-at its decode (`validity::Answered`: refused unread, `Unread`, or found
-and read in full; a confirmation's facts alone; at `UnlessSame`,
-`TurnAnswer::SameAsNamed` too). An answer that breaks its depth's
-rule, a found candidate without its read or a confirmation with one, is
+Each read of a candidate is a batch built to its depth
+(`msaa_run::TurnDepth`: `FullIfFocused`, `Full`, `UnlessSame`; a caret
+key's confirmation reads the facts alone; and `retake::Depth` for a read
+of the current focus), whose answer is judged once at its decode
+(`Asked::judged`; `validity::Answered`: refused unread, `Unread`, or
+found and read in full; a confirmation's facts alone; at `UnlessSame`,
+`TurnAnswer::SameAsNamed` too). An answer that breaks its depth's rule,
+a found candidate without its read or a confirmation with one, is
 undecodable, logged as a malformed answer (`QueueEffect::Undecodable`),
 and the entry ends.
 
@@ -1033,7 +1065,7 @@ it is the committed focus; the `Identity` is made from the committed
 snapshot then and kept nowhere. The candidate's `Test` then holds of an
 object without the focused state or of the object at those ids reading
 as that identity, in ADR 0004's order (`UnlessSame::matcher`); matched
-with the focused state, it is `TurnAnswer::SameAsNamed`, which `validity::judge_same` makes a
+with the focused state, it is `TurnAnswer::SameAsNamed`, which `validity::before_duplicate` makes a
 duplicate unless a row before the duplicate test now refuses the
 candidate. A focus read asks the position in the set and the set's size
 whatever the settings (`details::focus_set`), and speech leaves them out
@@ -1088,8 +1120,8 @@ the event queue until its last answer.
 (`books/dev/src/explanation/design/key-holding.md` gives the behaviour.)
 A caret key's `Press` runs `keys/caret_key.rs` at its turn, on the node it
 was bound to at its press (`CaretBinding`), even when the focus has moved
-on. A held key asks its starting read, then sends its stroke
-(the pass) and asks the watch, then says its unit by its script; at the
+on. A held key asks its starting batch, then sends its stroke
+(the pass) and asks its wait, then says its unit by its script; at the
 bound a sentence key in text with a sentence unit moves by sentence from
 its starting point. The key picks its path once at its turn, the edit
 field's or the terminal's, and each path's stage (`CaretStage`,
@@ -1218,16 +1250,18 @@ the focus's text having changed since the selection was last compared
 neither. A caret tell (`caret_tell.rs`), the system caret's
 for the readers' last focus or a UI Automation text-selection change of
 the committed focus's element, asks at its turn, with no focus pending,
-one `ReadSelection` naming the baseline and, for a UI Automation tell,
-the tell's element for the outpost to adopt when the node's own has no
-text pattern, and takes the caret it reads in arrival order. With no baseline named the answer only mints the next;
+one batch, a `Caret` (naming, for a UI Automation tell, the tell's
+element for the outpost to adopt when the node's own has no text
+pattern), the caret's line with its formatting, and a `CompareSelection`
+of the caret's selection with the baseline, and takes the caret it reads
+in arrival order. With no baseline named the answer only mints the next;
 otherwise Core speaks the difference in general terms when the flag is
 set or, in an edit control, when a value change of the focus waits in
 the queue (taken out as counted), else in specific terms, then clears the
 flag and takes the new baseline. An edit control's answer whose
 selection offsets equal the last caret tell's (`SrState::edit_selection`)
-changes nothing. An answer that the node has no text (`TextFailure::NoText`)
-leaves Core no caret and no selection for it, the baseline and the flag
+changes nothing. An answer that the node has no text (the `Caret` refused
+no text) leaves Core no caret and no selection for it, the baseline and the flag
 cleared, nothing said (`text_facts::no_text`), as NVDA's caret event says
 nothing for an object that is not editable text; any other failure says
 nothing and keeps the baseline and the flag. An MSAA value change of the
@@ -1235,8 +1269,8 @@ committed focus's edit control, read through its window messages with
 automatic selection detection, sets the flag at its turn when no caret
 tell took it as counted, and says nothing; no other change sets it, and a
 UI Automation value change of an element with a text pattern says
-nothing. Answers to `MoveCaret`, a
-sentence move and `Select` on the focused text mint the next baseline.
+nothing. A `Caret` after a `Select` on the focused text, say-all's caret
+move or review select, and a sentence move mint the next baseline.
 Every focus request names the details its caret read fetches, the
 line's formatting the settings report (`details::focus_details`), and a
 focus answer's `FocusCaret` becomes Core's caret, its line, with its
@@ -1247,13 +1281,13 @@ Dickson, 2026-11-17); a focus answer with no caret,
 or a failed focus read, clears the baseline and the flag. The end of the
 focus's outpost generation drops the baseline and keeps the flag, and the
 silent re-take, the recovery's included, takes the baseline its answer
-minted and keeps the flag. A caret key's starting and final reads compare no
-selection.
+minted and keeps the flag. A caret key's starting batch and the reads
+after its wait compare no selection.
 
 `SrState::held_anchors` and `held_nodes` name, besides the baseline,
-every anchor and node a request of the event queue names (a key's
-starting point while its watch or sentence move is out), and the node a
-waiting caret key was bound to.
+every anchor and node a request of the event queue names
+(`Batch::anchors`; a key's starting point while its wait or sentence
+move is out), and the node a waiting caret key was bound to.
 
 ## The secure desktop and the lock state
 
@@ -1306,10 +1340,11 @@ caused, carry none.
 ### Caret keys
 
 (`docs/nvda/editable-text-and-terminals.md`; `docs/parity/text.md`,
-"TextInfo-equivalent layer".) A caret key is answered by its outpost's
-watch (`TextOp::Watch`), which compares the application's caret with the
-key's starting read, judging the key's effect by `had_effect`, until its
-bound, and ends with its final read (`Watched`, `WatchedRead`).
+"TextInfo-equivalent layer".) A caret key is answered by its wait
+batch: `WaitForCaret`, which compares the application's caret with the
+key's starting point, judging the key's effect by `had_effect` on the
+starting texts the batch carries, until its bound (`Waited`), then the
+caret, its line and the key's unit read after it in the same poll.
 
 Each focus object holds one caret (`FocusContext::caret`). Core takes
 each report in arrival order, the order the event queue answers its
@@ -1327,7 +1362,8 @@ The answer updates the caret and speaks, queued:
 - Control with Up or Down Arrow: the paragraph, or the line.
 - Backspace and Control+Backspace: the provider's character or whole word
   around the character before the caret, or before a selection's start,
-  which the starting read read (`StartingUnit::BeforeCaret`), spoken as a
+  which the starting batch read (the caret moved back a character and
+  expanded to the unit), spoken as a
   character when it is one and as text otherwise, as NVDA's Backspace
   scripts speak it; at a line's start the provider's unit is the line
   break before it, and at the document's start it is empty and nothing is
@@ -1419,7 +1455,11 @@ from Core's copy, because a caret event can reach Core after a review
 command pressed later; say-all from the caret and the caret's location do
 the same. Once moved, a command that answers from the cursor's line first reads
 the line where it is now (one round trip, `review_text::begin`); a move goes
-straight to the read that moves, so no press reads twice to move. Moving
+straight to the read that moves, so no press reads twice to move. A word
+command reads the text's own word with no line read first, one batch a
+press (`text_request::word`; `docs/parity/review.md`, "Review words by
+the provider's word"), and a word move that crosses a line takes the
+line it lands on from the same batch. Moving
 to another line keeps a cell column in a terminal and a remembered
 character column elsewhere, kept across a short line for every text. A
 lost anchor starts again from the caret.
@@ -1428,8 +1468,10 @@ Select then copy (`docs/parity/review.md`, "Select then copy from the
 review cursor"): Verbatim+F9 marks the start, Verbatim+Shift+F9 moves the
 review cursor there, and Verbatim+F10 asks the outpost to select from the
 earlier end through the character at the later (Core sends both ends with
-the points just past their characters, `TextThrough`, since only the
-outpost can order them), and pressed twice reads and copies the range
+the points just past their characters, a `Span`'s `through`, since only the
+outpost can order them), one batch of the caret, the select, the caret
+again and the two selections compared, and pressed twice reads and
+copies the range
 (`Effect::CopyToClipboard`). The read carries the marker's generation, so
 a marker set while it is in flight is kept.
 
@@ -1449,8 +1491,8 @@ by" setting: a provider with no sentence unit reads by line, one whose
 text NVDA splits itself answers with the paragraph, split by Unicode's
 sentence rules, and a terminal always reads by line.
 
-- Each read asks for a batch of 20 units (`TextOp::ReadAhead`), buffered
-  in `SayAll::buffer`; the next batch is read once fewer than 10
+- Each read asks for 20 units (one `ReadText` of count 20), buffered
+  in `SayAll::buffer`; the next 20 are read once fewer than 10
   utterances (`LOW_WATER`) are left, so at most one read is in flight and
   the buffer holds under two batches. The costs are in
   `books/dev/src/reference/performance.md`, "Say-all, UIA".

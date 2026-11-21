@@ -65,19 +65,18 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   client; never under a lock or on a callback thread, since a release can
   call into the application.
 - Requests (`listener::asked`). Core's `CoreToListener::Request` is a
-  batch, or the generic read of the object an event names
-  (`Request::ReadObject`); any other request, a relation, or descendants
-  are refused unsupported, and a node is none of the listener's. A kept
-  element is read on its application's reading thread
-  (`asked::read_element`): the element afresh, its class from its event's
-  cache, and its name too for a generic read, as NVDA's object for the
-  event reads them, where a batch's is the one read afresh in the same
-  cache request (Core chooses the event's name for a focus and the fresh
-  one for a selection's item, by Dickson's ruling of 2026-10-20, [changes
-  and
+  batch; a node is none of the listener's. A kept element is read on its
+  application's reading thread (`asked::read_element`): the element
+  afresh, its class from its event's cache, as NVDA's object for the
+  event reads it, and a menu item's legacy checked state. Its name is
+  the one read afresh in the same cache request when the batch also
+  walks its ancestors, a focus's or a selected item's (Core chooses the
+  event's name for a focus and the fresh one for a selection's item, by
+  Dickson's ruling of 2026-10-20, [changes and
   selection](https://github.com/Neurrone/verbatim/blob/main/docs/parity/changes-and-selection.md),
-  "Selection in a list the focus controls"), and a menu item's legacy
-  checked state; for a batch's `Ancestors` step, its ancestors by the
+  "Selection in a list the focus controls"), and its event's cached name
+  for a lone `Read`, a toast's (Claude, 2026-11-21). For a batch's
+  `Ancestors` step, its ancestors by the
   classic walk up to the first Core already knows (a window by its own
   element's runtime id), the desktop root or the process boundary, and
   where the walk ended: at the known ancestor it met, by its place in
@@ -99,7 +98,7 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   reading thread, refused whole when it does not parse. The one kept
   element its steps name is read once, with one `start_read` taking its
   `keep` mark, by the union of its `Read` and `Ancestors` steps' sets, its
-  name read afresh and no focused state added, its ancestors in the same
+  name chosen as above and no focused state added, its ancestors in the same
   walk when a step asks for them (the walk's end answered as the
   `Ancestors` step's); a `Read` of an MSAA object is read at its event's address. A
   batch naming two kept elements is refused, and `Descendants` and
@@ -122,13 +121,12 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   timeout. A call over a second is logged at info
   (the private `call_log` module's `CallLog`).
 - `read_object` is the listener's answer to Core's batch on a kept
-  element, run as a reading thread runs it, `read_kept_object` its answer
-  to a generic read of one, for a test that stands in for the listener
-  holding the element itself, and `read_msaa_object` its read of an MSAA
-  object at an event's address; `read_object_observed` is the batch's
-  run, telling a test the name of each call before it makes it
-  (`CallObserver`), so the test can change the application's windows
-  between two of them.
+  element, run as a reading thread runs it, for a test that stands in
+  for the listener holding the element itself, and `read_msaa_batch` its
+  answer to a batch on MSAA objects at their events' addresses;
+  `read_object_observed` is the batch's run, telling a test the name of
+  each call before it makes it (`CallObserver`), so the test can change
+  the application's windows between two of them.
 
 ## A window's show
 

@@ -245,12 +245,10 @@ Public API:
   reading no more than the redirect needs, so the outpost can make NVDA's
   checks before the read: `key()` is the address after the redirect, for
   NVDA's duplicate check and the ids a redirected focus is read by;
-  `reads_as(identity, registry)` the identity check, the object's states
-  and role, a `SysListView32` item's position and set size, its name and
-  its value, compared with the identity Core names in that order by the
-  functions the full read uses and stopping at the first that differs;
-  `property(id, registry)` one of those values read alone by the same
-  functions, for a batch's `Test` reading in its matcher's order, and
+  `property(id, registry)` one value read alone by the functions the
+  full read uses (states, role, a `SysListView32` item's position and set
+  size, name, value), for a batch's `Test` reading in its matcher's
+  order, which is how Core's identity check reads it, and
   `object()` the object as an `EventObject`, whose `property(id, role,
   registry)` reads a name, value, description, role, states or place
   alone and whose `is_equal_to` and `which_of` answer a batch's

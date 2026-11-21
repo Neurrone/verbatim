@@ -114,8 +114,9 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   (`NodeGates::counts`), which no other read takes.
 - `controlled(focused, runtime_id, request)`: the selected element when
   it is an element the focus names in its `ControllerFor` relation or is
-  inside one; the classic implementation behind
-  `verbatim_uia_rops::controlled_selection`.
+  inside one. Nothing calls it: Core asks a controlled selection as a
+  batch's `Related` controller-for and `Descendants` steps
+  ([verbatim-uia-rops](verbatim-uia-rops.md)).
 - `selected(container, request)`: the first element of a selection
   container's current selection, or `None`. One `BuildUpdatedCache`
   refreshes the container as the `SelectionContainer` shape, which holds
