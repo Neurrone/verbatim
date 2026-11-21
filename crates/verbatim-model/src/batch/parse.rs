@@ -60,7 +60,7 @@ pub enum Bound {
 /// Why a batch was refused whole, a defect of its sender's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Malformed {
-    /// It has no step.
+    /// It has no step (Claude, 2026-11-21).
     Empty,
     /// It has more than [`MAX_STEPS`] steps.
     TooLong(usize),
@@ -113,7 +113,7 @@ pub enum Malformed {
     /// object, the focus or a route.
     Subject(Place),
     /// A step names a text anchor of a subject that is no node, though an
-    /// anchor means something only with the node it was minted for.
+    /// anchor means something only with the node it was minted for (Claude, 2026-11-21).
     AnchorWithoutNode(Place),
 }
 
@@ -409,7 +409,9 @@ impl Checking<'_> {
     }
 }
 
-/// Whether a result of `kind` is one node.
+/// Whether a result of `kind` is one node, which [`Subject::Result`]
+/// names; a list's node is named by [`Subject::Item`], and only a walk down
+/// the tree takes a whole list as its start (Claude, 2026-11-21).
 fn one_node(kind: OpKind) -> bool {
     matches!(kind, OpKind::Read | OpKind::Test | OpKind::FocusRead)
 }

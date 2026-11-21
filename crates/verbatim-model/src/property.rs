@@ -104,7 +104,9 @@ pub enum PropertyId {
     ChildCount,
     /// Whether the object, or an ancestor up to the desktop, has the
     /// focused state, by a walk of MSAA parents; absent for a UI
-    /// Automation object, whose focus is read in full.
+    /// Automation object, whose focus is read in full. This and the three
+    /// after it are read for a batch's operations alone, declared with the
+    /// request list's contract before the readers read them (Claude, 2026-11-21).
     FocusedWithin,
     /// The MSAA ids an object was reached at after NVDA's focus redirect,
     /// with the child id the reader holds it by; read with no call.

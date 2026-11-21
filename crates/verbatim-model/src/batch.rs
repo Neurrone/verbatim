@@ -573,7 +573,8 @@ impl Op {
     }
 }
 
-/// What a [`Condition`] tests of the step it names.
+/// What a [`Condition`] tests of the step it names: a condition carries
+/// no matcher of its own, a `Test` step holds it (Claude, 2026-11-21).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Check {
     /// A [`Op::Test`] matched.
@@ -877,7 +878,8 @@ pub enum Done {
     IsOneOf(Option<u32>),
     /// [`Op::Activate`]'s: the action's name, when it has one.
     Activate(Option<ActionName>),
-    /// [`Op::Follow`]'s: applied. The node followed is the one Core named.
+    /// [`Op::Follow`]'s: applied. The node followed is the one Core named,
+    /// so the result copies nothing back (Claude, 2026-11-21).
     Follow,
     /// [`Op::FocusRead`]'s.
     FocusRead(Box<FocusRead>),
@@ -977,7 +979,7 @@ pub enum Missing {
     Anchor(TextAnchor),
     /// The object a subject names that holds no node id: a kept element,
     /// an MSAA object, a route, a window, the focus, or an item past its
-    /// list's end.
+    /// list's end (Claude, 2026-11-21).
     Object,
 }
 

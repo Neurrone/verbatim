@@ -553,7 +553,7 @@ impl<B> Clone for Baseline<B> {
 impl<B> Copy for Baseline<B> {}
 
 /// An input of a step was another batch's handle, or named a step left
-/// off for that, so the step is left off too.
+/// off for that, so the step is left off too, and read as failed (Claude, 2026-11-21).
 struct LeftOff;
 
 /// A batch being built, branded `B`.
@@ -623,7 +623,7 @@ impl<B> Builder<B> {
         self
     }
 
-    /// The next step added runs only when `condition` holds.
+    /// The next step added runs only when `condition` holds (Claude, 2026-11-21).
     pub fn when(&mut self, condition: Cond<B>) -> &mut Self {
         self.pending = Some(condition);
         self
@@ -1129,7 +1129,7 @@ pub enum Got<'a, T> {
     /// A call failed; or its handle was another batch's, a defect.
     Failed,
     /// Not run: its condition did not hold, a step it names was not done,
-    /// or the shell answered the batch unsent with what is in front.
+    /// or the shell answered the batch unsent with what is in front (Claude, 2026-11-21).
     Skipped,
 }
 
