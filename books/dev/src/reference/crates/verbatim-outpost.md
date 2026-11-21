@@ -933,6 +933,30 @@ Core postpones the dialog to its show, and asks `ReadAnyway` for a read
 that must not check. Tests: `outpost::hidden_root_tests`, the check's cost
 pinned at no call for a shown root and two for a hidden one.
 
+A batch (`outpost/batch.rs`) is parsed once as it arrives and refused
+whole when it does not parse. Each subject is resolved once, at its
+first use: a node held or an earlier result's, an MSAA object acquired
+once with or without NVDA's redirect after its window's verdict (a
+window read through UI Automation refuses the whole batch
+`ReadThroughUia`), a window by handle, top-level window, class path
+(`shell_items::class_path_window`), focus or foreground, of the
+outpost's application and shown when `visible` asks, and the focus
+window, taken before any call that can block. Each step runs under its
+gate (`Step::gate`) on the code the kinds of request run on: `Read` by
+`properties` with the reported properties (an MSAA object's each read
+alone, `FocusCandidate::property`), `Test` lazily in its matcher's order,
+each property read once and kept in its result in the order read,
+`Related` by the navigation step (controller-for and the first selected
+item through `verbatim_uia_rops::batch::run_batch`), `Ancestors` and
+`Descendants` by the ancestor and children walks, `IsOneOf` by NVDA's
+equality for the equal node and by address for the others, `FocusRead`
+as `asked::candidate_read` or `asked::focus_now`, and the text
+operations through the node's text (`text::ops` for `Caret` and
+`CompareSelection`, today's text requests for the rest). A `Route`
+subject, whose completion needs what the listener read of each step, is
+refused, and `WaitForCaret` is refused until the caret keys convert to
+it. Tests: `mockapp`'s `batch_readers`.
+
 Each `CoreToOutpost::Request` is one program on the worker
 (`outpost/asked.rs`), answered once with one of the five outcomes, each
 node read with its nearest window's facts (`NodeWindow`, read from

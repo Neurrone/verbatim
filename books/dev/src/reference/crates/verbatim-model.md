@@ -296,7 +296,11 @@ them yet.
   seventeen (`OpKind`) with an optional `Condition` on one earlier step
   (`Check::Matched` of a `Test`, `Check::Found`, or their negation;
   `Condition::gate` gives the condition table: a skipped step skips its
-  dependants, a refused, missing or failed one makes the check false),
+  dependants, a refused, missing or failed one makes the check false;
+  `Step::gate` adds that every step it takes a result from,
+  `Step::references`, is done, the one gate each reader runs, and
+  `Subject::earlier_nodes` the nodes an earlier result names, by
+  `Done::nodes`),
   its `Placement` in the reader's order and a `spare` node and anchor
   held while it is out. An operation names its object by a `Subject`: a
   node, a listener's `Kept` element with its `keep` mark, an `Msaa`

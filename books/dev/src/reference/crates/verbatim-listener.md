@@ -94,6 +94,16 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   desktop window's name, and a classic progress bar's role, value, states
   and place, which Core asks at its value change. A token released, or
   never kept, is answered not there at once.
+- A batch is routed by its first step's subject and parsed once on its
+  reading thread, refused whole when it does not parse. The one kept
+  element its steps name is read once, with one `start_read` taking its
+  `keep` mark, by the union of its `Read` and `Ancestors` steps' sets, its
+  name read afresh and no focused state added, its ancestors in the same
+  walk when a step asks for them (the walk's end answered as the
+  `Ancestors` step's, a known ancestor met by its place in the step's
+  list); a `Read` of an MSAA object is read at its event's address. A
+  batch naming two kept elements is refused, and `Descendants` and
+  `IsOneOf`, which no batch to the listener asks yet, answer refused.
 - Reading threads (`reading`, the shell of
   `verbatim_listener_logic::schedule`): one per application process
   generation, Core's requests ahead of releases, an idle

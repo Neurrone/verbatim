@@ -954,7 +954,12 @@ left. The plain reader answers every request on its node at once with
 what NVDA's plain `Window` gives (`focus::plain::answer`): its
 properties (name, the role window, the unavailable state from its
 style), no children, an edge for every move, no text, "No action" for
-activate; a node of an older generation is not there. When the ghost's
+activate; a node of an older generation is not there. A batch naming its
+node is answered the same way, step by step under each step's gate: a
+`Read` and a `Test` from its facts, no `Related` or `Descendants` node,
+`IsOneOf` by its node, `Follow` applied, every text operation refused
+"no text" and `Activate` refused "unsupported"; one that does not parse
+is refused whole. When the ghost's
 window is destroyed the object stays held and becomes
 `PlainKind::Destroyed`, NVDA's plain `Window` of the dead handle: no
 name, the role window and the invisible state alone, so Insert+Tab and

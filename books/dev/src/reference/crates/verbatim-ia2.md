@@ -249,6 +249,12 @@ Public API:
   and role, a `SysListView32` item's position and set size, its name and
   its value, compared with the identity Core names in that order by the
   functions the full read uses and stopping at the first that differs;
+  `property(id, registry)` one of those values read alone by the same
+  functions, for a batch's `Test` reading in its matcher's order, and
+  `object()` the object as an `EventObject`, whose `property(id, role,
+  registry)` reads a name, value, description, role, states or place
+  alone and whose `is_equal_to` and `which_of` answer a batch's
+  `IsOneOf`;
   `role()` the object's role, read once and kept, which a
   menu start's facts carry; `has_focused_state(max_hops, plain,
   parent_window)` is NVDA's `shouldAllowIAccessibleFocusEvent`, the
