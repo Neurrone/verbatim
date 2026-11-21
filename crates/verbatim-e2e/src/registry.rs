@@ -242,6 +242,11 @@ pub struct ScenarioDef {
     /// it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`, as GitHub's `e2e`
     /// job sets it, skips it ([`skips`]).
     pub local_only: Option<&'static str>,
+    /// Why an outpost is expected to fall back from a remote operation
+    /// during this scenario, which otherwise fails it
+    /// ([`crate::artifacts::fallback_lines`]); `None` for every scenario
+    /// today.
+    pub expected_fallback: Option<&'static str>,
     /// The document the scenario edits in Windows 11 Notepad, opened
     /// before Verbatim starts ([`crate::scenario::Document`]); `None` for
     /// most.
@@ -271,6 +276,7 @@ impl ScenarioDef {
             compare,
             settings: None,
             local_only: None,
+            expected_fallback: None,
             document: None,
             setup,
             body,
@@ -282,6 +288,14 @@ impl ScenarioDef {
     #[must_use]
     pub const fn local_only(mut self, reason: &'static str) -> Self {
         self.local_only = Some(reason);
+        self
+    }
+
+    /// The entry, with an outpost's remote-operation fallback during it
+    /// expected, for `reason`.
+    #[must_use]
+    pub const fn expects_fallback(mut self, reason: &'static str) -> Self {
+        self.expected_fallback = Some(reason);
         self
     }
 
@@ -773,7 +787,7 @@ fn run(def: &ScenarioDef, mode: Mode) {
         ));
     }
     problems.extend(scenario.clean_up());
-    problems.extend(scenario.collect_run_artifacts(&dir));
+    problems.extend(scenario.collect_run_artifacts(&dir, def.expected_fallback));
     let outpost_crashes = if let Some(steps) = &steps {
         problems.extend(write_comparison(def, &scenario, &dir, steps));
         None

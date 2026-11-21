@@ -450,7 +450,7 @@ fn states_and_dialogs(
         }
     };
     if let Path::Fallback(error) = &path {
-        tracing::warn!(window, %error, "a remote operation failed; read the classic way");
+        super::remote_fell_back("focus states", Some(window), error);
         if matches!(error, verbatim_uia_rops::Error::Import(_)) {
             context.read_classically(window);
         }

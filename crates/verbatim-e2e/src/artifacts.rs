@@ -18,7 +18,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use verbatim_model::{DEFECT_TARGET, TraceId};
+use verbatim_model::{DEFECT_TARGET, REMOTE_FALLBACK_TARGET, TraceId};
 
 use crate::speech::LatencyRow;
 
@@ -454,6 +454,24 @@ pub fn defect_lines(file: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Every line of an outpost's log `text`, a file named `file`, that says
+/// the outpost fell back from a remote operation to the classic calls or
+/// marked a window for classic reading: a line logged to
+/// [`REMOTE_FALLBACK_TARGET`], which names the program, its error and the
+/// window, with terminal colour codes removed and prefixed with the file's
+/// name. A run whose logs hold one fails unless its scenario expects one
+/// ([`crate::registry::ScenarioDef::expects_fallback`]), so a fallback
+/// does not pass unnoticed behind speech that came out right.
+#[must_use]
+pub fn fallback_lines(file: &str, text: &str) -> Vec<String> {
+    let target = format!(" {REMOTE_FALLBACK_TARGET}: ");
+    text.lines()
+        .map(without_colours)
+        .filter(|line| line.contains(&target))
+        .map(|line| format!("{file}: {line}"))
+        .collect()
+}
+
 /// `line` without the escape sequences a terminal colours text with.
 fn without_colours(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -804,6 +822,26 @@ mod tests {
         let log = "2026-11-17T10:48:12.000000Z  WARN verbatim_outpost::outpost: the target application's exit is not watched\n\
                    2026-11-17T10:48:13.000000Z  WARN verbatim_listener: a bar's read did not return in time; its reader is abandoned pid=4\n";
         assert_eq!(defect_lines("listener.log", log), Vec::<String>::new());
+    }
+
+    /// The fallback lines of an outpost's log, coloured as it writes them:
+    /// the program's fallback, with its program, window and error, and the
+    /// window marked for classic reading; a defect line, an ordinary
+    /// warning, and a line naming the target in its text are none.
+    #[test]
+    fn an_outpost_log_s_fallback_lines_are_found_with_their_file_and_nothing_else() {
+        let log = "\u{1b}[2m2026-11-21T08:14:52.466965Z\u{1b}[0m \u{1b}[33m WARN\u{1b}[0m \u{1b}[2mverbatim::remote_fallback\u{1b}[0m\u{1b}[2m:\u{1b}[0m a remote operation failed; read the classic way \u{1b}[3mprogram\u{1b}[0m\u{1b}[2m=\u{1b}[0m\"navigation step\" \u{1b}[3mwindow\u{1b}[0m\u{1b}[2m=\u{1b}[0mSome(393818) \u{1b}[3merror\u{1b}[0m\u{1b}[2m=\u{1b}[0mimporting into a remote operation failed: Catastrophic failure (0x8000FFFF)\n\
+                   2026-11-21T08:14:52.467000Z  WARN verbatim::remote_fallback: a window is marked for classic reading window=393818\n\
+                   2026-11-21T08:14:52.468000Z ERROR verbatim::defect: an answer did not decode as its request's reply\n\
+                   2026-11-21T08:14:52.469000Z  WARN verbatim_outpost::outpost: the target application's exit is not watched\n\
+                   2026-11-21T08:14:52.470000Z  WARN verbatim_outpost::outpost: a message naming verbatim::remote_fallback in its text\n";
+        assert_eq!(
+            fallback_lines("outpost-mockapp-4.log", log),
+            vec![
+                "outpost-mockapp-4.log: 2026-11-21T08:14:52.466965Z  WARN verbatim::remote_fallback: a remote operation failed; read the classic way program=\"navigation step\" window=Some(393818) error=importing into a remote operation failed: Catastrophic failure (0x8000FFFF)".to_owned(),
+                "outpost-mockapp-4.log: 2026-11-21T08:14:52.467000Z  WARN verbatim::remote_fallback: a window is marked for classic reading window=393818".to_owned(),
+            ]
+        );
     }
 
     /// Whatever its message, a line logged to the defect target is a

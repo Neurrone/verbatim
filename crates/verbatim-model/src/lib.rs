@@ -186,6 +186,14 @@ pub const HIDDEN_FRAME_TITLE: &str = "Verbatim";
 /// the system refused, is not logged to it.
 pub const DEFECT_TARGET: &str = "verbatim::defect";
 
+/// The log target of a remote operation an outpost fell back from to the
+/// classic calls, or of a window it marked for classic reading: an
+/// end-to-end scenario whose logs hold a line of it fails, unless the
+/// scenario expects one (`books/dev/src/how-to/e2e.md`, "Remote-operation
+/// fallbacks fail a scenario"), because such fallbacks went unseen behind
+/// speech that came out right.
+pub const REMOTE_FALLBACK_TARGET: &str = "verbatim::remote_fallback";
+
 /// Names one outpost process generation.
 ///
 /// The supervisor assigns a fresh one at every spawn and never reuses one, so

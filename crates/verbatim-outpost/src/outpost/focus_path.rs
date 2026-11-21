@@ -96,7 +96,7 @@ pub(crate) fn find_from_window(
             let import_failed =
                 matches!(&path, Path::Fallback(verbatim_uia_rops::Error::Import(_)));
             if let Path::Fallback(error) = &path {
-                tracing::warn!(window = route.window.get(), %error, "a remote operation failed; read the classic way");
+                super::remote_fell_back("element by path", Some(route.window.get()), error);
             }
             (Ok(found), import_failed, Some(root))
         }

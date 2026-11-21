@@ -985,7 +985,7 @@ fn uia_remote_enrichment(
     }
     *table = ancestry.element_table;
     if let Path::Fallback(error) = &path {
-        tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+        super::remote_fell_back("focus ancestry", window, error);
         if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
             context.read_classically(window);
         }
@@ -2147,7 +2147,7 @@ fn uia_remote_step(
         Err(error) => return Err(ReadError::Failed(format!("UIA navigation failed: {error}"))),
     };
     if let Path::Fallback(error) = &path {
-        tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+        super::remote_fell_back("navigation step", window.or(step.window), error);
         if let (verbatim_uia_rops::Error::Import(_), Some(hwnd)) = (error, step.window) {
             context.read_classically(top_level_of(hwnd));
         }
@@ -2371,7 +2371,7 @@ pub(super) fn dump_tree(
         let ((root, truncated), path) = verbatim_uia_rops::tree_dump(uia, &query, remote)
             .map_err(|error| ReadError::Failed(format!("UIA tree walk failed: {error}")))?;
         if let Path::Fallback(error) = &path {
-            tracing::warn!(hwnd, %error, "a remote operation failed; read the classic way");
+            super::remote_fell_back("tree dump", Some(hwnd), error);
             if let verbatim_uia_rops::Error::Import(_) = error {
                 context.read_classically(hwnd);
             }

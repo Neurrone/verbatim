@@ -532,8 +532,14 @@ impl Context {
             })
     }
 
-    /// Reads `hwnd`'s UIA elements the classic way from now on.
+    /// Reads `hwnd`'s UIA elements the classic way from now on, logged to
+    /// [`verbatim_model::REMOTE_FALLBACK_TARGET`].
     fn read_classically(&self, hwnd: isize) {
+        tracing::warn!(
+            target: verbatim_model::REMOTE_FALLBACK_TARGET,
+            window = hwnd,
+            "a window is marked for classic reading"
+        );
         self.classic_windows()
             .insert(hwnd, verbatim_win32::window::window_thread(hwnd));
     }
@@ -1130,6 +1136,24 @@ impl Outpost {
 }
 
 /// `ask` with the node ids it names as this outpost knows them.
+/// Logs that `program`, a remote operation tried for an element of
+/// `window` (`None` when the element's window is not known), failed with
+/// `error` and was read by the classic calls instead: the one place a
+/// fallback is logged, to [`verbatim_model::REMOTE_FALLBACK_TARGET`].
+pub(super) fn remote_fell_back(
+    program: &'static str,
+    window: Option<isize>,
+    error: &verbatim_uia_rops::Error,
+) {
+    tracing::warn!(
+        target: verbatim_model::REMOTE_FALLBACK_TARGET,
+        program,
+        ?window,
+        %error,
+        "a remote operation failed; read the classic way"
+    );
+}
+
 fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::request::Ask> {
     let mut ask = Box::new(ask.clone());
     ask.unstamp();

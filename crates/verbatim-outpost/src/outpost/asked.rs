@@ -899,6 +899,9 @@ pub(super) fn controlled_by(
     let remote = context.tries_remote(window);
     let found =
         verbatim_uia_rops::controlled_selection(uia, &query, remote).map(|(answer, path)| {
+            if let verbatim_uia_rops::Path::Fallback(error) = &path {
+                super::remote_fell_back("controlled selection", window, error);
+            }
             if let (
                 verbatim_uia_rops::Path::Fallback(verbatim_uia_rops::Error::Import(_)),
                 Some(hwnd),

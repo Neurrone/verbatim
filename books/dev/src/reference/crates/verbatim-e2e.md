@@ -628,8 +628,12 @@ teardown; clean up; collect the artifacts (`collect_run_artifacts`),
 failing the run on every line of Verbatim's logs, its own and each
 child's, that states a defect of Verbatim's own, a panic or a line
 logged to the `verbatim::defect` target (`artifacts::defect_lines`),
-such as an answer no request can have, while a warning about an
-application misbehaving fails nothing;
+such as an answer no request can have, and on every line of an
+outpost's log on the `verbatim::remote_fallback` target
+(`artifacts::fallback_lines`, unless `ScenarioDef::expects_fallback`
+gives a reason; `books/dev/src/how-to/e2e.md`, "Remote-operation fallbacks
+fail a scenario"), while a warning about an application misbehaving fails
+nothing;
 finish the recording; check that no Windows Terminal window the run did
 not open appeared; write `foreground.txt` and the summary, and archive
 the run. The summary's latency lines (`ScenarioSummary::new`) are built

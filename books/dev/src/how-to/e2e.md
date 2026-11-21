@@ -661,6 +661,19 @@ announced, or interrupting speech; the lines just above the `cancelled`
 line show what. A timeout and an outright connection failure read
 differently: the second appends "underlying error: ...".
 
+## Remote-operation fallbacks fail a scenario
+
+A scenario fails, after its body, for every line of an outpost's log on
+the `verbatim::remote_fallback` target: a remote operation that failed
+and was read by the classic calls instead, the line naming the program,
+its error and the window, or a window marked for classic reading
+(`artifacts::fallback_lines`). A scenario may expect one only with a
+reason, given by `ScenarioDef::expects_fallback` as `local_only` takes
+one; none does, since no scenario turns `uia.remote_operations` off. A
+fallback found this way is triaged and its cause fixed, not declared
+expected, because each fallback until then passed unseen behind speech
+that came out right (Dickson, 2026-11-21).
+
 ## Replaying a run
 
 `cargo xtask replay <flight-recorder.jsonl> [--from <line>] [--to <line>]`

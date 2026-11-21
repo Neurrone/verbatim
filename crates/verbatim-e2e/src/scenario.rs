@@ -2699,9 +2699,17 @@ impl Scenario {
     /// line of those logs stating a defect of Verbatim's own
     /// ([`crate::artifacts::defect_lines`]), and every outpost started
     /// for a process Verbatim was told to ignore, its log named for that
-    /// process, each a failure of the run. In compare
+    /// process, each a failure of the run, and every line of an outpost's
+    /// log saying it fell back from a remote operation
+    /// ([`crate::artifacts::fallback_lines`]), a failure unless
+    /// `expected_fallback` gives the scenario's reason to expect one
+    /// ([`crate::registry::ScenarioDef::expects_fallback`]). In compare
     /// mode, which has no Verbatim, only the timeline.
-    pub fn collect_run_artifacts(&mut self, dir: &Path) -> Vec<String> {
+    pub fn collect_run_artifacts(
+        &mut self,
+        dir: &Path,
+        expected_fallback: Option<&'static str>,
+    ) -> Vec<String> {
         let mut problems = Vec::new();
         if let Err(error) = fs::create_dir_all(dir) {
             return vec![format!("could not create {}: {error}", dir.display())];
@@ -2750,7 +2758,7 @@ impl Scenario {
             problems.push(format!("could not copy Verbatim's audio {audio}: {error}"));
         }
         match self.pid("collect the logs of") {
-            Ok(pid) => problems.extend(self.collect_outpost_logs(pid, dir)),
+            Ok(pid) => problems.extend(self.collect_outpost_logs(pid, dir, expected_fallback)),
             Err(error) => problems.push(error.to_string()),
         }
         for (pid, stderr_path) in self.replaced.clone() {
@@ -2772,7 +2780,7 @@ impl Scenario {
             } else {
                 problems.extend(collected_defects(&replaced_dir.join(STDERR_FILE_NAME)));
             }
-            problems.extend(self.collect_outpost_logs(pid, &replaced_dir));
+            problems.extend(self.collect_outpost_logs(pid, &replaced_dir, expected_fallback));
         }
         problems.extend(self.collect_crash_dumps(dir));
         problems
@@ -2799,7 +2807,12 @@ impl Scenario {
 
     /// Fetches every outpost and listener log the Verbatim launch `pid`
     /// wrote, from `logs\<pid>` next to its executable, into `dir`.
-    fn collect_outpost_logs(&mut self, pid: u32, dir: &Path) -> Vec<String> {
+    fn collect_outpost_logs(
+        &mut self,
+        pid: u32,
+        dir: &Path,
+        expected_fallback: Option<&'static str>,
+    ) -> Vec<String> {
         let logs_dir = format!(r"{}\logs\{pid}", self.run_dir);
         let names = match self.agent.list_files(&logs_dir) {
             Ok(names) => names,
@@ -2819,6 +2832,9 @@ impl Scenario {
                 problems.push(format!("could not collect {remote_path}: {error}"));
             } else {
                 problems.extend(collected_defects(&dir.join(name)));
+                if expected_fallback.is_none() {
+                    problems.extend(collected_fallbacks(&dir.join(name)));
+                }
             }
         }
         for pid in &self.ignored {
@@ -4589,6 +4605,25 @@ fn collected_defects(path: &Path) -> Vec<String> {
         Ok(bytes) => defects_logged(path, &String::from_utf8_lossy(&bytes)),
         Err(error) => vec![format!(
             "could not read {} to check it for defects: {error}",
+            path.display()
+        )],
+    }
+}
+
+/// Every remote-operation fallback the log collected as `path` holds
+/// ([`crate::artifacts::fallback_lines`]), each a failure, or the failure
+/// to read it.
+fn collected_fallbacks(path: &Path) -> Vec<String> {
+    match fs::read(path) {
+        Ok(bytes) => crate::artifacts::fallback_lines(
+            &path.display().to_string(),
+            &String::from_utf8_lossy(&bytes),
+        )
+        .into_iter()
+        .map(|line| format!("an outpost fell back from a remote operation: {line}"))
+        .collect(),
+        Err(error) => vec![format!(
+            "could not read {} to check it for remote-operation fallbacks: {error}",
             path.display()
         )],
     }

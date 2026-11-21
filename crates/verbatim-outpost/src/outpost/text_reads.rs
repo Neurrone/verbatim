@@ -465,7 +465,7 @@ fn note_fallback(context: &RequestContext<'_>, node_id: NodeId, source: &mut Uia
         return;
     };
     let window = super::asked::known_nearest_of(context, node_id);
-    tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+    super::remote_fell_back("text read", window, &error);
     if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (&error, window) {
         context.read_classically(window);
     }
@@ -757,7 +757,7 @@ pub(super) fn terminal_read(
     };
     if let Path::Fallback(error) = &answer.path {
         let window = super::asked::known_nearest_of(context, node_id);
-        tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
+        super::remote_fell_back("terminal snapshot", window, error);
         if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
             context.read_classically(window);
         }
@@ -847,17 +847,23 @@ pub(super) fn terminal_history(
         Ok(range) => range,
         Err(reply) => return reply,
     };
-    let remote = context.tries_remote(super::asked::known_nearest_of(context, node_id));
+    let window = super::asked::known_nearest_of(context, node_id);
+    let remote = context.tries_remote(window);
     match crate::terminal::history(
         uia,
         (source.element(), source.pattern()),
         &start,
         (above, whole, height, remote),
     ) {
-        Ok(history) => TextReply::TerminalHistory {
-            text: history.text,
-            above: history.above,
-        },
+        Ok(history) => {
+            if let Path::Fallback(error) = &history.path {
+                super::remote_fell_back("terminal history", window, error);
+            }
+            TextReply::TerminalHistory {
+                text: history.text,
+                above: history.above,
+            }
+        }
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "a terminal's history could not be read");
@@ -885,7 +891,8 @@ pub(super) fn terminal_find(
         Ok(range) => range,
         Err(reply) => return reply,
     };
-    let remote = context.tries_remote(super::asked::known_nearest_of(context, node_id));
+    let window = super::asked::known_nearest_of(context, node_id);
+    let remote = context.tries_remote(window);
     match crate::terminal::find(
         uia,
         (source.element(), source.pattern()),
@@ -893,9 +900,14 @@ pub(super) fn terminal_find(
         (needle, from, rows),
         remote,
     ) {
-        Ok(found) => TextReply::TerminalFound {
-            matches: found.matches,
-        },
+        Ok(found) => {
+            if let Path::Fallback(error) = &found.path {
+                super::remote_fell_back("terminal find", window, error);
+            }
+            TextReply::TerminalFound {
+                matches: found.matches,
+            }
+        }
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "a terminal could not be searched");
