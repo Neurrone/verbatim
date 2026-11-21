@@ -1296,6 +1296,7 @@ impl OutpostUnderTest {
         self.outpost.handle_command(&CoreToOutpost::NodesHeld {
             nodes: held.iter().map(|id| id.number()).collect(),
             anchors: Vec::new(),
+            told: Vec::new(),
             acknowledged: self.position.get(),
         });
     }

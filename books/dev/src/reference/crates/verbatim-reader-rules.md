@@ -32,6 +32,14 @@ Public API:
   listener's answer from them, the one its check threads' probes and its
   value changes are judged by: a list view's provider counts only from
   Windows Forms, and a console's with no check, a limit its guide states.
+- `numbered` — a reader's numbering of the messages it writes to Core
+  that carry what it keeps for Core: `Numbered<K>` (`queued`, `written`,
+  `withdrawn`, `report`, `forget`, `position`) gives each key's `Report`,
+  the position of the last message carrying it and how many still wait,
+  and `too_early` says a held view cannot judge a key no message carried
+  yet, one a message waits to carry, or one carried after the position
+  it acknowledges. The listener numbers its tokens with it and an outpost
+  its nodes, anchors and caret tells' elements.
 - `Window` — a window's handle that is never 0. The protocol and the
   system's calls carry a handle as an `isize`, 0 for none; the logic
   crates parse one where it enters them, `Window::new(handle)` giving
@@ -41,5 +49,5 @@ Public API:
 
 Tests: the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the class verdict `classify_with` gives
-with NVDA's lists (the good, bad and shell rules), the limit per thread,
-and a window's handle parsed.
+with NVDA's lists (the good, bad and shell rules), the numbering, the
+limit per thread, and a window's handle parsed.

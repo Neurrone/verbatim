@@ -101,6 +101,10 @@ pub enum CoreToOutpost {
         /// these, and may forget any other once it has minted newer ones
         /// (the text protocol, `books/dev/src/reference/crates/verbatim-model.md`).
         anchors: Vec<u64>,
+        /// The tokens of the caret tells' elements Core holds for this
+        /// outpost: those its caret entries waiting or running name, for
+        /// its caret read to adopt. The outpost keeps these.
+        told: Vec<u64>,
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },
@@ -415,20 +419,24 @@ pub enum ListenerToCore {
 impl OutpostToCore {
     /// Whether this message counts toward the message positions that
     /// [`CoreToOutpost::NodesHeld`] acknowledges: an answer with a result,
-    /// the message that carries node ids. The outpost and Core count the
-    /// same messages, in pipe order, with this one function, so every
-    /// variant is listed: one that carries nodes and is not counted would
-    /// let the outpost release a node Core still reads.
+    /// the message that carries node ids, and a tell naming an element by
+    /// its token, which the outpost keeps for Core's caret read. The
+    /// outpost and Core count the same messages, in pipe order, with this
+    /// one function, so every variant is listed: one that carries what the
+    /// outpost keeps and is not counted would let the outpost release it
+    /// while Core still names it.
     #[must_use]
     pub fn carries_nodes(&self) -> bool {
         match self {
             OutpostToCore::Answer(answer) => {
                 matches!(answer.outcome, crate::request::Outcome::Result(_))
             }
+            OutpostToCore::Tell(tell) => {
+                matches!(tell.object, crate::tell::EventObject::Uia { .. })
+            }
             OutpostToCore::Ready { .. }
             | OutpostToCore::SpareReady { .. }
             | OutpostToCore::Pong { .. }
-            | OutpostToCore::Tell(_)
             | OutpostToCore::Fault { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::IdleAnswer { .. } => false,

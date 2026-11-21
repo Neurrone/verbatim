@@ -6,9 +6,9 @@
 //! objects (each node's text patterns, and the UIA ranges of its text
 //! positions under the keys the reducer's text facts name them by, with
 //! what its text is known to support),
-//! the terminals' kept ranges, and the mint tag of every node and anchor:
-//! the worker generation and request it was issued or looked up under.
-//! No other module holds a registry. A plain window and a foreground's
+//! the terminals' kept ranges, the text anchors it keeps, and the
+//! elements of the caret tells sent to Core. No other module holds a
+//! registry. A plain window and a foreground's
 //! client object read from local window data are minted by their window
 //! handle, as their MSAA keys `(hwnd, OBJID_WINDOW, 0)` and
 //! `(hwnd, OBJID_CLIENT, 0)`, so ids do not change and the MSAA registry's
@@ -21,29 +21,29 @@
 //!   removed object, so nothing is dropped under its lock or the outbound
 //!   backlog's ([`Removed`]).
 //! - A walk issues and looks up nodes through [`Nodes`], which implements
-//!   the interning traits of `verbatim-uia` and `verbatim-ia2`: a handle
-//!   carries its request's tag ([`Store::nodes_for`]), and every node
-//!   issued or looked up through it is tagged with it, in the same hold of
-//!   the store's lock. An element a lookup replaces is kept in the handle
-//!   for its holder to drop ([`Nodes::take_removed`]).
+//!   the interning traits of `verbatim-uia` and `verbatim-ia2`, with the
+//!   node details its request names ([`Store::nodes_for`]). An element a
+//!   lookup replaces is kept in the handle and dropped with it.
 //! - A message is sent as a [`Recorded`], which only the store makes,
 //!   listing the nodes and anchors the message names
-//!   ([`OutpostToCore::named`]); the outbound queue records them at the
-//!   message's position as it numbers it at write.
-//! - [`Store::release`] frees a node or anchor only when no live request can
-//!   still name it: every tag it has names a dead worker generation or a
-//!   claimed or ended request, and either it was never carried, or it was
-//!   carried at or before the position Core acknowledged, no waiting message
-//!   carries it, and Core does not hold it. Carried positions, waiting
-//!   messages and tags are read in one hold of the backlog's lock and then
-//!   the store's, the one nesting in the outpost, so no message can be
-//!   queued between the decision and the removal.
+//!   ([`OutpostToCore::named`]) and the element a caret tell names by its
+//!   token; the outbound queue records them at the message's position as
+//!   it numbers it at write.
+//! - [`Store::release`] runs between programs, when no program can still
+//!   name what it frees, and frees a node, anchor or caret tell's element
+//!   Core does not hold that either no message carried, or was carried at
+//!   or before the position Core acknowledged with no waiting message
+//!   carrying it: by position and Core's held view alone, the rule of
+//!   [`verbatim_reader_rules::numbered`]. Carried positions and waiting
+//!   messages are read in one hold of the backlog's lock and then the
+//!   store's, the one nesting in the outpost, so no message can be queued
+//!   between the decision and the removal.
 //! - A text call works on clones of the UIA ranges its copy of the node's
 //!   text facts names ([`Store::ranges`]), with no lock held. Its program
 //!   commits what it changed, and the shell makes the commit's text writes
 //!   only when the reducer accepts the commit ([`Store::write_text`]): the
-//!   ranges it made, under their new keys, its anchors tagged with its
-//!   request, and the node's patterns and what its text supports. A range
+//!   ranges it made, under their new keys, its anchors kept, and the
+//!   node's patterns and what its text supports. A range
 //!   is let go of when no text fact names it any more
 //!   ([`Store::forget_ranges`]), or with its node.
 
@@ -69,15 +69,7 @@ use super::outbound::{Carried, Outbound};
 use super::reducer::{RangeKey, TextChange};
 use super::text_reads::Patterns;
 use crate::text::uia::{TextSupport, UiaPos};
-
-/// The worker generation and request a node or anchor was issued or looked
-/// up under: its mint tag. Requests are numbered across generations, from
-/// one counter, so no two programs have the same tag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) struct Tag {
-    pub(super) generation: u64,
-    pub(super) request: u64,
-}
+use verbatim_reader_rules::numbered::too_early;
 
 /// Objects the store let go of, for the caller to drop once no lock is
 /// held: releasing an application's object can call into its process.
@@ -173,12 +165,7 @@ impl Recorded {
 
 /// What the store keeps under its lock besides the registries.
 struct State {
-    /// The tags of each node, by number: every program that issued or
-    /// looked it up and was live at the last release.
-    nodes: HashMap<u64, Vec<Tag>>,
-    /// The tags of each anchor, likewise.
-    anchors: HashMap<u64, Vec<Tag>>,
-    /// The node of each anchor tagged.
+    /// The node of each anchor kept.
     anchor_nodes: HashMap<u64, u64>,
     /// The UIA ranges of each node's text positions, by node and by the
     /// key its text facts name each by.
@@ -202,20 +189,12 @@ struct State {
     parked: HashMap<u64, Parked>,
     /// The last key given a parked object.
     parked_taken: u64,
-    /// The parked elements of the caret tells sent to Core, oldest first,
-    /// each with when it was told: kept for Core's caret read to adopt
-    /// until it is taken, past [`TOLD_FOR_US`], or beyond the newest
-    /// [`TOLD_KEPT`] (`docs/design/readers-tell-core-asks-build1.md`,
-    /// Table 6, whose rows the outpost's kept elements follow).
-    told: std::collections::VecDeque<(u64, u64)>,
+    /// The keys of the parked elements of the caret tells sent to Core,
+    /// by their tokens: kept for Core's caret read to adopt until a
+    /// release frees them, once Core has handled their tells and its held
+    /// view leaves them out ([`Store::release`]).
+    told: BTreeSet<u64>,
 }
-
-/// How long a caret tell's element is kept for Core to name, in
-/// microseconds: four times the longest due time (Table 6).
-pub(super) const TOLD_FOR_US: u64 = 60_000_000;
-
-/// How many caret tells' elements are kept at most (Table 6).
-pub(super) const TOLD_KEPT: usize = 64;
 
 /// An application object a UIA event came with, parked in the store as the
 /// event is pushed, so the mailbox's entry and the reducer hold only its
@@ -241,38 +220,12 @@ impl Parked {
     }
 }
 
-/// Adds `tag` to `tags`, once.
-fn add(tags: &mut Vec<Tag>, tag: Tag) {
-    if !tags.contains(&tag) {
-        tags.push(tag);
-    }
-}
-
 impl State {
-    fn tag_node(&mut self, node: NodeId, tag: Tag) {
-        add(self.nodes.entry(node.number()).or_default(), tag);
-    }
-
-    fn tag_anchors(&mut self, node: u64, anchors: &[u64], tag: Tag) {
-        for &anchor in anchors {
-            add(self.anchors.entry(anchor).or_default(), tag);
-            self.anchor_nodes.insert(anchor, node);
-        }
-    }
-
     /// Forgets everything kept for the nodes `gone`: their text, terminal
-    /// and tags, and the tags of their anchors, into `removed`.
+    /// and anchors, into `removed`.
     fn forget_nodes(&mut self, gone: &BTreeSet<u64>, removed: &mut Removed) {
-        let anchors = &mut self.anchors;
-        self.anchor_nodes.retain(|anchor, node| {
-            let kept = !gone.contains(node);
-            if !kept {
-                anchors.remove(anchor);
-            }
-            kept
-        });
+        self.anchor_nodes.retain(|_, node| !gone.contains(node));
         for &node in gone {
-            self.nodes.remove(&node);
             if let Some(ranges) = self.ranges.remove(&node) {
                 removed.ranges.extend(ranges.into_values());
             }
@@ -288,9 +241,6 @@ impl State {
 pub(super) struct Store {
     uia: UiaRegistry,
     msaa: MsaaRegistry,
-    /// The number of the last request a test tagged.
-    #[cfg(test)]
-    requests: AtomicU64,
     /// The counter anchors in both backends are numbered from.
     anchor_numbers: Arc<AtomicU64>,
     /// The last key given a UIA range.
@@ -313,13 +263,9 @@ impl Store {
         Self {
             uia: UiaRegistry::new(Arc::clone(&ids)),
             msaa: MsaaRegistry::new(ids),
-            #[cfg(test)]
-            requests: AtomicU64::new(0),
             anchor_numbers: anchors,
             range_keys: AtomicU64::new(0),
             state: Lock::new(State {
-                nodes: HashMap::new(),
-                anchors: HashMap::new(),
                 anchor_nodes: HashMap::new(),
                 ranges: HashMap::new(),
                 patterns: HashMap::new(),
@@ -328,7 +274,7 @@ impl Store {
                 routes: HashMap::new(),
                 parked: HashMap::new(),
                 parked_taken: 0,
-                told: std::collections::VecDeque::new(),
+                told: BTreeSet::new(),
             }),
         }
     }
@@ -352,42 +298,17 @@ impl Store {
         self.lock().parked.remove(&key)
     }
 
-    /// Keeps the element parked under `key` for the caret tell told at
-    /// `at_us`, whose token it is, and lets go of the elements of earlier
-    /// tells past [`TOLD_FOR_US`] or beyond the newest [`TOLD_KEPT`],
-    /// returned for the caller to drop once no lock is held.
-    pub(super) fn keep_told(&self, key: u64, at_us: u64) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        state.told.push_back((key, at_us));
-        while let Some(&(oldest, told_us)) = state.told.front() {
-            let expired = at_us.saturating_sub(told_us) > TOLD_FOR_US;
-            if !expired && state.told.len() <= TOLD_KEPT {
-                break;
-            }
-            state.told.pop_front();
-            removed.parked.extend(state.parked.remove(&oldest));
-        }
-        removed
+    /// Keeps the element parked under `key` for the caret tell whose
+    /// token it is, until a release frees it ([`Store::release`]).
+    pub(super) fn keep_told(&self, key: u64) {
+        self.lock().told.insert(key);
     }
 
-    /// The tag of a new request of worker generation `generation`, for a
-    /// test: the reducer numbers its requests itself.
-    #[cfg(test)]
-    pub(super) fn next_tag(&self, generation: u64) -> Tag {
-        Tag {
-            generation,
-            request: self.requests.fetch_add(1, Ordering::Relaxed) + 1,
-        }
-    }
-
-    /// The store's handle for the request `tag`, through which a walk
-    /// issues and looks up nodes, each tagged with it.
-    pub(super) fn nodes_for(&self, tag: Tag, details: NodeDetailSet) -> Nodes<'_> {
+    /// The store's handle for a request whose reads fetch `details`,
+    /// through which a walk issues and looks up nodes.
+    pub(super) fn nodes_for(&self, details: NodeDetailSet) -> Nodes<'_> {
         Nodes {
             store: self,
-            generation: tag.generation,
-            request: AtomicU64::new(tag.request),
             replaced: Lock::new(Vec::new()),
             details,
         }
@@ -469,8 +390,8 @@ impl Store {
 
     // Messages and release.
 
-    /// `message`, with the nodes and anchors it names, as the outbound
-    /// queue records them.
+    /// `message`, with the nodes and anchors it names and the element a
+    /// caret tell names by its token, as the outbound queue records them.
     #[expect(
         clippy::unused_self,
         reason = "only the store makes a `Recorded`, so a message is sent through it"
@@ -483,44 +404,58 @@ impl Store {
             .map(|node| Carried::Node(node.number()))
             .chain(named.anchors.iter().map(|anchor| Carried::Anchor(anchor.0)))
             .collect();
+        if let OutpostToCore::Tell(tell) = &message
+            && let verbatim_model::tell::EventObject::Uia { token, .. } = &tell.object
+        {
+            carried.push(Carried::Told(token.0));
+        }
         let mut seen = HashSet::new();
         carried.retain(|carried| seen.insert(*carried));
         Recorded { message, carried }
     }
 
-    /// Frees every node and anchor no live request can still name (the
-    /// module's documentation), for Core's held list `held`, which
-    /// acknowledges position `acknowledged`, with `live` the tags of the
-    /// requests still live. Returns the position the queue has reached,
-    /// for the log, and what was freed, `None` when nothing was.
+    /// Frees every node, anchor and caret tell's element Core does not hold
+    /// and has handled every message carrying (the module's documentation),
+    /// for Core's held view `held`, which acknowledges position
+    /// `acknowledged`. Returns the position the queue has reached, for the
+    /// log, and what was freed, `None` when nothing was.
     pub(super) fn release(
         &self,
         outbound: &Outbound,
         held: &HashSet<Carried>,
         acknowledged: u64,
-        live: &[Tag],
     ) -> (u64, Option<Released>) {
         outbound.with_pending(|pending| {
+            let numbered = pending.numbered();
             let mut state = self.lock();
-            let free = |carried: Carried, tags: &mut Vec<Tag>| {
-                tags.retain(|tag| live.contains(tag));
-                tags.is_empty()
-                    && pending.report(carried).is_none_or(|(position, waiting)| {
-                        waiting == 0 && position <= acknowledged && !held.contains(&carried)
-                    })
+            // A release runs between programs, so what no message carried
+            // no program can still name.
+            let free = |carried: Carried| {
+                let report = numbered.report(carried);
+                !held.contains(&carried) && (report.is_none() || !too_early(report, acknowledged))
             };
-            let nodes: BTreeSet<u64> = state
-                .nodes
-                .iter_mut()
-                .filter_map(|(&node, tags)| free(Carried::Node(node), tags).then_some(node))
+            let nodes: BTreeSet<u64> = self
+                .uia
+                .ids()
+                .into_iter()
+                .chain(self.msaa.ids())
+                .map(NodeId::number)
+                .filter(|&node| free(Carried::Node(node)))
                 .collect();
             let anchors: BTreeSet<u64> = state
-                .anchors
-                .iter_mut()
-                .filter_map(|(&anchor, tags)| free(Carried::Anchor(anchor), tags).then_some(anchor))
+                .anchor_nodes
+                .keys()
+                .copied()
+                .filter(|&anchor| free(Carried::Anchor(anchor)))
                 .collect();
-            if nodes.is_empty() && anchors.is_empty() {
-                return (pending.position(), None);
+            let told: Vec<u64> = state
+                .told
+                .iter()
+                .copied()
+                .filter(|&key| free(Carried::Told(key)))
+                .collect();
+            if nodes.is_empty() && anchors.is_empty() && told.is_empty() {
+                return (numbered.position(), None);
             }
             let mut removed = Removed::default();
             removed
@@ -533,16 +468,20 @@ impl Store {
             // A freed anchor's ranges stay until the reducer, given the
             // anchors freed, says no fact names them ([`Store::forget_ranges`]).
             for anchor in &anchors {
-                state.anchors.remove(anchor);
                 state.anchor_nodes.remove(anchor);
+            }
+            for key in told {
+                state.told.remove(&key);
+                removed.parked.extend(state.parked.remove(&key));
             }
             // What the queue recorded of anything no longer kept goes, the
             // anchors of a freed node with it.
-            pending.forget(|carried| match carried {
-                Carried::Node(node) => !state.nodes.contains_key(&node),
-                Carried::Anchor(anchor) => !state.anchors.contains_key(&anchor),
+            numbered.forget_where(|carried| match carried {
+                Carried::Node(node) => !self.holds(NodeId::new(node)),
+                Carried::Anchor(anchor) => !state.anchor_nodes.contains_key(&anchor),
+                Carried::Told(key) => !state.told.contains(&key),
             });
-            let position = pending.position();
+            let position = numbered.position();
             drop(state);
             (
                 position,
@@ -594,8 +533,6 @@ impl Store {
                 .drain()
                 .flat_map(|(_, ranges)| ranges.into_values()),
         );
-        state.nodes.clear();
-        state.anchors.clear();
         state.anchor_nodes.clear();
         removed
             .parked
@@ -644,17 +581,12 @@ impl Store {
             .collect()
     }
 
-    /// Makes `writes`, the text writes of a commit of request `tag` the
-    /// reducer accepts, in order. A change that adds to a node's facts is
-    /// made only while the store holds the node: its ranges are kept and
-    /// its anchors tagged. Returns the facts' changes made, for the
+    /// Makes `writes`, the text writes of a commit the reducer accepts, in
+    /// order. A change that adds to a node's facts is made only while the
+    /// store holds the node: its ranges and its anchors are kept. Returns the facts' changes made, for the
     /// reducer, and what the writes replaced or did not keep, for the
     /// caller to drop once no lock is held.
-    pub(super) fn write_text(
-        &self,
-        tag: Tag,
-        writes: Vec<TextWrite>,
-    ) -> (Vec<TextChange>, Removed) {
+    pub(super) fn write_text(&self, writes: Vec<TextWrite>) -> (Vec<TextChange>, Removed) {
         let mut removed = Removed::default();
         let mut changes = Vec::new();
         let mut state = self.lock();
@@ -672,7 +604,9 @@ impl Store {
                             .extend(ranges.into_iter().map(|(_, range)| range));
                         continue;
                     }
-                    state.tag_anchors(node, &touched, tag);
+                    for anchor in touched {
+                        state.anchor_nodes.insert(anchor, node);
+                    }
                     if !ranges.is_empty() {
                         let kept = state.ranges.entry(node).or_default();
                         for (key, range) in ranges {
@@ -731,25 +665,24 @@ impl Store {
         removed
     }
 
-    /// Whether anchor `anchor` is tagged, for a test.
+    /// Whether the caret tell's element under `key` is kept, for a test.
     #[cfg(test)]
-    pub(super) fn tags_anchor(&self, anchor: u64) -> bool {
-        self.lock().anchors.contains_key(&anchor)
+    pub(super) fn keeps_told(&self, key: u64) -> bool {
+        self.lock().told.contains(&key)
+    }
+
+    /// Whether anchor `anchor` is kept, for a test.
+    #[cfg(test)]
+    pub(super) fn keeps_anchor(&self, anchor: u64) -> bool {
+        self.lock().anchor_nodes.contains_key(&anchor)
     }
 }
 
-/// The store's handle for one request: every node issued or looked up
-/// through it is tagged with the request's tag, in the same hold of the
-/// store's lock as the registry's change. The elements its lookups replaced
-/// are kept in it, dropped with it or taken by its holder
-/// ([`take_removed`](Self::take_removed)): a handle used under a lock, the
-/// watchdog's, has them taken before the lock is let go.
+/// The store's handle for one request, through which its walks issue and
+/// look up nodes. The elements its lookups replaced are kept in it and
+/// dropped with it.
 pub(super) struct Nodes<'a> {
     store: &'a Store,
-    /// The request's tag, its generation and its number, which
-    /// [`retag`](Self::retag) changes when the worker starts owed work.
-    generation: u64,
-    request: AtomicU64,
     replaced: Lock<Vec<Agile<Kept>>>,
     /// The node details the request's reads fetch, as its property set
     /// names them.
@@ -757,20 +690,9 @@ pub(super) struct Nodes<'a> {
 }
 
 impl Nodes<'_> {
-    /// The tag of the request this handle tags with.
-    pub(super) fn tag(&self) -> Tag {
-        Tag {
-            generation: self.generation,
-            request: self.request.load(Ordering::Relaxed),
-        }
-    }
-
     /// The kept UIA node for `runtime_id`, if there is one, looked up.
     pub(super) fn existing(&self, runtime_id: &[i32]) -> Option<NodeId> {
-        let mut state = self.store.lock();
-        let node = self.store.uia.existing_id(runtime_id)?;
-        state.tag_node(node, self.tag());
-        Some(node)
+        self.store.uia.existing_id(runtime_id)
     }
 
     /// The node of window `hwnd` read from local window data, a plain
@@ -790,22 +712,14 @@ impl Nodes<'_> {
 
     /// The MSAA node at `key` with no object, issued or looked up.
     fn msaa_key(&self, key: MsaaKey) -> NodeId {
-        let mut state = self.store.lock();
-        let node = self.store.msaa.id_for(key);
-        state.tag_node(node, self.tag());
-        node
+        self.store.msaa.id_for(key)
     }
 
     /// The UIA node for `runtime_id`, issued or looked up, keeping
     /// `element` as its live element: an agile reference made already. The
     /// element it replaces is kept in the handle.
     pub(super) fn keep(&self, runtime_id: &[i32], element: Option<Agile<Kept>>) -> NodeId {
-        let (node, replaced) = {
-            let mut state = self.store.lock();
-            let (node, replaced) = self.store.uia.keep(runtime_id, element);
-            state.tag_node(node, self.tag());
-            (node, replaced)
-        };
+        let (node, replaced) = self.store.uia.keep(runtime_id, element);
         self.replaced.lock().extend(replaced);
         node
     }
@@ -833,20 +747,10 @@ impl verbatim_ia2::Interning for Nodes<'_> {
     }
 
     fn find(&self, key: MsaaKey, identity: Option<usize>, child: i32, at_address: bool) -> Found {
-        let mut state = self.store.lock();
-        let found = self.store.msaa.find(key, identity, child, at_address);
-        if let Found::Object(node, _) | Found::Key(node, _, _) = &found {
-            state.tag_node(*node, self.tag());
-        }
-        found
+        self.store.msaa.find(key, identity, child, at_address)
     }
 
-    fn touch(&self, id: NodeId) {
-        let mut state = self.store.lock();
-        if self.store.msaa.holds(id) {
-            state.tag_node(id, self.tag());
-        }
-    }
+    fn touch(&self, _: NodeId) {}
 
     fn insert(
         &self,
@@ -855,10 +759,7 @@ impl verbatim_ia2::Interning for Nodes<'_> {
         role_facts: (Role, Facts),
         at_address: bool,
     ) -> NodeId {
-        let mut state = self.store.lock();
-        let node = self.store.msaa.insert(key, held, role_facts, at_address);
-        state.tag_node(node, self.tag());
-        node
+        self.store.msaa.insert(key, held, role_facts, at_address)
     }
 
     fn facts_of(&self, id: NodeId) -> Option<verbatim_ia2::Kept> {
@@ -866,10 +767,8 @@ impl verbatim_ia2::Interning for Nodes<'_> {
     }
 
     fn reissue(&self, id: NodeId, name: Option<String>) {
-        let mut state = self.store.lock();
         if self.store.msaa.holds(id) {
             self.store.msaa.reissue(id, name);
-            state.tag_node(id, self.tag());
         }
     }
 

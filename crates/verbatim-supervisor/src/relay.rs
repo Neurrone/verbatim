@@ -535,6 +535,7 @@ mod tests {
             .push(Outgoing::Other(CoreToOutpost::NodesHeld {
                 nodes: (0..2_000).collect(),
                 anchors: Vec::new(),
+                told: Vec::new(),
                 acknowledged: 1,
             }))
             .expect("written, and pending");

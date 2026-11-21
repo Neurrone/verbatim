@@ -311,6 +311,23 @@ fn an_edit_controls_value_change_and_a_caret_read_are_the_control_planes_events(
     );
 }
 
+/// A caret tell's element, named by its token, is held for its outpost
+/// while its entry waits or runs, so the outpost keeps it for the caret
+/// read to adopt, and let go of once the entry has ended.
+#[test]
+fn a_caret_tells_token_is_held_while_its_entry_waits_or_runs() {
+    let mut held = uia_field();
+    assert!(held.state.held_told().is_empty());
+    let _ = step(&mut held, 1_000, uia_caret(1));
+    assert_eq!(
+        held.state.held_told().into_values().collect::<Vec<_>>(),
+        [std::collections::BTreeSet::from([9])]
+    );
+    let mut done = uia_field();
+    with_baseline(&mut done, uia_caret(1), TextProvider::Uia, 3);
+    assert!(done.state.held_told().is_empty());
+}
+
 #[test]
 fn a_caret_tell_with_no_baseline_mints_one_says_nothing_and_takes_the_caret() {
     let mut held = uia_field();

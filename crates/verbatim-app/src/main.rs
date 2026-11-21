@@ -28,7 +28,7 @@ mod strokes;
 mod terminal_settings;
 mod themes;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -1513,38 +1513,39 @@ impl ReducerThread<'_> {
         }
         let held = self.state.held_nodes();
         let anchors = self.state.held_anchors();
+        let mut told = self.state.held_told();
         for (outpost, live) in self.live.iter_mut() {
-            let nodes: BTreeSet<u64> = held
-                .get(outpost)
-                .map(|nodes| nodes.iter().map(|id| id.number()).collect())
-                .unwrap_or_default();
-            let outpost_anchors: BTreeSet<u64> = anchors
-                .get(outpost)
-                .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
-                .unwrap_or_default();
-            match live.held_changed(&nodes, &outpost_anchors) {
-                live::HeldChange::None => {}
-                change => {
-                    let (nodes, anchors) = (
-                        nodes.into_iter().collect(),
-                        outpost_anchors.into_iter().collect(),
-                    );
-                    if change == live::HeldChange::Nodes {
-                        self.context.supervisor.send_nodes_held(
-                            *outpost,
-                            nodes,
-                            anchors,
-                            live.position,
-                        );
-                    } else {
-                        self.context.supervisor.leave_nodes_held(
-                            *outpost,
-                            nodes,
-                            anchors,
-                            live.position,
-                        );
-                    }
-                }
+            let now = live::Held {
+                nodes: held
+                    .get(outpost)
+                    .map(|nodes| nodes.iter().map(|id| id.number()).collect())
+                    .unwrap_or_default(),
+                anchors: anchors
+                    .get(outpost)
+                    .map(|anchors| anchors.iter().map(|anchor| anchor.0).collect())
+                    .unwrap_or_default(),
+                told: told.remove(outpost).unwrap_or_default(),
+                acknowledged: live.position,
+            };
+            let change = live.held_changed(&now);
+            if change == live::HeldChange::None {
+                continue;
+            }
+            let lists = (
+                now.nodes.into_iter().collect(),
+                now.anchors.into_iter().collect(),
+                now.told.into_iter().collect(),
+            );
+            // A caret tell's element Core lets go of is left, as anchors
+            // are: no pipe write and no wake of the outpost per caret key.
+            if change == live::HeldChange::Nodes {
+                self.context
+                    .supervisor
+                    .send_nodes_held(*outpost, lists, now.acknowledged);
+            } else {
+                self.context
+                    .supervisor
+                    .leave_nodes_held(*outpost, lists, now.acknowledged);
             }
         }
     }

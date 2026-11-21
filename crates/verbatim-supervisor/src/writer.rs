@@ -369,6 +369,7 @@ mod tests {
         CoreToOutpost::NodesHeld {
             nodes: vec![acknowledged],
             anchors: Vec::new(),
+            told: Vec::new(),
             acknowledged,
         }
     }

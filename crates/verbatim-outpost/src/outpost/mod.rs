@@ -333,13 +333,13 @@ impl<'a> RequestContext<'a> {
     /// worker's `charge`.
     fn for_program(
         context: &'a Context,
-        (tag, details): (store::Tag, NodeDetailSet),
+        details: NodeDetailSet,
         (request, facts): (reducer::Request, Facts),
         charge: Arc<Charge>,
     ) -> Self {
         Self {
             context,
-            nodes: context.store.nodes_for(tag, details),
+            nodes: context.store.nodes_for(details),
             facts: RefCell::new(facts),
             program_text: RefCell::default(),
             program: Program {
@@ -1159,12 +1159,14 @@ impl Outpost {
             CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
+                told,
                 acknowledged,
             } => {
                 context.push(
                     Item::NodesHeld {
                         nodes: nodes.clone(),
                         anchors: anchors.clone(),
+                        told: told.clone(),
                         acknowledged: *acknowledged,
                     },
                     (TraceId::mint(), now_us(), EventTiming::default()),

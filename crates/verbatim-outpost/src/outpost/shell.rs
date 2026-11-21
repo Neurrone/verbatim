@@ -30,7 +30,7 @@ use super::Context;
 use super::commit::Effects;
 use super::outbound::Carried;
 use super::reducer::{Asker, Change, Effect, Entry, Input, Item, Now, Program, Reducer, Request};
-use super::store::{Removed, Store, Tag};
+use super::store::{Removed, Store};
 use super::worker::{self, Charge, Job};
 use verbatim_process::alarm::Alarm;
 
@@ -212,14 +212,6 @@ pub(super) struct Shell {
     warm: bool,
 }
 
-/// The store's tag for `request`.
-pub(super) fn tag_of(request: Request) -> Tag {
-    Tag {
-        generation: request.generation,
-        request: request.number,
-    }
-}
-
 /// The change the reducer is given for `effects`, a commit of `request`:
 /// for a commit it accepts, its text writes made ([`write`]). Any other is
 /// refused whole, `None`: its writes are not made and its objects are let
@@ -233,7 +225,7 @@ fn admit(
     let (mut change, text) = effects.split();
     if reducer.accepts(request) {
         if !text.is_empty() {
-            change.text = write(store, tag_of(request), text, garbage);
+            change.text = write(store, text, garbage);
         }
         return Some(change);
     }
@@ -241,16 +233,15 @@ fn admit(
     None
 }
 
-/// Makes `text`, the text writes of a commit of request `tag` the reducer
-/// accepts, to the store, in the order the program made them, and returns
-/// the text facts' changes the store made.
+/// Makes `text`, the text writes of a commit the reducer accepts, to the
+/// store, in the order the program made them, and returns the text facts'
+/// changes the store made.
 fn write(
     store: &Store,
-    tag: Tag,
     text: Vec<super::store::TextWrite>,
     garbage: &mut Garbage,
 ) -> Vec<super::reducer::TextChange> {
-    let (changes, removed) = store.write_text(tag, text);
+    let (changes, removed) = store.write_text(text);
     garbage.store.push(removed);
     changes
 }
@@ -466,9 +457,9 @@ impl Shell {
             Effect::Release {
                 nodes,
                 anchors,
+                told,
                 acknowledged,
-                live,
-            } => return vec![self.release(&nodes, &anchors, acknowledged, &live)],
+            } => return vec![self.release((&nodes, &anchors, &told), acknowledged)],
             Effect::ForgetRanges(ranges) => {
                 self.garbage
                     .store
@@ -564,27 +555,25 @@ impl Shell {
         self.context.send(message);
     }
 
-    /// Releases every node and text anchor no live request can still name
-    /// (`super::store`, the release rule), for Core's held lists, which
-    /// acknowledge position `acknowledged`; the removed objects go to the
-    /// next program's worker.
+    /// Releases every node, text anchor and caret tell's element Core does
+    /// not hold and has handled every message carrying (`super::store`, the
+    /// release rule), for Core's held lists, which acknowledge position
+    /// `acknowledged`; the removed objects go to the next program's worker.
     fn release(
         &mut self,
-        nodes: &[u64],
-        anchors: &[u64],
+        (nodes, anchors, told): (&[u64], &[u64], &[u64]),
         acknowledged: u64,
-        live: &[Request],
     ) -> Input {
         let held: HashSet<Carried> = nodes
             .iter()
             .map(|&number| Carried::Node(number))
             .chain(anchors.iter().map(|&number| Carried::Anchor(number)))
+            .chain(told.iter().map(|&key| Carried::Told(key)))
             .collect();
-        let live: Vec<Tag> = live.iter().copied().map(tag_of).collect();
         let (position, released) =
             self.context
                 .store
-                .release(&self.context.outbound, &held, acknowledged, &live);
+                .release(&self.context.outbound, &held, acknowledged);
         let Some(released) = released else {
             tracing::debug!(?held, acknowledged, position, "nothing to release");
             return Input::Released {
@@ -599,7 +588,7 @@ impl Shell {
             position,
             nodes = ?released.nodes,
             anchors = ?released.anchors,
-            "releasing the nodes and anchors no live request can name"
+            "releasing the nodes, anchors and caret tells' elements Core has let go of"
         );
         self.garbage.store.push(released.objects);
         Input::Released {
@@ -648,9 +637,9 @@ mod tests {
     }
 
     /// A commit the reducer refuses makes none of its text writes: the
-    /// anchor its text call minted is not tagged in the store, and the
+    /// anchor its text call minted is not kept in the store, and the
     /// reducer is given nothing. The same commit of the program in flight
-    /// has its anchor tagged and its change given to the reducer.
+    /// has its anchor kept and its change given to the reducer.
     #[test]
     fn a_refused_commits_text_writes_are_not_made() {
         let store = Store::new();
@@ -675,10 +664,7 @@ mod tests {
             })
             .expect("the entry's program dispatched");
         let node = store
-            .nodes_for(
-                tag_of(in_flight),
-                verbatim_model::property::NodeDetailSet::ALL,
-            )
+            .nodes_for(verbatim_model::property::NodeDetailSet::ALL)
             .window(5)
             .number();
         let dead = Request {
@@ -689,12 +675,12 @@ mod tests {
         let (refused, _) = minted(node, 7);
         let admitted = admit(&store, &reducer, (dead, refused), &mut garbage);
         assert!(admitted.is_none());
-        assert!(!store.tags_anchor(7));
+        assert!(!store.keeps_anchor(7));
         let (accepted, change) = minted(node, 8);
         let admitted = admit(&store, &reducer, (in_flight, accepted), &mut garbage)
             .expect("the change of the program in flight");
         assert_eq!(admitted.text, vec![change]);
-        assert!(store.tags_anchor(8));
+        assert!(store.keeps_anchor(8));
     }
     /// The context of an outpost of this process watching this process,
     /// its own reducer's thread and workers shut down, so the shell a test

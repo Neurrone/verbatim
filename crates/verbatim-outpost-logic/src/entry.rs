@@ -133,6 +133,8 @@ pub enum Item {
         nodes: Vec<u64>,
         /// The text anchors Core still holds, by number.
         anchors: Vec<u64>,
+        /// The caret tells' elements Core still holds, by their tokens.
+        told: Vec<u64>,
         /// The position of the last message Core has handled.
         acknowledged: u64,
     },

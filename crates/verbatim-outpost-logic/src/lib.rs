@@ -145,18 +145,18 @@ pub enum Effect {
     Dispatch(Box<Program>),
     /// Send a message to Core, its nodes recorded as carried.
     Send(Box<OutpostToCore>),
-    /// Release the nodes and anchors no live request can still name, for
-    /// Core's held lists, which acknowledge `acknowledged`; the shell
-    /// answers with [`Input::Released`].
+    /// Release everything kept for Core but what Core's held lists name,
+    /// once Core has handled every message carrying it, by the lists'
+    /// position `acknowledged`; the shell answers with [`Input::Released`].
     Release {
-        /// The nodes to release, by number.
+        /// The nodes Core holds, by number.
         nodes: Vec<u64>,
-        /// The text anchors to release, by number.
+        /// The text anchors Core holds, by number.
         anchors: Vec<u64>,
+        /// The caret tells' elements Core holds, by their tokens.
+        told: Vec<u64>,
         /// The position of the last message Core's held lists acknowledge.
         acknowledged: u64,
-        /// The requests still live, whose nodes and anchors stay.
-        live: Vec<Request>,
     },
     /// Drop the objects parked under these keys, on a worker.
     Unpark(Vec<u64>),
@@ -620,32 +620,23 @@ impl Reducer {
             Item::NodesHeld {
                 nodes,
                 mut anchors,
+                told,
                 acknowledged,
             } => {
                 // The anchors a waiting watch names are spared (Table 15, I).
                 anchors.extend(self.watches.anchors());
-                let live = self.live();
                 self.releasing = true;
                 effects.push(Effect::Release {
                     nodes,
                     anchors,
+                    told,
                     acknowledged,
-                    live,
                 });
             }
             _ => {
                 self.dispatch(Work::Entry(entry), effects);
             }
         }
-    }
-
-    /// The live requests: the program in flight's.
-    fn live(&self) -> Vec<Request> {
-        self.flight
-            .running()
-            .map(|(request, ..)| request)
-            .into_iter()
-            .collect()
     }
 
     /// Dispatches `work`.

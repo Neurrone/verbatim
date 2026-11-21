@@ -28,6 +28,8 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::tell::ElementToken;
 
+use verbatim_reader_rules::numbered::{Numbered, Report, too_early};
+
 use crate::check::Handler;
 
 /// Whether an event of `kind` is of a focus kind: a focus or a menu
@@ -125,81 +127,11 @@ pub enum Ended<E> {
     Release(E),
 }
 
-/// Where the writer placed a told element's tell: the position of the last
-/// message carrying tokens written that carried it, and how many messages
-/// carrying it still wait to be written. The outpost's record of its
-/// reported nodes, in the same shape.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Report {
-    /// The position of the last message written that carried it.
-    pub position: u64,
-    /// How many messages carrying it wait to be written.
-    pub waiting: u32,
-}
-
 /// The writer's numbering of the messages that carry tokens
 /// (`ListenerToCore::carries_tokens`), in the order they are written, as
-/// Core counts them as it handles them, and the [`Report`] of each token
-/// they carried. Kept in the writer's backlog, under its lock.
-#[derive(Debug, Default)]
-pub struct Reported {
-    /// How many messages carrying tokens have been written: the position
-    /// of the last one.
-    position: u64,
-    reports: BTreeMap<ElementToken, Report>,
-}
-
-impl Reported {
-    /// A message carrying `token` was queued to be written.
-    pub fn queued(&mut self, token: ElementToken) {
-        let report = self.reports.entry(token).or_default();
-        report.waiting = report.waiting.saturating_add(1);
-    }
-
-    /// A message carrying `token` is being written now: it is numbered,
-    /// and the token's report records it, unless the token was released
-    /// meanwhile ([`Self::forget`]).
-    pub fn written(&mut self, token: ElementToken) {
-        self.position = self.position.saturating_add(1);
-        if let Some(report) = self.reports.get_mut(&token) {
-            report.waiting = report.waiting.saturating_sub(1);
-            report.position = self.position;
-        }
-    }
-
-    /// A message carrying `token` that waited was replaced unwritten.
-    pub fn withdrawn(&mut self, token: ElementToken) {
-        if let Some(report) = self.reports.get_mut(&token) {
-            report.waiting = report.waiting.saturating_sub(1);
-        }
-    }
-
-    /// The report of `token`, `None` when no message carried it.
-    #[must_use]
-    pub fn report(&self, token: ElementToken) -> Option<Report> {
-        self.reports.get(&token).copied()
-    }
-
-    /// Forgets `token`, which the listener released.
-    pub fn forget(&mut self, token: ElementToken) {
-        self.reports.remove(&token);
-    }
-
-    /// The position of the last message carrying tokens written.
-    #[must_use]
-    pub fn position(&self) -> u64 {
-        self.position
-    }
-}
-
-/// Whether a token whose tell's report is `report` is too early for a view
-/// acknowledging `acknowledged` to judge: no message carried it yet, one
-/// still waits to be written, or the last was written after the position
-/// Core acknowledges.
-#[must_use]
-pub fn too_early(report: Option<Report>, acknowledged: u64) -> bool {
-    report.is_none_or(|report| report.waiting > 0 || report.position > acknowledged)
-}
+/// Core counts them as it handles them, and the report of each token they
+/// carried. Kept in the writer's backlog, under its lock.
+pub type Reported = Numbered<ElementToken>;
 
 /// Core's held view, as the listener keeps the last one: the tokens Core
 /// holds, and the position of the last message carrying tokens Core has
@@ -671,34 +603,6 @@ mod tests {
         );
     }
 
-    /// Too early: a tell with no report, one still waiting to be written,
-    /// and one written after the view's position.
-    #[test]
-    fn a_tell_not_yet_handled_is_too_early_to_judge() {
-        assert!(too_early(None, 9));
-        assert!(too_early(
-            Some(Report {
-                position: 3,
-                waiting: 1
-            }),
-            9
-        ));
-        assert!(too_early(
-            Some(Report {
-                position: 10,
-                waiting: 0
-            }),
-            9
-        ));
-        assert!(!too_early(
-            Some(Report {
-                position: 9,
-                waiting: 0
-            }),
-            9
-        ));
-    }
-
     /// The writer's record: kept, then a view whose acknowledged position
     /// precedes the write, then the write: the token stays until a view
     /// acknowledges its position.
@@ -707,14 +611,14 @@ mod tests {
         let mut reported = Reported::default();
         let mut kept = KeptElements::default();
         reported.queued(ElementToken(1));
-        reported.written(ElementToken(1));
+        reported.written(true, [ElementToken(1)]);
         kept.keep(ElementToken(2), 2_u64, rid(2), EventKind::UiaFocus);
         reported.queued(ElementToken(2));
         assert_eq!(
             kept.view(&view(&[], 1), |token| reported.report(token)),
             Vec::new()
         );
-        reported.written(ElementToken(2));
+        reported.written(true, [ElementToken(2)]);
         assert_eq!(
             reported.report(ElementToken(2)),
             Some(Report {
@@ -752,7 +656,7 @@ mod tests {
                 EventKind::UiaFocus,
             );
             reported.queued(ElementToken(token));
-            reported.written(ElementToken(token));
+            reported.written(true, [ElementToken(token)]);
         }
         assert_eq!(kept.owner(ElementToken(2)), Some(two));
         assert_eq!(

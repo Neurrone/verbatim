@@ -237,14 +237,9 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
         tracing::debug!(request = %ask.number, "request program begins");
     }
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
-    let tag = super::shell::tag_of(request);
     let details = node_details_of(&work);
-    let mut request_context = RequestContext::for_program(
-        context,
-        (tag, details),
-        (request, facts),
-        Arc::clone(charge),
-    );
+    let mut request_context =
+        RequestContext::for_program(context, details, (request, facts), Arc::clone(charge));
     let handled = catching(|| match work {
         Work::Entry(entry) => {
             Worker {
@@ -577,7 +572,7 @@ impl Worker<'_> {
         let runtime_id = RuntimeId(event.parts.runtime_id.clone());
         let object = match event.element {
             Some(key) => {
-                drop(self.context.store.keep_told(key, observed_at_us));
+                self.context.store.keep_told(key);
                 verbatim_model::tell::EventObject::Uia {
                     token: verbatim_model::tell::ElementToken(key),
                     runtime_id,

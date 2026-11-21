@@ -24,7 +24,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io;
 
@@ -34,15 +34,20 @@ use verbatim_process::transport::{Backlog, SendError, Sender};
 use super::store::Recorded;
 use verbatim_process::clock::now_us;
 use verbatim_process::message::put_message;
+use verbatim_reader_rules::Numbered;
 
 /// Something a message may carry that the outpost keeps until Core has
-/// seen it and does not hold it: a node, or a text anchor, by number.
+/// seen it and does not hold it: a node, a text anchor, or a caret tell's
+/// element, by number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Carried {
     /// A node.
     Node(u64),
     /// A text anchor.
     Anchor(u64),
+    /// The element a caret tell names by its token, for Core's caret read
+    /// to adopt.
+    Told(u64),
 }
 
 /// What is sent to Core: one item of the outbound queue.
@@ -65,15 +70,6 @@ enum Waiting {
     Flushed(std::sync::mpsc::Sender<()>),
 }
 
-/// When a node was reported: the number of the last message written that
-/// may have reported it, and how many messages that may report it still
-/// wait to be written.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Report {
-    position: u64,
-    waiting: u32,
-}
-
 /// The waiting messages, and the numbering of those that carry node ids:
 /// the backlog of the outpost's [`Sender`]. Every message sent passes
 /// through it, written at once or after waiting, so the numbers are given
@@ -82,11 +78,10 @@ struct Report {
 pub(crate) struct Pending {
     urgent: VecDeque<Urgent>,
     ordinary: VecDeque<Waiting>,
-    /// How many messages that carry node ids have been written: the
-    /// position of the last one, as Core counts them.
-    position: u64,
-    /// When each node and anchor was reported.
-    reported: BTreeMap<Carried, Report>,
+    /// The numbering of the messages that carry node ids, as Core counts
+    /// them, and where each node, anchor and caret tell's element was
+    /// carried.
+    numbered: Numbered<Carried>,
 }
 
 impl Pending {
@@ -94,53 +89,23 @@ impl Pending {
         Self {
             urgent: VecDeque::new(),
             ordinary: VecDeque::new(),
-            position: 0,
-            reported: BTreeMap::new(),
+            numbered: Numbered::default(),
         }
     }
 
     /// Queues `message`, which may report each of `touched`, at the back.
     fn push_message(&mut self, message: OutpostToCore, touched: Vec<Carried>) {
-        for &number in &touched {
-            self.reported.entry(number).or_default().waiting += 1;
+        for &carried in &touched {
+            self.numbered.queued(carried);
         }
         self.ordinary
             .push_back(Waiting::Message(Box::new(message), touched));
     }
 
-    /// Numbers `message`, being written now, if it carries node ids, and
-    /// records each of `touched` as reported at its number.
-    fn number(&mut self, message: &OutpostToCore, touched: &[Carried]) {
-        if message.carries_nodes() {
-            self.position += 1;
-        }
-        for number in touched {
-            if let Some(report) = self.reported.get_mut(number) {
-                report.waiting = report.waiting.saturating_sub(1);
-                report.position = self.position;
-            }
-        }
-    }
-
-    /// When `carried` was carried: the position of the last message
-    /// written that carried it, and how many messages that carry it still
-    /// wait; `None` when no message carried it.
-    pub(super) fn report(&self, carried: Carried) -> Option<(u64, u32)> {
-        self.reported
-            .get(&carried)
-            .map(|report| (report.position, report.waiting))
-    }
-
-    /// Forgets what was recorded of each node and anchor `gone` answers,
-    /// which the store has released.
-    pub(super) fn forget(&mut self, gone: impl Fn(Carried) -> bool) {
-        self.reported.retain(|&carried, _| !gone(carried));
-    }
-
-    /// How many messages that carry node ids have been written: the
-    /// position of the last one, as Core counts them.
-    pub(super) fn position(&self) -> u64 {
-        self.position
+    /// The numbering of the messages written, and where each kept thing
+    /// was carried.
+    pub(super) fn numbered(&mut self) -> &mut Numbered<Carried> {
+        &mut self.numbered
     }
 }
 
@@ -176,7 +141,8 @@ impl Backlog for Pending {
         let mut message = match item {
             Outgoing::Urgent(message) => message.into(),
             Outgoing::Message(message, touched) => {
-                self.number(&message, &touched);
+                self.numbered
+                    .written(message.carries_nodes(), touched.iter().copied());
                 message
             }
             Outgoing::Flushed(done) => {
@@ -394,27 +360,19 @@ mod tests {
         // A message without node ids takes no position.
         push(&mut pending, ended(4, ""), &[4]);
         assert_eq!(write(&mut pending).len(), 4);
-        assert_eq!(pending.position(), 3, "Core counts three messages");
+        let numbered = pending.numbered();
+        assert_eq!(numbered.position(), 3, "Core counts three messages");
         let reports: Vec<Option<(u64, u32)>> = [1, 2, 3, 4, 5]
-            .map(|number| pending.report(Carried::Node(number)))
+            .map(|number| {
+                numbered
+                    .report(Carried::Node(number))
+                    .map(|report| (report.position, report.waiting))
+            })
             .to_vec();
         assert_eq!(
             reports,
             vec![Some((3, 0)), Some((2, 0)), Some((3, 0)), Some((3, 0)), None]
         );
-    }
-
-    #[test]
-    fn a_node_a_waiting_message_carries_is_counted_as_waiting_until_written() {
-        let mut pending = pending();
-        push(&mut pending, answer(1), &[1]);
-        assert_eq!(write(&mut pending).len(), 1);
-        push(&mut pending, answer(2), &[1]);
-        assert_eq!(pending.report(Carried::Node(1)), Some((1, 1)));
-        assert_eq!(write(&mut pending).len(), 1);
-        assert_eq!(pending.report(Carried::Node(1)), Some((2, 0)));
-        pending.forget(|carried| carried == Carried::Node(1));
-        assert_eq!(pending.report(Carried::Node(1)), None);
     }
 
     /// An outbound queue writing to a pipe with a 4 KiB buffer, its writes

@@ -121,11 +121,9 @@ Public API:
   element a request cancelled for the foreground was reading; `ended`
   lets go of every kept reference, a read in flight releasing its own as
   it ends. `Reported` is the writer's numbering of the messages carrying
-  tokens, in pipe order, and where each token's tell was written
-  (`queued`, `written`, `withdrawn`, `forget`), the outposts' record of
-  reported nodes in the same shape; `too_early` says a view cannot judge
-  a token whose tell waits to be written or was written after the
-  position it acknowledges. `ListenerKept` is the listener's whole
+  tokens, in pipe order, and where each token's tell was written: the
+  numbering both readers share (`verbatim_reader_rules::Numbered` over
+  tokens), with its `too_early` rule. `ListenerKept` is the listener's whole
   judgement: every application's `KeptElements` and Core's last view,
   each call given the writer's `Reported`, whose reports of released
   tokens it forgets; a read whose answer was not sent is released at its

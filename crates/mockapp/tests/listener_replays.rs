@@ -133,7 +133,7 @@ impl Listener {
         };
         self.kept.keep((pid, token), ((), runtime_id.clone()), kind);
         self.reported.queued(token);
-        self.reported.written(token);
+        self.reported.written(true, [token]);
         self.shell.handled(token);
         read
     }

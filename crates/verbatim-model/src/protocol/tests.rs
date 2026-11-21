@@ -78,10 +78,11 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
     })
 }
 
-/// Only an answer with a result carries nodes, as the outpost and
-/// verbatim.exe count them.
+/// Only an answer with a result, and a tell naming an element by its
+/// token, carry what the outpost keeps, as the outpost and verbatim.exe
+/// count them.
 #[test]
-fn only_an_answer_with_a_result_carries_nodes() {
+fn only_an_answer_with_a_result_and_a_tell_with_a_token_carry_nodes() {
     let carried: Vec<(String, bool)> = super::samples::outpost_to_core()
         .iter()
         .map(|message| (name(message), message.carries_nodes()))
@@ -106,6 +107,17 @@ fn only_an_answer_with_a_result_carries_nodes() {
         detail: String::new(),
     });
     assert!(answer.carries_nodes());
+    let Some(OutpostToCore::Tell(mut tell)) = super::samples::outpost_to_core()
+        .into_iter()
+        .find(|message| matches!(message, OutpostToCore::Tell(_)))
+    else {
+        panic!("the samples have a tell");
+    };
+    tell.object = crate::tell::EventObject::Uia {
+        token: crate::tell::ElementToken(7),
+        runtime_id: crate::property::RuntimeId(vec![42, 1]),
+    };
+    assert!(OutpostToCore::Tell(tell).carries_nodes(), "a told key");
 }
 
 /// Only a listener tell naming a kept element carries a token, as the

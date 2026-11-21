@@ -64,6 +64,10 @@ guide maps those behaviors onto the crate's types and modules.
     line or point, the start marker, and say-all's positions). The shell
     sends each outpost its own, which keeps them alive
     ([verbatim-model](verbatim-model.md), "The text protocol").
+  - `held_told()`: the tokens of the caret tells' elements Core holds in
+    each ready outpost, those its caret entries waiting or running name
+    (`CaretTell::adopted`), sent with that outpost's held nodes and, a
+    change of them alone, left for the next command, as anchors are.
   - `held_tokens()`: the tokens of the running listener's told elements
     Core holds (`HeldTokens`): those its waiting entries, its front entry
     and the entries it appends later name (`Logic::told_token`: a UI

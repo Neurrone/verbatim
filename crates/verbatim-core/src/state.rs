@@ -979,6 +979,27 @@ impl SrState {
         held
     }
 
+    /// The tokens of the caret tells' elements Core holds in each ready
+    /// outpost generation: those its caret entries waiting or running
+    /// name, for the caret read to adopt (`CoreToOutpost::NodesHeld`'s
+    /// `told`). The shell leaves each outpost its own set with its held
+    /// nodes, and the outpost keeps these elements.
+    #[must_use]
+    pub fn held_told(&self) -> BTreeMap<OutpostId, BTreeSet<u64>> {
+        let ready: BTreeMap<verbatim_model::Pid, OutpostId> =
+            self.ready_outposts().into_iter().collect();
+        let mut held: BTreeMap<OutpostId, BTreeSet<u64>> = BTreeMap::new();
+        for entry in self.queue.entries() {
+            if let crate::entries::Entry::Caret(caret) = entry
+                && let Some(token) = caret.adopted()
+                && let Some(outpost) = ready.get(&caret.tell.process)
+            {
+                held.entry(*outpost).or_default().insert(token.0);
+            }
+        }
+        held
+    }
+
     /// The tokens of the running listener's told elements Core holds
     /// (`crate::held_tokens`): those its waiting entries, its front entry
     /// and the entries it appends later name, and the readers' last

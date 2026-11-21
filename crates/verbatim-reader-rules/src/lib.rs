@@ -47,8 +47,10 @@
 )]
 
 pub mod class;
+pub mod numbered;
 mod window;
 
+pub use numbered::Numbered;
 pub use window::Window;
 
 /// The console host's window class. A console window's provider is the

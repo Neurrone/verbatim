@@ -518,8 +518,8 @@ impl Supervisor {
         writer.push(writer::Outgoing::Other(command))
     }
 
-    /// Leaves for one outpost generation the list of its nodes and text
-    /// anchors Core still holds, with the position of the last of its
+    /// Leaves for one outpost generation the list of its nodes, text
+    /// anchors and caret tells' elements Core still holds, with the position of the last of its
     /// messages the app has handled (`docs/design/communication.md`, step
     /// 11). Nothing is written for it: the next command written to that
     /// generation, a request from the app or the relay's ping within
@@ -529,8 +529,7 @@ impl Supervisor {
     pub fn leave_nodes_held(
         &self,
         outpost: OutpostId,
-        nodes: Vec<u64>,
-        anchors: Vec<u64>,
+        (nodes, anchors, told): (Vec<u64>, Vec<u64>, Vec<u64>),
         acknowledged: u64,
     ) {
         let writer = self
@@ -543,13 +542,14 @@ impl Supervisor {
             writer.leave_held(CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
+                told,
                 acknowledged,
             });
         }
     }
 
-    /// Writes for one outpost generation the list of its nodes and text
-    /// anchors Core still holds, with the position of the last of its
+    /// Writes for one outpost generation the list of its nodes, text
+    /// anchors and caret tells' elements Core still holds, with the position of the last of its
     /// messages the app has handled, behind every command waiting for it
     /// now, in place of a list left and not yet sent
     /// ([`leave_nodes_held`](Self::leave_nodes_held)): the app writes it
@@ -560,8 +560,7 @@ impl Supervisor {
     pub fn send_nodes_held(
         &self,
         outpost: OutpostId,
-        nodes: Vec<u64>,
-        anchors: Vec<u64>,
+        (nodes, anchors, told): (Vec<u64>, Vec<u64>, Vec<u64>),
         acknowledged: u64,
     ) {
         let writer = self
@@ -574,6 +573,7 @@ impl Supervisor {
             writer.send_held(CoreToOutpost::NodesHeld {
                 nodes,
                 anchors,
+                told,
                 acknowledged,
             });
         }

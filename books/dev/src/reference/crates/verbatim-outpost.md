@@ -473,11 +473,10 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   thread answers pings with.
 - A focus is answered once its walk returns, in full, however long the
   walk takes: no walk is published at a bound.
-- Requests and their tags: each program is a request with a mint tag of
-  its own (`store::Tag`, the generation and a request number the reducer
-  gives), which its `RequestContext` carries with the store's handle; the
-  program in flight's request is live until it ends or its worker is
-  abandoned. A program's text writes
+- Requests: each program is a request (the generation and a request
+  number the reducer gives), whose `RequestContext` carries the store's
+  handle; the program in flight's request is live until it ends or its
+  worker is abandoned. A program's text writes
   go to the store only with a commit the reducer accepts, as every other
   write of the shell's does ("Window destruction and held objects", text
   on copies). A terminal read works on a
@@ -716,33 +715,33 @@ as NVDA's handlers read them.
 - Held objects: the object store (`outpost::store`;
   `books/dev/src/explanation/design/ownership.md`) owns both
   registries, each node's text patterns and anchors, the terminals' kept
-  ranges, and every node's and anchor's mint tag, the requests that issued
-  or looked it up. Its API returns owned clones and owned removed objects
-  (`store::Removed`), never a guard, and takes no closure. Walks issue and
-  look up nodes through the request's `store::Nodes` handle
-  (`Store::nodes_for(tag)`, `RequestContext::nodes`), which implements the
-  interning traits of `verbatim-uia` and `verbatim-ia2` and tags each node
-  with the request's tag in the same hold of the store's lock, keeping an
-  element a lookup replaced for its holder to drop as the handle drops,
-  on the worker; a plain
+  ranges, and the caret tells' elements. Its API returns owned clones and
+  owned removed objects (`store::Removed`), never a guard, and takes no
+  closure. Walks issue and look up nodes through the request's
+  `store::Nodes` handle (`Store::nodes_for(details)`,
+  `RequestContext::nodes`), which implements the interning traits of
+  `verbatim-uia` and `verbatim-ia2`, keeping an element a lookup replaced
+  to drop as the handle drops, on the worker; a plain
   window and a foreground's client object read from local data are minted
   by window handle (`Nodes::window`, `Nodes::client`), as their MSAA keys.
   Every ordinary message is sent as a
   `store::Recorded`, which only the store makes, listing the nodes and
-  anchors it names (`OutpostToCore::named`); each message that carries
-  node ids (`OutpostToCore::carries_nodes`) takes the next position as it
-  is written, and what it names is recorded at it (`outbound::Carried`).
-  The app writes `NodesHeld` (the reducer's nodes and text anchors in
-  that outpost and the last position handled) when the node set changed
-  or after a focus report (`Supervisor::send_nodes_held`); any other
-  change waits in the writer's slot (`Supervisor::leave_nodes_held`) for
-  the next command, a request or a ping within three seconds. When the
-  reducer reaches it, between programs, its shell calls `Store::release`
-  with the live requests' tags: under
-  the sender's lock and then the store's, it frees a node or anchor only
-  when none of its tags is live and either no message carried it or one
-  was written at or before that position, none waits that carries it, and
-  Core does not hold it; with it go the node's text and terminal entry,
+  anchors it names (`OutpostToCore::named`) and the element a caret tell
+  names by its token; each message that carries them
+  (`OutpostToCore::carries_nodes`) takes the next position as it is
+  written, and what it names is recorded at it (`outbound::Carried`, in
+  the numbering `verbatim_reader_rules::Numbered` the listener shares).
+  The app writes `NodesHeld` (the reducer's nodes, text anchors and caret
+  entries' tokens in that outpost and the last position handled) when the
+  node set changed or after a focus report (`Supervisor::send_nodes_held`);
+  any other change, a caret tell's token among them, waits in the
+  writer's slot (`Supervisor::leave_nodes_held`) for the next command, a
+  request or a ping within three seconds. When the reducer reaches it,
+  between programs, its shell calls `Store::release`: under the sender's
+  lock and then the store's, it frees a node, anchor or caret tell's
+  element Core does not hold that either no message carried or was
+  carried at or before that position with none waiting that carries it,
+  by position and Core's view alone; with it go the node's text and terminal entry,
   and the reducer is given the released nodes and anchors before it
   dispatches any program, dropping their reports, focus-following groups
   and text facts, so no program is given a vanishing node; it then has the
@@ -898,9 +897,9 @@ no comparison Core did not ask for.
   caret, in the caret's line, since a UIA caret is the selection's start,
   as NVDA's is (`CaretRead::selection_start`).
 - `Text_TextSelectionChanged` of a followed node is told to Core as a
-  caret tell, the event's element kept behind the token the tell names,
-  let go past 60 seconds or beyond the newest 64, for Core's caret read to
-  adopt when the node answered no text pattern (`text_reads::adopt_told`);
+  caret tell, the event's element kept behind the token the tell names
+  until Core's held view leaves the token out once it has handled the
+  tell, for Core's caret read to adopt when the node answered no text pattern (`text_reads::adopt_told`);
   the outpost reads nothing for it. A console's update and caret events
   are told as a terminal's change tells. `Text_TextChanged` and the active
   text position change are told too; the system caret's events reach Core

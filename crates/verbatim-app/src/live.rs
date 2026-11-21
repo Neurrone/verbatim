@@ -11,33 +11,43 @@ use verbatim_model::OutpostId;
 pub(crate) struct Live {
     /// The position of the last of its messages handled here.
     pub(crate) position: u64,
-    /// The held nodes and text anchors last left for it, and the position
-    /// acknowledged then ([`Live::held_changed`]).
-    held_left: (BTreeSet<u64>, BTreeSet<u64>, u64),
+    /// What was last left for it ([`Live::held_changed`]).
+    held_left: Held,
+}
+
+/// What the state holds in an outpost, as left for it: its nodes, its
+/// text anchors and its caret tells' elements, by number, and the position
+/// acknowledged.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Held {
+    /// The nodes.
+    pub(crate) nodes: BTreeSet<u64>,
+    /// The text anchors.
+    pub(crate) anchors: BTreeSet<u64>,
+    /// The caret tells' elements, by their tokens.
+    pub(crate) told: BTreeSet<u64>,
+    /// The position acknowledged.
+    pub(crate) acknowledged: u64,
 }
 
 impl Live {
-    /// Whether `nodes` and `anchors`, the nodes and text anchors the state
-    /// holds in this outpost, with the position of its last message handled
-    /// here, differ from what was last left for it; if so, they are noted
-    /// as left. A position that moved on is a change: the outpost keeps
-    /// every node it reported until a list acknowledges the message, so
+    /// Whether `held`, what the state holds in this outpost, its
+    /// acknowledged position the position of its last message handled
+    /// here, differs from what was last left for it; if so, it is noted as
+    /// left. A position that moved on is a change: the outpost keeps
+    /// everything it reported until a list acknowledges the message, so
     /// the list goes again even when the state holds the same nodes. When
     /// nothing changed, nothing is left, and the outpost hears nothing.
-    pub(crate) fn held_changed(
-        &mut self,
-        nodes: &BTreeSet<u64>,
-        anchors: &BTreeSet<u64>,
-    ) -> HeldChange {
-        let (left, left_anchors, acknowledged) = &self.held_left;
-        let change = if left != nodes {
+    pub(crate) fn held_changed(&mut self, held: &Held) -> HeldChange {
+        let left = &self.held_left;
+        let change = if left.nodes != held.nodes {
             HeldChange::Nodes
-        } else if left_anchors != anchors || *acknowledged != self.position {
+        } else if left != held {
             HeldChange::Other
         } else {
             return HeldChange::None;
         };
-        self.held_left = (nodes.clone(), anchors.clone(), self.position);
+        self.held_left = held.clone();
         change
     }
 }
@@ -50,8 +60,8 @@ pub(crate) enum HeldChange {
     None,
     /// The set of nodes.
     Nodes,
-    /// The text anchors or the position of the last message handled, and
-    /// not the nodes.
+    /// The text anchors, the caret tells' elements or the position of the
+    /// last message handled, and not the nodes.
     Other,
 }
 
@@ -68,7 +78,7 @@ impl LiveOutposts {
             outpost,
             Live {
                 position: 0,
-                held_left: (BTreeSet::new(), BTreeSet::new(), 0),
+                held_left: Held::default(),
             },
         );
     }
@@ -122,21 +132,30 @@ mod tests {
         live.started(OutpostId(2));
         let nodes = |numbers: &[u64]| numbers.iter().copied().collect::<BTreeSet<u64>>();
         let mut changes = Vec::new();
-        let mut step =
-            |live: &mut LiveOutposts, position: Option<u64>, held: &[u64], anchors: &[u64]| {
-                if let Some(position) = position {
-                    live.handled(OutpostId(2), position);
-                }
-                let (_, record) = live.iter_mut().next().expect("one live outpost");
-                changes.push(record.held_changed(&nodes(held), &nodes(anchors)));
+        let mut step = |live: &mut LiveOutposts,
+                        position: Option<u64>,
+                        held: &[u64],
+                        (anchors, told): (&[u64], &[u64])| {
+            if let Some(position) = position {
+                live.handled(OutpostId(2), position);
+            }
+            let (_, record) = live.iter_mut().next().expect("one live outpost");
+            let held = Held {
+                nodes: nodes(held),
+                anchors: nodes(anchors),
+                told: nodes(told),
+                acknowledged: record.position,
             };
-        step(&mut live, None, &[], &[]);
-        step(&mut live, Some(1), &[5], &[]);
-        step(&mut live, None, &[5], &[]);
-        step(&mut live, None, &[5], &[8]);
-        step(&mut live, None, &[5], &[8]);
-        step(&mut live, Some(2), &[5], &[8]);
-        step(&mut live, None, &[6], &[8]);
+            changes.push(record.held_changed(&held));
+        };
+        step(&mut live, None, &[], (&[], &[]));
+        step(&mut live, Some(1), &[5], (&[], &[]));
+        step(&mut live, None, &[5], (&[], &[]));
+        step(&mut live, None, &[5], (&[8], &[]));
+        step(&mut live, None, &[5], (&[8], &[]));
+        step(&mut live, Some(2), &[5], (&[8], &[]));
+        step(&mut live, None, &[5], (&[8], &[9]));
+        step(&mut live, None, &[6], (&[8], &[9]));
         assert_eq!(
             changes,
             [
@@ -146,9 +165,10 @@ mod tests {
                 HeldChange::Other,
                 HeldChange::None,
                 HeldChange::Other,
+                HeldChange::Other,
                 HeldChange::Nodes
             ],
-            "nothing yet; a message; the same again; an anchor; the same              again; a message holding the same; another node"
+            "nothing yet; a message; the same again; an anchor; the same              again; a message holding the same; a caret tell's element; another node"
         );
     }
 }

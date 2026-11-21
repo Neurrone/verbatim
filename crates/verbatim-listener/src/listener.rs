@@ -241,7 +241,7 @@ impl Backlog for Waiting {
         // Numbered once it is encoded, in pipe order: a message that could
         // not be encoded is skipped, and Core never counts it.
         if let Some(token) = message.carried_token() {
-            self.reported.written(token);
+            self.reported.written(true, [token]);
         }
         Ok(())
     }

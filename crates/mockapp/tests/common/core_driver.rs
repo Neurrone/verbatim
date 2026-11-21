@@ -562,7 +562,7 @@ impl CoreDriver {
         // Numbered as the listener writes it, and counted as the shell
         // hands it to Core.
         if let EventObject::Uia { token, .. } = &tell.object {
-            self.reported.written(*token);
+            self.reported.written(true, [*token]);
             self.view.handled(*token);
         }
         self.feed(QueueInput::Tell {

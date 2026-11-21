@@ -425,7 +425,8 @@ that carries them on the pipes is
 - One enum per direction and role, so a receiver cannot be sent what it
   does not take: a frame of another direction fails to decode, and its
   child is ended as failed.
-  - `CoreToOutpost`: `Ping`, `NodesHeld`, `IdleQuery`, `Shutdown`,
+  - `CoreToOutpost`: `Ping`, `NodesHeld` (the nodes, text anchors and
+    caret tells' tokens Core holds, and the position acknowledged), `IdleQuery`, `Shutdown`,
     `Assign`, `Request` (an `Ask` of the shared list, its node ids
     stamped with the outpost generation, which the outpost clears with
     `Ask::unstamp`), `Cancel` (a request's `Cancel` with its reason) and
@@ -458,8 +459,9 @@ that carries them on the pipes is
   listener tell carries (`carries_tokens`), and the listener and
   verbatim.exe count the positions `ElementsHeld` acknowledges with this
   one function.
-- `OutpostToCore::carries_nodes` says which messages carry node ids, an
-  answer with a result and a tell, and the outpost and verbatim.exe count
+- `OutpostToCore::carries_nodes` says which messages carry what the
+  outpost keeps for Core, an answer with a result and a tell naming an
+  element by its token, and the outpost and verbatim.exe count
   the positions `NodesHeld` acknowledges with this one function.
   `assign_outpost` stamps the arriving generation on every node id, and
   `named` lists the node ids and text anchors a message names (`Named`),

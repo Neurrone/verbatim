@@ -159,14 +159,14 @@ fn abandons(effects: &[Effect]) -> bool {
 }
 
 #[test]
-fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
+fn a_release_waits_for_the_program_in_flight() {
     let mut replay = Replay::new();
-    let effects = replay.input(core_ask(1), 1);
-    let hung = program(&effects).request;
+    let _ = replay.input(core_ask(1), 1);
     let effects = replay.push(
         Item::NodesHeld {
             nodes: vec![],
             anchors: vec![],
+            told: vec![],
             acknowledged: 0,
         },
         2,
@@ -178,18 +178,16 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
         "the release waits for the hung program"
     );
     // The program hangs in its read (8a087fe7): once its worker is
-    // abandoned, the release is made, its request no longer live.
+    // abandoned, the release is made.
     let effects = replay.input(cancel_for_the_foreground(1), 11_000);
     assert!(abandons(&effects));
-    let live: Vec<&Vec<Request>> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Release { live, .. } => Some(live),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(live, [&Vec::<Request>::new()]);
-    assert!(!live[0].contains(&hung));
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Release { .. }))
+            .count(),
+        1
+    );
     // Nothing is dispatched until the release's result is in.
     assert!(programs(&effects).is_empty());
     let effects = replay.input(

@@ -277,6 +277,7 @@ mod tests {
         let held = |acknowledged| Item::NodesHeld {
             nodes: Vec::new(),
             anchors: Vec::new(),
+            told: Vec::new(),
             acknowledged,
         };
         push_item(&mut intake, held(1), 1);
