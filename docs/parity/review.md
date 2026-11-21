@@ -249,8 +249,8 @@ review over TextInfo ([Review modes](../nvda/review-modes.md)). Verbatim:
 **matched (unverified)**: an edit field, document, or terminal is
 reviewed a line at a time through the text protocol, starting at the caret (or the
 start, with no caret) as NVDA's object review does; characters are
-grapheme clusters and words follow the text's language
-(`verbatim-text`); previous and next word cross lines; start and end of
+grapheme clusters; words are the text's own (see "Review words by the
+provider's word"); start and end of
 line speak the character there; the page commands (Verbatim+Page Up and
 Page Down), the selection's start and end (Verbatim+Alt+Home and End),
 and the review cursor's and caret's locations are NVDA's commands too,
@@ -302,14 +302,35 @@ line after the final break. Verbatim: **different** (Dickson,
 empty ("blank"), because NVDA's handling of a final empty line is taken
 to be a defect. Pinned by `text_box_review_words`.
 
-### Previous word across a line break
+### Review words by the provider's word
 
-In text measured by character offsets, NVDA's previous word from a
-line's first word stops on the line break before it, saying "line feed"
-and then "carriage return", before the previous line's last word.
-Verbatim: **different** (Dickson, 2026-11-03): previous word goes
-straight to the previous line's last word, as it does in UI Automation
-text. Pinned by `text_box_review_words`.
+NVDA's review word commands move by the text's own word
+(`nvda/source/globalCommands.py` 2137 to 2236): current word expands the
+review position to its word; previous word expands to the word there,
+moves one word back and speaks the word reached, or says "Top" and the
+word there when it cannot move; next word moves one word on and speaks
+the word reached, or says "Bottom" and that word when the move went no
+word or the word reached does not start after the review position (a
+provider that moves onto the text's end, NVDA's issue 12808). A word that
+is a line break is said by its character's name: Notepad stops on the
+carriage return each way, and a Windows Forms text box, measured by
+offsets, stops on the line feed and then the carriage return going back,
+and on neither going forward. Verbatim: **matched**: each press is one
+batch that reads the word, the word moved to and the line it is on, the
+review cursor landing at the word's start on that line (the request
+list's design, section 6, "The word rows' speech"). Previous word stops
+on a line break in UI Automation text too (Dickson, 2026-11-21). Matched
+against NVDA's captures
+`crates/verbatim-core/tests/fixtures/p1-word-break.jsonl` (Notepad),
+`crates/verbatim-core/tests/fixtures/s10-review-words-notepad.jsonl` and
+`crates/verbatim-core/tests/fixtures/s10-review-words-text-box.jsonl`,
+pinned by `review_words_move_by_the_providers_word_as_nvdas_capture`,
+`review_words_in_a_text_box_stop_on_each_line_break_character`,
+`notepad_review_words` and `text_box_review_words`. Flat text and a
+terminal Core reads have no provider's word: Core answers their word
+reads by its own words, which follow the text's language, a line with
+none being one stop (`terminal_review_words_are_cores_own_words_over_its_rows`,
+`flat_review_previous_word_crosses_a_line_start_and_stops_at_the_top`).
 
 ### Review cursor columns
 

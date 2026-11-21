@@ -647,37 +647,19 @@ read, its watch, the sentence move and a caret tell's read are under
   changes and the whole new selection's text (`new_selection`), so Core
   speaks the change in general terms when the node's text changed since
   the compared selection was read.
-- `Read(TextRead { at, movement, unit })`: start at `at`, move by
-  `movement` (a `TextMovement`: a unit and a signed count), landing on
-  that unit's start, then read the `unit` containing the point reached.
-  Answered `TextReply::Read { moved, chunk }`, `moved` being how far the
-  movement really went; movement never wraps. A unit the provider lacks is
-  `UnsupportedUnit(unit)`, never approximated. For `Sentence`, a provider
-  with no sentence unit (UIA) answers `UnsupportedUnit`; one whose text
-  NVDA splits itself (the offset-based edit controls) answers with the
-  paragraph, which Core splits; one with its own sentence unit answers
-  with the sentence.
-- `ReadAhead(TextReadAhead { at, movement, unit, count })`: say-all's
-  read. The first unit as `Read`, then each next unit of the same kind, up
-  to `count` (at most `MAX_READ_AHEAD`, 32), stopping once the text
-  reaches `MAX_READ_AHEAD_TEXT` (32 K UTF-16 code units). Answered
-  `TextReply::Chunks { moved, chunks }`, at least one, the last marked
-  `last` when the outpost could not move past it. Where the provider runs
-  remote operations the batch is one round trip.
-- `ReadRange { start, end, through }`: the text between two points,
-  whichever comes first, answered `Range { text, truncated }`, cut to
-  `MAX_RANGE_BYTES` (1 MB). With `through` (`TextThrough`, the points just
-  past the characters at each end), the text runs through the character
-  at the later end, whichever way round: the review copy's range.
-- `Select { start, end, through }`: select between two points and move
-  the caret there where allowed; answered `Selected(changes)` by the rule
-  of a caret reply, or `Unsupported`.
-- `MoveCaret(point)`: answered `Done` or `Unsupported`; Core does not wait
-  for it.
-- `Location(point)`: answered `Location { x, y }` in pixels, or
-  `Unsupported`; in text measured by character offsets (a plain Win32
-  edit control, not a rich edit), `OffsetLocation { offset, length, point }`, the point's offset,
-  the text's length and its place in pixels when the control gives one.
+- Every other read or move of text is a batch's text operation
+  (`verbatim_model::batch`): `ReadText` reads units from a point after a
+  movement, landing on the unit's start and answering how far it really
+  went, a unit the provider lacks refused, never approximated (for
+  `Sentence`, a provider with no sentence unit, UI Automation, refuses;
+  the offset-based edit controls answer the paragraph, which Core
+  splits), several units at once up to `MAX_READ_AHEAD` and
+  `MAX_READ_AHEAD_TEXT` for say-all; `ReadRange` the text between two
+  points whichever comes first, through the character at the later when
+  the points past both are given, cut to `MAX_RANGE_BYTES`; `Select`
+  selects, two equal points moving the caret, and a `Caret` after it holds
+  the next baseline; `Locate` a point's place on the screen, with its
+  offset and the text's length in text measured by character offsets.
 - `ReadTerminal(TerminalRead)`: a full read of the focused terminal from a
   screen above the start anchor Core names (`None` for a first read) to the
   document's end, answered `TerminalRead(TerminalReadReply)`: the

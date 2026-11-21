@@ -1,8 +1,10 @@
 //! The outpost's side of the text protocol (milestone M4,
 //! `books/dev/src/reference/crates/verbatim-model.md`, "The text protocol").
 //!
-//! [`perform`] carries out one [`TextOp`] on a [`TextSource`], the
-//! backend-neutral view of one node's text: UIA's `TextPattern`
+//! A batch's text steps run on a [`TextSource`], the backend-neutral view
+//! of one node's text: UI Automation's through the program builder
+//! ([`fused`]), an edit control's call by call ([`by_calls`], [`ops`]). A
+//! source is UIA's `TextPattern`
 //! ([`uia::UiaText`]) or a Win32 edit control's window messages
 //! ([`edit::EditText`]). A source works in its own positions and in UTF-16;
 //! this module converts at the boundary to the protocol's UTF-8 chunks and

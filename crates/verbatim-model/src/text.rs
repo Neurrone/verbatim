@@ -16,10 +16,9 @@
 //!   are read on request, one unit at a time, never the whole document.
 //! - Every chunk is capped at [`MAX_CHUNK_BYTES`], so one unit cannot grow
 //!   Core's state without bound.
-//! - A unit the provider does not support is answered
-//!   [`TextReply::UnsupportedUnit`], never approximated silently, and
-//!   movement stops at the document's ends: a [`TextReply::Read`] reports
-//!   how far it really moved.
+//! - A unit the provider does not support is refused, never approximated
+//!   silently, and movement stops at the document's ends: a read of text
+//!   ([`crate::batch::Chunks`]) reports how far it really moved.
 //! - Text carries its language in [`LanguageRun`]s, so speech can switch
 //!   voices and word segmentation can follow the language.
 
@@ -36,14 +35,14 @@ pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 /// [`characters`](SelectionChange::characters) count is always complete.
 pub const MAX_SELECTION_TEXT_BYTES: usize = 4 * 1024;
 
-/// The most UTF-8 bytes of text a [`TextReply::Range`] carries, for a copy
+/// The most UTF-8 bytes of text a [`crate::batch::RangeText`] carries, for a copy
 /// to the clipboard.
 pub const MAX_RANGE_BYTES: usize = 1024 * 1024;
 
-/// The most units one [`TextOp::ReadAhead`] asks for.
+/// The most units one read of text ([`crate::batch::Op::ReadText`]) reads.
 pub const MAX_READ_AHEAD: u8 = 32;
 
-/// A [`TextOp::ReadAhead`] stops adding units once the text it read
+/// A read of several units ([`crate::batch::Op::ReadText`]) stops adding units once the text it read
 /// reaches this many UTF-16 code units (as the providers count text, so at
 /// most three times as many UTF-8 bytes), so a batch of long units stays
 /// bounded; it always carries at least one.

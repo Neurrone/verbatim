@@ -7,10 +7,15 @@
 //! deliberate difference from NVDA, `docs/parity/review.md`, "Review cursor
 //! columns"); numpad 5 pressed twice spells the word; numpad 2 pressed
 //! twice describes the character ("Alfa") and three times gives its code
-//! ("65"). Last, numpad 4 reads the word before, from a row's first word
-//! the last word of the row above, and Shift+numpad 9 moves to the text's
-//! bottom. It holds for Windows 11 Notepad (UIA) and an edit control
-//! alike.
+//! ("65"). Last, numpad 4 reads the text's own word before, from a row's
+//! first word the line break before it, said by its character's name, then
+//! the last word of the row above, as NVDA's captures of this document
+//! say it (`crates/verbatim-core/tests/fixtures/s10-review-words-notepad.jsonl`
+//! steps 19 and 20, `crates/verbatim-core/tests/fixtures/s10-review-words-text-box.jsonl`
+//! steps 20 to 22; `docs/parity/review.md`, "Review words by the
+//! provider's word"); and Shift+numpad 9 moves to the text's bottom. It
+//! holds for Windows 11 Notepad (UIA) and an edit control alike, each
+//! stopping on its own line break characters.
 //!
 //! Single presses are sent as gestures. Presses that count are sent
 //! together, and since a gesture counts as a repeat of the same key
@@ -136,23 +141,16 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         &["A", "Alfa", "65, 0 x 4 1"],
     );
 
-    // Back a word from the row's first word crosses to the header row's
-    // last word, where NVDA stops on the line break first, and on to the
-    // one before; the bottom is the empty line after the text's last line
-    // break, where NVDA reads the table's last row, and the line above it
-    // is the table's last row. Both are deliberate differences
-    // (`docs/parity/review.md`).
-    scenario
-        .send_gesture("kb:numpad4")
-        .expect("sends the gesture");
-    scenario.deviates_from_nvda("docs/parity/review.md", "Previous word across a line break");
-    scenario.speech().expect(&["Price"]);
-    // NVDA says "carriage return" here, the line break's other half.
-    scenario
-        .send_gesture("kb:numpad4")
-        .expect("sends the gesture");
-    scenario.deviates_from_nvda("docs/parity/review.md", "Previous word across a line break");
-    scenario.speech().expect(&["Color"]);
+    // Back a word from the row's first word stops on the line feed and
+    // then the carriage return before it, the edit control's words, and
+    // reaches the header row's last word; the bottom is the empty line
+    // after the text's last line break, where NVDA reads the table's last
+    // row, and the line above it is the table's last row, a deliberate
+    // difference (`docs/parity/review.md`, "Review bottom on a final empty
+    // line").
+    review(scenario, "kb:numpad4", "line feed");
+    review(scenario, "kb:numpad4", "carriage return");
+    review(scenario, "kb:numpad4", "Price");
     scenario
         .send_gesture("kb:shift+numpad9")
         .expect("sends the gesture");
@@ -206,12 +204,12 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         &["A", "Alfa", "65, 0 x 4 1"],
     );
 
-    // Back a word from the row's first word crosses to the header row's
-    // last word, and on to the one before; the bottom is the empty line
-    // after the text's last line break, and the line above it is the
-    // table's last row.
+    // Back a word from the row's first word stops on the carriage return
+    // before it, Notepad's word, and reaches the header row's last word;
+    // the bottom is the empty line after the text's last line break, and
+    // the line above it is the table's last row.
+    review(scenario, "kb:numpad4", "carriage return");
     review(scenario, "kb:numpad4", "Price");
-    review(scenario, "kb:numpad4", "Color");
     review(scenario, "kb:shift+numpad9", "blank");
     review(scenario, "kb:numpad7", ROWS[3].0);
 }
