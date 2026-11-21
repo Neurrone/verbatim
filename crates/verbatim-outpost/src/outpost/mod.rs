@@ -1139,7 +1139,6 @@ impl Outpost {
     }
 }
 
-/// `ask` with the node ids it names as this outpost knows them.
 /// Logs that `program`, a remote operation tried for an element of
 /// `window` (`None` when the element's window is not known), failed with
 /// `error` and was read by the classic calls instead: the one place a
@@ -1158,6 +1157,7 @@ pub(super) fn remote_fell_back(
     );
 }
 
+/// `ask` with the node ids it names as this outpost knows them.
 fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::request::Ask> {
     let mut ask = Box::new(ask.clone());
     ask.unstamp();
