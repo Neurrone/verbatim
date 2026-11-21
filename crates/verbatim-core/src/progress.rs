@@ -21,6 +21,14 @@
 //!   whose role is known and is no progress bar, is not read: the
 //!   focused-value path speaks it, as NVDA redirects that event to its
 //!   focus object (Claude, 2026-11-21).
+//!   A bar has one read out at a time: a change of a bar whose read is
+//!   out marks it, and the read's ending, whatever it is, reads the bar
+//!   again when it was marked, so its newest value is still heard, as
+//!   NVDA's limiter keeps one waiting event per object and its handler
+//!   reads one at a time (`docs/parity/backends.md`, "MSAA winevent flood
+//!   control"). A flood of one bar's changes so keeps one read out, where
+//!   one read per change left thousands out, each step's work growing with
+//!   them (Claude, 2026-11-21).
 //! - A UI Automation bar's change carries its percentage and place from
 //!   its event's cache, so it asks nothing: it plays at its turn when the
 //!   element is native by Core's backend cache and in the foreground or
@@ -29,13 +37,13 @@
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{RuntimeId, props};
-use verbatim_model::request::{ObjectRef, Purpose, ReadObject, Reply, Request as Wire};
+use verbatim_model::request::{MsaaIds, ObjectRef, Purpose, ReadObject, Reply, Request as Wire};
 use verbatim_model::tell::{Event, Payload, Relation};
 use verbatim_model::{Effect, Percent, Role, State};
 
 use crate::changes::MsaaChange;
 use crate::entries::{Entries, request_window, window_facts};
-use crate::event_queue::{Cx, Outcome, Reader};
+use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
 use crate::focus::acceptance::{self, Acceptance};
 use crate::focus::backend::{Judged, Judgement};
 use crate::focus::versions::ReadBy;
@@ -43,7 +51,7 @@ use crate::state::SrState;
 
 verbatim_model::property_set! {
     /// What a classic bar's read answers.
-    struct BarRead {
+    struct BarAnswer {
         role: props::Role,
         value: props::Value,
         states: props::States,
@@ -111,6 +119,69 @@ fn heard(facts: &SrState, tell: &Event) -> bool {
     facts.settings.report_background_progress_bars || in_foreground(tell)
 }
 
+/// A classic bar's key among the reads out: its window, object id and
+/// child id.
+pub(crate) type BarKey = (u64, i32, i32);
+
+/// The key of the bar `ids` names.
+fn key(ids: &MsaaIds) -> BarKey {
+    (ids.window.0, ids.object, ids.child)
+}
+
+/// A classic bar's read out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum BarRead {
+    /// Its read is out under `token`, and no change came since it was
+    /// sent.
+    Reading {
+        /// The read's token.
+        token: u64,
+    },
+    /// Its read is out under `token`, and a newer change came, naming
+    /// `window`: its ending reads the bar again.
+    ReadingNewer {
+        /// The read's token.
+        token: u64,
+        /// The window the newest change's request names.
+        window: RequestWindow,
+    },
+}
+
+impl BarRead {
+    /// The token of its read out.
+    fn token(self) -> u64 {
+        match self {
+            Self::Reading { token } | Self::ReadingNewer { token, .. } => token,
+        }
+    }
+}
+
+/// Wants a read of the bar `ids` names, in `window`, under a new token,
+/// and records it as out.
+fn read(facts: &mut SrState, ids: MsaaIds, window: RequestWindow) {
+    let token = facts.wants.token();
+    facts
+        .bar_reads
+        .insert(key(&ids), BarRead::Reading { token });
+    let read = ReadObject {
+        object: ObjectRef::Msaa {
+            window: ids.window,
+            object: ids.object,
+            child: ids.child,
+        },
+        set: <BarAnswer as verbatim_model::property::PropertySet>::PROPERTIES.to_vec(),
+        relation: None,
+        descendants: false,
+        walk: None,
+        purpose: Purpose::Other,
+    };
+    facts.wants.want(
+        Some(token),
+        (Reader::Listener, window),
+        Wire::ReadObject(read),
+    );
+}
+
 /// Whether `change` names the readers' last focus, whose role is known
 /// and is no progress bar: its value change is the focused-value path's.
 fn on_last_focus(facts: &SrState, change: &MsaaChange) -> bool {
@@ -122,7 +193,8 @@ fn on_last_focus(facts: &SrState, change: &MsaaChange) -> bool {
 
 /// An MSAA value change at its turn, accepted and read through MSAA by
 /// its window's verdict: when it is heard and not on the readers' last
-/// focus, its object is read of the listener at once, outside the queue.
+/// focus, its object is read of the listener at once, outside the queue,
+/// unless the bar's read is out, which it marks to be read again.
 pub(crate) fn msaa_changed(cx: &mut Cx<Entries>, change: &MsaaChange) {
     if change.tell.kind != EventKind::ValueChange {
         return;
@@ -132,33 +204,35 @@ pub(crate) fn msaa_changed(cx: &mut Cx<Entries>, change: &MsaaChange) {
         if !heard(&facts, &change.tell) || on_last_focus(&facts, change) {
             return;
         }
-        let token = facts.wants.token();
-        facts.bar_reads.insert(token);
-        let read = ReadObject {
-            object: ObjectRef::Msaa {
-                window: change.ids.window,
-                object: change.ids.object,
-                child: change.ids.child,
-            },
-            set: <BarRead as verbatim_model::property::PropertySet>::PROPERTIES.to_vec(),
-            relation: None,
-            descendants: false,
-            walk: None,
-            purpose: Purpose::Other,
-        };
-        facts.wants.want(
-            Some(token),
-            (Reader::Listener, change.window),
-            Wire::ReadObject(read),
-        );
+        if let Some(out) = facts.bar_reads.get_mut(&key(&change.ids)) {
+            *out = BarRead::ReadingNewer {
+                token: out.token(),
+                window: change.window,
+            };
+            return;
+        }
+        read(&mut facts, change.ids, change.window);
     }
     cx.send_wanted();
 }
 
-/// Whether `token` is a bar read's: taken out of the reads out, as its
-/// ending arrives.
+/// Whether `token` is a bar read's, as its ending arrives: the bar's read
+/// out ends, and a bar changed since it was sent is read again.
 pub(crate) fn ended(facts: &mut SrState, token: u64) -> bool {
-    facts.bar_reads.remove(&token)
+    let Some((&bar, &out)) = facts.bar_reads.iter().find(|(_, out)| out.token() == token) else {
+        return false;
+    };
+    facts.bar_reads.remove(&bar);
+    if let BarRead::ReadingNewer { window, .. } = out {
+        let (window_handle, object, child) = bar;
+        let ids = MsaaIds {
+            window: verbatim_model::WindowHandle(window_handle),
+            object,
+            child,
+        };
+        read(facts, ids, window);
+    }
+    true
 }
 
 /// A bar read ended with `outcome`: the tone of a progress bar on screen
@@ -170,7 +244,7 @@ pub(crate) fn answered(facts: &mut SrState, outcome: Outcome<Reply>) -> Vec<Effe
     };
     // An answer other than the set asked is the reader's fault, which says
     // nothing, as an undecodable answer to the queue's request does.
-    let Ok(bar) = <BarRead as verbatim_model::property::PropertySet>::parse(read.object.values)
+    let Ok(bar) = <BarAnswer as verbatim_model::property::PropertySet>::parse(read.object.values)
     else {
         return Vec::new();
     };

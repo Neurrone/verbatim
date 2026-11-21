@@ -594,6 +594,15 @@ fn a_flood_of_one_uia_bars_changes_waits_as_one_entry() {
         );
     }
     assert_eq!(held.state.queue.waiting_for_tests(), 1);
+    assert_eq!(
+        step(
+            &mut held,
+            2_000,
+            answer_outcome(LISTENER, 1, verbatim_model::request::Outcome::NotThere)
+        ),
+        [tone(99)],
+        "the front ends and the newest percentage plays"
+    );
 }
 
 /// Two processes' bars with one runtime id are two bars: neither replaces
@@ -630,4 +639,127 @@ fn a_uia_bars_tell_is_neither_a_caret_tell_nor_a_property_change() {
     let entry = Entry::of_tell(LISTENER, tell, false).unwrap();
     assert!(matches!(entry, Entry::Progress(_)), "{entry:?}");
     assert_eq!(step(&mut held, 4_000, Input::Entry(entry)), [tone(30)]);
+}
+
+/// The bar's read out, by its token, and whether a newer change marked
+/// it.
+fn bar_out(held: &Held) -> Option<(u64, bool)> {
+    let out = held
+        .state
+        .bar_reads
+        .get(&(IDS.window.0, IDS.object, IDS.child))?;
+    Some(match *out {
+        crate::progress::BarRead::Reading { token } => (token, false),
+        crate::progress::BarRead::ReadingNewer { token, .. } => (token, true),
+    })
+}
+
+/// A flood of one classic bar's changes keeps one read out: each change
+/// after the first only marks it, so the work each step does over the
+/// requests out stays at one request however long the flood. The read's
+/// answer reads the bar once more, and that answer plays the newest
+/// value.
+#[test]
+fn a_flood_of_one_classic_bars_changes_keeps_one_read_out() {
+    let mut held = ready_with(false);
+    let tell = told(&held, value_change(Relation::Under));
+    assert_eq!(step(&mut held, 1_000, tell), [bar_read(1)]);
+    for change in 1..=1_000_u64 {
+        let tell = told(&held, value_change(Relation::Under));
+        assert_eq!(
+            step(&mut held, 1_000 + change, tell),
+            Vec::<String>::new(),
+            "change {change}"
+        );
+        assert_eq!(
+            held.state.queue.table_for_tests().len(),
+            1,
+            "change {change}"
+        );
+        assert_eq!(held.state.bar_reads.len(), 1, "change {change}");
+    }
+    assert_eq!(bar_out(&held).map(|(_, newer)| newer), Some(true));
+    assert_eq!(
+        step(
+            &mut held,
+            5_000,
+            answer(
+                LISTENER,
+                1,
+                bar_answer(Role::ProgressBar, "40", StateSet::new())
+            )
+        ),
+        [tone(40), bar_read(2)]
+    );
+    assert_eq!(
+        step(
+            &mut held,
+            6_000,
+            answer(
+                LISTENER,
+                2,
+                bar_answer(Role::ProgressBar, "100", StateSet::new())
+            )
+        ),
+        [tone(100)],
+        "the last change is heard"
+    );
+    assert!(held.state.bar_reads.is_empty());
+    assert_eq!(held.state.queue.table_for_tests(), Vec::<Wire>::new());
+}
+
+/// An ending of a bar's read, by its name, fed to the state.
+type Ending = (&'static str, fn(&mut Held) -> Vec<String>);
+
+/// Every ending of a bar's read out ends it when no change came since it
+/// was sent, and reads the bar again when one did: its answer, a refusal
+/// as hung, its due time, and its listener's end, whose read again waits
+/// for the next listener.
+#[test]
+fn each_ending_of_a_bar_read_ends_it_or_reads_the_bar_again() {
+    let endings: [Ending; 4] = [
+        ("answered", |held| {
+            step(
+                held,
+                2_000,
+                answer(LISTENER, 1, bar_answer(Role::Slider, "40", StateSet::new())),
+            )
+        }),
+        ("hung", |held| {
+            step(held, 2_000, Input::RefusedHung(RequestNumber(1)))
+        }),
+        ("due", |held| {
+            step(held, 1_000 + crate::event_queue::OTHER_DUE_US, Input::Tick)
+        }),
+        ("listener ended", |held| {
+            step(held, 2_000, Input::ReaderEnded(LISTENER))
+        }),
+    ];
+    for (why, end) in endings {
+        for newer in [false, true] {
+            let mut held = ready_with(false);
+            let tell = told(&held, value_change(Relation::Under));
+            assert_eq!(step(&mut held, 1_000, tell), [bar_read(1)]);
+            if newer {
+                let tell = told(&held, value_change(Relation::Under));
+                assert_eq!(step(&mut held, 1_100, tell), Vec::<String>::new());
+            }
+            let said = end(&mut held);
+            let read_again = said.contains(&bar_read(2));
+            match (newer, why) {
+                (false, _) => {
+                    assert!(!read_again, "{why}: {said:?}");
+                    assert_eq!(bar_out(&held), None, "{why}");
+                }
+                (true, "listener ended") => {
+                    assert!(!read_again, "{why}: no listener to send to");
+                    assert_eq!(bar_out(&held), Some((2, false)), "{why}");
+                }
+                (true, _) => {
+                    assert!(read_again, "{why}: {said:?}");
+                    assert_eq!(bar_out(&held), Some((2, false)), "{why}");
+                }
+            }
+        }
+    }
 }

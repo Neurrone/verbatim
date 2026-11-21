@@ -532,10 +532,13 @@ pub struct SrState {
     /// (`docs/nvda/object-model.md`, "How a progress bar reports its
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
-    /// The tokens of the progress bars' reads out, each from its want to
-    /// its one ending, so that an ending is routed to the bar
+    /// Each classic progress bar's one read out, by the bar's MSAA ids,
+    /// from its want to its one ending, so that an ending is routed to the
+    /// bar and a flood of one bar's changes keeps one read out
     /// ([`crate::progress`]).
-    pub(crate) bar_reads: std::collections::BTreeSet<u64>,
+    #[serde(with = "crate::event_queue::pairs")]
+    pub(crate) bar_reads:
+        std::collections::BTreeMap<crate::progress::BarKey, crate::progress::BarRead>,
     /// The requests Core's facts want sent outside the queue, and their
     /// tokens ([`crate::wants`]).
     pub(crate) wants: crate::wants::Wants,

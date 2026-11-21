@@ -652,8 +652,18 @@ code is in `reduce.rs` unless named.
   by its window's verdict, asks the listener for the object's role,
   value, states and place at once outside the queue (`msaa_changed`, run
   first in `changes::msaa`, before its early returns), as Core's facts'
-  own request under a token in `SrState::bar_reads`, with Core's ordinary
-  due time and endings; its answer (`answered`, parsed once as a property
+  own request under a token, with Core's ordinary due time and endings.
+  A bar has one read out at a time: `SrState::bar_reads` maps the bar's
+  MSAA ids to `BarRead::Reading { token }`, or to `ReadingNewer { token,
+  window }` once a change of the bar came while its read was out, which
+  sends nothing; the read's ending, whichever it is, removes a `Reading`
+  entry and turns a `ReadingNewer` one into a `Reading` of a new read, so
+  the newest value is still heard. A flood of one bar's changes so keeps
+  one read out, as NVDA's limiter keeps one waiting event per object and
+  thread (`nvda/source/IAccessibleHandler/orderedWinEventLimiter.py` 79)
+  and reads one at a time; one read per change had left thousands out,
+  each step's work over the request table growing with them (Claude,
+  2026-11-21). Its answer (`answered`, parsed once as a property
   set) plays for a progress bar not invisible or off screen whose value
   `Percent::parse` takes, at the centre of its rectangle, (0, 0) with
   none; every other ending says nothing, the hang check's "not
