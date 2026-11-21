@@ -58,7 +58,12 @@ pub type NavigationStepFn = fn(&Uia, &StepQuery<'_>) -> Result<Step, Error>;
 /// program when `remote` is true, falling back to the classic calls for
 /// this call when it fails (except for an element whose provider has gone
 /// or did not answer in time, which they would meet too), and the classic
-/// calls alone when `remote` is false.
+/// calls alone when `remote` is false or the element, fetched by a walk, is
+/// served only by UIA's proxies inside this process, such as a window's
+/// title bar, which no remote operation can import
+/// ([`Cached::served_only_by_uia_proxies`]; an element fetched any other
+/// way carries no description and is tried remotely, a guess that can
+/// cost only a failed import).
 ///
 /// # Errors
 ///
@@ -69,7 +74,7 @@ pub fn navigation_step(
     query: &StepQuery<'_>,
     remote: bool,
 ) -> Result<(Step, Path), Error> {
-    if !remote {
+    if !remote || query.element.served_only_by_uia_proxies() == Some(true) {
         return navigation_step_classic(uia, query).map(|step| (step, Path::Classic));
     }
     match navigation_step_remote(uia, query) {

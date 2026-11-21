@@ -120,7 +120,13 @@ A failed run is an `Error`:
 - `Unavailable`: Windows lacks the API.
 - `Import`: an import failed. An element served by a client-side proxy
   (UIA's MSAA proxy inside Verbatim's own process) fails with
-  `E_UNEXPECTED`, since there is no provider process to run in.
+  `E_UNEXPECTED`, since there is no provider process to run in. A
+  window's title bar is such an element inside a window whose provider is
+  the application's, so `navigation_step` takes the classic step from an
+  element that a tree-walker step fetched and whose cached provider
+  description names only UIA's proxies
+  (`Cached::served_only_by_uia_proxies`), rather than fail the import and
+  fall back (Claude, 2026-11-21).
 - `Unsupported(opcode)`: the provider lacks an instruction.
 - `Execute`: the call itself failed.
 - `Failed(Failure)`: the program stopped with a failure status

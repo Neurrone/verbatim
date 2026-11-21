@@ -86,6 +86,12 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   the window looking it up again. `focused(request)` is the focused element under
   the same rule. `any_window_element(hwnd, request)` is the lookup without
   the rule, for a window with no provider.
+- `Live::walk(walker, direction, request)`: one tree-walker step, its
+  neighbour's cache filled by `request` and the provider description, so
+  `Cached::served_only_by_uia_proxies` tells, with no call, whether only
+  UIA's proxies serve an element a walk fetched, such as a window's title
+  bar, which no remote operation can import; for an element fetched any
+  other way it answers `None`, which is not a failed read.
 - `window_live(hwnd)`: a window's element with no cache, for a caller
   that only searches under it; one call.
 - `request_fixed::<S>()` and `request::<S>(gates)`: a shape's request,

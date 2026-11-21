@@ -436,6 +436,27 @@ impl<S: Shape> Cached<S> {
         crate::com::runtime_id(&self.live.element)
     }
 
+    /// Whether every provider of the element is one of UIA's own proxies,
+    /// by the proxy rule ([`crate::served_only_by_uia_proxies`]), from the
+    /// provider description its cache holds when a walk fetched it
+    /// ([`Live::walk`]): such an element, a top-level window's title bar
+    /// for one, which UIA's MSAA proxy serves inside this process, cannot
+    /// be imported into a remote operation, since no provider process
+    /// holds it. `None` when the cache holds no description, which is not
+    /// a failed read. Local.
+    #[must_use]
+    pub fn served_only_by_uia_proxies(&self) -> Option<bool> {
+        // SAFETY: a live element; a cached read takes a plain property id
+        // and stays in this process.
+        let value = unsafe {
+            self.live.element.GetCachedPropertyValue(
+                windows::Win32::UI::Accessibility::UIA_ProviderDescriptionPropertyId,
+            )
+        }
+        .ok()?;
+        variant_string(&value).map(|description| crate::served_only_by_uia_proxies(&description))
+    }
+
     /// The element, with its shape, for another thread of this process.
     ///
     /// # Errors
@@ -612,7 +633,8 @@ impl Live {
     }
 
     /// The neighbour `direction` names in `walker`'s view, with its cache
-    /// filled by `request`: one cross-process call.
+    /// filled by `request` and the provider description
+    /// ([`Cached::served_only_by_uia_proxies`]): one cross-process call.
     ///
     /// # Errors
     ///
@@ -624,7 +646,7 @@ impl Live {
         direction: Direction,
         request: &Request<S>,
     ) -> windows::core::Result<Cached<S>> {
-        let cache = &request.cache;
+        let cache = request.described()?;
         let found = match direction {
             Direction::Parent => walker.parent(&self.element, cache),
             Direction::NextSibling => walker.next_sibling(&self.element, cache),

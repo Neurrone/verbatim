@@ -719,10 +719,76 @@ fn window_element_from_root_finds_an_owned_window() {
     opener.quit();
 }
 
+/// A window's title bar, which UIA's MSAA proxy serves inside this
+/// process, is stepped from by the classic calls: no remote operation can
+/// import it. Before the step judged it, the program's import failed with
+/// `E_UNEXPECTED` (`Path::Fallback`), once a run of
+/// `object_navigation_over_uia` on GitHub. The window's own element, which
+/// mockapp's provider serves, carries a description too and is not judged
+/// a proxy's.
+fn a_title_bar_is_stepped_from_by_the_classic_calls() {
+    let title = common::unique_title("mockapp-uia-title-bar-step");
+    let app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("Uia::new");
+    let fill = Fill::new(
+        &uia.request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
+            .expect("the node's request"),
+    );
+    let root = uia.window_live(hwnd).expect("mockapp's window element");
+    let root = root
+        .refresh(&uia.request_fixed::<TextEvent>().expect("a request"))
+        .expect("the window read");
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let kept = |element: &Cached<verbatim_uia::Kept>| {
+        let node = registry.id_for_element(&element.runtime_id(), element);
+        registry
+            .element_of(node)
+            .expect("the node's kept element")
+            .resolve()
+            .expect("the kept element resolves")
+    };
+    let window = kept(&root.narrow());
+    let step = |element, direction, remote| {
+        navigation_step(
+            &uia,
+            &StepQuery {
+                element,
+                direction,
+                fill: &fill,
+            },
+            remote,
+        )
+        .expect("the step")
+    };
+    // The outpost steps from a top-level window classically; its first
+    // child is the title bar.
+    let (first, _) = step(&window, NavigationDirection::FirstChild, false);
+    let title_bar = first.neighbor.expect("the title bar");
+    let title_bar_kept = kept(&title_bar.narrow());
+    let (next, path) = step(&title_bar_kept, NavigationDirection::NextSibling, true);
+
+    assert_eq!(
+        (
+            title_bar.read().role.role(),
+            title_bar_kept.served_only_by_uia_proxies(),
+            matches!(path, Path::Classic),
+            next.neighbor.map(|neighbor| neighbor.read().name),
+        ),
+        (Role::TitleBar, Some(true), true, Some(Some("Group One".to_owned()))),
+        "{path:?}"
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_title_bar_is_stepped_from_by_the_classic_calls",
+            a_title_bar_is_stepped_from_by_the_classic_calls,
+        ),
         (
             "window_element_from_root_finds_an_owned_window",
             window_element_from_root_finds_an_owned_window,
