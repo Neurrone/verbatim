@@ -289,3 +289,12 @@ script is run by its author before it is handed over:
   against deletion.
 - A full disk shows as a Windows "Low disk space" window, which the
   harness refuses to start beside; keep the C: drive above 15 GB free.
+
+**Never stop a `WindowsTerminal.exe` process.** Windows Terminal hosts all
+its windows in one process, even a window opened with `wt.exe -w new`, so
+stopping the process of a window you opened also closes every other
+terminal window, the one running your session included. On 2026-11-21 an
+agent that opened a window to test a terminal read closed this way the
+terminal hosting the session. Close a window you opened by its own window
+handle, by sending it `WM_CLOSE`, after checking that its title is the one
+you gave it; never by process, image name or `taskkill`.
