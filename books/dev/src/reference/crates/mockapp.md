@@ -748,14 +748,17 @@ Each file's module comment says exactly what it asserts; in outline:
   (`books/dev/src/reference/performance.md`, "The ledger"): over `counts.json`, and
   `dialog.json` (a message box) for a dialog's own text, it measures each
   ledger operation on each backend and asserts exactly how many
-  cross-process calls the client side made, by kind, and how many calls
-  mockapp's providers answered, by method. The MSAA operations, and a
+  cross-process calls the client side made, by kind, and how many of its
+  cached reads failed; what mockapp's providers answered it checks only
+  where that is the behaviour under test (the messages a window across the
+  process boundary receives, the raw probe, a dialog's title bar). The MSAA operations, and a
   focus on a text field with its caret, run through a real outpost; the
   UIA ones run on the test's own thread, making the same `verbatim-uia`
   calls in the same order as the outpost's worker once it has the element,
   since the worker finds a UIA focus by reading the system's keyboard
-  focus, which a test must not take. It also pins event registrations by
-  the provider calls they cost; that the focus listener's reader makes no
+  focus, which a test must not take. It also pins that an event
+  registration makes no counted call, and its move to the element it
+  already follows none in mockapp; that the focus listener's reader makes no
   connection to a window by its handle; that a focus chain stops below the
   process boundary and continues through MSAA above a parent with a UIA
   provider; the selected item that is a focus's value; a caret move, a caret report and

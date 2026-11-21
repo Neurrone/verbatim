@@ -17,11 +17,14 @@ allocation, a type's size or a local call of microseconds is not
 recorded.
 
 - `crates/mockapp/tests/call_counts.rs` pins every operation's calls by
-  kind, the provider calls mockapp answered by method, and its failed
-  cached reads (a cached read of a property or pattern the cache request
-  did not hold, which costs no call but makes UI Automation raise an
-  error inside itself, `books/dev/src/explanation/design/uia-shapes.md`). No pinned operation
-  makes a failed cached read.
+  kind and its failed cached reads (a cached read of a property or
+  pattern the cache request did not hold, which costs no call but makes
+  UI Automation raise an error inside itself,
+  `books/dev/src/explanation/design/uia-shapes.md`). No pinned operation makes a failed
+  cached read. What mockapp's providers answer is checked only where it
+  is the behaviour under test: the messages a window across the process
+  boundary receives, the raw probe, a dialog's title bar, and a
+  subscription's move to the element it already follows.
 - `crates/mockapp/tests/instruction_limit.rs` pins remote programs'
   instruction counts.
 - An exact count is a ratchet: a change that adds a call fails CI, and a
@@ -72,8 +75,7 @@ UIA calls that connect to a window by its handle (`ElementFromHandle`,
 `ElementFromHandleBuildCache` and `GetFocusedElementBuildCache`) are also
 counted apart as connections (`CallCounts::connections`), each still
 once under its kind. The probe is not one: an outpost's probe that finds
-a provider costs mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
-`HostRawElementProvider` and one `Navigate`, and no connection follows
+a provider is the raw probe alone, and no connection follows
 (`an_outposts_probe_that_finds_a_provider_makes_no_connection`). The
 focus listener makes no connection
 (`books/dev/src/explanation/design/listener-without-connections.md`, section 2;
@@ -82,8 +84,7 @@ focus listener makes no connection
 The rules for the edge cases, each with its reason:
 
 - One API call counts once, however many round trips it makes inside,
-  because the count is what Verbatim decides; mockapp's hit counters show
-  what each call cost the application, and the ratchet pins both.
+  because the count is what Verbatim decides.
 - `QueryInterface` for anything but `IUnknown` counts every time, because
   COM answers it from its proxy or with a round trip and Verbatim cannot
   tell which; `IUnknown` is always local.
@@ -215,7 +216,6 @@ what bounds the count. The fixture is mockapp's
 `tests/fixtures/counts.json` unless named: a window with a named group of
 two buttons and a list of three items, the first selected. Counts are UIA
 calls, MSAA calls and window messages; a kind not mentioned is zero.
-Provider calls are mockapp's hits, pinned beside the counts.
 
 How a UIA focus is measured: the listener reads it from the event's own
 element the classic way, with no remote operation or connection
@@ -227,8 +227,8 @@ desktop's root or the process boundary. The test runs the listener's
 reader and a real outpost in its process, so the figures are both
 together. After reporting a focus without text the outpost finds its own
 copy of the element, one `ElementFromHandle` and one remote operation or
-classic walk, outside the worker's count but inside the hits, as are the
-subscriptions' moves. Each is measured with remote operations, the
+classic walk, outside the worker's count but inside the test's, as are
+the subscriptions' moves. Each is measured with remote operations, the
 default, and with the classic walk (`uia.remote_operations = false`).
 
 Rules that hold for every UIA focus:
@@ -238,10 +238,8 @@ Rules that hold for every UIA focus:
   judged by Core
   ([ADR 0003](adr/0003-readers-tell-core-asks.md), "Readers tell, Core asks"): the sender's nearest
   window (`NormalizeElementBuildCache`, answered from the event's cache
-  for a sender that is a window), costing mockapp 31 provider calls for a
-  button or the list and 22 for a list item; and the sender's keyboard
-  focus read plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3
-  provider calls. The listener makes no duplicate test: Core judges a
+  for a sender that is a window); and the sender's keyboard focus read
+  plainly (`CurrentHasKeyboardFocus`, NVDA's last check). The listener makes no duplicate test: Core judges a
   repeat (`books/dev/src/explanation/design/ownership.md`). A menu opening is compared
   with its thread's last read while that read is current, one call. The
   keyboard focus is read plainly because inside a remote program
@@ -250,8 +248,7 @@ Rules that hold for every UIA focus:
 - A repeated focus on the element that still has the keyboard focus
   costs the listener's check alone, 3 UIA calls
   (`uia_repeated_focus_costs_exactly`): the nearest window, the kept
-  element's keyboard focus and the sender's. They cost mockapp 37
-  provider calls. Core drops the repeat with no read; the
+  element's keyboard focus and the sender's. Core drops the repeat with no read; the
   window's verdict is in Core's cache, so the window is asked nothing.
 - A focus on a console window's own element is dropped after the
   console's provider check, made once per console window by the listener
@@ -272,7 +269,7 @@ Rules that hold for every UIA focus:
   fills only the element found, because filling a window's title bar has
   UIA send its thread `WM_GETTITLEBARINFOEX`, which Windows answers for
   one window at a time across the desktop.
-- The steady state's 10 `WM_GETOBJECT`s come from the outpost's
+- The steady state's `WM_GETOBJECT`s come from the outpost's
   `ElementFromHandle` and the listener's and outpost's separate clients
   each connecting; recorded as a follow-up, not changed.
 
@@ -288,13 +285,8 @@ Rules that hold for every UIA focus:
 - Today: 7 UIA calls and 1 connection with the outpost's remote walk
   and 11 UIA calls and 1 connection with its classic walk: the
   listener's 4, the minimum, met, and the rest the outpost's completion
-  of the focus. 371 provider calls in all with the outpost's remote
-  walk and 353 with its classic walk, of which 9 `GetPatternProvider`
-  calls are the grid item's row and column (3 for each of the three
-  elements read alone, one of them the window element of the outpost's
-  walk), 2 `GetPropertyValue` calls the ancestors' automation ids, and
-  one `GetPropertyValue` the provider description that the outpost's
-  lookup of the route's window caches for the proxy rule
+  of the focus. The outpost's lookup of the route's window caches the
+  provider description for the proxy rule
   (`books/dev/src/explanation/design/listener-without-connections.md`, section 5).
 - Beside the calls, local work only and no wake-up: a read that finds
   its top-level window takes the listener's schedule lock once more, to
@@ -448,9 +440,7 @@ was answered (measured 2026-10-07).
   window and the desktop's root), and the outpost's raw probe of the
   window, the one verdict, before it reports the listener's read
   ([ADR 0001](adr/0001-focus.md), "One judge per fact"), while Core holds no verdict for it; the listener makes
-  no probe. 413 provider calls with the outpost's remote walk and 392 with
-  its classic walk, 12 of them the grid item's row and column and the
-  ancestors' automation ids, and 5 the outpost's probe.
+  no probe.
 - Probes per new window: in a UIA window, the outpost's 1; in an MSAA
   window not on the class lists, the outpost's 1 at its first MSAA focus,
   then none while its "no" lasts, 500 ms, from the probe's end, for events
@@ -478,12 +468,11 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
   once: 1 window message. A parent stalled for 4 seconds does not delay the
   report (`a_window_above_the_process_boundary_is_a_plain_window_with_no_call`).
   UIA's client side still connects to that parent when a read returns the
-  child window's element, once remotely, twice classically and once in a
-  focus-now query, each connection a `UiaRootObjectId` `WM_GETOBJECT`
-  with a nonzero wParam, one with a zero wParam, 6 `ProviderOptions`, 2
-  `HostRawElementProvider` and 2 `Navigate`; a parent without a provider
-  receives the nonzero message alone, an owner nothing. The listener's
-  read sends the parent's process 2 such `WM_GETOBJECT`s.
+  child window's element, with `UiaRootObjectId` `WM_GETOBJECT`s, and
+  nothing else reaches it; a parent without a provider receives the
+  message with a nonzero wParam alone, an owner nothing. The listener's
+  read sends the parent's process such messages too. The tests above pin
+  each read's messages by kind.
 - Target: no message to the parent, which UIA's client side does not
   allow while the child window's element is held; accepted as a known
   limit (`books/dev/src/explanation/design/listener-without-connections.md`, decision 13).
@@ -639,7 +628,7 @@ focused list's selected item is not spoken (Dickson, 2026-11-17).
 
 - Minimum and today: 4 UIA calls, all the listener's, a steady-state
   focus's; met. 7 UIA calls and 1 connection with the outpost's remote
-  walk, 10 with its classic walk, pinned with their provider calls by
+  walk, 10 with its classic walk, pinned by
   `uia_focus_changes_cost_exactly_remote` and `_classic`.
 
 ### A focus change onto a combo box without the Value pattern, UIA
@@ -672,9 +661,7 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
 - Today: 7 UIA calls and 1 connection with the outpost's remote walk
   and 12 UIA calls and 1 connection with its classic walk: the
   listener's 4, the minimum, met, and the rest the outpost's completion
-  of the focus. 387 provider calls with the outpost's remote walk and
-  372 with its classic walk, 11 of them the
-  grid item's row and column and the ancestors' automation ids.
+  of the focus.
 
 ### A focus change, MSAA, steady state
 
@@ -696,13 +683,10 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   passes the equality's first steps against the group of the focus before
   it, so its location and the kept group's are read live (2) and it is
   given the group's id; the walk stops there, the group being in the
-  followed chain. mockapp answered 29 provider calls, 12 of them
-  `accParent` and 3 `accLocation`. Each `accLocation` on an object
-  reached through `accParent`, as both groups are, has oleacc walk that
-  object's parents in the provider: 3 `accParent` hits per read here,
-  measured by leaving the location step out, which gives 18 calls, 6
-  `accParent` and 1 `accLocation`. The arrow between list items, whose list is one
-  level nearer the root, pays 3 `accParent` for its two reads. A focus
+  followed chain. Each `accLocation` on an object reached through
+  `accParent`, as both groups are, has oleacc walk that object's parents
+  in the provider, so a location read's work in the application grows
+  with the object's depth. A focus
   that is itself a sighting compared with a candidate reuses the location
   its read made, so it costs no second read.
 - Target: 18, the two location reads being the cost of comparing as NVDA
@@ -713,9 +697,7 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   324 calls, the walk's 64 hops each reading a location and each of up to
   130 candidates read live twice. In the provider, each of those 194
   location reads may walk its object's parents, which grows with the
-  object's depth; at the walk's 64-hop bound that is about 65 `accParent`
-  hits a read, about 12,600 in all, inferred from the two depths measured
-  and not measured at depth.
+  object's depth.
 
 ### The outpost's reducer
 
@@ -770,8 +752,7 @@ Counted from the code (`books/dev/src/explanation/design/ownership.md`), not mea
 - Minimum and today: 28 MSAA calls and 1 window message, the probe;
   met. The steady state makes 20 and no message
   (`msaa_focus_changes_cost_exactly`). `WindowFromAccessibleObject` answers no window for mockapp's
-  ancestors, and the walk keeps the window it is in. mockapp answered 33
-  provider calls.
+  ancestors, and the walk keeps the window it is in.
 
 ### A focus entering a Windows Forms window, MSAA
 
@@ -896,15 +877,13 @@ the object is the focus or an ancestor, applying the role-dependent rules
 of a full read from the role it was last read with
 (`msaa_state_change_costs_exactly`).
 
-- Today: 2 MSAA calls each, the acquisition and the one property; mockapp
-  answers the acquisition's `WM_GETOBJECT`, `accParent` and
-  `get_accChild` and the property's method.
+- Today: 2 MSAA calls each, the acquisition and the one property.
 - Bound: one property per event.
 
 A window's verdict is renewed every half second, as NVDA renews it, by
 Core's cache, because nothing tells a client that a window began to
 answer the probe. A focus whose window's verdict has run out costs the
-probe again, 1 window message and 1 `WM_GETOBJECT` more; an outpost
+probe again, 1 window message more; an outpost
 keeps a verdict only within one request. The ratchet's
 outpost reads time from the test, so no count depends on the test's
 speed. The two focuses it pins this way are arrows between list items
@@ -923,8 +902,7 @@ selection of the focus or an ancestor as a change of its state
 (mockapp's `a_selection_beside_the_focus_says_nothing` and
 `msaa_state_change_costs_exactly`).
 
-- Today: outside a focused container, the acquisition alone (mockapp
-  answers a `WM_GETOBJECT` and a `get_accChild`); inside one, a full
+- Today: outside a focused container, the acquisition alone; inside one, a full
   read; the focus selected, 2 MSAA calls, the acquisition and its states.
 - Bound: one item per selection event.
 
@@ -944,25 +922,21 @@ The outpost applies NVDA's acceptance test against the foreground window
 before anything else (`docs/parity/focus-events.md`, "Event acceptance";
 `msaa_state_change_costs_exactly`).
 
-- Today: an event from an unrelated window is dropped before any call;
-  mockapp answers nothing. With the focus's window in front, a state
-  change costs the probe, the acquisition and the focus's states, 2 MSAA
-  calls and 1 window message, and mockapp answers 2 `WM_GETOBJECT` and 3
-  provider calls.
+- Today: an event from an unrelated window is dropped before any call.
+  With the focus's window in front, a state change costs the probe, the
+  acquisition and the focus's states, 2 MSAA calls and 1 window message.
 
 ### A repeated or unfocused focus event, MSAA
 
 - A focus event at the address of the focus last reported, a whole
   object, with no foreground change and no other application's focus
   queued since, is NVDA's duplicate: only its role (for NVDA's list
-  redirect) and `accFocus` are read, and mockapp answers 4 provider calls
-  and the acquisition's `WM_GETOBJECT`.
+  redirect) and `accFocus` are read.
 - A focus event on an object neither focused nor inside a focused one:
   its role, `accFocus`, and its and each ancestor's state are read, as
   NVDA reads the states first, and each one's role, which tells the test
   the step that leaves a window, so that it never steps into a window it
-  reads as a plain window; mockapp answers 14 provider calls and the
-  `WM_GETOBJECT` for an object two levels below its root.
+  reads as a plain window.
 
 ### Entering a dialog, MSAA
 
@@ -974,7 +948,7 @@ dialog's own text"; `tests/fixtures/dialog.json`).
   focus's 28 MSAA calls and 1 window message, and 14 for the text: the
   child count and children (2), each of three children's `IAccessible`
   and role (6) and states (3), and the question's name, value and
-  description (3). mockapp answered 50 provider calls. A focus moving
+  description (3). A focus moving
   within a dialog with its own window does not read it again; mockapp's
   dialog has none, so it is a new node each time.
 - Bound: the dialog's children.
@@ -987,10 +961,7 @@ as the `Kept` shape, of which nothing is read
 
 - Minimum and today: 1 UIA call per container, met: its children with
   every property the rules read cached, in one `BuildUpdatedCache` scoped
-  to the children alone, as NVDA's is. mockapp answered 135 provider
-  calls: 26 `ProviderOptions`, 33 `GetPatternProvider`, 43
-  `GetPropertyValue`, 11 `HostRawElementProvider`, 9 `Navigate`, 6
-  `GetRuntimeId` and 7 `FragmentRoot`.
+  to the children alone, as NVDA's is.
 - A top-level message box's first child is the title bar UIA adds, read
   without whether it is off the screen, because that read has UIA send
   `WM_GETTITLEBARINFOEX`, about 6 ms alone and seconds under load
@@ -1348,8 +1319,9 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
   its automation id (`verbatim_uia::Ancestor`). The requests of an element
   read alone (the focus, its value's selected item, a navigation step's
   neighbour) hold the `GridItem` pattern's availability, row and column
-  (`verbatim_uia::Cell`), which costs mockapp 3 `GetPatternProvider` calls
-  per such element; no read of many elements asks for them. One
+  (`verbatim_uia::Cell`), which costs provider work inside the
+  application for each such element; no read of many elements asks for
+  them. One
   `GetAsyncKeyState` per reported focus change. A cell read for a focus or
   the review also reads its containing grid: one more call in the focus
   listener's classic read, only for a cell, and none in a remote program,
@@ -1976,31 +1948,31 @@ Every `verbatim_uia::Registration` registers its subscriptions as one
 its scope, as NVDA does, so the focus listener's three desktop-wide
 subscriptions (an element selected, a menu opened, notifications) are one
 registration with one thread and one client. A registration runs on the
-process's registering thread and makes no counted call; the provider calls
-UIA makes are pinned (`uia_event_registrations_cost_exactly`), the same
-with remote operations on or off.
+process's registering thread and makes no counted call
+(`uia_event_registrations_cost_exactly`), the same with remote operations
+on or off.
 
-- The listener's registration costs mockapp no provider call; registering
-  it takes 9.9 ms at the median (11.9 at the 95th percentile, 30 runs).
+- Registering the listener's group takes 9.9 ms at the median (11.9 at
+  the 95th percentile, 30 runs).
 - The outpost's focus-following property subscription is registered on the
   focus alone (`docs/parity/backends.md`, "UIA event registration"),
   because the reducer acts only on the focus's own changes, and UIA
   delivered no ancestor's event under NVDA's scope of the focus with its
-  ancestors either. Moving it to a focus inside a group costs 1
-  `HostRawElementProvider` and 2 `FragmentRoot` provider calls, 0.75 ms at
-  the median (1.14 at the 95th percentile, 30 runs). Those are the warm
-  costs, with UI Automation's copy of the element's runtime id fresh. The
+  ancestors either. Moving it to a focus inside a group takes 0.75 ms at
+  the median (1.14 at the 95th percentile, 30 runs). That is the warm
+  cost, with UI Automation's copy of the element's runtime id fresh. The
   outpost moves the registration to elements it keeps
   (`crates/verbatim-outpost/src/outpost/shell.rs`), and one held past UI
-  Automation's periodic sweep is cold: registering on it costs 9 provider
-  calls instead of 3, and moving the registration to the element it
-  already follows costs 6 instead of 0 (`books/dev/src/reference/uia-bugs.md`, "UI
-  Automation's copy of an element's runtime id lapses").
+  Automation's periodic sweep is cold: registering on it reads the
+  runtime id from the provider again, and so does moving the registration
+  to the element it already follows, which warm costs the application
+  nothing (`books/dev/src/reference/uia-bugs.md`, "UI Automation's copy of an element's runtime
+  id lapses").
 - A text focus's caret, text and active text position changes as one
   group on the focus, as browse mode (M7) will register them
   (`uia_active_text_position_costs_exactly`):
-  registering it on mockapp's text costs 1 `HostRawElementProvider` and 2
-  `FragmentRoot`, 0.89 ms at the median. An active text position change is
+  registering it on mockapp's text takes 0.89 ms at the median. An active
+  text position change is
   kept as a position without reading anything.
 
 ### Event caches
@@ -2015,23 +1987,17 @@ for every event, so each request holds only what is read from it.
   item selected in a focused list, 25 properties more
   (`verbatim_uia::ListenerSelection`: the value, states, description,
   keyboard shortcut, grid row and column, position in set and level, not
-  the rectangle), whatever the theme (Dickson, 2026-10-29):
-  25 provider calls more inside the application per selection event,
-  paid for every selection on the desktop, spoken or not.
+  the rectangle), whatever the theme (Dickson, 2026-10-29): a property
+  read more inside the application for each, per selection event, paid
+  for every selection on the desktop, spoken or not.
 - The outpost's text registration asks for 3 properties (`TextEvent`),
   since the worker reads the text itself, and its property registration
   for 25 (`PropertyEvent`), without a node's details or its off-screen
   state (`books/dev/src/explanation/design/uia-shapes.md`, decision 9);
   its automation id, with the Text pattern, tells Core whether a
-  suggestions change off the focus is a suggestions field's, one provider
-  call more per property event and no call across processes.
-- Pinned on demand (`uia_event_caches_cost_exactly`), because the calls
-  UIA makes to route an event vary with load: the text events' request 3
-  `GetPropertyValue`; the property changes' 13 `GetPropertyValue` and 12
-  `GetPatternProvider`; the listener's 15 `GetPropertyValue` and 3
-  `GetPatternProvider`, and for an element selected 27 and 16; each also
-  5 `ProviderOptions`, 3 `HostRawElementProvider`, 3 `FragmentRoot` and 2
-  `GetRuntimeId`.
+  suggestions change off the focus is a suggestions field's, one property
+  read more inside the application per property event and no call across
+  processes.
 - A help text change and a `ControllerFor` change on the focus each read
   what they need when handled, one call, as NVDA does
   (`a_focus_s_help_text_and_suggestions_are_followed`); the first after

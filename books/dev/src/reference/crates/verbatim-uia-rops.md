@@ -798,7 +798,7 @@ constants, and source locations. The mockapp tests run both
 implementations of each operation against real providers and assert that
 they agree: `remote_ops.rs` (the focus ancestry, the navigation step,
 cached properties, a stalled and an exited provider), `call_counts.rs`
-(calls and provider hits of each read), `text.rs` (the caret read and the
+(the calls of each read), `text.rs` (the caret read and the
 text reads), `terminal.rs` and `terminal_snapshot.rs`,
 `controller_for.rs`, `uia_tree.rs` and `time_limits.rs` (the tree dump),
 and `instruction_limit.rs` (the platform's limit and every program's
