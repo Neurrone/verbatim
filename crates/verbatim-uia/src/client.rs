@@ -16,9 +16,8 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope_Children, UIA_InvokePatternId,
-    UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-    UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    TreeScope_Children, UIA_InvokePatternId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
+    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
