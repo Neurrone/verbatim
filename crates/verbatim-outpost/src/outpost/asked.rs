@@ -29,6 +29,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::ops::ControlFlow;
+
 use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
@@ -144,18 +146,8 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
                 ask.verdict,
                 &mut probes,
             ) {
-                Some(true) => {
-                    let checked = complete.hidden == HiddenRoot::Check;
-                    match checked.then(|| hidden_root(hwnd_of(complete.route.window))) {
-                        Some(Root::HiddenDialog(window)) => {
-                            Outcome::Result(Reply::HiddenDialog(window))
-                        }
-                        Some(Root::NotThere) => Outcome::NotThere,
-                        Some(Root::Read) | None => {
-                            super::completion::complete(context, client, complete)
-                        }
-                    }
-                }
+                Some(true) => hidden_answer(complete.hidden, hwnd_of(complete.route.window))
+                    .unwrap_or_else(|| super::completion::complete(context, client, complete)),
                 Some(false) => Outcome::Refused(Refusal::ReadThroughMsaa),
                 None => Outcome::NotThere,
             }
@@ -329,12 +321,7 @@ fn known_nearest(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<is
     node.details
         .window
         .map(hwnd_of)
-        .or_else(|| context.store.key_of(node.id).map(|(hwnd, _, _)| hwnd))
-        .or_else(|| context.store.nearest_window_of(node.id))
-        .or_else(|| match context.store.runtime_id_of(node.id).as_deref() {
-            Some([42, hwnd]) => isize::try_from(*hwnd).ok(),
-            _ => None,
-        })
+        .or_else(|| known_nearest_of(context, node.id))
         .filter(|&hwnd| hwnd != 0)
 }
 
@@ -623,6 +610,34 @@ fn find(
     scope: FindScope,
     wanted: (PropertyId, &PropertyValue),
 ) -> Result<Option<NodeSnapshot>, ReadError> {
+    depth_first(
+        context,
+        client,
+        (node, scope == FindScope::Descendants),
+        |child| {
+            if has_value(context, &child, wanted) {
+                ControlFlow::Break(child)
+            } else {
+                ControlFlow::Continue(())
+            }
+        },
+    )
+}
+
+/// Walks the subtree below `node` depth first, in document order, handing
+/// each node to `visit` until it answers with the node to return, through
+/// `node`'s children alone unless `descend`, and through no more than
+/// [`MAX_NODES`] nodes. A child gone has no children.
+///
+/// # Errors
+///
+/// A failed read of a node's children, but a child gone.
+fn depth_first(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    (node, descend): (NodeId, bool),
+    mut visit: impl FnMut(NodeSnapshot) -> ControlFlow<NodeSnapshot>,
+) -> Result<Option<NodeSnapshot>, ReadError> {
     let mut visited = 0usize;
     let mut stack = vec![children(context, client, node)?.into_iter()];
     while let Some(level) = stack.last_mut() {
@@ -631,14 +646,15 @@ fn find(
             continue;
         };
         visited = visited.saturating_add(1);
-        if has_value(context, &child, wanted) {
-            return Ok(Some(child));
+        let id = child.id;
+        if let ControlFlow::Break(found) = visit(child) {
+            return Ok(Some(found));
         }
         if visited >= MAX_NODES {
             break;
         }
-        if scope == FindScope::Descendants {
-            let below = match children(context, client, child.id) {
+        if descend {
+            let below = match children(context, client, id) {
                 Ok(below) => below,
                 Err(ReadError::Gone) => Vec::new(),
                 Err(error) => return Err(error),
@@ -828,23 +844,10 @@ fn descendants(
     node: NodeId,
 ) -> Result<Vec<NodeSnapshot>, ReadError> {
     let mut found = Vec::new();
-    let mut stack = vec![children(context, client, node)?.into_iter()];
-    while let Some(level) = stack.last_mut() {
-        let Some(child) = level.next() else {
-            stack.pop();
-            continue;
-        };
-        if found.len() >= MAX_NODES {
-            break;
-        }
-        let below = match children(context, client, child.id) {
-            Ok(below) => below,
-            Err(ReadError::Gone) => Vec::new(),
-            Err(error) => return Err(error),
-        };
+    depth_first(context, client, (node, true), |child| {
         found.push(child);
-        stack.push(below.into_iter());
-    }
+        ControlFlow::Continue(())
+    })?;
     Ok(found)
 }
 
@@ -1169,6 +1172,20 @@ pub(super) fn hidden_root(hwnd: isize) -> Root {
     hidden_root_read(hwnd, verbatim_ia2::acquire::client_role)
 }
 
+/// The answer a request that `hidden` asks to check for a hidden root
+/// gives in window `hwnd` before it reads anything: a hidden dialog's
+/// window, or not there; `None` to read on ([`hidden_root`]).
+fn hidden_answer(hidden: HiddenRoot, hwnd: isize) -> Option<Outcome> {
+    if hidden != HiddenRoot::Check {
+        return None;
+    }
+    match hidden_root(hwnd) {
+        Root::HiddenDialog(window) => Some(Outcome::Result(Reply::HiddenDialog(window))),
+        Root::NotThere => Some(Outcome::NotThere),
+        Root::Read => None,
+    }
+}
+
 /// [`hidden_root`], the client object's role read by `client_role`.
 pub(super) fn hidden_root_read(hwnd: isize, client_role: impl Fn(isize) -> Option<Role>) -> Root {
     let root = verbatim_win32::window::top_level_of(hwnd);
@@ -1357,14 +1374,10 @@ fn current_focus(
 ) -> Outcome {
     let window = read::checked_focus_window(context);
     let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
-    if hidden == HiddenRoot::Check
-        && let Ok(hwnd) = window
+    if let Ok(hwnd) = window
+        && let Some(answer) = hidden_answer(hidden, hwnd)
     {
-        match hidden_root(hwnd) {
-            Root::HiddenDialog(window) => return Outcome::Result(Reply::HiddenDialog(window)),
-            Root::NotThere => return Outcome::NotThere,
-            Root::Read => {}
-        }
+        return answer;
     }
     let read = window.and_then(|hwnd| {
         read::focused_control_in(

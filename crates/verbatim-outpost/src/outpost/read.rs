@@ -508,6 +508,45 @@ fn window_from_local_state(
     }
 }
 
+/// How far the outpost reads window `hwnd`, judged with local calls in the
+/// order NVDA's `Window._get_parent` chooses the object of a window
+/// (`findBestAPIClass`, `NVDAObjects/window/__init__.py` 84 to 98): a
+/// window another process serves is above the process boundary; a ghost's
+/// or a hung application's is a plain window; any other is read by its own
+/// object, whose backend the caller judges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    /// Another process serves it.
+    AboveBoundary,
+    /// A ghost's or a hung application's window.
+    Plain,
+    /// The application's own window, readable.
+    Own,
+}
+
+/// How far the outpost reads window `hwnd` ([`Reach`]).
+fn reach(context: &RequestContext<'_>, hwnd: isize) -> Reach {
+    if !serves(context, hwnd) {
+        Reach::AboveBoundary
+    } else if context.window_unreadable(hwnd).is_some() {
+        Reach::Plain
+    } else {
+        Reach::Own
+    }
+}
+
+/// The stand-in for window `hwnd` read from Windows' own state alone, for
+/// a window the outpost makes no call into: NVDA's MSAA client for it
+/// ([`client_pane`]), but a ghost's or a hung application's window, which
+/// is a [`plain_window`], as NVDA's object for it is (Fable, 2026-10-30).
+fn stand_in(context: &RequestContext<'_>, hwnd: isize) -> NodeSnapshot {
+    if context.window_unreadable(hwnd).is_none() {
+        client_pane(context, hwnd)
+    } else {
+        plain_window(context, hwnd)
+    }
+}
+
 /// How the MSAA focused-state test reads window `hwnd`, a parent window it
 /// goes on to past a failed `accParent`
 /// (`verbatim_ia2::acquire::FocusCandidate::has_focused_state`), by the
@@ -522,11 +561,10 @@ pub(super) fn parent_window_for_focused_state(
     hwnd: isize,
 ) -> verbatim_ia2::acquire::ParentWindow {
     use verbatim_ia2::acquire::ParentWindow;
-    if !serves(context, hwnd) {
-        return ParentWindow::AboveBoundary;
-    }
-    if context.window_unreadable(hwnd).is_some() {
-        return ParentWindow::Plain;
+    match reach(context, hwnd) {
+        Reach::AboveBoundary => return ParentWindow::AboveBoundary,
+        Reach::Plain => return ParentWindow::Plain,
+        Reach::Own => {}
     }
     if !window_uses_uia(context, hwnd) {
         return ParentWindow::Msaa;
@@ -568,10 +606,8 @@ fn onward_after_failure(
 
 /// The windows from `hwnd` up to the desktop, which is none of them,
 /// outermost first, read with local calls only, for a chain cut at its
-/// depth limit or stopped at the process boundary: each is NVDA's MSAA
-/// client for it ([`client_pane`]), but a ghost's or a hung application's
-/// window, which is a [`plain_window`], as NVDA's object for it is (Fable,
-/// 2026-10-30). Each window from the first another process serves upward
+/// depth limit or stopped at the process boundary: each its
+/// [`stand_in`]. Each window from the first another process serves upward
 /// is above the process boundary, a stand-in for its own application's
 /// object ([`NodeDetails::above_boundary`]).
 pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> Vec<NodeSnapshot> {
@@ -581,11 +617,7 @@ pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> V
     let mut above_boundary = false;
     while current != 0 && current != desktop && windows.len() < MAX_ANCESTOR_HOPS as usize {
         above_boundary = above_boundary || !serves(context, current);
-        let mut window = if context.window_unreadable(current).is_none() {
-            client_pane(context, current)
-        } else {
-            plain_window(context, current)
-        };
+        let mut window = stand_in(context, current);
         window.details.above_boundary = above_boundary;
         windows.push(window);
         current = parent(current);
@@ -624,16 +656,20 @@ fn window_onward(
     let mut current = hwnd;
     let mut above = Vec::new();
     while current != 0 && current != desktop {
-        if !serves(context, current) {
-            above = plain_windows_from(context, current);
-            break;
-        }
-        if context.window_unreadable(current).is_none()
-            && let Some(chain) =
-                window_object_onward(context, uia, current, (previous, candidates))?
-        {
-            above = chain;
-            break;
+        match reach(context, current) {
+            Reach::AboveBoundary => {
+                above = plain_windows_from(context, current);
+                break;
+            }
+            Reach::Own => {
+                if let Some(chain) =
+                    window_object_onward(context, uia, current, (previous, candidates))?
+                {
+                    above = chain;
+                    break;
+                }
+            }
+            Reach::Plain => {}
         }
         passed.push(plain_window(context, current));
         current = parent(current);
@@ -786,21 +822,8 @@ pub(super) fn uia_chain_from_read(
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
     let known = |id: NodeId| knows(previous, id);
-    let parents: Vec<verbatim_uia::AncestorParts> = ancestors
-        .iter()
-        .map(|ancestor| verbatim_uia::AncestorParts {
-            parts: verbatim_uia::map::CachedUiaParts {
-                runtime_id: ancestor.snapshot.runtime_id.clone(),
-                role: ancestor.snapshot.role,
-                name: ancestor.snapshot.name.clone(),
-                value: ancestor.snapshot.value.clone(),
-                states: ancestor.snapshot.states,
-                details: ancestor.snapshot.details.clone(),
-            },
-            hwnd: ancestor.hwnd,
-            content: ancestor.content,
-        })
-        .collect();
+    let parents: Vec<verbatim_uia::AncestorParts> =
+        ancestors.iter().map(super::completion::parts).collect();
     let (chain, crossed, walked) = Uia::ancestor_chain_from_parts(
         &parents,
         context.nodes(),
@@ -1954,17 +1977,14 @@ fn window_object(
         node.details.desktop_window = true;
         return Ok(node);
     }
-    if !serves(context, hwnd) {
-        let mut node = if context.window_unreadable(hwnd).is_none() {
-            client_pane(context, hwnd)
-        } else {
-            plain_window(context, hwnd)
-        };
-        node.details.above_boundary = true;
-        return Ok(node);
-    }
-    if context.window_unreadable(hwnd).is_some() {
-        return Ok(plain_window(context, hwnd));
+    match reach(context, hwnd) {
+        Reach::AboveBoundary => {
+            let mut node = stand_in(context, hwnd);
+            node.details.above_boundary = true;
+            return Ok(node);
+        }
+        Reach::Plain => return Ok(plain_window(context, hwnd)),
+        Reach::Own => {}
     }
     if window_uses_uia(context, hwnd) {
         let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;

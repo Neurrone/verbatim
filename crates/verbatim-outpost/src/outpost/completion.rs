@@ -554,7 +554,7 @@ fn fact(runtime_id: &[i32], values: &PropertyValues) -> UiaSnapshotFact {
 }
 
 /// An ancestor's parts, as the chain from parts takes them.
-fn parts(ancestor: &UiaAncestorFact) -> verbatim_uia::AncestorParts {
+pub(super) fn parts(ancestor: &UiaAncestorFact) -> verbatim_uia::AncestorParts {
     verbatim_uia::AncestorParts {
         parts: verbatim_uia::map::CachedUiaParts {
             runtime_id: ancestor.snapshot.runtime_id.clone(),
