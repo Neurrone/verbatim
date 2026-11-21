@@ -3,18 +3,18 @@
 
 use std::sync::atomic::AtomicU64;
 
-use verbatim_model::batch::{Chunks, Done, RangeText, Selected};
+use verbatim_model::batch::{Chunks, Done, Missing, RangeText, Selected, StepOutcome, StepRefusal};
 use verbatim_model::{CaretMotion, SelectionDifference, SentenceMoved};
 
 use super::*;
 
 /// One unit read call by call at `at`, after `movement`: how far it moved
-/// and its chunk, or the reply that refuses it.
+/// and its chunk, or the outcome that refuses it.
 fn read_one(
     source: &mut Fake,
     anchors: &mut NodeText<'_, usize>,
     (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
-) -> Result<(i32, TextChunk), TextReply> {
+) -> Result<(i32, TextChunk), Box<StepOutcome>> {
     let step = CallStep::Read {
         at,
         movement,
@@ -24,17 +24,19 @@ fn read_one(
     match by_calls(source, anchors, step).expect("the fake answers") {
         Ok(Done::ReadText(Chunks { moved, mut chunks })) => Ok((moved, chunks.remove(0))),
         Ok(other) => panic!("a read, not {other:?}"),
-        Err(reply) => Err(reply),
+        Err(refused) => Err(Box::new(refused)),
     }
 }
 
-/// `step` run call by call: its result, or the reply that refuses it.
+/// `step` run call by call: its result, or the outcome that refuses it.
 fn call(
     source: &mut Fake,
     anchors: &mut NodeText<'_, usize>,
     step: CallStep,
-) -> Result<Done, TextReply> {
-    by_calls(source, anchors, step).expect("the fake answers")
+) -> Result<Done, Box<StepOutcome>> {
+    by_calls(source, anchors, step)
+        .expect("the fake answers")
+        .map_err(Box::new)
 }
 
 /// An in-memory text whose positions are UTF-16 offsets. Paragraphs end
@@ -338,7 +340,7 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     };
     assert_eq!(
         read(&mut anchors, &mut source, first),
-        Err(TextReply::AnchorLost)
+        Err(Box::new(StepOutcome::NotThere(Missing::Anchor(first))))
     );
     assert!(read(&mut anchors, &mut source, kept).is_ok());
 }
@@ -455,7 +457,7 @@ fn read(
     source: &mut Fake,
     anchors: &mut Anchors<usize>,
     read: (TextPoint, Option<TextMovement>, TextUnit),
-) -> Result<(i32, TextChunk), TextReply> {
+) -> Result<(i32, TextChunk), Box<StepOutcome>> {
     read_one(source, &mut anchors.node(1), read)
 }
 
@@ -508,7 +510,7 @@ fn the_ends_of_the_document_are_reached_by_document_movement() {
     let whole = (TextPoint::Start, None, TextUnit::Document);
     assert_eq!(
         read(&mut source, &mut anchors, whole),
-        Err(TextReply::UnsupportedUnit(TextUnit::Document))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
 }
 
@@ -525,12 +527,12 @@ fn sentences_are_unsupported_or_read_as_the_paragraph() {
     source.sentences = Sentences::Unsupported;
     assert_eq!(
         read(&mut source, &mut anchors, sentence),
-        Err(TextReply::UnsupportedUnit(TextUnit::Sentence))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
     let page = (TextPoint::Caret, None, TextUnit::Page);
     assert_eq!(
         read(&mut source, &mut anchors, page),
-        Err(TextReply::UnsupportedUnit(TextUnit::Page))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
 }
 
@@ -659,15 +661,20 @@ fn text_cut_short_ends_at_a_whole_character() {
 /// (Table 17, column E).
 #[test]
 fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
-    let mut source = Fake::new("line one
-", 2);
+    let mut source = Fake::new(
+        "line one
+",
+        2,
+    );
     let mut anchors = store();
     let (report, selected, baseline) =
-        held::read_focus(&mut source, &mut anchors.node(1), REPORTED_AT)
-            .expect("the fake answers");
+        held::read_focus(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
     assert_eq!(selected, None);
-    assert_eq!(report.line.text, "line one
-");
+    assert_eq!(
+        report.line.text,
+        "line one
+"
+    );
     assert_eq!(report.line.offset, 2);
     assert!(
         anchors.node(1).anchors.held.contains_key(&baseline.0),
@@ -680,8 +687,11 @@ fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
 /// selection given beside it (Table 17, column D).
 #[test]
 fn a_selection_says_what_changed_from_the_named_baseline() {
-    let mut source = Fake::new("line one
-", 0);
+    let mut source = Fake::new(
+        "line one
+",
+        0,
+    );
     let mut anchors = store();
     let first = caret_held(&mut source, &mut anchors);
     source.selection = Some((0, 4));
@@ -717,8 +727,11 @@ fn a_selection_says_what_changed_from_the_named_baseline() {
 /// is named as lost.
 #[test]
 fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_is_named() {
-    let mut source = Fake::new("line one
-", 0);
+    let mut source = Fake::new(
+        "line one
+",
+        0,
+    );
     let mut anchors = store();
     let first = caret_held(&mut source, &mut anchors);
     source.caret = 3;

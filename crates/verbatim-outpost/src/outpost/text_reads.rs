@@ -539,7 +539,7 @@ pub(super) fn by_calls(
     node_id: NodeId,
     step: text::CallStep,
     named: &[u64],
-) -> Result<text::OrReply<verbatim_model::batch::Done>, TextReply> {
+) -> Result<text::OrRefused<verbatim_model::batch::Done>, TextReply> {
     on_text!(
         context,
         node_id,

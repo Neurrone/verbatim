@@ -829,16 +829,9 @@ pub enum TextReply {
         /// nearest first in each direction.
         matches: Vec<crate::TerminalMatch>,
     },
-    /// The provider has no such unit (UIA has no sentence; a plain edit
-    /// control has no page). Core falls back to a unit it has.
-    UnsupportedUnit(TextUnit),
-    /// The provider cannot do this operation on this text.
-    Unsupported,
     /// The node has no text interface at all. Core falls back to the node's
     /// value or name, as NVDA's object review does.
     NoText,
-    /// A [`TextPosition`] named an anchor the outpost no longer has.
-    AnchorLost,
     /// The node no longer exists.
     Gone,
     /// The application did not answer in time, or the read failed.
@@ -851,15 +844,9 @@ pub enum TextReply {
 /// or one of these, so no answer a correct outpost gives fails to decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextFailure {
-    /// [`TextReply::UnsupportedUnit`].
-    UnsupportedUnit(TextUnit),
-    /// [`TextReply::Unsupported`].
-    Unsupported,
     /// [`TextReply::NoText`]: the node has no text, so no caret and no
     /// selection.
     NoText,
-    /// [`TextReply::AnchorLost`].
-    AnchorLost,
     /// [`TextReply::Gone`].
     Gone,
     /// [`TextReply::Unanswered`].
@@ -875,10 +862,7 @@ impl TextReply {
     /// The reply itself, when it is no failure.
     pub fn into_failure(self) -> Result<TextFailure, Self> {
         match self {
-            TextReply::UnsupportedUnit(unit) => Ok(TextFailure::UnsupportedUnit(unit)),
-            TextReply::Unsupported => Ok(TextFailure::Unsupported),
             TextReply::NoText => Ok(TextFailure::NoText),
-            TextReply::AnchorLost => Ok(TextFailure::AnchorLost),
             TextReply::Gone => Ok(TextFailure::Gone),
             TextReply::Unanswered => Ok(TextFailure::Unanswered),
             own @ (TextReply::TerminalRead(_)

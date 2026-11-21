@@ -31,7 +31,7 @@ use verbatim_model::request::{
     Ask, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
 };
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, QueryKind, TextAnchor, TextPoint, TextPosition, TextReply,
+    Backend, NodeId, NodeSnapshot, QueryKind, TextPoint, TextPosition, TextReply,
 };
 
 use super::RequestContext;
@@ -1250,7 +1250,7 @@ impl Run<'_, '_> {
             } => {
                 return Ok(
                     match text_reads::sentence_step(context, node, (*from, *forward), *details) {
-                        Err(reply) => text_refused(&reply, node, None),
+                        Err(reply) => text_refused(&reply, node),
                         Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
                         Ok(Err(TextError::Failed(reason))) => {
                             tracing::debug!(reason, "a move by sentence failed");
@@ -1275,16 +1275,14 @@ impl Run<'_, '_> {
         let named: Vec<u64> = step.named().into_iter().map(|anchor| anchor.0).collect();
         let ran = text_reads::by_calls(context, node, step, &named);
         Ok(match ran {
-            Ok(Ok(Err(reply))) => {
-                text_refused(&reply, node, named.first().copied().map(TextAnchor))
-            }
+            Ok(Ok(Err(refused))) => refused,
             Ok(Ok(Ok(done))) => StepOutcome::Done(done),
             Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
             Ok(Err(TextError::Failed(reason))) => {
                 tracing::debug!(reason, "a batch's text step failed");
                 StepOutcome::Failed
             }
-            Err(reply) => text_refused(&reply, node, None),
+            Err(reply) => text_refused(&reply, node),
         })
     }
 
@@ -1522,7 +1520,7 @@ fn text_result<T>(
     done: impl FnOnce(T) -> Result<Done, Missing>,
 ) -> StepOutcome {
     match ran {
-        Err(reply) => text_refused(&reply, node, None),
+        Err(reply) => text_refused(&reply, node),
         Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
         Ok(Err(TextError::Failed(reason))) => {
             tracing::debug!(reason, "a batch's text step failed");
@@ -1532,17 +1530,12 @@ fn text_result<T>(
     }
 }
 
-/// The outcome a text reply that is no result gives (the design's section
-/// 6, the reply rows).
-fn text_refused(reply: &TextReply, node: NodeId, named: Option<TextAnchor>) -> StepOutcome {
+/// The outcome of a text step on `node` whose text could not be opened,
+/// `reply` saying why (the design's section 6, the reply rows).
+fn text_refused(reply: &TextReply, node: NodeId) -> StepOutcome {
     match reply {
         TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
-        TextReply::UnsupportedUnit(_) => StepOutcome::Refused(StepRefusal::NoSuchUnit),
-        TextReply::Unsupported => StepOutcome::Refused(StepRefusal::Unsupported),
         TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
-        TextReply::AnchorLost => {
-            StepOutcome::NotThere(named.map_or(Missing::Node(node), Missing::Anchor))
-        }
         TextReply::Unanswered => StepOutcome::Failed,
         other => {
             tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");

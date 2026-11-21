@@ -27,11 +27,11 @@ use std::sync::Arc;
 
 use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
-use verbatim_model::batch::{Chunks, Done, Located, Op, TextOffset};
+use verbatim_model::batch::{Chunks, Done, Located, Op, StepOutcome, StepRefusal, TextOffset};
 use verbatim_model::request::Question;
 use verbatim_model::{
     CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextPoint,
-    TextPosition, TextReply, TextUnit,
+    TextPosition, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
@@ -95,13 +95,13 @@ fn point_of(chunk: &TextChunk) -> TextPosition {
 
 /// Reads `count` units call by call, as the outpost reads a batch's
 /// `ReadText` of an edit control: how far it moved and the chunks, or the
-/// reply that refuses it.
+/// outcome that refuses it.
 fn read_units<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (at, movement, unit): (TextPoint, Option<(TextUnit, i32)>, TextUnit),
     count: u8,
-) -> Result<(i32, Vec<TextChunk>), TextReply> {
+) -> Result<(i32, Vec<TextChunk>), Box<StepOutcome>> {
     let step = CallStep::Read {
         at,
         movement: movement.map(|(unit, count)| TextMovement { unit, count }),
@@ -111,7 +111,7 @@ fn read_units<S: TextSource>(
     match by_calls(source, anchors, step).expect("the text answers") {
         Ok(Done::ReadText(Chunks { moved, chunks })) => Ok((moved, chunks)),
         Ok(other) => panic!("a read, not {other:?}"),
-        Err(reply) => Err(reply),
+        Err(refused) => Err(Box::new(refused)),
     }
 }
 
@@ -122,13 +122,13 @@ fn read<S: TextSource>(
     at: TextPoint,
     movement: Option<(TextUnit, i32)>,
     unit: TextUnit,
-) -> Result<(i32, TextChunk), TextReply> {
+) -> Result<(i32, TextChunk), Box<StepOutcome>> {
     read_units(source, anchors, (at, movement, unit), 1)
         .map(|(moved, mut chunks)| (moved, chunks.remove(0)))
 }
 
 /// A read's chunk and how far it moved.
-fn chunk(reply: Result<(i32, TextChunk), TextReply>) -> (i32, TextChunk) {
+fn chunk(reply: Result<(i32, TextChunk), Box<StepOutcome>>) -> (i32, TextChunk) {
     reply.unwrap_or_else(|other| panic!("a read, not {other:?}"))
 }
 
@@ -337,7 +337,7 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
             None,
             TextUnit::Sentence
         ),
-        Err(TextReply::UnsupportedUnit(TextUnit::Sentence))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
     // A read carries UIA's language for its text.
     let (_, line) = chunk(read(
@@ -1267,7 +1267,7 @@ fn edit_control_text(fixture: &str, past_last_line: isize) {
             None,
             TextUnit::Page
         ),
-        Err(TextReply::UnsupportedUnit(TextUnit::Page))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
     a_caret_key_is_answered_with_what_it_did(
         (&mut app, hwnd),
@@ -1722,7 +1722,7 @@ fn page_movement_answers_from_the_providers_pages() {
             Some((TextUnit::Page, 1)),
             TextUnit::Line,
         ),
-        Err(TextReply::UnsupportedUnit(TextUnit::Page))
+        Err(Box::new(StepOutcome::Refused(StepRefusal::NoSuchUnit)))
     );
     app.quit();
 }

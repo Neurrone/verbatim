@@ -550,10 +550,7 @@ impl Named {
             }
             TextReply::TerminalHistory { .. }
             | TextReply::TerminalFound { .. }
-            | TextReply::UnsupportedUnit(_)
-            | TextReply::Unsupported
             | TextReply::NoText
-            | TextReply::AnchorLost
             | TextReply::Gone
             | TextReply::Unanswered => {}
         }

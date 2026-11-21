@@ -19,11 +19,11 @@
 //!   outpost itself reported (a caret, a selection's ends, the point of a
 //!   read), which it remembers as they are.
 //! - Anchors Core holds are kept; any other is forgotten once 64 newer ones
-//!   were minted for the same node, and a request naming it is answered
-//!   [`TextReply::AnchorLost`].
+//!   were minted for the same node, and a step naming it is answered not
+//!   there, by that anchor.
 //! - A chunk is at most [`MAX_CHUNK_BYTES`], cut at a character boundary.
-//! - A unit the source does not have is answered
-//!   [`TextReply::UnsupportedUnit`], and movement stops at the document's
+//! - A unit the source does not have is refused as no such unit
+//!   ([`StepRefusal::NoSuchUnit`]), and movement stops at the document's
 //!   ends, reporting how far it really went.
 //! - A key's read ([`check_key`]) reads the caret once and compares what it
 //!   read with the node's last read; Core judges evidence from it by
@@ -45,12 +45,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use verbatim_model::batch::{Chunks, Done, Located, RangeText, Selected, TextOffset};
+use verbatim_model::batch::{
+    Chunks, Done, Located, Missing, RangeText, Selected, StepOutcome, StepRefusal, TextOffset,
+};
 use verbatim_model::{
     CaretReport, CaretSelection, EditSelection, FormatRun, LanguageRun, MAX_CHUNK_BYTES,
     MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, Selection,
     SelectionChange, TextAnchor, TextAttributes, TextChunk, TextMovement, TextPoint, TextPosition,
-    TextReply, TextUnit,
+    TextUnit,
 };
 
 use crate::outpost::{Anchor, NodeAnchors, ReadSelection};
@@ -201,9 +203,12 @@ pub enum TextError {
 /// What reading text can fail with.
 pub type TextResult<T> = Result<T, TextError>;
 
-/// A value read, or the reply that ends the request instead (a forgotten
-/// anchor, an unsupported unit).
-pub type OrReply<T> = TextResult<Result<T, TextReply>>;
+/// A value read, or the outcome a batch's step answers instead (a
+/// forgotten anchor, a unit or an action the text does not have).
+pub type OrRefused<T> = TextResult<Result<T, StepOutcome>>;
+
+/// The outcome of a step naming a unit the text does not have.
+const NO_SUCH_UNIT: StepOutcome = StepOutcome::Refused(StepRefusal::NoSuchUnit);
 
 /// The caret and the selection as a source reads them.
 #[derive(Clone, Debug)]
@@ -231,8 +236,8 @@ pub struct Unit<P> {
 /// How a source treats sentences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sentences {
-    /// It has no sentence unit (UIA): a sentence read is answered
-    /// [`TextReply::UnsupportedUnit`], and Core reads by line.
+    /// It has no sentence unit (UIA): a sentence read is refused as no
+    /// such unit, and Core reads by line.
     Unsupported,
     /// Its text is offsets that Core splits into sentences itself (the
     /// Win32 edit controls): a sentence read is answered with the paragraph.
@@ -748,12 +753,12 @@ fn characters(text: &str) -> u32 {
     u32::try_from(verbatim_text::graphemes(text).len()).unwrap_or(u32::MAX)
 }
 
-/// A point resolved, or the reply that ends the request.
+/// A point resolved, or the outcome its step answers instead.
 fn point<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     point: TextPoint,
-) -> OrReply<S::Pos> {
+) -> OrRefused<S::Pos> {
     Ok(Ok(match point {
         TextPoint::Caret => source.caret()?.caret,
         TextPoint::SelectionStart => {
@@ -768,7 +773,9 @@ fn point<S: TextSource>(
         TextPoint::End => source.end()?,
         TextPoint::At(position) => match anchors.resolve(source, position)? {
             Some(pos) => pos,
-            None => return Ok(Err(TextReply::AnchorLost)),
+            None => {
+                return Ok(Err(StepOutcome::NotThere(Missing::Anchor(position.anchor))));
+            }
         },
     }))
 }
@@ -1178,7 +1185,7 @@ impl CallStep {
 }
 
 /// Runs `step` on `source`, whose anchors are `anchors`, call by call: the
-/// step's result, or the reply that refuses it (an anchor lost, a unit or
+/// step's result, or the outcome that refuses it (an anchor lost, a unit or
 /// an action the text does not have).
 ///
 /// # Errors
@@ -1188,7 +1195,7 @@ pub fn by_calls<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     step: CallStep,
-) -> OrReply<Done> {
+) -> OrRefused<Done> {
     Ok(match step {
         CallStep::Read {
             at,
@@ -1208,7 +1215,7 @@ pub fn by_calls<S: TextSource>(
             Ok((start, end)) if source.select(&start, &end)? => {
                 Ok(Done::Select(Selected { began_us }))
             }
-            Ok(_) => Err(TextReply::Unsupported),
+            Ok(_) => Err(StepOutcome::Refused(StepRefusal::Unsupported)),
             Err(reply) => Err(reply),
         },
         CallStep::Locate(at) => location(source, anchors, at)?.map(Done::Locate),
@@ -1224,12 +1231,12 @@ fn read_units<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
     count: u8,
-) -> OrReply<(i32, Vec<TextChunk>)> {
+) -> OrRefused<(i32, Vec<TextChunk>)> {
     let kind = match unit {
-        TextUnit::Document => return Ok(Err(TextReply::UnsupportedUnit(TextUnit::Document))),
+        TextUnit::Document => return Ok(Err(NO_SUCH_UNIT)),
         TextUnit::Sentence => match source.sentences() {
             Sentences::Unsupported => {
-                return Ok(Err(TextReply::UnsupportedUnit(TextUnit::Sentence)));
+                return Ok(Err(NO_SUCH_UNIT));
             }
             Sentences::ByParagraph => TextUnit::Paragraph,
         },
@@ -1261,12 +1268,12 @@ fn read_units<S: TextSource>(
             let by = movement_unit(source, by);
             match source.move_by(&at, by, count)? {
                 Some((landed, moved)) => (landed, moved, by == unit),
-                None => return Ok(Err(TextReply::UnsupportedUnit(by))),
+                None => return Ok(Err(NO_SUCH_UNIT)),
             }
         }
     };
     let Some(found) = source.unit_at(&at, kind, MAX_CHUNK_UNITS)? else {
-        return Ok(Err(TextReply::UnsupportedUnit(kind)));
+        return Ok(Err(NO_SUCH_UNIT));
     };
     let offset = if on_start {
         0
@@ -1329,7 +1336,7 @@ fn ordered<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     (start, end): (TextPoint, TextPoint),
     through: Option<(TextPoint, TextPoint)>,
-) -> OrReply<(S::Pos, S::Pos)> {
+) -> OrRefused<(S::Pos, S::Pos)> {
     let start = match point(source, anchors, start)? {
         Ok(pos) => pos,
         Err(reply) => return Ok(Err(reply)),
@@ -1360,7 +1367,7 @@ fn read_range<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     ends: (TextPoint, TextPoint),
     through: Option<(TextPoint, TextPoint)>,
-) -> OrReply<RangeText> {
+) -> OrRefused<RangeText> {
     let (start, end) = match ordered(source, anchors, ends, through)? {
         Ok(range) => range,
         Err(reply) => return Ok(Err(reply)),
@@ -1385,7 +1392,7 @@ fn location<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     at: TextPoint,
-) -> OrReply<Located> {
+) -> OrRefused<Located> {
     let at = match point(source, anchors, at)? {
         Ok(at) => at,
         Err(reply) => return Ok(Err(reply)),

@@ -328,7 +328,6 @@ fn status_bar_said(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::TextUnit;
 
     use super::*;
 
@@ -356,12 +355,6 @@ mod tests {
         };
         for (reply, failure) in [
             (TextReply::NoText, TextFailure::NoText),
-            (TextReply::Unsupported, TextFailure::Unsupported),
-            (
-                TextReply::UnsupportedUnit(TextUnit::Line),
-                TextFailure::UnsupportedUnit(TextUnit::Line),
-            ),
-            (TextReply::AnchorLost, TextFailure::AnchorLost),
             (TextReply::Gone, TextFailure::Gone),
             (TextReply::Unanswered, TextFailure::Unanswered),
         ] {

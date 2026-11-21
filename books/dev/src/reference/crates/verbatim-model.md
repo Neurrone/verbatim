@@ -561,8 +561,8 @@ implements. What each answer says is in `docs/parity/text.md`,
 - Anchors are kept by the outpost. `HeldAnchors` is the anchors Core
   holds, by outpost, which the shell sends with the held nodes; the
   outpost keeps those and may forget any other once it has minted 64
-  newer ones for the node. A request naming a forgotten anchor is
-  answered `AnchorLost`. Anchors die with the outpost generation.
+  newer ones for the node. A step naming a forgotten anchor is answered
+  `NotThere(Missing::Anchor)`. Anchors die with the outpost generation.
 
 ### Chunks
 
@@ -681,10 +681,9 @@ read, its watch, the sentence move and a caret tell's read are under
   at most 20 matches, `rows` rows read from each, answered
   `TerminalFound { matches, read }` with a `TerminalMatch` for each.
 
-Any request can also be answered `NoText` (no text interface; Core reviews
-its flat text, its name, value and description), `AnchorLost`, `Gone` (the node no longer
-exists), `Unanswered` (no answer in time, or the read failed),
-`Unsupported` or `UnsupportedUnit`. These six are the `TextFailure`s
+Any of these can also be answered `NoText` (no text interface), `Gone`
+(the node no longer exists) or `Unanswered` (no answer in time, or the
+read failed). These three are the `TextFailure`s
 (`TextReply::into_failure`), which Core's typed text requests decode
 beside the op's own reply, so no answer of them fails to decode.
 

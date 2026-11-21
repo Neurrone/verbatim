@@ -759,8 +759,9 @@ as NVDA's handlers read them.
   The objects are dropped by a release
   program on a worker, never on the reducer's thread. A
   never-carried node of an ended request or an abandoned generation goes
-  at the next release. A released node answers `Gone`, a forgotten anchor
-  `AnchorLost`. Only the newest list is kept.
+  at the next release. A released node answers `Gone`, a step naming a
+  forgotten anchor not there, by that anchor. Only the newest list is
+  kept.
 - Text on copies: each node's text facts are the store's
   (`reducer::TextFacts`, "Text and caret"), and a program reads them in
   its copy. A text call copies the part its operation names
@@ -844,8 +845,8 @@ reads behind ids Core names, released as anchors are (Table 16):
   sentence is not in it, and the caret moved; past the last sentence the
   caret goes to the text's end, and at the start it stays with the first
   sentence; the next baseline held. A source with no sentence unit
-  answers `UnsupportedUnit`, a starting point no longer held
-  `AnchorLost`.
+  refuses it as no such unit, and a starting point no longer held is not
+  there, by its anchor.
 - A batch whose first step is `WaitForCaret`, a caret key's wait, waits
   in the reducer's table (`verbatim-outpost-logic`'s `watch`), whose
   polls run as programs of their own (`batch::poll`,
@@ -869,10 +870,11 @@ reads behind ids Core names, released as anchors are (Table 16):
   text, checking it, except positions the outpost reported, which it
   remembers. Anchors Core holds (in `text::HeldAnchors`, with its own lock,
   so the reader never waits on the worker) are kept; others go after 64
-  newer ones, answered `AnchorLost`.
+  newer ones, and a step naming one is not there, by that anchor.
 - Chunks are at most 64 KB of UTF-8, cut between grapheme clusters; UIA
   chunks carry the range's `Culture`. Reads move first when asked, by whole
-  units, saying how far; a missing unit is `UnsupportedUnit`. `ReadRange`
+  units, saying how far; a missing unit is refused as no such unit
+  (`StepRefusal::NoSuchUnit`). `ReadRange`
   reads up to 1 MB; `Select` and `MoveCaret` select, `Select` answering the
   selection's change; `Location` gives a character's screen position;
   `ReadAhead` reads units up to 32 K UTF-16 code units and marks the last
