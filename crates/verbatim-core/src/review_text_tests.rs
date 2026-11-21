@@ -380,6 +380,38 @@ fn a_dead_object_reviews_as_empty_flat_text() {
     }
 }
 
+/// A dead object's flat position is the start, its column 0 too: with the
+/// review cursor at the start of an empty first line remembering column 2,
+/// a press that finds the object gone leaves the position at offset 0 and
+/// column 0.
+#[test]
+fn a_dead_object_resets_the_flat_column() {
+    use crate::state::{FlatPosition, ReviewText};
+    let mut state = committed(
+        "
+abcd",
+        Role::Button,
+    );
+    state.navigator.as_mut().unwrap().text = ReviewText::Flat(FlatPosition {
+        offset: 0,
+        column: 2,
+    });
+    let _ = feed_at(
+        &mut state,
+        1_000,
+        press(1, ReviewCommand::ReviewCurrentLine, 0),
+    );
+    let _ = feed_at(
+        &mut state,
+        1_100,
+        answer_outcome(OUTPOST, 3, WireOutcome::NotThere),
+    );
+    assert_eq!(
+        state.navigator.as_ref().unwrap().text,
+        ReviewText::Flat(FlatPosition::default())
+    );
+}
+
 /// The start marker is set at the review cursor; select then copy's second
 /// press copies from it through the character at the review cursor.
 #[test]

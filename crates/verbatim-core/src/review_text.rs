@@ -274,7 +274,7 @@ async fn run_next(
                             None => return,
                         }
                     }
-                    Outcome::NotThere => Next::Flat(String::new()),
+                    Outcome::NotThere => gone(&mut cx.facts_mut()),
                     _ => return,
                 }
             }
@@ -858,15 +858,19 @@ pub(crate) fn answered(
             PendingText { node, then },
             TextReply::Gone,
         ),
-        (_, TextReply::Gone) => {
-            if let Some(navigator) = state.navigator.as_mut() {
-                navigator.text = ReviewText::Flat(FlatPosition::default());
-            }
-            Next::Flat(String::new())
-        }
+        (_, TextReply::Gone) => gone(state),
         (_, TextReply::Unanswered) => Next::Said(Vec::new()),
         (then, reply) => reply_to(state, trace_id, press, PendingText { node, then }, reply),
     }
+}
+
+/// The navigator object gone: it reviews as empty flat text, the review
+/// cursor at its start, column 0.
+fn gone(state: &mut SrState) -> Next {
+    if let Some(navigator) = state.navigator.as_mut() {
+        navigator.text = ReviewText::Flat(FlatPosition::default());
+    }
+    Next::Flat(String::new())
 }
 
 /// A live read of the navigator object answered: the object becomes the
