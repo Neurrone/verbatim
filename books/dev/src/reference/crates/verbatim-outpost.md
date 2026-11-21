@@ -551,8 +551,9 @@ and the inherited pipe handles.
   roles have such text. The walk counts every child it fetches against
   `MAX_OBJECTS` (65,536) and stops at an object it visited before
   (`Visited`, by runtime id for UIA and by window, object id and child id
-  for an MSAA window's client area, `verbatim_ia2::dialog::DialogObject::address`),
-  giving the text read up to either.
+  for an MSAA window's client area, `verbatim_ia2::dialog::DialogObject::address`,
+  the one object of the walk with an address of its own; Claude,
+  2026-11-21), giving the text read up to either.
 
 ## Implementation notes
 

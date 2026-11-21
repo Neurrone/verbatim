@@ -346,7 +346,7 @@ through MSAA and in the foreground or reported in the background: one
 request and answer, one wake of the application's reading thread and
 about five MSAA calls, the acquisition, role, value, states and location;
 a value change on the readers' last focus whose role is known and no bar
-asks nothing (call_counts `msaa_focus_changes_cost_exactly`). Each UIA
+asks nothing, an unknown role counting as unknown (Claude, 2026-11-21) (call_counts `msaa_focus_changes_cost_exactly`). Each UIA
 range value change anywhere wakes the listener's UIA thread, and its
 cache holds two properties more for a bar, its rectangle and whether it
 is off the screen; a progress bar's then wakes its application's check

@@ -53,8 +53,9 @@ Public API:
   `GetForegroundWindow` does not name until it does or
   `FOREGROUND_HOLD_US` (20 ms) pass, or `Awaiting` that window once its
   hold is over. Only the `WinEvent` thread steps it (`step`, given a
-  `Seen`: a foreground event, the shell's foreground, any other event,
-  or the hold's timer), and each step answers `Placed`: the window found
+  `Seen`: a foreground event, the shell's foreground (`Seen::Shell`;
+  Claude, 2026-11-21), any other event, an invalid window's foreground
+  event among them (Claude, 2026-11-21), or the hold's timer), and each step answers `Placed`: the window found
   in front to report, before what it releases, in order, and how the
   hold's one timer changes; a newer foreground event replaces the pending
   one and counts its time again, a dropped foreground's window is still
