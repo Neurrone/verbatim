@@ -188,7 +188,7 @@ decided: it sets the one fact, `Versions::postponed`, a
 fence (`entries::front_fence`), keeping the older fence for the same
 dialog, and returns `None`, ending the entry. `Versions::execute` and
 `Versions::commit_own` end the fact, and so does the dialog's
-destruction (`Logic::window_destroyed`).
+destruction (`Logic::window_destroyed`); `Versions::respoken` leaves it.
 
 A `Show` tell of a top-level window whose class is none of NVDA's show
 classes becomes a `CurrentFocus` entry of `Why::Shown` (`shown::of_show`),
@@ -237,11 +237,13 @@ recorded settings dialog's three destroys in `tests/replay_validity.rs`.
 
 ## The outpost generation record
 
-(`docs/design/readers-tell-core-asks-build1.md`, "The outpost generation
-record", Table 5; `supervisor/record.rs`, applied by the event queue's
-driver in `event_queue/outposts.rs`.) Core's reducer owns one record per
-application: launching, starting, ready or waiting out a backoff, none
-being its absence. The owner thread reports its process facts as
+(`supervisor/record.rs`, applied by the event queue's driver in
+`event_queue/outposts.rs`, since a generation's start and end move the
+requests that wait for it or are out to it.) Core's reducer owns one
+record per application: launching, starting, ready or waiting out a
+backoff, none being its absence. The supervisor's owner thread reports
+the process facts and carries out the effects the record decides; it
+judges no generation itself. The owner thread reports its process facts as
 `QueueInput::Process` (`ProcessFact`): an outpost started, a launch
 failed (with whether the application is gone), each pong, the
 application's exit, the listener it is about to launch, the spares
@@ -250,13 +252,23 @@ outpost's `Ready` and its end arrive as `ReaderReady` and `ReaderEnded`.
 Core asks for an outpost (`QueueEffect::StartOutpost`) when a request
 waits for an application with none, or the listener's foreground report
 names one, and ends a generation (`QueueEffect::EndOutpost`) that passes
-9 seconds with no pong. A request waits through the
-launch and start and is sent at the generation's `Ready`; a first
-failure is replaced at once, a later one after today's backoff, which a
-foreground report resets and ends; a backoff that ends launches again
-only when a request waits or the application holds attention. The
-application's exit answers every request waiting or out "not there",
-drops its held ids and takes nothing again. An outpost is never ended
+9 seconds with no pong, or whose pong reports `ABANDONED_WORKER_LIMIT`
+workers or more abandoned to calls that never returned. Verbatim's own
+process's outpost is launched at once (`ProcessFact::OwnProcess`). A
+request waits through the launch and start and is sent at the
+generation's `Ready`, in arrival order. A launch that fails, or a
+generation that ends, before or after `Ready`, is replaced at once on a
+first failure, a later one after its backoff
+(`supervisor::policy::Backoff`), whose count starts again after an
+outpost that stayed up long enough; a foreground report naming the
+application resets the count, in any stage, and ends a backoff that
+runs; a backoff that ends launches again only when a request waits or
+the application holds attention. A ready generation's end answers its
+requests out "reader ended", ends their entries and drops its held ids;
+the committed focus's re-take follows as "The committed focus" (below)
+says. The application's exit answers every request waiting or out "not
+there", ends a starting generation, drops a ready one's held ids with no
+re-take, and takes nothing again, with no backoff. An outpost is never ended
 for being idle (Dickson, 2026-11-10 and 2026-11-16): it ends when its
 application exits, when it fails or stops answering pings, or when
 Verbatim exits. A frame of
@@ -457,7 +469,29 @@ code is in `reduce.rs` unless named.
   with only what Core spoke of it replaced (`Versions::respoken`). Rules read it through
   `Versions::focus` (`Read` or `Ended`), `Versions::live` (`Read`),
   `Versions::caret_target` and `Versions::committed_node`; the readers'
-  last focus (`LastFocus`) is a separate fact.
+  last focus (`LastFocus`) is a separate fact, empty at startup, with the
+  speech fence of the entry that executed it (`LastFocus::since`).
+  `Versions::execute` sets both versions and ends a postponed dialog;
+  `Versions::commit_own` replaces only the committed focus and ends a
+  postponed dialog; `respoken` replaces only the committed focus. A focus
+  read tried at its turn and refused or answered not there, or whose reader
+  ended, ends the last focus's fence (`Versions::tried_and_refused`), so
+  no later focus is "with no key between" it. A foreground marker at the
+  front empties the last focus when its window is a top-level window
+  unrelated to the committed focus, and always while nothing or Core's own
+  focus is committed, to which nothing is related
+  (`Versions::foreground_marker`). The end of the outpost generation that
+  minted the committed focus marks it `Ended` and always appends the
+  re-take (`retake::reader_ended`), naming the foreground record's window
+  when the focus's application holds attention and the window its read
+  named otherwise; while it is `Ended`, no known ancestor that generation
+  minted is sent. The listener's end marks nothing ended: it clears the
+  last focus's element token and re-takes the foreground window once,
+  except for a plain focus, Core's own focus or none. The recovered read
+  and the show's read are judged as the re-take is. A system caret tell
+  has a target only while the last focus names the committed focus, its
+  reader lives and its generation is its application's running one
+  (`caret_tell::target`).
 - The window in front. `SrState::hook_foreground()`
   (`verbatim_model::HookForeground`) is decided from the event queue's
   foreground record, the window the focus listener last reported
@@ -610,11 +644,47 @@ code is in `reduce.rs` unless named.
   its value"): the listener's `Input::Progress` plays `Earcon::Progress`
   once the value moves a percent from the last one indicated at the same
   place on screen (`SrState::progress_reported`, the last 32 places).
-- Notifications: a UIA `Notification` speaks its display string,
-  interrupting for `MostRecent` and `ImportantMostRecent`, at Next for
-  them during say-all, queued otherwise. Neither notifications nor UI
-  Automation selections merge a waiting entry: each is handled in
-  arrival order (ADR 0003, "Flood limiters and the merge").
+- Announcements (`announcements/`; `docs/parity/alerts.md`). Each kind is
+  an event-queue entry, one `Announcement` with what its kind parsed from
+  its tell, judged at its turn by its kind's function, whose module states
+  its rules:
+  - A UI Automation notification makes no request. It is dropped when its
+    check found no window, unless it is the shell's window-snap results,
+    when it is not from the committed focus's application, or the
+    application in front with no committed focus, and when its text is
+    empty; else its display string is spoken, interrupting for
+    `MostRecent` and `ImportantMostRecent`, at Next for them during
+    say-all, queued otherwise.
+  - A toast is dropped when its element is not native, its nearest
+    window is not a Windows Runtime core window, or it repeats the toast
+    spoken last within a second, judged at its turn; else the listener
+    reads it and it is announced as an object.
+  - A UI Automation selection is judged as `announcements/selection.rs`
+    says. It is dropped when not native, with no committed focus, when
+    refused, except an item of a Windows Forms combo box's `ComboLBox`
+    list, and when the committed focus changes between its two reads.
+  - An MSAA alert is moved once behind the entries waiting after it when
+    a focus that counts as pending is among them, and its acceptance is
+    checked; its one request asks whether it is one of the focus line's
+    objects (`RelationQuery::OneOf`), and else its snapshot with the
+    descendants NVDA speaks.
+  - A show asks a request only for `tooltips_class32` that passes
+    acceptance, and speaks a help balloon.
+  - The virtual desktop's name (`announcements/desktop_name.rs`), an MSAA
+    name change on the desktop window, is read by the listener and kept
+    until the next focus Core takes says it before its entered
+    containers, or 250 ms later, when it is said alone.
+
+  A notification, a toast and a show are exempt from the foreground stop,
+  and so are a selection, an alert and the desktop's name accepted other
+  than by the foreground relation (`Announcement::exempt_from_foreground`);
+  any other outcome than a result drops an announcement unspoken. Neither
+  notifications nor UI Automation selections merge a waiting entry: each
+  is handled in arrival order (ADR 0003, "Flood limiters and the merge").
+  An MSAA selection, alert, show or desktop name replaces the older
+  waiting entry of the same kind, ids and thread, searching back no
+  further than a focus-kind item, and joins the back; a show also removes
+  a waiting hide of its object, and a hide a waiting show.
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an
   outpost is replaced"). Node ids carry the outpost generation. The end
   of a generation arrives as `ReaderEnded` (above, "The outpost
@@ -640,7 +710,7 @@ takes, each in turn.
 
 ### Verbatim+Tab
 
-(`report_focus.rs`; `docs/design/readers-tell-core-asks-build1.md`,
+(`report_focus.rs`; NVDA's behaviour is in `docs/parity/review.md`,
 "Report focus".) Each press is an event-queue entry that, at its turn,
 reads the committed focus node's properties live in one request
 (`ANNOUNCED_SET`) and speaks the answer only: never taken as Core's
@@ -873,8 +943,8 @@ without asking.
 
 ### The caret key on the event queue
 
-(`docs/design/readers-tell-core-asks-build1.md`, Tables 7 and 13.) A
-caret key's `Press` runs `keys/caret_key.rs` at its turn, on the node it
+(`books/dev/src/explanation/design/key-holding.md` gives the behaviour.)
+A caret key's `Press` runs `keys/caret_key.rs` at its turn, on the node it
 was bound to at its press (`CaretBinding`), even when the focus has moved
 on. A held key asks its starting read, then sends its stroke
 (the pass) and asks the watch, then says its unit by its script; at the
@@ -903,6 +973,47 @@ kept for a focus change to forget.
 Enter held for a terminal, by a hook view behind the focus, is passed
 with no read, the carriage return the terminal's model takes.
 
+The key's places, each read from its request out or its stroke's status:
+- Waiting, its stroke unsent. A stroke with a dropped mark ends the key
+  as dropped. A key whose node is not held, a marked key, and a key with a
+  focus that counts behind it pass with no read and end silent, except
+  Backspace and Control+Backspace behind such a focus, which ask their
+  starting read. A key on the terminal's path that is marked or behind a
+  counting focus passes with no read, with no Backspace exception.
+  Passed, the stroke goes at once when nothing unsent is ahead of it, and
+  else with the stroke ahead. A foreground change that leaves its node's
+  window ends it silent, its stroke sent in press order.
+- Waiting, its stroke sent (released by its 150 ms timer, or never
+  held). It says and asks nothing, stops say-all and keeps the typed
+  word, Backspace dropping its last character at the end; a held key
+  bound to the focused terminal is told to the model at its release
+  time.
+- Starting. A later key or the 150 ms release withdraws the read; a
+  counting focus withdraws it but for Backspace's. At the answer the
+  stroke goes and the watch is asked; on the terminal's path the read is
+  taken and spoken before the stroke goes. A switch away from the user's
+  desktop drops the stroke, so the read is unneeded and withdrawn as the
+  queue settles.
+- Confirming: an `MsaaRun` at depth `Facts` of an unconfirmed focus
+  raised before the bound, which withdrew the watch. A later key
+  withdraws it, and a marked sentence key then moves by sentence; a
+  counting focus withdraws it, silent. Its facts, or an outpost ended or
+  object gone stored as not there, are judged again; any other ending is
+  silent.
+- Watching. At the bound, selection keys, Enter and other keys say
+  nothing, and a sentence key in text with a sentence unit moves by
+  sentence, as it does after an effect its final read left unread. Enter
+  at its effect keeps the word and types the carriage return.
+- A terminal key's final read, which a later key or a counting focus
+  withdraws; the terminal's reading rules speak it.
+- Moving by sentence. A later key lets the move complete unspoken; a
+  counting focus withdraws it.
+
+A switch away from the user's desktop withdraws no watch or sentence
+move: only a starting read becomes unneeded. A reset of the hook's line
+(`QueueInput::StrokesReset`, below) acts as that switch does on the
+stroke line; nothing sends it yet.
+
 `keys/strokes.rs` is Core's stroke line (`SrState::strokes`): each held
 stroke, from the press's arrival, and each deferred transition
 (`QueueInput::Deferred`), in the hook's order. A held stroke goes when its
@@ -910,11 +1021,22 @@ key passes, at its turn, by its 150 ms release from its press
 (`Logic::due` and `Logic::tick`), or when a foreground change ends its
 waiting entry (`Logic::ended_at_foreground`), with what is deferred behind
 it up to the next unsent held stroke, as one `QueueEffect::SendStrokes`.
-A reset of the hook's line (`QueueInput::StrokesReset`) drops what is
-unsent, leaving a dropped mark for each held key, and withdraws the
-front's starting read; the key's pass (`pass`), at its turn or once that
-read ends, reads the mark and forgets it, and the key ends as dropped; at `QueueInput::Exit` Core names the keys
-whose last transition in line is a release (`QueueEffect::ReleaseAtExit`).
+A held stroke whose key has passed while an unsent stroke is ahead stays
+in the line, marked passed (`InLine::Held { passed: true }`), and goes
+when the stroke ahead goes, in the same `SendInput`; a transition deferred
+behind it joins behind it, and it no longer holds the line. A switch away
+from the user's desktop (`StrokeLine::drop_unsent`) and a reset of the
+hook's line (`QueueInput::StrokesReset`) drop what is unsent, leaving a
+dropped mark for each held key that has not passed, and none for a
+passed one, and withdraw the front's starting read; the key's pass
+(`pass`), at its turn or once that read ends, reads the mark and forgets
+it, and the key ends as dropped. At `QueueInput::Exit` Core names the
+keys whose last transition in line is a release, a held stroke counting
+as one (`QueueEffect::ReleaseAtExit`). The line is sent only from its
+front, since releases fire in press order and keys reach the front in
+press order; the shell keeps no copy. The speech fence is not a state of
+the line: `keys::entry::Arrivals` moves it on any press, and a
+modifier's cut moves it and marks nothing.
 Beside the line, `SrState::alt_down` is whether Alt is down, set by the
 hook's `QueueInput::Alt` at once in the inbox; a UI Automation focus tell
 takes it at its arrival (`UiaFocus::alt_down`), and its execution judges
@@ -950,11 +1072,14 @@ supervisor's launch copy follow Core's setting.
 
 ### Caret tells and Core's text facts
 
-(`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-caret's text facts", "Held anchors", Table 17.) What Core keeps of the
-committed focus (`Kept`) carries its `SelectionFacts` (`text_facts.rs`): the
-selection baseline, an anchor its outpost generation holds, and the
-text-changed flag. A caret tell (`caret_tell.rs`), the system caret's
+(`text_facts.rs`, `caret_tell.rs`; NVDA's behaviour is in
+`docs/parity/changes-and-selection.md`.) What Core keeps of the committed
+focus (`Kept`) carries its `SelectionFacts`: the selection baseline, an
+anchor its outpost generation holds of the selection Core last spoke
+from, with that selection's text beside it, and the text-changed flag,
+the focus's text having changed since the selection was last compared
+(NVDA's `hasContentChangedSinceLastSelection`), so a new focus starts with
+neither. A caret tell (`caret_tell.rs`), the system caret's
 for the readers' last focus or a UI Automation text-selection change of
 the committed focus's element, asks at its turn, with no focus pending,
 one `ReadSelection` naming the baseline and, for a UI Automation tell,
@@ -969,9 +1094,12 @@ changes nothing. An answer that the node has no text (`TextFailure::NoText`)
 leaves Core no caret and no selection for it, the baseline and the flag
 cleared, nothing said (`text_facts::no_text`), as NVDA's caret event says
 nothing for an object that is not editable text; any other failure says
-nothing and keeps the baseline and the flag. A value change of an edit control that is the committed
-focus sets the flag and says nothing; a UI Automation value change of an
-element with a text pattern says nothing. Answers to `MoveCaret`, a
+nothing and keeps the baseline and the flag. An MSAA value change of the
+committed focus's edit control, read through its window messages with
+automatic selection detection, sets the flag at its turn when no caret
+tell took it as counted, and says nothing; no other change sets it, and a
+UI Automation value change of an element with a text pattern says
+nothing. Answers to `MoveCaret`, a
 sentence move and `Select` on the focused text mint the next baseline.
 Every focus request names the details its caret read fetches, the
 line's formatting the settings report (`details::focus_details`), and a
@@ -981,8 +1109,9 @@ the baseline and clears the flag, silently, a repeated focus's too, as
 NVDA's `initAutoSelectDetection` does (`text_facts::focus_answered`;
 Dickson, 2026-11-17); a focus answer with no caret,
 or a failed focus read, clears the baseline and the flag. The end of the
-focus's outpost generation drops the baseline, and the silent re-take
-takes the baseline its answer minted and keeps the flag. A caret key's starting and final reads compare no
+focus's outpost generation drops the baseline and keeps the flag, and the
+silent re-take, the recovery's included, takes the baseline its answer
+minted and keeps the flag. A caret key's starting and final reads compare no
 selection.
 
 `SrState::held_anchors` and `held_nodes` name, besides the baseline,
@@ -992,25 +1121,33 @@ waiting caret key was bound to.
 
 ## The secure desktop and the lock state
 
-(`docs/design/readers-tell-core-asks-build1.md`, "The secure desktop and
-the lock state", Table 8; `input_desktop.rs`.) The listener's desktop
-switch tell is handled at once in the inbox, never queued
-(`entries::route`). A switch to an input desktop Verbatim cannot open
-cuts speech, commits the sleeping focus (`Versions::commit_own`, which
-carries nothing, so that the next focus is spoken from the top with its
-window's title), sends `Follow` naming nothing to every
-outpost followed, as Core's own requests outside the queue
-(`event_queue::Input::Send`), drops the strokes Core holds, and counts
-the switch in the hook's view (`HookForeground::desktop_switches`), on
-which the hook forgets its modifiers and its line. A switch whose
-desktop opens arms a 200 ms timer (`InputDesktop::ReturnPending`), and
-when it comes due (`Logic::tick`) the read after the return joins the
-queue: the front application's current focus with none of the ancestors
-Core already knows and no duplicate test (`retake::Why::Returned`). A
-switch away while the return is pending cancels it. No re-take is made
-while the sleeping focus is committed. The lock state is recorded from
-`QueueInput::Lock`, unknown counting as locked
-(`SrState::session_locked`); nothing judges it before M8.7.
+(`input_desktop.rs`; NVDA's behaviour is in `docs/parity/focus-context.md`.)
+The listener's desktop switch tell is handled at once in the inbox, never
+queued (`entries::route`). Core's input desktop (`InputDesktop`) is the
+user's, another, or a return pending. A switch from the user's desktop
+or a pending return to an input desktop Verbatim cannot open cuts speech,
+commits the sleeping focus (`Versions::commit_own`, which carries
+nothing, so that the next focus is spoken from the top with its window's
+title), leaves the focused terminal, sends `Follow` naming nothing to
+every outpost followed, as Core's own requests outside the queue
+(`event_queue::Input::Send`), drops the strokes Core holds, so the front's
+starting read is withdrawn as the queue settles, and counts the switch in
+the hook's view (`HookForeground::desktop_switches`), on which the hook
+forgets its modifiers, but for an Alt still physically down, and its
+line; a further such switch changes nothing. A switch whose desktop opens
+arms a 200 ms timer (`InputDesktop::ReturnPending`), re-armed by each such
+switch, and when it comes due (`Logic::tick`) the user's desktop is up
+again and the read after the return joins the queue: the current focus of
+the window in front, with none of the ancestors Core already knows and no
+duplicate test (`retake::Why::Returned`), or nothing when no window is in
+front. A switch away while the return is pending cancels it. Every tell
+and answer is judged as usual meanwhile, so a focus on the user's
+desktop replaces the sleeping focus; no re-take is made while it is
+committed. The lock state is a fact beside the input desktop, recorded
+from `QueueInput::Lock` and the startup query, unknown counting as
+locked (`SrState::session_locked`), a Verbatim-only rule, security
+mitigation B3 (`docs/design/security-model.md`); nothing judges it before
+M8.7, which brings the rules for objects below the lock screen.
 
 ## Key numbers
 
@@ -1095,6 +1232,25 @@ then its text with each later change placed where it happens
 (`text::formatted_segments`). A character or word also says an error's
 end. Each change is a `Format` span, which the theme presents. Review
 commands and say-all read no formatting.
+
+Every text and node request names the details its read fetches, chosen
+by `details.rs` from Core's settings (the details the active theme
+reports, `Input::Reported`), the read's unit and its reason. The readers
+keep no copy of the settings and fetch exactly what a request names, so a
+detail whose setting is off is left unread and its call unmade.
+
+The memory belongs to a focus record, the committed focus's context, told
+apart by its node and the trace it was taken from. A caret key captures
+its record and that record's memory at its press (`CaretBinding`,
+`editing::focus_record`); when it speaks its unit it compares with its
+copy, updates it, and writes it back only while the committed focus is
+still that record (`editing::formatting_back`). A later focus taken, an
+outpost replaced and the silent re-take each make a new record, which
+starts empty, while a waiting key keeps its copy. So does the committed
+focus executed again in place (`Commit::InPlace`): its memory is emptied
+and its record changes, so a waiting key's write-back is dropped. The
+focus's own caret line compares with the focus object's memory directly
+(`editing::caret_line`).
 
 ### Typing echo
 
@@ -1191,6 +1347,15 @@ but the focus is ignored. `TerminalItem` (output, a count of lines
 skipped, or a key's answer), `TerminalUnit`, `Skipped` and
 `TerminalKeyKind` are Core's own types (`terminal/items.rs`); none crosses
 a pipe.
+
+A caret key bound to a terminal takes the terminal's path ("The caret key
+on the event queue"): its starting read is the terminal's full read,
+which also mints the caret starting point, it is told to the model at its
+pass, its watch polls with no event shortcut to its multiplied bound, it
+says nothing itself, and the model takes its final read. Core drops a
+system caret tell at its arrival and at its turn while the committed
+focus is a console host's terminal (`Kept::console_terminal`), since the
+console's caret event is its caret.
 
 - The answers to keys are spoken at once, ahead of the output the same
   speech carries: typing the terminal showed (`TerminalItem::Echo`) by the

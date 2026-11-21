@@ -5,7 +5,7 @@ Core's side of starting, watching and ending its children
 ([verbatim-outpost](verbatim-outpost.md)) and the focus listener
 ([verbatim-listener](verbatim-listener.md)), a library `verbatim-app`
 uses. It is reduced to process facts and their effects
-(`docs/design/readers-tell-core-asks-build1.md`, "The outpost generation
+([verbatim-core](verbatim-core.md), "The outpost generation
 record"): it launches children, watches their liveness by pings, sees
 pipes close and processes exit, reports these to Core, and carries out
 Core's start, end and shutdown effects. Core's reducer owns the outpost

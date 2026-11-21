@@ -121,11 +121,19 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Lowest common ancestor** — the innermost ancestor a new focus
   answer shares with Core's focus ancestry, where Core joins the two.
   [How focus works](../explanation/design/focus.md).
+- **Menu slot** — the one waiting entry of Core's event queue for MSAA
+  menu start, menu end, popup start, popup end and switch end, which keeps
+  the newest (`crates/verbatim-core/src/event_queue/limiter.rs`).
 - **Message position** — the count of messages carrying node ids an
   outpost has sent, kept the same way by the outpost and Core; Core
   acknowledges a position when it reports its held nodes, so the
   outpost knows which reported nodes Core has seen.
   [verbatim-outpost](crates/verbatim-outpost.md).
+- **Outcome** — one of the ways an answer to a request ends: a result;
+  refused, with a reason; not there; not responding; the reader ended or
+  stopped; and, inside Core alone, no longer awaited. Core's rules branch
+  on the outcome, not its diagnostic detail.
+  [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Module** — one contribution inside an extension: an app module bound
   to applications by identity, or a synthesizer; a folder with
   `module.toml` and a component, one instance per outpost.
@@ -169,6 +177,10 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Reducer** — the pure functional core: `reduce(state, input)`
   returns the next state and effects, no I/O, no clocks (architecture
   section 2). [verbatim-core](crates/verbatim-core.md).
+- **Run** — MSAA focus and foreground tells merged into one entry of
+  Core's event queue and tried newest first.
+  [verbatim-core](crates/verbatim-core.md), "One definition of a
+  candidate's validity".
 - **Rule** — a module's declaration of the form "match this, do that",
   with a subject (window, event or node), a required id and a backend,
   applied by the host as data without calling the module.
@@ -187,6 +199,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   under: the newest key given to the reading rules whose window holds
   the read, so a later key's cut treats that speech as the key's.
   [verbatim-core](crates/verbatim-core.md), "Core's terminal model".
+- **Starting point** — the text anchor a caret key's starting read
+  mints, held by the outpost, with the key's unit, word, line and
+  selection read beside it, which the key's watch compares the caret with.
+  [verbatim-core](crates/verbatim-core.md), "The caret key on the event
+  queue".
 - **Ancestors Core already knows** — the committed focus's ancestors, sent with a focus request. The reader's walk reads up the ancestor chain until it reaches one of them.
   [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Tell** — a message a reader sends Core when an event arrives, carrying what came with the event and reads of Windows' own state that cannot hang; a UI Automation event's tell also carries the results of its check thread's calls, and no other tell makes a call into the application.
@@ -200,6 +217,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   history-block read is a terminal's first read taken again with a
   screen of rows above its screen. [verbatim-model](crates/verbatim-model.md);
   [How Verbatim reads terminals](../explanation/design/terminal-model.md).
+- **Told, not yet read** — Core's fact, per terminal, that a change was
+  told and no full read has begun since; the outpost keeps no such flag.
+  [ADR 0003](adr/0003-readers-tell-core-asks.md).
 - **Theme** — a complete collection of indications and how each is
   reported (off, speech, sound, or speech and sound), with its sounds,
   replacement words, and voice styles; verbosity, speech, and sounds in
@@ -228,6 +248,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Utterance** — the structured unit of speech (a sequence of spans
   plus source metadata) emitted by the reducer (D12).
   [verbatim-speech](crates/verbatim-speech.md).
+- **Watch** — the outpost's waiting request that looks for a caret key's
+  effect by comparing the application's caret with the key's starting
+  point until its bound; each comparison is a **check**, and the one full
+  read that ends it its final read.
+  [verbatim-outpost-logic](crates/verbatim-outpost-logic.md).
 - **Wedge** — an outpost that is alive but no longer answering
   (missed pongs, called stuck) or accumulating parked workers; the
   generation record in Core ends it and its application is given the
