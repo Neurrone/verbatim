@@ -11,9 +11,12 @@
 //!
 //! 1. Every relative Markdown link, `[text](path)` or `[text](path#anchor)`,
 //!    resolves to an existing file or directory, relative to the linking
-//!    file (or to the repository root when the path starts with `/`). Links
-//!    to `http:`, `https:` and `mailto:` addresses and bare `#anchor` links
-//!    are not checked.
+//!    file (or to the repository root when the path starts with `/`). So
+//!    does every link to the repository's own main branch, one of
+//!    [`REPOSITORY_ADDRESSES`] followed by a path from the root, with its
+//!    `#anchor` or `#L` line fragment removed. Links to other `http:`,
+//!    `https:` and `mailto:` addresses and bare `#anchor` links are not
+//!    checked.
 //! 2. Every backticked repository path exists relative to the repository
 //!    root: a code span starting with one of [`REPOSITORY_ROOTS`], holding
 //!    no whitespace (a span with spaces is a command, not a path) and none
@@ -32,8 +35,9 @@
 //! 5. A relative link in a book's page resolves to a page inside that
 //!    book's `src/` folder, because the published site carries nothing
 //!    else: a page names an agent-only document, a source file or another
-//!    book by its full address instead. The page is a file other than the
-//!    summary, since mdBook publishes neither a folder nor `SUMMARY.md`.
+//!    book by its full address instead, which this rule does not read. The
+//!    page is a file other than the summary, since mdBook publishes neither
+//!    a folder nor `SUMMARY.md`.
 //!
 //! Names are compared exactly, letter case included, as GitHub compares
 //! them, although Windows' own file system would accept another case.
@@ -78,6 +82,13 @@ const DOCS_INDEX: &str = "docs/readme.md";
 /// The indexes `docs/readme.md` may delegate to: a document they link
 /// counts as indexed when `docs/readme.md` links the index itself.
 const INDEXES: &[&str] = &["docs/parity/readme.md", "docs/nvda/readme.md"];
+
+/// The full addresses of the repository's main branch, a file's and a
+/// folder's, after which rule 1 reads a path from the repository root.
+const REPOSITORY_ADDRESSES: &[&str] = &[
+    "https://github.com/Neurrone/verbatim/blob/main/",
+    "https://github.com/Neurrone/verbatim/tree/main/",
+];
 
 /// The folder holding the published books, one folder per book.
 const BOOKS: &str = "books/";
@@ -234,10 +245,10 @@ fn check_documents(
         for item in scan(text) {
             match item {
                 Item::Link { line, target } => {
-                    let Some(relative) = link_path(&target) else {
+                    let Some(link) = link_path(&target) else {
                         continue;
                     };
-                    match resolve(path, &relative) {
+                    match resolve(path, link.path()) {
                         None => violations.push(format!(
                             "{path}:{line}: the link ({target}) leads outside the repository"
                         )),
@@ -245,7 +256,9 @@ fn check_documents(
                             "{path}:{line}: the link ({target}) names {resolved}, which does not exist"
                         )),
                         Some(resolved) => {
-                            if let Some(source) = book_source(path) {
+                            if let (Some(source), LinkPath::Relative(_)) =
+                                (book_source(path), &link)
+                            {
                                 if !format!("{resolved}/").starts_with(source) {
                                     violations.push(format!(
                                         "{path}:{line}: the link ({target}) leaves the book {source}; name {resolved} by its full address"
@@ -293,7 +306,10 @@ fn links_of(documents: &[(String, String)], file: &str) -> BTreeSet<String> {
             scan(text)
                 .into_iter()
                 .filter_map(|item| match item {
-                    Item::Link { target, .. } => link_path(&target),
+                    Item::Link { target, .. } => match link_path(&target) {
+                        Some(LinkPath::Relative(relative)) => Some(relative),
+                        Some(LinkPath::Repository(_)) | None => None,
+                    },
                     Item::Code { .. } => None,
                 })
                 .filter_map(|relative| resolve(path, &relative))
@@ -534,14 +550,46 @@ fn closing_ticks(bytes: &[u8], from: usize, ticks: usize) -> Option<usize> {
     None
 }
 
+/// The path a link names, when rule 1 checks it.
+#[derive(Debug, PartialEq)]
+enum LinkPath {
+    /// A relative link's path, from the linking file or, starting with
+    /// `/`, from the repository root.
+    Relative(String),
+    /// A link to the repository's main branch, as a path from the root
+    /// starting with `/`; rule 5 does not read it.
+    Repository(String),
+}
+
+impl LinkPath {
+    /// The path, for [`resolve`].
+    fn path(&self) -> &str {
+        match self {
+            LinkPath::Relative(path) | LinkPath::Repository(path) => path,
+        }
+    }
+}
+
 /// The path a link's destination names, when rule 1 checks it: without its
 /// title, angle brackets, query and anchor, with `%20` read as a space.
-fn link_path(target: &str) -> Option<String> {
+fn link_path(target: &str) -> Option<LinkPath> {
     let target = target.trim();
     let destination = match target.strip_prefix('<') {
         Some(inside) => inside.split('>').next().unwrap_or(inside),
         None => target.split_whitespace().next().unwrap_or(""),
     };
+    let path = |text: &str| {
+        text.split(['#', '?'])
+            .next()
+            .unwrap_or(text)
+            .replace("%20", " ")
+    };
+    if let Some(inside) = REPOSITORY_ADDRESSES
+        .iter()
+        .find_map(|address| destination.strip_prefix(address))
+    {
+        return Some(LinkPath::Repository(format!("/{}", path(inside))));
+    }
     let lower = destination.to_ascii_lowercase();
     if destination.is_empty()
         || destination.starts_with('#')
@@ -551,8 +599,7 @@ fn link_path(target: &str) -> Option<String> {
     {
         return None;
     }
-    let path = destination.split(['#', '?']).next().unwrap_or(destination);
-    Some(path.replace("%20", " "))
+    Some(LinkPath::Relative(path(destination)))
 }
 
 /// `relative`, a link's path in the document at `from`, as a path from the
@@ -682,6 +729,37 @@ mod tests {
                 "docs/tooling/setup.md:1: the link (../../../x.md) leads outside the repository"
                     .to_owned(),
                 "docs/tooling/setup.md:9: the link (gone.md \"title\") names docs/tooling/gone.md, which does not exist"
+                    .to_owned(),
+            ]
+        );
+    }
+
+    /// A link to the repository's main branch is checked as a path from
+    /// the root, a file's or a folder's, with its anchor or line fragment
+    /// removed, and may leave a book; a link to another branch, commit or
+    /// repository is not checked.
+    #[test]
+    fn a_link_to_the_repository_s_main_branch_must_resolve_from_the_root() {
+        let documents = fixture(&[
+            ("books/dev/src/SUMMARY.md", "- [Page](page.md)\n"),
+            (
+                "books/dev/src/page.md",
+                "[doc](https://github.com/Neurrone/verbatim/blob/main/docs/a.md#part),\n\
+                 [line](https://github.com/Neurrone/verbatim/blob/main/crates/foo/src/lib.rs#L12),\n\
+                 [folder](https://github.com/Neurrone/verbatim/tree/main/crates/foo),\n\
+                 [gone](https://github.com/Neurrone/verbatim/blob/main/docs/gone.md#L3-L9),\n\
+                 [no folder](https://github.com/Neurrone/verbatim/tree/main/crates/bar),\n\
+                 [old](https://github.com/Neurrone/verbatim/blob/0123abcd/docs/gone.md) and\n\
+                 [other](https://github.com/other/verbatim/blob/main/docs/gone.md).\n",
+            ),
+            ("docs/a.md", ""),
+        ]);
+        assert_eq!(
+            run_check(&documents, &["crates/foo/src/lib.rs"]),
+            vec![
+                "books/dev/src/page.md:4: the link (https://github.com/Neurrone/verbatim/blob/main/docs/gone.md#L3-L9) names docs/gone.md, which does not exist"
+                    .to_owned(),
+                "books/dev/src/page.md:5: the link (https://github.com/Neurrone/verbatim/tree/main/crates/bar) names crates/bar, which does not exist"
                     .to_owned(),
             ]
         );
