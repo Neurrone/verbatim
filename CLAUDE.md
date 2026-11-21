@@ -63,9 +63,8 @@ Running work:
 
 - Locally, run one to three scenarios, never a family or the full suite, and at most 20 runs of one scenario when judging a fix, because GitHub runs the suite on every push.
 - A failure is matched to `docs/flaky-tests.md` and its artifacts read, naming the process or code responsible, before it is rerun or called environmental. A scenario failing for a known outside cause is fixed, deleted, or listed with the build that removes the cause; local-only is the last resort, with its reason.
-- One builder works in the main tree at a time; other agents only read, or work in their own worktree with `CARGO_INCREMENTAL=0` and delete its target directory when done. Keep the C: drive above 20 GB free.
-- A brief points at documents rather than restating them, names its output and limits, and asks for a short report; a subagent whose brief cannot work stops and reports rather than improvising.
-- Recurring traps of the desktop, PowerShell and the harness are written once in `books/dev/src/how-to/troubleshooting.md`, and briefs point there.
+- One builder works in the main tree at a time, with incremental builds on; other agents only read, or work in their own worktree with `CARGO_INCREMENTAL=0` and delete its target directory when done. Keep the C: drive above 15 GB free.
+- A brief points at documents rather than restating them, names its output and limits, and asks for a short report; a subagent whose brief cannot work stops and reports rather than improvising.- Recurring traps of the desktop, PowerShell and the harness are written once in `books/dev/src/how-to/troubleshooting.md`, and briefs point there.
 - Clean up: stop the processes you started, remove merged worktrees, and release held keys.
 
 Stopping: a build stops and reports when its mechanism needs a third fix to its design (a fix to tooling or tests does not count), when a review's must-fix contradicts a ruling of Dickson's, or when one of his decisions above comes up. It never stops for a budget, a missing capture or a count of review rounds.
