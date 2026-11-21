@@ -317,6 +317,11 @@ pub enum OutpostToCore {
     Tell(Box<crate::tell::Event>),
     /// The answer to a [`CoreToOutpost::Request`], one per request.
     Answer(crate::request::Answer),
+    /// A window of the outpost's application whose event it heard while
+    /// the window was hung, read as the event arrived with calls to
+    /// Windows only: sent once per stall of the window's thread
+    /// ([`crate::hung::Marks`]), before the event's own tell.
+    Hung(crate::tell::Hung),
 }
 
 /// Messages from the focus listener to verbatim.exe.
@@ -397,6 +402,11 @@ pub enum ListenerToCore {
     },
     /// The answer to a [`CoreToListener::Request`], one per request.
     Answer(crate::request::Answer),
+    /// A window whose event the listener dropped as hung, a ghost reported
+    /// as the window it stands for: sent once per stall of the window's
+    /// thread ([`crate::hung::Marks`]), held in the order of its tells
+    /// behind any pending foreground.
+    Hung(crate::tell::Hung),
     /// Answer to [`CoreToListener::Ping`].
     Pong {
         /// When the writer began writing this pong to verbatim.exe's pipe,
@@ -439,7 +449,8 @@ impl OutpostToCore {
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => false,
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::Hung(_) => false,
         }
     }
 
@@ -463,7 +474,8 @@ impl OutpostToCore {
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => {}
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::Hung(_) => {}
         }
     }
 
@@ -481,7 +493,8 @@ impl OutpostToCore {
             | OutpostToCore::Pong { .. }
             | OutpostToCore::Fault { .. }
             | OutpostToCore::TargetExited
-            | OutpostToCore::IdleAnswer { .. } => {}
+            | OutpostToCore::IdleAnswer { .. }
+            | OutpostToCore::Hung(_) => {}
         }
         named
     }
@@ -610,6 +623,7 @@ impl ListenerToCore {
             | ListenerToCore::Fault { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Destroyed { .. }
+            | ListenerToCore::Hung(_)
             | ListenerToCore::Answer(_)
             | ListenerToCore::IdleAnswer { .. }
             | ListenerToCore::ExitHandled { .. } => None,
@@ -632,6 +646,7 @@ impl ListenerToCore {
             | ListenerToCore::ExitHandled { .. }
             | ListenerToCore::Foreground { .. }
             | ListenerToCore::Destroyed { .. }
+            | ListenerToCore::Hung(_)
             | ListenerToCore::Tell(_)
             | ListenerToCore::Answer(_)
             | ListenerToCore::Fault { .. }

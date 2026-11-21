@@ -68,6 +68,9 @@ pub(crate) enum Input<E> {
         /// The raising thread's process.
         process: Option<Pid>,
     },
+    /// A reader reported `window` hung: it is taken as a request refused
+    /// as hung is, handled at once, since it changes no entry.
+    WindowHung(RequestWindow),
     /// A request from outside the event queue: Verbatim's dialogs, the
     /// control plane, the tree dump. It holds no key, and Core does not
     /// stop waiting for it when the foreground changes.
@@ -188,6 +191,7 @@ impl<L: Logic> Core<L> {
                 // the outpost's forget.
                 Self::begin_core(&mut shared, follows);
             }
+            Input::WindowHung(window) => self.hung(&window),
             Input::AskOutside {
                 asker,
                 reader,
@@ -394,12 +398,11 @@ impl<L: Logic> Core<L> {
     }
 
     /// A request on `window` was refused or stopped because the window is
-    /// hung: while its application holds attention, the sound plays and
-    /// the window joins the recovery set.
+    /// hung, or a reader reported it hung: it joins the recovery set while
+    /// its application holds attention, with the sound for the first
+    /// window of its application there.
     fn hung(&mut self, window: &RequestWindow) {
-        let mut shared = self.shared.borrow_mut();
-        shared.sound_if_attended(window);
-        shared.watch_if_attended(window);
+        self.shared.borrow_mut().hung_if_attended(window);
     }
 
     /// Delivers a request's ending to its owner, its probe unanswered.

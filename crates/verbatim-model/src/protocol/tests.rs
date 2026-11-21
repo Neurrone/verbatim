@@ -69,7 +69,21 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             probes: Vec::new(),
             detail: String::new(),
         }),
-        ListenerToCore::Answer(_) => ListenerToCore::Pong { written_at_us: 0 },
+        ListenerToCore::Answer(_) => {
+            let facet = crate::tell::WindowFacet {
+                handle: crate::WindowHandle(1),
+                class: "Notepad".to_owned(),
+                process: Pid(2),
+                thread: 3,
+            };
+            ListenerToCore::Hung(crate::tell::Hung {
+                window: facet.clone(),
+                root: facet.clone(),
+                root_owner: facet,
+                at_us: 1,
+            })
+        }
+        ListenerToCore::Hung(_) => ListenerToCore::Pong { written_at_us: 0 },
         ListenerToCore::Pong { .. } => ListenerToCore::Fault {
             detail: "a fault".to_owned(),
         },
@@ -98,6 +112,7 @@ fn only_an_answer_with_a_result_and_a_tell_with_a_token_carry_nodes() {
             ("IdleAnswer".to_owned(), false),
             ("Tell".to_owned(), false),
             ("Answer".to_owned(), false),
+            ("Hung".to_owned(), false),
         ]
     );
     let answer = OutpostToCore::Answer(crate::request::Answer {
@@ -137,6 +152,7 @@ fn only_a_tell_naming_a_kept_element_carries_a_token() {
             ("Tell".to_owned(), false),
             ("Destroyed".to_owned(), false),
             ("Answer".to_owned(), false),
+            ("Hung".to_owned(), false),
             ("Pong".to_owned(), false),
             ("Fault".to_owned(), false),
             ("IdleAnswer".to_owned(), false),

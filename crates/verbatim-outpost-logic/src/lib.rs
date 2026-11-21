@@ -78,6 +78,7 @@ use std::time::Duration;
 use self::charge::{Abandoned, InCharge};
 use self::watch::WatchCancelled;
 use verbatim_model::TextOp;
+use verbatim_model::hung::Marks;
 use verbatim_model::protocol::OutpostToCore;
 
 pub use self::charge::Request;
@@ -258,6 +259,9 @@ pub struct Reducer {
     /// node it frees.
     releasing: bool,
     stopping: bool,
+    /// The threads of the application's windows reported hung to Core and
+    /// not yet seen answer: one report per stall of a thread.
+    marks: Marks,
 }
 
 impl Reducer {
@@ -597,6 +601,13 @@ impl Reducer {
                 });
             }
             _ => {
+                // The window as the event's callback read it: a hung
+                // window is reported once per stall of its thread, before
+                // the entry's own tell, and the event is handled as any
+                // other (ADR 0003, "A frozen window").
+                if let Some(hung) = self.marks.step(entry.window.clone()) {
+                    effects.push(Effect::Send(Box::new(OutpostToCore::Hung(hung))));
+                }
                 self.dispatch(Work::Entry(entry), effects);
             }
         }

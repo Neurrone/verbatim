@@ -70,7 +70,9 @@ pub fn tell_window(
 
 /// Whether an event of `kind` is dropped when its window is hung or
 /// ghosted, as NVDA tests for a hang only in `winEventToNVDAEvent`
-/// (`IAccessibleHandler/__init__.py` 556 to 576). The kinds that never
+/// (`IAccessibleHandler/__init__.py` 556 to 576); a drop also reports the
+/// window to Core once per stall of its thread (ADR 0003, "A frozen
+/// window"). The kinds that never
 /// reach that test answer false: a window's destruction, handled on its
 /// own (`processDestroyWinEvent`, 911); the end of a menu, a popup menu
 /// or the task switcher, which go to the fake focus (1082 to 1084); the

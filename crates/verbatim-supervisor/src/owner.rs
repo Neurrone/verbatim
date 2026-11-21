@@ -652,6 +652,7 @@ impl Owner {
             }
             message @ (ListenerToCore::Answer(_)
             | ListenerToCore::Destroyed { .. }
+            | ListenerToCore::Hung(_)
             | ListenerToCore::Foreground { .. }) => {
                 self.outbox.send(OutpostMessage::Listener {
                     listener: outpost,

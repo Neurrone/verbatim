@@ -51,6 +51,7 @@ pub mod class;
 mod event;
 pub mod event_kind;
 mod gesture;
+pub mod hung;
 mod key_seq;
 mod limits;
 pub mod property;

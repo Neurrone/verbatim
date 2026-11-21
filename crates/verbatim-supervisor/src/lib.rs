@@ -252,8 +252,8 @@ pub enum OutpostMessage {
         /// The listener's generation.
         listener: OutpostId,
         /// The message: a [`ListenerToCore::Tell`], a
-        /// [`ListenerToCore::Destroyed`], a [`ListenerToCore::Answer`] or a
-        /// [`ListenerToCore::Foreground`].
+        /// [`ListenerToCore::Destroyed`], a [`ListenerToCore::Hung`], a
+        /// [`ListenerToCore::Answer`] or a [`ListenerToCore::Foreground`].
         message: Box<ListenerToCore>,
     },
     /// An outpost of `target_pid` answered a ping. Core's generation record

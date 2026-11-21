@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use verbatim_model::request::NodeWindow;
-use verbatim_model::tell::{AcceptanceFacts, Relation, WindowFacet};
+use verbatim_model::tell::{AcceptanceFacts, Hung, Relation, WindowFacet};
 use verbatim_model::{Pid, WindowHandle};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 
@@ -124,7 +124,30 @@ pub fn node_window(reads: &impl WindowReads, window: isize) -> NodeWindow {
     }
 }
 
+/// The report of `window`, found hung by an event observed at `at_us`:
+/// its facets, its top-level window's and its root owner's, read now with
+/// calls to Windows only. `host` is as for [`WindowPart::read`].
+#[must_use]
+pub fn hung(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>, at_us: u64) -> Hung {
+    let root = reads.root(window);
+    let root_owner = reads.root_owner(window);
+    let host_of = |handle: isize| (handle == window).then_some(host).flatten();
+    Hung {
+        window: facet(reads, window, host),
+        root: facet(reads, root, host_of(root)),
+        root_owner: facet(reads, root_owner, host_of(root_owner)),
+        at_us,
+    }
+}
+
 impl WindowPart {
+    /// The window's own facet: its handle, class, the process that serves
+    /// it and its thread.
+    #[must_use]
+    pub fn facet(&self) -> &WindowFacet {
+        &self.window
+    }
+
     /// The facts of `window` that depend on it alone, read now. `host` is
     /// the thread that raised the event and its process, which for a
     /// console window name its console host.

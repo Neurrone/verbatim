@@ -138,13 +138,22 @@ impl<L: Logic> Shared<L> {
             .is_some_and(|foreground| foreground.attends(window))
     }
 
-    /// The not-responding sound plays for `window`, hung, while its
-    /// application holds attention.
-    pub(super) fn sound_if_attended(&mut self, window: &RequestWindow) {
-        if self.attended(window) {
+    /// `window`, hung, joins the recovery set while its application holds
+    /// attention, and the not-responding sound plays when it is the first
+    /// window of its application there: a window joining while another of
+    /// its application is there plays nothing, so a stall heard through
+    /// several windows, refusals or reports sounds once (Claude,
+    /// 2026-11-21). The rule reads only the recovery set.
+    pub(super) fn hung_if_attended(&mut self, window: &RequestWindow) {
+        if !self.attended(window) {
+            return;
+        }
+        if !self.state.queue.table.recovering(window.process) {
             self.effects
                 .push(Effect::PlayEarcon(Earcon::AppNotResponding));
         }
+        let now_us = self.state.queue.now_us;
+        self.state.queue.table.watch(*window, now_us);
     }
 
     /// `window`, hung, joins the recovery set while its application holds
@@ -1077,10 +1086,11 @@ impl<L: Logic> Cx<L> {
     }
 
     /// A read of an application's current focus on `window` was answered
-    /// hung and its entry plays the not-responding sound for it, while
-    /// the window's application holds attention.
-    pub(crate) fn sound_if_attended(&mut self, window: &RequestWindow) {
-        self.shared.borrow_mut().sound_if_attended(window);
+    /// hung: the window joins the recovery set while its application holds
+    /// attention, with the sound for the first of its application there
+    /// ([`Shared::hung_if_attended`]).
+    pub(crate) fn hung_if_attended(&mut self, window: &RequestWindow) {
+        self.shared.borrow_mut().hung_if_attended(window);
     }
 
     /// A read of an application's current focus on `window` was answered

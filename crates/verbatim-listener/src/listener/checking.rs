@@ -50,8 +50,10 @@ use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Request,
 
 use super::Outgoing;
 use super::asked::{UiaJob, UiaReading};
-use super::tells::{Applications, Held, Pending, PendingWindow, SystemReads, Tells};
+use super::tells::{Applications, Held, Known, Pending, PendingWindow, SystemReads, Tells, told};
 use crate::reading::{IdleWaiter, Readers};
+use verbatim_model::hung::WindowState;
+use verbatim_model::tell::Hung;
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
 /// The UI Automation class of the Office menu item NVDA's
@@ -334,6 +336,22 @@ impl Kept {
     }
 }
 
+impl Known for Checks {
+    fn told(&self, process: Pid, answered: Option<u32>) -> String {
+        told(&mut self.lock().applications, process, answered)
+    }
+
+    fn hung(&self, hung: Hung) -> Option<Hung> {
+        self.lock()
+            .applications
+            .step(hung.window.process, WindowState::Hung(hung))
+    }
+
+    fn foreground(&self) {
+        self.lock().applications.foreground();
+    }
+}
+
 /// The records under the lock: the threads' decisions, and the wake of
 /// each application's thread.
 struct State {
@@ -378,22 +396,21 @@ impl Checks {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The executable name of `pid`, from the listener's one record of
-    /// the applications, for the `WinEvent` thread's tells.
-    pub(super) fn application_name(&self, pid: Pid) -> String {
-        self.lock().applications.name(pid)
+    /// Hands `event` of `pid`'s, a UI Automation event not dropped, to its
+    /// application's check thread, starting one when it has none, once the
+    /// thread of its sender's window, `answered` (0 for none), is unmarked
+    /// in `pid`'s record, under one lock. Never waits on a call.
+    pub(super) fn hand(self: &Arc<Self>, pid: Pid, answered: u32, event: CheckEvent) {
+        let mut state = self.lock();
+        let _ = state
+            .applications
+            .step(pid, WindowState::Responsive { thread: answered });
+        let pushed = state.threads.push(pid, event);
+        self.pushed(state, pid, pushed);
     }
 
     fn tells(&self) -> &Tells {
         &self.outgoing.tells
-    }
-
-    /// Hands `event` of `pid`'s to its application's check thread,
-    /// starting one when it has none. Never waits on a call.
-    pub(super) fn hand(self: &Arc<Self>, pid: Pid, event: CheckEvent) {
-        let mut state = self.lock();
-        let pushed = state.threads.push(pid, event);
-        self.pushed(state, pid, pushed);
     }
 
     /// Carries out what a push of `pid`'s did, under the lock `state`,

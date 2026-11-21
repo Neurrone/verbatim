@@ -61,6 +61,20 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
             probes: Vec::new(),
             detail: String::new(),
         }),
-        OutpostToCore::Answer(_) => return None,
+        OutpostToCore::Answer(_) => {
+            let facet = crate::tell::WindowFacet {
+                handle: crate::WindowHandle(4),
+                class: "Notepad".to_owned(),
+                process: Pid(2),
+                thread: 3,
+            };
+            OutpostToCore::Hung(crate::tell::Hung {
+                window: facet.clone(),
+                root: facet.clone(),
+                root_owner: facet,
+                at_us: 1,
+            })
+        }
+        OutpostToCore::Hung(_) => return None,
     })
 }

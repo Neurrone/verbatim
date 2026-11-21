@@ -4,6 +4,7 @@
 //! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::TraceId;
+use verbatim_model::hung::WindowState;
 use verbatim_model::protocol::{EventTiming, UiaSnapshotFact};
 /// The `WinEvent` kinds an outpost still takes in
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
@@ -135,6 +136,10 @@ pub struct Entry {
     pub observed_at_us: u64,
     /// When it was raised, observed, and relayed, for the latency log.
     pub timing: EventTiming,
+    /// Its window as read when the event arrived, with calls to Windows
+    /// only: hung, with the report Core is sent of it, or responsive. An
+    /// entry the reducer makes itself names no window.
+    pub window: WindowState,
 }
 
 impl Entry {
@@ -146,6 +151,7 @@ impl Entry {
             trace,
             observed_at_us,
             timing: EventTiming::default(),
+            window: WindowState::Responsive { thread: 0 },
         }
     }
 }

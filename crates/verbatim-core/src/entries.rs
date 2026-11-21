@@ -257,6 +257,19 @@ pub(crate) fn request_window(tell: &Event) -> Option<RequestWindow> {
     })
 }
 
+/// The window a reader's report of a hung window names, from its facets,
+/// as [`request_window`] names a tell's.
+fn hung_window(hung: &verbatim_model::tell::Hung) -> RequestWindow {
+    RequestWindow {
+        handle: hung.window.handle,
+        top_level: hung.root.handle,
+        root_owner: hung.root_owner.handle,
+        process: hung.window.process,
+        thread: hung.window.thread,
+        by_class: by_class(&hung.window.class, &hung.root.class),
+    }
+}
+
 impl Entry {
     /// The entry `tell`, told by `from`, becomes, `None` for a kind whose
     /// entry a later step of the build adds, and for a tell whose object
@@ -1142,7 +1155,9 @@ pub(crate) fn route(
         }
         // Every frame of an instance that is not its reader's current one
         // is dropped (design, "The outpost generation record").
-        QueueInput::Tell { from, .. } | QueueInput::WindowDestroyed { from, .. }
+        QueueInput::Tell { from, .. }
+        | QueueInput::WindowDestroyed { from, .. }
+        | QueueInput::WindowHung { from, .. }
             if !state.queue.admits(*from) =>
         {
             return Routed::Said(vec![Said::Queue(QueueEffect::StaleFrame(*from))]);
@@ -1202,6 +1217,7 @@ pub(crate) fn route(
             window: *window,
             process: *process,
         },
+        QueueInput::WindowHung { hung, .. } => Input::WindowHung(hung_window(hung)),
         QueueInput::Due => Input::Tick,
         QueueInput::Press(press) => Input::Entry(Entry::Press(Box::new(PressEntry::new(
             trace_id,

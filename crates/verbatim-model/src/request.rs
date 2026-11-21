@@ -1334,6 +1334,16 @@ pub enum QueueInput {
         /// could not open that thread.
         process: Option<Pid>,
     },
+    /// A reader of `from` reported a window hung
+    /// ([`crate::protocol::ListenerToCore::Hung`],
+    /// [`crate::protocol::OutpostToCore::Hung`]).
+    WindowHung {
+        /// The reader's instance, whose frames Core admits only while it
+        /// is the current one.
+        from: Instance,
+        /// The report.
+        hung: crate::tell::Hung,
+    },
     /// The time Core last asked to be woken at came.
     Due,
     /// The processes whose windows nothing is read from: the end-to-end

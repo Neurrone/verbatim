@@ -39,7 +39,7 @@ use verbatim_core::{ListenerView, ViewSend};
 use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_listener::listener::{
-    CheckEvent, EventReads, check_event, msaa_tell, written_together,
+    Applications, CheckEvent, EventReads, check_event, msaa_tell, written_together,
 };
 use verbatim_listener_logic::check::{Call, ProbeRecord};
 use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View};
@@ -151,6 +151,9 @@ pub struct CoreDriver {
     wake: Option<u64>,
     /// Core's time.
     clock: Clock,
+    /// The listener's record of the applications, mockapp's, which names
+    /// it and keeps its marks of hung threads.
+    applications: Mutex<Applications>,
     /// What Core said and the calls its requests made since the last take.
     said: Vec<Said>,
     calls: CallCounts,
@@ -300,6 +303,7 @@ impl CoreDriver {
             tells: 0,
             wake: None,
             clock: Clock::new(time, start_us),
+            applications: Mutex::new(Applications::default()),
             said: Vec::new(),
             say_all: Vec::new(),
             display_released: false,
@@ -513,7 +517,7 @@ impl CoreDriver {
                 let kind = verbatim_ia2::tell_kind(event).expect("a WinEvent the listener tells");
                 let address = (event.hwnd, event.id_object, event.id_child);
                 msaa_tell(
-                    &|_| "mockapp".to_owned(),
+                    &self.applications,
                     (kind, address, event.thread),
                     self.clock.now(),
                     &reads,
@@ -548,7 +552,7 @@ impl CoreDriver {
             foreground: self.outpost.foreground(),
         };
         msaa_tell(
-            &|_| "mockapp".to_owned(),
+            &self.applications,
             (kind, (window, object, child), thread),
             self.clock.now(),
             &reads,
@@ -1231,6 +1235,10 @@ impl EventReads for TestReads {
 
     fn hang_state(&self, window: isize) -> Readability {
         SystemReads.hang_state(window)
+    }
+
+    fn stood_for(&self, window: isize) -> Option<isize> {
+        SystemReads.stood_for(window)
     }
 
     fn process_of_thread(&self, thread: u32) -> Option<u32> {

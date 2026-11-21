@@ -12,6 +12,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
+use verbatim_model::hung::{Marks, WindowState};
+use verbatim_model::tell::Hung;
+
 use verbatim_ia2::WinEvent;
 use verbatim_listener_logic::foreground::{Front, Pending as Foreground, Seen, TimerChange};
 use verbatim_listener_logic::tell::{dropped_by_class, hang_tested, tell_window};
@@ -25,7 +28,7 @@ use verbatim_process::held::Target;
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::window::Readability;
 pub(super) use verbatim_win32::window_facts::SystemReads;
-use verbatim_win32::window_facts::{WindowPart, WindowReads};
+use verbatim_win32::window_facts::{WindowPart, WindowReads, hung};
 
 use super::{Sent, Waiting, foreground_report, sent};
 use verbatim_process::transport::Sender;
@@ -42,6 +45,9 @@ pub trait EventReads: WindowReads {
     /// Whether `window`, a window found to exist, is ghosted or hung
     /// ([`verbatim_win32::window::hang_state`]).
     fn hang_state(&self, window: isize) -> Readability;
+    /// The hung window `window` stands in for when it is a ghost
+    /// ([`verbatim_win32::window::hung_window_from_ghost`]).
+    fn stood_for(&self, window: isize) -> Option<isize>;
     /// The process `thread` belongs to, `None` when it cannot be read.
     fn process_of_thread(&self, thread: u32) -> Option<u32>;
     /// Whether this process can open the input desktop now
@@ -56,6 +62,10 @@ impl EventReads for SystemReads {
 
     fn hang_state(&self, window: isize) -> Readability {
         verbatim_win32::window::hang_state(window)
+    }
+
+    fn stood_for(&self, window: isize) -> Option<isize> {
+        verbatim_win32::window::hung_window_from_ghost(window)
     }
 
     fn process_of_thread(&self, thread: u32) -> Option<u32> {
@@ -163,6 +173,10 @@ pub(super) enum Held {
     },
     /// The idle barrier's answer for a round.
     IdleAnswer(u64),
+    /// A window found hung, reported once per stall of its thread
+    /// ([`ListenerToCore::Hung`]), on the lane that keeps order and never
+    /// merges.
+    Hung(Hung),
 }
 
 /// The listener's order of tells and its pending foreground
@@ -266,6 +280,9 @@ impl Tells {
                     at_us,
                 }))),
                 Held::IdleAnswer(round) => sent(&self.sender.send(Sent::IdleAnswer(round))),
+                Held::Hung(hung) => {
+                    sent(&self.sender.send(Sent::Report(ListenerToCore::Hung(hung))));
+                }
             }
         }
     }
@@ -280,34 +297,74 @@ fn foreground() -> isize {
 /// the check threads' lock (`checking`'s `Checks`): each
 /// process's executable name, read once per process generation with
 /// `QueryFullProcessImageNameW`, a call to Windows and not into the
-/// application. The process is held open while it is known, so its id
-/// names it and no other until it is seen to have exited; one that cannot
-/// be opened, a protected process such as csrss, is known by its id alone,
-/// with no name.
+/// application, and its marks of the hung threads reported to Core
+/// ([`Marks`]), which go with the record. The process is held open while
+/// it is known, so its id names it and no other until it is seen to have
+/// exited; one that cannot be opened, a protected process such as csrss,
+/// is known by its id alone, with no name.
 #[derive(Default)]
 pub struct Applications {
-    known: BTreeMap<Pid, (Option<Target>, String)>,
+    known: BTreeMap<Pid, Application>,
     /// How many were known at the last sweep of the exited.
     swept_at: usize,
+}
+
+/// One process generation's record.
+struct Application {
+    target: Option<Target>,
+    name: String,
+    marks: Marks,
+}
+
+impl Application {
+    /// Its process, opened, is seen to have exited.
+    fn exited(&self) -> bool {
+        self.target.as_ref().is_some_and(Target::has_exited)
+    }
 }
 
 impl Applications {
     /// The executable name of `process`, lower-cased with no folder or
     /// extension, empty when it cannot be read.
     pub(crate) fn name(&mut self, process: Pid) -> String {
-        if let Some((target, name)) = self.known.get(&process)
-            && target.as_ref().is_none_or(|target| !target.has_exited())
-        {
-            return name.clone();
+        self.record(process).name.clone()
+    }
+
+    /// `process`'s record, made afresh when it is not known or its process
+    /// has exited, so a new process with a reused id starts with no marks.
+    fn record(&mut self, process: Pid) -> &mut Application {
+        if self.known.get(&process).is_some_and(Application::exited) {
+            self.known.remove(&process);
         }
-        let target = Target::open(process).ok();
-        let name = target
-            .as_ref()
-            .and_then(Target::image_stem)
-            .unwrap_or_default();
-        self.known.insert(process, (target, name.clone()));
-        self.sweep();
-        name
+        if !self.known.contains_key(&process) {
+            self.sweep();
+        }
+        self.known.entry(process).or_insert_with(|| {
+            let target = Target::open(process).ok();
+            let name = target
+                .as_ref()
+                .and_then(Target::image_stem)
+                .unwrap_or_default();
+            Application {
+                target,
+                name,
+                marks: Marks::default(),
+            }
+        })
+    }
+
+    /// `process`'s marks stepped with `state`, an event's window as read
+    /// ([`Marks::step`]): the report to send, if any.
+    pub(crate) fn step(&mut self, process: Pid, state: WindowState) -> Option<Hung> {
+        self.record(process).marks.step(state)
+    }
+
+    /// A foreground event: every application's marks are cleared
+    /// ([`Marks::foreground`]).
+    pub(crate) fn foreground(&mut self) {
+        for application in self.known.values_mut() {
+            application.marks.foreground();
+        }
     }
 
     /// Lets go of every process seen to have exited, once the record has
@@ -317,10 +374,48 @@ impl Applications {
         if self.known.len() <= self.swept_at.saturating_mul(2).saturating_add(16) {
             return;
         }
-        self.known
-            .retain(|_, (target, _)| target.as_ref().is_none_or(|target| !target.has_exited()));
+        self.known.retain(|_, application| !application.exited());
         self.swept_at = self.known.len();
     }
+}
+
+/// The record of the applications as the `WinEvent` path reaches it: the
+/// listener's [`Applications`], under its lock.
+pub trait Known {
+    /// The executable name of `process`, its marks first stepped with
+    /// `answered`, the thread of an event's window read responsive.
+    fn told(&self, process: Pid, answered: Option<u32>) -> String;
+    /// The marks of the process `hung` names stepped with it: the report
+    /// to send, if its thread was not marked.
+    fn hung(&self, hung: Hung) -> Option<Hung>;
+    /// A foreground event: every mark of every application is cleared.
+    fn foreground(&self);
+}
+
+impl Known for Mutex<Applications> {
+    fn told(&self, process: Pid, answered: Option<u32>) -> String {
+        let mut applications = self.lock().unwrap_or_else(PoisonError::into_inner);
+        told(&mut applications, process, answered)
+    }
+
+    fn hung(&self, hung: Hung) -> Option<Hung> {
+        let mut applications = self.lock().unwrap_or_else(PoisonError::into_inner);
+        applications.step(hung.window.process, WindowState::Hung(hung))
+    }
+
+    fn foreground(&self) {
+        self.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .foreground();
+    }
+}
+
+/// [`Known::told`] over `applications`, under its lock.
+pub(super) fn told(applications: &mut Applications, process: Pid, answered: Option<u32>) -> String {
+    if let Some(thread) = answered {
+        let _ = applications.step(process, WindowState::Responsive { thread });
+    }
+    applications.name(process)
 }
 
 /// What `event`, received at `at_us`, gives the pending foreground: its
@@ -342,7 +437,7 @@ impl Applications {
 /// event's window when the hook's filter read it; every other fact is
 /// read through `reads`.
 pub(super) fn tell_win_event(
-    name: &dyn Fn(Pid) -> String,
+    known: &dyn Known,
     event: WinEvent,
     (at_us, class): (u64, Option<&str>),
     reads: &impl EventReads,
@@ -354,35 +449,36 @@ pub(super) fn tell_win_event(
         };
     };
     let address = (event.hwnd, event.id_object, event.id_child);
-    tell_msaa(name, (kind, address, event.thread), (at_us, class), reads)
+    tell_msaa(known, (kind, address, event.thread), (at_us, class), reads)
 }
 
 /// The tell the listener sends of an MSAA event of `kind` on `address`
 /// (window, object and child), raised by `thread` and received at
 /// `at_us`, its foreground facts read through `reads` as it is placed;
 /// `None` when a local drop takes it, and for a window's destruction,
-/// which is no tell; `name` names each process's executable. Public so
-/// that mockapp's tests tell Core of mockapp's own `WinEvent`s with the
-/// listener's code.
+/// which is no tell, and for a hung window, whose report this does not
+/// return; `known` names each process's executable and keeps its marks.
+/// Public so that mockapp's tests tell Core of mockapp's own `WinEvent`s
+/// with the listener's code.
 pub fn msaa_tell(
-    name: &dyn Fn(Pid) -> String,
+    known: &dyn Known,
     (kind, address, thread): (EventKind, (isize, i32, i32), u32),
     at_us: u64,
     reads: &impl EventReads,
 ) -> Option<(TellKey, Event)> {
-    let item = match tell_msaa(name, (kind, address, thread), (at_us, None), reads) {
+    let item = match tell_msaa(known, (kind, address, thread), (at_us, None), reads) {
         Seen::Foreground { item, .. } | Seen::Shell { item, .. } | Seen::Other { item, .. } => item,
         Seen::Timer => None,
     };
     match item? {
         Held::Tell(tell) => Some(tell.finish(reads)),
-        Held::Destroyed { .. } | Held::IdleAnswer(_) => None,
+        Held::Destroyed { .. } | Held::IdleAnswer(_) | Held::Hung(_) => None,
     }
 }
 
 /// [`tell_win_event`] for an event already named by its kind.
 fn tell_msaa(
-    name: &dyn Fn(Pid) -> String,
+    known: &dyn Known,
     (kind, (hwnd, id_object, id_child), thread): (EventKind, (isize, i32, i32), u32),
     (at_us, class): (u64, Option<&str>),
     reads: &impl EventReads,
@@ -391,6 +487,13 @@ fn tell_msaa(
         item,
         observed_at_us: at_us,
     };
+    // A foreground event clears every application's marks before it is
+    // judged, since Core drops a window from its recovery set when its
+    // application loses attention: a hung window brought back to the
+    // front is reported again by this event's own drop.
+    if matches!(kind, EventKind::Foreground | EventKind::ShellForeground) {
+        known.foreground();
+    }
     let window = match tell_window(
         kind,
         (hwnd, id_object, id_child),
@@ -438,18 +541,23 @@ fn tell_msaa(
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         seen(None)
     };
-    let process = routed_process(&class, reads.owner(window).1, || {
-        reads.process_of_thread(thread)
-    });
+    let (owner_thread, owner) = reads.owner(window);
+    let process = routed_process(&class, owner, || reads.process_of_thread(thread));
     let Some(process) = process.map(Pid) else {
         return dropped("the process serving the window cannot be read");
     };
     if let Some(reason) = dropped_by_class(kind, &class, id_object) {
         return dropped(reason);
     }
-    if hang_tested(kind) && reads.hang_state(window).is_hung() {
-        return dropped("its window is hung");
-    }
+    let host = console.then_some((thread, process.0));
+    let answered = match hang_judged(kind, (window, host, owner_thread), at_us, reads) {
+        Judged::Untested => None,
+        Judged::Answered(thread) => Some(thread),
+        Judged::Hung(report) => {
+            tracing::trace!(?kind, window, "a WinEvent is not told: its window is hung");
+            return seen(known.hung(report).map(Held::Hung));
+        }
+    };
     let payload = if kind == EventKind::DesktopSwitch {
         Payload::DesktopSwitch {
             input_desktop_open: reads.input_desktop_opens(),
@@ -460,7 +568,7 @@ fn tell_msaa(
     let tell = Pending {
         trace_id: TraceId::mint(),
         kind,
-        application: name(process),
+        application: known.told(process, answered),
         process,
         thread,
         at_us,
@@ -471,14 +579,44 @@ fn tell_msaa(
         },
         cached: PropertyValues(Vec::new()),
         payload,
-        window: PendingWindow::Found(WindowPart::read(
-            reads,
-            window,
-            console.then_some((thread, process.0)),
-        )),
+        window: PendingWindow::Found(WindowPart::read(reads, window, host)),
         checked: None,
     };
     seen(Some(Held::Tell(Box::new(tell))))
+}
+
+/// What the hang test of an event's window found ([`hang_judged`]).
+enum Judged {
+    /// The event's kind is not tested.
+    Untested,
+    /// The window answers, on this thread.
+    Answered(u32),
+    /// The window is hung or ghosted, with its report.
+    Hung(Hung),
+}
+
+/// The hang test of an event of `kind` on `window`, for the kinds NVDA
+/// tests ([`hang_tested`]), read live: the report of a hung or ghosted
+/// window, a ghost reported as the window it stands for, whose process
+/// holds attention where the ghost's, the desktop window manager's, does
+/// not; otherwise the thread the window was read responsive on, the
+/// console host's for a console window as its facets name it (`host`).
+fn hang_judged(
+    kind: EventKind,
+    (window, host, owner_thread): (isize, Option<(u32, u32)>, u32),
+    at_us: u64,
+    reads: &impl EventReads,
+) -> Judged {
+    if !hang_tested(kind) {
+        return Judged::Untested;
+    }
+    if !reads.hang_state(window).is_hung() {
+        return Judged::Answered(host.map_or(owner_thread, |(thread, _)| thread));
+    }
+    Judged::Hung(match reads.stood_for(window) {
+        Some(stood_for) => hung(reads, stood_for, None, at_us),
+        None => hung(reads, window, host, at_us),
+    })
 }
 
 /// The process that serves a window of `class` whose owner is process
@@ -498,10 +636,10 @@ pub(super) fn routed_process(
     }
 }
 
-/// The executable name of `process`, read afresh, for a test.
+/// A fresh record of the applications, for a test.
 #[cfg(test)]
-pub(super) fn name_of(process: Pid) -> String {
-    Applications::default().name(process)
+pub(super) fn known() -> Mutex<Applications> {
+    Mutex::new(Applications::default())
 }
 
 #[cfg(test)]
@@ -521,6 +659,7 @@ mod tests {
 
     use super::*;
     use verbatim_ia2::WinEventKind;
+    use verbatim_model::tell::WindowFacet;
 
     /// A message-only window of this thread's, of class `Static`, which no
     /// desktop shows and which is never in front: destroyed when dropped.
@@ -599,8 +738,8 @@ mod tests {
     /// [`tell_win_event`] with the system's reads, the hook having read
     /// no class, stepped with the window in front `at.1`, before the
     /// foreground's watch starts, so that no window is reported.
-    fn tell(tells: &Tells, name: &dyn Fn(Pid) -> String, event: WinEvent, at: (u64, isize)) {
-        let seen = tell_win_event(name, event, (at.0, None), &SystemReads);
+    fn tell(tells: &Tells, known: &dyn Known, event: WinEvent, at: (u64, isize)) {
+        let seen = tell_win_event(known, event, (at.0, None), &SystemReads);
         let _ = tells.step(seen, (at.1, false), &SystemReads);
     }
 
@@ -645,7 +784,7 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, name_change, (5_000, foreground()));
+        tell(&tells, &known(), name_change, (5_000, foreground()));
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
         assert_eq!(tell.kind, EventKind::NameChange);
@@ -693,7 +832,7 @@ mod tests {
                 OBJID_CLIENT.0,
             ),
         ] {
-            tell(&tells, &name_of, told, (1, foreground()));
+            tell(&tells, &known(), told, (1, foreground()));
         }
         assert_eq!(sent_all(&sender, &mut reader), Vec::<ListenerToCore>::new());
     }
@@ -703,7 +842,7 @@ mod tests {
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell(&tells, &name_of, destroy, (1, foreground()));
+        tell(&tells, &known(), destroy, (1, foreground()));
         assert_eq!(
             sent_all(&sender, &mut reader),
             [ListenerToCore::Destroyed {
@@ -726,7 +865,7 @@ mod tests {
             thread: 0,
             ..event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0)
         };
-        tell(&tells, &name_of, destroy, (2, foreground()));
+        tell(&tells, &known(), destroy, (2, foreground()));
         assert_eq!(
             sent_all(&sender, &mut reader),
             [ListenerToCore::Destroyed {
@@ -751,23 +890,23 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, foreground_event, (1, foreground()));
+        tell(&tells, &known(), foreground_event, (1, foreground()));
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, name_change, (2, foreground()));
+        tell(&tells, &known(), name_change, (2, foreground()));
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell(&tells, &name_of, destroy, (3, foreground()));
+        tell(&tells, &known(), destroy, (3, foreground()));
         let other_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             other.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, other_change, (4, foreground()));
+        tell(&tells, &known(), other_change, (4, foreground()));
         foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
@@ -801,14 +940,14 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, foreground_event, (1, foreground()));
+        tell(&tells, &known(), foreground_event, (1, foreground()));
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, name_change, (2, foreground()));
+        tell(&tells, &known(), name_change, (2, foreground()));
         tells.place_behind(Held::IdleAnswer(7));
         foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
@@ -837,7 +976,7 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &name_of, foreground_event, (1, foreground()));
+        tell(&tells, &known(), foreground_event, (1, foreground()));
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
@@ -847,7 +986,7 @@ mod tests {
         let Seen::Other {
             item: Some(passing),
             ..
-        } = tell_win_event(&name_of, name_change, (2, None), &SystemReads)
+        } = tell_win_event(&known(), name_change, (2, None), &SystemReads)
         else {
             panic!("a told name change");
         };
@@ -892,7 +1031,7 @@ mod tests {
                 2,
             ),
         ] {
-            tell(&tells, &name_of, told, (at_us, foreground()));
+            tell(&tells, &known(), told, (at_us, foreground()));
         }
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
@@ -911,6 +1050,243 @@ mod tests {
         };
         assert_eq!(facts.window.class, "#32769");
         assert!(facts.desktop);
+    }
+
+    /// The system's reads, but every window read hung, and `ghost`, when
+    /// given, a ghost standing for the window `stands_for`.
+    struct HungReads {
+        ghost: Option<(isize, isize)>,
+    }
+
+    impl WindowReads for HungReads {
+        fn class(&self, window: isize) -> String {
+            SystemReads.class(window)
+        }
+        fn owner(&self, window: isize) -> (u32, u32) {
+            SystemReads.owner(window)
+        }
+        fn console_host(&self, window: isize) -> Option<u32> {
+            SystemReads.console_host(window)
+        }
+        fn parent(&self, window: isize) -> isize {
+            SystemReads.parent(window)
+        }
+        fn root(&self, window: isize) -> isize {
+            SystemReads.root(window)
+        }
+        fn root_owner(&self, window: isize) -> isize {
+            SystemReads.root_owner(window)
+        }
+        fn is_child(&self, parent: isize, child: isize) -> bool {
+            SystemReads.is_child(parent, child)
+        }
+        fn topmost(&self, window: isize) -> bool {
+            SystemReads.topmost(window)
+        }
+        fn desktop(&self) -> isize {
+            SystemReads.desktop()
+        }
+        fn foreground(&self) -> isize {
+            SystemReads.foreground()
+        }
+        fn active_window(&self) -> isize {
+            SystemReads.active_window()
+        }
+        fn hidden_frame(&self, window: isize) -> bool {
+            SystemReads.hidden_frame(window)
+        }
+    }
+
+    impl EventReads for HungReads {
+        fn exists(&self, window: isize) -> bool {
+            SystemReads.exists(window)
+        }
+        fn hang_state(&self, _window: isize) -> Readability {
+            Readability::Hung
+        }
+        fn stood_for(&self, window: isize) -> Option<isize> {
+            self.ghost
+                .and_then(|(ghost, stands_for)| (ghost == window).then_some(stands_for))
+        }
+        fn process_of_thread(&self, thread: u32) -> Option<u32> {
+            SystemReads.process_of_thread(thread)
+        }
+        fn input_desktop_opens(&self) -> bool {
+            SystemReads.input_desktop_opens()
+        }
+    }
+
+    /// [`tell`] with every window read hung through `reads`.
+    fn tell_hung(
+        tells: &Tells,
+        known: &dyn Known,
+        event: WinEvent,
+        (at_us, reads): (u64, &HungReads),
+    ) {
+        let seen = tell_win_event(known, event, (at_us, None), reads);
+        let _ = tells.step(seen, (foreground(), false), &SystemReads);
+    }
+
+    /// What `sent` holds, as each message's kind and the window or time
+    /// that tells it apart.
+    fn kinds(sent: Vec<ListenerToCore>) -> Vec<String> {
+        sent.into_iter()
+            .map(|message| match message {
+                ListenerToCore::Tell(tell) => format!("{:?} {}", tell.kind, tell.at_us),
+                ListenerToCore::Hung(hung) => {
+                    format!("Hung {} {}", hung.window.handle.0, hung.at_us)
+                }
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    fn name_change(window: isize) -> WinEvent {
+        event(
+            WinEventKind::NameChange,
+            EVENT_OBJECT_NAMECHANGE,
+            window,
+            OBJID_CLIENT.0,
+        )
+    }
+
+    /// A name change on a hung window is not told: the window is reported,
+    /// with its facets, behind a foreground the hold keeps, and a second
+    /// drop on its thread reports nothing.
+    #[test]
+    fn a_dropped_win_event_on_a_hung_window_is_reported_behind_the_pending_foreground() {
+        let window = OwnWindow::new();
+        let other = OwnWindow::new();
+        let (tells, sender, mut reader) = tells();
+        let known = known();
+        let foreground_event = event(
+            WinEventKind::Foreground,
+            EVENT_SYSTEM_FOREGROUND,
+            other.0,
+            OBJID_CLIENT.0,
+        );
+        tell(&tells, &known, foreground_event, (1, foreground()));
+        let reads = HungReads { ghost: None };
+        tell_hung(&tells, &known, name_change(window.0), (2, &reads));
+        tell_hung(&tells, &known, name_change(other.0), (3, &reads));
+        foreground_in_front(&tells);
+        let sent = sent_all(&sender, &mut reader);
+        let facet = |handle: isize| WindowFacet {
+            handle: WindowHandle::from(handle),
+            class: "Static".to_owned(),
+            process: Pid(std::process::id()),
+            thread: this_thread(),
+        };
+        let message_only = WindowHandle::from(SystemReads.root(window.0));
+        assert_eq!(
+            sent.get(1),
+            Some(&ListenerToCore::Hung(Hung {
+                window: facet(window.0),
+                root: WindowFacet {
+                    handle: message_only,
+                    class: SystemReads.class(SystemReads.root(window.0)),
+                    process: Pid(SystemReads.owner(SystemReads.root(window.0)).1),
+                    thread: SystemReads.owner(SystemReads.root(window.0)).0,
+                },
+                root_owner: WindowFacet {
+                    handle: WindowHandle::from(SystemReads.root_owner(window.0)),
+                    class: SystemReads.class(SystemReads.root_owner(window.0)),
+                    process: Pid(SystemReads.owner(SystemReads.root_owner(window.0)).1),
+                    thread: SystemReads.owner(SystemReads.root_owner(window.0)).0,
+                },
+                at_us: 2,
+            }))
+        );
+        assert_eq!(
+            kinds(sent),
+            ["Foreground 1".to_owned(), format!("Hung {} 2", window.0)]
+        );
+    }
+
+    /// A ghost's dropped event is reported as the window it stands for,
+    /// with that window's own facets.
+    #[test]
+    fn a_ghost_is_reported_as_the_window_it_stands_for() {
+        let ghost = OwnWindow::new();
+        let hung = OwnWindow::new();
+        let (tells, sender, mut reader) = tells();
+        let reads = HungReads {
+            ghost: Some((ghost.0, hung.0)),
+        };
+        tell_hung(&tells, &known(), name_change(ghost.0), (1, &reads));
+        assert_eq!(
+            kinds(sent_all(&sender, &mut reader)),
+            [format!("Hung {} 1", hung.0)]
+        );
+    }
+
+    /// A foreground event clears the marks: its own drop reports the hung
+    /// window again, and a told event of a window on the thread unmarks
+    /// it, so the next drop reports it once more.
+    #[test]
+    fn a_foreground_event_and_a_responsive_event_let_the_window_be_reported_again() {
+        let window = OwnWindow::new();
+        let (tells, sender, mut reader) = tells();
+        let known = known();
+        let reads = HungReads { ghost: None };
+        tell_hung(&tells, &known, name_change(window.0), (1, &reads));
+        tell_hung(&tells, &known, name_change(window.0), (2, &reads));
+        let foreground_event = event(
+            WinEventKind::Foreground,
+            EVENT_SYSTEM_FOREGROUND,
+            window.0,
+            OBJID_CLIENT.0,
+        );
+        tell_hung(&tells, &known, foreground_event, (3, &reads));
+        foreground_in_front(&tells);
+        tell_hung(&tells, &known, name_change(window.0), (4, &reads));
+        tell(&tells, &known, name_change(window.0), (5, foreground()));
+        tell_hung(&tells, &known, name_change(window.0), (6, &reads));
+        assert_eq!(
+            kinds(sent_all(&sender, &mut reader)),
+            [
+                format!("Hung {} 1", window.0),
+                format!("Hung {} 3", window.0),
+                "NameChange 5".to_owned(),
+                format!("Hung {} 6", window.0),
+            ]
+        );
+    }
+
+    /// An application's marks go with its record when it exits: a thread
+    /// marked in the exited process is unmarked in the record that takes
+    /// its id's place.
+    #[test]
+    fn an_application_exit_drops_its_marks() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("a child process");
+        let process = Pid(child.id());
+        let hung = |at_us: u64| {
+            let facet = WindowFacet {
+                handle: WindowHandle(7),
+                class: "Static".to_owned(),
+                process,
+                thread: 9,
+            };
+            WindowState::Hung(Hung {
+                window: facet.clone(),
+                root: facet.clone(),
+                root_owner: facet,
+                at_us,
+            })
+        };
+        let mut applications = Applications::default();
+        assert!(applications.step(process, hung(1)).is_some());
+        assert!(applications.step(process, hung(2)).is_none());
+        child.kill().expect("the child ends");
+        child.wait().expect("the child exits");
+        assert_eq!(
+            applications.step(process, hung(3)).map(|hung| hung.at_us),
+            Some(3)
+        );
     }
 
     /// Waiting tells merge, one per object, kind and raising thread, the

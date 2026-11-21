@@ -104,6 +104,7 @@ use outbound::Outbound;
 pub(crate) use reducer::{Anchor, NodeAnchors, ReadSelection};
 use reducer::{Entry, Item, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
+use verbatim_model::hung::WindowState;
 use worker::Charge;
 
 #[cfg(test)]
@@ -562,24 +563,56 @@ impl Context {
         nodes
     }
 
-    /// Appends `item` to the mailbox.
-    fn push(&self, item: Item, (trace, observed_at_us, timing): (TraceId, u64, EventTiming)) {
+    /// Queues an event one of the outpost's own handlers took in, observed
+    /// now, its window's state read as it arrives
+    /// ([`window_state`](Self::window_state)), then tells the observer, if
+    /// there is one, that it was heard.
+    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
+        let observed_at_us = window::observed_us(&timing);
+        let window = self.window_state(&item, observed_at_us);
         self.mailbox.push(Entry {
             item,
-            trace,
+            trace: TraceId::mint(),
             observed_at_us,
             timing,
+            window,
         });
+        self.tell_heard(heard);
     }
 
-    /// Queues an event one of the outpost's own handlers took in, observed
-    /// now, then tells the observer, if there is one, that it was heard.
-    fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
-        self.push(
-            item,
-            (TraceId::mint(), window::observed_us(&timing), timing),
-        );
-        self.tell_heard(heard);
+    /// The state of the window of `item`, an event arriving at
+    /// `observed_at_us`, read now with calls to Windows only, as NVDA tests
+    /// a UIA event's window on arrival (ADR 0003, "A frozen window"): the
+    /// event's own window, or for an element that is no window itself, the
+    /// followed node's nearest window, as the tell's window facts read it.
+    /// A hung or ghosted window carries its report, which the reducer sends
+    /// once per stall of its thread; with no window to read, thread 0,
+    /// which marks nothing. Its events name this outpost's own
+    /// application's windows, so no ghost is mapped.
+    fn window_state(&self, item: &Item, observed_at_us: u64) -> WindowState {
+        let window = match item {
+            Item::Msaa { hwnd, .. } => *hwnd,
+            Item::Uia(event) if event.hwnd != 0 => event.hwnd,
+            Item::Uia(_) => followed::node(self)
+                .and_then(|node| self.store.nearest_window_of(node))
+                .unwrap_or(0),
+            Item::NodesHeld { .. } | Item::Barrier { .. } => 0,
+        };
+        if window == 0 {
+            return WindowState::Responsive { thread: 0 };
+        }
+        if verbatim_win32::window::hang_state(window).is_hung() {
+            WindowState::Hung(verbatim_win32::window_facts::hung(
+                &OutpostReads(self),
+                window,
+                None,
+                observed_at_us,
+            ))
+        } else {
+            WindowState::Responsive {
+                thread: verbatim_win32::window::window_owner(window).0,
+            }
+        }
     }
 
     /// Tells the observer, if there is one, that an event was heard.
@@ -1094,12 +1127,13 @@ impl Outpost {
     pub fn handle_command(&self, command: &CoreToOutpost) {
         let context = &self.context;
         match command {
-            CoreToOutpost::IdleQuery { round } => context.push(
+            CoreToOutpost::IdleQuery { round } => context.mailbox.push(Entry::own(
                 Item::Barrier {
                     asker: reducer::Asker::Round(*round),
                 },
-                (TraceId::mint(), now_us(), EventTiming::default()),
-            ),
+                TraceId::mint(),
+                now_us(),
+            )),
             CoreToOutpost::Request(ask) => {
                 tracing::debug!(request = %ask.number, "request received and posted");
                 context.mailbox.post(Posted::Ask(unstamped_ask(ask)));
@@ -1125,15 +1159,16 @@ impl Outpost {
                 told,
                 acknowledged,
             } => {
-                context.push(
+                context.mailbox.push(Entry::own(
                     Item::NodesHeld {
                         nodes: nodes.clone(),
                         anchors: anchors.clone(),
                         told: told.clone(),
                         acknowledged: *acknowledged,
                     },
-                    (TraceId::mint(), now_us(), EventTiming::default()),
-                );
+                    TraceId::mint(),
+                    now_us(),
+                ));
             }
         }
     }

@@ -156,6 +156,25 @@ pub enum TellWindow {
     Failed,
 }
 
+/// A reader's report of a window it found hung (ADR 0003, "A frozen
+/// window"): the listener's of a window whose event it dropped as hung, a
+/// ghost reported as the window it stands for, and an outpost's of a
+/// window of its application whose event it heard while the window was
+/// hung. Its facets are read with calls to Windows only, as a tell's are;
+/// Core takes it as it takes a request refused as hung.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hung {
+    /// The hung window.
+    pub window: WindowFacet,
+    /// Its top-level window.
+    pub root: WindowFacet,
+    /// The top of its owner chain.
+    pub root_owner: WindowFacet,
+    /// When the reader observed the event it found the window hung at, in
+    /// microseconds on the run's shared clock.
+    pub at_us: u64,
+}
+
 /// A read whose answer can fail, as a check thread's call can.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Read<T> {

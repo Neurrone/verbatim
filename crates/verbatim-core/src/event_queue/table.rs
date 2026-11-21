@@ -13,10 +13,10 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::WindowHandle;
 use verbatim_model::request::{
     Ask, CancelReason, Front, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
 };
+use verbatim_model::{Pid, WindowHandle};
 
 use super::{Instance, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
@@ -460,6 +460,13 @@ impl Table {
     pub(crate) fn watch(&mut self, window: RequestWindow, now_us: u64) {
         self.recovery.insert(window.handle.0, window);
         self.arm_round(now_us);
+    }
+
+    /// Whether a window of `process` is in the recovery set.
+    pub(crate) fn recovering(&self, process: Pid) -> bool {
+        self.recovery
+            .values()
+            .any(|window| window.process == process)
     }
 
     /// Removes `window` from the recovery set.

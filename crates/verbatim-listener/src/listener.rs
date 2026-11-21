@@ -95,7 +95,7 @@ use asked::{UiaJob, UiaReading};
 pub use checking::{CheckEvent, KeptElements, Told, cached_of, check_event};
 use checking::{Checks, Kept};
 
-pub use tells::{EventReads, Pending, PendingWindow, TellKey, msaa_tell};
+pub use tells::{Applications, EventReads, Known, Pending, PendingWindow, TellKey, msaa_tell};
 use tells::{Held, SystemReads, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger, ThreadTimer};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Seen, Step, TimerChange};
@@ -539,7 +539,7 @@ impl Listener {
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
             let checks = Arc::clone(&idle_checks);
-            let names = Arc::clone(&idle_checks);
+            let known = Arc::clone(&idle_checks);
             // The window in front, for the keyboard hook's view of it, and
             // the foreground hold's timer, kept on this thread by the
             // handlers.
@@ -549,13 +549,7 @@ impl Listener {
             let timer_outgoing = Arc::clone(&msaa_outgoing);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent, class: Option<&str>| {
-                    on_win_event(
-                        &outgoing,
-                        &|pid| names.application_name(pid),
-                        &thread,
-                        (event, class),
-                        &SystemReads,
-                    );
+                    on_win_event(&outgoing, &*known, &thread, (event, class), &SystemReads);
                 }),
                 // The idle barrier's query, its round in the first word:
                 // every event delivered before it has been handled, so the
@@ -813,14 +807,14 @@ struct EventThreadState {
 /// it.
 fn on_win_event(
     outgoing: &Arc<Outgoing>,
-    name: &dyn Fn(Pid) -> String,
+    known: &dyn Known,
     thread: &EventThreadState,
     (event, class): (WinEvent, Option<&str>),
     reads: &impl EventReads,
 ) {
     let arrived_us = outgoing.now();
     let front = outgoing.tells.front();
-    let seen = tell_win_event(name, event, (arrived_us, class), reads);
+    let seen = tell_win_event(known, event, (arrived_us, class), reads);
     let started = thread.watch.borrow().started();
     let stepped = outgoing.tells.step(seen, (front, started), reads);
     stepped_on(outgoing, thread, stepped);
@@ -1007,9 +1001,11 @@ fn menu_subscription(
 /// any call: before the subscriptions are installed, with no process, or
 /// with its sender's cached window hung or
 /// ghosted as it arrives (a sender with no cached window is not tested,
-/// `UIAHandler/utils.py` 446 to 450). Otherwise handed to its
-/// application's check thread, which tells Core of it. Makes no
-/// cross-process call.
+/// `UIAHandler/utils.py` 446 to 450); a hung window is reported to Core
+/// once per stall of its thread, a ghost as the window it stands for,
+/// behind any pending foreground. Otherwise its window's thread is
+/// unmarked and it is handed to its application's check thread, which
+/// tells Core of it. Makes no cross-process call.
 fn arrived(
     outgoing: &Outgoing,
     readers: &Readers<UiaReading>,
@@ -1028,12 +1024,23 @@ fn arrived(
     let Some(pid) = fields.process_id.filter(|&pid| pid != 0).map(Pid) else {
         return;
     };
-    if window_hung(&readers.reading().readability, fields.role.hwnd) {
-        tracing::debug!(%pid, ?kind, hwnd = fields.role.hwnd, "UIA event dropped as it arrived: its window is hung");
+    let hwnd = fields.role.hwnd;
+    if window_hung(&readers.reading().readability, hwnd) {
+        tracing::debug!(%pid, ?kind, hwnd, "UIA event dropped as it arrived: its window is hung");
+        let reported = verbatim_win32::window::hung_window_from_ghost(hwnd).unwrap_or(hwnd);
+        let report = verbatim_win32::window_facts::hung(&SystemReads, reported, None, at_us);
+        if let Some(report) = checks.hung(report) {
+            outgoing.tells.place_behind(Held::Hung(report));
+        }
         return;
     }
     if let Some(event) = CheckEvent::new(kind, (sender, fields), pid, at_us, (states, payload)) {
-        checks.hand(pid, event);
+        let answered = if hwnd == 0 {
+            0
+        } else {
+            verbatim_win32::window::window_owner(hwnd).0
+        };
+        checks.hand(pid, answered, event);
     }
 }
 
@@ -1848,9 +1855,40 @@ mod tests {
         );
     }
 
+    /// The one report `sent` holds, of the desktop window, the senders'
+    /// cached window in these tests, with the facets Windows gives it:
+    /// its own, and no top-level window or root owner, which the desktop
+    /// window has none of. Its time is the listener's clock's at arrival.
+    fn only_the_desktop_reported(sent: &[ListenerToCore]) {
+        let [ListenerToCore::Hung(hung)] = sent else {
+            panic!("one report of a hung window: {sent:?}");
+        };
+        let (thread, process) = verbatim_win32::window::window_owner(desktop_window());
+        let none = verbatim_model::tell::WindowFacet {
+            handle: WindowHandle(0),
+            class: String::new(),
+            process: Pid(0),
+            thread: 0,
+        };
+        assert_eq!(
+            (&hung.window, &hung.root, &hung.root_owner),
+            (
+                &verbatim_model::tell::WindowFacet {
+                    handle: desktop_handle(),
+                    class: "#32769".to_owned(),
+                    process: Pid(process),
+                    thread,
+                },
+                &none,
+                &none
+            )
+        );
+    }
+
     /// A UIA focus whose sender's cached window the listener's reader
     /// answers hung as it arrives is dropped in the callback: nothing is
-    /// told, and the reader was asked of the sender's window once.
+    /// told, the window is reported hung, and the reader was asked of the
+    /// sender's window once.
     #[test]
     fn a_focus_whose_window_is_hung_as_it_arrives_is_dropped_in_the_callback() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -1868,7 +1906,7 @@ mod tests {
         };
         callback(&sender);
         drop(callback);
-        assert_eq!(parts.stop(), []);
+        only_the_desktop_reported(&parts.stop());
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window()]
@@ -2144,7 +2182,8 @@ mod tests {
 
     /// A selection and a notification whose sender's cached window the
     /// listener's reader answers hung as they arrive are dropped in their
-    /// callbacks: nothing is told.
+    /// callbacks: nothing is told, and the window is reported once, its
+    /// thread marked by the first drop.
     #[test]
     fn a_selection_and_a_notification_whose_window_is_hung_are_dropped_in_their_callbacks() {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -2177,7 +2216,7 @@ mod tests {
             None,
         );
         drop(callback);
-        assert_eq!(parts.stop(), []);
+        only_the_desktop_reported(&parts.stop());
         assert_eq!(
             *asked.lock().unwrap_or_else(PoisonError::into_inner),
             [desktop_window(), desktop_window()]
@@ -2558,7 +2597,7 @@ mod tests {
         let _ = thread.watch.borrow_mut().start(None);
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 client_event(
@@ -2590,7 +2629,7 @@ mod tests {
         let _ = thread.watch.borrow_mut().start(None);
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 client_event(
@@ -2605,7 +2644,7 @@ mod tests {
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 client_event(
@@ -2642,7 +2681,7 @@ mod tests {
         let _ = thread.watch.borrow_mut().start(None);
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 client_event(
@@ -2657,7 +2696,7 @@ mod tests {
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 client_event(
@@ -2786,6 +2825,9 @@ mod tests {
         fn hang_state(&self, _window: isize) -> Readability {
             self.count("hang_state", Readability::Readable)
         }
+        fn stood_for(&self, _window: isize) -> Option<isize> {
+            self.count("stood_for", None)
+        }
         fn process_of_thread(&self, _thread: u32) -> Option<u32> {
             self.count("process_of_thread", Some(std::process::id()))
         }
@@ -2809,7 +2851,7 @@ mod tests {
         let desk = FloodDesk::owned_in_front();
         on_win_event(
             &outgoing,
-            &tells::name_of,
+            &tells::known(),
             &thread,
             (
                 WinEvent {
@@ -2965,7 +3007,7 @@ mod tests {
             readability_reads.store(0, Ordering::SeqCst);
             on_win_event(
                 &outgoing,
-                &tells::name_of,
+                &tells::known(),
                 &thread,
                 (event, Some(class)),
                 &desk,

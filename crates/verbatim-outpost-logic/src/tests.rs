@@ -6,8 +6,10 @@
 
 use std::time::Duration;
 
-use verbatim_model::TraceId;
-use verbatim_model::protocol::{EventTiming, OutpostToCore};
+use verbatim_model::hung::WindowState;
+use verbatim_model::protocol::{EventTiming, OutpostToCore, UiaSnapshotFact};
+use verbatim_model::tell::{Hung, WindowFacet};
+use verbatim_model::{Pid, TraceId, WindowHandle};
 
 use super::*;
 
@@ -62,6 +64,7 @@ fn entry(item: Item, at_ms: u64) -> Entry {
         trace: TraceId::from_raw(at_ms),
         observed_at_us: at_ms * 1_000,
         timing: EventTiming::default(),
+        window: WindowState::Responsive { thread: 0 },
     }
 }
 
@@ -256,4 +259,145 @@ fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
         settled_and_dispatches(&replay.finish(next, 7)),
         [] as [String; 0]
     );
+}
+
+/// A property change of the followed focus, its element no window itself.
+fn property_change() -> Item {
+    Item::Uia(UiaEvent {
+        kind: UiaKind::Property {
+            id: 30005,
+            text_pattern: false,
+            automation_id: None,
+            window: Box::new(verbatim_model::tell::TellWindow::NoWindow),
+        },
+        parts: UiaSnapshotFact {
+            runtime_id: vec![42, 1],
+            role: verbatim_model::Role::ProgressBar,
+            name: None,
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+        hwnd: 0,
+        element: None,
+    })
+}
+
+/// The report of window `window` on thread `thread`, read hung at `at_ms`.
+fn hung(window: u64, thread: u32, at_ms: u64) -> Hung {
+    let facet = WindowFacet {
+        handle: WindowHandle(window),
+        class: "Static".to_owned(),
+        process: Pid(4),
+        thread,
+    };
+    Hung {
+        window: facet.clone(),
+        root: facet.clone(),
+        root_owner: facet,
+        at_us: at_ms * 1_000,
+    }
+}
+
+/// `item` observed at `at_ms`, its window read as `window`.
+fn entry_in(item: Item, at_ms: u64, window: WindowState) -> Input {
+    Input::Entry(Entry {
+        window,
+        ..entry(item, at_ms)
+    })
+}
+
+/// What `effects` do, in order: each message sent and each program
+/// dispatched.
+fn reports_and_dispatches(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .map(|effect| match effect {
+            Effect::Send(message) => match &**message {
+                OutpostToCore::Hung(hung) => {
+                    format!("report {} at {}", hung.window.handle.0, hung.at_us / 1_000)
+                }
+                other => format!("{other:?}"),
+            },
+            Effect::Dispatch(program) => format!("dispatch {}", handles(program)),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+/// Two property events of the followed focus arrive while its window's
+/// thread is hung: the first is reported before its own tell, which its
+/// program commits once dispatched, and the second only handled. A
+/// responsive event unmarks the thread, so the next hung one is reported
+/// again. Each event is handled as any other.
+#[test]
+fn a_property_event_from_a_hung_window_reports_it_once_before_its_tell() {
+    let mut replay = Replay::new();
+    let mut steps = Vec::new();
+    let mut step = |replay: &mut Replay, input: Input, at_ms: u64| {
+        let effects = replay.input(input, at_ms);
+        steps.extend(reports_and_dispatches(&effects));
+        let request = programs(&effects).first().map(|program| program.request);
+        if let Some(request) = request {
+            steps.extend(reports_and_dispatches(&replay.finish(request, at_ms)));
+        }
+    };
+    let window = || WindowState::Hung(hung(11, 5, 1));
+    step(&mut replay, entry_in(property_change(), 1, window()), 1);
+    step(
+        &mut replay,
+        entry_in(property_change(), 2, WindowState::Hung(hung(11, 5, 2))),
+        2,
+    );
+    step(
+        &mut replay,
+        entry_in(property_change(), 3, WindowState::Responsive { thread: 5 }),
+        3,
+    );
+    step(
+        &mut replay,
+        entry_in(property_change(), 4, WindowState::Hung(hung(11, 5, 4))),
+        4,
+    );
+    assert_eq!(
+        steps,
+        [
+            "report 11 at 1",
+            "dispatch 1",
+            "dispatch 2",
+            "dispatch 3",
+            "report 11 at 4",
+            "dispatch 4"
+        ]
+    );
+}
+
+/// A console's event heard while its console window is hung is reported
+/// as a property event's is, and an event with no window to read, thread
+/// 0, leaves the mark.
+#[test]
+fn a_console_event_from_a_hung_console_reports_it() {
+    let mut replay = Replay::new();
+    let effects = replay.input(
+        entry_in(console_update(21), 1, WindowState::Hung(hung(21, 8, 1))),
+        1,
+    );
+    assert_eq!(
+        reports_and_dispatches(&effects),
+        ["report 21 at 1", "dispatch 1"]
+    );
+    let effects = replay.finish(program(&effects).request, 2);
+    assert_eq!(reports_and_dispatches(&effects), [] as [String; 0]);
+    let effects = replay.input(
+        entry_in(property_change(), 3, WindowState::Responsive { thread: 0 }),
+        3,
+    );
+    assert_eq!(reports_and_dispatches(&effects), ["dispatch 3"]);
+    let effects = replay.finish(program(&effects).request, 4);
+    assert_eq!(reports_and_dispatches(&effects), [] as [String; 0]);
+    let effects = replay.input(
+        entry_in(console_update(21), 5, WindowState::Hung(hung(21, 8, 5))),
+        5,
+    );
+    assert_eq!(reports_and_dispatches(&effects), ["dispatch 5"]);
 }

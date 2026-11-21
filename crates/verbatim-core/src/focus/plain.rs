@@ -399,8 +399,7 @@ pub(crate) fn decide(
         (Front::Desktop(_), _, false)
         | (Front::Ghost(_) | Front::Hung | Front::Responsive | Front::Gone, false, _)
         | (Front::Hung, true, _) => {
-            cx.sound_if_attended(&window);
-            cx.watch_if_attended(&window);
+            cx.hung_if_attended(&window);
             cx.facts_mut().focus_read_failed();
         }
     }

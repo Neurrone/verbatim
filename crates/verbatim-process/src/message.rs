@@ -282,6 +282,7 @@ mod tests {
             OutpostToCore::TargetExited => Peeked::TargetExited,
             OutpostToCore::IdleAnswer { .. }
             | OutpostToCore::Tell(_)
+            | OutpostToCore::Hung(_)
             | OutpostToCore::Answer(_) => Peeked::Other,
         };
         let mut samples = verbatim_model::protocol::samples::outpost_to_core();

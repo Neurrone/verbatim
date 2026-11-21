@@ -1044,6 +1044,10 @@ impl ReducerThread<'_> {
                             tell,
                         });
                     }
+                    OutpostToCore::Hung(hung) => self.queue(QueueInput::WindowHung {
+                        from: outpost_instance(pid, outpost),
+                        hung,
+                    }),
                     OutpostToCore::Answer(answer) => {
                         tracing::debug!(target: "request_hop", request = %answer.number, "answer queued for Core's reducer");
                         self.queue(QueueInput::Answer {
@@ -1261,6 +1265,7 @@ impl ReducerThread<'_> {
             // consumes the rest, and hands none of them on.
             OutpostToCore::Answer(_)
             | OutpostToCore::Tell(_)
+            | OutpostToCore::Hung(_)
             | OutpostToCore::Pong { .. }
             | OutpostToCore::TargetExited
             | OutpostToCore::SpareReady { .. } => {}
@@ -1947,8 +1952,8 @@ fn elements_held(view: verbatim_core::View) -> CoreToListener {
 /// The instance of the listener of generation `listener`.
 /// The input Core's event queue takes for `message`, a message the
 /// listener instance `from` sent that the supervisor hands on: a tell, a
-/// window destroyed, or an answer; any other message back, which the
-/// supervisor never hands on.
+/// window destroyed or reported hung, or an answer; any other message
+/// back, which the supervisor never hands on.
 fn listener_input(
     from: Instance,
     message: ListenerToCore,
@@ -1963,6 +1968,7 @@ fn listener_input(
             window,
             process,
         }),
+        ListenerToCore::Hung(hung) => Ok(QueueInput::WindowHung { from, hung }),
         other => Err(Box::new(other)),
     }
 }
@@ -2356,6 +2362,29 @@ mod tests {
                 })
             );
         }
+    }
+
+    /// The listener's report of a hung window becomes Core's `WindowHung`
+    /// input from that listener.
+    #[test]
+    fn a_listeners_report_of_a_hung_window_is_queued_for_core() {
+        let from = listener_instance(OutpostId(3));
+        let facet = verbatim_model::tell::WindowFacet {
+            handle: WindowHandle(7),
+            class: "#32770".to_owned(),
+            process: Pid(9),
+            thread: 4,
+        };
+        let hung = verbatim_model::tell::Hung {
+            window: facet.clone(),
+            root: facet.clone(),
+            root_owner: facet,
+            at_us: 1,
+        };
+        assert_eq!(
+            listener_input(from, ListenerToCore::Hung(hung.clone())),
+            Ok(QueueInput::WindowHung { from, hung })
+        );
     }
 
     /// A wait for a deadline that runs out with no command wakes the

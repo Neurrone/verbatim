@@ -1191,16 +1191,16 @@ fn a_watched_window_that_answers_again_leaves_the_set_and_its_entry_joins_the_qu
     assert_eq!(core.next_due(), None);
 }
 
+/// A refusal for a window whose application is in the recovery set plays
+/// nothing: the sound plays once per application joining the set
+/// (Claude, 2026-11-21).
 #[test]
 fn a_watched_window_stays_when_another_request_to_it_is_found_hung() {
     let mut core = core_watching();
     assert_eq!(feed(&mut core, 2_000, read(1)), [send(2)]);
     assert_eq!(
         feed(&mut core, 2_100, Input::RefusedHung(RequestNumber(2))),
-        [
-            Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
-            said("NotResponding")
-        ]
+        [said("NotResponding")]
     );
     assert_eq!(
         feed(
@@ -1260,6 +1260,94 @@ fn a_watched_window_leaves_the_set_when_its_outpost_ends() {
         [Effect::Queue(QueueEffect::StartOutpost(APP))]
     );
     assert_eq!(core.next_due(), None);
+}
+
+// A reader's report of a hung window (ADR 0003, "A frozen window").
+
+/// Another window of the tests' application, under the same top-level
+/// window.
+const SIBLING: RequestWindow = RequestWindow {
+    handle: WindowHandle(12),
+    ..WINDOW
+};
+
+/// A window of another application.
+const OTHER_APP_WINDOW: RequestWindow = RequestWindow {
+    handle: WindowHandle(21),
+    top_level: WindowHandle(20),
+    root_owner: WindowHandle(20),
+    process: Pid(2),
+    ..WINDOW
+};
+
+#[test]
+fn a_report_while_attended_plays_the_sound_and_watches_the_window() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::WindowHung(WINDOW)),
+        [Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding)]
+    );
+    assert_eq!(core.next_due(), Some(1_000 + HANG_ROUND_US));
+    assert_eq!(
+        feed(&mut core, 1_000 + HANG_ROUND_US, Input::Tick),
+        [Effect::Queue(QueueEffect::CheckHung(vec![WINDOW.handle]))]
+    );
+    assert_eq!(
+        feed(
+            &mut core,
+            1_100 + HANG_ROUND_US,
+            Input::HangCheck {
+                window: WINDOW.handle,
+                hung: false
+            }
+        ),
+        [said("recovered 11")]
+    );
+}
+
+#[test]
+fn a_second_window_of_the_same_application_is_watched_with_no_sound() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::WindowHung(WINDOW)),
+        [Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding)]
+    );
+    assert_eq!(feed(&mut core, 1_100, Input::WindowHung(SIBLING)), []);
+    assert_eq!(feed(&mut core, 1_200, Input::WindowHung(WINDOW)), []);
+    assert_eq!(
+        feed(&mut core, 1_000 + HANG_ROUND_US, Input::Tick),
+        [Effect::Queue(QueueEffect::CheckHung(vec![
+            WINDOW.handle,
+            SIBLING.handle
+        ]))]
+    );
+}
+
+#[test]
+fn a_report_while_its_application_does_not_hold_attention_does_nothing() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::WindowHung(OTHER_APP_WINDOW)),
+        []
+    );
+    assert_eq!(core.next_due(), None);
+}
+
+/// Once an application's windows leave the set, the next report sounds
+/// again.
+#[test]
+fn a_report_after_the_application_left_the_set_sounds_again() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::WindowHung(WINDOW)),
+        [Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding)]
+    );
+    assert_eq!(feed(&mut core, 1_100, Input::Foreground(ELSEWHERE)), []);
+    assert_eq!(feed(&mut core, 1_200, Input::Foreground(IN_FRONT)), []);
+    assert_eq!(
+        feed(&mut core, 1_300, Input::WindowHung(WINDOW)),
+        [Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding)]
+    );
 }
 
 // The five rules.

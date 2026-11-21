@@ -656,6 +656,40 @@ fn a_menu_end_from_a_hung_window_holding_attention_plays_the_sound() {
     );
 }
 
+/// `app`'s window reported hung by `from`.
+fn reported_hung(from: verbatim_model::request::Instance, app: App) -> QueueInput {
+    let facet = app.facet(app.window(), "AppPane");
+    QueueInput::WindowHung {
+        from,
+        hung: verbatim_model::tell::Hung {
+            window: facet.clone(),
+            root: app.facet(app.top_level(), "Frame"),
+            root_owner: app.facet(app.top_level(), "Frame"),
+            at_us: 1,
+        },
+    }
+}
+
+/// A reader's report of a hung window (ADR 0003, "A frozen window"): an
+/// outpost's is taken as the listener's, the sound playing for the first
+/// window of the application in front to join the recovery set, and a
+/// report from an instance that is not its reader's current one is dropped
+/// as its tells are.
+#[test]
+fn an_outposts_report_of_a_hung_window_is_taken_as_the_listeners() {
+    let mut desk = Desk::new();
+    assert_eq!(
+        started_on(&mut desk, ONE, msaa_ok(ONE)),
+        msaa_ok_heard(ONE, None)
+    );
+    assert_eq!(desk.step(reported_hung(ONE.replaced().instance(), ONE)), []);
+    assert_eq!(
+        desk.step(reported_hung(ONE.instance(), ONE)),
+        [Heard::Earcon(Earcon::AppNotResponding)]
+    );
+    assert_eq!(desk.step(reported_hung(LISTENER, ONE)), []);
+}
+
 /// A hang met by a request for a process whose focus is in the window in
 /// front plays the sound, as a Settings page (`SystemSettings`) hangs
 /// inside `ApplicationFrameHost`'s frame, which is in front; a hang in a
