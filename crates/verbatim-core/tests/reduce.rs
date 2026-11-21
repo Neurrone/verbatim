@@ -4,6 +4,10 @@
 //! (`desk`), plus flight-recorder replay determinism.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
+
+use readers::Found;
 
 use desk::{
     App, Desk, FRAME, Heard, LISTENER, ONE, TWO, focus_heard, focus_now, focus_now_in,
@@ -14,8 +18,8 @@ use verbatim_core::{ReducerRecorder, Runtime, SrState, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    CandidateAnswer, FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds,
-    ObjectRead, Outcome, ProcessFact, QueueInput, Reader, Reply, Request as Wire,
+    FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds, ObjectRead, Outcome,
+    ProcessFact, QueueInput, Reader, Reply, Request as Wire,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, Relation, TellWindow,
@@ -79,10 +83,11 @@ fn label_role(name: &str, of: Role) -> Vec<UtteranceSegment> {
     vec![UtteranceSegment::label(name), role(of)]
 }
 
-/// The one request the last step sent, by number, instance and request.
-fn one_sent(desk: &Desk) -> Option<(u64, Instance, Wire)> {
+/// The one request the last step sent, by number, instance and kind
+/// ([`desk::kind`]).
+fn one_sent(desk: &Desk) -> Option<(u64, Instance, &'static str)> {
     match &desk.sent[..] {
-        [one] => Some(one.clone()),
+        [(number, to, request)] => Some((*number, *to, desk::kind(request))),
         _ => None,
     }
 }
@@ -109,33 +114,24 @@ fn foreground(desk: &mut Desk, app: App) -> Vec<Heard> {
 /// every effect of the answer.
 fn started(desk: &mut Desk, app: App, read: Option<FocusRead>) -> Vec<Heard> {
     let _ = foreground(desk, app);
-    let Some((number, to, Wire::CurrentFocus { .. })) = one_sent(desk) else {
+    let Some((number, to, "CurrentFocus")) = one_sent(desk) else {
         panic!("the focus at startup asked: {:?}", desk.sent);
     };
-    let outcome = match read {
-        Some(read) => Outcome::Result(Reply::Candidate(
-            verbatim_model::request::CandidateAnswer::focused(read),
-        )),
-        None => Outcome::NotThere,
-    };
-    desk.answer(to, number, outcome)
+    match read {
+        Some(read) => desk.found(to, number, &Found::Read(read)),
+        None => desk.answer(to, number, Outcome::NotThere),
+    }
 }
 
 /// The user switching to `app`: its window comes to the foreground and
 /// its focus, the window itself, named "App", is spoken.
 fn switch_to(desk: &mut Desk, app: App) {
     let _ = foreground(desk, app);
-    if let Some((number, to, Wire::CurrentFocus { .. })) = one_sent(desk) {
-        let _ = desk.answer(
+    if let Some((number, to, "CurrentFocus")) = one_sent(desk) {
+        let _ = desk.found(
             to,
             number,
-            Outcome::Result(Reply::Candidate(
-                verbatim_model::request::CandidateAnswer::focused(focus_read_of(
-                    app,
-                    &frame(app, "App"),
-                    &[],
-                )),
-            )),
+            &Found::Read(focus_read_of(app, &frame(app, "App"), &[])),
         );
     } else {
         let _ = desk.focus(app, &frame(app, "App"), &[]);
@@ -156,23 +152,15 @@ fn told_focus(desk: &mut Desk, app: App, tell: Event, read: FocusRead) -> Vec<He
     desk.app(app);
     let number = read.focus.read.node.expect("a focus node").number();
     let heard = desk.tell(LISTENER, tell);
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(desk) else {
         assert_eq!(desk.sent, [], "a focus asks only the listener's read");
         return heard;
     };
-    let _ = desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(listener_read(app, number)))),
-    );
-    let Some((completion, to, Wire::CompleteUia(_))) = one_sent(desk) else {
+    let _ = desk.found(LISTENER, object, &listener_read(app, number));
+    let Some((completion, to, "Completion")) = one_sent(desk) else {
         panic!("one completion asked: {:?}", desk.sent);
     };
-    desk.answer(
-        to,
-        completion,
-        Outcome::Result(Reply::Focus(Box::new(read))),
-    )
+    desk.found(to, completion, &Found::Read(read))
 }
 
 /// The listener's UI Automation focus tell of `focus` in `app`, its
@@ -279,14 +267,10 @@ fn msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Vec<He
     let window = read.msaa.expect("an MSAA read").event.window;
     let tell = msaa_tell(desk, app, window, object);
     let _ = desk.tell(LISTENER, tell);
-    let Some((run, to, Wire::MsaaRun(_))) = one_sent(desk) else {
+    let Some((run, to, "Candidate")) = one_sent(desk) else {
         panic!("one run asked: {:?}", desk.sent);
     };
-    desk.answer(
-        to,
-        run,
-        Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
-    )
+    desk.found(to, run, &Found::Read(read))
 }
 
 /// An ancestor's state change spoken just before the focus moves into
@@ -426,8 +410,6 @@ fn listener_object(app: App, node: NodeId, id: PropertyId, value: PropertyValue)
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     }
 }
 
@@ -498,6 +480,8 @@ struct Recorded {
     at_us: u64,
     /// Every input fed, in order, with its effects.
     fed: Vec<(Input, Vec<Effect>)>,
+    /// Every request sent, by number.
+    asked: Vec<(u64, verbatim_model::request::Question)>,
 }
 
 impl Recorded {
@@ -528,6 +512,7 @@ impl Recorded {
                     }
                     Effect::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => {
                         sent.push((ask.number.0, *to));
+                        self.asked.push((ask.number.0, ask.request.clone()));
                     }
                     _ => {}
                 }
@@ -537,13 +522,24 @@ impl Recorded {
         sent
     }
 
-    /// Answers request `number` sent to `from` with `reply`.
-    fn answer(&mut self, from: Instance, number: u64, reply: Reply) -> Vec<(u64, Instance)> {
+    /// Answers request `number`, a batch sent to `from`, as its reader
+    /// does having found `found`.
+    fn found(&mut self, from: Instance, number: u64, found: &Found) -> Vec<(u64, Instance)> {
+        let batch = self
+            .asked
+            .iter()
+            .find_map(|(asked, question)| match question {
+                verbatim_model::request::Question::Batch(batch) if *asked == number => {
+                    Some(batch.clone())
+                }
+                _ => None,
+            })
+            .expect("a batch asked");
         self.feed(QueueInput::Answer {
             from,
             answer: verbatim_model::request::Answer {
                 number: verbatim_model::request::RequestNumber(number),
-                outcome: Outcome::Result(reply),
+                outcome: readers::outcome(&batch, found),
                 probes: Vec::new(),
                 detail: String::new(),
             },
@@ -575,6 +571,7 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
         recorder: ReducerRecorder::new(4, 1 << 20, SrState::new()),
         at_us: 1_000,
         fed: Vec::new(),
+        asked: Vec::new(),
     };
     let _ = live.feed(QueueInput::Process(ProcessFact::ListenerStarted(
         LISTENER.generation,
@@ -595,17 +592,13 @@ fn a_window_that_dropped_its_start_replays_from_its_checkpoint() {
     })[..] else {
         panic!("one listener read");
     };
-    let [(completion, to)] = live.answer(
-        LISTENER,
-        object,
-        Reply::Object(Box::new(listener_read(ONE, 1))),
-    )[..] else {
+    let [(completion, to)] = live.found(LISTENER, object, &listener_read(ONE, 1))[..] else {
         panic!("one completion");
     };
-    let _ = live.answer(
+    let _ = live.found(
         to,
         completion,
-        Reply::Focus(Box::new(focus_read_of(ONE, &slider, &[]))),
+        &Found::Read(focus_read_of(ONE, &slider, &[])),
     );
     let start = live.fed.len();
     for value in 1..=20 {
@@ -777,14 +770,10 @@ fn in_front(desk: &mut Desk, app: App, window: &NodeSnapshot) -> Vec<Heard> {
         ..msaa_tell(desk, app, app.top_level(), 0)
     };
     let heard = desk.tell(LISTENER, tell);
-    let Some((run, to, Wire::MsaaRun(_))) = one_sent(desk) else {
+    let Some((run, to, "Candidate")) = one_sent(desk) else {
         return heard;
     };
-    desk.answer(
-        to,
-        run,
-        Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
-    )
+    desk.found(to, run, &Found::Read(read))
 }
 
 #[test]
@@ -967,31 +956,23 @@ fn a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus() {
     facts.root_owner = ONE.facet(ONE.top_level(), "Frame");
     let tell = tell_with(&desk, TWO, &ok, facts);
     let _ = desk.tell(LISTENER, tell);
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(&desk) else {
         panic!("the dialog's read asked: {:?}", desk.sent);
     };
-    let _ = desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(listener_read(TWO, ok.id.number())))),
-    );
-    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+    let _ = desk.found(LISTENER, object, &listener_read(TWO, ok.id.number()));
+    let Some((completion, to, "Completion")) = one_sent(&desk) else {
         panic!("the dialog's completion asked: {:?}", desk.sent);
     };
+    let (_, known) = desk::completion_of(&desk.sent[0].2).expect("a completion");
     let owner_window = KnownAncestor::Window(ONE.top_level());
-    let place = complete
-        .known
+    let place = known
         .iter()
         .position(|known| *known == owner_window)
         .expect("the owner's window is known");
     let mut read = focus_read_of(TWO, &ok, std::slice::from_ref(&dialog));
     read.met = Some(u32::try_from(place).expect("a short list"));
     read.foreground = None;
-    let heard = desk.answer(
-        to,
-        completion,
-        Outcome::Result(Reply::Focus(Box::new(read))),
-    );
+    let heard = desk.found(to, completion, &Found::Read(read));
     assert_eq!(
         spoken(&heard),
         vec![
@@ -1003,54 +984,53 @@ fn a_return_to_the_owner_as_the_dialogs_application_exits_says_its_focus() {
 
     let tell = focus_tell(ONE, open.id.number(), desk.at_us + 1_000);
     let _ = desk.tell(LISTENER, tell);
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(&desk) else {
         panic!("the listener's read asked: {:?}", desk.sent);
     };
     let _ = desk.step(QueueInput::Process(ProcessFact::ApplicationExited(TWO.pid)));
-    let mut read = listener_read(ONE, open.id.number());
     let met = KnownAncestor::Uia(runtime_of(owner.id.number()));
-    if let Some(route) = read.route.as_mut() {
-        route.end = verbatim_model::request::RouteEnd::Known(met.clone());
-    }
-    let _ = desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(read))),
-    );
-    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+    let read = desk::listener_read_meeting(&desk, object, (ONE, open.id.number()), &met);
+    let _ = desk.found(LISTENER, object, &read);
+    let Some((completion, to, "Completion")) = one_sent(&desk) else {
         panic!("the completion asked: {:?}", desk.sent);
     };
+    let (_, known) = desk::completion_of(&desk.sent[0].2).expect("a completion");
     assert_eq!(to, ONE.instance());
     assert!(
-        complete.known.contains(&KnownAncestor::Node(owner.id)),
-        "the owner's window is known to the outpost that minted it: {:?}",
-        complete.known
+        known.contains(&KnownAncestor::Node(owner.id)),
+        "the owner's window is known to the outpost that minted it: {known:?}"
     );
-    let place = complete
-        .known
+    let place = known
         .iter()
         .position(|known| *known == met)
         .expect("the ancestor the walk met is known");
     let mut focus = focus_read_of(ONE, &open, &[]);
     focus.met = Some(u32::try_from(place).expect("a short list"));
     focus.foreground = None;
-    let heard = desk.answer(
-        to,
-        completion,
-        Outcome::Result(Reply::Focus(Box::new(focus))),
-    );
+    let heard = desk.found(to, completion, &Found::Read(focus));
     assert_eq!(spoken(&heard), vec![label_role("Open", Role::Button)]);
 }
 
-/// The last step of a focus, answered by `to` to request `number` with
-/// `reply`, fed with every effect it had, whole.
-fn raw_answer(desk: &mut Desk, to: Instance, number: u64, reply: Reply) -> Vec<Effect> {
+/// The last step of a focus: the batch `number` asked of `to`, answered
+/// as its reader answers it having found `found`, fed with every effect
+/// it had, whole.
+fn raw_found(desk: &mut Desk, to: Instance, number: u64, found: &Found) -> Vec<Effect> {
+    let batch = desk
+        .asked
+        .iter()
+        .find_map(|(asked, _, question)| match question {
+            verbatim_model::request::Question::Batch(batch) if *asked == number => {
+                Some(batch.clone())
+            }
+            _ => None,
+        })
+        .expect("a batch asked");
     desk.at_us += 1_000;
     desk.feed(QueueInput::Answer {
         from: to,
         answer: verbatim_model::request::Answer {
             number: verbatim_model::request::RequestNumber(number),
-            outcome: Outcome::Result(reply),
+            outcome: readers::outcome(&batch, found),
             probes: Vec::new(),
             detail: String::new(),
         },
@@ -1063,15 +1043,10 @@ fn raw_msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Ve
     let window = read.msaa.expect("an MSAA read").event.window;
     let tell = msaa_tell(desk, app, window, object);
     let _ = desk.tell(LISTENER, tell);
-    let Some((run, to, Wire::MsaaRun(_))) = one_sent(desk) else {
+    let Some((run, to, "Candidate")) = one_sent(desk) else {
         panic!("one run asked: {:?}", desk.sent);
     };
-    raw_answer(
-        desk,
-        to,
-        run,
-        Reply::Candidate(CandidateAnswer::focused(read)),
-    )
+    raw_found(desk, to, run, &Found::Read(read))
 }
 
 /// [`Desk::focus`], with `read` as the outpost's answer, its effects
@@ -1081,18 +1056,14 @@ fn raw_focus(desk: &mut Desk, app: App, read: FocusRead) -> Vec<Effect> {
     let number = read.focus.read.node.expect("a focus node").number();
     let tell = focus_tell(app, number, desk.at_us + 1_000);
     let _ = desk.tell(LISTENER, tell);
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(desk) else {
         panic!("one listener read asked: {:?}", desk.sent);
     };
-    let _ = desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(listener_read(app, number)))),
-    );
-    let Some((completion, to, Wire::CompleteUia(_))) = one_sent(desk) else {
+    let _ = desk.found(LISTENER, object, &listener_read(app, number));
+    let Some((completion, to, "Completion")) = one_sent(desk) else {
         panic!("one completion asked: {:?}", desk.sent);
     };
-    raw_answer(desk, to, completion, Reply::Focus(Box::new(read)))
+    raw_found(desk, to, completion, &Found::Read(read))
 }
 
 /// Where the focus is, as `effects` told the speech manager, before any
@@ -1392,7 +1363,7 @@ fn a_foreground_change_moves_attention_and_says_nothing() {
         desk.tell(LISTENER, focus_tell(ONE, 3, desk.at_us)),
         [Heard::Sent(Reader::Listener, "ReadObject")]
     );
-    let Some((late, to, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((late, to, "ReadObject")) = one_sent(&desk) else {
         panic!("one read asked: {:?}", desk.sent);
     };
     assert_eq!(foreground(&mut desk, TWO), [], "nothing is said");
@@ -1421,14 +1392,7 @@ fn a_foreground_change_moves_attention_and_says_nothing() {
     // The previous application's focus observed before the switch is
     // dropped: Core stopped waiting for its read at the switch, so its
     // late answer says nothing and leaves the focus where it is.
-    assert_eq!(
-        desk.answer(
-            to,
-            late,
-            Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 3))))
-        ),
-        []
-    );
+    assert_eq!(desk.found(to, late, &listener_read(ONE, 3)), []);
     assert_eq!(
         desk.state.focused().map(|(_, node)| node.id),
         Some(TWO.node(2))
@@ -1517,17 +1481,11 @@ fn the_snap_results_notification_is_spoken_from_anywhere_queued() {
 fn replaced(desk: &mut Desk, app: App, read: FocusRead) -> Vec<Heard> {
     desk.app(app.replaced());
     let _ = desk.step(QueueInput::ReaderEnded(app.instance()));
-    let Some((number, to, Wire::CurrentFocus { .. })) = one_sent(desk) else {
+    let Some((number, to, "CurrentFocus")) = one_sent(desk) else {
         panic!("the replacement asked for the focus: {:?}", desk.sent);
     };
     assert_eq!(to, app.replaced().instance());
-    desk.answer(
-        to,
-        number,
-        Outcome::Result(Reply::Candidate(
-            verbatim_model::request::CandidateAnswer::focused(read),
-        )),
-    )
+    desk.found(to, number, &Found::Read(read))
 }
 
 /// A replacement outpost's focus that is not a silent re-take meets the
@@ -1595,7 +1553,9 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
         );
         let _ = desk.focus(ONE, &control, &[]);
         // The outpost answers each commit's `Follow`, as a live one does.
-        let [(follow, to, Wire::Follow(_))] = desk.sent[..] else {
+        let [(follow, to, verbatim_model::request::Question::Legacy(Wire::Follow(_)))] =
+            desk.sent[..]
+        else {
             panic!("one Follow sent: {:?}", desk.sent);
         };
         let _ = desk.answer(to, follow, Outcome::Result(Reply::Followed));
@@ -1992,8 +1952,6 @@ fn windows_toast(desk: &mut Desk, id: u64, at_us: u64) -> Vec<Heard> {
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     })))
 }
 
@@ -2058,14 +2016,10 @@ fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
         ..focus_tell(ONE, 51, desk.at_us + 1_000)
     };
     let heard = desk.tell(LISTENER, tell);
-    let Some((number, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((number, LISTENER, "ReadObject")) = one_sent(&desk) else {
         panic!("the item is read: {heard:?}");
     };
-    let _ = desk.answer(
-        LISTENER,
-        number,
-        Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 51)))),
-    );
+    let _ = desk.found(LISTENER, number, &listener_read(ONE, 51));
     let Some((completion, to, _)) = one_sent(&desk) else {
         panic!("the item is completed: {:?}", desk.sent);
     };
@@ -2351,11 +2305,21 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
     desk.app(ONE);
     let tell = msaa_tell(&desk, ONE, ONE.window(), -4);
     let _ = desk.tell(LISTENER, tell);
-    let Some((run, to, Wire::MsaaRun(asked))) = one_sent(&desk) else {
+    let Some((run, to, "Candidate")) = one_sent(&desk) else {
         panic!("one run asked: {:?}", desk.sent);
     };
-    let met = asked
-        .known
+    let known = match &desk.sent[0].2 {
+        verbatim_model::request::Question::Batch(batch) => batch
+            .steps
+            .iter()
+            .find_map(|step| match &step.op {
+                verbatim_model::batch::Op::FocusRead { known, .. } => Some(known.clone()),
+                _ => None,
+            })
+            .expect("a full read"),
+        verbatim_model::request::Question::Legacy(other) => panic!("a batch: {other:?}"),
+    };
+    let met = known
         .iter()
         .position(|known| *known == KnownAncestor::Window(WindowHandle(ONE.top)))
         .expect("the window named by its handle");
@@ -2364,11 +2328,7 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
         ..msaa_read(ONE, -4, &paste, &[group(5)])
     };
     assert_eq!(
-        desk.answer(
-            to,
-            run,
-            Outcome::Result(Reply::Candidate(CandidateAnswer::focused(read))),
-        ),
+        desk.found(to, run, &Found::Read(read)),
         focus_heard(
             ONE,
             focus_now_in(ONE, 6, &[1, 5]),
@@ -2737,9 +2697,9 @@ fn review(
             return heard;
         };
         let reply = match request {
-            Wire::Properties { .. } => Reply::Properties(desk::values_of(navigator)),
-            Wire::Text { .. } => Reply::Text(verbatim_model::TextReply::NoText),
-            other => panic!("a review read these tests do not answer: {other:?}"),
+            "Properties" => Reply::Properties(desk::values_of(navigator)),
+            "Text" => Reply::Text(verbatim_model::TextReply::NoText),
+            other => panic!("a review read these tests do not answer: {other}"),
         };
         heard = desk.reply(reply);
     }
@@ -3217,19 +3177,16 @@ fn a_second_task_switching_item_with_alt_held_knows_no_containers_and_is_said_al
         },
     ]);
     desk.tell(LISTENER, tell);
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(&desk) else {
         panic!("the listener's read asked: {:?}", desk.sent);
     };
-    desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(listener_read(TWO, 5)))),
-    );
-    let Some((completion, to, Wire::CompleteUia(complete))) = one_sent(&desk) else {
+    desk.found(LISTENER, object, &listener_read(TWO, 5));
+    let Some((completion, to, "Completion")) = one_sent(&desk) else {
         panic!("one completion asked: {:?}", desk.sent);
     };
+    let (_, known) = desk::completion_of(&desk.sent[0].2).expect("a completion");
     assert_eq!(
-        complete.known,
+        known,
         [
             KnownAncestor::Node(TWO.node(4)),
             KnownAncestor::Uia(runtime_of(4))
@@ -3237,11 +3194,7 @@ fn a_second_task_switching_item_with_alt_held_knows_no_containers_and_is_said_al
     );
     let read = focus_read_of(TWO, &second, &task_switching_containers());
     assert_eq!(
-        desk.answer(
-            to,
-            completion,
-            Outcome::Result(Reply::Focus(Box::new(read)))
-        ),
+        desk.found(to, completion, &Found::Read(read)),
         [
             Heard::Expire(focus_now_with(TWO, 5, &[], Some((TWO, FRAME)))),
             Heard::Stop,
@@ -3469,26 +3422,22 @@ fn an_msaa_button_disabled_as_the_focus_leaves_it_says_unavailable_then_the_new_
             )
         }))),
     );
-    let Some((run, to, Wire::MsaaRun(_))) = one_sent(&desk) else {
+    let Some((run, to, "Candidate")) = one_sent(&desk) else {
         panic!("the run of focuses asked: {:?}", desk.sent);
     };
     assert_eq!(
         read,
         [
             queued(vec![state(State::Disabled)]),
-            Heard::Sent(Reader::Outpost(ONE.pid), "MsaaRun")
+            Heard::Sent(Reader::Outpost(ONE.pid), "Candidate")
         ]
     );
     let read_only = node(ONE, 53, Role::CheckBox, Some("Read-only"), None, focused);
     assert_eq!(
-        desk.answer(
+        desk.found(
             to,
             run,
-            Outcome::Result(Reply::Candidate(CandidateAnswer::focused(in_own_window(
-                read_only_window,
-                &read_only,
-                &[sheet, page]
-            ))))
+            &Found::Read(in_own_window(read_only_window, &read_only, &[sheet, page]))
         ),
         msaa_heard(
             focus_now_in(ONE, 53, &[50, 51]),
@@ -3563,7 +3512,7 @@ fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selecte
         states(&[State::Focusable, State::Focused]),
     );
     let _ = desk.tell(LISTENER, focus_tell(ONE, 72, desk.at_us + 1_000));
-    let Some((object, LISTENER, Wire::ReadObject(_))) = one_sent(&desk) else {
+    let Some((object, LISTENER, "ReadObject")) = one_sent(&desk) else {
         panic!("the listener's read asked: {:?}", desk.sent);
     };
     let x_selected = states(&[State::Focusable, State::Selectable, State::Selected]);
@@ -3571,12 +3520,8 @@ fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selecte
         desk.tell(LISTENER, selected(&desk, ONE, 71, x_selected)),
         []
     );
-    let _ = desk.answer(
-        LISTENER,
-        object,
-        Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 72)))),
-    );
-    let Some((completion, to, Wire::CompleteUia(_))) = one_sent(&desk) else {
+    let _ = desk.found(LISTENER, object, &listener_read(ONE, 72));
+    let Some((completion, to, "Completion")) = one_sent(&desk) else {
         panic!("the completion asked: {:?}", desk.sent);
     };
     let mut x_now = x.clone();
@@ -3588,14 +3533,10 @@ fn an_item_selected_as_the_focus_moves_inside_it_says_the_new_focus_then_selecte
     );
     heard.push(queued(vec![state(State::Selected)]));
     assert_eq!(
-        desk.answer(
+        desk.found(
             to,
             completion,
-            Outcome::Result(Reply::Focus(Box::new(focus_read_of(
-                ONE,
-                &y,
-                &[list, x_now]
-            ))))
+            &Found::Read(focus_read_of(ONE, &y, &[list, x_now]))
         ),
         heard
     );

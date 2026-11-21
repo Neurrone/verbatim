@@ -49,7 +49,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: K
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         },
     };

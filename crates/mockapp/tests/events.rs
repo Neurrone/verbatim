@@ -1057,7 +1057,6 @@ fn a_classic_bar_is_read_at_its_address_with_no_outpost() {
         ],
         relation: None,
         descendants: false,
-        walk: None,
         purpose: Purpose::Other,
     };
     let Outcome::Result(Reply::Object(object)) = verbatim_listener::read_msaa_object(&read) else {

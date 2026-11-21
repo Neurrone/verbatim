@@ -12,10 +12,9 @@ mod harness;
 
 use std::time::Duration;
 
+use common::outpost::{CandidateKind, Depth, FocusOutcome, FocusReply};
 use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::request::{
-    CandidateKind, Depth, MsaaIds, MsaaRun, Outcome, Reply, Request, RunCandidate, WindowVerdict,
-};
+use verbatim_model::request::MsaaIds;
 use verbatim_model::{CallCounts, WindowHandle};
 use verbatim_outpost::arbitration::Arbitrator;
 use verbatim_uia::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe};
@@ -100,26 +99,12 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
 
     let stall = Duration::from_millis(u64::from(UIA_RAW_PROBE_TIMEOUT_MS) + 1_500);
     app.stall(stall);
-    let number = outpost.request(
-        window,
-        Request::MsaaRun(MsaaRun {
-            hidden: verbatim_model::request::HiddenRoot::Check,
-            candidate: RunCandidate {
-                ids: MsaaIds {
-                    window: WindowHandle(window.0 as u64),
-                    object: 0,
-                    child: 0,
-                },
-                kind: CandidateKind::Foreground,
-                verdict: WindowVerdict::ProbeFirst,
-            },
-            depth: Depth::Full,
-            spare: None,
-            set: common::outpost::focus_set(),
-            known: Vec::new(),
-            details: verbatim_model::TextDetails::NONE,
-        }),
-    );
+    let ids = MsaaIds {
+        window: WindowHandle(window.0 as u64),
+        object: 0,
+        child: 0,
+    };
+    let (number, batch) = outpost.ask_candidate((ids, CandidateKind::Foreground), &Depth::Full);
     let message = outpost
         .messages
         .recv_timeout(stall + common::WAIT_TIMEOUT)
@@ -138,8 +123,13 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
         [false],
         "the window is probed once, and its probe found no provider"
     );
-    let Outcome::Result(Reply::Candidate(run)) = answer.outcome else {
-        panic!("the run answered {:?}", answer.outcome);
+    let outcome = common::outpost::candidate_outcome(
+        &batch,
+        (CandidateKind::Foreground, &Depth::Full),
+        answer.outcome,
+    );
+    let FocusOutcome::Result(FocusReply::Candidate(run)) = outcome else {
+        panic!("the run answered {outcome:?}");
     };
     let Some(read) = run.read else {
         panic!("the candidate was not read: {:?}", run.facts);

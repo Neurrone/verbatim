@@ -165,6 +165,7 @@ mod tests {
                 .chain((2..=3).zip(windows).map(|(id, hwnd)| step(id, hwnd)))
                 .collect(),
             end,
+            read: Vec::new(),
         }
     }
 

@@ -293,6 +293,7 @@ fn doc_node(outpost: &OutpostUnderTest, hwnd: HWND) -> verbatim_model::NodeId {
 
 /// The document `node`'s text read, selected and compared, as
 /// [`text_operations_read_and_select_through_the_nodes_text`] says.
+#[expect(clippy::too_many_lines, reason = "one assertion per text operation")]
 fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::NodeId) {
     use verbatim_model::batch::{Before, Point, PointOf};
     use verbatim_model::{TextDetails, TextPoint, TextUnit};
@@ -337,8 +338,11 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
     };
     assert_eq!(
         (line.chunks[0].text.as_str(), line.chunks[0].offset),
-        ("alpha beta
-", 0)
+        (
+            "alpha beta
+",
+            0
+        )
     );
     assert!(
         matches!(&read[2], StepOutcome::Done(Done::ReadRange(range)) if range.text == "alpha beta
@@ -387,9 +391,11 @@ gamma
             .new_selection
             .as_ref()
             .map(|selection| selection.text.as_str()),
-        Some("alpha beta
+        Some(
+            "alpha beta
 gamma
-")
+"
+        )
     );
 }
 

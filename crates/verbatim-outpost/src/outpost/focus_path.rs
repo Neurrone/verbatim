@@ -142,6 +142,7 @@ mod tests {
                 .chain((2..=4).zip(windows).map(|(id, hwnd)| step(id, hwnd)))
                 .collect(),
             end: RouteEnd::Root,
+            read: Vec::new(),
         })
     }
 

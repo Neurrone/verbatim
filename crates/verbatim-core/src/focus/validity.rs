@@ -23,16 +23,14 @@ use std::convert::Infallible;
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, Depth, FocusRead, Identity, MsaaIds, Refusal,
-};
+use verbatim_model::request::{FocusRead, MsaaIds, Refusal};
 use verbatim_model::tell::{Event, Read, TellWindow};
 use verbatim_model::{NodeSnapshot, Role, TraceId, WindowHandle};
 
 use super::acceptance;
 use super::backend::{BackendCache, Judged, JudgedWindow, Judgement, WindowKey};
 use super::duplicate::{msaa_duplicate, uia_duplicate};
-use super::msaa_run::{TurnDepth, UnlessSame};
+use super::msaa_run::{Identity, TurnDepth, UnlessSame};
 use super::versions::{LastFocus, ReadBy, Versions};
 use crate::entries::{Candidate, Entries, Entry, UiaFocus};
 use crate::event_queue::{Cx, Item, Outcome, Refused};
@@ -179,10 +177,7 @@ impl From<Settled> for Validity {
 }
 
 /// A full read's answer, parsed once as it is decoded: either refused by
-/// its facts with nothing more read, or found and read in full. A found
-/// candidate the depth asked to read always carries its read, so an answer
-/// breaking that is undecodable, logged as a malformed answer
-/// (`QueueEffect::Undecodable`).
+/// its facts with nothing more read, or found and read in full.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Answered {
     /// Not read further, refused by its facts.
@@ -203,8 +198,8 @@ pub(crate) enum Unread {
     Skipped,
     /// Its object is not there.
     NotThere,
-    /// Neither it nor an ancestor has the focused state, at
-    /// [`Depth::FullIfFocused`].
+    /// Neither it nor an ancestor has the focused state, at a depth that
+    /// reads in full only when focused.
     NotFocused,
 }
 
@@ -219,44 +214,22 @@ impl Unread {
     }
 }
 
-impl Answered {
-    /// `answer`, to a read of depth `depth`, parsed: `None` for an answer
-    /// that breaks the depth's rule, a reader's fault. An answer at
-    /// [`Depth::FullUnlessSame`] that is not the object named follows
-    /// [`Depth::FullIfFocused`]'s rule.
-    pub(crate) fn parse(answer: CandidateAnswer, depth: &Depth) -> Option<Self> {
-        let stops_unfocused = matches!(depth, Depth::FullIfFocused | Depth::FullUnlessSame { .. });
-        if !stops_unfocused && *depth != Depth::Full {
-            return None;
-        }
-        let unfocused = matches!(
-            answer.facts,
-            CandidateFacts::Found {
-                focused: Some(false),
-                ..
-            }
-        );
-        let stopped = unfocused && stops_unfocused;
-        match (answer.facts, answer.read) {
-            (CandidateFacts::Skipped, None) => Some(Self::Unread(Unread::Skipped)),
-            (CandidateFacts::NotThere, None) => Some(Self::Unread(Unread::NotThere)),
-            (CandidateFacts::Found { .. }, None) if stopped => {
-                Some(Self::Unread(Unread::NotFocused))
-            }
-            // A found candidate is read in full, but one found without the
-            // focused state at a depth that stops there.
-            (facts @ CandidateFacts::Found { .. }, Some(read)) if !stopped => {
-                Some(Self::Read { facts, read })
-            }
-            _ => None,
-        }
-    }
-}
-
-/// A confirmation's answer, its facts alone, parsed: `None` for one that
-/// carries a read it did not ask for.
-pub(crate) fn parse_facts(answer: CandidateAnswer) -> Option<CandidateFacts> {
-    answer.read.is_none().then_some(answer.facts)
+/// What an outpost found of an MSAA candidate, which Core judges.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum CandidateFacts {
+    /// Its window is read through UI Automation, so it was not read.
+    Skipped,
+    /// The object is not there.
+    NotThere,
+    /// The object was found.
+    Found {
+        /// Whether it or an ancestor has the focused state; `None` when
+        /// not read, for a foreground or menu start, or a UI Automation
+        /// focus.
+        focused: Option<bool>,
+        /// Its role, read for a menu start; `None` otherwise.
+        role: Option<Role>,
+    },
 }
 
 /// Whether a candidate counts as pending
@@ -407,6 +380,7 @@ fn named(
     let snapshot = committed?;
     Some(UnlessSame {
         ids: *ids,
+        held_child: *held_child,
         identity: Identity {
             states: snapshot.states,
             role: snapshot.role,

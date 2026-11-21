@@ -15,6 +15,10 @@
 //! varies.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
+
+use readers::Found;
 mod terminal_support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -131,7 +135,8 @@ fn same(small: &mut Desk, large: &mut Desk, input: &QueueInput) -> Vec<Effect> {
     small_effects
 }
 
-/// The number of the one request of `kind` that `effects` sent.
+/// The one request of a kind not yet a batch, by `kind`, among
+/// `effects`.
 fn sent(effects: &[Effect], kind: fn(&Wire) -> bool) -> u64 {
     let numbers: Vec<u64> = effects
         .iter()
@@ -155,6 +160,45 @@ fn answer(from: Instance, number: u64, reply: Reply) -> QueueInput {
         answer: Answer {
             number: RequestNumber(number),
             outcome: Outcome::Result(reply),
+            probes: Vec::new(),
+            detail: String::new(),
+        },
+    }
+}
+
+/// The one batch of `kind` ([`desk::kind`]) among `effects`.
+fn sent_batch(effects: &[Effect], kind: &str) -> (u64, verbatim_model::batch::Batch) {
+    let mut asked: Vec<(u64, verbatim_model::batch::Batch)> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Queue(QueueEffect::Send { ask, .. }) if desk::kind(&ask.request) == kind => {
+                match &ask.request {
+                    verbatim_model::request::Question::Batch(batch) => {
+                        Some((ask.number.0, batch.clone()))
+                    }
+                    verbatim_model::request::Question::Legacy(_) => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    let (Some(one), None) = (asked.pop(), asked.pop()) else {
+        panic!("one batch asked: {effects:?}");
+    };
+    one
+}
+
+/// The answer to request `number` from `from`, `reply`.
+fn answer_found(
+    from: Instance,
+    (number, batch): &(u64, verbatim_model::batch::Batch),
+    found: &Found,
+) -> QueueInput {
+    QueueInput::Answer {
+        from,
+        answer: Answer {
+            number: RequestNumber(*number),
+            outcome: readers::outcome(batch, found),
             probes: Vec::new(),
             detail: String::new(),
         },
@@ -214,17 +258,13 @@ fn a_focus_step_allocates_no_more_than_in_proportion_to_the_ancestor_chain() {
         tell: Box::new(focus_tell(ONE, 2, shorter.at_us + 1_000)),
     };
     let effects = proportional(&mut shorter, &mut longer, &tell);
-    let read = sent(&effects, |request| matches!(request, Wire::ReadObject(_)));
+    let read = sent_batch(&effects, "ReadObject");
     let effects = proportional(
         &mut shorter,
         &mut longer,
-        &answer(
-            LISTENER,
-            read,
-            Reply::Object(Box::new(listener_read(ONE, 2))),
-        ),
+        &answer_found(LISTENER, &read, &listener_read(ONE, 2)),
     );
-    let completion = sent(&effects, |request| matches!(request, Wire::CompleteUia(_)));
+    let completion = sent_batch(&effects, "Completion");
     let completed = focus_read_of(
         ONE,
         &node(2, Role::Button, "Next"),
@@ -237,11 +277,7 @@ fn a_focus_step_allocates_no_more_than_in_proportion_to_the_ancestor_chain() {
     let effects = proportional(
         &mut shorter,
         &mut longer,
-        &answer(
-            ONE.instance(),
-            completion,
-            Reply::Focus(Box::new(completed)),
-        ),
+        &answer_found(ONE.instance(), &completion, &Found::Read(completed)),
     );
     assert!(
         effects

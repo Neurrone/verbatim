@@ -4,7 +4,8 @@
 //! release, the foreground and the sentence move. Ported from the key
 //! line's tests where their speech holds (`tests/text.rs`), with the
 //! sequences "What users hear" changes.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::request::{
     CancelReason, CaretBinding, Outcome as WireOutcome, Press, PressAction, QueueEffect,
@@ -46,11 +47,7 @@ fn editing() -> Held {
     let _ = feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
     let mut read = focus_read(None);
     read.focus.read.values = values("Body", Role::EditableText);
-    let _ = feed_at(
-        &mut state,
-        600,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(read));
     state
 }
 
@@ -129,14 +126,39 @@ struct Step {
     /// Each cancel: its request's number and its reason.
     cancelled: Vec<(u64, CancelReason)>,
     /// Each MSAA candidate asked: its number, its object id, the reader
-    /// asked, its depth and the anchor it keeps held.
+    /// asked, how far it reads ([`depth_of`]) and the anchor it keeps
+    /// held.
     runs: Vec<(
         u64,
         i32,
         crate::event_queue::Reader,
-        verbatim_model::request::Depth,
+        &'static str,
         Option<TextAnchor>,
     )>,
+}
+
+/// How far a candidate's batch reads it: "facts" for its facts alone, a
+/// caret key's confirmation; "full if focused" for its test of the focused
+/// state before its full read; "full" otherwise.
+pub(crate) fn depth_of(question: &verbatim_model::request::Question) -> &'static str {
+    let verbatim_model::request::Question::Batch(batch) = question else {
+        return "not a batch";
+    };
+    if crate::focus::msaa_run::is_confirmation(question) {
+        "facts"
+    } else if batch.steps.iter().any(|step| {
+        matches!(
+            &step.op,
+            verbatim_model::batch::Op::Test {
+                subject: verbatim_model::batch::Subject::Msaa { .. },
+                ..
+            }
+        )
+    }) {
+        "full if focused"
+    } else {
+        "full"
+    }
 }
 
 /// Feeds `input` at `at_us` and reads the step.
@@ -152,19 +174,32 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
 fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
         Effect::Queue(QueueEffect::Send { ask, to }) => {
-            match crate::event_queue::legacy_for_tests(&ask.request) {
-                Wire::Text { node, op } => step.text.push((ask.number.0, node.number(), op)),
-                Wire::MsaaRun(run) => step.runs.push((
+            if let verbatim_model::request::Question::Batch(batch) = &ask.request
+                && let Some(object) = batch.steps.iter().find_map(|step| match step.op.subject() {
+                    Some(verbatim_model::batch::Subject::Msaa { ids, .. }) => Some(ids.object),
+                    _ => None,
+                })
+            {
+                step.runs.push((
                     ask.number.0,
-                    run.candidate.ids.object,
+                    object,
                     to.reader,
-                    run.depth,
-                    run.spare.map(|(_, anchor)| anchor),
-                )),
-                other => step.other.push(match other {
-                    Wire::ReadObject(_) => "ReadObject",
-                    Wire::Follow(_) => "Follow",
-                    _ => "other",
+                    depth_of(&ask.request),
+                    batch.spare.map(|(_, anchor)| anchor),
+                ));
+                return;
+            }
+            match ask.request {
+                verbatim_model::request::Question::Legacy(Wire::Text { node, op }) => {
+                    step.text.push((ask.number.0, node.number(), op));
+                }
+                other => step.other.push(match &other {
+                    verbatim_model::request::Question::Batch(batch) => {
+                        crate::entries::tests::batch_kind(batch)
+                    }
+                    verbatim_model::request::Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
+                    verbatim_model::request::Question::Legacy(Wire::Follow(_)) => "Follow",
+                    verbatim_model::request::Question::Legacy(_) => "other",
                 }),
             }
         }
@@ -1271,14 +1306,11 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
     );
     let mut button = ready();
     let _ = feed_at(&mut button, 500, Input::Foreground(IN_FRONT));
-    let _ = feed_at(
+    let _ = found_at(
         &mut button,
         600,
-        answer(
-            OUTPOST,
-            1,
-            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
-        ),
+        (OUTPOST, 1),
+        Found::Read(focus_read(None)),
     );
     assert_eq!(caret_key::binding(&button.state), None);
 }

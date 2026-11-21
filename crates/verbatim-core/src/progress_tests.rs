@@ -4,6 +4,8 @@
 //! the setting on or off), the read's endings, and the queue's handling of
 //! a bar's tells.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -31,15 +33,21 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => {
-                Some(match &crate::event_queue::legacy_for_tests(&ask.request) {
-                    Wire::ReadObject(read) => format!(
-                        "send {:?} {} ReadObject {:?} {:?}",
-                        to.reader, ask.number.0, read.object, read.set
-                    ),
-                    other => format!("send {:?} {} {other:?}", to.reader, ask.number.0),
-                })
-            }
+            Effect::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
+                verbatim_model::request::Question::Legacy(Wire::ReadObject(read)) => format!(
+                    "send {:?} {} ReadObject {:?} {:?}",
+                    to.reader, ask.number.0, read.object, read.set
+                ),
+                verbatim_model::request::Question::Batch(batch) => format!(
+                    "send {:?} {} {}",
+                    to.reader,
+                    ask.number.0,
+                    crate::entries::tests::batch_kind(batch)
+                ),
+                verbatim_model::request::Question::Legacy(other) => {
+                    format!("send {:?} {} {other:?}", to.reader, ask.number.0)
+                }
+            }),
             Effect::PlayEarcon(earcon) => Some(format!("{earcon:?}")),
             Effect::Speak(utterance, _) => Some(
                 utterance
@@ -186,8 +194,6 @@ fn bar_answer(role: Role, value: &str, states: StateSet) -> Reply {
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     }))
 }
 
@@ -625,14 +631,11 @@ fn bars_of_two_processes_sharing_a_runtime_id_are_kept_apart() {
 #[test]
 fn a_uia_bars_tell_is_neither_a_caret_tell_nor_a_property_change() {
     let mut held = crate::entries::tests::asked_completion();
-    let _ = feed_at(
+    let _ = found_at(
         &mut held,
         3_000,
-        answer(
-            crate::entries::tests::OUTPOST,
-            2,
-            Reply::Focus(Box::new(crate::entries::tests::focus_read(None))),
-        ),
+        (crate::entries::tests::OUTPOST, 2),
+        Found::Read(crate::entries::tests::focus_read(None)),
     );
     let mut tell = uia_bar("30", Relation::Equal, (APP, true));
     tell.object = EventObject::Followed {

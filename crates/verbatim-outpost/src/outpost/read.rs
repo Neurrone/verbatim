@@ -33,7 +33,7 @@ use crate::dialog_text::{Visited as Identity, is_dialog};
 
 use crate::gates;
 use verbatim_model::protocol::{DumpedTree, UiaSnapshotFact};
-use verbatim_model::request::{FocusDepth, KnownAncestor};
+use verbatim_model::request::KnownAncestor;
 use verbatim_win32::window::window_class_name;
 
 use super::window::{main_window_of, window_style, window_text};
@@ -1334,6 +1334,15 @@ fn dialog_text_of(
             dialog_text(&UiaDialog::new(uia, &children, dialog))
         }
     }
+}
+
+/// How far a read of the application's focus goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FocusDepth {
+    /// The focused state as a fact, and the full read only when focused.
+    FullIfFocused,
+    /// The full read.
+    Full,
 }
 
 /// The application's focused control in `hwnd`, the window with the

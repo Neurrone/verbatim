@@ -693,7 +693,7 @@ fn msaa_list_view_costs_exactly() {
 
 /// The identity `read` reads as, built from its focus node's values as
 /// Core builds it from its snapshot.
-fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::request::Identity {
+fn identity_of(read: &verbatim_model::request::FocusRead) -> common::outpost::Identity {
     use verbatim_model::property::{PropertyId, PropertyValue};
     let values = &read.focus.read.values;
     let value = |id| values.answer(id).and_then(|answer| answer.value.clone());
@@ -705,7 +705,7 @@ fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::req
         Some(PropertyValue::Count(count)) => Some(count),
         _ => None,
     };
-    verbatim_model::request::Identity {
+    common::outpost::Identity {
         states: match value(PropertyId::States) {
             Some(PropertyValue::States(states)) => states,
             _ => StateSet::default(),
@@ -731,7 +731,8 @@ fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::req
 /// in full with its value read once, by the full read; one whose value
 /// alone differs reads its value twice; one at other ids reads no identity.
 fn msaa_identity_check_costs_exactly() {
-    use verbatim_model::request::{Depth, MsaaIds, Reply};
+    use common::outpost::{Depth, FocusReply};
+    use verbatim_model::request::MsaaIds;
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-identity");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
@@ -746,7 +747,7 @@ fn msaa_identity_check_costs_exactly() {
     };
     let focused = outpost.msaa_focus_answer(first);
     let identity = identity_of(&focused.read);
-    let unless = |identity: verbatim_model::request::Identity, ids: MsaaIds| {
+    let unless = |identity: common::outpost::Identity, ids: MsaaIds| {
         let (reply, calls) = outpost.msaa_run_reply(
             first,
             Depth::FullUnlessSame {
@@ -762,15 +763,14 @@ fn msaa_identity_check_costs_exactly() {
             },
         )
     };
-    let read_in_full =
-        |reply: &Reply| matches!(reply, Reply::Candidate(answer) if answer.read.is_some());
+    let read_in_full = |reply: &FocusReply| matches!(reply, FocusReply::Candidate(answer) if answer.read.is_some());
 
     let (reply, cost) = unless(identity.clone(), first);
-    assert_eq!(reply, Reply::CandidateSame);
+    assert_eq!(reply, FocusReply::CandidateSame);
     ratchet.check("MSAA identity check, the same", &cost, calls(0, 6, 1), 0);
 
     let (reply, cost) = unless(
-        verbatim_model::request::Identity {
+        common::outpost::Identity {
             name: Some("Other".to_owned()),
             ..identity.clone()
         },
@@ -785,7 +785,7 @@ fn msaa_identity_check_costs_exactly() {
     );
 
     let (reply, cost) = unless(
-        verbatim_model::request::Identity {
+        common::outpost::Identity {
             value: Some("Other".to_owned()),
             ..identity.clone()
         },
@@ -811,8 +811,8 @@ fn msaa_identity_check_costs_exactly() {
     let (reply, cost) = unless(identity, first);
     assert_eq!(
         reply,
-        Reply::Candidate(verbatim_model::request::CandidateAnswer {
-            facts: verbatim_model::request::CandidateFacts::Found {
+        FocusReply::Candidate(common::outpost::CandidateAnswer {
+            facts: common::outpost::CandidateFacts::Found {
                 focused: Some(false),
                 role: None,
             },
@@ -843,7 +843,8 @@ fn msaa_identity_check_costs_exactly() {
 /// only while the list has the keyboard focus, which a window on the
 /// test's own desktop does not get. The provider is comctl32's.
 fn msaa_list_view_identity_check_costs_exactly() {
-    use verbatim_model::request::{Depth, MsaaIds, Reply};
+    use common::outpost::{Depth, FocusReply};
+    use verbatim_model::request::MsaaIds;
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
     use windows::core::w;
     common::init_com();
@@ -878,7 +879,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
         ),
         (Some("Speech"), Some(1), Some(2))
     );
-    let unless = |identity: verbatim_model::request::Identity| {
+    let unless = |identity: common::outpost::Identity| {
         outpost.msaa_run_reply(
             ids(1),
             Depth::FullUnlessSame {
@@ -888,7 +889,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
         )
     };
     let (reply, cost) = unless(identity.clone());
-    assert_eq!(reply, Reply::CandidateSame);
+    assert_eq!(reply, FocusReply::CandidateSame);
     // On the test's own desktop the list has no keyboard focus, so the
     // focused-state test walks to the fixture's focused root: 10 of the
     // MSAA calls are that walk's, which a focused item does not make.
@@ -897,12 +898,12 @@ fn msaa_list_view_identity_check_costs_exactly() {
         cost,
         calls(0, 13, 7),
     );
-    let (reply, cost) = unless(verbatim_model::request::Identity {
+    let (reply, cost) = unless(common::outpost::Identity {
         set_size: Some(3),
         ..identity
     });
     assert!(
-        matches!(&reply, Reply::Candidate(answer) if answer.read.is_some()),
+        matches!(&reply, FocusReply::Candidate(answer) if answer.read.is_some()),
         "{reply:?}"
     );
     ratchet.check_calls(
@@ -2104,16 +2105,16 @@ fn the_focused_state_walk_makes_no_call_above_the_process_boundary() {
     let (run, _) = outpost.msaa_run(
         (
             common::outpost::node_ids(hwnd, 1),
-            verbatim_model::request::CandidateKind::Focus,
+            common::outpost::CandidateKind::Focus,
         ),
-        verbatim_model::request::Depth::FullIfFocused,
+        common::outpost::Depth::FullIfFocused,
     );
     let judged_at = common::now_us();
     assert!(
         matches!(
             run,
-            verbatim_model::request::CandidateAnswer {
-                facts: verbatim_model::request::CandidateFacts::Found {
+            common::outpost::CandidateAnswer {
+                facts: common::outpost::CandidateFacts::Found {
                     focused: Some(false),
                     ..
                 },
@@ -2236,7 +2237,7 @@ fn an_acc_focus_served_by_another_process_answers_no_focused_control() {
     let (outcome, _) = outpost.current_focus();
     assert_eq!(
         outcome,
-        verbatim_model::request::Outcome::NotThere,
+        common::outpost::FocusOutcome::NotThere,
         "the current focus's focused control"
     );
     assert_eq!(

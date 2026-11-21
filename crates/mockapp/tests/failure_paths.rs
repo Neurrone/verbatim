@@ -16,7 +16,7 @@ mod harness;
 use std::sync::{Arc, mpsc};
 
 use verbatim_faults::Fault;
-use verbatim_model::request::{Outcome, Request};
+use verbatim_model::request::Outcome;
 use verbatim_uia::{Part, PropertyEvent, Registration, Scope, Subscription, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId};
@@ -66,16 +66,7 @@ fn a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next
     let outpost = OutpostUnderTest::new(&app);
     focus_button(&mut app, &outpost, &title);
 
-    let first = outpost.request(
-        outpost.app_window(),
-        Request::CurrentFocus {
-            set: common::outpost::focus_set(),
-            known: Vec::new(),
-            details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::FocusDepth::Full,
-            hidden: verbatim_model::request::HiddenRoot::Check,
-        },
-    );
+    let (first, _) = outpost.ask_current_focus(outpost.app_window());
     assert_eq!(
         outpost.answer(first).outcome,
         Outcome::Ended,

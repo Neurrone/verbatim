@@ -189,7 +189,31 @@ impl Table {
     pub(crate) fn requests_for_tests(&self) -> Vec<verbatim_model::request::Request> {
         self.live
             .values()
-            .map(|live| legacy_for_tests(&live.request))
+            .filter_map(|live| match &live.request {
+                Question::Legacy(request) => Some(request.clone()),
+                Question::Batch(_) => None,
+            })
+            .collect()
+    }
+
+    /// The batch request `number` is, while it waits or is out.
+    #[cfg(test)]
+    pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
+        match &self.live.get(&RequestNumber(number))?.request {
+            Question::Batch(batch) => Some(batch.clone()),
+            Question::Legacy(_) => None,
+        }
+    }
+
+    /// The batches waiting or out, by number.
+    #[cfg(test)]
+    pub(crate) fn batches_for_tests(&self) -> Vec<(u64, verbatim_model::batch::Batch)> {
+        self.live
+            .iter()
+            .filter_map(|(number, live)| match &live.request {
+                Question::Batch(batch) => Some((number.0, batch.clone())),
+                Question::Legacy(_) => None,
+            })
             .collect()
     }
 

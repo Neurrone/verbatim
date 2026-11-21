@@ -22,19 +22,23 @@
     reason = "reads its fixture files, and writes them when regenerated: listed under the determinism rule's exceptions"
 )]
 
+use readers::Found;
 use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;
+use verbatim_model::request::Question;
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{App, Desk, LISTENER, ONE, TWO, focus_read_of, focus_tell, listener_read, runtime_of};
 use verbatim_core::{SrState, dump, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    Answer, CandidateAnswer, FocusRead, HeldIds, Instance, MsaaIds, NodeRead, ObjectRead, Outcome,
-    QueueInput, RelationFound, Reply, Request as Wire, RequestNumber,
+    Answer, FocusRead, HeldIds, Instance, MsaaIds, NodeRead, ObjectRead, Outcome, QueueInput,
+    RelationFound, Reply, Request as Wire, RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -94,7 +98,7 @@ struct Due {
     at_us: u64,
     number: u64,
     to: Instance,
-    request: Wire,
+    request: Question,
 }
 
 /// A session's run: the desk, the requests whose answers are due, and the
@@ -102,7 +106,7 @@ struct Due {
 struct Run<'a> {
     desk: &'a mut Desk,
     due: Vec<Due>,
-    answer: Box<dyn FnMut(&Wire) -> Reply + 'a>,
+    answer: Box<dyn FnMut(&Question) -> Outcome + 'a>,
 }
 
 impl Run<'_> {
@@ -118,7 +122,7 @@ impl Run<'_> {
         let _ = self.desk.step_at(at_us, input);
         let now = self.desk.at_us;
         for (number, to, request) in self.desk.sent.clone() {
-            if matches!(request, Wire::Follow(_)) {
+            if desk::kind(&request) == "Follow" {
                 continue;
             }
             self.due.push(Due {
@@ -147,14 +151,14 @@ impl Run<'_> {
             if self.desk.cancelled.contains(&due.number) {
                 continue;
             }
-            let reply = (self.answer)(&due.request);
+            let outcome = (self.answer)(&due.request);
             self.step(
                 due.at_us,
                 QueueInput::Answer {
                     from: due.to,
                     answer: Answer {
                         number: RequestNumber(due.number),
-                        outcome: Outcome::Result(reply),
+                        outcome,
                         probes: Vec::new(),
                         detail: String::new(),
                     },
@@ -293,20 +297,26 @@ fn win32_apply(desk: &mut Desk) {
         desk,
         due: Vec::new(),
         answer: Box::new(|request| match request {
-            Wire::MsaaRun(_) if runs == 0 => {
+            Question::Batch(batch) if runs == 0 => {
                 runs += 1;
-                Reply::Candidate(CandidateAnswer::focused(by_ids(
-                    focus_read_of(ONE, &apply, std::slice::from_ref(&sheet)),
-                    apply_window,
-                )))
+                readers::outcome(
+                    batch,
+                    &Found::Read(by_ids(
+                        focus_read_of(ONE, &apply, std::slice::from_ref(&sheet)),
+                        apply_window,
+                    )),
+                )
             }
-            Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(by_ids(
-                focus_read_of(ONE, &read_only, &[sheet.clone(), page.clone()]),
-                read_only_window,
-            ))),
-            Wire::ReadObject(_) => {
+            Question::Batch(batch) => readers::outcome(
+                batch,
+                &Found::Read(by_ids(
+                    focus_read_of(ONE, &read_only, &[sheet.clone(), page.clone()]),
+                    read_only_window,
+                )),
+            ),
+            Question::Legacy(Wire::ReadObject(_)) => {
                 reads += 1;
-                Reply::Object(Box::new(ObjectRead {
+                Outcome::Result(Reply::Object(Box::new(ObjectRead {
                     object: NodeRead {
                         node: Some(apply.id),
                         window: ONE.node_window(),
@@ -318,11 +328,11 @@ fn win32_apply(desk: &mut Desk) {
                     relation: Some(RelationFound::Is(0)),
                     descendants: Vec::new(),
                     ancestors: Vec::new(),
-                    met: None,
-                    route: None,
-                }))
+                })))
             }
-            other => panic!("a request the session does not answer: {other:?}"),
+            Question::Legacy(other) => {
+                panic!("a request the session does not answer: {other:?}")
+            }
         }),
     };
     let first = events[0].t_us;
@@ -403,14 +413,19 @@ fn wpf_apply(desk: &mut Desk) {
     let mut run = Run {
         desk,
         due: Vec::new(),
-        answer: Box::new(|request| match request {
-            Wire::ReadObject(_) => Reply::Object(Box::new(listener_read(ONE, focus.get()))),
-            Wire::CompleteUia(_) => Reply::Focus(Box::new(focus_read_of(
-                ONE,
-                if focus.get() == 1 { &apply } else { &ok },
-                &[],
-            ))),
-            other => panic!("a request the session does not answer: {other:?}"),
+        answer: Box::new(|request| match (request, desk::kind(request)) {
+            (Question::Batch(batch), "ReadObject") => {
+                readers::outcome(batch, &listener_read(ONE, focus.get()))
+            }
+            (Question::Batch(batch), "Completion") => readers::outcome(
+                batch,
+                &Found::Read(focus_read_of(
+                    ONE,
+                    if focus.get() == 1 { &apply } else { &ok },
+                    &[],
+                )),
+            ),
+            (other, _) => panic!("a request the session does not answer: {other:?}"),
         }),
     };
     let first = events[0].t_us;

@@ -12,9 +12,10 @@
 #![forbid(unsafe_code)]
 
 use verbatim_model::WindowHandle;
+use verbatim_model::batch::{Batch, Op, Placement, Step, Subject};
 use verbatim_model::property::{PROPERTIES, PropertyId};
 use verbatim_model::protocol::CoreToOutpost;
-use verbatim_model::request::{Ask, Cancel, CancelReason, Request, RequestNumber, WindowVerdict};
+use verbatim_model::request::{Ask, Cancel, CancelReason, Question, RequestNumber, WindowVerdict};
 
 use crate::outpost::Outpost;
 
@@ -54,7 +55,7 @@ impl<'a> Driver<'a> {
         &mut self,
         window: WindowHandle,
         verdict: WindowVerdict,
-        request: Request,
+        request: impl Into<Question>,
     ) -> RequestNumber {
         self.last = self.last.saturating_add(1);
         let number = RequestNumber(self.last);
@@ -83,18 +84,24 @@ impl<'a> Driver<'a> {
     }
 
     /// Asks for the application's current focus with every property and
-    /// every text detail, no ancestors known, as Core asks it at its start
+    /// every text detail, no ancestors known, as Core reads it as it is
     /// with every setting on: the read the attach mode prints.
     pub fn current_focus(&mut self, window: WindowHandle) -> RequestNumber {
         self.ask(
             window,
             WindowVerdict::ProbeFirst,
-            Request::CurrentFocus {
-                hidden: verbatim_model::request::HiddenRoot::Check,
-                set: every_property(),
-                known: Vec::new(),
-                details: verbatim_model::TextDetails::ALL,
-                depth: verbatim_model::request::FocusDepth::Full,
+            Batch {
+                steps: vec![Step {
+                    op: Op::FocusRead {
+                        subject: Subject::Focus,
+                        known: Vec::new(),
+                        set: every_property(),
+                        details: verbatim_model::TextDetails::ALL,
+                    },
+                    when: None,
+                }],
+                placement: Placement::Queue,
+                spare: None,
             },
         )
     }

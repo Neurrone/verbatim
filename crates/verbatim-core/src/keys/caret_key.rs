@@ -15,12 +15,10 @@ use verbatim_model::{
 };
 
 use verbatim_model::TextAnchor;
-use verbatim_model::request::{CandidateFacts, Depth};
 
 use crate::editing;
 use crate::entries::{Entries, Entry};
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
-use crate::focus::msaa_run::{FactsOnly, RunRequest};
 use crate::focus::validity::{Pending, Within, pending_behind_front};
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
@@ -283,9 +281,7 @@ impl CaretStage {
                 TextOp::MoveBySentence(_) => Some(Self::Sentence),
                 _ => None,
             },
-            Question::Legacy(Wire::MsaaRun(run)) if run.depth == Depth::Facts => {
-                Some(Self::Confirming)
-            }
+            question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
             _ => None,
         }
     }
@@ -335,9 +331,7 @@ impl TerminalStage {
                 }),
                 _ => None,
             },
-            Question::Legacy(Wire::MsaaRun(run)) if run.depth == Depth::Facts => {
-                Some(Self::Confirming)
-            }
+            question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
             _ => None,
         }
     }
@@ -409,9 +403,7 @@ async fn confirm(
     let Some(candidate) = crate::focus::validity::waiting_candidate(cx, trace) else {
         return Confirmed::Judged;
     };
-    let known = crate::focus::msaa_run::known_for(cx, candidate.tell.process);
-    let request = RunRequest::of(cx, (&candidate, &FactsOnly), spare, &known);
-    match cx.ask(request, due_us).await {
+    match crate::focus::msaa_run::facts(cx, &candidate, spare, due_us).await {
         Outcome::Result(facts) => {
             crate::focus::validity::store_facts(cx, trace, facts);
             Confirmed::Judged
@@ -419,7 +411,11 @@ async fn confirm(
         // The candidate's outpost ended, or its object is gone: stored as
         // not there, and judged again.
         Outcome::ReaderEnded | Outcome::NotThere => {
-            crate::focus::validity::store_facts(cx, trace, CandidateFacts::NotThere);
+            crate::focus::validity::store_facts(
+                cx,
+                trace,
+                crate::focus::validity::CandidateFacts::NotThere,
+            );
             Confirmed::Judged
         }
         Outcome::NoLongerAwaited(CancelReason::Withdrawn) => Confirmed::Withdrawn,

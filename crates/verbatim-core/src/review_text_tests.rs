@@ -2,7 +2,8 @@
 //! resolves the navigator at its turn and makes its reads as the queue's
 //! requests on the navigator's window, holding the queue until its last
 //! answer.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire};
 use verbatim_model::{
@@ -36,11 +37,7 @@ fn committed(name: &str, role: Role) -> Held {
     let _ = feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
     let mut read = focus_read(None);
     read.focus.read.values = values(name, role);
-    let _ = feed_at(
-        &mut state,
-        600,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(read));
     assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
     state
 }

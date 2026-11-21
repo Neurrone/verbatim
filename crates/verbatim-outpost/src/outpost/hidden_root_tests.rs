@@ -1,13 +1,15 @@
-//! The hidden-dialog check of a focus read (Dickson, 2026-11-19): a read in
-//! a window whose top-level window is a hidden dialog is answered with
-//! that window; a shown root, or a hidden one that is no dialog, is read
-//! as it is, as File Explorer's hidden Static before Run was recorded; and
-//! a hidden
-//! root whose client role cannot be read is not there, never "not a
-//! dialog". The roles are the ones oleacc's own proxies give these
-//! classes.
+//! The hidden-dialog check of a focus read (Dickson, 2026-11-19), the
+//! `Test` of a top-level window's own object through MSAA that Core asks
+//! first: a window whose top-level window is a hidden dialog matches; a
+//! shown root, or a hidden one that is no dialog, does not, as File
+//! Explorer's hidden Static before Run was recorded; and a hidden root
+//! whose client role cannot be read answers its role absent, never "not a
+//! dialog", which Core judges not there. The roles are the ones oleacc's
+//! own proxies give these classes.
 
-use verbatim_model::{Pid, Role, WindowHandle};
+use verbatim_model::matcher::Matcher;
+use verbatim_model::property::{PropertyId, PropertyValue};
+use verbatim_model::{Backend, Role};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, SW_SHOWNA, ShowWindow, WINDOW_EX_STYLE, WS_CHILD,
@@ -15,7 +17,44 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use super::asked::{Root, hidden_root, hidden_root_read};
+use super::batch::window_property;
+
+/// The hidden-dialog check as Core asks it (`verbatim-core`'s
+/// `focus::shown::check`).
+fn check() -> Matcher {
+    Matcher::All(vec![
+        Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(false)),
+        Matcher::IsAnyOf(
+            PropertyId::Role,
+            [Role::Dialog, Role::Alert, Role::PropertyPage]
+                .into_iter()
+                .map(PropertyValue::Role)
+                .collect(),
+        ),
+    ])
+}
+
+/// The check of the top-level window of `window`, its client role read by
+/// `client_role`: whether it matched, and what it read, in order.
+fn checked(
+    window: isize,
+    client_role: impl Fn(isize) -> Option<Role>,
+) -> (bool, Vec<(PropertyId, Option<PropertyValue>)>) {
+    let top = verbatim_win32::window::top_level_of(window);
+    let mut read = Vec::new();
+    let Ok(holds) = check().evaluate::<std::convert::Infallible>(&mut |id| {
+        let value = window_property((top, Backend::Msaa), id, &client_role)
+            .expect("the check reads the window's own properties");
+        read.push((id, value.clone()));
+        Ok(value)
+    });
+    (holds, read)
+}
+
+/// [`checked`], the role read as the outpost reads it.
+fn hidden_root(window: isize) -> bool {
+    checked(window, verbatim_ia2::acquire::client_role).0
+}
 
 /// A popup of `class`, of this thread's, with no size and never taking the
 /// foreground, hidden; destroyed by the caller on this thread.
@@ -71,61 +110,71 @@ fn raw(window: HWND) -> isize {
     window.0 as isize
 }
 
-/// A field inside a hidden dialog is answered with the dialog's window.
+/// A field inside a hidden dialog matches: its top-level window is a
+/// hidden dialog.
 #[test]
-fn a_field_in_a_hidden_dialog_answers_the_dialogs_window() {
+fn a_field_in_a_hidden_dialog_matches() {
     let dialog = top_level(w!("#32770"));
     let field = field_in(dialog);
-    let Root::HiddenDialog(window) = hidden_root(raw(field)) else {
-        panic!("a hidden dialog");
-    };
     assert_eq!(
-        (window.handle, window.top_level, window.process),
+        checked(raw(field), verbatim_ia2::acquire::client_role),
         (
-            WindowHandle(u64::try_from(raw(dialog)).expect("a handle")),
-            WindowHandle(u64::try_from(raw(dialog)).expect("a handle")),
-            Pid(std::process::id())
+            true,
+            vec![
+                (PropertyId::WindowShown, Some(PropertyValue::Flag(false))),
+                (PropertyId::Role, Some(PropertyValue::Role(Role::Dialog))),
+            ]
         )
     );
     destroy(dialog);
 }
 
-/// Once shown, the same dialog is read as it is.
+/// Once shown, the same dialog does not match, its role not read.
 #[test]
-fn a_shown_dialog_is_read_as_it_is() {
+fn a_shown_dialog_does_not_match() {
     let dialog = top_level(w!("#32770"));
     let field = field_in(dialog);
     // SAFETY: a live window of this thread's.
     let _ = unsafe { ShowWindow(dialog, SW_SHOWNA) };
-    assert_eq!(hidden_root(raw(field)), Root::Read);
+    assert_eq!(
+        checked(raw(field), verbatim_ia2::acquire::client_role),
+        (
+            false,
+            vec![(PropertyId::WindowShown, Some(PropertyValue::Flag(true)))]
+        )
+    );
     destroy(dialog);
 }
 
 /// Hidden roots that are no dialog, a Static as File Explorer's before Run
-/// was recorded, and an Edit: each is read as it is.
+/// was recorded, and an Edit: neither matches.
 #[test]
-fn a_hidden_root_that_is_no_dialog_is_read_as_it_is() {
+fn a_hidden_root_that_is_no_dialog_does_not_match() {
     for class in [w!("Static"), w!("Edit")] {
         let root = top_level(class);
-        assert_eq!(hidden_root(raw(root)), Root::Read);
+        assert!(!hidden_root(raw(root)));
         destroy(root);
     }
 }
 
-/// A hidden root whose client role cannot be read is not there, as a failed
-/// acquire is answered; a role that is no dialog's is read, never failed.
+/// A hidden root whose client role cannot be read answers it absent, which
+/// Core judges not there; a role that is no dialog's does not match; an
+/// alert's does.
 #[test]
-fn a_hidden_root_whose_role_fails_is_not_there() {
+fn a_hidden_roots_role_unread_is_answered_absent() {
     let dialog = top_level(w!("#32770"));
-    assert_eq!(hidden_root_read(raw(dialog), |_| None), Root::NotThere);
     assert_eq!(
-        hidden_root_read(raw(dialog), |_| Some(Role::Window)),
-        Root::Read
+        checked(raw(dialog), |_| None),
+        (
+            false,
+            vec![
+                (PropertyId::WindowShown, Some(PropertyValue::Flag(false))),
+                (PropertyId::Role, None),
+            ]
+        )
     );
-    assert!(matches!(
-        hidden_root_read(raw(dialog), |_| Some(Role::Alert)),
-        Root::HiddenDialog(_)
-    ));
+    assert!(!checked(raw(dialog), |_| Some(Role::Window)).0);
+    assert!(checked(raw(dialog), |_| Some(Role::Alert)).0);
     destroy(dialog);
 }
 
@@ -155,7 +204,7 @@ fn the_check_costs_nothing_for_a_shown_root_and_two_calls_for_a_hidden_one() {
 }
 
 /// Verbatim's own hidden tray frame, wxWidgets' `wxWindowNR`, in front at
-/// every tray menu's opening as recorded: no dialog, so read as it is.
+/// every tray menu's opening as recorded: no dialog, so it does not match.
 #[test]
 fn verbatims_hidden_tray_frame_is_read_as_it_is() {
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
@@ -183,6 +232,6 @@ fn verbatims_hidden_tray_frame_is_read_as_it_is() {
     // registered again harmlessly by a rerun in the same process.
     let _ = unsafe { RegisterClassW(&raw const class) };
     let frame = top_level(w!("wxWindowNR"));
-    assert_eq!(hidden_root(raw(frame)), Root::Read);
+    assert!(!hidden_root(raw(frame)));
     destroy(frame);
 }

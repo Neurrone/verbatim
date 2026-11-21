@@ -148,10 +148,6 @@ pub(crate) fn named_by(request: &Question) -> Vec<(NodeId, Vec<TextAnchor>)> {
 /// The node a kind of request not yet converted to a batch is about, and
 /// every text anchor it names.
 fn legacy_named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
-    // A caret key's confirmation keeps the key's starting point held.
-    if let Wire::MsaaRun(run) = request {
-        return run.spare.map(|(node, anchor)| (node, vec![anchor]));
-    }
     let Wire::Text { node, op } = request else {
         return None;
     };

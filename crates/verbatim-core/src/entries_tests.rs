@@ -3,13 +3,14 @@
 //! an entry with no read, and the paused function rebuilt from the state
 //! after a clone or a dump.
 
+use verbatim_model::batch::{AncestorsEnd, Batch, Op, Subject};
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, CandidateAnswer, CandidateFacts, CompleteUia, Depth, FocusAncestor, FocusCaret,
-    FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead, ObjectRead, Outcome as WireOutcome,
-    Refusal, Reply, Request as Wire, RequestNumber, Route, RouteEnd, RouteStep,
+    Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead,
+    Outcome as WireOutcome, Question, Refusal, Reply, Request as Wire, RequestNumber, Route,
+    RouteEnd,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -19,7 +20,9 @@ use verbatim_model::{NodeId, OutpostId, Pid, Role, SegmentContent};
 use super::*;
 use crate::event_queue::{Input, Instance, Reader};
 use crate::focus::versions::{Committed, LastFocus};
+use crate::readers::Found;
 use verbatim_model::Effect;
+use verbatim_model::WindowHandle;
 
 pub(crate) const APP: Pid = Pid(40);
 pub(crate) const GENERATION: u64 = 3;
@@ -178,27 +181,109 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
     }
 }
 
-pub(crate) fn listener_answer() -> ObjectRead {
-    ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: win(5),
-            values: values("OK", Role::Button),
+/// A kept element as the listener reads it for a route: `name`, a
+/// `role`, of runtime id `runtime`, in window 5, both a control and
+/// content.
+pub(crate) fn walked_element(name: &str, role: Role, runtime: Vec<i32>) -> NodeRead {
+    let mut values = values(name, role);
+    values.0.extend([
+        PropertyAnswer {
+            id: PropertyId::RuntimeId,
+            value: Some(PropertyValue::RuntimeId(RuntimeId(runtime))),
         },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: WindowHandle(5),
-            steps: vec![RouteStep {
-                runtime_id: RuntimeId(vec![42, 1]),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::ContinueFrom(WindowHandle(5)),
-        }),
+        PropertyAnswer {
+            id: PropertyId::IsContent,
+            value: Some(PropertyValue::Flag(true)),
+        },
+    ]);
+    NodeRead {
+        node: None,
+        window: win(5),
+        values,
     }
+}
+
+/// The listener's read of the focus "OK": the element alone, its walk
+/// going on from its window.
+pub(crate) fn listener_answer() -> Found {
+    Found::Walked(
+        walked_element("OK", Role::Button, vec![42, 1]),
+        Vec::new(),
+        AncestorsEnd::ContinueFrom(WindowHandle(5)),
+    )
+}
+
+/// The listener's read of the focus "OK" of runtime id `runtime`, the
+/// element alone, its walk going on from its window.
+pub(crate) fn listener_answer_of(runtime: Vec<i32>) -> Found {
+    Found::Walked(
+        walked_element("OK", Role::Button, runtime),
+        Vec::new(),
+        AncestorsEnd::ContinueFrom(WindowHandle(5)),
+    )
+}
+
+/// The committed focus given its own window `window`, which a walk then
+/// knows it by, so a listener's walk sent after can meet it.
+pub(crate) fn committed_window_known(held: &mut Held, window: u64) {
+    let Committed::Read(focus) = &mut held.state.versions.committed else {
+        panic!("a reader's focus committed");
+    };
+    focus.context.snapshot.details.window = Some(WindowHandle(window));
+}
+
+/// The listener's answer to its walk `number` of the focus "OK", meeting
+/// the first ancestor it was asked to stop at, the window
+/// [`committed_window_known`] gave the committed focus; then the committed
+/// focus's line changes before the answer comes, that window no longer
+/// its, so the ancestor is no longer known and the focus is read afresh.
+pub(crate) fn walk_meeting_a_changed_line(held: &mut Held, number: u64) -> Input<Entry> {
+    let Found::Walked(element, ancestors, _) = listener_answer() else {
+        unreachable!("the listener's answer is a walk");
+    };
+    let input = found(
+        held,
+        LISTENER,
+        number,
+        Found::Walked(element, ancestors, AncestorsEnd::Met(0)),
+    );
+    let Committed::Read(focus) = &mut held.state.versions.committed else {
+        panic!("a reader's focus committed");
+    };
+    focus.context.snapshot.details.window = None;
+    input
+}
+
+/// The listener's answer to its walk `number`: `element` alone, its walk
+/// meeting `met`, by its place among the ancestors the walk was asked to
+/// stop at, or, with none, going on from its window.
+pub(crate) fn walk_answer(
+    held: &Held,
+    number: u64,
+    element: NodeRead,
+    met: Option<&KnownAncestor>,
+) -> Input<Entry> {
+    let end = match met {
+        None => AncestorsEnd::ContinueFrom(WindowHandle(5)),
+        Some(met) => {
+            let batch = held.queue.batch_for_tests(number).unwrap();
+            let place = batch
+                .steps
+                .iter()
+                .find_map(|step| match &step.op {
+                    Op::Ancestors { until, .. } => until.iter().position(|known| known == met),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{met:?} is among the walk's stops"));
+            AncestorsEnd::Met(u32::try_from(place).unwrap())
+        }
+    };
+    found(
+        held,
+        LISTENER,
+        number,
+        Found::Walked(element, Vec::new(), end),
+    )
 }
 
 /// A state with the runtime its test keeps beside it. A clone has no
@@ -304,38 +389,97 @@ pub(crate) fn uia_focus_read(
     let [object] = asked[..] else {
         panic!("one listener read asked: {asked:?}");
     };
-    let (asked, _) = sent_at(
-        held,
-        at_us + 1,
-        answer(LISTENER, object, Reply::Object(Box::new(listener_answer()))),
-    );
+    let (asked, _) = found_sent(held, at_us + 1, (LISTENER, object), listener_answer());
     let [completion] = asked[..] else {
         panic!("one completion asked: {asked:?}");
     };
-    sent_at(
-        held,
-        at_us + 2,
-        answer(OUTPOST, completion, Reply::Focus(Box::new(read))),
-    )
-    .1
+    found_sent(held, at_us + 2, (OUTPOST, completion), Found::Read(read)).1
 }
 
 pub(crate) fn kind(ask: &Ask) -> &'static str {
-    match &crate::event_queue::legacy_for_tests(&ask.request) {
-        Wire::ReadObject(_) => "ReadObject",
-        Wire::CompleteUia(_) => "CompleteUia",
-        Wire::MsaaRun(_) => "MsaaRun",
-        Wire::CurrentFocus {
-            depth: verbatim_model::request::FocusDepth::Full,
-            ..
-        } => "CurrentFocus",
-        Wire::CurrentFocus {
-            depth: verbatim_model::request::FocusDepth::FullIfFocused,
-            ..
-        } => "CurrentFocus with the focused state as a fact",
-        Wire::Follow(_) => "Follow",
-        _ => "other",
+    match &ask.request {
+        Question::Batch(batch) => batch_kind(batch),
+        Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
+        Question::Legacy(Wire::Follow(_)) => "Follow",
+        Question::Legacy(_) => "other",
     }
+}
+
+/// What a batch reads, as the tests name it: a candidate's read, a read of
+/// the current focus (with its focused state as a fact for the check after
+/// a menu end), the listener's read of a kept element, and the outpost's
+/// read of the route that walk made.
+pub(crate) fn batch_kind(batch: &Batch) -> &'static str {
+    let subjects: Vec<&Subject> = batch
+        .steps
+        .iter()
+        .filter_map(|step| step.op.subject())
+        .collect();
+    if batch.reads_focus_if_focused() {
+        "CurrentFocus with the focused state as a fact"
+    } else if batch.reads_focus_first() {
+        "CurrentFocus"
+    } else if subjects
+        .iter()
+        .any(|subject| matches!(subject, Subject::Msaa { .. }))
+    {
+        "Candidate"
+    } else if subjects
+        .iter()
+        .any(|subject| matches!(subject, Subject::Kept { .. }))
+    {
+        "ReadObject"
+    } else if subjects
+        .iter()
+        .any(|subject| matches!(subject, Subject::Route(_)))
+    {
+        "Completion"
+    } else if batch
+        .steps
+        .iter()
+        .all(|step| matches!(step.op, Op::Follow(_)))
+    {
+        "Follow"
+    } else {
+        "other"
+    }
+}
+
+/// The answer of `from` to its request `number`, the batch Core sent,
+/// made by the stand-in reader from what it found.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "its callers build what was found in place"
+)]
+pub(crate) fn found(held: &Held, from: Instance, number: u64, found: Found) -> Input<Entry> {
+    let batch = held
+        .queue
+        .batch_for_tests(number)
+        .unwrap_or_else(|| panic!("request {number} is a batch out"));
+    answer_outcome(from, number, crate::readers::outcome(&batch, &found))
+}
+
+/// [`found`] fed at `at_us`: what the step sent and said.
+pub(crate) fn found_at(
+    held: &mut Held,
+    at_us: u64,
+    (from, number): (Instance, u64),
+    reader_found: Found,
+) -> Vec<String> {
+    let input = found(held, from, number, reader_found);
+    feed_at(held, at_us, input)
+}
+
+/// [`found`] fed at `at_us`: the requests it sent, by number, and what it
+/// said.
+pub(crate) fn found_sent(
+    held: &mut Held,
+    at_us: u64,
+    (from, number): (Instance, u64),
+    reader_found: Found,
+) -> (Vec<u64>, Vec<String>) {
+    let input = found(held, from, number, reader_found);
+    sent_at(held, at_us, input)
 }
 
 pub(crate) fn answer(from: Instance, number: u64, reply: Reply) -> Input<Entry> {
@@ -402,12 +546,8 @@ pub(crate) fn asked_completion() -> Held {
         ["send Listener ReadObject"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(LISTENER, 1, Reply::Object(Box::new(listener_answer())))
-        ),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        found_at(&mut state, 2_000, (LISTENER, 1), listener_answer()),
+        ["send Outpost(Pid(40)) Completion"]
     );
     state
 }
@@ -416,10 +556,11 @@ pub(crate) fn asked_completion() -> Held {
 fn a_uia_focus_is_read_in_two_requests_and_executed() {
     let mut state = asked_completion();
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+            (OUTPOST, 2),
+            Found::Read(focus_read(None))
         ),
         SPOKEN_FOLLOWED
     );
@@ -456,10 +597,11 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
 #[test]
 fn a_uia_duplicate_of_the_readers_last_focus_ends_with_no_read() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     let repeat = uia_tell(1, vec![(ElementToken(9), Read::Answered(true))]);
     assert_eq!(feed_at(&mut state, 4_000, entry(repeat)), NOTHING);
@@ -494,20 +636,37 @@ fn a_refused_completion_ends_the_focus_unspoken() {
     assert!(state.queue.front_for_tests().is_none());
 }
 
-/// The completion asked at `at_us` by `input`, as the outpost receives it.
-fn sent_completion(held: &mut Held, at_us: u64, input: Input<Entry>) -> Option<Box<CompleteUia>> {
+/// The route and the known ancestors of the completion asked at `at_us`
+/// by `input`, as the outpost receives them.
+fn sent_completion(
+    held: &mut Held,
+    at_us: u64,
+    input: Input<Entry>,
+) -> Option<(Route, Vec<KnownAncestor>)> {
     feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
         .unwrap()
         .into_iter()
         .find_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) => {
-                match crate::event_queue::legacy_for_tests(&ask.request) {
-                    Wire::CompleteUia(complete) => Some(complete),
+            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
+                Question::Batch(batch) => batch.steps.into_iter().find_map(|step| match step.op {
+                    Op::FocusRead {
+                        subject: Subject::Route(route),
+                        known,
+                        ..
+                    } => Some((*route, known)),
                     _ => None,
-                }
-            }
+                }),
+                Question::Legacy(_) => None,
+            },
             _ => None,
         })
+}
+
+/// The listener's answer to its walk `number`, [`listener_answer`] with
+/// its walk meeting `met`.
+fn walk_meeting(held: &Held, number: u64, met: &KnownAncestor) -> Input<Entry> {
+    let element = walked_element("OK", Role::Button, vec![42, 1]);
+    walk_answer(held, number, element, Some(met))
 }
 
 /// A second focus, of runtime id `[42, 2]`, asked of the listener after
@@ -517,11 +676,7 @@ fn second_focus_asked() -> Held {
     let mut state = asked_completion();
     let mut first = focus_read(None);
     first.ancestors[0].node.runtime_id = Some(RuntimeId(vec![42, 4]));
-    feed_at(
-        &mut state,
-        3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(first))),
-    );
+    found_at(&mut state, 3_000, (OUTPOST, 2), Found::Read(first));
     assert_eq!(
         feed_at(&mut state, 4_000, entry(uia_tell(2, Vec::new()))),
         ["send Listener ReadObject"]
@@ -533,18 +688,10 @@ fn second_focus_asked() -> Held {
 fn the_known_ancestor_a_listeners_walk_met_is_named_in_the_completion() {
     let mut state = second_focus_asked();
     let met = KnownAncestor::Uia(RuntimeId(vec![42, 4]));
-    let mut object = listener_answer();
-    if let Some(route) = object.route.as_mut() {
-        route.end = RouteEnd::Known(met.clone());
-    }
-    let complete = sent_completion(
-        &mut state,
-        5_000,
-        answer(LISTENER, 4, Reply::Object(Box::new(object))),
-    )
-    .unwrap();
-    assert_eq!(complete.route.end, RouteEnd::Known(met.clone()));
-    assert!(complete.known.contains(&met));
+    let input = walk_meeting(&state, 4, &met);
+    let (route, known) = sent_completion(&mut state, 5_000, input).unwrap();
+    assert_eq!(route.end, RouteEnd::Known(met.clone()));
+    assert!(known.contains(&met));
 }
 
 #[test]
@@ -554,17 +701,9 @@ fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
     // is known first, and a focus inside it says no container again.
     let mut state = second_focus_asked();
     let met = KnownAncestor::Uia(RuntimeId(vec![42, 1]));
-    let mut object = listener_answer();
-    if let Some(route) = object.route.as_mut() {
-        route.end = RouteEnd::Known(met.clone());
-    }
-    let complete = sent_completion(
-        &mut state,
-        5_000,
-        answer(LISTENER, 4, Reply::Object(Box::new(object))),
-    )
-    .unwrap();
-    let place = complete.known.iter().position(|known| *known == met);
+    let input = walk_meeting(&state, 4, &met);
+    let (_, known) = sent_completion(&mut state, 5_000, input).unwrap();
+    let place = known.iter().position(|known| *known == met);
     let mut inner = focus_read(None);
     inner.focus.read.node = Some(node(3));
     inner.focus.read.values = values("Inner", Role::Button);
@@ -572,11 +711,7 @@ fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
     inner.ancestors = Vec::new();
     inner.met = Some(u32::try_from(place.unwrap()).unwrap());
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 5, Reply::Focus(Box::new(inner)))
-        ),
+        found_at(&mut state, 6_000, (OUTPOST, 5), Found::Read(inner)),
         [
             "Label(\"Inner\") Role(Button)",
             "send Outpost(Pid(40)) Follow"
@@ -599,38 +734,25 @@ fn a_focus_inside_the_committed_focus_meets_it_and_says_only_itself() {
 /// so the application's focus is read afresh and spoken: nothing is lost.
 #[test]
 fn a_walk_that_met_an_ancestor_core_no_longer_knows_reads_the_focus_afresh() {
-    let mut state = ready();
+    let mut state = second_focus_asked();
+    let met = KnownAncestor::Uia(RuntimeId(vec![42, 4]));
+    let input = walk_meeting(&state, 4, &met);
+    // The committed focus's line changes between the two reads, so the
+    // frame the walk met is no longer known.
+    state.versions.committed = Committed::Nothing;
     assert_eq!(
-        feed_at(&mut state, 1_000, entry(uia_tell(1, Vec::new()))),
-        ["send Listener ReadObject"]
-    );
-    let mut object = listener_answer();
-    if let Some(route) = object.route.as_mut() {
-        route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
-    }
-    assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(LISTENER, 1, Reply::Object(Box::new(object)))
-        ),
+        feed_at(&mut state, 5_000, input),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
-    assert_eq!(
-        feed_at(
-            &mut state,
-            3_000,
-            answer(
-                OUTPOST,
-                2,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
-        ),
-        [
-            "Label(\"Editor\") Role(Window)",
-            "Label(\"OK\") Role(Button)",
-            "send Outpost(Pid(40)) Follow"
-        ]
+    let said = found_at(
+        &mut state,
+        6_000,
+        (OUTPOST, 5),
+        Found::Read(focus_read(None)),
+    );
+    assert!(
+        said.contains(&"Label(\"OK\") Role(Button)".to_owned()),
+        "{said:?}"
     );
     assert!(state.queue.front_for_tests().is_none());
 }
@@ -639,7 +761,7 @@ fn a_walk_that_met_an_ancestor_core_no_longer_knows_reads_the_focus_afresh() {
 fn a_clone_of_the_state_rebuilds_the_paused_function_and_goes_on_alike() {
     let mut state = asked_completion();
     let mut cloned = state.clone();
-    let reply = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
+    let reply = found(&state, OUTPOST, 2, Found::Read(focus_read(None)));
     let straight = feed_at(&mut state, 3_000, reply.clone());
     assert_eq!(feed_at(&mut cloned, 3_000, reply), straight);
     assert_eq!(cloned, state);
@@ -655,7 +777,7 @@ fn a_dump_of_the_state_rebuilds_the_paused_function_and_goes_on_alike() {
         runtime: Runtime::default(),
     };
     assert_eq!(restored, state);
-    let reply = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
+    let reply = found(&state, OUTPOST, 2, Found::Read(focus_read(None)));
     let straight = feed_at(&mut state, 3_000, reply.clone());
     assert_eq!(feed_at(&mut restored, 3_000, reply), SPOKEN_FOLLOWED);
     assert_eq!(straight, SPOKEN_FOLLOWED);
@@ -672,13 +794,14 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
         checkpoint.asked_for_tests().clear();
     }
     let before = cloned.clone();
+    let input = found(&cloned, OUTPOST, 2, Found::Read(focus_read(None)));
     assert!(
         feed(
             &mut cloned.state,
             &mut cloned.runtime,
             Timed {
                 at_us: 3_000,
-                input: answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+                input,
             }
         )
         .is_err()
@@ -698,28 +821,27 @@ pub(crate) fn held(object: i32) -> HeldIds {
     }
 }
 
-/// The object of the one candidate the MSAA request out names, with its
-/// depth.
-fn asked_candidate(state: &Held) -> Option<(i32, Depth)> {
+/// The object of the one candidate the MSAA batch out names, and whether
+/// the batch reads it in full only when it is focused.
+fn asked_candidate(state: &Held) -> Option<(i32, bool)> {
     state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .find_map(|request| match request {
-            Wire::MsaaRun(run) => Some((run.candidate.ids.object, run.depth)),
-            _ => None,
+        .find_map(|(_, batch)| {
+            let object = batch
+                .steps
+                .iter()
+                .find_map(|step| match step.op.subject() {
+                    Some(Subject::Msaa { ids, .. }) => Some(ids.object),
+                    _ => None,
+                })?;
+            let if_focused = batch.steps.iter().any(|step| {
+                matches!(&step.op, Op::Test { subject: Subject::Msaa { .. }, matcher }
+                    if matcher.properties().contains(&PropertyId::FocusedWithin))
+            });
+            Some((object, if_focused))
         })
-}
-
-/// An answer finding the candidate without the focused state.
-pub(crate) fn not_focused() -> CandidateAnswer {
-    CandidateAnswer {
-        facts: CandidateFacts::Found {
-            focused: Some(false),
-            role: None,
-        },
-        read: None,
-    }
 }
 
 #[test]
@@ -727,43 +849,24 @@ fn a_run_asks_one_candidate_at_a_time_newest_first_and_executes_the_valid_focus(
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(msaa_tell(-4))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
-    assert_eq!(asked_candidate(&state), Some((-4, Depth::FullIfFocused)));
+    assert_eq!(asked_candidate(&state), Some((-4, true)));
     // The first candidate is asked alone; two more join a run behind it.
     feed_at(&mut state, 1_100, entry(msaa_tell(-5)));
     feed_at(&mut state, 1_200, entry(msaa_tell(-6)));
-    let gone = CandidateAnswer {
-        facts: CandidateFacts::NotThere,
-        read: None,
-    };
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(gone))
-        ),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        found_at(&mut state, 2_000, (OUTPOST, 1), Found::NotThere),
+        ["send Outpost(Pid(40)) Candidate"]
     );
-    assert_eq!(asked_candidate(&state), Some((-6, Depth::FullIfFocused)));
+    assert_eq!(asked_candidate(&state), Some((-6, true)));
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_500,
-            answer(OUTPOST, 2, Reply::Candidate(not_focused()))
-        ),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        found_at(&mut state, 2_500, (OUTPOST, 2), Found::Unfocused),
+        ["send Outpost(Pid(40)) Candidate"]
     );
-    assert_eq!(asked_candidate(&state), Some((-5, Depth::FullIfFocused)));
-    let tried = CandidateAnswer::focused(focus_read(Some(held(-5))));
-    assert_eq!(
-        feed_at(
-            &mut state,
-            3_000,
-            answer(OUTPOST, 3, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
+    assert_eq!(asked_candidate(&state), Some((-5, true)));
+    let tried = Found::Read(focus_read(Some(held(-5))));
+    assert_eq!(found_at(&mut state, 3_000, (OUTPOST, 3), tried), SPOKEN);
     assert_eq!(
         state.versions.last.as_ref().map(|last| &last.read_by),
         Some(&ReadBy::Msaa {
@@ -814,7 +917,7 @@ fn a_second_focus_on_the_desktops_item_with_no_key_between_is_said_once() {
         };
         feed_at(state, at_us, entry(tell))
     };
-    assert_eq!(item(&mut state, 1_000), ["send Outpost(Pid(40)) MsaaRun"]);
+    assert_eq!(item(&mut state, 1_000), ["send Outpost(Pid(40)) Candidate"]);
     let read = focus_read(Some(HeldIds {
         event: MsaaIds {
             window: WindowHandle(5),
@@ -823,18 +926,11 @@ fn a_second_focus_on_the_desktops_item_with_no_key_between_is_said_once() {
         },
         held_child: 3,
     }));
-    let tried = CandidateAnswer::focused(read);
+    let tried = Found::Read(read);
+    assert_eq!(found_at(&mut state, 2_000, (OUTPOST, 1), tried), SPOKEN);
+    assert_eq!(item(&mut state, 3_000), ["send Outpost(Pid(40)) Candidate"]);
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
-    assert_eq!(item(&mut state, 3_000), ["send Outpost(Pid(40)) MsaaRun"]);
-    assert_eq!(
-        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        found_at(&mut state, 4_000, (OUTPOST, 2), Found::Same),
         NOTHING
     );
     assert!(state.queue.front_for_tests().is_none());
@@ -888,7 +984,7 @@ fn a_foreground_tell_after_the_report_of_its_window_is_asked() {
     );
     assert_eq!(
         feed_at(&mut state, 1_000, entry(foreground_tell(4))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
 }
 
@@ -958,7 +1054,7 @@ fn a_background_value_change_is_judged_with_the_setting_at_its_arrival() {
         };
         let _ = crate::reduce(&mut state.state, &mut state.runtime, &queued);
         state.settings.report_background_progress_bars = !on_at_arrival;
-        let read = answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))));
+        let read = found(&state, OUTPOST, 2, Found::Read(focus_read(None)));
         let spoken: Vec<_> = SPOKEN_FOLLOWED.into_iter().chain(said).collect();
         assert_eq!(feed_at(&mut state, 3_000, read), spoken, "{on_at_arrival}");
     }
@@ -967,10 +1063,11 @@ fn a_background_value_change_is_judged_with_the_setting_at_its_arrival() {
 #[test]
 fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     assert!(state.versions.last.is_some());
     let foreground = Foreground {
@@ -1016,15 +1113,8 @@ fn the_item_a_redirect_reached_says_nothing_when_its_outpost_finds_it_the_same()
         event: child,
         held_child: 2,
     }));
-    let tried = CandidateAnswer::focused(read);
-    assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
+    let tried = Found::Read(read);
+    assert_eq!(found_at(&mut state, 2_000, (OUTPOST, 1), tried), SPOKEN);
     let mut tell = msaa_tell(-4);
     tell.object = EventObject::Msaa {
         window: child.window,
@@ -1033,10 +1123,10 @@ fn the_item_a_redirect_reached_says_nothing_when_its_outpost_finds_it_the_same()
     };
     assert_eq!(
         feed_at(&mut state, 3_000, entry(tell)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(
-        feed_at(&mut state, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        found_at(&mut state, 4_000, (OUTPOST, 2), Found::Same),
         NOTHING
     );
     assert!(state.queue.front_for_tests().is_none());
@@ -1085,26 +1175,15 @@ fn a_redirect_to_the_committed_focus_that_reads_differently_is_spoken() {
         child: child.child,
     };
     feed_at(&mut state, 1_000, entry(tell));
-    let tried = CandidateAnswer::focused(focus_read(Some(at_child)));
-    assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
+    let tried = Found::Read(focus_read(Some(at_child)));
+    assert_eq!(found_at(&mut state, 2_000, (OUTPOST, 1), tried), SPOKEN);
     assert_eq!(
         feed_at(&mut state, 3_000, entry(msaa_tell(-4))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
-    let tried = CandidateAnswer::focused(focus_read(Some(at_child)));
+    let tried = Found::Read(focus_read(Some(at_child)));
     assert_eq!(
-        feed_at(
-            &mut state,
-            4_000,
-            answer(OUTPOST, 2, Reply::Candidate(tried))
-        ),
+        found_at(&mut state, 4_000, (OUTPOST, 2), tried),
         ["Label(\"OK\") Role(Button)"]
     );
 }
@@ -1139,7 +1218,7 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
     }));
     assert_eq!(
         feed_at(&mut state, 1_000, entry(tell)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = values("Settings...", Role::MenuItem);
@@ -1158,13 +1237,9 @@ fn a_focus_in_a_window_the_hidden_frame_owns_takes_the_frame_as_its_foreground()
         },
         runtime_id: None,
     });
-    let tried = CandidateAnswer::focused(read);
+    let tried = Found::Read(read);
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
+        found_at(&mut state, 2_000, (OUTPOST, 1), tried),
         ["Label(\"Verbatim\") Role(Window)", "Label(\"Settings...\")",]
     );
 }
@@ -1195,7 +1270,7 @@ fn a_focused_dialog_the_hidden_frame_owns_is_not_its_own_ancestor() {
     }));
     assert_eq!(
         feed_at(&mut state, 1_000, entry(tell)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     let mut dialog = values("Settings", Role::Dialog);
     dialog.0.push(PropertyAnswer {
@@ -1213,13 +1288,9 @@ fn a_focused_dialog_the_hidden_frame_owns_is_not_its_own_ancestor() {
         },
         runtime_id: None,
     });
-    let tried = CandidateAnswer::focused(read);
+    let tried = Found::Read(read);
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
+        found_at(&mut state, 2_000, (OUTPOST, 1), tried),
         ["Label(\"Settings\") Role(Dialog)"]
     );
 }
@@ -1249,7 +1320,7 @@ fn a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title()
     }));
     assert_eq!(
         feed_at(&mut state, 1_000, entry(tell)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = values("Context", Role::Menu);
@@ -1268,13 +1339,9 @@ fn a_focus_in_the_hidden_frames_popup_menu_with_no_owner_says_the_frames_title()
         },
         runtime_id: None,
     });
-    let tried = CandidateAnswer::focused(read);
+    let tried = Found::Read(read);
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 1, Reply::Candidate(tried))
-        ),
+        found_at(&mut state, 2_000, (OUTPOST, 1), tried),
         ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
     );
 }
@@ -1369,24 +1436,16 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
     );
     feed_at(&mut state, 1_000, entry(frame_menu_tell(0)));
     let menu = frame_menu_read(3, "Context", Role::Menu, 0, true);
-    let tried = |read| CandidateAnswer::focused(read);
+    let tried = |read| Found::Read(read);
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 2, Reply::Candidate(tried(menu)))
-        ),
+        found_at(&mut state, 2_000, (OUTPOST, 2), tried(menu)),
         ["Label(\"Verbatim\")", "Label(\"Context\") Role(Menu)"]
     );
     feed_at(&mut state, 3_000, entry(frame_menu_tell(1)));
     let mut settings = frame_menu_read(5, "Settings...", Role::MenuItem, 1, false);
     settings.met = Some(0);
     assert_eq!(
-        feed_at(
-            &mut state,
-            4_000,
-            answer(OUTPOST, 3, Reply::Candidate(tried(settings)))
-        ),
+        found_at(&mut state, 4_000, (OUTPOST, 3), tried(settings)),
         ["Label(\"Settings...\")"]
     );
     // The frame's foreground report comes again, after the item's focus.
@@ -1404,11 +1463,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
         described: false,
     });
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 4, Reply::Candidate(tried(exit)))
-        ),
+        found_at(&mut state, 6_000, (OUTPOST, 4), tried(exit)),
         ["Label(\"Exit\")"]
     );
 }
@@ -1418,10 +1473,11 @@ fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answe
     let mut state = asked_completion();
     state.ignored = vec![APP];
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+            (OUTPOST, 2),
+            Found::Read(focus_read(None))
         ),
         // Not executed: naming nothing removes the completion's
         // registration.
@@ -1434,10 +1490,11 @@ fn a_focus_whose_top_level_window_is_an_ignored_processs_is_dropped_at_its_answe
 #[test]
 fn an_executed_focus_runs_under_its_tells_trace_and_takes_its_top_ancestor_as_foreground() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     let focus = state.versions.focus().unwrap();
     assert_eq!(
@@ -1488,17 +1545,18 @@ fn the_reducer_routes_a_tell_into_the_queue_and_asks_to_be_woken_at_its_due_time
     else {
         panic!("one request and the wake: {effects:?}");
     };
-    assert_eq!((*to, kind(ask)), (OUTPOST, "MsaaRun"));
+    assert_eq!((*to, kind(ask)), (OUTPOST, "Candidate"));
     assert_eq!(*wake, Some(1_000 + crate::event_queue::HANG_ROUND_US));
 }
 
 #[test]
 fn a_failed_focus_read_clears_cores_caret_baseline() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     state.versions.focus_mut().unwrap().context.caret = Some(crate::state::CaretContext {
         line: std::sync::Arc::new(verbatim_model::TextChunk {
@@ -1544,19 +1602,11 @@ fn a_focus_on_a_shell_staging_window_is_taken_and_says_nothing() {
             feed_at(&mut state, 1_000, entry(tell)),
             ["send Listener ReadObject"]
         );
-        feed_at(
-            &mut state,
-            2_000,
-            answer(LISTENER, 1, Reply::Object(Box::new(listener_answer()))),
-        );
+        found_at(&mut state, 2_000, (LISTENER, 1), listener_answer());
         let mut read = focus_read(None);
         read.focus.read.values = values("Staging", Role::Pane);
         assert_eq!(
-            feed_at(
-                &mut state,
-                3_000,
-                answer(OUTPOST, 2, Reply::Focus(Box::new(read)))
-            ),
+            found_at(&mut state, 3_000, (OUTPOST, 2), Found::Read(read)),
             ["send Outpost(Pid(40)) Follow"],
             "{class}"
         );
@@ -1790,18 +1840,10 @@ fn switcher_item_said(down: bool) -> Vec<String> {
         },
     );
     assert_eq!(sent.len(), 1, "the listener's read: {sent:?}");
-    feed_at(
-        &mut held,
-        2_000,
-        answer(LISTENER, 1, Reply::Object(Box::new(listener_answer()))),
-    );
+    found_at(&mut held, 2_000, (LISTENER, 1), listener_answer());
     let mut read = focus_read(None);
     read.focus.read.values = values("Window B", Role::ListItem);
-    feed_at(
-        &mut held,
-        3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(read))),
-    )
+    found_at(&mut held, 3_000, (OUTPOST, 2), Found::Read(read))
 }
 
 /// The task switcher's item reached with Alt down says only itself, its
@@ -1847,13 +1889,13 @@ fn msaa_node(number: u64, name: &str, role: Role) -> verbatim_model::NodeSnapsho
 fn an_executed_focus_is_the_control_planes_focus_change() {
     let mut state = ready();
     let _ = feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
-    let tried = CandidateAnswer::focused(focus_read(Some(held(-4))));
+    let input = found(&state, OUTPOST, 1, Found::Read(focus_read(Some(held(-4)))));
     let observed: Vec<verbatim_model::Observed> = feed(
         &mut state.state,
         &mut state.runtime,
         Timed {
             at_us: 2_000,
-            input: answer(OUTPOST, 1, Reply::Candidate(tried)),
+            input,
         },
     )
     .unwrap()

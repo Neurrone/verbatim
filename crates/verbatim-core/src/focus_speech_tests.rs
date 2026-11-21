@@ -956,9 +956,7 @@ fn bring_forward(
             "CurrentFocus"
         )]
     );
-    desk.reply(verbatim_model::request::Reply::Candidate(
-        verbatim_model::request::CandidateAnswer::focused(read),
-    ))
+    desk.found(&crate::readers::Found::Read(read))
 }
 
 #[test]
@@ -2246,12 +2244,12 @@ fn losing_half_checked_says_not_checked() {
 /// (`docs/parity/backends.md`, "The UIA provider probe").
 #[test]
 fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_completion() {
-    use verbatim_model::request::{Answer, Outcome, Probe, Reply, Request as Wire, RequestNumber};
+    use verbatim_model::request::{Answer, Probe, RequestNumber};
     use verbatim_model::request::{Reader, WindowVerdict};
 
     use crate::desk_tests::{focus_tell, listener_read};
     use crate::entries::Entry;
-    use crate::entries::tests::{LISTENER, answer};
+    use crate::entries::tests::LISTENER;
     use crate::event_queue::Input;
 
     let mut desk = Desk::new();
@@ -2284,17 +2282,16 @@ fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_com
     }
     desk.at_us = probe_began + 500_000;
     let (_, sent) = desk.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()));
-    let [(object, Reader::Listener, Wire::ReadObject(_))] = sent[..] else {
+    let [(_, Reader::Listener, verbatim_model::request::Question::Batch(_))] = &sent[..] else {
         panic!("one listener read asked: {sent:?}");
     };
-    let (_, sent) = desk.step(answer(
-        LISTENER,
-        object,
-        Reply::Object(Box::new(listener_read(ONE, 2))),
-    ));
-    let [(completion, Reader::Outpost(_), Wire::CompleteUia(_))] = sent[..] else {
-        panic!("one completion asked: {sent:?}");
+    desk.found(&listener_read(ONE, 2));
+    let [(completion, Reader::Outpost(_), verbatim_model::request::Question::Batch(ref batch))] =
+        desk.sent[..]
+    else {
+        panic!("one completion asked: {:?}", desk.sent);
     };
+    let batch = batch.clone();
     assert_eq!(
         desk.verdicts,
         [(completion, WindowVerdict::ProbeFirst)],
@@ -2304,12 +2301,12 @@ fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_com
     let mut beta = node(ONE, 2, Role::ListItem, Some("beta"), None, StateSet::new());
     beta.details.position_in_set = Some(3);
     beta.details.set_size = Some(4);
-    let read = Reply::Focus(Box::new(focus_read_of(ONE, &beta, &[])));
+    let read = crate::readers::Found::Read(focus_read_of(ONE, &beta, &[]));
     let probed = Input::Answer {
         from: ONE.instance(),
         answer: Answer {
             number: RequestNumber(completion),
-            outcome: Outcome::Result(read),
+            outcome: crate::readers::outcome(&batch, &read),
             probes: vec![Probe {
                 window: ONE.window(),
                 thread: 41,

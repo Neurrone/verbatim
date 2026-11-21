@@ -24,8 +24,8 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues,
 };
 use verbatim_model::request::{
-    Ask, FocusDepth, Follow, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe,
-    Refusal, Reply,
+    Ask, Follow, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal,
+    Reply, Route,
 };
 use verbatim_model::{
     Backend, NodeId, NodeSnapshot, QueryKind, SentenceMove, TextAnchor, TextOp, TextPoint,
@@ -76,13 +76,28 @@ pub(super) fn answer(
         .batch()
         .reads_focus_first()
         .then(|| read::checked_focus_window(context).map_err(|_| ()));
-    let _ = asked::verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    // The request's window's verdict, probed once for the batch: a subject
+    // on that window takes it, so no step probes it again.
+    let verdict = asked::verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    // What a read of the focus takes, which a test of the focus reads it
+    // by, so that the one read serves both.
+    let focus_read = parsed.steps().iter().find_map(|step| match &step.op {
+        Op::FocusRead {
+            subject: Subject::Focus,
+            known,
+            set,
+            details,
+        } => Some((known.clone(), set.clone(), *details)),
+        _ => None,
+    });
     let mut run = Run {
         context,
         client,
         ask,
         probes,
         focus,
+        focus_read,
+        verdict,
         held: Vec::new(),
         outcomes: Vec::new(),
     };
@@ -112,8 +127,11 @@ enum Held {
     Msaa(Option<Box<verbatim_ia2::acquire::FocusCandidate>>),
     /// A window's own object, through the backend Core names.
     Window(isize, Backend),
-    /// The application's focus, in the focused window taken first.
-    Focus(isize),
+    /// The application's focus, in the focused window taken first, with
+    /// its read once a test of it read it.
+    Focus(isize, Option<FocusNow>),
+    /// The outpost's copy of an element the listener read, by its route.
+    Route(Box<Route>),
 }
 
 /// A batch under way.
@@ -125,6 +143,16 @@ struct Run<'r, 'c> {
     /// The focused window, taken before anything else when the first step
     /// reads the focus.
     focus: Option<Result<isize, ()>>,
+    /// The request's window's verdict, `None` for a window the outpost's
+    /// application does not serve.
+    verdict: Option<bool>,
+    /// What the batch's read of the focus takes: the ancestors Core knows,
+    /// the set and the caret's details.
+    focus_read: Option<(
+        Vec<KnownAncestor>,
+        Vec<PropertyId>,
+        verbatim_model::TextDetails,
+    )>,
     /// Each subject resolved, with what it resolved to.
     held: Vec<(Subject, Result<Held, Missing>)>,
     outcomes: Vec<StepOutcome>,
@@ -156,16 +184,18 @@ impl Run<'_, '_> {
             } => self
                 .window(which, *visible)
                 .map(|hwnd| Held::Window(hwnd, *backend)),
-            Subject::Focus => match self.focus {
-                Some(Ok(hwnd)) => Ok(Held::Focus(hwnd)),
-                _ => Err(Missing::Object),
+            Subject::Focus => match self.focus_window() {
+                Ok(hwnd) => Ok(Held::Focus(hwnd, None)),
+                Err(()) => Err(Missing::Object),
             },
-            // The completion of a listener's route needs what the listener
-            // read of each of its steps, which the subject does not carry:
-            // a question for the build's report (Claude, 2026-11-21).
-            Subject::Route(_) | Subject::Kept { .. } => {
-                return Err(Outcome::Refused(Refusal::Unsupported));
-            }
+            // Read through Core's verdict for the request's window, as the
+            // listener's element is UI Automation's.
+            Subject::Route(route) => match self.verdict_of(route.window, self.ask.verdict) {
+                Some(true) => Ok(Held::Route(route.clone())),
+                Some(false) => return Err(Outcome::Refused(Refusal::ReadThroughMsaa)),
+                None => Err(Missing::Object),
+            },
+            Subject::Kept { .. } => return Err(Outcome::Refused(Refusal::Unsupported)),
         };
         self.held.push((subject.clone(), resolved));
         Ok(self.held.len() - 1)
@@ -176,12 +206,10 @@ impl Run<'_, '_> {
     /// (ADR 0004, "MSAA candidates").
     fn msaa(&mut self, ids: MsaaIds, redirect: bool) -> Result<Result<Held, Missing>, Outcome> {
         let hwnd = hwnd_of(ids.window);
-        let given = if ids.window == self.ask.window {
-            self.ask.verdict
-        } else {
-            verbatim_model::request::WindowVerdict::ProbeFirst
-        };
-        match asked::verdict(self.context, hwnd, given, self.probes) {
+        match self.verdict_of(
+            ids.window,
+            verbatim_model::request::WindowVerdict::ProbeFirst,
+        ) {
             Some(true) => return Err(Outcome::Refused(Refusal::ReadThroughUia)),
             None => return Ok(Err(Missing::Object)),
             Some(false) => {}
@@ -196,16 +224,42 @@ impl Run<'_, '_> {
             .ok_or(Missing::Object))
     }
 
+    /// The verdict of `window`: the request's window's, probed once for the
+    /// batch, or another's by `given`.
+    fn verdict_of(
+        &mut self,
+        window: verbatim_model::WindowHandle,
+        given: verbatim_model::request::WindowVerdict,
+    ) -> Option<bool> {
+        if window == self.ask.window {
+            return self.verdict;
+        }
+        asked::verdict(self.context, hwnd_of(window), given, self.probes)
+    }
+
+    /// The window with the keyboard focus, taken once per batch.
+    fn focus_window(&mut self) -> Result<isize, ()> {
+        let context = self.context;
+        *self
+            .focus
+            .get_or_insert_with(|| read::checked_focus_window(context).map_err(|_| ()))
+    }
+
     /// The window `which` names, of the outpost's application, shown when
-    /// `visible`.
-    fn window(&self, which: &WindowOf, visible: bool) -> Result<isize, Missing> {
+    /// `visible`: for the focused window, the top-level window of the
+    /// window with the keyboard focus, whose own object the hidden-dialog
+    /// check reads (Claude, 2026-11-22).
+    fn window(&mut self, which: &WindowOf, visible: bool) -> Result<isize, Missing> {
         let hwnd = match which {
             WindowOf::Handle(window) => Some(hwnd_of(*window)),
             WindowOf::TopLevelOf(window) => {
                 Some(verbatim_win32::window::top_level_of(hwnd_of(*window)))
             }
             WindowOf::ClassPath(classes) => super::shell_items::class_path_window(classes),
-            WindowOf::Focused => read::checked_focus_window(self.context).ok(),
+            WindowOf::Focused => self
+                .focus_window()
+                .ok()
+                .map(verbatim_win32::window::top_level_of),
             WindowOf::Foreground => Some(verbatim_win32::window::foreground_window_handle()),
         };
         hwnd.filter(|&hwnd| hwnd != 0 && read::serves(self.context, hwnd))
@@ -329,7 +383,13 @@ impl Run<'_, '_> {
                     None => StepOutcome::NotThere(Missing::Object),
                 }
             }
-            Ok(Held::Msaa(None) | Held::Focus(_)) | Err(_) => {
+            Ok(Held::Route(route)) => {
+                match super::completion::object(context, self.client, route, set) {
+                    Ok(read) => StepOutcome::Done(Done::Read(read)),
+                    Err(unread) => unread.outcome(),
+                }
+            }
+            Ok(Held::Msaa(None) | Held::Focus(..)) | Err(_) => {
                 StepOutcome::Refused(StepRefusal::Unsupported)
             }
         })
@@ -337,6 +397,7 @@ impl Run<'_, '_> {
 
     /// `Test`: the matcher evaluated lazily, each property read at most
     /// once when the matcher first needs it, in its order.
+    #[expect(clippy::too_many_lines, reason = "one arm per kind of object tested")]
     fn test(&mut self, subject: &Subject, matcher: &verbatim_model::matcher::Matcher) -> Stepped {
         let place = match self.held(subject)? {
             Ok(place) => place,
@@ -361,22 +422,17 @@ impl Run<'_, '_> {
                 let mut snapshot: Option<Option<NodeSnapshot>> = None;
                 let client = &mut *self.client;
                 let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
-                    Ok(match id {
-                        PropertyId::WindowShown => Some(PropertyValue::Flag(
-                            verbatim_win32::window::window_is_visible(hwnd),
-                        )),
-                        // Its role through MSAA, as the hidden-dialog check
-                        // reads it, whatever the window's verdict.
-                        PropertyId::Role if backend == Backend::Msaa => {
-                            verbatim_ia2::acquire::client_role(hwnd).map(PropertyValue::Role)
-                        }
-                        _ => snapshot
-                            .get_or_insert_with(|| {
-                                read::window_node(context, client, hwnd, backend)
-                            })
-                            .as_ref()
-                            .and_then(|node| value_of(context, node, id)),
-                    })
+                    let client_role = verbatim_ia2::acquire::client_role;
+                    Ok(
+                        window_property((hwnd, backend), id, client_role).unwrap_or_else(|| {
+                            snapshot
+                                .get_or_insert_with(|| {
+                                    read::window_node(context, client, hwnd, backend)
+                                })
+                                .as_ref()
+                                .and_then(|node| value_of(context, node, id))
+                        }),
+                    )
                 });
                 (None, hwnd, holds)
             }
@@ -404,7 +460,42 @@ impl Run<'_, '_> {
                 let window = asked::known_nearest_of(context, node).unwrap_or(0);
                 (Some(node), window, holds)
             }
-            Ok(Held::Msaa(None) | Held::Focus(_)) | Err(_) => {
+            Ok(Held::Focus(hwnd, kept)) => {
+                let hwnd = *hwnd;
+                // The focus read as a read of it with its focused state
+                // reads it, in full only when focused, kept for the read
+                // of the focus that follows.
+                let (known, set, details) = self
+                    .focus_read
+                    .clone()
+                    .unwrap_or_else(|| (Vec::new(), Vec::new(), verbatim_model::TextDetails::NONE));
+                let now = asked::focus_now(
+                    context,
+                    self.client,
+                    Ok(hwnd),
+                    &set,
+                    (&known, details, read::FocusDepth::FullIfFocused),
+                );
+                let (focused, values) = match &now {
+                    FocusNow::Read(focused, focus) => (
+                        focused.map(PropertyValue::Flag),
+                        Some(&focus.focus.read.values),
+                    ),
+                    FocusNow::Unfocused => (Some(PropertyValue::Flag(false)), None),
+                    FocusNow::NotThere => return Ok(StepOutcome::NotThere(Missing::Object)),
+                };
+                let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
+                    Ok(match id {
+                        PropertyId::FocusedWithin => focused.clone(),
+                        id => values
+                            .and_then(|values| values.answer(id))
+                            .and_then(|answer| answer.value.clone()),
+                    })
+                });
+                *kept = Some(now);
+                (None, hwnd, holds)
+            }
+            Ok(Held::Msaa(None) | Held::Route(_)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
             }
         };
@@ -692,7 +783,7 @@ impl Run<'_, '_> {
                     }
                 })
             }
-            Ok(Held::Msaa(None) | Held::Window(..) | Held::Focus(_)) | Err(_) => {
+            Ok(Held::Msaa(None) | Held::Window(..) | Held::Focus(..) | Held::Route(_)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
             }
         };
@@ -726,7 +817,8 @@ impl Run<'_, '_> {
         )
     }
 
-    /// `FocusRead`: an MSAA candidate's full read, or the focus-now read.
+    /// `FocusRead`: an MSAA candidate's full read, the focus-now read, or
+    /// the completion of a route the listener read.
     fn focus_read(
         &mut self,
         subject: &Subject,
@@ -741,18 +833,34 @@ impl Run<'_, '_> {
             Ok(Held::Msaa(candidate)) => candidate.take().and_then(|candidate| {
                 asked::candidate_read(context, self.client, *candidate, (known, set, details))
             }),
-            Ok(Held::Focus(hwnd)) => {
+            Ok(Held::Focus(hwnd, tested)) => {
                 let hwnd = *hwnd;
-                match asked::focus_now(
-                    context,
-                    self.client,
-                    Ok(hwnd),
-                    set,
-                    (known, details, FocusDepth::Full),
-                ) {
+                let now = tested.take().unwrap_or_else(|| {
+                    asked::focus_now(
+                        context,
+                        self.client,
+                        Ok(hwnd),
+                        set,
+                        (known, details, read::FocusDepth::Full),
+                    )
+                });
+                match now {
                     FocusNow::Read(_, read) => Some(*read),
                     FocusNow::Unfocused | FocusNow::NotThere => None,
                 }
+            }
+            Ok(Held::Route(route)) => {
+                return Ok(
+                    match super::completion::focus(
+                        context,
+                        self.client,
+                        route,
+                        (known, set, details),
+                    ) {
+                        Ok(read) => StepOutcome::Done(Done::FocusRead(read)),
+                        Err(unread) => unread.outcome(),
+                    },
+                );
             }
             Ok(Held::Node(_) | Held::Window(..)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
@@ -962,6 +1070,32 @@ impl Run<'_, '_> {
             Some(StepOutcome::Done(Done::Caret(caret))) => Some(*caret),
             _ => None,
         }
+    }
+}
+
+/// Property `id` of window `hwnd`'s own object read through `backend`, when
+/// it is one the outpost reads of the window itself: whether it is shown,
+/// from Windows with no call into the application; and, through MSAA, its
+/// client object's role as `client_role` reads it, as the hidden-dialog
+/// check reads it whatever the window's verdict (two counted calls).
+/// `None` for a property read from the window's object.
+#[expect(
+    clippy::option_option,
+    reason = "a value or none for the window's own properties, none for the rest"
+)]
+pub(super) fn window_property(
+    (hwnd, backend): (isize, Backend),
+    id: PropertyId,
+    client_role: impl Fn(isize) -> Option<verbatim_model::Role>,
+) -> Option<Option<PropertyValue>> {
+    match id {
+        PropertyId::WindowShown => Some(Some(PropertyValue::Flag(
+            verbatim_win32::window::window_is_visible(hwnd),
+        ))),
+        PropertyId::Role if backend == Backend::Msaa => {
+            Some(client_role(hwnd).map(PropertyValue::Role))
+        }
+        _ => None,
     }
 }
 

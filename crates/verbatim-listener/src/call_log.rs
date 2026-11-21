@@ -1,8 +1,7 @@
 //! What the listener's asked read shares with the tests that stand in for
-//! the listener: the log of a read's calls (`CallLog`), the depth of an
-//! ancestor walk (`MAX_ANCESTORS`), and [`read_object`], the listener's
-//! answer to Core's read of a kept element, for a test that holds the
-//! element itself.
+//! the listener: the log of a read's calls (`CallLog`), and
+//! [`read_object`], the listener's answer to Core's batch on a kept
+//! element, for a test that holds the element itself.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -10,9 +9,6 @@ use std::time::{Duration, Instant};
 
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use verbatim_win32::window::WindowReadabilityReader;
-
-/// The most ancestors read for a focus, as many as the outpost walks.
-pub(crate) const MAX_ANCESTORS: u32 = 64;
 
 /// The log of one focus read's calls, for diagnosis alone: it times each
 /// call by the system's clock, and a call that takes longer than
@@ -81,7 +77,7 @@ impl Drop for CallLog {
 /// ([`read_object_observed`]).
 pub type CallObserver = Arc<dyn Fn(&'static str) + Send + Sync>;
 
-/// The listener's answer to Core's generic read `read` of `element`, the
+/// The listener's answer to Core's batch `batch` on `element`, the
 /// element a UI Automation event named, read on `uia`, of process `pid`,
 /// whose nearest window Core names, `nearest`: the read a reading thread
 /// makes for a kept element (`listener::asked`), judging windows by
@@ -92,9 +88,28 @@ pub fn read_object(
     (uia, readability): (&Uia, &WindowReadabilityReader),
     element: &Cached<ListenerEvent>,
     (pid, nearest): (verbatim_model::Pid, isize),
+    batch: &verbatim_model::batch::Batch,
+) -> verbatim_model::request::Outcome {
+    crate::listener::asked::batch_on_element(
+        (uia, readability),
+        element,
+        (pid, nearest),
+        batch,
+        &CallLog::default(),
+    )
+}
+
+/// The listener's answer to Core's generic read `read` of `element`, the
+/// element a UI Automation event named, as [`read_object`] reads it. For
+/// a test that stands in for the listener, holding the element itself.
+#[must_use]
+pub fn read_kept_object(
+    (uia, readability): (&Uia, &WindowReadabilityReader),
+    element: &Cached<ListenerEvent>,
+    (pid, nearest): (verbatim_model::Pid, isize),
     read: &verbatim_model::request::ReadObject,
 ) -> verbatim_model::request::Outcome {
-    crate::listener::asked::read_element(
+    crate::listener::asked::object_on_element(
         (uia, readability),
         element,
         (pid, nearest),
@@ -111,14 +126,14 @@ pub fn read_object_observed(
     (uia, readability): (&Uia, &WindowReadabilityReader),
     element: &Cached<ListenerEvent>,
     (pid, nearest): (verbatim_model::Pid, isize),
-    read: &verbatim_model::request::ReadObject,
+    batch: &verbatim_model::batch::Batch,
     observer: CallObserver,
 ) -> verbatim_model::request::Outcome {
-    crate::listener::asked::read_element(
+    crate::listener::asked::batch_on_element(
         (uia, readability),
         element,
         (pid, nearest),
-        read,
+        batch,
         &CallLog::observed(Some(observer)),
     )
 }

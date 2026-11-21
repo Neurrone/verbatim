@@ -172,7 +172,6 @@ fn read(facts: &mut SrState, ids: MsaaIds, window: RequestWindow) {
         set: <BarAnswer as verbatim_model::property::PropertySet>::PROPERTIES.to_vec(),
         relation: None,
         descendants: false,
-        walk: None,
         purpose: Purpose::Other,
     };
     facts.wants.want(

@@ -74,6 +74,9 @@ mod input_desktop;
 mod keys;
 mod navigator;
 mod progress;
+#[cfg(test)]
+#[path = "../tests/support/readers.rs"]
+pub(crate) mod readers;
 mod recorder;
 mod reduce;
 mod report_focus;

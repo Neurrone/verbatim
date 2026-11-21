@@ -377,6 +377,16 @@ impl<E, F> Queue<E, F> {
         self.table.requests_for_tests()
     }
 
+    /// The batch request `number` is, while it waits or is out.
+    pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
+        self.table.batch_for_tests(number)
+    }
+
+    /// The batches waiting or out, by number.
+    pub(crate) fn batches_for_tests(&self) -> Vec<(u64, verbatim_model::batch::Batch)> {
+        self.table.batches_for_tests()
+    }
+
     /// The front's checkpoint, to change.
     pub(crate) fn checkpoint_for_tests(&mut self) -> Option<&mut Checkpoint<E, F>> {
         self.checkpoint.as_deref_mut()
@@ -1123,13 +1133,6 @@ impl<L: Logic> Cx<L> {
     /// expression has a type of its own, so a handle of one call site's
     /// batch is no input to, and cannot be read from the answers of,
     /// another's.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     #[expect(
         clippy::unused_self,
         reason = "a batch is begun where its function's context is, as a numbered one is"
@@ -1142,13 +1145,6 @@ impl<L: Logic> Cx<L> {
     /// closure's brand: each is numbered too, and a handle given to, or
     /// read from the answers of, a batch of another number is a defect,
     /// logged and answered failed.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     pub(crate) fn batch_numbered<B: FnOnce()>(&self, brand: B) -> crate::batch::Builder<B> {
         let _ = brand;
         crate::batch::Builder::numbered(&self.shared.borrow().ledger)

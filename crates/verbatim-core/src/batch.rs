@@ -217,13 +217,6 @@ pub(crate) struct Ledger(Rc<Book>);
 
 #[derive(Debug, Default)]
 struct Book {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     last: Cell<u64>,
     defects: RefCell<Vec<QueueEffect>>,
 }
@@ -234,13 +227,6 @@ impl Ledger {
         self.0.defects.take()
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     fn next(&self) -> u64 {
         let next = self.0.last.get().saturating_add(1);
         self.0.last.set(next);
@@ -597,13 +583,6 @@ impl<B> Builder<B> {
     }
 
     /// A builder whose batch has its own number from `ledger`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     pub(crate) fn numbered(ledger: &Ledger) -> Self {
         Self {
             numbering: Numbering(Some((ledger.next(), ledger.clone()))),
@@ -1015,13 +994,6 @@ impl<B> Sent<B> {
     }
 
     /// The batch, asked of `reader` naming `window`.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     pub(crate) fn of(self, reader: Reader, window: RequestWindow) -> Asked<B> {
         Asked {
             sent: self,
@@ -1033,13 +1005,6 @@ impl<B> Sent<B> {
 
 /// A built batch asked of a reader: the one request of the event queue
 /// that a batch is.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the conversions to batches use it from the readers' step on"
-    )
-)]
 pub(crate) struct Asked<B> {
     sent: Sent<B>,
     reader: Reader,
@@ -1087,16 +1052,69 @@ impl<B: 'static> Request for Asked<B> {
     }
 }
 
+impl<B> Asked<B> {
+    /// The batch asked, its answers judged by `judge` as they arrive:
+    /// `None` from it is a malformed answer, as an answer that does not
+    /// parse against the batch is.
+    pub(crate) fn judged<T>(
+        self,
+        judge: impl Fn(&Answers<B>) -> Option<T> + 'static,
+    ) -> Judged<B, T> {
+        Judged {
+            asked: self,
+            judge: Box::new(judge),
+        }
+    }
+}
+
+/// How a function judges a batch's answers into what it acts on, `None`
+/// for answers no correct reader gives.
+type Judge<B, T> = Box<dyn Fn(&Answers<B>) -> Option<T>>;
+
+/// A batch asked, whose answers its function judges once, as they are
+/// decoded, into what it acts on.
+pub(crate) struct Judged<B, T> {
+    asked: Asked<B>,
+    judge: Judge<B, T>,
+}
+
+impl<B, T> fmt::Debug for Judged<B, T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.asked.fmt(formatter)
+    }
+}
+
+impl<B: 'static, T: fmt::Debug + 'static> Request for Judged<B, T> {
+    type Reply = T;
+
+    fn reader(&self) -> Reader {
+        self.asked.reader
+    }
+
+    fn window(&self) -> RequestWindow {
+        self.asked.window
+    }
+
+    fn wire(&self) -> Question {
+        self.asked.wire()
+    }
+
+    fn decode(&self, reply: Reply) -> Option<T> {
+        self.asked
+            .decode(reply)
+            .and_then(|answers| (self.judge)(&answers))
+    }
+
+    fn decode_in_front(&self, front: Front) -> Option<T> {
+        self.asked
+            .decode_in_front(front)
+            .and_then(|answers| (self.judge)(&answers))
+    }
+}
+
 #[derive(Debug)]
 enum Answered {
     Steps(Vec<StepOutcome>),
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the conversions to batches use it from the readers' step on"
-        )
-    )]
     InFront(Front),
 }
 

@@ -16,6 +16,8 @@
 //! are output, not echo; and "Report status bar" reads the footer after a fresh read,
 //! spelled and copied on later presses, the review cursor left alone.
 
+#[path = "support/readers.rs"]
+mod readers;
 mod terminal_support;
 
 use std::fmt::Write as _;

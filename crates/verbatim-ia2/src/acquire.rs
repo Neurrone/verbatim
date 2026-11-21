@@ -417,6 +417,9 @@ pub struct FocusCandidate {
     key: MsaaKey,
     role: Prefetched,
     state: Prefetched,
+    /// A list view item's position in its set and the set's size, once a
+    /// read of either asked them, so the other costs no call.
+    position: Option<(Option<u32>, Option<u32>)>,
 }
 
 /// Acquires the object named by an `EVENT_OBJECT_FOCUS` `WinEvent` and
@@ -458,6 +461,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state,
+            position: None,
         });
     }
     Some(FocusCandidate {
@@ -465,6 +469,7 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
         key: (hwnd, id_object, id_child),
         role,
         state: Prefetched::Unread,
+        position: None,
     })
 }
 
@@ -488,6 +493,7 @@ pub fn menu_start_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Optio
         key: (hwnd, id_object, id_child),
         role,
         state: Prefetched::Unread,
+        position: None,
     })
 }
 
@@ -655,7 +661,9 @@ impl FocusCandidate {
                 if !is_list_view_item(&self.acc, self.key, role) {
                     return None;
                 }
-                let (position, size) = position_of(self.key.0, self.acc.child(), role, None);
+                let (position, size) = *self
+                    .position
+                    .get_or_insert_with(|| position_of(self.key.0, self.acc.child(), role, None));
                 if id == PropertyId::PositionInSet {
                     position
                 } else {
@@ -686,53 +694,6 @@ impl FocusCandidate {
             key: self.key,
             role: self.role,
         }
-    }
-
-    /// Whether the object reads as `named`, each value read as a full read
-    /// ([`FocusCandidate::read`]) gives it, by the same functions, and
-    /// compared as it is read, stopping at the first that differs
-    /// (`docs/parity/focus-events.md`, "Duplicate focus suppression", the
-    /// identity check): its states and role, from the state word the
-    /// focused-state test read and its role, read once; then, for a
-    /// `SysListView32` item, its position, its child id, and the set's
-    /// size, one `LVM_GETITEMCOUNT`, a tree view item's position needing a
-    /// walk and so not compared; then its name, a list view item's by its
-    /// columns first, its own name asked only when it shows none; then its
-    /// value, last, which a list view item has none of, so with no call.
-    /// The role and state words read are kept for the full read that
-    /// follows a difference. `registry` says the details the full read
-    /// reads, the description an owner-drawn list view's name may come
-    /// from among them.
-    pub fn reads_as(
-        &mut self,
-        named: &verbatim_model::request::Identity,
-        registry: &dyn Interning,
-    ) -> bool {
-        let raw_role = self.role.or_read(|| self.acc.role());
-        self.role = Prefetched::Read(raw_role);
-        let state = self.state.or_read(|| self.acc.state());
-        self.state = Prefetched::Read(state);
-        let role = role_from_msaa(raw_role);
-        let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
-        if states != named.states || role != named.role {
-            return false;
-        }
-        let list_view_item = is_list_view_item(&self.acc, self.key, role);
-        if list_view_item
-            && position_of(self.key.0, self.acc.child(), role, None)
-                != (named.position_in_set, named.set_size)
-        {
-            return false;
-        }
-        let acc = &self.acc;
-        if live_name(acc, self.key, role, registry) != named.name {
-            return false;
-        }
-        let mut value = value_for(acc, self.key, role, || visible_text(acc.value()));
-        if let Some(text) = &mut value {
-            verbatim_text::strip_bidi_controls(text);
-        }
-        value == named.value
     }
 
     /// Reads the object, as a focus is read to be announced, comparing it
@@ -1628,6 +1589,7 @@ pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<Foc
             key,
             role: Prefetched::Unread,
             state: Prefetched::Unread,
+            position: None,
         },
         at_address,
     })

@@ -24,12 +24,11 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::{NodeId, TraceId};
 
-use super::FOCUS_SET;
 use super::backend::BackendCache;
 use super::execute::{Origin, execute};
-use super::msaa_run::{FullIfFocused, known_for, read_full};
+use super::msaa_run::{known_for, read_full};
 use super::plain::HungRead;
-use super::retake::{CurrentFocusRead, Focused, read_by};
+use super::retake::{Focused, current_if_focused, read_by};
 use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
 use crate::entries::{Candidate, Entries, Entry};
 use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
@@ -175,14 +174,8 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     let window = foreground.window();
     let due_us = cx.due_in(FOCUS_DUE_US);
     let known = known_for(&cx, window.process);
-    let request = CurrentFocusRead::<FullIfFocused> {
-        window,
-        known: known.sent.clone(),
-        details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-        depth: std::marker::PhantomData,
-    };
-    let Some(outcome) = super::shown::ask(&mut cx, request, due_us).await else {
+    let Some(outcome) = current_if_focused(&mut cx, window, known.sent.clone(), due_us).await
+    else {
         return;
     };
     let answered = match outcome {

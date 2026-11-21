@@ -1,14 +1,14 @@
 //! Core's requests to the listener, and the reading threads' jobs (design
 //! `docs/design/readers-tell-core-asks-build1.md`, "The listener in this
-//! build", Tables 6 and 9): the generic read of the object an event names,
-//! for a UI Automation element the listener kept for a tell (a focus
-//! event's, read up its ancestors until it reaches one Core already knows,
-//! answering what it read and the element's route; a menu opening's; any
-//! other event's object, by property set) or an MSAA object at an event's
-//! address (the desktop window's name, a classic progress bar's role,
-//! value, states and place). Each request is answered once, with one of the
-//! five outcomes, by the job that runs it or, for one cancelled or
-//! abandoned, by the reading threads' shell.
+//! build", Tables 6 and 9): a batch's `Read` and `Ancestors` of a UI
+//! Automation element the listener kept for a tell (a focus's or a
+//! selection's, read up its ancestors until it reaches one Core already
+//! knows), the generic read of any other event's kept element, by property
+//! set, and the read of an MSAA object at an event's address (the desktop
+//! window's name, a classic progress bar's role, value, states and place).
+//! Each request is answered once, with one of the five outcomes, by the job
+//! that runs it or, for one cancelled or abandoned, by the reading threads'
+//! shell.
 //!
 //! The releases of kept elements run on the same threads, behind Core's
 //! requests.
@@ -26,11 +26,11 @@ use verbatim_model::property::{
     Number, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, KnownAncestor, NodeRead, ObjectRead, ObjectRef, Outcome, Purpose, Question,
-    ReadObject, Refusal, Reply, Request, RequestNumber, Route, RouteEnd, RouteStep,
+    Answer, Ask, KnownAncestor, NodeRead, ObjectRead, ObjectRef, Outcome, Question, ReadObject,
+    Refusal, Reply, Request, RequestNumber,
 };
 use verbatim_model::tell::ElementToken;
-use verbatim_model::{Pid, State, WindowHandle};
+use verbatim_model::{Pid, WindowHandle};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Agile, Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
@@ -44,7 +44,7 @@ use windows::Win32::UI::Accessibility::UIA_LegacyIAccessibleStatePropertyId;
 use super::Outgoing;
 use super::checking::Kept;
 use super::tells::SystemReads;
-use crate::call_log::{CallLog, MAX_ANCESTORS};
+use crate::call_log::CallLog;
 use crate::reading::Reading;
 
 /// One job of a reading thread.
@@ -131,7 +131,8 @@ impl UiaReading {
     }
 
     /// The read of the kept element `token`, whose nearest window Core
-    /// names, `window`.
+    /// names, `window`, by its event's name: no relation, descendants or
+    /// walk, which no generic read asks of the listener.
     fn read_kept(
         &self,
         thread: &ReadingThread,
@@ -139,48 +140,49 @@ impl UiaReading {
         window: WindowHandle,
         read: &ReadObject,
     ) -> (Outcome, Option<KeptRead>) {
-        let focus = matches!(read.purpose, Purpose::Focus);
-        self.read_kept_to(
-            thread,
-            (token, number, focus),
-            window,
-            (read, MAX_ANCESTORS),
+        let Some(reading) = ElementAsk::of_read(read) else {
+            return (Outcome::Refused(Refusal::Unsupported), None);
+        };
+        let (outcome, kept) = self.read_kept_to(thread, (token, number, false), window, &reading);
+        (
+            outcome.map_or_else(|outcome| outcome, ElementRead::answer),
+            kept,
         )
     }
 
-    /// [`Self::read_kept`], the element kept as read after it when `keep`,
-    /// its walk going at most `depth` ancestors up.
+    /// The kept element `token` read as `reading` asks, kept as read after
+    /// it when `keep`.
     fn read_kept_to(
         &self,
         thread: &ReadingThread,
         (token, number, keep): (ElementToken, RequestNumber, bool),
         window: WindowHandle,
-        (read, depth): (&ReadObject, u32),
-    ) -> (Outcome, Option<KeptRead>) {
+        reading: &ElementAsk,
+    ) -> (Result<ElementRead, Outcome>, Option<KeptRead>) {
         let Some(pid) = self.kept.owner(token) else {
-            return (Outcome::NotThere, None);
+            return (Err(Outcome::NotThere), None);
         };
         let element = match self.kept.start_read(pid, token, (number.0, keep)) {
             Start::Read(element) => element,
-            Start::NotThere => return (Outcome::NotThere, None),
+            Start::NotThere => return (Err(Outcome::NotThere), None),
             Start::NotAsked => {
                 tracing::error!(target: verbatim_model::DEFECT_TARGET, ?token, "a request asked of a kept element already read");
-                return (Outcome::Refused(Refusal::Unsupported), None);
+                return (Err(Outcome::Refused(Refusal::Unsupported)), None);
             }
         };
-        let outcome = match (thread.uia.as_ref(), element.resolve()) {
-            (Some(uia), Ok(sender)) => read_element_to(
+        let read = match (thread.uia.as_ref(), element.resolve()) {
+            (Some(uia), Ok(sender)) => read_element(
                 (uia, &self.readability),
                 &sender,
                 (pid, isize::from(window)),
-                (read, depth),
+                reading,
                 &CallLog::default(),
             ),
-            (None, _) => Outcome::Ended,
-            (_, Err(_)) => Outcome::NotThere,
+            (None, _) => Err(Outcome::Ended),
+            (_, Err(_)) => Err(Outcome::NotThere),
         };
         (
-            outcome,
+            read,
             Some(KeptRead {
                 pid,
                 token,
@@ -194,12 +196,7 @@ impl UiaReading {
     /// Runs `batch`, `ask`'s, on `thread` (the design's section 7): parsed
     /// once and refused whole when it does not parse; the one kept element
     /// its steps name read once, with one `start_read` taking its `keep`
-    /// mark, through [`read_element_to`], which reads the element and, for
-    /// an `Ancestors` step, its ancestors in one walk; an MSAA object read
-    /// at its event's address. A batch naming two kept elements is refused
-    /// whole as unsupported, since one read keeps one element (Claude,
-    /// 2026-11-21). `Descendants` and `IsOneOf`, which no batch sent to the
-    /// listener asks in this build, are refused (Claude, 2026-11-21).
+    /// mark ([`kept_of`]); an MSAA object read at its event's address.
     fn batch(
         &self,
         thread: &ReadingThread,
@@ -211,89 +208,98 @@ impl UiaReading {
             Err(malformed) => return (Outcome::Refused(Refusal::Malformed(malformed)), None),
         };
         let steps = parsed.steps();
-        let mut kept = steps.iter().filter_map(|step| match step.op.subject() {
-            Some(&Subject::Kept { token, keep, .. }) => Some((token, keep)),
-            _ => None,
-        });
-        let element = kept.next();
-        if kept.any(|(token, _)| Some(token) != element.map(|(first, _)| first)) {
+        let Ok(element) = kept_of(steps) else {
             return (Outcome::Refused(Refusal::Unsupported), None);
-        }
-        let mut whole = None;
-        let mut kept_read = None;
-        if let Some((token, keep)) = element {
-            let (outcome, read) = self.read_batch_kept(thread, ask, (token, keep), steps);
-            kept_read = read;
-            match outcome {
-                Outcome::Result(Reply::Object(read)) => whole = Some(*read),
-                outcome => return (outcome, kept_read),
-            }
-        }
-        let mut outcomes: Vec<StepOutcome> = Vec::with_capacity(steps.len());
-        for step in steps {
-            let outcome = match step.gate(&outcomes) {
-                Ok(Gate::Skip) => StepOutcome::Skipped,
-                Ok(Gate::Run) => batch_step(self.read_at_event, &step.op, whole.as_ref()),
-                Err(KindMismatch) => {
-                    tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a listener step's condition names a result it cannot test");
-                    StepOutcome::Failed
-                }
-            };
-            outcomes.push(outcome);
-        }
-        (Outcome::Result(Reply::Steps(outcomes)), kept_read)
-    }
-
-    /// The kept element `token` read once for `steps`, with `keep` its
-    /// mark: by the union of its `Read` and `Ancestors` steps' sets, its
-    /// ancestors too when a step asks for them.
-    fn read_batch_kept(
-        &self,
-        thread: &ReadingThread,
-        ask: &Ask,
-        (token, keep): (ElementToken, bool),
-        steps: &[Step],
-    ) -> (Outcome, Option<KeptRead>) {
-        let mut set: Vec<PropertyId> = Vec::new();
-        let mut walk = None;
-        for step in steps {
-            let (Op::Read { set: own, .. } | Op::Ancestors { set: own, .. }) = &step.op else {
-                continue;
-            };
-            for id in own {
-                if !set.contains(id) {
-                    set.push(*id);
-                }
-            }
-            if let Op::Ancestors { until, depth, .. } = &step.op {
-                walk = Some((until.clone(), *depth));
-            }
-        }
-        let depth = walk.as_ref().map_or(MAX_ANCESTORS, |(_, depth)| *depth);
-        let read = ReadObject {
-            object: ObjectRef::Kept { listener: 0, token },
-            set,
-            relation: None,
-            walk: walk.map(|(until, _)| until),
-            descendants: false,
-            // The name read afresh, and no focused state added: Core
-            // chooses the event's cached name where it speaks that one, and
-            // adds the focused state to a focus it reads (Claude,
-            // 2026-11-21, the design's section 6, `ReadObject` rows).
-            purpose: Purpose::Selection,
         };
-        self.read_kept_to(
-            thread,
-            (token, ask.number, keep),
-            ask.window,
-            (&read, depth),
+        let mut kept_read = None;
+        let whole = match element {
+            None => None,
+            Some((token, keep)) => {
+                let reading = ElementAsk::of(steps);
+                let (read, kept) =
+                    self.read_kept_to(thread, (token, ask.number, keep), ask.window, &reading);
+                kept_read = kept;
+                match read {
+                    Ok(read) => Some(read),
+                    Err(outcome) => return (outcome, kept_read),
+                }
+            }
+        };
+        (
+            run_steps(self.read_at_event, steps, whole.as_ref()),
+            kept_read,
         )
     }
 }
 
+/// The one kept element `steps` name, with its `keep` mark; `Err` for
+/// steps that name two, since one read keeps one element (Claude,
+/// 2026-11-21).
+fn kept_of(steps: &[Step]) -> Result<Option<(ElementToken, bool)>, ()> {
+    let mut kept = steps.iter().filter_map(|step| match step.op.subject() {
+        Some(&Subject::Kept { token, keep, .. }) => Some((token, keep)),
+        _ => None,
+    });
+    let first = kept.next();
+    if kept.any(|(token, _)| Some(token) != first.map(|(token, _)| token)) {
+        return Err(());
+    }
+    Ok(first)
+}
+
+/// `steps` run in order, each under its condition, on what the kept
+/// element's one read answered, `whole`, or at an MSAA object's address
+/// through `read_at_event`. `Descendants` and `IsOneOf`, which no batch
+/// sent to the listener asks in this build, are refused (Claude,
+/// 2026-11-21).
+fn run_steps(read_at_event: MsaaReads, steps: &[Step], whole: Option<&ElementRead>) -> Outcome {
+    let mut outcomes: Vec<StepOutcome> = Vec::with_capacity(steps.len());
+    for step in steps {
+        let outcome = match step.gate(&outcomes) {
+            Ok(Gate::Skip) => StepOutcome::Skipped,
+            Ok(Gate::Run) => batch_step(read_at_event, &step.op, whole),
+            Err(KindMismatch) => {
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a listener step's condition names a result it cannot test");
+                StepOutcome::Failed
+            }
+        };
+        outcomes.push(outcome);
+    }
+    Outcome::Result(Reply::Steps(outcomes))
+}
+
+/// `batch` run on `element`, a kept element of `pid`'s whose nearest
+/// window Core names, `nearest`, read on `uia`, judging windows by
+/// `readability`, as a reading thread runs it, each call told to `calls`.
+/// For a test that stands in for the listener, holding the element itself.
+pub(crate) fn batch_on_element(
+    (uia, readability): (&Uia, &WindowReadabilityReader),
+    element: &Cached<ListenerEvent>,
+    (pid, nearest): (Pid, isize),
+    batch: &Batch,
+    calls: &CallLog,
+) -> Outcome {
+    let parsed = match parse(batch.clone(), ReaderKind::Listener) {
+        Ok(parsed) => parsed,
+        Err(malformed) => return Outcome::Refused(Refusal::Malformed(malformed)),
+    };
+    let steps = parsed.steps();
+    let whole = match read_element(
+        (uia, readability),
+        element,
+        (pid, nearest),
+        &ElementAsk::of(steps),
+        calls,
+    ) {
+        Ok(whole) => whole,
+        Err(outcome) => return outcome,
+    };
+    run_steps(verbatim_ia2::acquire::read_at_event, steps, Some(&whole))
+}
+
 /// One step of a batch, run on what the kept element's read answered,
 /// `whole`, or at an MSAA object's address through `read_at_event`.
-fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ObjectRead>) -> StepOutcome {
+fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ElementRead>) -> StepOutcome {
     let only = |values: &PropertyValues, set: &[PropertyId]| {
         PropertyValues(
             set.iter()
@@ -327,23 +333,8 @@ fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ObjectRead>) -> 
             window: whole.object.window,
             values: only(&whole.object.values, set),
         })),
-        (Op::Ancestors { until, set, .. }, Some(whole)) => {
-            let end = match whole.route.as_ref().map(|route| &route.end) {
-                Some(RouteEnd::Known(known)) => {
-                    let place = until.iter().position(|each| each == known);
-                    match place.and_then(|place| u32::try_from(place).ok()) {
-                        Some(place) => AncestorsEnd::Met(place),
-                        None => return StepOutcome::Failed,
-                    }
-                }
-                Some(RouteEnd::ProcessBoundary) => AncestorsEnd::ProcessBoundary,
-                Some(RouteEnd::Root) => AncestorsEnd::Top,
-                Some(RouteEnd::ContinueFrom(window)) => AncestorsEnd::ContinueFrom(*window),
-                Some(RouteEnd::PlainFrom(window)) => AncestorsEnd::PlainFrom(*window),
-                // A walk always answers its route.
-                None => return StepOutcome::Failed,
-            };
-            StepOutcome::Done(Done::Ancestors(Ancestry {
+        (Op::Ancestors { set, .. }, Some(whole)) => match whole.end {
+            Some(end) => StepOutcome::Done(Done::Ancestors(Ancestry {
                 ancestors: whole
                     .ancestors
                     .iter()
@@ -354,8 +345,10 @@ fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ObjectRead>) -> 
                     })
                     .collect(),
                 end,
-            }))
-        }
+            })),
+            // A read with an `Ancestors` step walks.
+            None => StepOutcome::Failed,
+        },
         _ => StepOutcome::Refused(StepRefusal::Unsupported),
     }
 }
@@ -510,7 +503,6 @@ fn read_msaa(
     read: &ReadObject,
 ) -> Outcome {
     if read.set.iter().any(|id| !MSAA_SET.contains(id))
-        || read.walk.is_some()
         || read.relation.is_some()
         || read.descendants
     {
@@ -529,8 +521,6 @@ fn read_msaa(
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     })))
 }
 
@@ -692,57 +682,131 @@ fn known_runtime_ids(walk: &[KnownAncestor]) -> (Vec<Vec<i32>>, Vec<u32>) {
         .unzip()
 }
 
-/// Reads `sender`, a kept element of `pid`'s whose nearest window is
-/// `nearest`, as `read` asks, with `uia`, a window `readability` finds
-/// hung or ghosted read as a plain window: the element afresh, its name
-/// and class as its event's cache had them, as NVDA's object for the event
-/// reads them, a selection's item with the name read afresh; for a walk,
-/// its ancestors up to one Core already knows, the desktop root or the
-/// process boundary, and its route. A walk whose own
-/// read fails is answered with what it read, the event's cache giving the
-/// rest, and the chain going on from the parent window of the outermost
-/// element's nearest window, as NVDA's failed parent read goes on by
-/// `Window._get_parent`. `calls` logs each call the read makes.
-pub(crate) fn read_element(
+/// What a read of a kept element reads.
+pub(crate) struct ElementAsk {
+    /// The properties of the element and each ancestor.
+    set: Vec<PropertyId>,
+    /// Its ancestors up to the first of these Core knows, at most this
+    /// many; `None` for the element alone.
+    walk: Option<(Vec<KnownAncestor>, u32)>,
+    /// Whether its name is the one read afresh, as a batch's is; else its
+    /// event's cache's, as NVDA's object for the event reads it. Core
+    /// chooses the cached name where it speaks that one (Claude,
+    /// 2026-11-21, the request list's design, section 6).
+    fresh_name: bool,
+}
+
+impl ElementAsk {
+    /// What the generic read `read` reads of its kept element: its set
+    /// alone, by its event's name; `None` for a relation or descendants,
+    /// which no generic read asks of the listener.
+    fn of_read(read: &ReadObject) -> Option<Self> {
+        (read.relation.is_none() && !read.descendants).then(|| Self {
+            set: read.set.clone(),
+            walk: None,
+            fresh_name: false,
+        })
+    }
+
+    /// What a batch's `steps` read of their kept element: the union of the
+    /// sets of its `Read` and `Ancestors` steps, its ancestors when a step
+    /// asks for them, the name read afresh.
+    fn of(steps: &[Step]) -> Self {
+        let mut set: Vec<PropertyId> = Vec::new();
+        let mut walk = None;
+        for step in steps {
+            let (Op::Read { set: own, .. } | Op::Ancestors { set: own, .. }) = &step.op else {
+                continue;
+            };
+            for id in own {
+                if !set.contains(id) {
+                    set.push(*id);
+                }
+            }
+            if let Op::Ancestors { until, depth, .. } = &step.op {
+                walk = Some((until.clone(), *depth));
+            }
+        }
+        Self {
+            set,
+            walk,
+            fresh_name: true,
+        }
+    }
+}
+
+/// What a read of a kept element read.
+pub(crate) struct ElementRead {
+    /// The element.
+    object: NodeRead,
+    /// Its ancestors, nearest first, up to the one Core knows that the
+    /// walk met, which is not among them.
+    ancestors: Vec<NodeRead>,
+    /// Where the walk ended; `None` for the element alone.
+    end: Option<AncestorsEnd>,
+}
+
+impl ElementRead {
+    /// The element alone as the answer to a generic read.
+    fn answer(self) -> Outcome {
+        Outcome::Result(Reply::Object(Box::new(ObjectRead {
+            object: self.object,
+            relation: None,
+            descendants: Vec::new(),
+            ancestors: Vec::new(),
+        })))
+    }
+}
+
+/// The generic read `read` of `element`, a kept element of `pid`'s whose
+/// nearest window Core names, `nearest`, as a reading thread makes it,
+/// each call told to `calls`. For a test that stands in for the listener.
+pub(crate) fn object_on_element(
     (uia, readability): (&Uia, &WindowReadabilityReader),
-    sender: &Cached<ListenerEvent>,
+    element: &Cached<ListenerEvent>,
     (pid, nearest): (Pid, isize),
     read: &ReadObject,
     calls: &CallLog,
 ) -> Outcome {
-    read_element_to(
-        (uia, readability),
-        sender,
-        (pid, nearest),
-        (read, MAX_ANCESTORS),
-        calls,
-    )
+    let Some(reading) = ElementAsk::of_read(read) else {
+        return Outcome::Refused(Refusal::Unsupported);
+    };
+    read_element((uia, readability), element, (pid, nearest), &reading, calls)
+        .map_or_else(|outcome| outcome, ElementRead::answer)
 }
 
-/// [`read_element`], its walk going at most `depth` ancestors up.
-fn read_element_to(
+/// Reads `sender`, a kept element of `pid`'s whose nearest window is
+/// `nearest`, as `reading` asks, with `uia`, a window `readability` finds
+/// hung or ghosted read as a plain window: the element afresh, its class
+/// as its event's cache had it, and its name too unless the name read
+/// afresh is asked; for a walk, its ancestors up to one Core already
+/// knows, the desktop root or the process boundary, and where the walk
+/// ended. A walk whose own read fails is answered with what it read, the
+/// event's cache giving the rest, and the chain going on from the parent
+/// window of the outermost element's nearest window, as NVDA's failed
+/// parent read goes on by `Window._get_parent`. `calls` logs each call the
+/// read makes.
+pub(crate) fn read_element(
     (uia, readability): (&Uia, &WindowReadabilityReader),
     sender: &Cached<ListenerEvent>,
     (pid, nearest): (Pid, isize),
-    (read, depth): (&ReadObject, u32),
+    reading: &ElementAsk,
     calls: &CallLog,
-) -> Outcome {
-    if read.relation.is_some() || read.descendants {
-        return Outcome::Refused(Refusal::Unsupported);
-    }
+) -> Result<ElementRead, Outcome> {
     let fields = sender.read();
     let hwnd = fields.role.hwnd;
     let nearest = if hwnd == 0 { nearest } else { hwnd };
-    let (known, places) = known_runtime_ids(read.walk.as_deref().unwrap_or_default());
+    let until = reading.walk.as_ref().map_or(&[][..], |(until, _)| until);
+    let (known, places) = known_runtime_ids(until);
     let (ended, mut walked) = walk(
         (uia, readability),
         sender,
         nearest,
-        (read.walk.is_some().then_some(depth), &known),
+        (reading.walk.as_ref().map(|(_, depth)| *depth), &known),
         calls,
     );
-    let mut element = element_read(&fields, sender, &mut walked, read.purpose);
-    if read.set.contains(&PropertyId::States)
+    let mut element = element_read(&fields, sender, &mut walked, reading.fresh_name);
+    if reading.set.contains(&PropertyId::States)
         && wants_legacy_checked_state(element.parts.role, element.parts.states)
     {
         // A menu item without the Toggle pattern: its checked state may be
@@ -756,38 +820,18 @@ fn read_element_to(
             .flatten();
         add_legacy_checked_state(&mut element.parts.states, legacy);
     }
-    let known_met = |met: usize| {
-        let place = places.get(met).copied()?;
-        read.walk
-            .as_deref()?
-            .get(usize::try_from(place).ok()?)
-            .cloned()
-    };
-    let end = match route_end(&ended, &mut walked, (hwnd, nearest), known_met) {
-        Ok(end) => end,
-        Err(outcome) => return outcome,
-    };
+    let known_met = |met: usize| places.get(met).copied();
+    let end = ended
+        .transpose()
+        .map(|ended| walk_end(&ended, &mut walked, (hwnd, nearest), known_met))
+        .transpose()?;
     let ancestor_windows = nearest_windows((hwnd, nearest), &walked.ancestors);
-    let route = read.walk.as_ref().map(|_| Route {
-        window: WindowHandle::from(nearest),
-        steps: std::iter::once(&element)
-            .chain(walked.ancestors.iter())
-            .map(|read| RouteStep {
-                runtime_id: RuntimeId(read.parts.runtime_id.clone()),
-                window: (read.hwnd != 0).then(|| WindowHandle::from(read.hwnd)),
-                content: read.content,
-            })
-            .collect(),
-        end,
-    });
-    Outcome::Result(Reply::Object(Box::new(ObjectRead {
+    Ok(ElementRead {
         object: NodeRead {
             node: None,
             window: node_window(&SystemReads, nearest),
-            values: element.values(&read.set, pid),
+            values: element.values(&reading.set, pid),
         },
-        relation: None,
-        descendants: Vec::new(),
         ancestors: walked
             .ancestors
             .iter()
@@ -795,26 +839,24 @@ fn read_element_to(
             .map(|(ancestor, window)| NodeRead {
                 node: None,
                 window: node_window(&SystemReads, window),
-                values: ancestor.values(&read.set, pid),
+                values: ancestor.values(&reading.set, pid),
             })
             .collect(),
-        // A read with a route names what its walk met in the route's end.
-        met: None,
-        route,
-    })))
+        end,
+    })
 }
 
-/// Where a walk that `ended` so ended, as its route says: `walked` loses
-/// the known ancestor it met, which `known_met` names by its place among
-/// the walk's known runtime ids; `hwnd` is the element's own window and
-/// `nearest` its nearest. An outcome answers the read instead.
-fn route_end(
-    ended: &Result<Option<FocusAncestry>, verbatim_uia_rops::Error>,
+/// Where a walk that `ended` so ended: `walked` loses the known ancestor
+/// it met, which `known_met` gives the place in Core's list of by its
+/// place among the walk's known runtime ids; `hwnd` is the element's own
+/// window and `nearest` its nearest. An outcome answers the read instead.
+fn walk_end(
+    ended: &Result<FocusAncestry, verbatim_uia_rops::Error>,
     walked: &mut Walked,
     (hwnd, nearest): (isize, isize),
-    known_met: impl Fn(usize) -> Option<KnownAncestor>,
-) -> Result<RouteEnd, Outcome> {
-    if let Ok(Some(FocusAncestry::Focused(ancestry))) = ended
+    known_met: impl Fn(usize) -> Option<u32>,
+) -> Result<AncestorsEnd, Outcome> {
+    if let Ok(FocusAncestry::Focused(ancestry)) = ended
         && let Some(met) = ancestry.met_known
     {
         // The known ancestor the walk met is the last read, and not among
@@ -824,7 +866,7 @@ fn route_end(
             tracing::error!(target: verbatim_model::DEFECT_TARGET, "a walk met a known ancestor the request did not name");
             return Err(Outcome::Refused(Refusal::Unsupported));
         };
-        return Ok(RouteEnd::Known(known));
+        return Ok(AncestorsEnd::Met(known));
     }
     let windows =
         || std::iter::once(hwnd).chain(walked.ancestors.iter().map(|ancestor| ancestor.hwnd));
@@ -835,13 +877,13 @@ fn route_end(
         ))
     };
     Ok(match ended {
-        Ok(Some(FocusAncestry::Focused(ancestry))) => {
+        Ok(FocusAncestry::Focused(ancestry)) => {
             if let Some(plain) = ancestry.plain_window {
-                RouteEnd::ContinueFrom(WindowHandle::from(plain))
+                AncestorsEnd::ContinueFrom(WindowHandle::from(plain))
             } else if ancestry.failed_hop.is_some() {
-                RouteEnd::ContinueFrom(WindowHandle::from(continue_from()))
+                AncestorsEnd::ContinueFrom(WindowHandle::from(continue_from()))
             } else if ancestry.depth_limited {
-                RouteEnd::PlainFrom(WindowHandle::from(
+                AncestorsEnd::PlainFrom(WindowHandle::from(
                     verbatim_win32::provider::plain_windows_start(nearest, windows()),
                 ))
             } else {
@@ -853,21 +895,19 @@ fn route_end(
                     .last()
                     .map_or(hwnd, |ancestor| ancestor.hwnd);
                 if outermost != 0 && verbatim_win32::window::top_level_of(outermost) != outermost {
-                    RouteEnd::ProcessBoundary
+                    AncestorsEnd::ProcessBoundary
                 } else {
-                    RouteEnd::Root
+                    AncestorsEnd::Top
                 }
             }
         }
         // Not asked for: the check read the keyboard focus.
-        Ok(Some(FocusAncestry::NotFocused)) => {
+        Ok(FocusAncestry::NotFocused) => {
             return Err(Outcome::Refused(Refusal::NotFocused));
         }
-        // The element alone: no walk, so no route carries this end.
-        Ok(None) => RouteEnd::Root,
         Err(error) => {
             tracing::debug!(%error, "a kept element's read failed; answered with what was read");
-            RouteEnd::ContinueFrom(WindowHandle::from(continue_from()))
+            AncestorsEnd::ContinueFrom(WindowHandle::from(continue_from()))
         }
     })
 }
@@ -954,18 +994,17 @@ fn walk(
     (ended, walked.into_inner())
 }
 
-/// The element as a read for `purpose` answers it: its class from its
-/// event's cache, and its name too, as NVDA's object for the event reads
-/// them, except for a selection's item, whose name is the one read afresh
-/// (Dickson, 2026-10-20, [`Purpose::Selection`]); its role, value, states
-/// and details as read afresh, or from the event's cache when they were
-/// not; a value taken from its first selected item's name when that is
-/// its value; and, for a focus read, the focused state.
+/// The element as a read answers it: its class from its event's cache,
+/// and its name too, as NVDA's object for the event reads them, unless
+/// `fresh_name` asks the name read afresh, as a selection's item is said
+/// by it (Dickson, 2026-10-20); its role, value, states and details as
+/// read afresh, or from the event's cache when they were not; and a value
+/// taken from its first selected item's name when that is its value.
 fn element_read(
     fields: &ListenerEvent,
     sender: &Cached<ListenerEvent>,
     walked: &mut Walked,
-    purpose: Purpose,
+    fresh_name: bool,
 ) -> Read {
     let event = fields.parts(sender.runtime_id());
     let (mut read, from_selection) = walked.fresh.take().unwrap_or_else(|| {
@@ -985,7 +1024,7 @@ fn element_read(
     // The fresh read's name came in the same cache request as its role and
     // position, so a selection's costs no call; with no fresh read, the
     // parts are the event's, its name included.
-    if purpose != Purpose::Selection {
+    if !fresh_name {
         read.parts.name.clone_from(&event.name);
     }
     read.parts
@@ -999,9 +1038,6 @@ fn element_read(
         read.parts.value = walked.selected_name.take();
     }
     read.value_from_selection = Some(from_selection);
-    if purpose == Purpose::Focus {
-        read.parts.states = read.parts.states.with(State::Focused);
-    }
     read
 }
 
@@ -1042,7 +1078,7 @@ mod tests {
 
     /// A batch's steps on a kept element take what its one read answered:
     /// each step its own set's values, and an `Ancestors` step the end of
-    /// the walk, a known ancestor met by its place in the step's list.
+    /// the walk, a known ancestor met by its place in Core's list.
     #[test]
     fn a_kept_elements_steps_take_their_sets_and_the_walks_end_from_its_one_read() {
         let value = |id, text: &str| PropertyAnswer {
@@ -1050,8 +1086,7 @@ mod tests {
             value: Some(PropertyValue::Text(text.to_owned())),
         };
         let window = node_window(&SystemReads, 0);
-        let known = KnownAncestor::Uia(RuntimeId(vec![7, 1]));
-        let whole = ObjectRead {
+        let whole = ElementRead {
             object: NodeRead {
                 node: None,
                 window,
@@ -1060,19 +1095,12 @@ mod tests {
                     value(PropertyId::Description, "Saves"),
                 ]),
             },
-            relation: None,
-            descendants: Vec::new(),
             ancestors: vec![NodeRead {
                 node: None,
                 window,
                 values: PropertyValues(vec![value(PropertyId::Name, "Pane")]),
             }],
-            met: None,
-            route: Some(Route {
-                window: WindowHandle(0),
-                steps: Vec::new(),
-                end: RouteEnd::Known(known.clone()),
-            }),
+            end: Some(AncestorsEnd::Met(1)),
         };
         let kept = Subject::Kept {
             listener: 1,
@@ -1100,7 +1128,10 @@ mod tests {
                 nothing,
                 &Op::Ancestors {
                     subject: kept,
-                    until: vec![KnownAncestor::Window(WindowHandle(9)), known],
+                    until: vec![
+                        KnownAncestor::Window(WindowHandle(9)),
+                        KnownAncestor::Uia(RuntimeId(vec![7, 1])),
+                    ],
                     depth: 60,
                     set: vec![PropertyId::Name],
                 },

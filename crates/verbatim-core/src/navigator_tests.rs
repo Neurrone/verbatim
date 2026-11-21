@@ -1,7 +1,8 @@
 //! The navigator object's commands as event-queue entries: each resolves
 //! the navigator at its turn, makes its reads as the queue's requests on
 //! the object's window and holds the queue until its last answer.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
@@ -38,15 +39,7 @@ const IN_FRONT: Foreground = Foreground {
 fn committed() -> Held {
     let mut state = ready();
     let _ = feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
-    let _ = feed_at(
-        &mut state,
-        600,
-        answer(
-            OUTPOST,
-            1,
-            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
-        ),
-    );
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(focus_read(None)));
     state
 }
 
@@ -563,15 +556,7 @@ fn the_navigator_follows_a_focus_retaken_silently_from_a_replacement_outpost() {
         ancestor.node.read.node = ancestor.node.read.node.map(anew);
     }
     assert_eq!(
-        feed_at(
-            &mut state,
-            1_200,
-            answer(
-                REPLACEMENT,
-                3,
-                Reply::Candidate(CandidateAnswer::focused(read))
-            )
-        ),
+        found_at(&mut state, 1_200, (REPLACEMENT, 3), Found::Read(read)),
         ["send Outpost(Pid(40)) Follow"]
     );
     assert_eq!(
@@ -923,26 +908,19 @@ fn cancel_told() -> Input<Entry> {
 }
 
 /// The listener's answer to request `number`, the element `[42, 2]`.
-fn cancel_checked(number: u64) -> Input<Entry> {
-    let mut read = crate::entries::tests::listener_answer();
-    if let Some(route) = read.route.as_mut() {
-        route.steps[0].runtime_id = verbatim_model::property::RuntimeId(vec![42, 2]);
-    }
-    answer(
-        crate::entries::tests::LISTENER,
-        number,
-        Reply::Object(Box::new(read)),
-    )
+fn cancel_checked(held: &Held, number: u64) -> Input<Entry> {
+    let read = crate::entries::tests::listener_answer_of(vec![42, 2]);
+    crate::entries::tests::found(held, crate::entries::tests::LISTENER, number, read)
 }
 
 /// The outpost's completion of request `number`: the button "Cancel",
 /// node 3, in the frame "Editor".
-fn cancel_completed(number: u64) -> Input<Entry> {
+fn cancel_completed(held: &Held, number: u64) -> Input<Entry> {
     let mut read = focus_read(None);
     read.focus.read.node = Some(node(3));
     read.focus.read.values = values("Cancel", Role::Button);
     read.focus.runtime_id = Some(verbatim_model::property::RuntimeId(vec![42, 2]));
-    answer(OUTPOST, number, Reply::Focus(Box::new(read)))
+    crate::entries::tests::found(held, OUTPOST, number, Found::Read(read))
 }
 
 /// Move to focus pressed while a focus is being read runs after that
@@ -959,11 +937,17 @@ fn moving_to_the_focus_while_a_focus_is_read_runs_on_that_focus() {
         Vec::<String>::new()
     );
     assert_eq!(
-        feed_at(&mut state, 1_200, cancel_checked(3)),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        {
+            let input = cancel_checked(&state, 3);
+            feed_at(&mut state, 1_200, input)
+        },
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        feed_at(&mut state, 1_300, cancel_completed(4)),
+        {
+            let input = cancel_completed(&state, 4);
+            feed_at(&mut state, 1_300, input)
+        },
         [
             "Label(\"Cancel\") Role(Button)",
             "send Outpost(Pid(40)) Follow",
@@ -979,7 +963,10 @@ fn moving_to_the_focus_behind_a_focus_not_there_runs_on_the_focus_before() {
     let mut state = committed();
     let _ = feed_at(&mut state, 1_000, cancel_told());
     let _ = feed_at(&mut state, 1_100, press(1, ReviewCommand::ToFocus, 0));
-    let _ = feed_at(&mut state, 1_200, cancel_checked(3));
+    let _ = {
+        let input = cancel_checked(&state, 3);
+        feed_at(&mut state, 1_200, input)
+    };
     assert_eq!(
         feed_at(
             &mut state,
@@ -1055,9 +1042,15 @@ fn a_focus_behind_a_navigation_and_a_report_is_executed_after_them() {
         ),
         ["Label(\"Buttons\") Role(Group)", "send Listener ReadObject"]
     );
-    let _ = feed_at(&mut state, 4_000, cancel_checked(5));
+    let _ = {
+        let input = cancel_checked(&state, 5);
+        feed_at(&mut state, 4_000, input)
+    };
     assert_eq!(
-        feed_at(&mut state, 5_000, cancel_completed(6)),
+        {
+            let input = cancel_completed(&state, 6);
+            feed_at(&mut state, 5_000, input)
+        },
         [
             "Label(\"Cancel\") Role(Button)",
             "send Outpost(Pid(40)) Follow"

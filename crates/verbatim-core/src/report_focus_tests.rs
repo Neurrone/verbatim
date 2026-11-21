@@ -2,7 +2,8 @@
 //! focus's node at its turn, "No focus" with nothing committed, silence
 //! for any outcome but a result, and the not-responding sound for a hung
 //! window.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, TextSummary,
@@ -38,15 +39,7 @@ fn committed() -> Held {
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            600,
-            answer(
-                OUTPOST,
-                1,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
-        ),
+        found_at(&mut state, 600, (OUTPOST, 1), Found::Read(focus_read(None))),
         SPOKEN_FOLLOWED
     );
     state

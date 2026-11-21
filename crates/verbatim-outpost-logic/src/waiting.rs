@@ -51,7 +51,6 @@ fn ids_window(request: &Question) -> Option<WindowHandle> {
             ObjectRef::Msaa { window, .. } => Some(window),
             ObjectRef::Kept { .. } | ObjectRef::Node(_) => None,
         },
-        Request::MsaaRun(run) => Some(run.candidate.ids.window),
         Request::Properties { .. }
         | Request::Navigate { .. }
         | Request::Find { .. }
@@ -59,8 +58,6 @@ fn ids_window(request: &Question) -> Option<WindowHandle> {
         | Request::Text { .. }
         | Request::Activate { .. }
         | Request::Follow(_)
-        | Request::CompleteUia(_)
-        | Request::CurrentFocus { .. }
         | Request::DumpTree { .. }
         | Request::ShellItems { .. }
         | Request::ShellItemPosition { .. } => None,
@@ -207,12 +204,9 @@ mod tests {
             number: RequestNumber(number),
             window: WindowHandle(1),
             verdict: WindowVerdict::Msaa,
-            request: Request::CurrentFocus {
-                hidden: verbatim_model::request::HiddenRoot::Check,
+            request: Request::Properties {
+                node: verbatim_model::NodeId::new(1),
                 set: Vec::new(),
-                known: Vec::new(),
-                details: verbatim_model::TextDetails::NONE,
-                depth: verbatim_model::request::FocusDepth::Full,
             }
             .into(),
         })
@@ -306,7 +300,10 @@ mod tests {
         let mut asks = Asks::default();
         let _ = asks.push(follow(1, 1));
         let replaced = asks.push(batch(2, Op::Follow(None)));
-        assert_eq!(replaced, [ended(RequestNumber(1), "replaced by a newer Follow")]);
+        assert_eq!(
+            replaced,
+            [ended(RequestNumber(1), "replaced by a newer Follow")]
+        );
         let msaa = Subject::Msaa {
             ids: verbatim_model::request::MsaaIds {
                 window: WindowHandle(7),
@@ -316,7 +313,10 @@ mod tests {
             redirect: true,
         };
         let _ = asks.push(batch(3, read(msaa)));
-        let _ = asks.push(batch(4, read(Subject::Node(verbatim_model::NodeId::new(5)))));
+        let _ = asks.push(batch(
+            4,
+            read(Subject::Node(verbatim_model::NodeId::new(5))),
+        ));
         let gone: Vec<u64> = asks
             .destroyed(WindowHandle(7))
             .iter()

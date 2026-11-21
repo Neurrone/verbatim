@@ -10,6 +10,7 @@
 
 #![allow(dead_code, reason = "each test file uses part of the support")]
 
+use crate::readers::{self, Found};
 use std::collections::{BTreeMap, VecDeque};
 
 use verbatim_core::{SrState, reduce, snapshot_of};
@@ -717,11 +718,13 @@ impl Session {
     /// answers one; any other "not responding".
     fn answer(&mut self, ask: Ask) {
         if self.hung {
-            let refused = match legacy(&ask.request) {
-                Wire::CurrentFocus { .. } => QueueInput::InFront {
-                    number: ask.number,
-                    front: verbatim_model::request::Front::Hung,
-                },
+            let refused = match &ask.request {
+                verbatim_model::request::Question::Batch(batch) if batch.reads_focus_first() => {
+                    QueueInput::InFront {
+                        number: ask.number,
+                        front: verbatim_model::request::Front::Hung,
+                    }
+                }
                 _ => QueueInput::RefusedHung(ask.number),
             };
             let input = self.queued_input(TraceId::from_raw(2), refused);
@@ -729,14 +732,14 @@ impl Session {
             self.take(effects, None);
             return;
         }
+        if let verbatim_model::request::Question::Batch(batch) = &ask.request {
+            let found = Found::Read(focus_read(self.depth, self.console));
+            let outcome = readers::outcome(batch, &found);
+            self.reply(&ask, outcome);
+            return;
+        }
         let outcome = match legacy(&ask.request) {
             Wire::Follow(_) => Outcome::Result(Reply::Followed),
-            Wire::CurrentFocus { .. } => Outcome::Result(Reply::Candidate(
-                verbatim_model::request::CandidateAnswer::focused(focus_read(
-                    self.depth,
-                    self.console,
-                )),
-            )),
             Wire::Text { op, .. } => match op {
                 TextOp::ReadTerminal(read) => {
                     if self.hold_whole && read.scope == TerminalScope::Whole {
@@ -885,7 +888,7 @@ impl Session {
 
     /// Records what `ask` asks of the terminal.
     fn record(&mut self, ask: &Ask) {
-        let Wire::Text { op, .. } = legacy(&ask.request) else {
+        let verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) = &ask.request else {
             return;
         };
         let asked = match op {
@@ -1068,18 +1071,17 @@ impl Session {
         let effects = self.step(input);
         self.take(effects, None);
         let ask = self.pending.pop_front().expect("the read after the return");
+        let verbatim_model::request::Question::Batch(batch) = &ask.request else {
+            panic!("the read after the return: {ask:?}");
+        };
         assert!(
-            matches!(legacy(&ask.request), Wire::CurrentFocus { .. }),
+            batch.reads_focus_first(),
             "the read after the return: {ask:?}"
         );
         let mut read = focus_read(self.depth, self.console);
         read.runtime_id_reused = runtime_id_reused;
-        self.reply(
-            &ask,
-            Outcome::Result(Reply::Candidate(
-                verbatim_model::request::CandidateAnswer::focused(read),
-            )),
-        );
+        let outcome = readers::outcome(batch, &Found::Read(read));
+        self.reply(&ask, outcome);
         while let Some(ask) = self.pending.pop_front() {
             self.answer(ask);
         }

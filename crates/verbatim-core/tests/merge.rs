@@ -11,16 +11,19 @@
 //! each one (ADR 0003, "Flood limiters and the merge").
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{
     Desk, Heard, LISTENER, ONE, focus_heard, focus_now_in, focus_read_of, focus_tell,
     listener_read, queued, runtime_of,
 };
+use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    Instance, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Reader, RelationFound,
-    Reply, Request as Wire,
+    Instance, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Question, Reader,
+    RelationFound, Reply, Request as Wire,
 };
 use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -193,8 +196,6 @@ fn alert_read() -> Outcome {
         relation: Some(RelationFound::Unrelated),
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     })))
 }
 
@@ -228,7 +229,7 @@ fn run(
     older: Option<&Told>,
     others: &[Other],
     newer: &Told,
-    answer: &dyn Fn(&Wire) -> Outcome,
+    answer: &dyn Fn(&Question) -> Outcome,
 ) -> Run {
     let mut desk = start();
     let front = busy(&mut desk);
@@ -247,11 +248,11 @@ fn run(
     while let Some((number, to, request)) = desk
         .sent
         .iter()
-        .find(|(_, _, request)| !matches!(request, Wire::Follow(_)))
+        .find(|(_, _, request)| desk::kind(request) != "Follow")
         .cloned()
     {
         let outcome = match &request {
-            Wire::ReadObject(read)
+            Question::Legacy(Wire::ReadObject(read))
                 if matches!(read.object, ObjectRef::Msaa { object: ALERT, .. }) =>
             {
                 alert_read()
@@ -268,7 +269,7 @@ fn run(
 
 /// For every sequence of others, `older` then `newer` does exactly what
 /// `newer` alone does; with no others, `newer` alone does `heard`.
-fn equivalent(older: &Told, newer: &Told, answer: &dyn Fn(&Wire) -> Outcome, heard: &[Heard]) {
+fn equivalent(older: &Told, newer: &Told, answer: &dyn Fn(&Question) -> Outcome, heard: &[Heard]) {
     for others in sequences() {
         assert_eq!(
             run(Some(older), &others, newer, answer),
@@ -280,7 +281,7 @@ fn equivalent(older: &Told, newer: &Told, answer: &dyn Fn(&Wire) -> Outcome, hea
 }
 
 /// No request is expected beside the front's and the alert's.
-fn unasked(request: &Wire) -> Outcome {
+fn unasked(request: &Question) -> Outcome {
     panic!("an unexpected request: {request:?}")
 }
 
@@ -299,17 +300,16 @@ fn focus_on_four() -> Told {
 #[test]
 fn a_focus_merged_is_the_newer_focus() {
     let second = node(4, Role::Button, "Second", focused());
-    let answer = move |request: &Wire| match request {
-        Wire::ReadObject(_) => Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 4)))),
-        Wire::CompleteUia(_) => Outcome::Result(Reply::Focus(Box::new(focus_read_of(
-            ONE,
-            &second,
-            &line_ancestors(),
-        )))),
-        other => unasked(other),
+    let answer = move |request: &Question| match (request, desk::kind(request)) {
+        (Question::Batch(batch), "ReadObject") => readers::outcome(batch, &listener_read(ONE, 4)),
+        (Question::Batch(batch), "Completion") => readers::outcome(
+            batch,
+            &readers::Found::Read(focus_read_of(ONE, &second, &line_ancestors())),
+        ),
+        _ => unasked(request),
     };
     let mut heard = vec![Heard::Sent(Reader::Listener, "ReadObject")];
-    heard.push(Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia"));
+    heard.push(Heard::Sent(Reader::Outpost(ONE.pid), "Completion"));
     heard.extend(focus_heard(
         ONE,
         focus_now_in(ONE, 4, &[WINDOW, PANE]),
@@ -333,8 +333,8 @@ fn property(property: PropertyId, (older, newer): (PropertyValue, PropertyValue)
 /// read once at its turn, its read answering `value`, after which it says
 /// `said`.
 fn read_property(property: PropertyId, value: PropertyValue, said: &[Heard]) {
-    let answer = move |request: &Wire| match request {
-        Wire::Properties { .. } => {
+    let answer = move |request: &Question| match request {
+        Question::Legacy(Wire::Properties { .. }) => {
             Outcome::Result(Reply::Properties(PropertyValues(vec![PropertyAnswer {
                 id: property,
                 value: Some(value.clone()),
@@ -416,8 +416,8 @@ fn an_alert_merged_is_the_newer_alert() {
         from: LISTENER,
         tell: alert(7),
     };
-    let answer = |request: &Wire| match request {
-        Wire::ReadObject(_) => {
+    let answer = |request: &Question| match request {
+        Question::Legacy(Wire::ReadObject(_)) => {
             let Outcome::Result(Reply::Object(mut read)) = alert_read() else {
                 unreachable!("an object read");
             };
@@ -480,8 +480,8 @@ fn a_focus_merged_across_a_change_of_its_line_moves_behind_it() {
         ]
     );
     assert_eq!(
-        desk.reply(Reply::Object(Box::new(listener_read(ONE, 4)))),
-        [Heard::Sent(Reader::Outpost(ONE.pid), "CompleteUia")]
+        desk.reply_found(&listener_read(ONE, 4)),
+        [Heard::Sent(Reader::Outpost(ONE.pid), "Completion")]
     );
     let said = focus_heard(
         ONE,
@@ -489,11 +489,11 @@ fn a_focus_merged_across_a_change_of_its_line_moves_behind_it() {
         vec![vec![UtteranceSegment::label("Second"), role(Role::Button)]],
     );
     assert_eq!(
-        desk.reply(Reply::Focus(Box::new(focus_read_of(
+        desk.reply_found(&Found::Read(focus_read_of(
             ONE,
             &node(4, Role::Button, "Second", focused()),
             &line_ancestors(),
-        )))),
+        ))),
         said
     );
 }

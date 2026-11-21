@@ -9,14 +9,17 @@
 //! produce and asserts every effect.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{App, Desk, Heard, LISTENER, follow, queued, values_of};
+use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyValues, RuntimeId};
+use verbatim_model::request::Question;
 use verbatim_model::request::{
-    CandidateAnswer, FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds,
-    MsaaIds, NodeRead, NodeWindow, ObjectRead, Outcome, QueueInput, Reader, Reply, Request as Wire,
-    Route, RouteEnd, RouteStep,
+    FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds, MsaaIds, NodeRead,
+    NodeWindow, Outcome, QueueInput, Reader, Reply, Request as Wire,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -343,27 +346,27 @@ fn focus_read(
 
 /// The listener's read of a UI Automation focus element of node `number`
 /// in `app` at `win`: its route to its window.
-fn listener_read(app: App, win: Win, number: u64) -> ObjectRead {
-    ObjectRead {
-        object: NodeRead {
+fn listener_read(app: App, win: Win, number: u64) -> Found {
+    Found::Walked(
+        NodeRead {
             node: None,
             window: node_window(app, win),
-            values: PropertyValues::default(),
+            values: PropertyValues(vec![
+                verbatim_model::property::PropertyAnswer {
+                    id: verbatim_model::property::PropertyId::RuntimeId,
+                    value: Some(verbatim_model::property::PropertyValue::RuntimeId(
+                        runtime_of(number),
+                    )),
+                },
+                verbatim_model::property::PropertyAnswer {
+                    id: verbatim_model::property::PropertyId::IsContent,
+                    value: Some(verbatim_model::property::PropertyValue::Flag(true)),
+                },
+            ]),
         },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: WindowHandle(win.top + 1),
-            steps: vec![RouteStep {
-                runtime_id: runtime_of(number),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::ContinueFrom(WindowHandle(win.top + 1)),
-        }),
-    }
+        Vec::new(),
+        verbatim_model::batch::AncestorsEnd::ContinueFrom(WindowHandle(win.top + 1)),
+    )
 }
 
 /// A focus via `via` on `focus` of `app` at `win`, under `ancestors`,
@@ -383,27 +386,27 @@ fn focus(
     let tell = focus_tell(app, win, via, number, desk.at_us + 1_000);
     let read = focus_read((app, win, via), focus, ancestors, foreground);
     let heard = desk.tell(LISTENER, tell);
-    answered(desk, heard, &|request| match request {
-        Wire::ReadObject(_) => Reply::Object(Box::new(listener_read(app, win, number))),
-        Wire::CompleteUia(_) => Reply::Focus(Box::new(read.clone())),
-        Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(read.clone())),
-        other => panic!("a focus read asked: {other:?}"),
+    answered(desk, heard, &|request| match desk::kind(request) {
+        "ReadObject" => listener_read(app, win, number),
+        "Completion" | "Candidate" => Found::Read(read.clone()),
+        other => panic!("a focus read asked: {other}"),
     })
 }
 
 /// `heard`, then every request the step sent and those their answers
 /// send, answered in order: a `Follow` followed, any other by `reply`.
 /// Every effect but the requests, which the answers stand for.
-fn answered(desk: &mut Desk, heard: Vec<Heard>, reply: &dyn Fn(&Wire) -> Reply) -> Vec<Heard> {
+fn answered(desk: &mut Desk, heard: Vec<Heard>, reply: &dyn Fn(&Question) -> Found) -> Vec<Heard> {
     let mut heard = heard;
     let mut pending = std::mem::take(&mut desk.sent);
     while !pending.is_empty() {
         let (number, to, request) = pending.remove(0);
-        let answer = match &request {
-            Wire::Follow(_) => Reply::Followed,
-            other => reply(other),
-        };
-        heard.extend(desk.answer(to, number, Outcome::Result(answer)));
+        heard.extend(match &request {
+            Question::Legacy(Wire::Follow(_)) => {
+                desk.answer(to, number, Outcome::Result(Reply::Followed))
+            }
+            other => desk.found(to, number, &reply(other)),
+        });
         pending.append(&mut desk.sent);
     }
     heard
@@ -508,11 +511,7 @@ fn in_the_edit() -> Desk {
         &[main_window()],
         Some(&main_window()),
     );
-    let _ = answered(&mut desk, Vec::new(), &|_| {
-        Reply::Candidate(verbatim_model::request::CandidateAnswer::focused(
-            read.clone(),
-        ))
-    });
+    let _ = answered(&mut desk, Vec::new(), &|_| Found::Read(read.clone()));
     // UI Automation's focus event for the edit, which the listener keeps,
     // so that a repeat of it is a duplicate.
     let _ = focus(

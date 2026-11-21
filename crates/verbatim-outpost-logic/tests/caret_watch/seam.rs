@@ -30,11 +30,16 @@ use verbatim_model::property::{
 };
 use verbatim_model::protocol::{OutpostToCore, UiaSnapshotFact};
 use verbatim_model::request::{
-    Answer, Ask, CandidateAnswer, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead,
-    FocusNode, FocusRead, ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow,
-    ObjectRead, Outcome, Press as WirePress, PressAction, Probe, ProcessFact, QueueEffect,
-    QueueInput, Reader, Reply, Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
+    Answer, Ask, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead, FocusNode, FocusRead,
+    ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow, Outcome,
+    Press as WirePress, PressAction, Probe, ProcessFact, Question, QueueEffect, QueueInput, Reader,
+    Reply, Request as Wire, WindowVerdict,
 };
+
+#[path = "../../../verbatim-core/tests/support/readers.rs"]
+mod readers;
+
+use readers::Found;
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -494,16 +499,16 @@ impl Seam {
     /// the key at the front; the focus's completion the script's; the rest
     /// at once.
     fn latency(&self, ask: &Ask) -> Us {
-        match legacy(&ask.request) {
-            Wire::Text {
+        match &ask.request {
+            Question::Legacy(Wire::Text {
                 op: TextOp::StartingRead(_),
                 ..
-            } => self
+            }) => self
                 .unsent
                 .values()
                 .next()
                 .map_or(0, |&key| self.read_us[key]),
-            Wire::CompleteUia(_) | Wire::MsaaRun(_) => self.focus_us.1,
+            Question::Batch(batch) if !batch.reads_focus_first() => self.focus_us.1,
             _ => 0,
         }
     }
@@ -512,9 +517,12 @@ impl Seam {
     fn end(&mut self, program: Running, app: &App) -> Vec<Seen> {
         match program {
             Running::Listener(ask) => {
+                let Question::Batch(batch) = &ask.request else {
+                    panic!("the listener reads a batch: {ask:?}");
+                };
                 let answer = Answer {
                     number: ask.number,
-                    outcome: Outcome::Result(Reply::Object(Box::new(listener_read()))),
+                    outcome: readers::outcome(batch, &listener_read()),
                     probes: Vec::new(),
                     detail: String::new(),
                 };
@@ -605,24 +613,27 @@ impl Seam {
 
     /// What `verbatim-outpost`'s program answers to `ask`, read from `app`.
     fn reply(&mut self, ask: &Ask, app: &App) -> Reply {
+        if let Question::Batch(batch) = &ask.request {
+            let full = batch
+                .steps
+                .iter()
+                .any(|step| matches!(step.op, verbatim_model::batch::Op::FocusRead { .. }));
+            let found = if batch.reads_focus_first() {
+                Found::Read(self.field_read(app))
+            } else if full {
+                Found::Read(button_read(self.kind))
+            } else {
+                // Its facts alone, a confirmation: the button, really
+                // focused, has the focused state.
+                Found::Focused
+            };
+            let Outcome::Result(reply) = readers::outcome(batch, &found) else {
+                unreachable!("the stand-in finds every object");
+            };
+            return reply;
+        }
         match legacy(&ask.request) {
-            Wire::CurrentFocus { .. } => {
-                Reply::Candidate(CandidateAnswer::focused(self.field_read(app)))
-            }
             Wire::Follow(_) => Reply::Followed,
-            Wire::CompleteUia(_) => Reply::Focus(Box::new(button_read(self.kind))),
-            // At the depth that stops at the facts the outpost reads no more
-            // than the focused state, which the button, really focused, has.
-            Wire::MsaaRun(run) if run.depth == verbatim_model::request::Depth::Facts => {
-                Reply::Candidate(CandidateAnswer {
-                    facts: verbatim_model::request::CandidateFacts::Found {
-                        focused: Some(true),
-                        role: None,
-                    },
-                    read: None,
-                })
-            }
-            Wire::MsaaRun(_) => Reply::Candidate(CandidateAnswer::focused(button_read(self.kind))),
             Wire::Text {
                 op: TextOp::StartingRead(read),
                 ..
@@ -815,28 +826,29 @@ fn focus_read(node: NodeId, window: NodeWindow, values: PropertyValues) -> Focus
     }
 }
 
-/// The listener's read of the button's element, with its route.
-fn listener_read() -> ObjectRead {
-    ObjectRead {
-        object: NodeRead {
+/// The listener's read of the button's element, its walk going on from
+/// its window.
+fn listener_read() -> Found {
+    let mut values = values("OK", Role::Button);
+    values.0.extend([
+        PropertyAnswer {
+            id: PropertyId::RuntimeId,
+            value: Some(PropertyValue::RuntimeId(RuntimeId(vec![42, 7]))),
+        },
+        PropertyAnswer {
+            id: PropertyId::IsContent,
+            value: Some(PropertyValue::Flag(true)),
+        },
+    ]);
+    Found::Walked(
+        NodeRead {
             node: None,
             window: window(5),
-            values: values("OK", Role::Button),
+            values,
         },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: WindowHandle(5),
-            steps: vec![RouteStep {
-                runtime_id: RuntimeId(vec![42, 7]),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::ContinueFrom(WindowHandle(5)),
-        }),
-    }
+        Vec::new(),
+        verbatim_model::batch::AncestorsEnd::ContinueFrom(WindowHandle(5)),
+    )
 }
 
 fn values(name: &str, role: Role) -> PropertyValues {

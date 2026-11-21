@@ -1014,60 +1014,77 @@ impl CoreDriver {
         answer
     }
 
-    /// The listener's read for Core's `ask` of the element it keeps.
+    /// The listener's read for Core's `ask` of the element it keeps: a
+    /// batch on it, or a generic read of it.
     fn listener_read(&mut self, ask: &Ask) -> Answer {
-        let Some(Request::ReadObject(read)) = ask.request.legacy() else {
-            panic!(
-                "Core asked the listener {:?}, which it reads no other way",
-                ask.request
-            );
-        };
-        let ObjectRef::Kept { listener, token } = read.object else {
-            return Answer {
-                number: ask.number,
-                outcome: verbatim_listener::read_msaa_object(read),
-                probes: Vec::new(),
-                detail: String::new(),
-            };
-        };
-        assert_eq!(listener, LISTENER.generation, "a token of another listener");
-        let focus = matches!(read.purpose, verbatim_model::request::Purpose::Focus);
-        let element = match self
-            .kept
-            .start_read((self.app, token), (ask.number.0, focus))
-        {
-            Start::Read(element) => element,
-            Start::NotThere => {
-                return Answer {
-                    number: ask.number,
-                    outcome: verbatim_model::request::Outcome::NotThere,
-                    probes: Vec::new(),
-                    detail: String::new(),
-                };
-            }
-            Start::NotAsked => panic!("Core asked of {token:?} twice"),
-        };
-        let _ = verbatim_win32::calls::take();
-        let readability = self.outpost.listener_readability();
-        let outcome = verbatim_listener::read_object(
-            (&self.uia, &readability),
-            &element,
-            (
-                self.app,
-                isize::try_from(ask.window.0).expect("a window handle"),
-            ),
-            read,
-        );
-        self.calls += verbatim_win32::calls::take();
-        let _ = self
-            .kept
-            .read_ended((self.app, token), element, true, &mut self.reported);
-        Answer {
+        let answered = |outcome| Answer {
             number: ask.number,
             outcome,
             probes: Vec::new(),
             detail: String::new(),
-        }
+        };
+        let (listener, token, keep) = match &ask.request {
+            verbatim_model::request::Question::Batch(batch) => {
+                let Some(verbatim_model::batch::Subject::Kept {
+                    listener,
+                    token,
+                    keep,
+                }) = batch.steps.first().and_then(|step| step.op.subject())
+                else {
+                    panic!(
+                        "Core asked the listener {:?}, which it reads no other way",
+                        ask.request
+                    );
+                };
+                (*listener, *token, *keep)
+            }
+            verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
+                let ObjectRef::Kept { listener, token } = read.object else {
+                    return answered(verbatim_listener::read_msaa_object(read));
+                };
+                (listener, token, false)
+            }
+            verbatim_model::request::Question::Legacy(_) => panic!(
+                "Core asked the listener {:?}, which it reads no other way",
+                ask.request
+            ),
+        };
+        assert_eq!(listener, LISTENER.generation, "a token of another listener");
+        let element = match self
+            .kept
+            .start_read((self.app, token), (ask.number.0, keep))
+        {
+            Start::Read(element) => element,
+            Start::NotThere => return answered(verbatim_model::request::Outcome::NotThere),
+            Start::NotAsked => panic!("Core asked of {token:?} twice"),
+        };
+        let _ = verbatim_win32::calls::take();
+        let readability = self.outpost.listener_readability();
+        let nearest = (
+            self.app,
+            isize::try_from(ask.window.0).expect("a window handle"),
+        );
+        let outcome = match &ask.request {
+            verbatim_model::request::Question::Batch(batch) => {
+                verbatim_listener::read_object((&self.uia, &readability), &element, nearest, batch)
+            }
+            verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
+                verbatim_listener::read_kept_object(
+                    (&self.uia, &readability),
+                    &element,
+                    nearest,
+                    read,
+                )
+            }
+            verbatim_model::request::Question::Legacy(other) => {
+                panic!("the listener reads no {other:?}")
+            }
+        };
+        self.calls += verbatim_win32::calls::take();
+        let _ = self
+            .kept
+            .read_ended((self.app, token), element, true, &mut self.reported);
+        answered(outcome)
     }
 
     /// The tell the listener sends for a UI Automation event of `kind` on

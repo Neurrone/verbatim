@@ -559,7 +559,8 @@ fn a_focus_with_no_key_since_names_the_committed_items_ids_and_identity() {
             object: -4,
             child: 2,
         },
-        identity: verbatim_model::request::Identity {
+        held_child: 2,
+        identity: super::super::msaa_run::Identity {
             states: verbatim_model::StateSet::default(),
             role: Role::ListItem,
             position_in_set: Some(2),

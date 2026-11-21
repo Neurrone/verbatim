@@ -787,6 +787,23 @@ impl Batch {
             )
         )
     }
+
+    /// Whether it tests the application's focus for the focused state
+    /// before reading it: the check after a menu, popup or switcher end,
+    /// NVDA's fake focus, which the shell answers unsent with the desktop
+    /// when no window is in front.
+    #[must_use]
+    pub fn reads_focus_if_focused(&self) -> bool {
+        self.steps.iter().any(|step| {
+            matches!(
+                &step.op,
+                Op::Test {
+                    subject: Subject::Focus,
+                    matcher,
+                } if matcher.properties().contains(&PropertyId::FocusedWithin)
+            )
+        })
+    }
 }
 
 /// A [`Op::Test`]'s result.

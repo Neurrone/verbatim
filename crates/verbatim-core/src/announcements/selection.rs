@@ -2,16 +2,14 @@
 //! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
 //! objects", its announcements).
 
-use std::iter;
-
-use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{
-    CompleteUia, CompletionFor, ObjectRead, ObjectRef, Purpose, ReadObject, RelationFound, Reply,
-    Request as Wire, RouteEnd,
-};
+use verbatim_model::batch::{MAX_DEPTH, MAX_NODES, Relation, View, Walk};
+use verbatim_model::matcher::Matcher;
+use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
+use verbatim_model::request::{NodeRead, Reply, Request as Wire, Route, RouteEnd};
 use verbatim_model::{Backend, NodeId, PropertyChange, Role, State, StateSet, WindowHandle};
 
 use super::{Announcement, Kept, native, text};
+use crate::batch::{Got, On};
 use crate::changes::AtArrival;
 use crate::entries::Entries;
 use crate::entries::window_facts;
@@ -19,39 +17,71 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWind
 use crate::focus::FOCUS_SET;
 use crate::focus::acceptance;
 use crate::focus::execute::Known;
-use crate::focus::uia_focus::ListenerRead;
+use crate::focus::uia_focus::walked;
 use crate::focus::versions::Focus as CommittedFocus;
 
-/// The item's outpost completing the listener's read of a selected item.
+/// What the item's outpost found of a selected item, judged at its
+/// decode.
 #[derive(Debug)]
-struct ItemCompletion {
-    window: RequestWindow,
-    complete: CompleteUia,
+enum Item {
+    /// The item, and whether the committed focus controls it or what it
+    /// is inside of.
+    Read(NodeRead, bool),
+    /// The item, or the focus's controller-for relation, could not be
+    /// read: nothing is said, as NVDA's COM error ends its
+    /// `event_selection`.
+    Gone,
 }
 
-impl Request for ItemCompletion {
-    type Reply = Box<ObjectRead>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::CompleteUia(Box::new(
-            self.complete.clone(),
-        )))
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Object(read) => Some(read),
-            _ => None,
-        }
-    }
+/// The item the listener read by `route`, read by its outpost, with
+/// whether the committed focus `focus` controls it or a subtree holding
+/// it, found by its runtime id `runtime_id` (the request list's design,
+/// section 6, `CompleteUia` for a selection's item).
+async fn item(
+    cx: &mut Cx<Entries>,
+    (window, route, focus, runtime_id): (RequestWindow, Route, NodeId, &RuntimeId),
+    due_us: u64,
+) -> Outcome<Item> {
+    let mut batch = cx.batch(|| ());
+    let item = batch.read(
+        On::route(route),
+        &crate::details::node_set(&cx.facts(), FOCUS_SET),
+    );
+    let controlled = batch.related(focus, Relation::ControllerFor, &[]);
+    let found = batch.descendants(
+        controlled.every(),
+        Walk {
+            depth: MAX_DEPTH,
+            view: View::Raw,
+            matcher: Some(Matcher::Is(
+                PropertyId::RuntimeId,
+                PropertyValue::RuntimeId(runtime_id.clone()),
+            )),
+            prune: None,
+            include_subject: true,
+            limit: 1,
+            nodes: MAX_NODES,
+            set: Vec::new(),
+        },
+    );
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(window.process), window)
+        .judged(move |answers| {
+            let item = match answers.get(item) {
+                Got::Done(item) => item.clone(),
+                Got::NotThere(_) | Got::Failed => return Some(Item::Gone),
+                Got::Refused(_) | Got::Skipped => return None,
+            };
+            match (answers.get(controlled), answers.get(found)) {
+                (Got::Failed, _) => Some(Item::Gone),
+                (_, Got::Done(found)) => Some(Item::Read(item, !found.nodes.is_empty())),
+                // No controller-for relation: nothing to walk.
+                (Got::Done(_) | Got::NotThere(_), Got::Skipped) => Some(Item::Read(item, false)),
+                _ => None,
+            }
+        });
+    cx.ask(request, due_us).await
 }
 
 /// The properties of a node by set.
@@ -162,54 +192,31 @@ async fn selected(
         crate::changes::speak_change(cx, trace_id, node, &PropertyChange::States(states), None);
         return;
     }
-    let read = ListenerRead {
-        window,
-        read: ReadObject {
-            object: ObjectRef::Kept {
-                listener: kept.listener,
-                token: kept.token,
-            },
-            set: crate::details::description_kept(&cx.facts(), FOCUS_SET),
-            relation: None,
-            descendants: false,
-            walk: Some(Known::of(&cx.facts(), None).sent),
-            purpose: Purpose::Selection,
-        },
-    };
-    let Outcome::Result(object) = cx.ask(read, due_us).await else {
-        return;
-    };
-    // An item read without its route is the listener's fault.
-    let Some(route) = object.route else {
+    let walk = Known::of(&cx.facts(), None).sent;
+    let kept_element = (kept.listener, kept.token, false);
+    let Outcome::Result(walked) = walked(cx, kept_element, (window, walk), due_us).await else {
         return;
     };
     let generation = cx
         .instance(Reader::Outpost(window.process))
         .map(verbatim_model::request::Instance::outpost_id);
     let known = Known::of(&cx.facts(), generation);
-    if let RouteEnd::Known(met) = &route.end
-        && !known.sent.contains(met)
-    {
-        // The committed focus changed between the two reads.
-        return;
-    }
-    let complete = ItemCompletion {
-        window,
-        complete: CompleteUia {
-            hidden: verbatim_model::request::HiddenRoot::ReadAnyway,
-            route,
-            read: iter::once(object.object.values)
-                .chain(object.ancestors.into_iter().map(|ancestor| ancestor.values))
-                .collect(),
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-            known: known.sent.clone(),
-            completes: CompletionFor::SelectionItem {
-                focus: committed.context.snapshot.id,
-            },
-            details: crate::details::focus_details(&cx.facts()),
+    let met = match &walked.route.end {
+        RouteEnd::Known(met) => match known.sent.iter().position(|known| known == met) {
+            Some(place) => Some(place),
+            // The committed focus changed between the two reads.
+            None => return,
         },
+        _ => None,
     };
-    let Outcome::Result(item) = cx.ask(complete, due_us).await else {
+    // The item's parent is the committed focus: the listener's walk up met
+    // the focus itself, the first of what Core knows, before any other
+    // ancestor.
+    let parent_is_focus =
+        walked.ancestors.is_empty() && met.and_then(|met| known.places.get(met)) == Some(&0);
+    let focus = committed.context.snapshot.id;
+    let asked = (window, walked.route, focus, &kept.runtime_id);
+    let Outcome::Result(Item::Read(item, controlled)) = item(cx, asked, due_us).await else {
         return;
     };
     // The focus committed meanwhile is no longer the one asked about.
@@ -217,33 +224,20 @@ async fn selected(
         .facts()
         .versions
         .live()
-        .is_none_or(|now| now.context.snapshot.id != committed.context.snapshot.id)
+        .is_none_or(|now| now.context.snapshot.id != focus)
     {
         return;
     }
-    match item.relation {
-        Some(RelationFound::Controlled | RelationFound::InsideControlled) => {
-            crate::changes::controlled_selection(
-                cx,
-                trace_id,
-                committed.context.snapshot.id,
-                (item.object, Backend::Uia),
-            );
+    if controlled {
+        crate::changes::controlled_selection(cx, trace_id, focus, (item, Backend::Uia));
+    } else if parent_is_focus && !focused(&item) && read_role(&item) == Some(Role::ListItem) {
+        if committed.kept.value_from_selection {
+            combo_box_value(cx, trace_id, committed, due_us).await;
+        } else {
+            core_window_value(cx, trace_id, committed, due_us).await;
         }
-        _ if parent_is_focus(&item, &known)
-            && !focused(&item)
-            && read_role(&item) == Some(Role::ListItem) =>
-        {
-            if committed.kept.value_from_selection {
-                combo_box_value(cx, trace_id, committed, due_us).await;
-            } else {
-                core_window_value(cx, trace_id, committed, due_us).await;
-            }
-        }
-        _ => {}
     }
 }
-
 /// Whether `tell`, a selection, is from a `ComboLBox` window of the
 /// committed focus's process while the focus is a combo box: the events a
 /// Windows Forms combo box asks for, Core asking the focus whether it is
@@ -372,9 +366,8 @@ fn cached_role(tell: &verbatim_model::tell::Event) -> Option<Role> {
 }
 
 /// The item's role, as read.
-fn read_role(item: &ObjectRead) -> Option<Role> {
+fn read_role(item: &NodeRead) -> Option<Role> {
     match item
-        .object
         .values
         .answer(PropertyId::Role)
         .and_then(|answer| answer.value.as_ref())
@@ -396,22 +389,10 @@ fn cached_states(tell: &verbatim_model::tell::Event) -> Option<StateSet> {
     }
 }
 
-/// Whether the item's parent is the committed focus: its walk up met the
-/// focus itself, the first of what Core knows, before any other ancestor.
-fn parent_is_focus(item: &ObjectRead, known: &Known) -> bool {
-    item.ancestors.is_empty()
-        && item
-            .met
-            .and_then(|met| usize::try_from(met).ok())
-            .and_then(|met| known.places.get(met))
-            == Some(&0)
-}
-
 /// Whether the item has the keyboard focus, as read.
-fn focused(item: &ObjectRead) -> bool {
+fn focused(item: &NodeRead) -> bool {
     matches!(
-        item.object
-            .values
+        item.values
             .answer(PropertyId::States)
             .and_then(|answer| answer.value.as_ref()),
         Some(verbatim_model::property::PropertyValue::States(states)) if states.contains(State::Focused)

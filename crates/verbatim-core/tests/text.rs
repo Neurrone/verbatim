@@ -7,9 +7,12 @@
 //! scripts it.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 mod terminal_support;
 
 use desk::{App, Desk, ONE};
+use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
     FocusCaret, FocusCaretRead, FocusRead, Instance, Outcome, Press, PressAction, QueueEffect,
@@ -127,12 +130,12 @@ fn heard_of(effect: Effect) -> Option<Heard> {
         Effect::CopyToClipboard(text) => Some(Heard::Copied(text)),
         Effect::SettingsChanged(settings) => Some(Heard::Settings(settings)),
         Effect::KeepDisplayOn(on) => Some(Heard::Display(on)),
-        Effect::Queue(QueueEffect::Send { ask, .. }) => {
-            Some(match desk::legacy(&ask.request).clone() {
-                Wire::Text { op, .. } => Heard::Asked(op),
-                other => Heard::Sent(desk::kind(&other)),
-            })
-        }
+        Effect::Queue(QueueEffect::Send { ask, .. }) => Some(match &ask.request {
+            verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) => {
+                Heard::Asked(op.clone())
+            }
+            other => Heard::Sent(desk::kind(other)),
+        }),
         Effect::Queue(QueueEffect::SendStrokes(sent)) => Some(Heard::Strokes(sent.len())),
         Effect::Queue(QueueEffect::Cancel { .. }) => Some(Heard::Cancelled),
         Effect::Observed(_) | Effect::Queue(_) => None,
@@ -751,7 +754,7 @@ fn edit_control(text: &str, offset: u32) -> Text {
     field.desk.app(ONE);
     let tell = field.edit_tell(EventKind::MsaaFocus, -4);
     let _ = field.desk.tell(desk::LISTENER, tell);
-    let [(run, to, Wire::MsaaRun(_))] = field.desk.sent[..] else {
+    let [(run, to, verbatim_model::request::Question::Batch(_))] = field.desk.sent[..] else {
         panic!("one run asked: {:?}", field.desk.sent);
     };
     let caret = caret_on(line(text, 100, offset), None);
@@ -768,10 +771,7 @@ fn edit_control(text: &str, offset: u32) -> Text {
         ..desk::focus_read_of(ONE, &node(FIELD, Role::EditableText, StateSet::new()), &[])
     };
     read.focus.runtime_id = None;
-    let tried = verbatim_model::request::CandidateAnswer::focused(read);
-    let _ = field
-        .desk
-        .answer(to, run, Outcome::Result(Reply::Candidate(tried)));
+    let _ = field.desk.found(to, run, &Found::Read(read));
     field.caret = caret;
     field
 }
@@ -2741,7 +2741,7 @@ impl Text {
         let next = ONE.replaced();
         self.desk.app(next);
         let _ = self.desk.step(QueueInput::ReaderEnded(ONE.instance()));
-        let [(number, to, Wire::CurrentFocus { .. })] = self.desk.sent[..] else {
+        let [(number, to, verbatim_model::request::Question::Batch(_))] = self.desk.sent[..] else {
             panic!("the replacement asked for the focus: {:?}", self.desk.sent);
         };
         let read = FocusRead {
@@ -2749,13 +2749,7 @@ impl Text {
             ..desk::focus_read_of(next, snapshot, &[])
         };
         self.desk
-            .answer(
-                to,
-                number,
-                Outcome::Result(Reply::Candidate(
-                    verbatim_model::request::CandidateAnswer::focused(read),
-                )),
-            )
+            .found(to, number, &Found::Read(read))
             .into_iter()
             .filter_map(|heard| match heard {
                 desk::Heard::Say(_, segments) => Some(segments),
@@ -3873,11 +3867,13 @@ impl Text {
         // The listener's first foreground report asks for the focus at
         // startup; the field's focus was told before it, so nothing is
         // there to read again.
-        if let [(number, to, Wire::CurrentFocus { .. })] = self.desk.sent[..] {
+        if let [(number, to, ref asked)] = self.desk.sent[..]
+            && desk::kind(asked) == "CurrentFocus"
+        {
             let _ = self.desk.answer(to, number, Outcome::NotThere);
         }
         let _ = self.desk.tell(desk::LISTENER, tell);
-        let [(run, to, Wire::MsaaRun(_))] = self.desk.sent[..] else {
+        let [(run, to, verbatim_model::request::Question::Batch(_))] = self.desk.sent[..] else {
             panic!("one run asked: {:?}", self.desk.sent);
         };
         let nameless = NodeSnapshot {
@@ -3897,9 +3893,8 @@ impl Text {
             ..desk::focus_read_of(app, &nameless, &[])
         };
         read.focus.runtime_id = None;
-        let tried = verbatim_model::request::CandidateAnswer::focused(read);
         self.desk
-            .answer(to, run, Outcome::Result(Reply::Candidate(tried)))
+            .found(to, run, &Found::Read(read))
             .into_iter()
             .filter_map(|heard| match heard {
                 desk::Heard::Say(_, segments) => Some(segments),

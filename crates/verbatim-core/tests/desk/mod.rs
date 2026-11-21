@@ -9,15 +9,19 @@
 
 #![allow(dead_code, reason = "each test file uses part of the support")]
 
+use crate::readers::{self, Found};
+use verbatim_model::batch::{AncestorsEnd, Op, Subject};
+use verbatim_model::request::Question;
+
 use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Instance, NodeRead, NodeWindow,
-    ObjectRead, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply, Request as Wire,
-    RequestNumber, Route, RouteEnd, RouteStep,
+    Answer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Instance, KnownAncestor, NodeRead,
+    NodeWindow, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply, Request as Wire,
+    RequestNumber, Route,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -224,17 +228,41 @@ pub fn focus_heard(
     expected
 }
 
-/// A request's kind, as [`Heard::Sent`] names it.
-pub fn kind(request: &Wire) -> &'static str {
-    match request {
-        Wire::ReadObject(_) => "ReadObject",
-        Wire::CompleteUia(_) => "CompleteUia",
-        Wire::MsaaRun(_) => "MsaaRun",
-        Wire::CurrentFocus { .. } => "CurrentFocus",
-        Wire::Follow(_) => "Follow",
-        Wire::Properties { .. } => "Properties",
-        Wire::Text { .. } => "Text",
-        _ => "other",
+/// A request's kind, as [`Heard::Sent`] names it: a batch by what it
+/// reads, a candidate's read, a read of the current focus, the listener's
+/// read of a kept element, the outpost's read of a route.
+pub fn kind(request: &Question) -> &'static str {
+    let batch = match request {
+        Question::Legacy(Wire::ReadObject(_)) => return "ReadObject",
+        Question::Legacy(Wire::Follow(_)) => return "Follow",
+        Question::Legacy(Wire::Properties { .. }) => return "Properties",
+        Question::Legacy(Wire::Text { .. }) => return "Text",
+        Question::Legacy(_) => return "other",
+        Question::Batch(batch) => batch,
+    };
+    let names = |subject: fn(&Subject) -> bool| {
+        batch
+            .steps
+            .iter()
+            .filter_map(|step| step.op.subject())
+            .any(subject)
+    };
+    if batch.reads_focus_first() {
+        "CurrentFocus"
+    } else if names(|subject| matches!(subject, Subject::Msaa { .. })) {
+        "Candidate"
+    } else if names(|subject| matches!(subject, Subject::Kept { .. })) {
+        "ReadObject"
+    } else if names(|subject| matches!(subject, Subject::Route(_))) {
+        "Completion"
+    } else if batch
+        .steps
+        .iter()
+        .all(|step| matches!(step.op, Op::Follow(_)))
+    {
+        "Follow"
+    } else {
+        "other"
     }
 }
 
@@ -264,7 +292,7 @@ fn heard_of(effect: Effect) -> Option<Heard> {
         Effect::CopyToClipboard(text) => Some(Heard::Copied(text)),
         Effect::ForKey(_, effect) => heard_of(*effect),
         Effect::Queue(QueueEffect::Send { to, ask }) => {
-            Some(Heard::Sent(to.reader, kind(legacy(&ask.request))))
+            Some(Heard::Sent(to.reader, kind(&ask.request)))
         }
         Effect::Observed(_) | Effect::Queue(_) => None,
         other => panic!("an effect these tests do not expect: {other:?}"),
@@ -435,29 +463,71 @@ pub fn focus_tell(app: App, number: u64, at_us: u64) -> Event {
     }
 }
 
-/// The listener's read of the focus element in `app`: its route to the
-/// application's window.
-pub fn listener_read(app: App, number: u64) -> ObjectRead {
-    ObjectRead {
-        object: NodeRead {
+/// The listener's read of the focus element `number` in `app`: the element
+/// alone, its walk going on from the application's window.
+pub fn listener_read(app: App, number: u64) -> Found {
+    Found::Walked(
+        NodeRead {
             node: None,
             window: app.node_window(),
-            values: PropertyValues::default(),
+            values: PropertyValues(vec![
+                PropertyAnswer {
+                    id: PropertyId::RuntimeId,
+                    value: Some(PropertyValue::RuntimeId(runtime_of(number))),
+                },
+                PropertyAnswer {
+                    id: PropertyId::IsContent,
+                    value: Some(PropertyValue::Flag(true)),
+                },
+            ]),
         },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: app.window(),
-            steps: vec![RouteStep {
-                runtime_id: runtime_of(number),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::ContinueFrom(app.window()),
-        }),
-    }
+        Vec::new(),
+        AncestorsEnd::ContinueFrom(app.window()),
+    )
+}
+
+/// [`listener_read`] of `number` in `app`, its walk meeting `met`, by its
+/// place among the stops of the walk `asked`, the listener's batch.
+pub fn listener_read_meeting(
+    desk: &Desk,
+    asked: u64,
+    (app, number): (App, u64),
+    met: &KnownAncestor,
+) -> Found {
+    let place = desk
+        .asked
+        .iter()
+        .find_map(|(each, _, question)| match question {
+            Question::Batch(batch) if *each == asked => {
+                batch.steps.iter().find_map(|step| match &step.op {
+                    Op::Ancestors { until, .. } => until.iter().position(|known| known == met),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{met:?} among the stops of walk {asked}"));
+    let Found::Walked(element, ancestors, _) = listener_read(app, number) else {
+        unreachable!("the listener's read is a walk");
+    };
+    let place = u32::try_from(place).expect("a short list");
+    Found::Walked(element, ancestors, AncestorsEnd::Met(place))
+}
+
+/// The route and the ancestors Core knows of the outpost's read of a route
+/// that `question` asks, if it asks one.
+pub fn completion_of(question: &Question) -> Option<(Route, Vec<KnownAncestor>)> {
+    let Question::Batch(batch) = question else {
+        return None;
+    };
+    batch.steps.iter().find_map(|step| match &step.op {
+        Op::FocusRead {
+            subject: Subject::Route(route),
+            known,
+            ..
+        } => Some(((**route).clone(), known.clone())),
+        _ => None,
+    })
 }
 
 /// A desktop whose listener is ready, and the outposts Core asked for,
@@ -472,14 +542,14 @@ pub struct Desk {
     /// The last key's number.
     pub keys: u64,
     /// The requests the last step sent, by number, instance and request.
-    pub sent: Vec<(u64, Instance, Wire)>,
+    pub sent: Vec<(u64, Instance, Question)>,
     /// The wake Core last asked for.
     pub wake: Option<u64>,
     /// Every input fed, with how many effects it had, as the flight
     /// recorder keeps them: a replay fixture's inputs.
     pub recorded: Vec<verbatim_core::RecordedInput>,
     /// Every request sent since the desk was made, in order.
-    pub asked: Vec<(u64, Instance, Wire)>,
+    pub asked: Vec<(u64, Instance, Question)>,
     /// Every request Core cancelled, by number.
     pub cancelled: Vec<u64>,
 }
@@ -571,10 +641,8 @@ impl Desk {
                         pending.push(QueueInput::ReaderReady(app.instance()));
                     }
                     Effect::Queue(QueueEffect::Send { to, ask }) => {
-                        self.sent
-                            .push((ask.number.0, *to, legacy(&ask.request).clone()));
-                        self.asked
-                            .push((ask.number.0, *to, legacy(&ask.request).clone()));
+                        self.sent.push((ask.number.0, *to, ask.request.clone()));
+                        self.asked.push((ask.number.0, *to, ask.request.clone()));
                     }
                     Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = *wake,
                     Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
@@ -623,6 +691,29 @@ impl Desk {
         self.reply_outcome(Outcome::Result(reply))
     }
 
+    /// Answers request `number`, a batch sent to `from`, as its reader does
+    /// having found `found`.
+    pub fn found(&mut self, from: Instance, number: u64, found: &Found) -> Vec<Heard> {
+        let batch = self
+            .asked
+            .iter()
+            .find_map(|(asked, _, question)| match question {
+                Question::Batch(batch) if *asked == number => Some(batch.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("request {number} is a batch asked"));
+        self.answer(from, number, readers::outcome(&batch, found))
+    }
+
+    /// Answers the one batch the last step sent as its reader does, having
+    /// found `found`.
+    pub fn reply_found(&mut self, found: &Found) -> Vec<Heard> {
+        let [(number, to, _)] = self.sent[..] else {
+            panic!("one request out: {:?}", self.sent);
+        };
+        self.found(to, number, found)
+    }
+
     /// The queue's wake fed, at the time Core asked for.
     pub fn due(&mut self) -> Vec<Heard> {
         let wake = self.wake.expect("a wake asked for");
@@ -648,24 +739,14 @@ impl Desk {
         let number = read.focus.read.node.expect("a focus node").number();
         let tell = focus_tell(app, number, self.at_us + 1_000);
         let _ = self.tell(LISTENER, tell);
-        let [(object, LISTENER, Wire::ReadObject(_))] = &self.sent[..] else {
+        let [(_, LISTENER, Question::Batch(_))] = &self.sent[..] else {
             panic!("one listener read asked: {:?}", self.sent);
         };
-        let object = *object;
-        let _ = self.answer(
-            LISTENER,
-            object,
-            Outcome::Result(Reply::Object(Box::new(listener_read(app, number)))),
-        );
-        let [(completion, to, Wire::CompleteUia(_))] = &self.sent[..] else {
+        let _ = self.reply_found(&listener_read(app, number));
+        let [(_, _, Question::Batch(_))] = &self.sent[..] else {
             panic!("one completion asked: {:?}", self.sent);
         };
-        let (completion, to) = (*completion, *to);
-        self.answer(
-            to,
-            completion,
-            Outcome::Result(Reply::Focus(Box::new(read))),
-        )
+        self.reply_found(&Found::Read(read))
     }
 
     /// A UI Automation property change of `property` to `value` on the

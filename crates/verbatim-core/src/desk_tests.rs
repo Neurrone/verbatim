@@ -10,8 +10,8 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, ObjectRead, Reply,
-    Request as Wire, Route, RouteEnd, RouteStep, WindowVerdict,
+    FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, Question, Reply,
+    Request as Wire, WindowVerdict,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -23,8 +23,9 @@ use verbatim_model::{
 };
 
 use crate::entries::Entry;
-use crate::entries::tests::{Held, LISTENER, answer};
+use crate::entries::tests::{Held, LISTENER};
 use crate::event_queue::{Input, Instance, Reader, Timed};
+use crate::readers::Found;
 use verbatim_model::Effect;
 use verbatim_model::request::QueueEffect;
 
@@ -202,21 +203,19 @@ pub(crate) fn focus_heard(
     expected
 }
 
-fn kind(request: &Wire) -> &'static str {
+fn kind(request: &Question) -> &'static str {
     match request {
-        Wire::ReadObject(_) => "ReadObject",
-        Wire::CompleteUia(_) => "CompleteUia",
-        Wire::MsaaRun(_) => "MsaaRun",
-        Wire::CurrentFocus { .. } => "CurrentFocus",
-        Wire::Follow(_) => "Follow",
-        Wire::Properties { .. } => "Properties",
-        Wire::Text { .. } => "Text",
-        _ => "other",
+        Question::Batch(batch) => crate::entries::tests::batch_kind(batch),
+        Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
+        Question::Legacy(Wire::Follow(_)) => "Follow",
+        Question::Legacy(Wire::Properties { .. }) => "Properties",
+        Question::Legacy(Wire::Text { .. }) => "Text",
+        Question::Legacy(_) => "other",
     }
 }
 
 /// The requests a step sent, by number, reader and request.
-type Sent = Vec<(u64, Reader, Wire)>;
+type Sent = Vec<(u64, Reader, Question)>;
 
 /// `effects` as [`Heard`], with the requests sent, by number, and the
 /// verdict each carried, by number.
@@ -227,10 +226,9 @@ fn heard_of(effects: Vec<Effect>) -> (Vec<Heard>, Sent, Vec<(u64, WindowVerdict)
     for effect in effects {
         match effect {
             Effect::Queue(QueueEffect::Send { to, ask }) => {
-                let request = crate::event_queue::legacy_for_tests(&ask.request);
-                heard.push(Heard::Sent(to.reader, kind(&request)));
+                heard.push(Heard::Sent(to.reader, kind(&ask.request)));
                 verdicts.push((ask.number.0, ask.verdict));
-                sent.push((ask.number.0, to.reader, request));
+                sent.push((ask.number.0, to.reader, ask.request));
             }
             said => heard.extend(said_heard(said)),
         }
@@ -432,29 +430,29 @@ pub(crate) fn focus_tell(app: App, number: u64, at_us: u64) -> Event {
     }
 }
 
-/// The listener's read of the focus element in `app`: its route to the
-/// application's window.
-pub(crate) fn listener_read(app: App, number: u64) -> ObjectRead {
-    ObjectRead {
-        object: NodeRead {
+/// The listener's read of the focus element `number` in `app`: the element
+/// alone, its walk going on from the application's window.
+pub(crate) fn listener_read(app: App, number: u64) -> Found {
+    let mut values = PropertyValues::default();
+    values.0.extend([
+        PropertyAnswer {
+            id: PropertyId::RuntimeId,
+            value: Some(PropertyValue::RuntimeId(runtime_of(number))),
+        },
+        PropertyAnswer {
+            id: PropertyId::IsContent,
+            value: Some(PropertyValue::Flag(true)),
+        },
+    ]);
+    Found::Walked(
+        NodeRead {
             node: None,
             window: app.node_window(),
-            values: PropertyValues::default(),
+            values,
         },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: app.window(),
-            steps: vec![RouteStep {
-                runtime_id: runtime_of(number),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::ContinueFrom(app.window()),
-        }),
-    }
+        Vec::new(),
+        verbatim_model::batch::AncestorsEnd::ContinueFrom(app.window()),
+    )
 }
 
 /// A desktop whose listener is ready, and the outposts of the applications
@@ -531,6 +529,17 @@ impl Desk {
         self.reply_outcome(verbatim_model::request::Outcome::Result(reply))
     }
 
+    /// Answers the one batch the last step sent as its reader does, having
+    /// found `found`.
+    pub(crate) fn found(&mut self, found: &Found) -> Vec<Heard> {
+        let [(number, _, Question::Batch(batch))] = &self.sent[..] else {
+            panic!("one batch out: {:?}", self.sent);
+        };
+        let outcome = crate::readers::outcome(batch, found);
+        let _ = number;
+        self.reply_outcome(outcome)
+    }
+
     /// `app`'s outpost made ready, if it is not.
     pub(crate) fn app(&mut self, app: App) {
         if self.ready.iter().any(|ready| ready.pid == app.pid) {
@@ -558,23 +567,14 @@ impl Desk {
         let number = read.focus.read.node.expect("a focus node").number();
         let tell = focus_tell(app, number, self.at_us + 1_000);
         let (_, sent) = self.step(Input::Entry(Entry::of_tell(LISTENER, tell, false).unwrap()));
-        let [(object, Reader::Listener, Wire::ReadObject(_))] = &sent[..] else {
+        let [(_, Reader::Listener, Question::Batch(_))] = &sent[..] else {
             panic!("one listener read asked: {sent:?}");
         };
-        let (_, sent) = self.step(answer(
-            LISTENER,
-            *object,
-            Reply::Object(Box::new(listener_read(app, number))),
-        ));
-        let [(completion, _, Wire::CompleteUia(_))] = &sent[..] else {
-            panic!("one completion asked: {sent:?}");
+        self.found(&listener_read(app, number));
+        let [(_, _, Question::Batch(_))] = &self.sent[..] else {
+            panic!("one completion asked: {:?}", self.sent);
         };
-        self.step(answer(
-            app.instance(),
-            *completion,
-            Reply::Focus(Box::new(read)),
-        ))
-        .0
+        self.found(&Found::Read(read))
     }
 
     /// A UI Automation property change of `property` to `value` on the
@@ -675,8 +675,12 @@ impl Desk {
                 panic!("one request out: {asked:?}");
             };
             let reply = match request {
-                Wire::Properties { .. } => Reply::Properties(values_of(navigator)),
-                Wire::Text { .. } => Reply::Text(verbatim_model::TextReply::NoText),
+                Question::Legacy(Wire::Properties { .. }) => {
+                    Reply::Properties(values_of(navigator))
+                }
+                Question::Legacy(Wire::Text { .. }) => {
+                    Reply::Text(verbatim_model::TextReply::NoText)
+                }
                 other => panic!("a review read these tests do not answer: {other:?}"),
             };
             heard = self.reply(reply);

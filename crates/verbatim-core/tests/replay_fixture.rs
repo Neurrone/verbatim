@@ -18,14 +18,16 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{LISTENER, ONE, focus_read_of, focus_tell, listener_read, runtime_of};
-use verbatim_core::{RecordedInput, SrState, dump, reduce, replay};
+use readers::Found;
+use verbatim_core::{RecordedInput, Runtime, SrState, dump, reduce, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    Answer, Instance, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply,
-    Request as Wire, RequestNumber,
+    Answer, Instance, ProcessFact, Question, QueueEffect, QueueInput, Reader, RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -60,16 +62,55 @@ fn queued(trace: u64, at_us: u64, input: QueueInput) -> Input {
     }
 }
 
-/// The answer to request `number` from `from`, `reply`.
-fn answer(from: Instance, number: u64, reply: Reply) -> QueueInput {
-    QueueInput::Answer {
-        from,
-        answer: Answer {
-            number: RequestNumber(number),
-            outcome: Outcome::Result(reply),
-            probes: Vec::new(),
-            detail: String::new(),
-        },
+/// The scripted session as it is written: each input reduced as it is
+/// added, so that a reader's answer is made against the batch Core sent.
+struct Script {
+    state: SrState,
+    runtime: Runtime,
+    asked: Vec<(u64, Question)>,
+    inputs: Vec<Input>,
+}
+
+impl Script {
+    fn new() -> Self {
+        Self {
+            state: SrState::new(),
+            runtime: Runtime::default(),
+            asked: Vec::new(),
+            inputs: Vec::new(),
+        }
+    }
+
+    /// `input` added.
+    fn push(&mut self, input: Input) {
+        for effect in reduce(&mut self.state, &mut self.runtime, &input) {
+            if let Effect::Queue(QueueEffect::Send { ask, .. }) = effect {
+                self.asked.push((ask.number.0, ask.request));
+            }
+        }
+        self.inputs.push(input);
+    }
+
+    /// The answer to request `number` from `from`, the batch Core sent,
+    /// as its reader answers it having found `found`.
+    fn answer(&self, from: Instance, number: u64, found: &Found) -> QueueInput {
+        let batch = self
+            .asked
+            .iter()
+            .find_map(|(asked, question)| match question {
+                Question::Batch(batch) if *asked == number => Some(batch.clone()),
+                _ => None,
+            })
+            .expect("a batch asked");
+        QueueInput::Answer {
+            from,
+            answer: Answer {
+                number: RequestNumber(number),
+                outcome: readers::outcome(&batch, found),
+                probes: Vec::new(),
+                detail: String::new(),
+            },
+        }
     }
 }
 
@@ -107,59 +148,53 @@ fn followed(trace: u64, property: PropertyId, value: PropertyValue) -> QueueInpu
 /// read, and its tells of the two changes. This is the session the
 /// committed fixture pins.
 fn scripted_inputs() -> Vec<Input> {
-    vec![
-        queued(
-            1,
-            1_000,
-            QueueInput::Process(ProcessFact::ListenerStarted(1)),
-        ),
-        queued(2, 2_000, QueueInput::ReaderReady(LISTENER)),
-        queued(
-            3,
-            3_000,
-            QueueInput::Tell {
-                from: LISTENER,
-                tell: Box::new(focus_tell(ONE, 1, 3_000)),
-            },
-        ),
-        queued(
-            4,
-            4_000,
-            answer(LISTENER, 1, Reply::Object(Box::new(listener_read(ONE, 1)))),
-        ),
-        queued(
-            5,
-            5_000,
-            QueueInput::Process(ProcessFact::OutpostStarted {
-                process: ONE.pid,
-                generation: ONE.generation,
-            }),
-        ),
-        queued(6, 6_000, QueueInput::ReaderReady(ONE.instance())),
-        queued(
-            7,
-            7_000,
-            answer(
-                ONE.instance(),
-                2,
-                Reply::Focus(Box::new(focus_read_of(ONE, &slider(), &[]))),
-            ),
-        ),
-        queued(
-            8,
-            8_000,
-            followed(8, PropertyId::Value, PropertyValue::Text("55".to_owned())),
-        ),
-        queued(
+    let mut script = Script::new();
+    script.push(queued(
+        1,
+        1_000,
+        QueueInput::Process(ProcessFact::ListenerStarted(1)),
+    ));
+    script.push(queued(2, 2_000, QueueInput::ReaderReady(LISTENER)));
+    script.push(queued(
+        3,
+        3_000,
+        QueueInput::Tell {
+            from: LISTENER,
+            tell: Box::new(focus_tell(ONE, 1, 3_000)),
+        },
+    ));
+    let listened = script.answer(LISTENER, 1, &listener_read(ONE, 1));
+    script.push(queued(4, 4_000, listened));
+    script.push(queued(
+        5,
+        5_000,
+        QueueInput::Process(ProcessFact::OutpostStarted {
+            process: ONE.pid,
+            generation: ONE.generation,
+        }),
+    ));
+    script.push(queued(6, 6_000, QueueInput::ReaderReady(ONE.instance())));
+    let completed = script.answer(
+        ONE.instance(),
+        2,
+        &Found::Read(focus_read_of(ONE, &slider(), &[])),
+    );
+    script.push(queued(7, 7_000, completed));
+    script.push(queued(
+        8,
+        8_000,
+        followed(8, PropertyId::Value, PropertyValue::Text("55".to_owned())),
+    ));
+    script.push(queued(
+        9,
+        9_000,
+        followed(
             9,
-            9_000,
-            followed(
-                9,
-                PropertyId::States,
-                PropertyValue::States(StateSet::new().with(State::Disabled)),
-            ),
+            PropertyId::States,
+            PropertyValue::States(StateSet::new().with(State::Disabled)),
         ),
-    ]
+    ));
+    script.inputs
 }
 
 /// One effect as this test compares it: a wake asked, an outpost asked
@@ -183,11 +218,9 @@ fn seen(effect: Effect) -> Seen {
         Effect::Queue(QueueEffect::Send { to, ask }) => Seen::Sent(
             to.reader,
             ask.number.0,
-            match legacy(&ask.request) {
-                Wire::ReadObject(_) => "ReadObject",
-                Wire::CompleteUia(_) => "CompleteUia",
-                Wire::Follow(_) => "Follow",
-                other => panic!("a request this session does not send: {other:?}"),
+            match desk::kind(&ask.request) {
+                kind @ ("ReadObject" | "Completion" | "Follow") => kind,
+                other => panic!("a request this session does not send: {other}"),
             },
         ),
         Effect::Observed(observed) => Seen::Observed(observed.trace_id),
@@ -232,7 +265,7 @@ fn expected_effects() -> Vec<Vec<Seen>> {
         vec![Seen::Start(ONE.pid), Seen::Wake(Some(13_003_000))],
         vec![Seen::Wake(Some(9_005_000))],
         vec![
-            Seen::Sent(outpost, 2, "CompleteUia"),
+            Seen::Sent(outpost, 2, "Completion"),
             Seen::Wake(Some(506_000)),
         ],
         vec![
@@ -343,12 +376,4 @@ fn regenerate_fixture() {
     let path = fixture_path();
     fs::create_dir_all(path.parent().expect("fixtures dir")).expect("creates fixtures dir");
     fs::write(path, buffer).expect("writes fixture");
-}
-
-/// `question` as one of the kinds of request not yet converted to a
-/// batch: these tests state today's requests, and a batch fails them.
-fn legacy(question: &verbatim_model::request::Question) -> &Wire {
-    question
-        .legacy()
-        .expect("a kind of request, where no feature asks a batch yet")
 }

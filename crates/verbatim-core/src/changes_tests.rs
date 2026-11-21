@@ -2,6 +2,8 @@
 //! focus: the button "OK", node 2 in window 5, under the frame "Editor",
 //! node 1.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -23,10 +25,11 @@ use crate::event_queue::Input;
 fn committed() -> Held {
     let mut state = asked_completion();
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+            (OUTPOST, 2),
+            Found::Read(focus_read(None))
         ),
         SPOKEN_FOLLOWED
     );
@@ -63,8 +66,6 @@ fn read(relation: RelationFound, values: PropertyValues) -> Reply {
         relation: Some(relation),
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     }))
 }
 
@@ -508,17 +509,10 @@ fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
             NOTHING
         );
     }
-    let mut listened = crate::entries::tests::listener_answer();
-    if let Some(route) = listened.route.as_mut() {
-        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
-    }
+    let listened = crate::entries::tests::listener_answer_of(vec![42, 3]);
     assert_eq!(
-        feed_at(
-            &mut state,
-            4_200,
-            answer(LISTENER, 4, Reply::Object(Box::new(listened)))
-        ),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        found_at(&mut state, 4_200, (LISTENER, 4), listened),
+        ["send Outpost(Pid(40)) Completion"]
     );
     let mut read = focus_read(None);
     read.focus.read.node = Some(node(3));
@@ -538,11 +532,7 @@ fn a_focus_under_the_committed_focus_judges_its_waiting_state_tells_first() {
         described: false,
     };
     read.ancestors.insert(0, combo);
-    let said = feed_at(
-        &mut state,
-        4_300,
-        answer(OUTPOST, 5, Reply::Focus(Box::new(read))),
-    );
+    let said = found_at(&mut state, 4_300, (OUTPOST, 5), Found::Read(read));
     // "expanded" on the committed combo box first, then the focus; the
     // name change is not moved, so it is judged after the commit, on an
     // ancestor, and says nothing (were it moved, "Saved" would be said).
@@ -574,14 +564,11 @@ fn a_focus_not_under_the_committed_focus_leaves_its_state_tells_waiting() {
             crate::entries::Entry::of_tell(LISTENER, uia_states(1, expanded), false).unwrap(),
         ),
     );
-    feed_at(
+    found_at(
         &mut state,
         4_200,
-        answer(
-            LISTENER,
-            4,
-            Reply::Object(Box::new(crate::entries::tests::listener_answer())),
-        ),
+        (LISTENER, 4),
+        crate::entries::tests::listener_answer(),
     );
     let mut read = focus_read(None);
     read.focus.read.node = Some(node(3));
@@ -590,11 +577,7 @@ fn a_focus_not_under_the_committed_focus_leaves_its_state_tells_waiting() {
     // The state change is judged after the commit, on a node that is no
     // longer the focus or its ancestor: nothing is said of it.
     assert_eq!(
-        feed_at(
-            &mut state,
-            4_300,
-            answer(OUTPOST, 5, Reply::Focus(Box::new(read)))
-        ),
+        found_at(&mut state, 4_300, (OUTPOST, 5), Found::Read(read)),
         ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
     );
 }
@@ -922,24 +905,17 @@ fn focus_on_three(state: &mut Held) {
 /// The listener's read of the focus [`focus_on_three`] asked, answered at
 /// `at_us`: the completion asked (request 5).
 fn three_routed(state: &mut Held, at_us: u64) {
-    let mut listened = crate::entries::tests::listener_answer();
-    if let Some(route) = listened.route.as_mut() {
-        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
-    }
+    let listened = crate::entries::tests::listener_answer_of(vec![42, 3]);
     assert_eq!(
-        feed_at(
-            state,
-            at_us,
-            answer(LISTENER, 4, Reply::Object(Box::new(listened)))
-        ),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        found_at(state, at_us, (LISTENER, 4), listened),
+        ["send Outpost(Pid(40)) Completion"]
     );
 }
 
 /// The completion of the focus [`focus_on_three`] asked: node 3, named
 /// `name`, of `role`, with `states`, under the frame and, when given, the
 /// list "Cities", node 6, runtime id `[42, 6]`.
-fn three_read(name: &str, role: Role, states: StateSet, in_cities: bool) -> Reply {
+fn three_read(name: &str, role: Role, states: StateSet, in_cities: bool) -> Found {
     use verbatim_model::request::{FocusAncestor, FocusNode};
     let mut read = focus_read(None);
     read.focus.read.node = Some(node(3));
@@ -967,7 +943,7 @@ fn three_read(name: &str, role: Role, states: StateSet, in_cities: bool) -> Repl
             },
         );
     }
-    Reply::Focus(Box::new(read))
+    Found::Read(read)
 }
 
 /// The arrival table for an outpost's state change, at its turn on the
@@ -985,14 +961,11 @@ fn a_state_change_of_a_focus_told_before_its_completion_is_silent() {
     );
     three_routed(&mut state, 4_200);
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             4_300,
-            answer(
-                OUTPOST,
-                5,
-                three_read("Paris", Role::ListItem, StateSet::default(), false)
-            )
+            (OUTPOST, 5),
+            three_read("Paris", Role::ListItem, StateSet::default(), false)
         ),
         ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
     );
@@ -1011,14 +984,11 @@ fn an_ancestors_state_change_is_spoken_only_when_on_the_line_at_its_arrival() {
     let mut state = committed();
     focus_on_three(&mut state);
     three_routed(&mut state, 4_200);
-    feed_at(
+    found_at(
         &mut state,
         4_300,
-        answer(
-            OUTPOST,
-            5,
-            three_read("Paris", Role::ListItem, StateSet::default(), true),
-        ),
+        (OUTPOST, 5),
+        three_read("Paris", Role::ListItem, StateSet::default(), true),
     );
     assert_eq!(
         feed_at(&mut state, 4_400, followed_states(6, expanded)),
@@ -1033,14 +1003,11 @@ fn an_ancestors_state_change_is_spoken_only_when_on_the_line_at_its_arrival() {
     );
     three_routed(&mut state, 4_200);
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             4_300,
-            answer(
-                OUTPOST,
-                5,
-                three_read("Paris", Role::ListItem, StateSet::default(), true)
-            )
+            (OUTPOST, 5),
+            three_read("Paris", Role::ListItem, StateSet::default(), true)
         ),
         [
             "Label(\"Cities\") Role(List)",
@@ -1072,18 +1039,15 @@ fn a_state_change_told_while_the_focus_completion_is_out_is_spoken_after_the_foc
         NOTHING
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             4_300,
-            answer(
-                OUTPOST,
-                5,
-                three_read(
-                    "File",
-                    Role::MenuButton,
-                    focused.with(State::Collapsed),
-                    false
-                )
+            (OUTPOST, 5),
+            three_read(
+                "File",
+                Role::MenuButton,
+                focused.with(State::Collapsed),
+                false
             )
         ),
         [

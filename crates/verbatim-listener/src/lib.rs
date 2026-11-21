@@ -14,6 +14,6 @@ mod call_log;
 pub mod listener;
 mod reading;
 
-pub use call_log::{CallObserver, read_object, read_object_observed};
+pub use call_log::{CallObserver, read_kept_object, read_object, read_object_observed};
 pub use listener::asked::read_msaa_object;
 pub use listener::run_listener;

@@ -1747,7 +1747,6 @@ mod tests {
             set,
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         };
         let client = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
@@ -1773,8 +1772,6 @@ mod tests {
                     relation: None,
                     descendants: Vec::new(),
                     ancestors: Vec::new(),
-                    met: None,
-                    route: None,
                 }))),
                 probes: Vec::new(),
                 detail: String::new(),
@@ -1926,7 +1923,6 @@ mod tests {
             set: vec![PropertyId::Name],
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         };
         ask(
@@ -2176,7 +2172,6 @@ mod tests {
             set: vec![PropertyId::Name],
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         };
         ask(
@@ -2233,7 +2228,6 @@ mod tests {
             set: set.clone(),
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         };
         for number in [1, 2] {
@@ -2277,7 +2271,6 @@ mod tests {
             object.object.window,
             verbatim_win32::window_facts::node_window(&tells::SystemReads, desktop_window())
         );
-        assert_eq!(object.route, None, "no walk asked");
         assert_eq!(
             parts.next(),
             ListenerToCore::Answer(Answer {

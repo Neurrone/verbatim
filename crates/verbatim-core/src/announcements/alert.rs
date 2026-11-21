@@ -69,7 +69,6 @@ pub(crate) async fn run(
             set: crate::details::node_set(&cx.facts(), FOCUS_SET),
             relation: (!line.is_empty()).then_some(RelationQuery::OneOf(line)),
             descendants: true,
-            walk: None,
             purpose: Purpose::Other,
         },
     };

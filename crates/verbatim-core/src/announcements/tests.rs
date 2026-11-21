@@ -2,13 +2,13 @@
 //! focus of the entries' tests: the button "OK", node 2 in window 5,
 //! runtime id `[42, 1]`, under the frame "Editor", node 1.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
-use verbatim_model::request::{
-    NodeRead, ObjectRead, Outcome as WireOutcome, RelationFound, Reply, Route, RouteEnd, RouteStep,
-};
+use verbatim_model::request::{NodeRead, ObjectRead, Outcome as WireOutcome, RelationFound, Reply};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     NotificationKind, NotificationProcessing, Pid, Role, SpeechPriority, State, StateSet,
@@ -25,10 +25,11 @@ use crate::entries::tests::{
 fn committed() -> Held {
     let mut state = asked_completion();
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None))))
+            (OUTPOST, 2),
+            Found::Read(focus_read(None))
         ),
         SPOKEN_FOLLOWED
     );
@@ -114,8 +115,6 @@ fn object(
         relation,
         descendants,
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     }))
 }
 
@@ -291,8 +290,6 @@ fn a_toast_is_read_by_the_listener_and_announced_and_its_repeat_within_a_second_
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     };
     assert_eq!(
         feed_at(
@@ -380,7 +377,7 @@ fn paris_asked(state: &mut Held) {
 /// The completion of the focus [`paris_asked`] asked: "Paris", node 3,
 /// runtime id `[42, 3]`, under the frame and `ancestor`, its node 6 and
 /// runtime id `[42, 6]`.
-fn paris_read(ancestor: Option<(&str, Role)>) -> Reply {
+fn paris_read(ancestor: Option<(&str, Role)>) -> Found {
     use verbatim_model::request::{FocusAncestor, FocusNode};
     let mut read = focus_read(None);
     read.focus.read.node = Some(node(3));
@@ -404,17 +401,18 @@ fn paris_read(ancestor: Option<(&str, Role)>) -> Reply {
             },
         );
     }
-    Reply::Focus(Box::new(read))
+    Found::Read(read)
 }
 
-/// The listener's read of the focus [`paris_asked`] asked, its route to
-/// the application's window.
-fn paris_route() -> Reply {
-    let mut listened = crate::entries::tests::listener_answer();
-    if let Some(route) = listened.route.as_mut() {
-        route.steps[0].runtime_id = RuntimeId(vec![42, 3]);
-    }
-    Reply::Object(Box::new(listened))
+/// The listener's read of the focus [`paris_asked`] asked, its walk going
+/// on from the application's window.
+fn paris_route() -> Found {
+    let element = crate::entries::tests::walked_element("OK", Role::Button, vec![42, 3]);
+    Found::Walked(
+        element,
+        Vec::new(),
+        verbatim_model::batch::AncestorsEnd::ContinueFrom(WindowHandle(5)),
+    )
 }
 
 /// The arrival table's cell "the committed focus at its turn, not on the
@@ -433,11 +431,11 @@ fn a_selection_of_a_focus_not_yet_committed_at_its_arrival_is_silent() {
         NOTHING
     );
     assert_eq!(
-        feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route())),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        found_at(&mut state, 4_200, (LISTENER, 4), paris_route()),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        feed_at(&mut state, 4_300, answer(OUTPOST, 5, paris_read(None))),
+        found_at(&mut state, 4_300, (OUTPOST, 5), paris_read(None)),
         ["Label(\"Paris\")", "send Outpost(Pid(40)) Follow"]
     );
     assert!(state.queue.front_for_tests().is_none());
@@ -457,12 +455,13 @@ fn a_selection_of_an_ancestor_off_the_line_at_its_arrival_is_silent() {
         feed_at(&mut state, 4_100, entry(selected(6, states))),
         NOTHING
     );
-    feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route()));
+    found_at(&mut state, 4_200, (LISTENER, 4), paris_route());
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             4_300,
-            answer(OUTPOST, 5, paris_read(Some(("Cities", Role::List))))
+            (OUTPOST, 5),
+            paris_read(Some(("Cities", Role::List)))
         ),
         [
             "Label(\"Cities\") Role(List)",
@@ -488,9 +487,9 @@ fn a_selection_of_the_focus_left_before_its_turn_is_no_state_change() {
         feed_at(&mut state, 4_100, entry(selected(1, states))),
         NOTHING
     );
-    feed_at(&mut state, 4_200, answer(LISTENER, 4, paris_route()));
+    found_at(&mut state, 4_200, (LISTENER, 4), paris_route());
     assert_eq!(
-        feed_at(&mut state, 4_300, answer(OUTPOST, 5, paris_read(None))),
+        found_at(&mut state, 4_300, (OUTPOST, 5), paris_read(None)),
         [
             "Label(\"Paris\")",
             "send Outpost(Pid(40)) Follow",
@@ -507,47 +506,41 @@ fn a_selection_of_the_focus_left_before_its_turn_is_no_state_change() {
     );
 }
 
-/// The listener's read of the item `[42, 8]`, its walk meeting the
-/// committed focus, the first ancestor Core knows.
-fn item_read() -> Reply {
-    Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: win(5),
-            values: values("Paris", Role::ListItem),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met: None,
-        route: Some(Route {
-            window: WindowHandle(5),
-            steps: vec![RouteStep {
-                runtime_id: RuntimeId(vec![42, 8]),
-                window: None,
-                content: true,
-            }],
-            end: RouteEnd::Known(verbatim_model::request::KnownAncestor::Uia(RuntimeId(
-                vec![42, 1],
-            ))),
-        }),
-    }))
+/// The listener's answer to its read `number` of the item `[42, 8]`, its
+/// walk meeting the committed focus, the first ancestor Core knows, when
+/// `in_focus`, else going on from the window.
+fn item_read(
+    held: &Held,
+    number: u64,
+    in_focus: bool,
+) -> crate::event_queue::Input<crate::entries::Entry> {
+    let element = crate::entries::tests::walked_element("Paris", Role::ListItem, vec![42, 8]);
+    let focus = verbatim_model::request::KnownAncestor::Uia(RuntimeId(vec![42, 1]));
+    crate::entries::tests::walk_answer(held, number, element, in_focus.then_some(&focus))
 }
 
-/// The item completed: node 7, met at `met` of what Core knows.
-fn item(relation: RelationFound, met: Option<u32>) -> Reply {
-    Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
+/// [`item_read`] fed at `at_us`: what it sent and said.
+fn listened_item(state: &mut Held, at_us: u64, number: u64, in_focus: bool) -> Vec<String> {
+    let input = item_read(state, number, in_focus);
+    feed_at(state, at_us, input)
+}
+
+/// [`item`] answered to request `number` at `at_us`: what it sent and said.
+fn answered_item(state: &mut Held, at_us: u64, number: u64, controlled: bool) -> Vec<String> {
+    found_at(state, at_us, (OUTPOST, number), item(controlled))
+}
+
+/// The item read by its outpost: node 7, and whether the committed focus
+/// controls it.
+fn item(controlled: bool) -> Found {
+    Found::Item(
+        NodeRead {
             node: Some(node(7)),
             window: win(5),
             values: values("Paris", Role::ListItem),
         },
-        relation: Some(relation),
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-        met,
-        route: None,
-    }))
+        Some(controlled),
+    )
 }
 
 /// The item was never on the focus line: the arrival fact does not gate a
@@ -560,15 +553,11 @@ fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() 
         ["send Listener ReadObject"]
     );
     assert_eq!(
-        feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read())),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        listened_item(&mut state, 5_000, 4, true),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 5, item(RelationFound::Controlled, None))
-        ),
+        answered_item(&mut state, 6_000, 5, true),
         ["Label(\"Paris\")"]
     );
     assert_eq!(
@@ -588,13 +577,13 @@ fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() 
 fn a_selected_item_whose_relation_cannot_be_read_says_nothing() {
     let mut state = committed();
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
-    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    listened_item(&mut state, 5_000, 4, true);
+    let Found::Item(read, _) = item(true) else {
+        unreachable!("an item read");
+    };
+    // The controller-for step failed.
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer_outcome(OUTPOST, 5, WireOutcome::NotThere)
-        ),
+        found_at(&mut state, 6_000, (OUTPOST, 5), Found::Item(read, None)),
         NOTHING
     );
     assert_ne!(
@@ -635,13 +624,9 @@ fn a_selected_list_item_whose_parent_is_the_focus_asks_its_value_facts_and_says_
  {
     let mut state = committed();
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
-    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    listened_item(&mut state, 5_000, 4, true);
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1)))
-        ),
+        answered_item(&mut state, 6_000, 5, false),
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
@@ -670,12 +655,8 @@ fn a_selected_list_item_whose_parent_is_the_focus_asks_its_value_facts_and_says_
 fn a_selected_list_item_of_a_focus_with_the_value_pattern_in_a_core_window_speaks_its_value() {
     let mut state = committed();
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
-    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
-    feed_at(
-        &mut state,
-        6_000,
-        answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1))),
-    );
+    listened_item(&mut state, 5_000, 4, true);
+    answered_item(&mut state, 6_000, 5, false);
     assert_eq!(
         feed_at(
             &mut state,
@@ -694,12 +675,8 @@ fn a_selected_list_item_of_a_focus_with_the_value_pattern_in_a_core_window_speak
 fn a_selected_list_item_of_a_core_window_focus_without_the_value_pattern_says_nothing() {
     let mut state = committed();
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
-    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
-    feed_at(
-        &mut state,
-        6_000,
-        answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1))),
-    );
+    listened_item(&mut state, 5_000, 4, true);
+    answered_item(&mut state, 6_000, 5, false);
     assert_eq!(
         feed_at(
             &mut state,
@@ -719,11 +696,7 @@ fn combo_box_committed() -> Held {
     let mut state = asked_completion();
     let mut read = focus_read(None);
     read.focus.read.values = values("Hour", Role::ComboBox);
-    feed_at(
-        &mut state,
-        3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(read))),
-    );
+    found_at(&mut state, 3_000, (OUTPOST, 2), Found::Read(read));
     state
 }
 
@@ -783,15 +756,11 @@ fn a_list_item_selected_in_a_windows_forms_combo_boxs_list_speaks_the_combo_boxs
         ["send Listener ReadObject"]
     );
     assert_eq!(
-        feed_at(&mut state, 6_000, answer(LISTENER, 5, item_read())),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        listened_item(&mut state, 6_000, 5, false),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            7_000,
-            answer(OUTPOST, 6, item(RelationFound::Unrelated, None))
-        ),
+        answered_item(&mut state, 7_000, 6, false),
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
@@ -838,15 +807,8 @@ fn a_selection_in_another_list_of_a_windows_forms_combo_boxs_process_gives_no_va
         5_000,
         answer(OUTPOST, 4, combo_box_list(Some(10))),
     );
-    feed_at(&mut state, 6_000, answer(LISTENER, 5, item_read()));
-    assert_eq!(
-        feed_at(
-            &mut state,
-            7_000,
-            answer(OUTPOST, 6, item(RelationFound::Unrelated, None))
-        ),
-        NOTHING
-    );
+    listened_item(&mut state, 6_000, 5, false);
+    assert_eq!(answered_item(&mut state, 7_000, 6, false), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
 }
 
@@ -856,21 +818,13 @@ fn an_item_of_the_focused_combo_box_without_the_value_pattern_reads_and_speaks_i
     let mut read = focus_read(None);
     read.value_from_selection = true;
     read.focus.read.values = values("Hour", Role::ComboBox);
-    feed_at(
-        &mut state,
-        3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(read))),
-    );
+    found_at(&mut state, 3_000, (OUTPOST, 2), Found::Read(read));
     feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
-    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    listened_item(&mut state, 5_000, 4, true);
     // Met at place 1 of what Core sends the outpost: the focus's own
     // runtime id, after its node.
     assert_eq!(
-        feed_at(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 5, item(RelationFound::Unrelated, Some(1)))
-        ),
+        answered_item(&mut state, 6_000, 5, false),
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
@@ -906,27 +860,25 @@ fn two_selections_of_one_controlled_item_are_each_spoken_cutting_the_last() {
         NOTHING
     );
     assert_eq!(
-        feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read())),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        listened_item(&mut state, 5_000, 4, true),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        said_with_priority(
-            &mut state,
-            6_000,
-            answer(OUTPOST, 5, item(RelationFound::Controlled, None))
-        ),
+        {
+            let input = crate::entries::tests::found(&state, OUTPOST, 5, item(true));
+            said_with_priority(&mut state, 6_000, input)
+        },
         [(SpeechPriority::Interrupt, "Label(\"Paris\")".to_owned())]
     );
     assert_eq!(
-        feed_at(&mut state, 7_000, answer(LISTENER, 6, item_read())),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        listened_item(&mut state, 7_000, 6, true),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        said_with_priority(
-            &mut state,
-            8_000,
-            answer(OUTPOST, 7, item(RelationFound::Controlled, None))
-        ),
+        {
+            let input = crate::entries::tests::found(&state, OUTPOST, 7, item(true));
+            said_with_priority(&mut state, 8_000, input)
+        },
         [(SpeechPriority::Interrupt, "Label(\"Paris\")".to_owned())]
     );
 }
@@ -1038,23 +990,21 @@ fn an_alert_with_a_focus_pending_behind_it_is_moved_once_behind_it() {
         NOTHING
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             2_000,
-            answer(
-                LISTENER,
-                1,
-                Reply::Object(Box::new(crate::entries::tests::listener_answer()))
-            )
+            (LISTENER, 1),
+            crate::entries::tests::listener_answer()
         ),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        ["send Outpost(Pid(40)) Completion"]
     );
     // The first focus done, the alert reaches the front and is moved
     // behind the second focus, which is asked at once.
-    let said = feed_at(
+    let said = found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     assert_eq!(
         said.last().map(String::as_str),

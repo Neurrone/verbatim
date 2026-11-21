@@ -3,13 +3,14 @@
 //! commit through the ordinary path, the plain reader's answers, and the
 //! commands on the plain object through their own entries.
 
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    CandidateAnswer, FindScope, FocusNode, FocusRead, Follow, FollowGroup, Followed, Front,
-    GhostFront, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome,
-    OutsideOutcome, Press, PressAction, Purpose, QueueEffect, QueueInput, ReadObject, Refusal,
-    RelationFound, RelationQuery, Reply, Request as Wire,
+    FindScope, FocusNode, FocusRead, Follow, FollowGroup, Followed, Front, GhostFront, NodeRead,
+    NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome, OutsideOutcome, Press, PressAction,
+    Purpose, QueueEffect, QueueInput, ReadObject, Refusal, RelationFound, RelationQuery, Reply,
+    Request as Wire,
 };
 use verbatim_model::{
     Effect as Said, KeySeq, NodeId, OutpostId, Pid, QueryKind, ReviewCommand, Role, SegmentContent,
@@ -17,7 +18,7 @@ use verbatim_model::{
 };
 
 use crate::entries::tests::{
-    APP, Held, LISTENER, OUTPOST, SPOKEN, answer, entry, focus_read, held, msaa_tell, ready,
+    APP, Held, LISTENER, OUTPOST, SPOKEN, entry, focus_read, held, msaa_tell, ready,
 };
 use crate::entries::{Entry, feed};
 use crate::event_queue::{Asker, Foreground, Input, Instance, Reader, Timed};
@@ -94,6 +95,18 @@ fn effects(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .collect()
 }
 
+/// What `from` answering its request `number`, having found `found`, did
+/// at `at_us`.
+fn found_effects(
+    held: &mut Held,
+    at_us: u64,
+    (from, number): (crate::event_queue::Instance, u64),
+    reader_found: crate::readers::Found,
+) -> Vec<String> {
+    let input = crate::entries::tests::found(held, from, number, reader_found);
+    effects(held, at_us, input)
+}
+
 /// The shell refused request `number`, a read of the current focus, as
 /// hung, with `front` in front.
 fn hung_focus(number: u64, front: Front) -> Input<Entry> {
@@ -112,14 +125,11 @@ fn in_front() -> Held {
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
-        effects(
+        found_effects(
             &mut state,
             200,
-            answer(
-                OUTPOST,
-                1,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(Some(held(-4)))))
-            )
+            (OUTPOST, 1),
+            Found::Read(focus_read(Some(held(-4))))
         ),
         SPOKEN
     );
@@ -580,7 +590,6 @@ fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
             node,
         ])),
         descendants: true,
-        walk: Some(Vec::new()),
         purpose: Purpose::Other,
     });
     assert_eq!(
@@ -604,8 +613,6 @@ fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
             relation: Some(RelationFound::Is(1)),
             descendants: Vec::new(),
             ancestors: Vec::new(),
-            met: None,
-            route: None,
         }))))
     );
 }
@@ -952,7 +959,7 @@ fn a_focus_after_the_plain_window_is_no_duplicate_of_it() {
     let mut state = plain_committed();
     assert_eq!(
         effects(&mut state, 200_000, entry(msaa_tell(-4))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
 }
 
@@ -987,15 +994,7 @@ fn after_recovery_the_recovered_read_is_spoken_once() {
         ..focus_read(None)
     };
     assert_eq!(
-        effects(
-            &mut state,
-            501_000,
-            answer(
-                OUTPOST,
-                3,
-                Reply::Candidate(CandidateAnswer::focused(window))
-            )
-        ),
+        found_effects(&mut state, 501_000, (OUTPOST, 3), Found::Read(window)),
         ["stop", "Label(\"hungwin\") Role(Window)"]
     );
     assert_eq!(
@@ -1069,10 +1068,9 @@ fn another_applications_ghost_in_front_is_named_by_its_own_application() {
 /// window is watched, as before.
 #[test]
 fn a_uia_focus_read_afresh_over_a_ghost_or_a_hung_window_plays_the_sound_and_watches() {
-    use verbatim_model::property::RuntimeId;
-    use verbatim_model::request::{KnownAncestor, RouteEnd};
     for front in [ghost("hungwin (Not Responding)"), Front::Hung] {
         let mut state = in_front();
+        crate::entries::tests::committed_window_known(&mut state, 4);
         assert_eq!(
             effects(
                 &mut state,
@@ -1081,16 +1079,9 @@ fn a_uia_focus_read_afresh_over_a_ghost_or_a_hung_window_plays_the_sound_and_wat
             ),
             ["send Listener ReadObject"]
         );
-        let mut object = crate::entries::tests::listener_answer();
-        if let Some(route) = object.route.as_mut() {
-            route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
-        }
+        let input = crate::entries::tests::walk_meeting_a_changed_line(&mut state, 2);
         assert_eq!(
-            effects(
-                &mut state,
-                2_000,
-                answer(LISTENER, 2, Reply::Object(Box::new(object)))
-            ),
+            effects(&mut state, 2_000, input),
             ["send Outpost(Pid(40)) CurrentFocus"]
         );
         assert_eq!(effects(&mut state, 3_000, hung_focus(3, front)), ["sound"]);

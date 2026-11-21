@@ -12,14 +12,19 @@
 //! (`Commit::InPlace`) leaves it.
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::Role;
 use verbatim_model::WindowHandle;
+use verbatim_model::batch::Tested;
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{NodeWindow, PressAction, Reply};
+use verbatim_model::matcher::Matcher;
+use verbatim_model::property::{PropertyId, PropertyValue};
+use verbatim_model::request::{NodeWindow, PressAction};
 use verbatim_model::tell::Event;
 
 use super::retake::{CurrentFocus, Why};
+use crate::batch::Got;
 use crate::entries::{Entries, front_fence, request_window, window_facts};
-use crate::event_queue::{Cx, Outcome, Request, RequestWindow};
+use crate::event_queue::{Cx, Outcome, RequestWindow};
 use crate::keys::entry::{Fence, PressEntry};
 
 /// A focus read's answer: the read, or the hidden dialog its window's
@@ -32,14 +37,59 @@ pub(crate) enum Hidden<T> {
     Dialog(NodeWindow),
 }
 
-impl<T> Hidden<T> {
-    /// `reply` as a focus read's answer: [`Reply::HiddenDialog`], or the
-    /// read `parse` makes of any other reply, `None` for one it refuses.
-    pub(crate) fn parse(reply: Reply, parse: impl FnOnce(Reply) -> Option<T>) -> Option<Self> {
-        match reply {
-            Reply::HiddenDialog(window) => Some(Self::Dialog(window)),
-            reply => parse(reply).map(Self::Read),
+/// What the hidden-dialog check found of a top-level window.
+pub(crate) enum Check {
+    /// It is shown, or is no dialog: the read goes on.
+    Shown,
+    /// It is a hidden dialog.
+    Dialog(NodeWindow),
+    /// It is hidden and its role could not be read: the focus read is not
+    /// there, as a failed acquire is (the request list's design, section
+    /// 6, "Orders kept").
+    Gone,
+}
+
+/// The hidden-dialog check (Dickson, 2026-11-19: a dialog's text is read
+/// only once it is shown), a `Test` of a top-level window's own object
+/// through MSAA: that it is hidden, two local calls that send the
+/// application nothing, and only then that its client object's role is a
+/// dialog's.
+pub(crate) fn check() -> Matcher {
+    Matcher::All(vec![
+        Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(false)),
+        Matcher::IsAnyOf(
+            PropertyId::Role,
+            [Role::Dialog, Role::Alert, Role::PropertyPage]
+                .into_iter()
+                .map(PropertyValue::Role)
+                .collect(),
+        ),
+    ])
+}
+
+/// The hidden-dialog check's outcome, `got`, judged: a check not done, its
+/// window gone or no window of the application's, is no hidden dialog;
+/// `None` for an outcome no correct outpost gives.
+pub(crate) fn judge(got: &Got<'_, Tested>) -> Option<Check> {
+    match got {
+        Got::Done(tested) if tested.matched => Some(Check::Dialog(tested.node.window)),
+        Got::Done(tested) => {
+            let value = |id| {
+                tested
+                    .node
+                    .values
+                    .answer(id)
+                    .map(|answer| answer.value.as_ref())
+            };
+            let hidden = value(PropertyId::WindowShown) == Some(Some(&PropertyValue::Flag(false)));
+            Some(if hidden && value(PropertyId::Role) == Some(None) {
+                Check::Gone
+            } else {
+                Check::Shown
+            })
         }
+        Got::NotThere(_) | Got::Failed => Some(Check::Shown),
+        Got::Refused(_) | Got::Skipped => None,
     }
 }
 
@@ -54,30 +104,33 @@ pub(crate) struct Postponed {
     pub(crate) fence: Fence,
 }
 
-/// Asks the focus read `request` under `due_us`: the one place a hidden
-/// dialog's answer is decided for every focus read. A hidden dialog, which
-/// only a read made to check decodes, postpones it, keeping the older
-/// fence when the same dialog is postponed already, and `None` is
-/// returned: the caller's entry ends, nothing said.
-pub(crate) async fn ask<R, T>(cx: &mut Cx<Entries>, request: R, due_us: u64) -> Option<Outcome<T>>
-where
-    R: Request<Reply = Hidden<T>>,
-{
-    let dialog = match cx.ask(request, due_us).await.split() {
-        Ok(Hidden::Read(read)) => return Some(Outcome::Result(read)),
-        Ok(Hidden::Dialog(dialog)) => dialog,
-        Err(other) => return Some(other),
-    };
+/// A focus read's outcome, `outcome`: the one place a hidden dialog's
+/// answer is decided for every focus read. A hidden dialog postpones it,
+/// keeping the older fence when the same dialog is postponed already, and
+/// `None` is returned: the caller's entry ends, nothing said.
+pub(crate) fn postpone<T>(cx: &mut Cx<Entries>, outcome: Outcome<Hidden<T>>) -> Option<Outcome<T>> {
+    match outcome.split() {
+        Ok(Hidden::Read(read)) => Some(Outcome::Result(read)),
+        Ok(Hidden::Dialog(dialog)) => {
+            postpone_dialog(cx, &dialog);
+            None
+        }
+        Err(other) => Some(other),
+    }
+}
+
+/// Postpones the hidden dialog `dialog` a focus read met, keeping the
+/// older fence when it is postponed already.
+pub(crate) fn postpone_dialog(cx: &mut Cx<Entries>, dialog: &NodeWindow) {
     let fence = front_fence(cx);
     let mut facts = cx.facts_mut();
     let postponed = &mut facts.versions.postponed;
     if postponed.is_none_or(|kept| kept.dialog.handle != dialog.handle) {
         *postponed = Some(Postponed {
-            dialog: RequestWindow::of_node(&dialog),
+            dialog: RequestWindow::of_node(dialog),
             fence,
         });
     }
-    None
 }
 
 /// The entry a tell `tell` becomes when it is the show of a top-level
@@ -157,7 +210,7 @@ pub(crate) async fn before_press(cx: &mut Cx<Entries>, press: &PressEntry) {
         trace_id: press.trace_id,
         fence: postponed.fence,
     };
-    super::retake::read_current::<super::retake::AsItIs>(cx, &read).await;
+    super::retake::read_current(cx, &read, super::retake::Depth::AsItIs).await;
 }
 
 #[cfg(test)]

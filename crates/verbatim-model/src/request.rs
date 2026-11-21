@@ -19,8 +19,7 @@ use crate::batch::{Batch, Malformed, Placement, StepOutcome};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
 use crate::tell::ElementToken;
 use crate::{
-    ActionName, CaretReport, NodeId, Pid, QueryKind, TextAnchor, TextDetails, TextOp, TextReply,
-    WindowHandle,
+    ActionName, CaretReport, NodeId, Pid, QueryKind, TextAnchor, TextOp, TextReply, WindowHandle,
 };
 
 /// A reader Core asks.
@@ -229,29 +228,18 @@ pub enum RelationFound {
 /// Why a read of an event's object is made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Purpose {
-    /// A focus read, whose element the listener keeps as read once the
-    /// read ends, until Core's held view lets it go.
-    Focus,
     /// A change of a property of one of the nodes its relation names
     /// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
     /// objects"): an object that is none of them answers not there, read
     /// no further, and one that is reads the set's properties alone, as
     /// NVDA reads only the property its event names.
     Change,
-    /// A selection's item, read to be spoken: its name is the one read
-    /// afresh, where every other read takes it from its event's cache, so
-    /// that the first suggestion Settings selects as its list opens is
-    /// said by the name Settings has set by then, not the "list item" its
-    /// event carried (`docs/parity/changes-and-selection.md`, "Selection in
-    /// a list the focus controls", Dickson, 2026-10-20).
-    Selection,
     /// Any other read.
     Other,
 }
 
 /// The generic read: the properties of the object an event names, by
-/// property set, optionally reading up its ancestors until it reaches an
-/// ancestor Core already knows.
+/// property set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadObject {
     /// The object.
@@ -263,9 +251,6 @@ pub struct ReadObject {
     pub relation: Option<RelationQuery>,
     /// Whether its descendants are read too, as an alert's are.
     pub descendants: bool,
-    /// The ancestors Core already knows, when the read walks up to them;
-    /// an empty list walks to the top. `None` reads no ancestors.
-    pub walk: Option<Vec<KnownAncestor>>,
     /// Why it is read.
     pub purpose: Purpose,
 }
@@ -319,30 +304,6 @@ pub enum Request {
         node: NodeId,
         /// The properties of each child.
         set: Vec<PropertyId>,
-    },
-    /// The completion of a UI Automation read from the listener's route.
-    CompleteUia(Box<CompleteUia>),
-    /// One MSAA candidate, read to the depth Core asks.
-    MsaaRun(MsaaRun),
-    /// The application's current focus, with NVDA's MSAA ids.
-    CurrentFocus {
-        /// The properties of each node.
-        set: Vec<PropertyId>,
-        /// The ancestors Core already knows.
-        known: Vec<KnownAncestor>,
-        /// What the focus's caret read fetches beyond the text, as the
-        /// settings report it: its line's formatting ([`FocusCaret`]).
-        details: TextDetails,
-        /// How far the read goes: [`FocusDepth::Full`] for a read Core makes
-        /// itself, [`FocusDepth::FullIfFocused`] for the check after a menu end,
-        /// NVDA's fake focus, whose MSAA focus is read in full only when it
-        /// or an ancestor, up to the desktop, has the focused state
-        /// (`shouldAllowIAccessibleFocusEvent`). The answer carries the
-        /// focused state as a fact, and Core judges it.
-        depth: FocusDepth,
-        /// Whether the read first checks for a hidden dialog
-        /// ([`HiddenRoot`]).
-        hidden: HiddenRoot,
     },
     /// A read or move in a node's text.
     Text {
@@ -475,16 +436,8 @@ pub struct ObjectRead {
     pub relation: Option<RelationFound>,
     /// Its descendants, when asked.
     pub descendants: Vec<NodeRead>,
-    /// Its ancestors, nearest first, up to the ancestor Core already knows
-    /// that the walk met, which is not among them.
+    /// Its ancestors, nearest first, when its relation asked for them.
     pub ancestors: Vec<NodeRead>,
-    /// The place, in the request's list, of the known ancestor the walk
-    /// met; `None` when it walked to the top, and for a read with a route,
-    /// whose end names what the walk met ([`RouteEnd::Known`]).
-    pub met: Option<u32>,
-    /// For the listener's read of a UI Automation element, the element's
-    /// route, from which the application's outpost completes the read.
-    pub route: Option<Route>,
 }
 
 /// One element of a route: a UI Automation element as the listener read
@@ -500,9 +453,8 @@ pub struct RouteStep {
     pub content: bool,
 }
 
-/// Where the listener's walk above a route ended, which Core passes on in
-/// [`CompleteUia`] so that the outpost makes no read of its own to find
-/// it.
+/// Where the listener's walk above a route ended, which the route carries
+/// so that the outpost makes no read of its own to find it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RouteEnd {
     /// It met this ancestor Core already knows, one of the request's list,
@@ -527,7 +479,8 @@ pub enum RouteEnd {
 /// How the listener reached a UI Automation element, so that the
 /// application's outpost finds its own copy of it and of its ancestors:
 /// the element and each ancestor the listener read, nearest first, below
-/// the element's nearest window, and where the chain goes on.
+/// the element's nearest window, where the chain goes on, and what the
+/// listener read of each, which the outpost's read of the route keeps.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Route {
     /// The element's nearest window.
@@ -536,216 +489,10 @@ pub struct Route {
     pub steps: Vec<RouteStep>,
     /// Where the chain goes on above them.
     pub end: RouteEnd,
-}
-
-/// What a UI Automation completion is for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CompletionFor {
-    /// A focus: the node's `Follow` registration is added before its
-    /// states are read.
-    Focus,
-    /// A selection's item, with its relation to the committed focus, read
-    /// live from the focus's controller-for relation: answered
-    /// [`Reply::Object`], its ancestors the item's parent first.
-    SelectionItem {
-        /// The committed focus.
-        focus: NodeId,
-    },
-}
-
-/// The outpost completes the listener's read of a UI Automation element
-/// from its route: it mints node ids, reads the MSAA window above it and
-/// the chain above the process boundary.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompleteUia {
-    /// The route the listener answered.
-    pub route: Route,
-    /// What the listener read of the element and each ancestor on the
-    /// route, nearest first, which the completion keeps.
+    /// What the listener read of the element and each ancestor, nearest
+    /// first: the properties of Core's set, the description whatever the
+    /// settings, which the outpost's layout judgment reads.
     pub read: Vec<PropertyValues>,
-    /// The properties reported of each node, as Core's settings choose
-    /// them: the listener's read holds these, and the description too,
-    /// which the completion's layout judgment reads whatever the settings.
-    pub set: Vec<PropertyId>,
-    /// The ancestors Core already knows.
-    pub known: Vec<KnownAncestor>,
-    /// What it is for.
-    pub completes: CompletionFor,
-    /// What the focus's caret read fetches beyond the text, as the
-    /// settings report it: its line's formatting ([`FocusCaret`]).
-    pub details: TextDetails,
-    /// Whether the completion first checks for a hidden dialog
-    /// ([`HiddenRoot`]).
-    pub hidden: HiddenRoot,
-}
-
-/// One MSAA focus, foreground or menu start candidate, by the ids its
-/// event named, with its window's verdict.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunCandidate {
-    /// The ids its event named.
-    pub ids: MsaaIds,
-    /// What kind of event named it.
-    pub kind: CandidateKind,
-    /// Core's verdict for its window.
-    pub verdict: WindowVerdict,
-}
-
-/// What kind of event named a candidate, which decides what facts the
-/// outpost reads of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum CandidateKind {
-    /// A focus event: whether the object or an ancestor has the focused
-    /// state is read.
-    Focus,
-    /// A foreground event.
-    Foreground,
-    /// A menu start or popup start: its role is read, which Core judges.
-    MenuStart,
-}
-
-/// How far a candidate's read goes, which Core chooses so that the
-/// outpost holds no rule (`docs/parity/focus-events.md`, "Event
-/// acceptance").
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Depth {
-    /// Only the facts: whether it is there, and its focused state or role.
-    Facts,
-    /// The facts, and the full read when the object or an ancestor has the
-    /// focused state.
-    FullIfFocused,
-    /// The facts and the full read.
-    Full,
-    /// As [`Depth::FullIfFocused`], unless the object reached, after the
-    /// redirect, is at `ids` and reads as `identity`: then the facts alone,
-    /// answered [`Reply::CandidateSame`] (`docs/parity/focus-events.md`,
-    /// "Duplicate focus suppression", the identity check).
-    FullUnlessSame {
-        /// The ids of the readers' last focus.
-        ids: MsaaIds,
-        /// What the readers' last focus reads as.
-        identity: Box<Identity>,
-    },
-}
-
-/// What an MSAA object reads as, which the identity check compares, each
-/// value as a full read gives it: its states, its role, its position in its
-/// set and the set's size, its name and its value. The outpost compares
-/// them in that order and stops at the first that differs.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Identity {
-    /// Its states.
-    pub states: crate::StateSet,
-    /// Its role.
-    pub role: crate::Role,
-    /// Its position in its set, compared only where the control gives it
-    /// with no walk: a `SysListView32` item's.
-    pub position_in_set: Option<u32>,
-    /// Its set's size, compared as its position is.
-    pub set_size: Option<u32>,
-    /// Its name.
-    pub name: Option<String>,
-    /// Its value.
-    pub value: Option<String>,
-}
-
-/// How far a read of the application's current focus goes: always at
-/// least as far as the focus, so it has no depth that stops at its facts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum FocusDepth {
-    /// The focused state as a fact, and the full read only when focused.
-    FullIfFocused,
-    /// The full read.
-    Full,
-}
-
-impl From<FocusDepth> for Depth {
-    fn from(depth: FocusDepth) -> Self {
-        match depth {
-            FocusDepth::FullIfFocused => Self::FullIfFocused,
-            FocusDepth::Full => Self::Full,
-        }
-    }
-}
-
-/// The outpost reads one MSAA candidate to the depth Core asks.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MsaaRun {
-    /// The candidate.
-    pub candidate: RunCandidate,
-    /// How far its read goes.
-    pub depth: Depth,
-    /// A node and text anchor of another request Core keeps held while
-    /// this one is out, a caret key's starting point while it confirms a
-    /// focus; the outpost reads nothing of it.
-    pub spare: Option<(NodeId, TextAnchor)>,
-    /// The properties of each node.
-    pub set: Vec<PropertyId>,
-    /// The ancestors Core already knows.
-    pub known: Vec<KnownAncestor>,
-    /// What the focus's caret read fetches beyond the text, as the
-    /// settings report it: its line's formatting ([`FocusCaret`]).
-    pub details: TextDetails,
-    /// Whether the read first checks for a hidden dialog ([`HiddenRoot`]).
-    pub hidden: HiddenRoot,
-}
-
-/// Whether a focus read first checks whether its window's top-level
-/// window is a hidden dialog, answering [`Reply::HiddenDialog`] in place
-/// of the read when it is: a dialog's text is read only once it is shown
-/// (Dickson, 2026-11-19). Core decides; the outpost obeys.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HiddenRoot {
-    /// The outpost checks, and answers a hidden dialog unread.
-    Check,
-    /// The outpost reads as it is, hidden or not: a read that postpones
-    /// no dialog (a caret key's confirmation, a menu start, a selection's
-    /// item), or the read at a press while a dialog is postponed.
-    ReadAnyway,
-}
-
-/// What an outpost found of a candidate, which Core judges.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CandidateFacts {
-    /// Its window is read through UI Automation, so it was not read.
-    Skipped,
-    /// The object is not there.
-    NotThere,
-    /// The object was found.
-    Found {
-        /// Whether it or an ancestor has the focused state; `None` when
-        /// not asked, for a foreground or menu start, or a UI Automation
-        /// focus.
-        focused: Option<bool>,
-        /// Its role, read for a menu start; `None` otherwise.
-        role: Option<crate::Role>,
-    },
-}
-
-/// The answer to [`MsaaRun`] and [`Request::CurrentFocus`]: the facts
-/// found, and the full read when the depth asked for one and the object
-/// was found.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CandidateAnswer {
-    /// The facts.
-    pub facts: CandidateFacts,
-    /// The full read.
-    pub read: Option<Box<FocusRead>>,
-}
-
-impl CandidateAnswer {
-    /// The answer of a focused candidate read in full, its role taken from
-    /// the read.
-    #[must_use]
-    pub fn focused(read: FocusRead) -> Self {
-        Self {
-            facts: CandidateFacts::Found {
-                focused: Some(true),
-                role: None,
-            },
-            read: Some(Box::new(read)),
-        }
-    }
 }
 
 /// An MSAA object's ids.
@@ -887,14 +634,6 @@ pub enum Reply {
     Object(Box<ObjectRead>),
     /// The answer to [`Request::Properties`].
     Properties(PropertyValues),
-    /// The answer to [`Request::CompleteUia`].
-    Focus(Box<FocusRead>),
-    /// The answer to [`Request::MsaaRun`] and [`Request::CurrentFocus`].
-    Candidate(CandidateAnswer),
-    /// The answer to [`Request::MsaaRun`] at [`Depth::FullUnlessSame`]
-    /// when the object reached is at the ids named, has the focused state,
-    /// and reads as the identity named: nothing more read.
-    CandidateSame,
     /// The answer to [`Request::Navigate`]: the node reached, `None` at a
     /// genuine edge of the tree.
     Navigated(Option<NodeRead>),
@@ -917,11 +656,6 @@ pub enum Reply {
     /// The answer to [`Request::ShellItemPosition`]: the buttons that may
     /// be the item.
     ShellItemPosition(crate::ShellCandidates),
-    /// The answer to [`Request::MsaaRun`], [`Request::CurrentFocus`] and a
-    /// focus's [`Request::CompleteUia`] asked with [`HiddenRoot::Check`],
-    /// when the window's top-level window is hidden and its client object's
-    /// role is a dialog's: that window's facts, and nothing read.
-    HiddenDialog(NodeWindow),
     /// The answer to a batch ([`Question::Batch`]): one outcome per step,
     /// in order. Once the old kinds are gone a result is this alone.
     Steps(Vec<StepOutcome>),
@@ -984,13 +718,6 @@ impl Ask {
         fn unstamp(node: &mut NodeId) {
             *node = node.unstamped();
         }
-        fn known(known: &mut [KnownAncestor]) {
-            for ancestor in known {
-                if let KnownAncestor::Node(node) = ancestor {
-                    unstamp(node);
-                }
-            }
-        }
         let request = match &mut self.request {
             Question::Batch(batch) => {
                 batch.visit_nodes(&mut unstamp);
@@ -1012,9 +739,6 @@ impl Ask {
                     }
                     None => {}
                 }
-                if let Some(walk) = &mut read.walk {
-                    known(walk);
-                }
             }
             Request::Properties { node, .. }
             | Request::Navigate { node, .. }
@@ -1022,14 +746,6 @@ impl Ask {
             | Request::Children { node, .. }
             | Request::Text { node, .. }
             | Request::Activate { node } => unstamp(node),
-            Request::CompleteUia(complete) => {
-                known(&mut complete.known);
-                if let CompletionFor::SelectionItem { focus } = &mut complete.completes {
-                    unstamp(focus);
-                }
-            }
-            Request::MsaaRun(run) => known(&mut run.known),
-            Request::CurrentFocus { known: list, .. } => known(list),
             Request::Follow(follow) => {
                 if let Some(followed) = &mut follow.node {
                     unstamp(&mut followed.node);
@@ -1068,9 +784,6 @@ impl Request {
             | Request::Navigate { .. }
             | Request::Find { .. }
             | Request::Children { .. }
-            | Request::CompleteUia(_)
-            | Request::MsaaRun(_)
-            | Request::CurrentFocus { .. }
             | Request::Text { .. }
             | Request::Activate { .. }
             | Request::Follow(_) => false,
@@ -1132,12 +845,6 @@ impl Answer {
                     read(node, nodes);
                 }
             }
-            Reply::Focus(focus) => focus.visit(nodes, anchors),
-            Reply::Candidate(answer) => {
-                if let Some(focus) = &mut answer.read {
-                    focus.visit(nodes, anchors);
-                }
-            }
             Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, nodes),
             Reply::Children(children) => {
                 for child in children {
@@ -1152,10 +859,8 @@ impl Answer {
             | Reply::Text(_)
             | Reply::Activated(_)
             | Reply::Followed
-            | Reply::CandidateSame
             | Reply::ShellItems(_)
-            | Reply::ShellItemPosition(_)
-            | Reply::HiddenDialog(_) => {}
+            | Reply::ShellItemPosition(_) => {}
         }
     }
 }
@@ -1363,8 +1068,8 @@ pub enum QueueInput {
     /// with what it read in front ([`Front`]): when the read's window is
     /// hung, where every other request is [`QueueInput::RefusedHung`]; and
     /// when the check after a menu, popup or switcher end
-    /// ([`FocusDepth::FullIfFocused`]) finds no foreground window, as
-    /// NVDA's fake focus then reads the desktop.
+    /// ([`crate::batch::Batch::reads_focus_if_focused`]) finds no
+    /// foreground window, as NVDA's fake focus then reads the desktop.
     InFront {
         /// The request.
         number: RequestNumber,
@@ -1785,8 +1490,6 @@ mod tests {
                 relation: None,
                 descendants: vec![node_read(2)],
                 ancestors: vec![node_read(3)],
-                met: None,
-                route: None,
             }))),
             probes: Vec::new(),
             detail: String::new(),
@@ -1827,8 +1530,7 @@ mod tests {
                 set: vec![PropertyId::Name, PropertyId::Role],
                 relation: Some(RelationQuery::OneOf(vec![NodeId::new(4)])),
                 descendants: false,
-                walk: Some(vec![KnownAncestor::Uia(RuntimeId(vec![42, 1]))]),
-                purpose: Purpose::Focus,
+                purpose: Purpose::Other,
             })
             .into(),
         };
@@ -1853,8 +1555,6 @@ mod tests {
                 relation: Some(RelationFound::Unrelated),
                 descendants: Vec::new(),
                 ancestors: Vec::new(),
-                met: Some(0),
-                route: None,
             }))),
             probes: Vec::new(),
             detail: String::new(),

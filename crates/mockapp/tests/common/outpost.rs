@@ -56,9 +56,8 @@ use std::time::{Duration, Instant};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 use verbatim_model::request::{
-    Answer, CandidateAnswer, CandidateFacts, CandidateKind, CompleteUia, CompletionFor, Depth,
-    FocusNode, FocusRead, KnownAncestor, MsaaIds, MsaaRun, NodeRead, ObjectRead, ObjectRef,
-    Outcome, Purpose, ReadObject, Reply, Request, RequestNumber, RunCandidate, WindowVerdict,
+    Answer, FocusNode, FocusRead, KnownAncestor, MsaaIds, NodeRead, NodeWindow, Outcome, Reply,
+    Request, RequestNumber, WindowVerdict,
 };
 use verbatim_model::{CallCounts, NodeId, Pid, QueryKind, Role, StateSet, WindowHandle};
 use verbatim_outpost::{Heard, Outpost};
@@ -648,7 +647,11 @@ impl OutpostUnderTest {
     /// request driver (`verbatim_outpost::driver`), as Core's request table
     /// sends it, with no verdict in force for the window, and returns its
     /// number.
-    pub fn request(&self, window: HWND, request: Request) -> RequestNumber {
+    pub fn request(
+        &self,
+        window: HWND,
+        request: impl Into<verbatim_model::request::Question>,
+    ) -> RequestNumber {
         self.request_with(window, WindowVerdict::ProbeFirst, request)
     }
 
@@ -657,7 +660,7 @@ impl OutpostUnderTest {
         &self,
         window: HWND,
         verdict: WindowVerdict,
-        request: Request,
+        request: impl Into<verbatim_model::request::Question>,
     ) -> RequestNumber {
         let mut driver =
             verbatim_outpost::driver::Driver::after(&self.outpost, self.last_asked.get());
@@ -804,17 +807,17 @@ impl OutpostUnderTest {
         self.committed.borrow_mut().clear();
     }
 
-    /// What the listener answers for Core's read `read` of `element`, the
+    /// What the listener answers for Core's batch `batch` on `element`, the
     /// element a UI Automation event of mockapp named, which the test holds
-    /// as the listener keeps it: made with the listener's own read
-    /// (`verbatim_listener::read_object`) on this thread, with
-    /// the calls it made.
+    /// as the listener keeps it: run by the listener's own code
+    /// (`verbatim_listener::read_object`) on this thread, with the calls
+    /// it made.
     pub fn listener_object(
         &self,
         element: &Cached<ListenerEvent>,
-        read: &ReadObject,
+        batch: &verbatim_model::batch::Batch,
     ) -> (Outcome, CallCounts) {
-        self.listener_object_in(element, nearest_window(element), read)
+        self.listener_object_in(element, nearest_window(element), batch)
     }
 
     /// [`Self::listener_object`], Core's request naming `nearest`, the
@@ -824,7 +827,7 @@ impl OutpostUnderTest {
         &self,
         element: &Cached<ListenerEvent>,
         nearest: isize,
-        read: &ReadObject,
+        batch: &verbatim_model::batch::Batch,
     ) -> (Outcome, CallCounts) {
         let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
         let _ = verbatim_win32::calls::take();
@@ -834,22 +837,24 @@ impl OutpostUnderTest {
                 (&uia, &readability),
                 element,
                 (Pid(self.app_pid), nearest),
-                read,
+                batch,
                 observer,
             ),
             None => verbatim_listener::read_object(
                 (&uia, &readability),
                 element,
                 (Pid(self.app_pid), nearest),
-                read,
+                batch,
             ),
         };
         (outcome, verbatim_win32::calls::take())
     }
 
     /// The listener's read of a UI Automation focus on `element`, as Core
-    /// asks it: up to the ancestors Core already knows, answering its
-    /// route, which must come. With the calls it made.
+    /// asks it: the element and its ancestors up to the ones Core already
+    /// knows, of which the stand-in for Core makes the route, with the
+    /// name its event's cache had and the focused state, as Core does.
+    /// With the calls it made.
     pub fn listener_focus(&self, element: &Cached<ListenerEvent>) -> (ListenerFocus, CallCounts) {
         self.listener_focus_in(element, nearest_window(element))
     }
@@ -862,84 +867,123 @@ impl OutpostUnderTest {
         element: &Cached<ListenerEvent>,
         nearest: isize,
     ) -> (ListenerFocus, CallCounts) {
+        use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
         let sent = self.known();
-        let (outcome, calls) = self.listener_object_in(
-            element,
-            nearest,
-            &ReadObject {
-                object: ObjectRef::Kept {
-                    listener: 1,
-                    token: verbatim_model::tell::ElementToken(0),
+        let mut asked = self.reported_set.borrow().clone();
+        for id in [
+            PropertyId::Description,
+            PropertyId::RuntimeId,
+            PropertyId::NativeWindow,
+            PropertyId::IsContent,
+        ] {
+            if !asked.contains(&id) {
+                asked.push(id);
+            }
+        }
+        let kept = Subject::Kept {
+            listener: 1,
+            token: verbatim_model::tell::ElementToken(0),
+            keep: true,
+        };
+        let batch = Batch {
+            steps: vec![
+                Step {
+                    op: Op::Read {
+                        subject: kept.clone(),
+                        set: asked.clone(),
+                    },
+                    when: None,
                 },
-                set: {
-                    let mut walked = self.reported_set.borrow().clone();
-                    if !walked.contains(&PropertyId::Description) {
-                        walked.push(PropertyId::Description);
-                    }
-                    walked
+                Step {
+                    op: Op::Ancestors {
+                        subject: kept,
+                        until: sent.clone(),
+                        depth: verbatim_model::batch::MAX_DEPTH,
+                        set: asked,
+                    },
+                    when: None,
                 },
-                relation: None,
-                descendants: false,
-                walk: Some(sent.clone()),
-                purpose: Purpose::Focus,
-            },
-        );
-        let Outcome::Result(Reply::Object(object)) = outcome else {
+            ],
+            placement: Placement::Queue,
+            spare: None,
+        };
+        let (outcome, calls) = self.listener_object_in(element, nearest, &batch);
+        let Outcome::Result(Reply::Steps(steps)) = outcome else {
             panic!("the listener answered {outcome:?}, not the focus's read");
         };
-        assert!(object.route.is_some(), "a focus read answers its route");
+        let [
+            StepOutcome::Done(Done::Read(mut object)),
+            StepOutcome::Done(Done::Ancestors(ancestry)),
+        ] = <[StepOutcome; 2]>::try_from(steps).expect("two steps")
+        else {
+            panic!("the listener read no focus");
+        };
+        // As Core takes a focus's element: the name its event's cache had,
+        // and the focused state.
+        let cached = element.read().name.clone().filter(|name| !name.is_empty());
+        for answer in &mut object.values.0 {
+            match (answer.id, &mut answer.value) {
+                (PropertyId::Name, value) => *value = cached.clone().map(PropertyValue::Text),
+                (PropertyId::States, Some(PropertyValue::States(states))) => {
+                    *states = states.with(verbatim_model::State::Focused);
+                }
+                _ => {}
+            }
+        }
+        let route = route_of(&object, &ancestry, &sent);
         (
             ListenerFocus {
-                object: *object,
+                object: ListenerObject {
+                    object,
+                    ancestors: ancestry.ancestors,
+                    route: Some(route),
+                },
                 sent,
             },
             calls,
         )
     }
 
-    /// The outpost's completion of the listener's read `focus` from its
-    /// route, as Core asks it, which the stand-in for Core commits when it
-    /// answers a focus; with its calls. Its window is read through UI
-    /// Automation, as the listener's check found the focus's nearest window
-    /// before Core asked: Core asks a completion only then.
-    pub fn complete_focus(&self, focus: ListenerFocus) -> (Outcome, CallCounts) {
+    /// The outpost's read of the focus whose route the listener's read
+    /// `focus` gives, as Core asks it, which the stand-in for Core commits
+    /// when it answers a focus; with its calls. Its window is read through
+    /// UI Automation, as the listener's check found the focus's nearest
+    /// window before Core asked: Core asks for it only then.
+    pub fn complete_focus(&self, focus: ListenerFocus) -> (FocusOutcome, CallCounts) {
         let ListenerFocus { object, sent } = focus;
-        let ObjectRead {
+        let ListenerObject {
             object,
             ancestors,
             route,
-            ..
         } = object;
-        let route = route.expect("a focus read answers its route");
+        let mut route = route.expect("a focus read answers its route");
+        route.read = std::iter::once(object.values)
+            .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
+            .take(route.steps.len())
+            .collect();
         let window = hwnd(route.window);
-        let number = self.request_with(
-            window,
-            WindowVerdict::Uia,
-            Request::CompleteUia(Box::new(CompleteUia {
-                hidden: verbatim_model::request::HiddenRoot::Check,
-                route,
-                read: std::iter::once(object.values)
-                    .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
-                    .collect(),
-                set: self.reported_set.borrow().clone(),
-                known: sent.clone(),
-                completes: CompletionFor::Focus,
-                details: verbatim_model::TextDetails::NONE,
-            })),
+        let top = verbatim_win32::window::top_level_of(window.0 as isize);
+        let top = WindowHandle(u64::try_from(top).expect("a window handle"));
+        let batch = focus_batch(
+            Some(verbatim_model::batch::WindowOf::TopLevelOf(top)),
+            None,
+            verbatim_model::batch::Subject::Route(Box::new(route)),
+            (sent.clone(), self.reported_set.borrow().clone()),
         );
-        let (answer, calls) = self.answer_with_calls(number);
-        if let Outcome::Result(Reply::Focus(read)) = &answer.outcome {
+        let (answer, calls) = self.batch(window, WindowVerdict::Uia, batch.clone());
+        let outcome = focus_outcome(&batch, answer.outcome);
+        if let FocusOutcome::Result(FocusReply::Focus(read)) = &outcome {
             self.commit_focus(read, &sent);
         }
-        (answer.outcome, calls)
+        (outcome, calls)
     }
 
     /// A UI Automation focus on `element`, which mockapp reports focused,
     /// read as Core reads it: the listener's read
-    /// ([`Self::listener_focus`]), then the outpost's completion
-    /// ([`Self::complete_focus`]). Returns the completion's answer, with
-    /// the calls of both reads.
-    pub fn uia_focus_read(&self, element: &Cached<ListenerEvent>) -> (Outcome, CallCounts) {
+    /// ([`Self::listener_focus`]), then the outpost's read of its route
+    /// ([`Self::complete_focus`]). Returns the outpost's answer, with the
+    /// calls of both reads.
+    pub fn uia_focus_read(&self, element: &Cached<ListenerEvent>) -> (FocusOutcome, CallCounts) {
         self.uia_focus_read_in(element, nearest_window(element))
     }
 
@@ -949,7 +993,7 @@ impl OutpostUnderTest {
         &self,
         element: &Cached<ListenerEvent>,
         nearest: isize,
-    ) -> (Outcome, CallCounts) {
+    ) -> (FocusOutcome, CallCounts) {
         let (focus, listener_calls) = self.listener_focus_in(element, nearest);
         let (outcome, calls) = self.complete_focus(focus);
         (outcome, listener_calls + calls)
@@ -967,7 +1011,7 @@ impl OutpostUnderTest {
         let (outcome, calls) = self.uia_focus_read_in(element, nearest);
         let listener_failed = verbatim_uia::calls::take_failed_reads();
         match outcome {
-            Outcome::Result(Reply::Focus(read)) => Focused {
+            FocusOutcome::Result(FocusReply::Focus(read)) => Focused {
                 read: *read,
                 facts: None,
                 calls,
@@ -981,31 +1025,20 @@ impl OutpostUnderTest {
     /// kind, with no verdict in force for its window, read to `depth` as
     /// Core asks it with the ancestors it already knows; the focus it
     /// reads is committed. Returns the answer and its calls.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "its callers build the depth in place"
+    )]
     pub fn msaa_run(
         &self,
         (ids, kind): (MsaaIds, CandidateKind),
         depth: Depth,
     ) -> (CandidateAnswer, CallCounts) {
         let sent = self.known();
-        let number = self.request(
-            hwnd(ids.window),
-            Request::MsaaRun(MsaaRun {
-                hidden: verbatim_model::request::HiddenRoot::Check,
-                candidate: RunCandidate {
-                    ids,
-                    kind,
-                    verdict: WindowVerdict::ProbeFirst,
-                },
-                depth,
-                spare: None,
-                set: focus_set(),
-                known: sent.clone(),
-                details: verbatim_model::TextDetails::NONE,
-            }),
-        );
-        let (answer, calls) = self.answer_with_calls(number);
-        let Outcome::Result(Reply::Candidate(run)) = answer.outcome else {
-            panic!("the run answered {:?}", answer.outcome);
+        let (reply, calls) = self.candidate((ids, kind), &depth, (sent.clone(), focus_set()));
+        let run = match reply {
+            FocusReply::Candidate(run) => run,
+            other => panic!("the run answered {other:?}"),
         };
         if let Some(read) = &run.read {
             self.commit_focus(read, &sent);
@@ -1014,38 +1047,73 @@ impl OutpostUnderTest {
     }
 
     /// One MSAA focus candidate of mockapp's at `ids`, read to `depth` as
-    /// Core asks it, with no verdict in force: the reply as the outpost
-    /// answered it, committing nothing, and its calls.
-    pub fn msaa_run_reply(&self, ids: MsaaIds, depth: Depth) -> (Reply, CallCounts) {
+    /// Core asks it, with no verdict in force: the reply as Core judges
+    /// the outpost's answer, committing nothing, and its calls.
+    pub fn msaa_run_reply(&self, ids: MsaaIds, depth: Depth) -> (FocusReply, CallCounts) {
         self.msaa_run_reply_with(ids, depth, focus_set())
     }
 
     /// [`Self::msaa_run_reply`] with the properties `set`.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "its callers build the depth in place"
+    )]
     pub fn msaa_run_reply_with(
         &self,
         ids: MsaaIds,
         depth: Depth,
         set: Vec<PropertyId>,
-    ) -> (Reply, CallCounts) {
-        let number = self.request(
-            hwnd(ids.window),
-            Request::MsaaRun(MsaaRun {
-                hidden: verbatim_model::request::HiddenRoot::Check,
-                candidate: RunCandidate {
-                    ids,
-                    kind: CandidateKind::Focus,
-                    verdict: WindowVerdict::ProbeFirst,
-                },
-                depth,
-                spare: None,
-                set,
-                known: self.known(),
-                details: verbatim_model::TextDetails::NONE,
-            }),
+    ) -> (FocusReply, CallCounts) {
+        self.candidate((ids, CandidateKind::Focus), &depth, (self.known(), set))
+    }
+
+    /// Sends the candidate at `ids` of `kind`, asked to `depth` by Core's
+    /// batch with no verdict in force, not waiting for its answer: its
+    /// number and the batch, which [`candidate_outcome`] judges its answer
+    /// against.
+    pub fn ask_candidate(
+        &self,
+        (ids, kind): (MsaaIds, CandidateKind),
+        depth: &Depth,
+    ) -> (RequestNumber, verbatim_model::batch::Batch) {
+        let batch = candidate_batch((ids, kind), depth, (self.known(), focus_set()));
+        (self.request(hwnd(ids.window), batch.clone()), batch)
+    }
+
+    /// Sends the read of the application's current focus as Core asks it,
+    /// naming `window`, not waiting for its answer: its number and the
+    /// batch, which [`focus_outcome`] judges its answer against.
+    pub fn ask_current_focus(&self, window: HWND) -> (RequestNumber, verbatim_model::batch::Batch) {
+        let batch = focus_batch(
+            Some(verbatim_model::batch::WindowOf::Focused),
+            None,
+            verbatim_model::batch::Subject::Focus,
+            (self.known(), focus_set()),
         );
-        let (answer, calls) = self.answer_with_calls(number);
-        let Outcome::Result(reply) = answer.outcome else {
-            panic!("the run answered {:?}", answer.outcome);
+        (self.request(window, batch.clone()), batch)
+    }
+
+    /// The candidate at `ids` of `kind` asked to `depth` by Core's batch,
+    /// the ancestors it knows `known`, by `set`: its answer as Core judges
+    /// it, which must be a result, and its calls.
+    fn candidate(
+        &self,
+        (ids, kind): (MsaaIds, CandidateKind),
+        depth: &Depth,
+        (known, set): (Vec<KnownAncestor>, Vec<PropertyId>),
+    ) -> (FocusReply, CallCounts) {
+        let batch = candidate_batch((ids, kind), depth, (known, set));
+        let (answer, calls) =
+            self.batch(hwnd(ids.window), WindowVerdict::ProbeFirst, batch.clone());
+        let reply = match answer.outcome {
+            Outcome::Refused(verbatim_model::request::Refusal::ReadThroughUia) => {
+                FocusReply::Candidate(CandidateAnswer {
+                    facts: CandidateFacts::Skipped,
+                    read: None,
+                })
+            }
+            Outcome::Result(Reply::Steps(steps)) => candidate_reply(&batch, (kind, depth), &steps),
+            other => panic!("the run answered {other:?}"),
         };
         (reply, calls)
     }
@@ -1076,27 +1144,29 @@ impl OutpostUnderTest {
 
     /// The application's current focus, asked as Core asks it with the
     /// ancestors it already knows, which it commits; with its calls.
-    pub fn current_focus(&self) -> (Outcome, CallCounts) {
+    pub fn current_focus(&self) -> (FocusOutcome, CallCounts) {
         let sent = self.known();
-        // Core names the window its foreground record holds.
-        let number = self.request(
-            HWND(self.foreground() as _),
-            Request::CurrentFocus {
-                hidden: verbatim_model::request::HiddenRoot::Check,
-                set: focus_set(),
-                known: sent.clone(),
-                details: verbatim_model::TextDetails::NONE,
-                depth: verbatim_model::request::FocusDepth::Full,
-            },
+        let batch = focus_batch(
+            Some(verbatim_model::batch::WindowOf::Focused),
+            None,
+            verbatim_model::batch::Subject::Focus,
+            (sent.clone(), focus_set()),
         );
-        let (answer, calls) = self.answer_with_calls(number);
-        if let Outcome::Result(Reply::Candidate(CandidateAnswer {
-            read: Some(read), ..
-        })) = &answer.outcome
+        // Core names the window its foreground record holds.
+        let (answer, calls) = self.batch(
+            HWND(self.foreground() as _),
+            WindowVerdict::ProbeFirst,
+            batch.clone(),
+        );
+        let outcome = focus_outcome(&batch, answer.outcome);
+        if let FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
+            read: Some(read),
+            ..
+        })) = &outcome
         {
             self.commit_focus(read, &sent);
         }
-        (answer.outcome, calls)
+        (outcome, calls)
     }
 
     /// The outpost's next message, counted as Core counts the messages
@@ -1330,7 +1400,7 @@ pub fn value(values: &PropertyValues, id: PropertyId) -> Option<&PropertyValue> 
 /// names again.
 pub struct ListenerFocus {
     /// The listener's answer, with its route.
-    pub object: ObjectRead,
+    pub object: ListenerObject,
     /// The ancestors Core already knew.
     pub sent: Vec<KnownAncestor>,
 }
@@ -1350,15 +1420,15 @@ pub struct Focused {
 impl Focused {
     /// The focus `outcome`, a completion's or a current focus's answer,
     /// reads, which it must, with `calls`.
-    pub fn of(outcome: Outcome, calls: CallCounts) -> Self {
+    pub fn of(outcome: FocusOutcome, calls: CallCounts) -> Self {
         match outcome {
-            Outcome::Result(Reply::Focus(read)) => Self {
+            FocusOutcome::Result(FocusReply::Focus(read)) => Self {
                 read: *read,
                 facts: None,
                 calls,
                 failed_reads: 0,
             },
-            Outcome::Result(Reply::Candidate(CandidateAnswer {
+            FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
                 facts,
                 read: Some(read),
             })) => Self {
@@ -1464,4 +1534,565 @@ pub fn nearest_window(element: &Cached<ListenerEvent>) -> isize {
     verbatim_uia::nearest_window_lookup(element.live().element())
         .expect("the check's walk to the nearest window")
         .expect("the element has a nearest window")
+}
+
+/// What the outpost found of an MSAA candidate, as Core judges it from its
+/// batch's outcomes (`verbatim-core`'s `focus::validity::CandidateFacts`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CandidateFacts {
+    /// Its window is read through UI Automation: the batch was refused.
+    Skipped,
+    /// The object is not there.
+    NotThere,
+    /// The object was found.
+    Found {
+        /// Whether it or an ancestor has the focused state, when read.
+        focused: Option<bool>,
+        /// Its role, read for a menu start.
+        role: Option<Role>,
+    },
+}
+
+/// A candidate's facts, and its full read when the batch read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidateAnswer {
+    /// The facts.
+    pub facts: CandidateFacts,
+    /// The full read.
+    pub read: Option<Box<FocusRead>>,
+}
+
+/// What kind of event named a candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CandidateKind {
+    /// A focus event: its focused state is tested.
+    Focus,
+    /// A foreground event.
+    Foreground,
+    /// A menu start: its object taken with no redirect, its role read.
+    MenuStart,
+}
+
+/// What an MSAA object reads as, which the identity check compares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    /// Its states.
+    pub states: StateSet,
+    /// Its role.
+    pub role: Role,
+    /// Its position in its set.
+    pub position_in_set: Option<u32>,
+    /// Its set's size.
+    pub set_size: Option<u32>,
+    /// Its name.
+    pub name: Option<String>,
+    /// Its value.
+    pub value: Option<String>,
+}
+
+/// How far Core's batch reads a candidate (`verbatim-core`'s
+/// `focus::msaa_run`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Depth {
+    /// Its facts alone.
+    Facts,
+    /// In full only when focused.
+    FullIfFocused,
+    /// In full.
+    Full,
+    /// As [`Depth::FullIfFocused`], unless it is the object at `ids`
+    /// reading as `identity`.
+    FullUnlessSame {
+        /// The ids of the readers' last focus.
+        ids: MsaaIds,
+        /// What it reads as.
+        identity: Box<Identity>,
+    },
+}
+
+/// A focus read's result as Core judges its batch's outcomes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FocusReply {
+    /// A route's or the current focus's read.
+    Focus(Box<FocusRead>),
+    /// A candidate's facts and read.
+    Candidate(CandidateAnswer),
+    /// The candidate is the object the identity check named.
+    CandidateSame,
+    /// The window's top-level window is a hidden dialog.
+    HiddenDialog(NodeWindow),
+}
+
+/// A focus read's outcome as Core judges it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FocusOutcome {
+    /// Its result.
+    Result(FocusReply),
+    /// Refused.
+    Refused(verbatim_model::request::Refusal),
+    /// Not there.
+    NotThere,
+    /// Not responding.
+    NotResponding,
+    /// The reader ended.
+    Ended,
+}
+
+/// The hidden-dialog check as Core asks it (`verbatim-core`'s
+/// `focus::shown::check`).
+pub fn hidden_check() -> verbatim_model::matcher::Matcher {
+    use verbatim_model::matcher::Matcher;
+    Matcher::All(vec![
+        Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(false)),
+        Matcher::IsAnyOf(
+            PropertyId::Role,
+            [Role::Dialog, Role::Alert, Role::PropertyPage]
+                .into_iter()
+                .map(PropertyValue::Role)
+                .collect(),
+        ),
+    ])
+}
+
+/// The test of an object neither it nor an ancestor of which has the
+/// focused state.
+fn unfocused() -> verbatim_model::matcher::Matcher {
+    verbatim_model::matcher::Matcher::Is(PropertyId::FocusedWithin, PropertyValue::Flag(false))
+}
+
+/// The identity check as Core writes it (`verbatim-core`'s
+/// `focus::msaa_run::UnlessSame::matcher`), the object held by its ids'
+/// child.
+fn same(ids: MsaaIds, identity: &Identity) -> verbatim_model::matcher::Matcher {
+    use verbatim_model::matcher::Matcher;
+    let count = |id, count: Option<u32>| match count {
+        Some(count) => Matcher::Any(vec![
+            Matcher::Absent(id),
+            Matcher::Is(id, PropertyValue::Count(count)),
+        ]),
+        None => Matcher::Absent(id),
+    };
+    let text = |id, text: &Option<String>| match text {
+        Some(text) => Matcher::Is(id, PropertyValue::Text(text.clone())),
+        None => Matcher::Absent(id),
+    };
+    Matcher::All(vec![
+        Matcher::Is(
+            PropertyId::MsaaAddress,
+            PropertyValue::MsaaAddress(verbatim_model::request::HeldIds {
+                event: ids,
+                held_child: ids.child,
+            }),
+        ),
+        Matcher::Is(PropertyId::States, PropertyValue::States(identity.states)),
+        Matcher::Is(PropertyId::Role, PropertyValue::Role(identity.role)),
+        count(PropertyId::PositionInSet, identity.position_in_set),
+        count(PropertyId::SetSize, identity.set_size),
+        text(PropertyId::Name, &identity.name),
+        text(PropertyId::Value, &identity.value),
+    ])
+}
+
+/// A step of a batch, run when the step at `on` did not match, if given.
+fn step(op: verbatim_model::batch::Op, unless: Option<u8>) -> verbatim_model::batch::Step {
+    verbatim_model::batch::Step {
+        op,
+        when: unless.map(|on| verbatim_model::batch::Condition {
+            on: verbatim_model::batch::Place(on),
+            check: verbatim_model::batch::Check::Matched,
+            negated: true,
+        }),
+    }
+}
+
+/// A focus read of `subject` as Core asks it: the hidden-dialog check of
+/// `hidden`'s window first when given, the test `facts` of the subject
+/// next when given, then its read unless either matched.
+fn focus_batch(
+    hidden: Option<verbatim_model::batch::WindowOf>,
+    facts: Option<verbatim_model::matcher::Matcher>,
+    subject: verbatim_model::batch::Subject,
+    (known, set): (Vec<KnownAncestor>, Vec<PropertyId>),
+) -> verbatim_model::batch::Batch {
+    use verbatim_model::batch::{Batch, Op, Placement, Subject};
+    let mut steps = Vec::new();
+    if let Some(which) = hidden {
+        steps.push(step(
+            Op::Test {
+                subject: Subject::Window {
+                    which,
+                    backend: verbatim_model::Backend::Msaa,
+                    visible: false,
+                },
+                matcher: hidden_check(),
+            },
+            None,
+        ));
+    }
+    let last = |steps: &Vec<verbatim_model::batch::Step>| {
+        steps
+            .len()
+            .checked_sub(1)
+            .map(|place| u8::try_from(place).expect("a short batch"))
+    };
+    if let Some(matcher) = facts {
+        let unless = last(&steps);
+        steps.push(step(
+            Op::Test {
+                subject: subject.clone(),
+                matcher,
+            },
+            unless,
+        ));
+    }
+    let unless = last(&steps);
+    steps.push(step(
+        Op::FocusRead {
+            subject,
+            known,
+            set,
+            details: verbatim_model::TextDetails::NONE,
+        },
+        unless,
+    ));
+    Batch {
+        steps,
+        placement: Placement::Queue,
+        spare: None,
+    }
+}
+
+/// A candidate's batch at `ids` of `kind`, to `depth`, as Core writes it
+/// (`verbatim-core`'s `focus::msaa_run::build`).
+fn candidate_batch(
+    (ids, kind): (MsaaIds, CandidateKind),
+    depth: &Depth,
+    (known, set): (Vec<KnownAncestor>, Vec<PropertyId>),
+) -> verbatim_model::batch::Batch {
+    use verbatim_model::batch::{Batch, Op, Placement, Subject, WindowOf};
+    let subject = Subject::Msaa {
+        ids,
+        redirect: kind != CandidateKind::MenuStart,
+    };
+    let hidden = (!matches!(depth, Depth::Facts) && kind != CandidateKind::MenuStart)
+        .then_some(WindowOf::TopLevelOf(ids.window));
+    match (kind, depth) {
+        (CandidateKind::MenuStart, _) | (CandidateKind::Foreground, Depth::Facts) => {
+            let set_read = if kind == CandidateKind::MenuStart {
+                vec![PropertyId::Role]
+            } else {
+                Vec::new()
+            };
+            let mut steps = vec![step(
+                Op::Read {
+                    subject: subject.clone(),
+                    set: set_read,
+                },
+                None,
+            )];
+            if *depth != Depth::Facts {
+                steps.push(step(
+                    Op::FocusRead {
+                        subject,
+                        known,
+                        set,
+                        details: verbatim_model::TextDetails::NONE,
+                    },
+                    None,
+                ));
+            }
+            Batch {
+                steps,
+                placement: Placement::Queue,
+                spare: None,
+            }
+        }
+        (CandidateKind::Foreground, _) => focus_batch(hidden, None, subject, (known, set)),
+        // In full: the focused state read as a fact, the read not waiting
+        // on it.
+        (CandidateKind::Focus, Depth::Full) => Batch {
+            steps: vec![
+                step(
+                    Op::Test {
+                        subject: Subject::Window {
+                            which: WindowOf::TopLevelOf(ids.window),
+                            backend: verbatim_model::Backend::Msaa,
+                            visible: false,
+                        },
+                        matcher: hidden_check(),
+                    },
+                    None,
+                ),
+                step(
+                    Op::Test {
+                        subject: subject.clone(),
+                        matcher: unfocused(),
+                    },
+                    Some(0),
+                ),
+                step(
+                    Op::FocusRead {
+                        subject,
+                        known,
+                        set,
+                        details: verbatim_model::TextDetails::NONE,
+                    },
+                    Some(0),
+                ),
+            ],
+            placement: Placement::Queue,
+            spare: None,
+        },
+        (CandidateKind::Focus, Depth::Facts) => Batch {
+            steps: vec![step(
+                Op::Test {
+                    subject,
+                    matcher: unfocused(),
+                },
+                None,
+            )],
+            placement: Placement::Queue,
+            spare: None,
+        },
+        (
+            CandidateKind::Focus,
+            Depth::FullUnlessSame {
+                ids: named,
+                identity,
+            },
+        ) => focus_batch(
+            hidden,
+            Some(verbatim_model::matcher::Matcher::Any(vec![
+                unfocused(),
+                same(*named, identity),
+            ])),
+            subject,
+            (known, set),
+        ),
+        (CandidateKind::Focus, _) => focus_batch(hidden, Some(unfocused()), subject, (known, set)),
+    }
+}
+
+/// The `FocusedWithin` `values` read, when they read it.
+fn focused_within(values: &PropertyValues) -> Option<bool> {
+    match value(values, PropertyId::FocusedWithin) {
+        Some(PropertyValue::Flag(focused)) => Some(*focused),
+        _ => None,
+    }
+}
+
+/// The outcome `outcome` of a candidate's batch `batch`, of `kind`, to
+/// `depth`, as Core judges it.
+pub fn candidate_outcome(
+    batch: &verbatim_model::batch::Batch,
+    (kind, depth): (CandidateKind, &Depth),
+    outcome: Outcome,
+) -> FocusOutcome {
+    match outcome {
+        Outcome::Result(Reply::Steps(steps)) => {
+            FocusOutcome::Result(candidate_reply(batch, (kind, depth), &steps))
+        }
+        Outcome::Result(other) => panic!("a batch answered {other:?}"),
+        Outcome::Refused(verbatim_model::request::Refusal::ReadThroughUia) => {
+            FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
+                facts: CandidateFacts::Skipped,
+                read: None,
+            }))
+        }
+        Outcome::Refused(refusal) => FocusOutcome::Refused(refusal),
+        Outcome::NotThere => FocusOutcome::NotThere,
+        Outcome::NotResponding => FocusOutcome::NotResponding,
+        Outcome::Ended => FocusOutcome::Ended,
+    }
+}
+
+/// The outcomes `steps` of a candidate's batch `batch`, to `depth`, as Core
+/// judges them (`verbatim-core`'s `focus::msaa_run::judge`).
+fn candidate_reply(
+    batch: &verbatim_model::batch::Batch,
+    (kind, depth): (CandidateKind, &Depth),
+    steps: &[verbatim_model::batch::StepOutcome],
+) -> FocusReply {
+    use verbatim_model::batch::{Done, Op, StepOutcome, Subject};
+    let gone = FocusReply::Candidate(CandidateAnswer {
+        facts: CandidateFacts::NotThere,
+        read: None,
+    });
+    let mut focused = None;
+    let mut role = None;
+    let mut read = None;
+    for (step, outcome) in batch.steps.iter().zip(steps) {
+        match (&step.op, outcome) {
+            (
+                Op::Test {
+                    subject: Subject::Window { .. },
+                    ..
+                },
+                StepOutcome::Done(Done::Test(tested)),
+            ) => {
+                if tested.matched {
+                    return FocusReply::HiddenDialog(tested.node.window);
+                }
+                if value(&tested.node.values, PropertyId::WindowShown)
+                    == Some(&PropertyValue::Flag(false))
+                    && tested
+                        .node
+                        .values
+                        .answer(PropertyId::Role)
+                        .is_some_and(|answer| answer.value.is_none())
+                {
+                    return gone;
+                }
+            }
+            (Op::Test { .. }, StepOutcome::Done(Done::Test(tested))) => {
+                focused = focused_within(&tested.node.values);
+                if tested.matched && !matches!(depth, Depth::Full) {
+                    if matches!(depth, Depth::Facts) || focused == Some(false) {
+                        focused = Some(false);
+                        break;
+                    }
+                    return FocusReply::CandidateSame;
+                }
+            }
+            (Op::Read { .. }, StepOutcome::Done(Done::Read(node))) => {
+                role = match value(&node.values, PropertyId::Role) {
+                    Some(PropertyValue::Role(role)) if kind == CandidateKind::MenuStart => {
+                        Some(*role)
+                    }
+                    _ => None,
+                };
+            }
+            (Op::FocusRead { .. }, StepOutcome::Done(Done::FocusRead(focus))) => {
+                read = Some(focus.clone());
+            }
+            // A window the application does not serve is no hidden dialog.
+            (_, StepOutcome::Skipped)
+            | (
+                Op::Test {
+                    subject: Subject::Window { .. },
+                    ..
+                },
+                StepOutcome::NotThere(_),
+            ) => {}
+            (_, StepOutcome::NotThere(_) | StepOutcome::Failed) => return gone,
+            (op, other) => panic!("a candidate's step {op:?} answered {other:?}"),
+        }
+    }
+    FocusReply::Candidate(CandidateAnswer {
+        facts: CandidateFacts::Found { focused, role },
+        read,
+    })
+}
+
+/// The outcome `outcome` of a focus read's batch `batch`, a route's or
+/// the current focus's, as Core judges it.
+pub fn focus_outcome(batch: &verbatim_model::batch::Batch, outcome: Outcome) -> FocusOutcome {
+    use verbatim_model::batch::{Done, StepOutcome};
+    let steps = match outcome {
+        Outcome::Result(Reply::Steps(steps)) => steps,
+        Outcome::Result(other) => panic!("a batch answered {other:?}"),
+        Outcome::Refused(refusal) => return FocusOutcome::Refused(refusal),
+        Outcome::NotThere => return FocusOutcome::NotThere,
+        Outcome::NotResponding => return FocusOutcome::NotResponding,
+        Outcome::Ended => return FocusOutcome::Ended,
+    };
+    let current = batch.reads_focus_first();
+    for (step, outcome) in batch.steps.iter().zip(steps) {
+        // A window the application does not serve is no hidden dialog.
+        if matches!(
+            (&step.op, &outcome),
+            (
+                verbatim_model::batch::Op::Test {
+                    subject: verbatim_model::batch::Subject::Window { .. },
+                    ..
+                },
+                StepOutcome::NotThere(_)
+            )
+        ) {
+            continue;
+        }
+        match outcome {
+            StepOutcome::Done(Done::Test(tested)) if tested.matched => {
+                return FocusOutcome::Result(FocusReply::HiddenDialog(tested.node.window));
+            }
+            StepOutcome::Done(Done::Test(tested)) => {
+                if value(&tested.node.values, PropertyId::WindowShown)
+                    == Some(&PropertyValue::Flag(false))
+                    && tested
+                        .node
+                        .values
+                        .answer(PropertyId::Role)
+                        .is_some_and(|answer| answer.value.is_none())
+                {
+                    return FocusOutcome::NotThere;
+                }
+            }
+            StepOutcome::Done(Done::FocusRead(read)) if current => {
+                return FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
+                    facts: CandidateFacts::Found {
+                        focused: None,
+                        role: None,
+                    },
+                    read: Some(read),
+                }));
+            }
+            StepOutcome::Done(Done::FocusRead(read)) => {
+                return FocusOutcome::Result(FocusReply::Focus(read));
+            }
+            StepOutcome::NotThere(_) | StepOutcome::Failed => return FocusOutcome::NotThere,
+            other => panic!("a focus read's step answered {other:?}"),
+        }
+    }
+    panic!("a focus read's batch answered no read")
+}
+
+/// The route of the element the listener read as `object`, its ancestors
+/// as `ancestry` read them, up to one of `known`, as Core makes it.
+fn route_of(
+    object: &NodeRead,
+    ancestry: &verbatim_model::batch::Ancestry,
+    known: &[KnownAncestor],
+) -> verbatim_model::request::Route {
+    use verbatim_model::batch::AncestorsEnd;
+    use verbatim_model::request::{RouteEnd, RouteStep};
+    let step = |read: &NodeRead| RouteStep {
+        runtime_id: match value(&read.values, PropertyId::RuntimeId) {
+            Some(PropertyValue::RuntimeId(runtime_id)) => runtime_id.clone(),
+            other => panic!("the listener read a runtime id: {other:?}"),
+        },
+        window: match value(&read.values, PropertyId::NativeWindow) {
+            Some(PropertyValue::Window(window)) => Some(*window),
+            _ => None,
+        },
+        content: value(&read.values, PropertyId::IsContent) == Some(&PropertyValue::Flag(true)),
+    };
+    let end = match ancestry.end {
+        AncestorsEnd::Met(place) => {
+            RouteEnd::Known(known[usize::try_from(place).expect("a place")].clone())
+        }
+        AncestorsEnd::ProcessBoundary => RouteEnd::ProcessBoundary,
+        AncestorsEnd::Top => RouteEnd::Root,
+        AncestorsEnd::ContinueFrom(window) => RouteEnd::ContinueFrom(window),
+        AncestorsEnd::PlainFrom(window) => RouteEnd::PlainFrom(window),
+        AncestorsEnd::DepthLimit => panic!("the listener's walk goes on by plain windows"),
+    };
+    let reads = || std::iter::once(object).chain(&ancestry.ancestors);
+    verbatim_model::request::Route {
+        window: object.window.handle,
+        steps: reads().map(step).collect(),
+        end,
+        read: reads().map(|read| read.values.clone()).collect(),
+    }
+}
+
+/// The listener's read of a kept element and its ancestors, as the
+/// stand-in for Core holds it.
+#[derive(Clone, Debug)]
+pub struct ListenerObject {
+    /// The element.
+    pub object: NodeRead,
+    /// Its ancestors, nearest first.
+    pub ancestors: Vec<NodeRead>,
+    /// Its route.
+    pub route: Option<verbatim_model::request::Route>,
 }

@@ -69,14 +69,6 @@ pub(crate) enum Outcome<T> {
 }
 
 impl<T> Outcome<T> {
-    /// The result made into `U` by `result`, any other outcome left as it is.
-    pub(crate) fn map<U>(self, result: impl FnOnce(T) -> U) -> Outcome<U> {
-        match self.split() {
-            Ok(answer) => Outcome::Result(result(answer)),
-            Err(other) => other,
-        }
-    }
-
     /// The result, or the outcome that is not one, as an outcome of any
     /// request.
     pub(crate) fn split<U>(self) -> Result<T, Outcome<U>> {

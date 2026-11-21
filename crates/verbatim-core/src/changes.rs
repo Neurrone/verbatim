@@ -114,10 +114,17 @@ fn in_flight<'a>(
     front: Option<(&'a crate::entries::Entry, Option<&Question>)>,
 ) -> Option<&'a RuntimeId> {
     match front? {
-        (
-            crate::entries::Entry::UiaFocus(focus),
-            Some(Question::Legacy(Wire::CompleteUia(complete))),
-        ) if complete.completes == verbatim_model::request::CompletionFor::Focus => {
+        (crate::entries::Entry::UiaFocus(focus), Some(Question::Batch(batch)))
+            if batch.steps.iter().any(|step| {
+                matches!(
+                    step.op,
+                    verbatim_model::batch::Op::FocusRead {
+                        subject: verbatim_model::batch::Subject::Route(_),
+                        ..
+                    }
+                )
+            }) =>
+        {
             Some(&focus.runtime_id)
         }
         _ => None,
@@ -451,7 +458,6 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
             set,
             relation: Some(relation),
             descendants: false,
-            walk: None,
             purpose: Purpose::Change,
         },
     };

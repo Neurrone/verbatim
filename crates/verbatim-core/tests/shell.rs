@@ -7,11 +7,14 @@
 //! foreground window. Each asserts every effect its input produces.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{
     App, Desk, FRAME, Heard, LISTENER, ONE, TWO, focus_heard, focus_now, focus_now_in,
     focus_now_with, focus_read_of, focus_tell, listener_read,
 };
+use readers::Found;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
@@ -484,9 +487,7 @@ fn started_on(desk: &mut Desk, app: App, read: FocusRead) -> Vec<Heard> {
         bring_forward(desk, app),
         [Heard::Sent(Reader::Outpost(app.pid), "CurrentFocus")]
     );
-    desk.reply(Reply::Candidate(
-        verbatim_model::request::CandidateAnswer::focused(read),
-    ))
+    desk.reply_found(&Found::Read(read))
 }
 
 /// What a UI Automation focus on the "OK" button of `app` does, as the
@@ -715,8 +716,8 @@ fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
         [Heard::Sent(Reader::Listener, "ReadObject")]
     );
     assert_eq!(
-        desk.reply(Reply::Object(Box::new(listener_read(SETTINGS, 5)))),
-        [Heard::Sent(Reader::Outpost(SETTINGS.pid), "CompleteUia")]
+        desk.reply_found(&listener_read(SETTINGS, 5)),
+        [Heard::Sent(Reader::Outpost(SETTINGS.pid), "Completion")]
     );
     let [(completion, _, _)] = desk.sent[..] else {
         panic!("one completion asked: {:?}", desk.sent);
@@ -734,8 +735,8 @@ fn a_hang_in_the_process_focused_inside_the_attention_window_plays_the_sound() {
         [Heard::Sent(Reader::Listener, "ReadObject")]
     );
     assert_eq!(
-        desk.reply(Reply::Object(Box::new(listener_read(TWO, 5)))),
-        [Heard::Sent(Reader::Outpost(TWO.pid), "CompleteUia")]
+        desk.reply_found(&listener_read(TWO, 5)),
+        [Heard::Sent(Reader::Outpost(TWO.pid), "Completion")]
     );
     let [(completion, _, _)] = desk.sent[..] else {
         panic!("one completion asked: {:?}", desk.sent);
@@ -765,12 +766,7 @@ fn a_fake_focus_on_the_msaa_focus_core_holds_says_nothing() {
             id: PropertyId::States,
             value: Some(PropertyValue::States(StateSet::new().with(State::Focused))),
         });
-    assert_eq!(
-        desk.reply(Reply::Candidate(
-            verbatim_model::request::CandidateAnswer::focused(read)
-        )),
-        []
-    );
+    assert_eq!(desk.reply_found(&Found::Read(read)), []);
 }
 
 /// The check after a menu's end reads the UI Automation focus Core holds:
@@ -785,9 +781,7 @@ fn a_fake_focus_on_the_uia_focus_core_holds_is_spoken_again() {
     );
     menu_ended(&mut desk, ONE);
     assert_eq!(
-        desk.reply(Reply::Candidate(
-            verbatim_model::request::CandidateAnswer::focused(focus_read_of(ONE, &ok(ONE), &[]))
-        )),
+        desk.reply_found(&Found::Read(focus_read_of(ONE, &ok(ONE), &[]))),
         focus_heard(ONE, focus_now_in(ONE, 5, &[]), vec![ok_button()])
     );
 }
@@ -823,9 +817,7 @@ fn a_desktop_return_s_focus_is_spoken_again_on_the_focus_core_holds() {
         [Heard::Sent(Reader::Outpost(ONE.pid), "CurrentFocus")]
     );
     assert_eq!(
-        desk.reply(Reply::Candidate(
-            verbatim_model::request::CandidateAnswer::focused(msaa_ok(ONE))
-        )),
+        desk.reply_found(&Found::Read(msaa_ok(ONE))),
         msaa_ok_heard(ONE, Some((ONE, FRAME)))
     );
 }
@@ -854,8 +846,6 @@ fn desktop_named(desk: &mut Desk, name: &str) {
         relation: None,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     };
     assert_eq!(desk.reply(Reply::Object(Box::new(read))), []);
 }

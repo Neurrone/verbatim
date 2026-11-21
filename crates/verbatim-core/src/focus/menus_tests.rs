@@ -1,15 +1,17 @@
 //! The check after a menu or switcher ends, and the UI Automation menu
 //! opening.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::{CandidateAnswer, Outcome, Reply};
+use verbatim_model::request::Outcome;
 use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{Role, State, StateSet, WindowHandle};
 
 use crate::entries::tests::{
-    APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, answer, asked_completion,
-    entry, feed_at, focus_read, held, listener_answer, msaa_tell, node, ready, uia_tell, values,
+    APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, asked_completion, entry,
+    feed_at, focus_read, held, listener_answer, msaa_tell, node, ready, uia_tell, values,
 };
 use crate::event_queue::{Foreground, Input};
 
@@ -50,7 +52,7 @@ fn menu_end() -> Input<crate::entries::Entry> {
 /// The focus answer of the check, an MSAA focus whose object or an
 /// ancestor has the focused state, read in full; or without it, its
 /// facts alone.
-fn focused(focused: bool) -> Reply {
+fn focused(focused: bool) -> Found {
     let mut read = focus_read(Some(held(-4)));
     let mut states = StateSet::default();
     states.insert(State::Focused);
@@ -58,13 +60,11 @@ fn focused(focused: bool) -> Reply {
         id: PropertyId::States,
         value: Some(PropertyValue::States(states)),
     });
-    Reply::Candidate(CandidateAnswer {
-        facts: verbatim_model::request::CandidateFacts::Found {
-            focused: Some(focused),
-            role: None,
-        },
-        read: focused.then(|| Box::new(read)),
-    })
+    if focused {
+        Found::Read(read)
+    } else {
+        Found::Unfocused
+    }
 }
 
 /// The focus it speaks keeps the check's own fence, the key before the
@@ -88,7 +88,7 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
         .arrivals
         .key_joined(verbatim_model::KeySeq::new(4));
     assert_eq!(
-        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
+        found_at(&mut state, 52_000, (OUTPOST, 2), focused(true)),
         SPOKEN
     );
     assert_eq!(
@@ -112,11 +112,7 @@ fn a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_
     let mut edit = focus_read(Some(held(-6)));
     edit.focus.read.node = Some(node(3));
     edit.focus.read.values = values("Field", Role::EditableText);
-    feed_at(
-        &mut state,
-        200,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(edit))),
-    );
+    found_at(&mut state, 200, (OUTPOST, 1), Found::Read(edit));
     assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
     let mut value_change = msaa_tell(-4);
     value_change.kind = EventKind::ValueChange;
@@ -124,7 +120,7 @@ fn a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_
     assert!(state.versions.live().unwrap().kept.selection.text_changed);
     feed_at(&mut state, 51_000, Input::Tick);
     assert_eq!(
-        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(true))),
+        found_at(&mut state, 52_000, (OUTPOST, 2), focused(true)),
         ["Label(\"OK\") Role(Button)"]
     );
 }
@@ -140,7 +136,7 @@ fn a_checked_msaa_focus_answered_unfocused_is_refused_and_not_spoken() {
     feed_at(&mut state, 1_000, menu_end());
     feed_at(&mut state, 51_000, Input::Tick);
     assert_eq!(
-        feed_at(&mut state, 52_000, answer(OUTPOST, 2, focused(false))),
+        found_at(&mut state, 52_000, (OUTPOST, 2), focused(false)),
         NOTHING
     );
     assert!(state.versions.last.is_none());
@@ -197,18 +193,15 @@ fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() 
         ["send Listener ReadObject"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            3_200,
-            answer(LISTENER, 2, Reply::Object(Box::new(listener_answer())))
-        ),
-        ["send Outpost(Pid(40)) CompleteUia"]
+        found_at(&mut state, 3_200, (LISTENER, 2), listener_answer()),
+        ["send Outpost(Pid(40)) Completion"]
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             3_400,
-            answer(OUTPOST, 3, Reply::Focus(Box::new(focus_read(None))))
+            (OUTPOST, 3),
+            Found::Read(focus_read(None))
         ),
         SPOKEN_FOLLOWED
     );
@@ -219,20 +212,11 @@ fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() 
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             60_000,
-            answer(
-                OUTPOST,
-                5,
-                Reply::Candidate(CandidateAnswer {
-                    facts: verbatim_model::request::CandidateFacts::Found {
-                        focused: None,
-                        role: None,
-                    },
-                    read: Some(Box::new(focus_read(None))),
-                })
-            )
+            (OUTPOST, 5),
+            Found::Read(focus_read(None))
         ),
         ["Label(\"OK\") Role(Button)", "send Outpost(Pid(40)) Follow"]
     );
@@ -244,15 +228,8 @@ fn a_focus_committed_before_the_check_ends_it_with_no_read() {
     feed_at(&mut state, 1_000, menu_end());
     // A focus is executed within the 50 ms.
     feed_at(&mut state, 2_000, entry(msaa_tell(-5)));
-    let tried = CandidateAnswer::focused(focus_read(Some(held(-5))));
-    assert_eq!(
-        feed_at(
-            &mut state,
-            3_000,
-            answer(OUTPOST, 2, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
+    let tried = Found::Read(focus_read(Some(held(-5))));
+    assert_eq!(found_at(&mut state, 3_000, (OUTPOST, 2), tried), SPOKEN);
     assert_eq!(feed_at(&mut state, 51_000, Input::Tick), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
 }
@@ -263,18 +240,11 @@ fn a_menu_end_after_a_run_that_executed_a_focus_makes_no_check() {
     // The run asks; the menu end waits behind it.
     assert_eq!(
         feed_at(&mut state, 1_000, entry(msaa_tell(-5))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     feed_at(&mut state, 1_100, menu_end());
-    let tried = CandidateAnswer::focused(focus_read(Some(held(-5))));
-    assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            answer(OUTPOST, 2, Reply::Candidate(tried))
-        ),
-        SPOKEN
-    );
+    let tried = Found::Read(focus_read(Some(held(-5))));
+    assert_eq!(found_at(&mut state, 2_000, (OUTPOST, 2), tried), SPOKEN);
     assert_eq!(feed_at(&mut state, 60_000, Input::Tick), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
 }
@@ -307,10 +277,11 @@ fn a_menu_opening_behind_a_pending_focus_raised_before_it_is_dropped() {
 #[test]
 fn a_menu_opening_on_the_committed_focus_executes_it_again() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     let again = feed_at(&mut state, 4_000, opening(1, 4_000));
     assert!(state.queue.front_for_tests().is_none());
@@ -320,10 +291,11 @@ fn a_menu_opening_on_the_committed_focus_executes_it_again() {
 #[test]
 fn a_menu_opening_on_the_committed_focus_that_lost_the_keyboard_focus_is_dropped() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     assert_eq!(feed_at(&mut state, 4_000, lost_opening(1, 4_000)), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
@@ -356,27 +328,24 @@ fn menu_start() -> Input<crate::entries::Entry> {
 }
 
 /// A focus answer of `role`, named "Context".
-fn read_as(role: verbatim_model::Role) -> Reply {
+fn read_as(role: verbatim_model::Role) -> Found {
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = crate::entries::tests::values("Context", role);
-    Reply::Candidate(CandidateAnswer {
-        facts: verbatim_model::request::CandidateFacts::Found {
-            focused: None,
-            role: Some(role),
-        },
-        read: Some(Box::new(read)),
-    })
+    Found::Role(Some(role), Some(read))
 }
 
-/// The run candidates' kinds of the request out.
-fn asked_kinds(state: &Held) -> Vec<verbatim_model::request::CandidateKind> {
+/// Whether each candidate out is read as a menu start: its object at its
+/// event's ids with no redirect, its role read.
+fn asked_kinds(state: &Held) -> Vec<bool> {
     state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .flat_map(|request| match request {
-            verbatim_model::request::Request::MsaaRun(run) => vec![run.candidate.kind],
-            _ => Vec::new(),
+        .filter_map(|(_, batch)| {
+            batch.steps.iter().find_map(|step| match step.op.subject() {
+                Some(verbatim_model::batch::Subject::Msaa { redirect, .. }) => Some(!redirect),
+                _ => None,
+            })
         })
         .collect()
 }
@@ -386,17 +355,15 @@ fn a_menu_start_reads_its_object_and_a_menu_popup_executes_as_a_focus() {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, menu_start()),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
+    assert_eq!(asked_kinds(&state), [true]);
     assert_eq!(
-        asked_kinds(&state),
-        [verbatim_model::request::CandidateKind::MenuStart]
-    );
-    assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             2_000,
-            answer(OUTPOST, 1, read_as(verbatim_model::Role::Menu))
+            (OUTPOST, 1),
+            read_as(verbatim_model::Role::Menu)
         ),
         [
             "Label(\"Editor\") Role(Window)",
@@ -410,10 +377,11 @@ fn a_menu_start_on_anything_but_a_menu_popup_says_nothing() {
     let mut state = ready();
     feed_at(&mut state, 1_000, menu_start());
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             2_000,
-            answer(OUTPOST, 1, read_as(verbatim_model::Role::Button))
+            (OUTPOST, 1),
+            read_as(verbatim_model::Role::Button)
         ),
         NOTHING
     );
@@ -426,16 +394,12 @@ fn start_after_a_run(role: verbatim_model::Role) -> Vec<String> {
     let mut state = ready();
     assert_eq!(
         feed_at(&mut state, 1_000, entry(msaa_tell(-4))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(feed_at(&mut state, 1_100, menu_start()), NOTHING);
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = crate::entries::tests::values("File", role);
-    feed_at(
-        &mut state,
-        2_000,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    )
+    found_at(&mut state, 2_000, (OUTPOST, 1), Found::Read(read))
 }
 
 #[test]
@@ -453,7 +417,7 @@ fn a_menu_start_after_a_run_that_executed_another_focus_reads_its_object() {
         [
             "Label(\"Editor\") Role(Window)",
             "Label(\"File\") Role(Button)",
-            "send Outpost(Pid(40)) MsaaRun"
+            "send Outpost(Pid(40)) Candidate"
         ]
     );
 }
@@ -494,7 +458,7 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
         };
         if focused {
             candidate.confirmation =
-                Confirmation::Read(verbatim_model::request::CandidateFacts::Found {
+                Confirmation::Read(crate::focus::validity::CandidateFacts::Found {
                     focused: Some(true),
                     role: None,
                 });

@@ -2,11 +2,12 @@
 //! (Table 3, row "Startup"), the re-take after a reader's replacement
 //! (column F) and the read after a hung window answers again (Table 18,
 //! column B).
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::CandidateAnswer;
 
 use verbatim_model::request::{
-    FocusCaret, FocusCaretRead, FocusRead, KnownAncestor, Reply, Request as Wire,
+    FocusCaret, FocusCaretRead, FocusRead, KnownAncestor, Request as Wire,
 };
 use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{
@@ -15,8 +16,8 @@ use verbatim_model::{
 };
 
 use crate::entries::tests::{
-    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, answer, asked_completion,
-    entry, feed_at, focus_read, held, msaa_tell, node, ready, ready_at, uia_tell, values,
+    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, SPOKEN_FOLLOWED, asked_completion, entry,
+    feed_at, focus_read, held, msaa_tell, node, ready, ready_at, uia_tell, values,
 };
 use crate::event_queue::{Foreground, Input, Instance, Reader};
 use crate::focus::versions::{Committed, ReadBy};
@@ -58,15 +59,7 @@ fn started() -> Held {
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            600,
-            answer(
-                OUTPOST,
-                1,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
-        ),
+        found_at(&mut state, 600, (OUTPOST, 1), Found::Read(focus_read(None))),
         SPOKEN_FOLLOWED
     );
     state
@@ -121,15 +114,7 @@ fn the_committed_focus_read_again_after_its_outpost_ends_is_taken_silently() {
     state.arrivals.key_joined(verbatim_model::KeySeq::new(4));
     let read = minted_anew(focus_read(None));
     assert_eq!(
-        feed_at(
-            &mut state,
-            1_200,
-            answer(
-                REPLACEMENT,
-                3,
-                Reply::Candidate(CandidateAnswer::focused(read))
-            )
-        ),
+        found_at(&mut state, 1_200, (REPLACEMENT, 3), Found::Read(read)),
         // Taken silently, and named to the replacement generation.
         ["send Outpost(Pid(40)) Follow"]
     );
@@ -154,11 +139,7 @@ fn a_focus_whose_outpost_ended_holds_no_caret_key_and_echoes_nothing() {
     let mut read = focus_read(None);
     read.focus.read.values =
         crate::entries::tests::values("Body", verbatim_model::Role::EditableText);
-    let _ = feed_at(
-        &mut state,
-        600,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(read));
     assert!(state.holds_caret_keys());
     assert_eq!(
         crate::editing::character_typed(&mut state, TraceId::from_raw(20), "a").len(),
@@ -185,15 +166,7 @@ fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
     let mut read = minted_anew(focus_read(None));
     read.focus.read.values = crate::entries::tests::values("Cancel", verbatim_model::Role::Button);
     assert_eq!(
-        feed_at(
-            &mut state,
-            1_200,
-            answer(
-                REPLACEMENT,
-                3,
-                Reply::Candidate(CandidateAnswer::focused(read))
-            )
-        ),
+        found_at(&mut state, 1_200, (REPLACEMENT, 3), Found::Read(read)),
         // None of the ended generation's ancestors is sent as known, so
         // the walk goes to the top and the window is said again.
         [
@@ -207,24 +180,22 @@ fn a_different_focus_read_after_its_outpost_ends_is_spoken() {
 #[test]
 fn the_listeners_end_clears_its_token_and_reads_the_attended_applications_focus() {
     let mut state = asked_completion();
-    feed_at(
+    found_at(
         &mut state,
         3_000,
-        answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+        (OUTPOST, 2),
+        Found::Read(focus_read(None)),
     );
     // The foreground report's startup read, answered the same.
     assert_eq!(
         feed_at(&mut state, 3_100, Input::Foreground(IN_FRONT)),
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
-    feed_at(
+    found_at(
         &mut state,
         3_200,
-        answer(
-            OUTPOST,
-            4,
-            Reply::Candidate(CandidateAnswer::focused(focus_read(None))),
-        ),
+        (OUTPOST, 4),
+        Found::Read(focus_read(None)),
     );
     // A later focus of the listener's waits behind the re-take and is
     // dropped with the listener's element.
@@ -278,14 +249,11 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut state,
             1_700,
-            answer(
-                OUTPOST,
-                4,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
+            (OUTPOST, 4),
+            Found::Read(focus_read(None))
         ),
         NOTHING
     );
@@ -323,15 +291,7 @@ fn the_silent_retake_mints_the_baseline_in_the_new_generation_and_keeps_the_flag
         baseline: TextAnchor(90),
     }));
     assert_eq!(
-        feed_at(
-            &mut state,
-            1_200,
-            answer(
-                REPLACEMENT,
-                3,
-                Reply::Candidate(CandidateAnswer::focused(read))
-            )
-        ),
+        found_at(&mut state, 1_200, (REPLACEMENT, 3), Found::Read(read)),
         ["send Outpost(Pid(40)) Follow"]
     );
     let Committed::Read(focus) = &state.versions.committed else {
@@ -362,15 +322,7 @@ fn the_startup_read_keeps_its_entrys_fence() {
     state.arrivals.key_joined(verbatim_model::KeySeq::new(2));
     feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
     assert_eq!(
-        feed_at(
-            &mut state,
-            600,
-            answer(
-                OUTPOST,
-                1,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
-        ),
+        found_at(&mut state, 600, (OUTPOST, 1), Found::Read(focus_read(None))),
         SPOKEN_FOLLOWED
     );
     assert_eq!(since(&state), Some(Some(state.arrivals.fence())));
@@ -397,29 +349,38 @@ fn run_dialog() -> FocusRead {
 /// button").
 #[test]
 fn a_tab_after_a_retake_that_kept_the_old_dialog_entry_says_the_button() {
-    let focused = |read| Reply::Candidate(CandidateAnswer::focused(read));
+    let focused = Found::Read;
     let mut state = ready();
     feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
-    feed_at(&mut state, 600, answer(OUTPOST, 1, focused(run_dialog())));
+    found_at(&mut state, 600, (OUTPOST, 1), focused(run_dialog()));
     feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
     ready_at(&mut state, 1_100, REPLACEMENT);
     let retaken = focused(minted_anew(run_dialog()));
     assert_eq!(
-        feed_at(&mut state, 1_200, answer(REPLACEMENT, 2, retaken)),
+        found_at(&mut state, 1_200, (REPLACEMENT, 2), retaken),
         NOTHING
     );
     feed_at(&mut state, 2_000, entry(msaa_tell(-5)));
-    let Some(Wire::MsaaRun(run)) = state.queue.table_for_tests().into_iter().next() else {
+    let Some(known) = state
+        .queue
+        .batches_for_tests()
+        .into_iter()
+        .flat_map(|(_, batch)| batch.steps)
+        .find_map(|step| match step.op {
+            verbatim_model::batch::Op::FocusRead { known, .. } => Some(known),
+            _ => None,
+        })
+    else {
         panic!("the Tab's MSAA run is out");
     };
     let dialog = KnownAncestor::Window(WindowHandle(4));
-    let met = run.known.iter().position(|known| *known == dialog).unwrap();
+    let met = known.iter().position(|known| *known == dialog).unwrap();
     let mut ok = minted_anew(focus_read(Some(held(-5))));
     ok.focus.read.node = Some(NodeId::in_outpost(OutpostId(GENERATION + 1), 3));
     ok.ancestors.clear();
     ok.met = Some(u32::try_from(met).unwrap());
     assert_eq!(
-        feed_at(&mut state, 2_100, answer(REPLACEMENT, 3, focused(ok))),
+        found_at(&mut state, 2_100, (REPLACEMENT, 3), focused(ok)),
         ["Label(\"OK\") Role(Button)"]
     );
 }

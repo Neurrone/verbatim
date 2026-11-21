@@ -8,14 +8,15 @@
 //! source (`editableText.py` 93 to 99; `IAccessibleHandler/__init__.py`
 //! 762 to 782).
 
-use verbatim_model::request::{CandidateAnswer, CandidateFacts, Depth, MsaaRun, RunCandidate};
-use verbatim_model::request::{CandidateKind, MsaaIds, WindowVerdict};
+use verbatim_model::batch::{Batch, Op, Placement, Step as BatchStep, Subject};
+use verbatim_model::request::MsaaIds;
 
 use super::*;
 use crate::entries::tests::msaa_tell;
 use crate::event_queue::Reader;
 use crate::focus::validity::Pending;
 use crate::keys::caret_key::{Arrival, CaretPress, CaretStage, TerminalStage};
+use crate::readers::Found;
 
 const KEY: Arrival = Arrival::Key;
 const OTHER: Arrival = Arrival::Other;
@@ -134,39 +135,45 @@ fn the_stage_is_derived_from_the_request_out() {
         held: true,
         bound: Some(binding),
     };
-    let run = |depth| {
-        Wire::MsaaRun(MsaaRun {
-            hidden: verbatim_model::request::HiddenRoot::Check,
-            candidate: RunCandidate {
-                ids: MsaaIds {
-                    window: WindowHandle(5),
-                    object: -5,
-                    child: 0,
-                },
-                kind: CandidateKind::Focus,
-                verdict: WindowVerdict::ProbeFirst,
+    let candidate = |facts_alone: bool| {
+        let ids = MsaaIds {
+            window: WindowHandle(5),
+            object: -5,
+            child: 0,
+        };
+        let subject = Subject::Msaa {
+            ids,
+            redirect: true,
+        };
+        let mut steps = vec![BatchStep {
+            op: Op::Test {
+                subject: subject.clone(),
+                matcher: crate::focus::msaa_run::unfocused(),
             },
-            depth,
+            when: None,
+        }];
+        if !facts_alone {
+            steps.push(BatchStep {
+                op: Op::FocusRead {
+                    subject,
+                    known: Vec::new(),
+                    set: Vec::new(),
+                    details: TextDetails::NONE,
+                },
+                when: None,
+            });
+        }
+        verbatim_model::request::Question::Batch(Batch {
+            steps,
+            placement: Placement::Queue,
             spare: None,
-            set: Vec::new(),
-            known: Vec::new(),
-            details: TextDetails::NONE,
         })
     };
     assert_eq!(
-        CaretStage::of(
-            &press,
-            &verbatim_model::request::Question::from(run(Depth::Facts))
-        ),
+        CaretStage::of(&press, &candidate(true)),
         Some(CaretStage::Confirming)
     );
-    assert_eq!(
-        CaretStage::of(
-            &press,
-            &verbatim_model::request::Question::from(run(Depth::Full))
-        ),
-        None
-    );
+    assert_eq!(CaretStage::of(&press, &candidate(false)), None);
     let watch = Wire::Text {
         node: node(2),
         op: watch(CaretMotion::NextCharacter, 5_000, true),
@@ -188,29 +195,26 @@ fn msaa_focus(object: i32, at_us: u64, trace: u64) -> Input<Entry> {
     entry(tell)
 }
 
-/// A confirmation's answer: found, with `focused`.
-fn confirmed(number: u64, focused: bool) -> Input<Entry> {
-    answer(
-        OUTPOST,
-        number,
-        Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Found {
-                focused: Some(focused),
-                role: None,
-            },
-            read: None,
-        }),
-    )
+/// A confirmation's answer, to its request `number`: found, with
+/// `focused`; fed at `at_us`.
+fn confirmed(held: &mut Held, at_us: u64, number: u64, focused: bool) -> Step {
+    let found = if focused {
+        Found::Focused
+    } else {
+        Found::Unfocused
+    };
+    let input = crate::entries::tests::found(held, OUTPOST, number, found);
+    step(held, at_us, input)
 }
 
 /// The confirmation of the candidate on `object`, request `number`, the
 /// key's starting point held.
-fn confirming(number: u64, object: i32) -> (u64, i32, Reader, Depth, Option<TextAnchor>) {
+fn confirming(number: u64, object: i32) -> (u64, i32, Reader, &'static str, Option<TextAnchor>) {
     (
         number,
         object,
         Reader::Outpost(APP),
-        Depth::Facts,
+        "facts",
         Some(TextAnchor(50)),
     )
 }
@@ -248,7 +252,7 @@ fn confirming_after_the_watch() -> Held {
 #[test]
 fn an_unconfirmed_focus_found_not_focused_lets_the_key_watch_on_and_speak() {
     let mut held = confirming_after_the_watch();
-    let answered = step(&mut held, 31_000, confirmed(5, false));
+    let answered = confirmed(&mut held, 31_000, 5, false);
     assert_eq!(
         answered.text,
         [(6, 2, watch(CaretMotion::NextCharacter, 5_000, true))]
@@ -268,12 +272,12 @@ fn an_unconfirmed_focus_found_not_focused_lets_the_key_watch_on_and_speak() {
 #[test]
 fn an_unconfirmed_focus_found_focused_silences_the_key_and_is_read_at_its_turn() {
     let mut held = confirming_after_the_watch();
-    let answered = step(&mut held, 31_000, confirmed(5, true));
+    let answered = confirmed(&mut held, 31_000, 5, true);
     assert_eq!(answered.said, NO_WORDS);
     assert_eq!(answered.text, NO_REQUESTS);
     assert_eq!(
         answered.runs,
-        [(6, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)]
+        [(6, -5, Reader::Outpost(APP), "full if focused", None)]
     );
 }
 
@@ -287,7 +291,7 @@ fn backspace_silenced_by_a_confirmed_focus_says_what_it_deleted() {
     );
     let arrived = step(&mut held, 30_000, msaa_focus(-5, 29_000, 100));
     assert_eq!(arrived.runs, [confirming(5, -5)]);
-    let answered = step(&mut held, 31_000, confirmed(5, true));
+    let answered = confirmed(&mut held, 31_000, 5, true);
     assert_eq!(answered.said, [character("x")]);
 }
 
@@ -307,7 +311,7 @@ fn a_key_withdraws_the_confirmation_and_the_focus_is_asked_at_its_turn() {
     assert_eq!(key.said, NO_WORDS);
     assert_eq!(
         key.runs,
-        [(6, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)],
+        [(6, -5, Reader::Outpost(APP), "full if focused", None)],
         "the focus, ahead of key 2, at its own turn with nothing stored"
     );
 }
@@ -329,15 +333,15 @@ fn three_staggered_unconfirmed_focuses_are_read_once_each_and_not_at_their_turns
     let mut held = confirming_after_the_watch();
     let second = step(&mut held, 32_000, msaa_focus(-6, 31_000, 101));
     assert_eq!(second, Step::default(), "kept while the first is confirmed");
-    let answered = step(&mut held, 33_000, confirmed(5, false));
+    let answered = confirmed(&mut held, 33_000, 5, false);
     assert_eq!(answered.runs, [confirming(6, -6)]);
     let third = step(&mut held, 34_000, msaa_focus(-7, 33_500, 102));
     assert_eq!(third, Step::default());
     assert_eq!(
-        step(&mut held, 35_000, confirmed(6, false)).runs,
+        confirmed(&mut held, 35_000, 6, false).runs,
         [confirming(7, -7)]
     );
-    let last = step(&mut held, 36_000, confirmed(7, false));
+    let last = confirmed(&mut held, 36_000, 7, false);
     assert_eq!(
         last.text,
         [(8, 2, watch(CaretMotion::NextCharacter, 5_000, true))]
@@ -359,11 +363,11 @@ fn a_focus_raised_before_the_bound_and_confirmed_after_it_counts() {
     );
     let arrived = step(&mut held, 104_500, msaa_focus(-5, 104_000, 100));
     assert_eq!(arrived.runs, [confirming(5, -5)]);
-    let answered = step(&mut held, 160_000, confirmed(5, true));
+    let answered = confirmed(&mut held, 160_000, 5, true);
     assert_eq!(answered.said, NO_WORDS);
     assert_eq!(
         answered.runs,
-        [(6, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)]
+        [(6, -5, Reader::Outpost(APP), "full if focused", None)]
     );
 }
 
@@ -382,7 +386,7 @@ fn a_focus_raised_after_the_bound_does_not_withdraw_the_watch() {
     assert_eq!(ended.said, [character("i")]);
     assert_eq!(
         ended.runs,
-        [(5, -5, Reader::Outpost(APP), Depth::FullIfFocused, None)]
+        [(5, -5, Reader::Outpost(APP), "full if focused", None)]
     );
 }
 
@@ -477,18 +481,8 @@ fn backspace_whose_confirmation_the_foreground_stops_says_nothing() {
 #[test]
 fn a_skipped_confirmation_leaves_the_window_judged_as_uia() {
     let mut held = confirming_after_the_watch();
-    let skipped = step(
-        &mut held,
-        31_000,
-        answer(
-            OUTPOST,
-            5,
-            Reply::Candidate(CandidateAnswer {
-                facts: CandidateFacts::Skipped,
-                read: None,
-            }),
-        ),
-    );
+    let input = crate::entries::tests::found(&held, OUTPOST, 5, Found::ThroughUia);
+    let skipped = step(&mut held, 31_000, input);
     assert_eq!(
         skipped.text,
         [(6, 2, watch(CaretMotion::NextCharacter, 5_000, true))]
@@ -552,21 +546,8 @@ fn a_menu_start_behind_the_key_is_confirmed_for_its_role() {
         let arrived = step(&mut held, 30_000, entry(tell));
         assert_eq!(arrived.cancelled, [(4, CancelReason::Withdrawn)]);
         assert_eq!(arrived.runs, [confirming(5, -4)]);
-        let answered = step(
-            &mut held,
-            31_000,
-            answer(
-                OUTPOST,
-                5,
-                Reply::Candidate(CandidateAnswer {
-                    facts: CandidateFacts::Found {
-                        focused: None,
-                        role: Some(role),
-                    },
-                    read: None,
-                }),
-            ),
-        );
+        let input = crate::entries::tests::found(&held, OUTPOST, 5, Found::Role(Some(role), None));
+        let answered = step(&mut held, 31_000, input);
         assert_eq!(answered.said, NO_WORDS, "{role:?}");
         if counts {
             assert_eq!(answered.text, NO_REQUESTS, "{role:?}");

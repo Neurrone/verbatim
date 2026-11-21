@@ -21,12 +21,13 @@
 //! parity ledger records as a difference (Dickson, 2026-11-21).
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{App, Desk, Heard, focus_read_of, queued};
+use readers::Found;
 use verbatim_core::read_dump;
-use verbatim_model::request::{
-    CandidateAnswer, Instance, Outcome, QueueEffect, QueueInput, Reply, Request as Wire,
-};
+use verbatim_model::request::{Instance, QueueEffect, QueueInput};
 use verbatim_model::tell::{Hung, WindowFacet};
 use verbatim_model::{
     Backend, Earcon, Effect, Input, NodeDetails, NodeSnapshot, Pid, Role, SegmentContent, StateSet,
@@ -113,12 +114,8 @@ fn no_button() -> NodeSnapshot {
 
 /// The outpost's answer to a recovery read: the No button focused in the
 /// confirmation.
-fn the_confirmation_read() -> Outcome {
-    Outcome::Result(Reply::Candidate(CandidateAnswer::focused(focus_read_of(
-        VERBATIM,
-        &no_button(),
-        &[confirmation()],
-    ))))
+fn the_confirmation_read() -> Found {
+    Found::Read(focus_read_of(VERBATIM, &no_button(), &[confirmation()]))
 }
 
 /// The hang rounds due by `until`, each check answered as Windows
@@ -156,9 +153,8 @@ fn last_current_focus(desk: &Desk) -> (u64, Instance) {
     desk.asked
         .iter()
         .rev()
-        .find_map(|(number, to, request)| match request {
-            Wire::CurrentFocus { .. } => Some((*number, *to)),
-            _ => None,
+        .find_map(|(number, to, request)| {
+            (desk::kind(request) == "CurrentFocus").then_some((*number, *to))
         })
         .expect("a current-focus read")
 }
@@ -212,7 +208,7 @@ fn a_dialog_whose_events_arrive_while_its_window_is_hung_is_spoken_once_it_answe
     for _ in [TASK_DIALOG, THEME_DIALOG] {
         let (number, to) = last_current_focus(&desk);
         answered.push(number);
-        heard.extend(desk.answer(to, number, the_confirmation_read()));
+        heard.extend(desk.found(to, number, &the_confirmation_read()));
     }
     assert_ne!(
         answered[0], answered[1],

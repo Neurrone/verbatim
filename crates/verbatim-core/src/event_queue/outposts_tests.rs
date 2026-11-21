@@ -2,7 +2,7 @@
 //! inputs as the owner thread reports its process facts.
 
 use verbatim_model::Pid;
-use verbatim_model::request::{CandidateAnswer, ProcessFact, QueueEffect, QueueInput, Reply};
+use verbatim_model::request::{ProcessFact, QueueEffect, QueueInput};
 use verbatim_model::{Effect as Said, TraceId, WindowHandle};
 
 use crate::entries::tests::{
@@ -78,15 +78,18 @@ fn focus_tell_of(object: i32) -> QueueInput {
     }
 }
 
-/// A run's answer, from `from` to request `number`: the button "OK".
-fn run_answer(from: Instance, number: u64) -> QueueInput {
+/// A run's answer, from `from` to request `number`, the batch out: the
+/// button "OK".
+fn run_answer(state: &Held, from: Instance, number: u64) -> QueueInput {
+    let batch = state.queue.batch_for_tests(number).unwrap();
     QueueInput::Answer {
         from,
         answer: verbatim_model::request::Answer {
             number: verbatim_model::request::RequestNumber(number),
-            outcome: verbatim_model::request::Outcome::Result(Reply::Candidate(
-                CandidateAnswer::focused(focus_read(Some(held(-4)))),
-            )),
+            outcome: crate::readers::outcome(
+                &batch,
+                &crate::readers::Found::Read(focus_read(Some(held(-4)))),
+            ),
             probes: Vec::new(),
             detail: String::new(),
         },
@@ -116,10 +119,13 @@ fn committed() -> Held {
     );
     assert_eq!(
         route(&mut held, 1_200, &QueueInput::ReaderReady(OUTPOST)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(
-        route(&mut held, 1_300, &run_answer(OUTPOST, 1)),
+        {
+            let answer = run_answer(&held, OUTPOST, 1);
+            route(&mut held, 1_300, &answer)
+        },
         ["said", "said"]
     );
     held
@@ -365,7 +371,7 @@ fn an_applications_exit_answers_its_requests_not_there_and_takes_nothing_again()
     let mut held = committed();
     assert_eq!(
         route(&mut held, 2_000, &focus_tell_of(-8)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(
         route(
@@ -429,7 +435,7 @@ fn an_applications_exit_ends_its_outpost_and_releases_its_record() {
     let mut held = committed();
     assert_eq!(
         route(&mut held, 2_000, &focus_tell_of(-8)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     let ended = route(&mut held, 2_100, &QueueInput::ReaderEnded(OUTPOST));
     assert!(
@@ -513,7 +519,7 @@ fn the_queue_is_not_idle_while_an_entrys_request_is_out() {
     assert_eq!(held.state.oldest_key_entry(), None);
     assert_eq!(
         route(&mut held, 2_000, &focus_tell_of(-8)),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert!(!held.state.queue_idle());
     let _ = route(

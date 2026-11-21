@@ -13,13 +13,15 @@
 //! same, with no sound (Dickson, 2026-11-19).
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{App, Desk, Heard, focus_read_of, follow, queued};
+use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, ForegroundReport, Front, GhostFront, QueueInput, Reader,
-    Reply, RequestNumber,
+    ForegroundReport, Front, GhostFront, QueueInput, Reader, RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -84,11 +86,7 @@ fn menu_open() -> Desk {
         [Heard::Sent(Reader::Outpost(VERBATIM.pid), "CurrentFocus")]
     );
     let item = item();
-    let spoken = desk.reply(Reply::Candidate(CandidateAnswer::focused(focus_read_of(
-        VERBATIM,
-        &item,
-        &[],
-    ))));
+    let spoken = desk.reply_found(&Found::Read(focus_read_of(VERBATIM, &item, &[])));
     assert_eq!(spoken.last(), Some(&follow(VERBATIM)));
     desk
 }
@@ -212,16 +210,7 @@ fn the_ghosts_report_after_the_check_says_nothing() {
         desk.step_at(150_000, QueueInput::Due),
         [Heard::Sent(Reader::Outpost(VERBATIM.pid), "CurrentFocus")]
     );
-    assert_eq!(
-        desk.reply(Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Found {
-                focused: Some(false),
-                role: None,
-            },
-            read: None,
-        })),
-        []
-    );
+    assert_eq!(desk.reply_found(&Found::Unfocused), []);
     assert_eq!(ghost_in_front(&mut desk, 160_000), []);
 }
 

@@ -11,18 +11,10 @@
 //!   the event queue, the control plane's tree dump and the taskbar's two
 //!   reads for the notification area list.
 //! - The generic read of the object an event names, for an MSAA object at
-//!   an event's address or a node the outpost holds: its properties, its
-//!   relation to nodes Core names, and its ancestors up to one Core
-//!   already knows.
-//! - An MSAA run, newest first, its candidates tried as NVDA's pump tries
-//!   them: a window read through UI Automation skipped, a focus event
-//!   without the focused state refused, and the first valid focus read.
-//! - The application's current focus.
-//! - The completion of a UI Automation focus from the listener's route:
-//!   the outpost finds its own copy of the element, adds the node's event
-//!   registration on the registering thread and waits for it, then reads
-//!   the node's states, as NVDA adds a focus's event handler group before
-//!   it reads the focus's states.
+//!   an event's address or a node the outpost holds: its properties and
+//!   its relation to nodes Core names.
+//! - The focus reads a batch's `FocusRead` makes (`super::batch`): an MSAA
+//!   candidate's full read and the application's current focus.
 //!
 //! A request whose window has no verdict in force has the window probed
 //! first, and the answer carries the probe.
@@ -35,10 +27,9 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
-    FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, HiddenRoot, KnownAncestor, MsaaIds,
-    MsaaRun, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose, Question,
-    ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate,
+    Answer, Ask, FindScope, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
+    KnownAncestor, MsaaIds, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose,
+    Question, ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd,
     WindowVerdict,
 };
 use verbatim_model::{
@@ -57,10 +48,6 @@ use super::window::{hwnd_of, window_handle};
 const MAX_NODES: usize = 1000;
 
 /// The answer to `ask`, read on the worker.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one arm per request of the shared list"
-)]
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
     let mut probes = Vec::new();
     // Core's verdict for the request's window is the one its reads judge
@@ -138,33 +125,6 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             Ok(action) => Outcome::Result(Reply::Activated(action)),
             Err(error) => failed(&error),
         },
-        Request::MsaaRun(run) => msaa_run(context, client, run, &mut probes),
-        Request::CurrentFocus {
-            set,
-            known,
-            details,
-            depth,
-            hidden,
-        } => current_focus(
-            context,
-            client,
-            (ask, &mut probes),
-            set,
-            (known, *details, *depth, *hidden),
-        ),
-        Request::CompleteUia(complete) => {
-            match verdict(
-                context,
-                hwnd_of(complete.route.window),
-                ask.verdict,
-                &mut probes,
-            ) {
-                Some(true) => hidden_answer(complete.hidden, hwnd_of(complete.route.window))
-                    .unwrap_or_else(|| super::completion::complete(context, client, complete)),
-                Some(false) => Outcome::Refused(Refusal::ReadThroughMsaa),
-                None => Outcome::NotThere,
-            }
-        }
         Request::Follow(follow) => super::followed::follow(context, client, follow),
         Request::DumpTree { locations } => match read::dump_tree(context, client, *locations) {
             Ok(dumped) => Outcome::Result(Reply::Tree(Box::new(dumped))),
@@ -205,10 +165,7 @@ pub(super) fn node_details(request: &Question) -> NodeDetailSet {
         | Request::Properties { set, .. }
         | Request::Navigate { set, .. }
         | Request::Find { set, .. }
-        | Request::Children { set, .. }
-        | Request::MsaaRun(MsaaRun { set, .. })
-        | Request::CurrentFocus { set, .. } => NodeDetailSet::named_by(set),
-        Request::CompleteUia(complete) => NodeDetailSet::named_by(&complete.set),
+        | Request::Children { set, .. } => NodeDetailSet::named_by(set),
         Request::DumpTree { .. } => NodeDetailSet::ALL,
         Request::Text { .. }
         | Request::Activate { .. }
@@ -254,19 +211,14 @@ fn terminal(
 }
 
 /// Whether `request`'s handling consults its window's verdict itself,
-/// probing when it carries "probe first": a completion, an MSAA run by
-/// each candidate's, and a read of an MSAA object; and a read of the
-/// current focus, which takes the focus window before it probes.
+/// probing when it carries "probe first": a read of an MSAA object.
 fn consults_verdict(request: &Request) -> bool {
     matches!(
         request,
-        Request::CompleteUia(_)
-            | Request::MsaaRun(_)
-            | Request::CurrentFocus { .. }
-            | Request::ReadObject(ReadObject {
-                object: ObjectRef::Msaa { .. },
-                ..
-            })
+        Request::ReadObject(ReadObject {
+            object: ObjectRef::Msaa { .. },
+            ..
+        })
     )
 }
 
@@ -787,13 +739,6 @@ fn read_object(
             (snapshot, relation, Some(hwnd))
         }
     };
-    let (ancestors, met) = match &read.walk {
-        None => (Vec::new(), None),
-        Some(known) => match walk(context, client, &snapshot, known) {
-            Ok(walked) => walked,
-            Err(read::FocusLost) => return Outcome::NotThere,
-        },
-    };
     let descendants = if read.descendants {
         match descendants(context, client, snapshot.id) {
             Ok(descendants) => descendants,
@@ -803,7 +748,6 @@ fn read_object(
         Vec::new()
     };
     let nearest = nearest.or_else(|| known_nearest(context, &snapshot));
-    let ancestor_reads = ancestor_reads(context, &ancestors, nearest, &read.set);
     Outcome::Result(Reply::Object(Box::new(ObjectRead {
         object: node_read(context, &snapshot, nearest, &read.set),
         relation,
@@ -811,9 +755,7 @@ fn read_object(
             .iter()
             .map(|descendant| node_read(context, descendant, nearest, &read.set))
             .collect(),
-        ancestors: ancestor_reads,
-        met,
-        route: None,
+        ancestors: Vec::new(),
     })))
 }
 
@@ -868,8 +810,6 @@ fn changed(
         relation,
         descendants: Vec::new(),
         ancestors: Vec::new(),
-        met: None,
-        route: None,
     })))
 }
 
@@ -1070,24 +1010,6 @@ pub(super) fn cut_at_known(
     }
 }
 
-/// `node`'s ancestors, nearest first, up to the first Core already knows,
-/// and its place in `known`; the walk stops at a known node of this
-/// outpost.
-fn walk(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node: &NodeSnapshot,
-    known: &[KnownAncestor],
-) -> Result<(Vec<NodeSnapshot>, Option<u32>), read::FocusLost> {
-    let candidates = candidates_of(known);
-    let chain = if node.backend == Backend::Msaa {
-        read::msaa_enrichment(context, client, (node, known, Some(&candidates)))?
-    } else {
-        read::ancestors(context, client, node.id).map_err(|_| read::FocusLost)?
-    };
-    Ok(cut_at_known(context, chain, known))
-}
-
 /// The kept nodes of `stops`, for NVDA's equality to compare what a walk
 /// reads with.
 pub(super) fn candidates_of(known: &[KnownAncestor]) -> verbatim_ia2::equality::Candidates {
@@ -1189,178 +1111,6 @@ pub(super) fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Opt
     })
 }
 
-/// What the hidden-dialog check found of a focus read's window's top-level
-/// window ([`hidden_root`]).
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Root {
-    /// Shown, or hidden but no dialog: the read goes on as it is.
-    Read,
-    /// A hidden dialog, with its window's facts: nothing more is read.
-    HiddenDialog(NodeWindow),
-    /// Hidden, and its client object's role could not be read: answered
-    /// not there, as a failed acquire is.
-    NotThere,
-}
-
-/// The hidden-dialog check of a focus read in window `hwnd` (Dickson,
-/// 2026-11-19: a dialog's text is read only once it is shown): its
-/// top-level window (`GetAncestor` with `GA_ROOT`) and whether that is
-/// visible (`IsWindowVisible`), two local calls that send the application
-/// nothing; and, only for a hidden one, its client object's role, two
-/// counted calls ([`verbatim_ia2::acquire::client_role`]). A role that is
-/// a dialog's ([`crate::dialog_text::is_dialog`]) answers the window's
-/// facts. The outpost judges nothing: Core asks the check, and decides what
-/// a hidden dialog means.
-pub(super) fn hidden_root(hwnd: isize) -> Root {
-    hidden_root_read(hwnd, verbatim_ia2::acquire::client_role)
-}
-
-/// The answer a request that `hidden` asks to check for a hidden root
-/// gives in window `hwnd` before it reads anything: a hidden dialog's
-/// window, or not there; `None` to read on ([`hidden_root`]).
-fn hidden_answer(hidden: HiddenRoot, hwnd: isize) -> Option<Outcome> {
-    if hidden != HiddenRoot::Check {
-        return None;
-    }
-    match hidden_root(hwnd) {
-        Root::HiddenDialog(window) => Some(Outcome::Result(Reply::HiddenDialog(window))),
-        Root::NotThere => Some(Outcome::NotThere),
-        Root::Read => None,
-    }
-}
-
-/// [`hidden_root`], the client object's role read by `client_role`.
-pub(super) fn hidden_root_read(hwnd: isize, client_role: impl Fn(isize) -> Option<Role>) -> Root {
-    let root = verbatim_win32::window::top_level_of(hwnd);
-    if root == 0 || verbatim_win32::window::window_is_visible(root) {
-        return Root::Read;
-    }
-    match client_role(root) {
-        Some(role) if crate::dialog_text::is_dialog(role) => Root::HiddenDialog(node_window(root)),
-        Some(_) => Root::Read,
-        None => Root::NotThere,
-    }
-}
-
-/// One MSAA candidate Core asks about, its window's verdict consulted
-/// first.
-fn msaa_run(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    run: &MsaaRun,
-    probes: &mut Vec<Probe>,
-) -> Outcome {
-    let candidate = &run.candidate;
-    let window = hwnd_of(candidate.ids.window);
-    let reply = match verdict(context, window, candidate.verdict, probes) {
-        // Read through UI Automation, whose own focus speaks for it, as
-        // NVDA drops a native UI Automation window's `WinEvent`.
-        Some(true) => Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Skipped,
-            read: None,
-        }),
-        None => Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::NotThere,
-            read: None,
-        }),
-        Some(false) => try_candidate(context, client, candidate, run),
-    };
-    Outcome::Result(reply)
-}
-
-/// One MSAA candidate read as NVDA's pump reads it, to the depth Core
-/// asks: the object at its event's address, after NVDA's redirect for a
-/// focus and with none for a menu start; the
-/// facts Core judges, a focus event's focused state over the object and
-/// its ancestors and a menu start's role; then, unless the depth stops
-/// there, the full read, with its ancestors up to one Core already knows.
-/// At [`Depth::FullUnlessSame`], a focused object reached at the ids Core
-/// names that reads as the identity Core names is answered
-/// [`Reply::CandidateSame`] with nothing more read: the outpost compares
-/// values Core names, and judges none of the facts.
-fn try_candidate(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    asked: &RunCandidate,
-    run: &MsaaRun,
-) -> Reply {
-    let not_there = Reply::Candidate(CandidateAnswer {
-        facts: CandidateFacts::NotThere,
-        read: None,
-    });
-    let ids = asked.ids;
-    let hwnd = hwnd_of(ids.window);
-    // A read Core asks to check, in a hidden dialog, is answered with the
-    // dialog's window before the object is acquired or its focused state
-    // read: no recording shows a hidden window's focused state, so the
-    // answer never depends on it.
-    if run.hidden == HiddenRoot::Check {
-        match hidden_root(hwnd) {
-            Root::HiddenDialog(window) => return Reply::HiddenDialog(window),
-            Root::NotThere => return not_there,
-            Root::Read => {}
-        }
-    }
-    // A menu start's object is its event's own, with no redirect, as
-    // NVDA's (`IAccessibleHandler/__init__.py` 942 to 973).
-    let acquired = if asked.kind == CandidateKind::MenuStart {
-        verbatim_ia2::acquire::menu_start_candidate(hwnd, ids.object, ids.child)
-    } else {
-        verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
-    };
-    let Some(mut candidate) = acquired else {
-        return not_there;
-    };
-    let focused = (asked.kind == CandidateKind::Focus).then(|| {
-        let plain = |window| read::reads_as_plain(context, window);
-        let mut parent = |window| read::parent_window_for_focused_state(context, client, window);
-        candidate.has_focused_state(read::MAX_ANCESTOR_HOPS, &plain, &mut parent)
-    });
-    let role = (asked.kind == CandidateKind::MenuStart)
-        .then(|| candidate.role())
-        .flatten();
-    let facts = CandidateFacts::Found { focused, role };
-    // The ids the object was reached at, after the redirect: a redirected
-    // focus's are its child's from then on, as NVDA builds the redirected
-    // object with the child's id as its event's
-    // (`IAccessibleHandler/__init__.py` 746 to 757).
-    let (window, object, child) = candidate.key();
-    let event = MsaaIds {
-        window: window_handle(window),
-        object,
-        child,
-    };
-    let full = match &run.depth {
-        Depth::Facts => false,
-        Depth::FullIfFocused => focused != Some(false),
-        Depth::Full => true,
-        Depth::FullUnlessSame { ids, identity } => {
-            if focused == Some(false) {
-                false
-            } else if event == *ids && candidate.reads_as(identity, context.nodes()) {
-                return Reply::CandidateSame;
-            } else {
-                true
-            }
-        }
-    };
-    if !full {
-        return Reply::Candidate(CandidateAnswer { facts, read: None });
-    }
-    let Some(read) = candidate_read(
-        context,
-        client,
-        candidate,
-        (&run.known, &run.set, run.details),
-    ) else {
-        return not_there;
-    };
-    Reply::Candidate(CandidateAnswer {
-        facts,
-        read: Some(Box::new(read)),
-    })
-}
-
 /// The full read of an MSAA focus candidate, as NVDA's pump reads the
 /// focus it accepts: the object, its ancestors up to the first of `known`,
 /// the text of the dialogs it enters, and, when it met none of `known`,
@@ -1415,57 +1165,6 @@ pub(super) fn candidate_read(
     ))
 }
 
-/// The application's current focus, as a focus-now read finds it, with its
-/// ancestors up to one Core already knows; and, when it met none, so that
-/// it enters a new window, the foreground object, read after it, as NVDA
-/// reads `objectInForeground` after the focus's ancestry, only when that
-/// ancestry shares nothing below the desktop with the old focus's
-/// (`eventHandler.py` 402 to 413).
-///
-/// The window with the keyboard focus is taken first, before any call
-/// that can block, `ask`'s probe among them, which `probes` records: NVDA's
-/// fake focus takes the foreground window and its thread's focus window
-/// when its timer fires (`NVDAObjects/window/__init__.py` 165 to 173), and
-/// a probe of a window whose thread is busy, Verbatim's hidden frame as its
-/// settings dialog opens, would let the focus move on before it is taken.
-/// With [`FocusDepth::FullIfFocused`], an MSAA focus's focused state is read
-/// over it and every ancestor up to the desktop, as NVDA tests its fake
-/// focus (`NVDAObjects/IAccessible/__init__.py` 874 to 892), and the
-/// answer carries it as a fact, with the full read only when focused;
-/// Core judges it.
-fn current_focus(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (ask, probes): (&Ask, &mut Vec<Probe>),
-    set: &[PropertyId],
-    (known, details, depth, hidden): (&[KnownAncestor], TextDetails, FocusDepth, HiddenRoot),
-) -> Outcome {
-    let window = read::checked_focus_window(context);
-    let _ = verdict(context, hwnd_of(ask.window), ask.verdict, probes);
-    if let Ok(hwnd) = window
-        && let Some(answer) = hidden_answer(hidden, hwnd)
-    {
-        return answer;
-    }
-    match focus_now(context, client, window, set, (known, details, depth)) {
-        FocusNow::Read(focused, read) => Outcome::Result(Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Found {
-                focused,
-                role: None,
-            },
-            read: Some(read),
-        })),
-        FocusNow::Unfocused => Outcome::Result(Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::Found {
-                focused: Some(false),
-                role: None,
-            },
-            read: None,
-        })),
-        FocusNow::NotThere => Outcome::NotThere,
-    }
-}
-
 /// What a focus-now read found ([`focus_now`]).
 pub(super) enum FocusNow {
     /// The focus read, with its MSAA focused state when the depth read it.
@@ -1477,15 +1176,34 @@ pub(super) enum FocusNow {
     NotThere,
 }
 
-/// The application's focus in `window`, taken already, read as
-/// [`current_focus`] reads it, by `set`, with its ancestors up to the first
-/// of `known` and its caret fetching `details`, to `depth`.
+/// The application's current focus, as a focus-now read finds it, with its
+/// ancestors up to one Core already knows; and, when it met none, so that
+/// it enters a new window, the foreground object, read after it, as NVDA
+/// reads `objectInForeground` after the focus's ancestry, only when that
+/// ancestry shares nothing below the desktop with the old focus's
+/// (`eventHandler.py` 402 to 413).
+///
+/// The window with the keyboard focus is taken first, before any call
+/// that can block, the request's probe among them: NVDA's
+/// fake focus takes the foreground window and its thread's focus window
+/// when its timer fires (`NVDAObjects/window/__init__.py` 165 to 173), and
+/// a probe of a window whose thread is busy, Verbatim's hidden frame as its
+/// settings dialog opens, would let the focus move on before it is taken.
+/// With [`read::FocusDepth::FullIfFocused`], an MSAA focus's focused state is read
+/// over it and every ancestor up to the desktop, as NVDA tests its fake
+/// focus (`NVDAObjects/IAccessible/__init__.py` 874 to 892), and the
+/// answer carries it as a fact, with the full read only when focused;
+/// Core judges it.
+///
+/// The focus is read in `window`, taken already, by `set`, with its
+/// ancestors up to the first of `known` and its caret fetching `details`,
+/// to `depth`.
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,
     window: Result<isize, read::FocusReadMiss>,
     set: &[PropertyId],
-    (known, details, depth): (&[KnownAncestor], TextDetails, FocusDepth),
+    (known, details, depth): (&[KnownAncestor], TextDetails, read::FocusDepth),
 ) -> FocusNow {
     let read = window.and_then(|hwnd| {
         read::focused_control_in(

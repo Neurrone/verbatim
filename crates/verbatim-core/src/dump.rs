@@ -290,9 +290,10 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 mod tests {
     use super::*;
     use crate::entries::tests::{
-        LISTENER, OUTPOST, answer, asked_completion, feed_at, focus_read, uia_tell,
+        LISTENER, OUTPOST, asked_completion, focus_read, found_at, uia_tell,
     };
-    use verbatim_model::request::{QueueInput, Reply};
+    use crate::readers::Found;
+    use verbatim_model::request::QueueInput;
     use verbatim_model::{Input, TraceId};
 
     fn sample_inputs() -> Vec<RecordedInput> {
@@ -319,10 +320,11 @@ mod tests {
     /// state line carries something.
     fn sample_base() -> SrState {
         let mut held = asked_completion();
-        let _ = feed_at(
+        let _ = found_at(
             &mut held,
             3_000,
-            answer(OUTPOST, 2, Reply::Focus(Box::new(focus_read(None)))),
+            (OUTPOST, 2),
+            Found::Read(focus_read(None)),
         );
         held.state
     }

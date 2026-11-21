@@ -30,7 +30,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, ids: Ms
             set: vec![PropertyId::Name],
             relation: None,
             descendants: false,
-            walk: None,
             purpose: Purpose::Other,
         },
     };

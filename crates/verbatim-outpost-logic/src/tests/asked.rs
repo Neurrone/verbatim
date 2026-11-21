@@ -16,12 +16,18 @@ fn ask(number: u64) -> Input {
         number: RequestNumber(number),
         window: WindowHandle(1),
         verdict: WindowVerdict::Msaa,
-        request: CoreRequest::CurrentFocus {
-            hidden: verbatim_model::request::HiddenRoot::Check,
-            set: Vec::new(),
-            known: Vec::new(),
-            details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::FocusDepth::Full,
+        request: verbatim_model::batch::Batch {
+            steps: vec![verbatim_model::batch::Step {
+                op: verbatim_model::batch::Op::FocusRead {
+                    subject: verbatim_model::batch::Subject::Focus,
+                    known: Vec::new(),
+                    set: Vec::new(),
+                    details: verbatim_model::TextDetails::NONE,
+                },
+                when: None,
+            }],
+            placement: verbatim_model::batch::Placement::Queue,
+            spare: None,
         }
         .into(),
     }))
@@ -287,24 +293,30 @@ fn a_newer_follow_answers_the_queued_one_ended() {
 }
 
 /// Core's request `number` asked on `window`, of `request`.
-fn asked_on(number: u64, window: u64, request: CoreRequest) -> Input {
+fn asked_on(number: u64, window: u64, request: verbatim_model::request::Question) -> Input {
     Input::Ask(Box::new(Ask {
         number: RequestNumber(number),
         window: WindowHandle(window),
         verdict: WindowVerdict::Msaa,
-        request: request.into(),
+        request,
     }))
 }
 
 /// A read of the application's current focus, as the re-take and the
 /// recovery read ask it.
-fn current_focus() -> CoreRequest {
-    CoreRequest::CurrentFocus {
-        hidden: verbatim_model::request::HiddenRoot::Check,
-        set: Vec::new(),
-        known: Vec::new(),
-        details: verbatim_model::TextDetails::NONE,
-        depth: verbatim_model::request::FocusDepth::Full,
+fn current_focus() -> verbatim_model::batch::Batch {
+    verbatim_model::batch::Batch {
+        steps: vec![verbatim_model::batch::Step {
+            op: verbatim_model::batch::Op::FocusRead {
+                subject: verbatim_model::batch::Subject::Focus,
+                known: Vec::new(),
+                set: Vec::new(),
+                details: verbatim_model::TextDetails::NONE,
+            },
+            when: None,
+        }],
+        placement: verbatim_model::batch::Placement::Queue,
+        spare: None,
     }
 }
 
@@ -315,30 +327,32 @@ fn read_object(object: verbatim_model::request::ObjectRef) -> CoreRequest {
         set: Vec::new(),
         relation: None,
         descendants: false,
-        walk: None,
         purpose: verbatim_model::request::Purpose::Other,
     })
 }
 
-/// A run's candidate at MSAA ids in `window`.
-fn run_in(window: u64) -> CoreRequest {
-    CoreRequest::MsaaRun(verbatim_model::request::MsaaRun {
-        hidden: verbatim_model::request::HiddenRoot::Check,
-        candidate: verbatim_model::request::RunCandidate {
-            ids: verbatim_model::request::MsaaIds {
-                window: WindowHandle(window),
-                object: -4,
-                child: 0,
+/// A candidate's read at MSAA ids in `window`.
+fn run_in(window: u64) -> verbatim_model::batch::Batch {
+    verbatim_model::batch::Batch {
+        steps: vec![verbatim_model::batch::Step {
+            op: verbatim_model::batch::Op::FocusRead {
+                subject: verbatim_model::batch::Subject::Msaa {
+                    ids: verbatim_model::request::MsaaIds {
+                        window: WindowHandle(window),
+                        object: -4,
+                        child: 0,
+                    },
+                    redirect: true,
+                },
+                known: Vec::new(),
+                set: Vec::new(),
+                details: verbatim_model::TextDetails::NONE,
             },
-            kind: verbatim_model::request::CandidateKind::Focus,
-            verdict: WindowVerdict::Msaa,
-        },
-        depth: verbatim_model::request::Depth::Full,
+            when: None,
+        }],
+        placement: verbatim_model::batch::Placement::Queue,
         spare: None,
-        set: Vec::new(),
-        known: Vec::new(),
-        details: verbatim_model::TextDetails::NONE,
-    })
+    }
 }
 
 /// The one program `effects` dispatched ended.
@@ -363,15 +377,15 @@ fn a_destroyed_window_answers_the_reads_its_ids_name_and_forgets_it_before_the_r
     assert_eq!(dispatched(&running)[0].1, "ask 1");
     let node = verbatim_model::NodeId::new(4);
     for (number, request) in [
-        (2, current_focus()),
-        (3, current_focus()),
+        (2, current_focus().into()),
+        (3, current_focus().into()),
         (
             4,
-            CoreRequest::Follow(verbatim_model::request::Follow { node: None }),
+            CoreRequest::Follow(verbatim_model::request::Follow { node: None }).into(),
         ),
         (
             5,
-            read_object(verbatim_model::request::ObjectRef::Node(node)),
+            read_object(verbatim_model::request::ObjectRef::Node(node)).into(),
         ),
         (
             6,
@@ -379,9 +393,10 @@ fn a_destroyed_window_answers_the_reads_its_ids_name_and_forgets_it_before_the_r
                 window: WindowHandle(7),
                 object: -4,
                 child: 0,
-            }),
+            })
+            .into(),
         ),
-        (7, run_in(7)),
+        (7, run_in(7).into()),
     ] {
         assert_eq!(reducer.input(asked_on(number, 7, request), now(1)).len(), 0);
     }

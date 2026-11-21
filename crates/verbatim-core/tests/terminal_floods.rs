@@ -6,6 +6,8 @@
 //! reads it for Core and held while Core's queue is full
 //! (`terminal_support`).
 
+#[path = "support/readers.rs"]
+mod readers;
 mod terminal_support;
 
 use std::fmt::Write as _;

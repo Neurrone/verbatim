@@ -167,6 +167,7 @@ fn conversions() -> Vec<(&'static str, ReaderKind, Vec<Step>)> {
             content: true,
         }],
         end: RouteEnd::Root,
+        read: vec![crate::property::PropertyValues::default()],
     }));
     let same = Matcher::Any(vec![
         Matcher::Is(PropertyId::FocusedWithin, PropertyValue::Flag(false)),

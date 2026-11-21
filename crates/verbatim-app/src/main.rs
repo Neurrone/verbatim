@@ -1722,13 +1722,8 @@ impl ReducerThread<'_> {
         // in front is answered with the desktop, as NVDA's fake focus
         // reads it (Dickson, 2026-11-19).
         if matches!(
-            ask.request,
-            verbatim_model::request::Question::Legacy(
-                verbatim_model::request::Request::CurrentFocus {
-                    depth: verbatim_model::request::FocusDepth::FullIfFocused,
-                    ..
-                }
-            )
+            &ask.request,
+            verbatim_model::request::Question::Batch(batch) if batch.reads_focus_if_focused()
         ) && hang_check::nothing_in_front()
         {
             self.follow_ups.push(queued(QueueInput::InFront {
@@ -1742,10 +1737,7 @@ impl ReducerThread<'_> {
             // what is in front, which Core judges; every other request is
             // answered "not responding".
             let in_front = match &ask.request {
-                verbatim_model::request::Question::Legacy(request) => matches!(
-                    request,
-                    verbatim_model::request::Request::CurrentFocus { .. }
-                ),
+                verbatim_model::request::Question::Legacy(_) => false,
                 verbatim_model::request::Question::Batch(batch) => batch.reads_focus_first(),
             };
             let refused = if in_front {

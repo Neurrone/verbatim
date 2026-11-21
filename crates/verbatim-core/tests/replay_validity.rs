@@ -21,19 +21,21 @@
     reason = "reads its fixture files, and writes them when regenerated: listed under the determinism rule's exceptions"
 )]
 
+use readers::Found;
 use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
 use desk::{App, Desk, LISTENER, ONE, TWO, focus_read_of, focus_tell};
 use verbatim_core::{SrState, dump, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, CaretBinding, FocusCaret, FocusCaretRead, FocusRead,
-    ForegroundReport, HeldIds, MsaaIds, Outcome, Press, PressAction, QueueEffect, QueueInput,
-    Reply, Request,
+    CaretBinding, FocusCaret, FocusCaretRead, FocusRead, ForegroundReport, HeldIds, MsaaIds,
+    Outcome, Press, PressAction, QueueEffect, QueueInput, Reply,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{Event, EventObject, Relation, TellWindow};
@@ -148,7 +150,7 @@ fn out_of(desk: &Desk, kind: &str) -> (u64, verbatim_model::request::Instance) {
 
 /// The one candidate out, with its reader.
 fn run_sent(desk: &Desk) -> (u64, verbatim_model::request::Instance) {
-    out_of(desk, "MsaaRun")
+    out_of(desk, "Candidate")
 }
 
 /// The one request of `kind` out.
@@ -156,26 +158,27 @@ fn sent_of(desk: &Desk, kind: &str) -> u64 {
     out_of(desk, kind).0
 }
 
-/// Answers the one candidate the last step asked with `answer` at `at_us`.
-fn answer_run(desk: &mut Desk, at_us: u64, answer: CandidateAnswer) {
-    answer_run_with(desk, at_us, Reply::Candidate(answer));
+/// Answers the one candidate out at `at_us` as its outpost does, having
+/// found `found`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "its callers build what was found in place"
+)]
+fn answer_run(desk: &mut Desk, at_us: u64, found: Found) {
+    let (number, to) = run_sent(desk);
+    desk.at_us = at_us.saturating_sub(1_000);
+    let _ = desk.found(to, number, &found);
 }
 
-/// Answers the one candidate the last step asked with `reply` at `at_us`.
-fn answer_run_with(desk: &mut Desk, at_us: u64, reply: Reply) {
-    let (number, to) = run_sent(desk);
-    desk.step_at(
-        at_us,
-        QueueInput::Answer {
-            from: to,
-            answer: verbatim_model::request::Answer {
-                number: verbatim_model::request::RequestNumber(number),
-                outcome: Outcome::Result(reply),
-                probes: Vec::new(),
-                detail: String::new(),
-            },
-        },
-    );
+/// Answers batch `number` of `app`'s outpost at `at_us` as it does, having
+/// found `found`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "its callers build what was found in place"
+)]
+fn found_at(desk: &mut Desk, at_us: u64, app: App, number: u64, found: Found) {
+    desk.at_us = at_us.saturating_sub(1_000);
+    let _ = desk.found(app.instance(), number, &found);
 }
 
 /// Answers request `number` of `app`'s outpost with `reply` at `at_us`.
@@ -194,20 +197,9 @@ fn answer_at(desk: &mut Desk, at_us: u64, app: App, number: u64, reply: Reply) {
     );
 }
 
-/// Facts of a candidate found, focused or not.
-fn found(focused: bool) -> CandidateFacts {
-    CandidateFacts::Found {
-        focused: Some(focused),
-        role: None,
-    }
-}
-
 /// A candidate found without the focused state, not read further.
-fn unfocused() -> CandidateAnswer {
-    CandidateAnswer {
-        facts: found(false),
-        read: None,
-    }
+fn unfocused() -> Found {
+    Found::Unfocused
 }
 
 /// A tell from the listener at `at_us`.
@@ -343,8 +335,8 @@ fn settings_list(desk: &mut Desk) {
     let categories = msaa_node(ONE, 10, Role::List, Some("Categories:"));
     let child = ids(list, -4, 1);
     let read = by_ids(focus_read_of(ONE, &speech, &[categories]), child);
-    answer_run(desk, 2_800_300, CandidateAnswer::focused(read));
-    answer_run_with(desk, 2_800_700, Reply::CandidateSame);
+    answer_run(desk, 2_800_300, Found::Read(read));
+    answer_run(desk, 2_800_700, Found::Same);
 }
 
 /// mockapp's list on a mouse return (`validity_list_button_run1`): the
@@ -358,7 +350,7 @@ fn mouse_return(desk: &mut Desk) {
     let button = windows.handle(&events[0].window);
     let apply = msaa_node(ONE, 20, Role::Button, Some("Apply"));
     let read = by_ids(focus_read_of(ONE, &apply, &[]), ids(button, -4, 0));
-    answer_run(desk, 31_000, CandidateAnswer::focused(read));
+    answer_run(desk, 31_000, Found::Read(read));
     play(desk, &mut windows, &events[1..], 1_532_000);
     let list = windows.handle(&events[1].window);
     let alpha = item(msaa_node(ONE, 31, Role::ListItem, Some("Alpha")), 1, 3);
@@ -367,7 +359,7 @@ fn mouse_return(desk: &mut Desk) {
         focus_read_of(ONE, &alpha, &[msaa_node(ONE, 30, Role::List, None)]),
         child,
     );
-    answer_run(desk, 1_533_000, CandidateAnswer::focused(read));
+    answer_run(desk, 1_533_000, Found::Read(read));
 }
 
 /// Five Tabs in a Properties sheet (`c7_held_tab_run1`, the MSAA events
@@ -388,7 +380,7 @@ fn five_tabs(desk: &mut Desk) {
     general.states = StateSet::new().with(verbatim_model::State::Selected);
     let control = msaa_node(ONE, 40, Role::TabControl, None);
     let read = by_ids(focus_read_of(ONE, &general, &[control]), ids(tab, -4, 1));
-    answer_run(desk, 42_000, CandidateAnswer::focused(read));
+    answer_run(desk, 42_000, Found::Read(read));
 }
 
 /// Change B's order, code-level, as no recording gives it: a second application's UI Automation focus raised
@@ -414,15 +406,15 @@ fn uia_past_the_hold(desk: &mut Desk) {
     );
     let ok = msaa_node(ONE, 1, Role::Button, Some("OK"));
     let number = sent_of(desk, "CurrentFocus");
-    answer_at(
+    found_at(
         desk,
         11_000,
         ONE,
         number,
-        Reply::Candidate(CandidateAnswer::focused(by_ids(
+        Found::Read(by_ids(
             focus_read_of(ONE, &ok, &[]),
             ids(ONE.top + 1, -4, 0),
-        ))),
+        )),
     );
     desk.app(TWO);
     let mut early = focus_tell(TWO, 2, desk.at_us + 1_000);
@@ -459,7 +451,7 @@ fn uia_past_the_hold(desk: &mut Desk) {
     let mut settings = msaa_node(TWO, 1, Role::Window, Some("Settings"));
     settings.details.window = Some(TWO.top_level());
     let read = by_ids(focus_read_of(TWO, &settings, &[]), ids(TWO.top, 0, 0));
-    answer_run(desk, at + 52_000, CandidateAnswer::focused(read));
+    answer_run(desk, at + 52_000, Found::Read(read));
 }
 
 fn empty_line() -> TextChunk {
@@ -546,7 +538,7 @@ fn file_name(desk: &mut Desk, event: &Recorded, text: &str) -> Windows {
         selected_text: None,
         baseline: TextAnchor(70),
     }));
-    answer_run(desk, 76_000, CandidateAnswer::focused(read));
+    answer_run(desk, 76_000, Found::Read(read));
     windows
 }
 
@@ -566,15 +558,16 @@ fn open_dialog(desk: &mut Desk, focused: bool) {
     started(desk, tree_at - 13_000);
     play(desk, &mut windows, &events[1..], tree_at);
     let (number, _) = run_sent(desk);
-    answer_at(
+    found_at(
         desk,
         tree_at + 2_000,
         ONE,
         number,
-        Reply::Candidate(CandidateAnswer {
-            facts: found(focused),
-            read: None,
-        }),
+        if focused {
+            Found::Focused
+        } else {
+            Found::Unfocused
+        },
     );
     let tree = windows.handle(&events[1].window);
     if focused {
@@ -583,7 +576,7 @@ fn open_dialog(desk: &mut Desk, focused: bool) {
             focus_read_of(ONE, &tree_item, &[msaa_node(ONE, 59, Role::Tree, None)]),
             ids(tree, -4, 16),
         );
-        answer_run(desk, tree_at + 5_000, CandidateAnswer::focused(read));
+        answer_run(desk, tree_at + 5_000, Found::Read(read));
         return;
     }
     // The bound: the watch's last check, the caret still at the start.
@@ -704,7 +697,7 @@ fn desktop_delete(desk: &mut Desk) {
             position,
             size,
         );
-        CandidateAnswer::focused(by_ids(
+        Found::Read(by_ids(
             focus_read_of(ONE, &node, std::slice::from_ref(&desktop)),
             ids(list, -4, i32::try_from(position).expect("a child id")),
         ))
@@ -1142,10 +1135,7 @@ fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
         .flatten()
         .find_map(|effect| match effect {
             Effect::Queue(QueueEffect::Send { ask, .. })
-                if matches!(
-                    ask.request,
-                    verbatim_model::request::Question::Legacy(Request::CurrentFocus { .. })
-                ) =>
+                if desk::kind(&ask.request) == "CurrentFocus" =>
             {
                 Some(ask.number)
             }

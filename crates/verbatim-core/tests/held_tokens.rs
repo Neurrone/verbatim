@@ -7,15 +7,17 @@
 //! never takes back a token it dropped.
 
 mod desk;
+#[path = "support/readers.rs"]
+mod readers;
 
+use readers::Found;
 use std::collections::BTreeSet;
+use verbatim_model::request::Question;
 
 use desk::{App, Desk, LISTENER, ONE, focus_read_of, focus_tell, listener_read, runtime_of};
 use verbatim_core::HeldTokens;
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{
-    Instance, Outcome, ProcessFact, QueueInput, Reader, Reply, Request as Wire,
-};
+use verbatim_model::request::{Instance, Outcome, ProcessFact, QueueInput, Reader};
 use verbatim_model::tell::{ElementToken, EventObject, Payload, Read};
 use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, StateSet, TraceId};
 
@@ -59,26 +61,18 @@ fn a_focus_is_held_while_it_runs_and_as_the_readers_last_focus() {
     assert_eq!(desk.state.held_tokens(), Some(held(&[5])));
     told(&mut desk, ONE, 6);
     assert_eq!(desk.state.held_tokens(), Some(held(&[5, 6])));
-    let [(read, _, Wire::ReadObject(_))] = desk.sent[..] else {
+    let [(read, _, Question::Batch(_))] = desk.sent[..] else {
         panic!("one listener read asked: {:?}", desk.sent);
     };
-    let _ = desk.answer(
-        LISTENER,
-        read,
-        Outcome::Result(Reply::Object(Box::new(listener_read(ONE, 6)))),
-    );
+    let _ = desk.found(LISTENER, read, &listener_read(ONE, 6));
     assert_eq!(desk.state.held_tokens(), Some(held(&[5, 6])));
-    let [(completion, to, Wire::CompleteUia(_))] = desk.sent[..] else {
+    let [(completion, to, Question::Batch(_))] = desk.sent[..] else {
         panic!("one completion asked: {:?}", desk.sent);
     };
-    let _ = desk.answer(
+    let _ = desk.found(
         to,
         completion,
-        Outcome::Result(Reply::Focus(Box::new(focus_read_of(
-            ONE,
-            &button(ONE, 6, "Cancel"),
-            &[],
-        )))),
+        &Found::Read(focus_read_of(ONE, &button(ONE, 6, "Cancel"), &[])),
     );
     assert_eq!(desk.state.held_tokens(), Some(held(&[6])));
 }
@@ -143,7 +137,7 @@ fn the_set_never_regains_a_dropped_token() {
     let _ = desk.focus(ONE, &button(ONE, 5, "OK"), &[]);
     let _ = desk.focus(ONE, &button(ONE, 6, "Cancel"), &[]);
     told(&mut desk, ONE, 7);
-    let [(read, _, Wire::ReadObject(_))] = desk.sent[..] else {
+    let [(read, _, Question::Batch(_))] = desk.sent[..] else {
         panic!("one listener read asked: {:?}", desk.sent);
     };
     let _ = desk.answer(LISTENER, read, Outcome::NotThere);

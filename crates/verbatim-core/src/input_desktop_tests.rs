@@ -1,18 +1,17 @@
 //! The secure desktop and the lock state (Table 8): a switch away handled
 //! at once, the read after the return, and the lock state.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
-use verbatim_model::request::{
-    Follow, QueueEffect, QueueInput, Reply, Request as Wire, SessionLock,
-};
+use verbatim_model::request::{Follow, QueueEffect, QueueInput, Request as Wire, SessionLock};
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{Effect as Said, SegmentContent, TraceId, WindowHandle};
 
 use super::{InputDesktop, RETURN_DELAY_US};
 use crate::entries::tests::{
-    APP, Held, LISTENER, OUTPOST, SPOKEN_FOLLOWED, answer, feed_at, focus_read, ready,
+    APP, Held, LISTENER, OUTPOST, SPOKEN_FOLLOWED, feed_at, focus_read, ready,
 };
 use crate::event_queue::{Foreground, Input};
 use crate::focus::versions::Committed;
@@ -34,15 +33,7 @@ fn started() -> Held {
     let mut held = ready();
     let _ = feed_at(&mut held, 500, Input::Foreground(IN_FRONT));
     assert_eq!(
-        feed_at(
-            &mut held,
-            600,
-            answer(
-                OUTPOST,
-                1,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
-        ),
+        found_at(&mut held, 600, (OUTPOST, 1), Found::Read(focus_read(None))),
         SPOKEN_FOLLOWED
     );
     held
@@ -89,15 +80,23 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
     .into_iter()
     .filter_map(|said| match said {
         Said::StopSpeech => Some("cut".to_owned()),
-        Said::Queue(QueueEffect::Send { to, ask }) => {
-            Some(match crate::event_queue::legacy_for_tests(&ask.request) {
-                Wire::Follow(Follow { node }) => format!("send {:?} Follow {node:?}", to.reader),
-                Wire::CurrentFocus { known, .. } => {
-                    format!("send {:?} CurrentFocus known {}", to.reader, known.len())
-                }
-                _ => format!("send {:?} other", to.reader),
-            })
-        }
+        Said::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
+            verbatim_model::request::Question::Legacy(Wire::Follow(Follow { node })) => {
+                format!("send {:?} Follow {node:?}", to.reader)
+            }
+            verbatim_model::request::Question::Batch(batch) if batch.reads_focus_first() => {
+                let known = batch.steps.iter().find_map(|step| match &step.op {
+                    verbatim_model::batch::Op::FocusRead { known, .. } => Some(known.len()),
+                    _ => None,
+                });
+                format!(
+                    "send {:?} CurrentFocus known {}",
+                    to.reader,
+                    known.unwrap_or_default()
+                )
+            }
+            _ => format!("send {:?} other", to.reader),
+        }),
         Said::Speak(utterance, _) => Some(
             utterance
                 .segments
@@ -164,14 +163,11 @@ fn the_return_reads_the_front_focus_200_ms_later_and_says_its_title() {
     );
     assert_eq!(held.state.desktop.input, InputDesktop::User);
     assert_eq!(
-        feed_at(
+        found_at(
             &mut held,
             300_000,
-            answer(
-                OUTPOST,
-                4,
-                Reply::Candidate(CandidateAnswer::focused(focus_read(None)))
-            )
+            (OUTPOST, 4),
+            Found::Read(focus_read(None))
         ),
         SPOKEN_FOLLOWED
     );

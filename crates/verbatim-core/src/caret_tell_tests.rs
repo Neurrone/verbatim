@@ -4,11 +4,12 @@
 //! text-changed flag set by a value change and cleared by a comparison,
 //! and the baseline minted, kept and dropped.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
-    CandidateAnswer, FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply,
-    Request as Wire,
+    FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire,
 };
 use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
@@ -45,11 +46,7 @@ fn uia_field() -> Held {
     let _ = feed_at(&mut held, 500, Input::Foreground(IN_FRONT));
     let mut read = focus_read(None);
     read.focus.read.values = values("Body", Role::EditableText);
-    let _ = feed_at(
-        &mut held,
-        600,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    let _ = found_at(&mut held, 600, (OUTPOST, 1), Found::Read(read));
     held
 }
 
@@ -60,8 +57,8 @@ fn edit_control() -> Held {
     let _ = feed_at(&mut state, 500, entry(msaa_tell(-4)));
     let mut read = focus_read(Some(held(-4)));
     read.focus.read.values = values("Name", Role::EditableText);
-    let tried = CandidateAnswer::focused(read);
-    let _ = feed_at(&mut state, 600, answer(OUTPOST, 1, Reply::Candidate(tried)));
+    let tried = Found::Read(read);
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), tried);
     state
 }
 
@@ -105,12 +102,12 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     let mut step = Step::default();
     for effect in effects {
         match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) => {
-                match crate::event_queue::legacy_for_tests(&ask.request) {
-                    Wire::Text { op, .. } => step.text.push((ask.number.0, op)),
-                    _ => step.other += 1,
+            Effect::Queue(QueueEffect::Send { ask, .. }) => match &ask.request {
+                verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) => {
+                    step.text.push((ask.number.0, op.clone()));
                 }
-            }
+                _ => step.other += 1,
+            },
             Said::Speak(utterance, _) => step.said.push(
                 utterance
                     .segments
@@ -858,12 +855,8 @@ fn edit_focus(held: &mut Held, (object, number): (i32, u64), caret: FocusCaret) 
     let mut read = focus_read(Some(crate::entries::tests::held(object)));
     read.focus.read.values = values("Name", Role::EditableText);
     read.caret = caret;
-    let tried = CandidateAnswer::focused(read);
-    sent.extend(feed_at(
-        held,
-        500 * number + 100,
-        answer(OUTPOST, number, Reply::Candidate(tried)),
-    ));
+    let tried = Found::Read(read);
+    sent.extend(found_at(held, 500 * number + 100, (OUTPOST, number), tried));
     sent
 }
 
@@ -879,12 +872,15 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
     )
     .unwrap();
     effects.into_iter().find_map(|effect| match effect {
-        Effect::Queue(QueueEffect::Send { ask, .. }) => {
-            match crate::event_queue::legacy_for_tests(&ask.request) {
-                Wire::MsaaRun(run) => Some(run.details),
-                _ => None,
+        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
+            verbatim_model::request::Question::Batch(batch) => {
+                batch.steps.into_iter().find_map(|step| match step.op {
+                    verbatim_model::batch::Op::FocusRead { details, .. } => Some(details),
+                    _ => None,
+                })
             }
-        }
+            verbatim_model::request::Question::Legacy(_) => None,
+        },
         _ => None,
     })
 }
@@ -898,7 +894,7 @@ fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
     assert_eq!(
         said,
         [
-            "send Outpost(Pid(40)) MsaaRun",
+            "send Outpost(Pid(40)) Candidate",
             "Label(\"Editor\") Role(Window)",
             "Label(\"Name\") Role(EditableText)",
             "Text(\"alpha beta\")",
@@ -935,7 +931,7 @@ fn a_repeated_focus_mints_the_baseline_silently() {
     assert_eq!(
         said,
         [
-            "send Outpost(Pid(40)) MsaaRun",
+            "send Outpost(Pid(40)) Candidate",
             "Label(\"Name\") Role(EditableText)",
             "Text(\"alpha beta\")",
         ]

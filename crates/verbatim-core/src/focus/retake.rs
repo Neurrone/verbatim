@@ -11,21 +11,18 @@
 //! None of them sends the ancestors Core already knows.
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::property::PropertyId;
-use verbatim_model::request::{
-    CandidateAnswer, FocusDepth, FocusRead, Front, HiddenRoot, KnownAncestor, Reply,
-    Request as Wire,
-};
-use verbatim_model::{TextDetails, TraceId};
+use verbatim_model::batch::WindowOf;
+use verbatim_model::request::{FocusRead, Front, KnownAncestor, NodeWindow};
+use verbatim_model::{Backend, TraceId};
 
 use super::FOCUS_SET;
 use super::execute::{Executed, Known, Origin, execute, retake};
-use super::shown::Hidden;
+use super::shown::Check;
+use super::validity::{Answered, CandidateFacts, Unread};
 use super::versions::{Committed, ReadBy};
+use crate::batch::{Answers, Got, On, Ref, kind};
 use crate::entries::Entries;
-use crate::event_queue::{
-    Cx, FOCUS_DUE_US, Foreground, Instance, Outcome, Reader, Request, RequestWindow,
-};
+use crate::event_queue::{Cx, FOCUS_DUE_US, Foreground, Instance, Outcome, Reader, RequestWindow};
 use crate::state::SrState;
 
 /// Why Core reads an application's current focus.
@@ -57,53 +54,17 @@ pub(crate) struct CurrentFocus {
     pub(crate) fence: crate::keys::entry::Fence,
 }
 
-/// How far a read of the current focus goes, as its request's type, with
-/// how its answer is parsed at its decode.
-pub(crate) trait FocusReadDepth: std::fmt::Debug + Unpin + 'static {
-    /// The depth.
-    const DEPTH: FocusDepth;
-    /// Whether the outpost checks for a hidden dialog first, or reads as
-    /// it is, at a press while a dialog is postponed (`super::shown`).
-    const HIDDEN: HiddenRoot = HiddenRoot::Check;
-    /// The answer, parsed.
-    type Parsed: std::fmt::Debug + 'static;
-    /// `answer` parsed, `None` for one that breaks the depth's rule.
-    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed>;
-}
-
-impl FocusReadDepth for super::msaa_run::FullIfFocused {
-    const DEPTH: FocusDepth = FocusDepth::FullIfFocused;
-    type Parsed = super::validity::Answered;
-    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
-        super::validity::Answered::parse(answer, &Self::DEPTH.into())
-    }
-}
-
-/// A read in full answers the focus read, nothing else: the outpost answers
-/// "not there" for a focus it cannot read.
-impl FocusReadDepth for super::msaa_run::Full {
-    const DEPTH: FocusDepth = FocusDepth::Full;
-    type Parsed = Box<FocusRead>;
-    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
-        match super::validity::Answered::parse(answer, &Self::DEPTH.into())? {
-            super::validity::Answered::Read { read, .. } => Some(read),
-            super::validity::Answered::Unread(_) => None,
-        }
-    }
-}
-
-/// A read in full made as it is, the read at a press while a dialog is
-/// postponed: a hidden dialog answered to it breaks its rule.
-#[derive(Debug)]
-pub(crate) struct AsItIs;
-
-impl FocusReadDepth for AsItIs {
-    const DEPTH: FocusDepth = FocusDepth::Full;
-    const HIDDEN: HiddenRoot = HiddenRoot::ReadAnyway;
-    type Parsed = Box<FocusRead>;
-    fn parse(answer: CandidateAnswer) -> Option<Self::Parsed> {
-        super::msaa_run::Full::parse(answer)
-    }
+/// How far a read of an application's current focus goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Depth {
+    /// In full, after the hidden-dialog check.
+    Full,
+    /// In full as it is, hidden or not: the read at a press while a dialog
+    /// is postponed (`super::shown`).
+    AsItIs,
+    /// After the hidden-dialog check, its focused state, and in full only
+    /// when focused: the check after a menu end, NVDA's fake focus.
+    FullIfFocused,
 }
 
 /// An application's current focus as its read answers it: read to its
@@ -112,64 +73,161 @@ impl FocusReadDepth for AsItIs {
 /// entry judges (`super::plain::decide`).
 #[derive(Debug)]
 pub(crate) enum Focused<P> {
-    /// The read, parsed to its depth.
+    /// The read, to its depth.
     Read(P),
     /// This is in front.
     InFront(Front),
 }
 
-/// The request for an application's current focus, of the outpost of the
-/// window's application, read to `D`.
+/// What a read of the current focus found, judged at its decode, its
+/// read made `T` by the depth's rule.
 #[derive(Debug)]
-pub(crate) struct CurrentFocusRead<D: FocusReadDepth> {
-    /// The window it names.
-    pub(crate) window: RequestWindow,
-    /// The ancestors Core already knows.
-    pub(crate) known: Vec<KnownAncestor>,
-    /// What the focus's caret read fetches beyond the text: its line's
-    /// formatting.
-    pub(crate) details: TextDetails,
-    /// The properties of each node, chosen from the settings.
-    pub(crate) set: Vec<PropertyId>,
-    /// How far the read goes: in full, or, for the check after a menu end,
-    /// NVDA's fake focus, in full only when focused.
-    pub(crate) depth: std::marker::PhantomData<D>,
+enum Current<T> {
+    /// The shell answered it unsent with what is in front.
+    InFront(Front),
+    /// The focused window's top-level window is a hidden dialog.
+    Hidden(NodeWindow),
+    /// No focus could be read.
+    Gone,
+    /// Read to its depth's rule.
+    Read(T),
 }
 
-impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
-    type Reply = Hidden<Focused<D::Parsed>>;
+/// The steps of a current-focus batch.
+struct Steps<B> {
+    hidden: Option<Ref<B, kind::Test>>,
+    facts: Option<Ref<B, kind::Test>>,
+    read: Ref<B, kind::FocusRead>,
+}
 
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
+/// `answers` to a current-focus batch of `steps`, judged, a focus read
+/// made `T` by `read` with its MSAA focused state when the batch read it,
+/// and one found unfocused by `unfocused`: `None` for an answer no correct
+/// outpost gives.
+fn judge<B, T>(
+    answers: &Answers<B>,
+    steps: &Steps<B>,
+    (read, unfocused): Rule<T>,
+) -> Option<Current<T>> {
+    if let Some(front) = answers.in_front() {
+        return Some(Current::InFront(front.clone()));
     }
-
-    fn window(&self) -> RequestWindow {
-        self.window
+    if let Some(check) = steps.hidden {
+        match super::shown::judge(&answers.get(check))? {
+            Check::Dialog(window) => return Some(Current::Hidden(window)),
+            Check::Gone => return Some(Current::Gone),
+            Check::Shown => {}
+        }
     }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::CurrentFocus {
-            hidden: D::HIDDEN,
-            set: self.set.clone(),
-            known: self.known.clone(),
-            details: self.details,
-            depth: D::DEPTH,
-        })
+    let focused = match steps.facts.map(|test| answers.get(test)) {
+        None => None,
+        Some(Got::Done(tested)) if tested.matched => return unfocused().map(Current::Read),
+        Some(Got::Done(tested)) => super::msaa_run::focused_within(&tested.node.values),
+        Some(Got::NotThere(_) | Got::Failed) => return Some(Current::Gone),
+        Some(Got::Refused(_) | Got::Skipped) => return None,
+    };
+    match answers.get(steps.read) {
+        Got::Done(focus) => Some(Current::Read(read(focused, Box::new(focus.clone())))),
+        Got::NotThere(_) | Got::Failed => Some(Current::Gone),
+        Got::Refused(_) | Got::Skipped => None,
     }
+}
 
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        if D::HIDDEN == HiddenRoot::ReadAnyway && matches!(reply, Reply::HiddenDialog(_)) {
+/// How a depth makes a current-focus read its answer: a read with its MSAA
+/// focused state when read, and a focus found unfocused, `None` where the
+/// depth reads no focused state.
+type Rule<T> = (fn(Option<bool>, Box<FocusRead>) -> T, fn() -> Option<T>);
+
+/// Reads the current focus of `window`'s application to `depth`, its
+/// ancestors up to one of `known`, its answer made by `rule`: `None` when
+/// a hidden dialog postponed it (`super::shown`). The window with the
+/// keyboard focus, and its top-level window for the hidden-dialog check,
+/// are the outpost's.
+async fn current<T: std::fmt::Debug + 'static>(
+    cx: &mut Cx<Entries>,
+    window: RequestWindow,
+    (known, depth, rule): (Vec<KnownAncestor>, Depth, Rule<T>),
+    due_us: u64,
+) -> Option<Outcome<Focused<T>>> {
+    let mut batch = cx.batch(|| ());
+    let hidden = (depth != Depth::AsItIs).then(|| {
+        let window = On::window(WindowOf::Focused, Backend::Msaa, false);
+        let check = batch.test(window, super::shown::check());
+        batch.when(!check.matched());
+        check
+    });
+    let facts = (depth == Depth::FullIfFocused).then(|| {
+        let test = batch.test(On::focus(), super::msaa_run::unfocused());
+        batch.when(!test.matched());
+        test
+    });
+    let read = {
+        let facts = cx.facts();
+        batch.focus_read(
+            On::focus(),
+            known,
+            &crate::details::focus_set(&facts, FOCUS_SET),
+            crate::details::focus_details(&facts),
+        )
+    };
+    let steps = Steps {
+        hidden,
+        facts,
+        read,
+    };
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(window.process), window)
+        .judged(move |answers| judge(answers, &steps, rule));
+    Some(match cx.ask(request, due_us).await.split() {
+        Ok(Current::InFront(front)) => Outcome::Result(Focused::InFront(front)),
+        Ok(Current::Hidden(dialog)) => {
+            super::shown::postpone_dialog(cx, &dialog);
             return None;
         }
-        Hidden::parse(reply, |reply| match reply {
-            Reply::Candidate(answer) => D::parse(answer).map(Focused::Read),
-            _ => None,
-        })
-    }
+        Ok(Current::Gone) => Outcome::NotThere,
+        Ok(Current::Read(read)) => Outcome::Result(Focused::Read(read)),
+        Err(other) => other,
+    })
+}
 
-    fn decode_in_front(&self, front: Front) -> Option<Self::Reply> {
-        Some(Hidden::Read(Focused::InFront(front)))
-    }
+/// Reads the current focus of `window`'s application with its focused
+/// state, in full only when focused, its ancestors up to one of `known`:
+/// the check after a menu end ([`current`]).
+pub(crate) async fn current_if_focused(
+    cx: &mut Cx<Entries>,
+    window: RequestWindow,
+    known: Vec<KnownAncestor>,
+    due_us: u64,
+) -> Option<Outcome<Focused<Answered>>> {
+    let read = |focused, read| Answered::Read {
+        facts: CandidateFacts::Found {
+            focused,
+            role: None,
+        },
+        read,
+    };
+    let unfocused = || Some(Answered::Unread(Unread::NotFocused));
+    current(
+        cx,
+        window,
+        (known, Depth::FullIfFocused, (read, unfocused)),
+        due_us,
+    )
+    .await
+}
+
+/// Reads the current focus of `window`'s application in full, checking
+/// for a hidden dialog or as it is by `depth`, its ancestors up to one of
+/// `known` ([`current`]).
+pub(crate) async fn current_full(
+    cx: &mut Cx<Entries>,
+    window: RequestWindow,
+    (known, depth): (Vec<KnownAncestor>, Depth),
+    due_us: u64,
+) -> Option<Outcome<Focused<Box<FocusRead>>>> {
+    let read = |_, read| read;
+    current(cx, window, (known, depth, (read, || None)), due_us).await
 }
 
 /// How a current-focus answer is named: by the MSAA ids it carries, else
@@ -281,26 +339,17 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     if entry.why == Why::Shown && !super::shown::shown_due(&cx, entry.window.handle) {
         return;
     }
-    read_current::<super::msaa_run::Full>(&mut cx, &entry).await;
+    read_current(&mut cx, &entry, Depth::Full).await;
 }
 
 /// Reads the current focus `read` names, in full, checking for a hidden
-/// dialog or reading as it is by `D`, and judges its answer by its reason:
-/// the one place that decides a current-focus read's outcomes. Its speech
-/// carries `read`'s fence. A failed read clears Core's caret baseline.
-pub(crate) async fn read_current<D: FocusReadDepth<Parsed = Box<FocusRead>>>(
-    cx: &mut Cx<Entries>,
-    read: &CurrentFocus,
-) {
+/// dialog or reading as it is by `depth`, and judges its answer by its
+/// reason: the one place that decides a current-focus read's outcomes. Its
+/// speech carries `read`'s fence. A failed read clears Core's caret
+/// baseline.
+pub(crate) async fn read_current(cx: &mut Cx<Entries>, read: &CurrentFocus, depth: Depth) {
     let due_us = cx.due_in(FOCUS_DUE_US);
-    let request = CurrentFocusRead::<D> {
-        window: read.window,
-        known: Vec::new(),
-        details: crate::details::focus_details(&cx.facts()),
-        set: crate::details::focus_set(&cx.facts(), FOCUS_SET),
-        depth: std::marker::PhantomData,
-    };
-    let Some(outcome) = super::shown::ask(cx, request, due_us).await else {
+    let Some(outcome) = current_full(cx, read.window, (Vec::new(), depth), due_us).await else {
         return;
     };
     let answer = match outcome {

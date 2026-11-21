@@ -439,7 +439,7 @@ fn a_controls_own_focus_reports_its_focused_child() {
 }
 
 /// The identity of `read`'s focus as Core names it from its snapshot.
-fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::request::Identity {
+fn identity_of(read: &verbatim_model::request::FocusRead) -> common::outpost::Identity {
     use verbatim_model::property::{PropertyId, PropertyValue};
     let values = &read.focus.read.values;
     let value = |id| values.answer(id).and_then(|answer| answer.value.clone());
@@ -451,7 +451,7 @@ fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::req
         Some(PropertyValue::Text(text)) => Some(text),
         _ => None,
     };
-    verbatim_model::request::Identity {
+    common::outpost::Identity {
         states: match value(PropertyId::States) {
             Some(PropertyValue::States(states)) => states,
             _ => verbatim_model::StateSet::default(),
@@ -467,13 +467,13 @@ fn identity_of(read: &verbatim_model::request::FocusRead) -> verbatim_model::req
     }
 }
 
-/// The outpost at [`verbatim_model::request::Depth::FullUnlessSame`]: an
+/// The outpost at [`common::outpost::Depth::FullUnlessSame`]: an
 /// object at the ids named that reads as the identity named is answered
 /// the same; one whose identity differs, or at other ids, is read in
 /// full; one without the focused state answers its facts alone
 /// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
 fn a_candidate_is_read_unless_it_is_the_object_named() {
-    use verbatim_model::request::{CandidateAnswer, CandidateFacts, Depth, Reply};
+    use common::outpost::{CandidateAnswer, CandidateFacts, Depth, FocusReply};
     let title = common::unique_title("mockapp-candidate-unless-same");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -497,10 +497,9 @@ fn a_candidate_is_read_unless_it_is_the_object_named() {
             )
             .0
     };
-    let in_full =
-        |reply: &Reply| matches!(reply, Reply::Candidate(answer) if answer.read.is_some());
-    assert_eq!(unless(at(3), identity.clone()), Reply::CandidateSame);
-    let renamed = verbatim_model::request::Identity {
+    let in_full = |reply: &FocusReply| matches!(reply, FocusReply::Candidate(answer) if answer.read.is_some());
+    assert_eq!(unless(at(3), identity.clone()), FocusReply::CandidateSame);
+    let renamed = common::outpost::Identity {
         name: Some("Second".to_owned()),
         ..identity.clone()
     };
@@ -509,7 +508,7 @@ fn a_candidate_is_read_unless_it_is_the_object_named() {
     common::apply(&mut app, hwnd, "set-focus second");
     assert_eq!(
         unless(at(3), identity),
-        Reply::Candidate(CandidateAnswer {
+        FocusReply::Candidate(CandidateAnswer {
             facts: CandidateFacts::Found {
                 focused: Some(false),
                 role: None,
@@ -538,9 +537,9 @@ fn a_candidate_is_read_unless_it_is_the_object_named() {
 /// reporting off, and the identity still compares the position and the
 /// set's size.
 fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
+    use common::outpost::{Depth, FocusReply};
     use verbatim_ia2::WinEventKind;
     use verbatim_model::property::PropertyId;
-    use verbatim_model::request::{Depth, Reply};
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
     use windows::core::w;
     let title = common::unique_title("mockapp-twin-deleted");
@@ -601,7 +600,7 @@ fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
         },
         without_position,
     );
-    let Reply::Candidate(answer) = reply else {
+    let FocusReply::Candidate(answer) = reply else {
         panic!("the twin was answered the same: {reply:?}");
     };
     let read = answer.read.expect("the twin read in full");
@@ -625,7 +624,7 @@ fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
 /// (`tests/fixtures/popup_focused_item.json`), whose `accFocus` names its
 /// first item, focused, which a focus event's wider redirect would reach.
 fn a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup() {
-    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
+    use common::outpost::{CandidateFacts, CandidateKind, Depth};
     let title = common::unique_title("mockapp-menu-start-popup");
     let mut app = common::spawn_visible("popup_focused_item.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -666,7 +665,7 @@ fn a_menu_start_on_a_popup_with_a_focused_item_reads_the_popup() {
 /// `FullIfFocused` a focused candidate is read in full, and a menu start's
 /// role is read as a fact.
 fn a_candidate_is_read_to_the_depth_core_asks() {
-    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
+    use common::outpost::{CandidateFacts, CandidateKind, Depth};
     let title = common::unique_title("mockapp-candidate-depth");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
@@ -720,8 +719,8 @@ fn a_candidate_is_read_to_the_depth_core_asks() {
 /// item, its edit keeping the focus, and the outpost finds the item
 /// without the focused state on it or any ancestor.
 fn the_stale_tree_focus_stand_in_matches_the_open_dialogs_recording() {
+    use common::outpost::{CandidateFacts, CandidateKind, Depth};
     use verbatim_ia2::WinEventKind;
-    use verbatim_model::request::{CandidateFacts, CandidateKind, Depth};
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::Controls::{TVGN_CARET, TVM_GETNEXTITEM, TVM_MAPHTREEITEMTOACCID};
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_LEFT;
@@ -1940,22 +1939,14 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
     common::apply(&mut app, hwnd, "set-focus first");
 
     app.hold();
-    let number = outpost.request(
-        hwnd,
-        verbatim_model::request::Request::CurrentFocus {
-            hidden: verbatim_model::request::HiddenRoot::Check,
-            set: common::outpost::focus_set(),
-            known: Vec::new(),
-            details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::FocusDepth::Full,
-        },
-    );
+    let (number, batch) = outpost.ask_current_focus(hwnd);
     assert_eq!(app.held(), "GetObject", "the probe of the request's window");
     // SAFETY: GetDesktopWindow has no preconditions.
     outpost
         .set_focus_window(unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() });
     app.release();
-    let focused = Focused::of(outpost.answer(number).outcome, CallCounts::default());
+    let outcome = common::outpost::focus_outcome(&batch, outpost.answer(number).outcome);
+    let focused = Focused::of(outcome, CallCounts::default());
     assert_eq!(focused.name(), Some("First"));
 
     outpost.settled();
@@ -2013,7 +2004,7 @@ fn a_focused_element_of_another_process_is_not_read_further() {
     let (outcome, _) = outpost.current_focus();
     assert_eq!(
         outcome,
-        verbatim_model::request::Outcome::NotThere,
+        common::outpost::FocusOutcome::NotThere,
         "no focused control is answered"
     );
     assert_eq!(
@@ -3244,15 +3235,15 @@ fn the_focused_state_test_continues_past_a_failed_acc_parent() {
     let (run, _) = outpost.msaa_run(
         (
             common::outpost::node_ids(child, 1),
-            verbatim_model::request::CandidateKind::Focus,
+            common::outpost::CandidateKind::Focus,
         ),
-        verbatim_model::request::Depth::FullIfFocused,
+        common::outpost::Depth::FullIfFocused,
     );
     assert!(
         matches!(
             run,
-            verbatim_model::request::CandidateAnswer {
-                facts: verbatim_model::request::CandidateFacts::Found {
+            common::outpost::CandidateAnswer {
+                facts: common::outpost::CandidateFacts::Found {
                     focused: Some(false),
                     ..
                 },
@@ -3734,7 +3725,7 @@ fn a_uia_window_whose_element_cannot_be_read_loses_the_focus() {
         "the listener's walk goes on from the host window"
     );
     let (outcome, _) = outpost.complete_focus(focus);
-    assert_eq!(outcome, verbatim_model::request::Outcome::NotThere);
+    assert_eq!(outcome, common::outpost::FocusOutcome::NotThere);
     outpost.settled();
     drop(outpost);
     app.quit();

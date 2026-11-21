@@ -12,22 +12,23 @@
 //! refusals between a pair, the key between, the desktop switch while a
 //! read is out and the outposts' answers are code-level.
 
+use crate::entries::tests::{found, found_at};
+use crate::focus::msaa_run::{Identity, UnlessSame, unfocused};
+use crate::readers::Found;
+use verbatim_model::batch::{Op, Subject};
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{
-    CandidateAnswer, CandidateFacts, Depth, FocusRead, HeldIds, Identity, MsaaIds,
-    Outcome as WireOutcome, QueueInput, Reply, Request as Wire,
-};
+use verbatim_model::request::{FocusRead, HeldIds, MsaaIds, Outcome as WireOutcome, QueueInput};
 use verbatim_model::tell::{Event, EventObject, Payload, Relation, TellWindow};
 use verbatim_model::{KeySeq, Pid, Role, StateSet, TraceId, WindowHandle};
 
-use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{KnownAncestor, RequestNumber, RouteEnd};
+use verbatim_model::request::RequestNumber;
 
 use crate::entries::Entry;
 use crate::entries::tests::{
-    Held, LISTENER, NOTHING, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, held,
-    listener_answer, msaa_tell, not_focused, ready, ready_at, uia_tell, values,
+    Held, LISTENER, NOTHING, OUTPOST, answer_outcome, entry, feed_at, focus_read, held,
+    listener_answer, msaa_tell, ready, ready_at, uia_tell, values,
 };
 use crate::event_queue::{Foreground, Input, Instance, Reader, Timed};
 use crate::keys::entry::Fence;
@@ -94,8 +95,8 @@ fn item_read(name: &str, (position, size): (u32, u32)) -> FocusRead {
 }
 
 /// [`item_read`] as the focused candidate's answer.
-fn item_answer(name: &str, place: (u32, u32)) -> Reply {
-    Reply::Candidate(CandidateAnswer::focused(item_read(name, place)))
+fn item_answer(name: &str, place: (u32, u32)) -> Found {
+    Found::Read(item_read(name, place))
 }
 
 /// How the item named `name`, item `position` of `size`, is spoken.
@@ -115,22 +116,107 @@ fn copy_identity() -> Identity {
     }
 }
 
-/// The depth of the one MSAA candidate out.
-fn depth_out(held: &Held) -> Depth {
-    let depths: Vec<Depth> = held
+/// How far a focus's turn read goes, by its candidate's test: in full
+/// only when focused, or that unless it is the object at `ids` reading as
+/// `identity`.
+#[derive(Debug, PartialEq)]
+enum Depth {
+    FullIfFocused,
+    FullUnlessSame {
+        ids: MsaaIds,
+        identity: Box<Identity>,
+    },
+}
+
+impl Depth {
+    /// The test a candidate's batch makes at this depth, the object held
+    /// by its event's child id.
+    fn matcher(&self) -> Matcher {
+        match self {
+            Self::FullIfFocused => unfocused(),
+            Self::FullUnlessSame { ids, identity } => Matcher::Any(vec![
+                unfocused(),
+                UnlessSame {
+                    ids: *ids,
+                    held_child: ids.child,
+                    identity: (**identity).clone(),
+                }
+                .matcher(),
+            ]),
+        }
+    }
+}
+
+/// The test of the one MSAA candidate out.
+fn test_out(held: &Held) -> Matcher {
+    let tests: Vec<Matcher> = held
         .state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .filter_map(|request| match request {
-            Wire::MsaaRun(run) => Some(run.depth),
+        .flat_map(|(_, batch)| batch.steps)
+        .filter_map(|step| match step.op {
+            Op::Test {
+                subject: Subject::Msaa { .. },
+                matcher,
+            } => Some(matcher),
             _ => None,
         })
         .collect();
-    let [depth] = &depths[..] else {
-        panic!("one candidate out: {depths:?}");
+    let [test] = &tests[..] else {
+        panic!("one candidate out: {tests:?}");
     };
-    depth.clone()
+    test.clone()
+}
+
+/// The depth of the one MSAA candidate out.
+fn depth_out(held: &Held) -> Depth {
+    let test = test_out(held);
+    if test == Depth::FullIfFocused.matcher() {
+        return Depth::FullIfFocused;
+    }
+    let Matcher::Any(either) = &test else {
+        panic!("a test of the identity: {test:?}");
+    };
+    let Some(Matcher::All(identity)) = either.get(1) else {
+        panic!("a test of the identity: {test:?}");
+    };
+    let value = |place: usize| match identity.get(place) {
+        Some(Matcher::Is(_, value)) => Some(value.clone()),
+        _ => None,
+    };
+    let count = |place: usize| match identity.get(place) {
+        Some(Matcher::Any(forms)) => match forms.get(1) {
+            Some(Matcher::Is(_, PropertyValue::Count(count))) => Some(*count),
+            _ => None,
+        },
+        _ => None,
+    };
+    let text_at = |place: usize| match value(place) {
+        Some(PropertyValue::Text(said)) => Some(said),
+        _ => None,
+    };
+    let (
+        Some(PropertyValue::MsaaAddress(address)),
+        Some(PropertyValue::States(states)),
+        Some(PropertyValue::Role(role)),
+    ) = (value(0), value(1), value(2))
+    else {
+        panic!("a test of the identity: {test:?}");
+    };
+    let depth = Depth::FullUnlessSame {
+        ids: address.event,
+        identity: Box::new(Identity {
+            states,
+            role,
+            position_in_set: count(3),
+            set_size: count(4),
+            name: text_at(5),
+            value: text_at(6),
+        }),
+    };
+    assert_eq!(depth.matcher(), test, "the test is the identity's");
+    depth
 }
 
 /// The readers' last focus's fence, `None` with no last focus.
@@ -149,15 +235,11 @@ fn spoken_copy(key: u64) -> Held {
     held.state.arrivals.key_joined(KeySeq::new(key));
     assert_eq!(
         feed_at(&mut held, 1_000, entry(item_tell(1_000))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(depth_out(&held), Depth::FullIfFocused);
     assert_eq!(
-        feed_at(
-            &mut held,
-            2_000,
-            answer(OUTPOST, 1, item_answer("Copy", (2, 3)))
-        ),
+        found_at(&mut held, 2_000, (OUTPOST, 1), item_answer("Copy", (2, 3))),
         [TITLE.to_owned(), item_said("Copy", (2, 3))]
     );
     assert_eq!(since(&held), Some(Some(held.state.arrivals.fence())));
@@ -172,7 +254,7 @@ fn the_items_own_focus_again_is_read_unless_it_is_the_same() {
     let mut held = spoken_copy(3);
     assert_eq!(
         feed_at(&mut held, 3_000, entry(item_tell(3_000))),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(
         depth_out(&held),
@@ -182,7 +264,7 @@ fn the_items_own_focus_again_is_read_unless_it_is_the_same() {
         }
     );
     assert_eq!(
-        feed_at(&mut held, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        found_at(&mut held, 4_000, (OUTPOST, 2), Found::Same),
         NOTHING
     );
     assert!(held.state.queue.front_for_tests().is_none());
@@ -203,7 +285,7 @@ fn the_lists_own_focus_reaching_the_same_item_says_nothing() {
         }
     );
     assert_eq!(
-        feed_at(&mut held, 4_000, answer(OUTPOST, 2, Reply::CandidateSame)),
+        found_at(&mut held, 4_000, (OUTPOST, 2), Found::Same),
         NOTHING
     );
 }
@@ -216,11 +298,7 @@ fn another_item_at_the_same_ids_is_spoken() {
     let mut held = spoken_copy(3);
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));
     assert_eq!(
-        feed_at(
-            &mut held,
-            4_000,
-            answer(OUTPOST, 2, item_answer("Paste", (2, 3)))
-        ),
+        found_at(&mut held, 4_000, (OUTPOST, 2), item_answer("Paste", (2, 3))),
         [item_said("Paste", (2, 3))]
     );
 }
@@ -232,11 +310,7 @@ fn the_same_reading_in_a_set_one_smaller_is_spoken() {
     let mut held = spoken_copy(3);
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));
     assert_eq!(
-        feed_at(
-            &mut held,
-            4_000,
-            answer(OUTPOST, 2, item_answer("Copy", (2, 2)))
-        ),
+        found_at(&mut held, 4_000, (OUTPOST, 2), item_answer("Copy", (2, 2))),
         [item_said("Copy", (2, 2))]
     );
 }
@@ -250,11 +324,7 @@ fn after_a_key_the_items_own_focus_is_read_and_spoken() {
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));
     assert_eq!(depth_out(&held), Depth::FullIfFocused);
     assert_eq!(
-        feed_at(
-            &mut held,
-            4_000,
-            answer(OUTPOST, 2, item_answer("Copy", (2, 3)))
-        ),
+        found_at(&mut held, 4_000, (OUTPOST, 2), item_answer("Copy", (2, 3))),
         [item_said("Copy", (2, 3))]
     );
 }
@@ -267,11 +337,7 @@ fn a_last_focus_held_by_child_0_has_no_identity_check() {
     let mut state = ready();
     feed_at(&mut state, 1_000, entry(msaa_tell(-4)));
     let read = focus_read(Some(held(-4)));
-    feed_at(
-        &mut state,
-        2_000,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    found_at(&mut state, 2_000, (OUTPOST, 1), Found::Read(read));
     assert_eq!(feed_at(&mut state, 3_000, entry(msaa_tell(-4))), NOTHING);
     feed_at(&mut state, 3_100, entry(item_tell(3_100)));
     assert_eq!(depth_out(&state), Depth::FullIfFocused);
@@ -311,23 +377,15 @@ fn a_run_keeps_its_executed_candidates_own_fence() {
             2_000,
             answer_outcome(OUTPOST, 1, WireOutcome::NotThere)
         ),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(
-        feed_at(
-            &mut held,
-            3_000,
-            answer(OUTPOST, 2, Reply::Candidate(not_focused()))
-        ),
-        ["send Outpost(Pid(40)) MsaaRun"],
+        found_at(&mut held, 3_000, (OUTPOST, 2), Found::Unfocused),
+        ["send Outpost(Pid(40)) Candidate"],
         "the newest, refused, then the item"
     );
     assert_eq!(
-        feed_at(
-            &mut held,
-            4_000,
-            answer(OUTPOST, 3, item_answer("Copy", (2, 3)))
-        ),
+        found_at(&mut held, 4_000, (OUTPOST, 3), item_answer("Copy", (2, 3))),
         [TITLE.to_owned(), item_said("Copy", (2, 3))]
     );
     assert_ne!(older, held.state.arrivals.fence());
@@ -380,11 +438,7 @@ fn alpha() -> Held {
     let mut held = ready();
     held.state.arrivals.key_joined(KeySeq::new(3));
     feed_at(&mut held, 1_000, entry(item_tell(1_000)));
-    let said = feed_at(
-        &mut held,
-        2_000,
-        answer(OUTPOST, 1, item_answer("Alpha", (1, 3))),
-    );
+    let said = found_at(&mut held, 2_000, (OUTPOST, 1), item_answer("Alpha", (1, 3)));
     assert_eq!(said, [TITLE.to_owned(), item_said("Alpha", (1, 3))]);
     held
 }
@@ -403,11 +457,7 @@ fn asked(kind: Kind) -> (Held, Instance, u64) {
         }
         Kind::MenuCheck => {
             feed_at(&mut held, 2_100, Input::Foreground(IN_FRONT));
-            feed_at(
-                &mut held,
-                2_200,
-                answer(OUTPOST, 2, item_answer("Alpha", (1, 3))),
-            );
+            found_at(&mut held, 2_200, (OUTPOST, 2), item_answer("Alpha", (1, 3)));
             tell.kind = EventKind::MenuEnd;
             feed_at(&mut held, 2_300, entry(tell));
             Input::Tick
@@ -417,17 +467,29 @@ fn asked(kind: Kind) -> (Held, Instance, u64) {
             let number = one_sent(&mut held, 3_000, entry(island));
             return (held, LISTENER, number);
         }
-        Kind::Completion | Kind::Afresh => {
+        Kind::Completion => {
             let read = one_sent(&mut held, 3_000, entry(island));
-            let mut object = listener_answer();
-            if let (Kind::Afresh, Some(route)) = (kind, object.route.as_mut()) {
-                route.end = RouteEnd::Known(KnownAncestor::Uia(RuntimeId(vec![42, 4])));
-            }
-            answer(LISTENER, read, Reply::Object(Box::new(object)))
+            found(&held, LISTENER, read, listener_answer())
+        }
+        Kind::Afresh => {
+            // The walk meets the first ancestor it was asked to stop at,
+            // which is no longer known when its answer comes: the
+            // committed focus changed between the two reads.
+            crate::entries::tests::committed_window_known(&mut held, 4);
+            let read = one_sent(&mut held, 3_000, entry(island));
+            crate::entries::tests::walk_meeting_a_changed_line(&mut held, read)
         }
     };
     let number = one_sent(&mut held, 60_000, input);
     (held, OUTPOST, number)
+}
+
+/// How a reader answers in [`each_failed_focus_read_ends_the_fence_by_one_rule`]:
+/// with a whole outcome, or with what it found.
+#[derive(Clone, Debug)]
+enum Answer {
+    Whole(WireOutcome),
+    Found(Box<Found>),
 }
 
 /// The mouse return to "Alpha" with no key between: its own focus, asked
@@ -436,10 +498,10 @@ fn asked(kind: Kind) -> (Held, Instance, u64) {
 fn returned(held: &mut Held) -> Vec<String> {
     let number = one_sent(held, 100_000, entry(item_tell(100_000)));
     let reply = match depth_out(held) {
-        Depth::FullUnlessSame { .. } => Reply::CandidateSame,
-        _ => item_answer("Alpha", (1, 3)),
+        Depth::FullUnlessSame { .. } => Found::Same,
+        Depth::FullIfFocused => item_answer("Alpha", (1, 3)),
     };
-    feed_at(held, 101_000, answer(OUTPOST, number, reply))
+    found_at(held, 101_000, (OUTPOST, number), reply)
 }
 
 /// Each outcome but a result of each kind of focus read, as its reader
@@ -461,43 +523,37 @@ fn each_failed_focus_read_ends_the_fence_by_one_rule() {
     use Kind::{Afresh, Completion, Listener, MenuCheck, MenuStart, Run, Startup};
     use WireOutcome::{Ended, NotThere, Refused};
     use verbatim_model::request::Refusal::{NotFocused, ReadThroughMsaa, Unsupported};
-    let found = |facts| {
-        Some(WireOutcome::Result(Reply::Candidate(CandidateAnswer {
-            facts,
-            read: None,
-        })))
-    };
-    let unfocused = Some(WireOutcome::Result(Reply::Candidate(not_focused())));
+    let whole = |outcome| Some(Answer::Whole(outcome));
+    let reader = |found| Some(Answer::Found(Box::new(found)));
+    let unfocused = reader(Found::Unfocused);
     let mut button = item_read("Context", (1, 1));
     button.focus.read.values = values("Context", Role::Button);
-    let not_popup = Some(WireOutcome::Result(Reply::Candidate(
-        CandidateAnswer::focused(button),
-    )));
+    let not_popup = reader(Found::Role(Some(Role::Button), Some(button)));
     for (kind, outcome, ends) in [
-        (Run, Some(NotThere), true),
-        (Run, Some(Ended), true),
+        (Run, whole(NotThere), true),
+        (Run, whole(Ended), true),
         (Run, unfocused.clone(), true),
-        (Run, found(CandidateFacts::NotThere), true),
-        (Run, found(CandidateFacts::Skipped), false),
+        (Run, reader(Found::NotThere), true),
+        (Run, reader(Found::ThroughUia), false),
         (Run, None, false),
         (MenuStart, not_popup, true),
-        (MenuStart, Some(Ended), true),
-        (MenuCheck, Some(NotThere), true),
-        (MenuCheck, Some(Ended), true),
+        (MenuStart, whole(Ended), true),
+        (MenuCheck, whole(NotThere), true),
+        (MenuCheck, whole(Ended), true),
         (MenuCheck, unfocused, true),
-        (Startup, Some(NotThere), true),
-        (Startup, Some(Ended), true),
-        (Listener, Some(Ended), true),
-        (Listener, Some(NotThere), true),
-        (Listener, Some(Refused(NotFocused)), true),
-        (Listener, Some(Refused(Unsupported)), false),
-        (Completion, Some(Ended), true),
-        (Completion, Some(NotThere), true),
-        (Completion, Some(Refused(ReadThroughMsaa)), false),
-        (Completion, Some(Refused(Unsupported)), false),
+        (Startup, whole(NotThere), true),
+        (Startup, whole(Ended), true),
+        (Listener, whole(Ended), true),
+        (Listener, whole(NotThere), true),
+        (Listener, whole(Refused(NotFocused)), true),
+        (Listener, whole(Refused(Unsupported)), false),
+        (Completion, whole(Ended), true),
+        (Completion, whole(NotThere), true),
+        (Completion, whole(Refused(ReadThroughMsaa)), false),
+        (Completion, whole(Refused(Unsupported)), false),
         (Completion, None, false),
-        (Afresh, Some(NotThere), true),
-        (Afresh, Some(Ended), true),
+        (Afresh, whole(NotThere), true),
+        (Afresh, whole(Ended), true),
     ] {
         let (mut held, from, number) = asked(kind);
         let fence = held.state.arrivals.fence();
@@ -506,14 +562,16 @@ fn each_failed_focus_read_ends_the_fence_by_one_rule() {
         // never ended: the completion ends with its outpost, whose end
         // also ends the committed item, so the mouse return waits for the
         // replacement's re-take (`retake_tests.rs`), not for this fence.
-        if let (Completion, Some(Ended)) = (kind, outcome.as_ref()) {
+        if let (Completion, Some(Answer::Whole(Ended))) = (kind, outcome.as_ref()) {
             feed_at(&mut held, 70_000, Input::ReaderEnded(from));
             assert_eq!(since(&held), Some(None), "{row}");
             continue;
         }
-        let input = outcome.map_or(Input::RefusedHung(RequestNumber(number)), |outcome| {
-            answer_outcome(from, number, outcome)
-        });
+        let input = match outcome {
+            None => Input::RefusedHung(RequestNumber(number)),
+            Some(Answer::Whole(outcome)) => answer_outcome(from, number, outcome),
+            Some(Answer::Found(reader_found)) => found(&held, from, number, *reader_found),
+        };
         feed_at(&mut held, 70_000, input);
         assert_eq!(since(&held), Some((!ends).then_some(fence)), "{row}");
         let said = if ends {
@@ -563,8 +621,12 @@ fn each_failed_focus_read_ends_the_fence_by_one_rule() {
 #[test]
 fn a_menu_opening_after_a_failed_read_leaves_the_fence_ended() {
     let (mut held, _, completion) = asked(Kind::Completion);
-    let read = Reply::Focus(Box::new(focus_read(None)));
-    feed_at(&mut held, 61_000, answer(OUTPOST, completion, read));
+    found_at(
+        &mut held,
+        61_000,
+        (OUTPOST, completion),
+        Found::Read(focus_read(None)),
+    );
     let run = one_sent(&mut held, 62_000, entry(msaa_tell(-9)));
     feed_at(
         &mut held,
@@ -660,11 +722,7 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
         ["send Outpost(Pid(40)) CurrentFocus"]
     );
     assert_eq!(
-        feed_at(
-            &mut held,
-            2_600,
-            answer(OUTPOST, 2, item_answer("Copy", (2, 3)))
-        ),
+        found_at(&mut held, 2_600, (OUTPOST, 2), item_answer("Copy", (2, 3))),
         [item_said("Copy", (2, 3))]
     );
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));
@@ -682,7 +740,7 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
         &switch(false),
     );
     assert_eq!(
-        feed_at(&mut held, 3_200, answer(OUTPOST, 3, Reply::CandidateSame)),
+        found_at(&mut held, 3_200, (OUTPOST, 3), Found::Same),
         NOTHING
     );
     let _ = crate::entries::route(
@@ -699,15 +757,16 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
         &QueueInput::Due,
     );
     assert_eq!(
-        held.state.queue.table_for_tests().len(),
+        held.state.queue.batches_for_tests().len(),
         1,
         "the read after the return"
     );
     assert_eq!(
-        feed_at(
+        found_at(
             &mut held,
             due + 1_000,
-            answer(OUTPOST, 4, item_answer("Copy", (2, 3)))
+            (OUTPOST, 4),
+            item_answer("Copy", (2, 3))
         ),
         [TITLE.to_owned(), item_said("Copy", (2, 3))]
     );
@@ -745,29 +804,24 @@ fn a_run_spanning_two_applications_is_tried_strictly_newest_first() {
     let asked = |held: &Held| {
         held.state
             .queue
-            .table_for_tests()
+            .batches_for_tests()
             .into_iter()
-            .find_map(|request| match request {
-                Wire::MsaaRun(run) => Some(run.candidate.ids.object),
+            .flat_map(|(_, batch)| batch.steps)
+            .find_map(|step| match step.op.subject() {
+                Some(Subject::Msaa { ids, .. }) => Some(ids.object),
                 _ => None,
             })
     };
-    let gone = || {
-        Reply::Candidate(CandidateAnswer {
-            facts: CandidateFacts::NotThere,
-            read: None,
-        })
-    };
-    feed_at(&mut held, 2_000, answer(OUTPOST, 1, gone()));
+    found_at(&mut held, 2_000, (OUTPOST, 1), Found::NotThere);
     assert_eq!(asked(&held), Some(-7));
     assert_eq!(
-        feed_at(&mut held, 3_000, answer(OUTPOST, 2, gone())),
-        ["send Outpost(Pid(41)) MsaaRun"]
+        found_at(&mut held, 3_000, (OUTPOST, 2), Found::NotThere),
+        ["send Outpost(Pid(41)) Candidate"]
     );
     assert_eq!(asked(&held), Some(-6));
     assert_eq!(
-        feed_at(&mut held, 4_000, answer(other, 3, gone())),
-        ["send Outpost(Pid(40)) MsaaRun"]
+        found_at(&mut held, 4_000, (other, 3), Found::NotThere),
+        ["send Outpost(Pid(40)) Candidate"]
     );
     assert_eq!(asked(&held), Some(-5));
 }
@@ -836,7 +890,7 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
         answer_outcome(OUTPOST, 1, WireOutcome::NotThere),
     );
     let mut said = Vec::new();
-    let mut out: Vec<(u64, Wire)> = Vec::new();
+    let mut out: Vec<u64> = Vec::new();
     let mut asked = 0;
     let mut at_us = 1_000;
     for step in order {
@@ -854,14 +908,18 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
             }
             Step::ListFocus => entry(list_tell(at_us)),
             Step::Answer => {
-                let (number, request) = out.remove(0);
-                let reply = match request {
-                    Wire::MsaaRun(run) if matches!(run.depth, Depth::FullUnlessSame { .. }) => {
-                        Reply::CandidateSame
-                    }
-                    _ => item_answer("Speech", (1, 3)),
+                let number = out.remove(0);
+                let batch = held.state.queue.batch_for_tests(number).unwrap();
+                let unless_same = batch.steps.iter().any(|step| {
+                    matches!(&step.op, Op::Test { subject: Subject::Msaa { .. }, matcher }
+                        if *matcher != unfocused())
+                });
+                let reply = if unless_same {
+                    Found::Same
+                } else {
+                    item_answer("Speech", (1, 3))
                 };
-                answer(OUTPOST, number, reply)
+                found(&held, OUTPOST, number, reply)
             }
         };
         let effects =
@@ -871,10 +929,7 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
             match effect {
                 Effect::Queue(QueueEffect::Send { ask, .. }) => {
                     asked += 1;
-                    out.push((
-                        ask.number.0,
-                        crate::event_queue::legacy_for_tests(&ask.request),
-                    ));
+                    out.push(ask.number.0);
                 }
                 verbatim_model::Effect::Speak(utterance, _) => said.push(
                     utterance
@@ -935,10 +990,11 @@ fn with_position_reporting_off_the_read_asks_the_position_and_speech_leaves_it_o
     let set: Vec<PropertyId> = held
         .state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .find_map(|request| match request {
-            Wire::MsaaRun(run) => Some(run.set),
+        .flat_map(|(_, batch)| batch.steps)
+        .find_map(|step| match step.op {
+            Op::FocusRead { set, .. } => Some(set),
             _ => None,
         })
         .expect("the item asked");
@@ -947,11 +1003,7 @@ fn with_position_reporting_off_the_read_asks_the_position_and_speech_leaves_it_o
         "{set:?}"
     );
     assert_eq!(
-        feed_at(
-            &mut held,
-            2_000,
-            answer(OUTPOST, 1, item_answer("Copy", (2, 3)))
-        ),
+        found_at(&mut held, 2_000, (OUTPOST, 1), item_answer("Copy", (2, 3))),
         [TITLE, "Label(\"Copy\")"]
     );
     feed_at(&mut held, 3_000, entry(item_tell(3_000)));

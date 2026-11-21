@@ -40,9 +40,7 @@ use std::path::PathBuf;
 use verbatim_core::{ListenerView, Runtime, View as HeldView, ViewSend, read_dump, reduce};
 use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View, focus_kind};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{
-    ObjectRef, ProcessFact, Purpose, QueueEffect, QueueInput, Reader, Request,
-};
+use verbatim_model::request::{ObjectRef, ProcessFact, QueueEffect, QueueInput, Reader, Request};
 use verbatim_model::tell::{ElementToken, EventObject, Read};
 use verbatim_model::{Effect, Input, Message, Pid, Role, SegmentContent, State};
 use verbatim_process::held_slot::HeldSlot;
@@ -214,15 +212,30 @@ fn replay(name: &str) -> Replayed {
                         .collect(),
                 ),
                 Effect::Queue(QueueEffect::Send { to, ask }) if to.reader == Reader::Listener => {
-                    if let Some(Request::ReadObject(read)) = ask.request.legacy()
-                        && let ObjectRef::Kept { token, .. } = read.object
-                    {
+                    let kept = match &ask.request {
+                        verbatim_model::request::Question::Batch(batch) => {
+                            match batch.steps.first().and_then(|step| step.op.subject()) {
+                                Some(verbatim_model::batch::Subject::Kept {
+                                    token, keep, ..
+                                }) => Some((*token, *keep)),
+                                _ => None,
+                            }
+                        }
+                        verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
+                            match read.object {
+                                ObjectRef::Kept { token, .. } => Some((token, false)),
+                                _ => None,
+                            }
+                        }
+                        verbatim_model::request::Question::Legacy(_) => None,
+                    };
+                    if let Some((token, keep)) = kept {
                         listener.pending.push((
                             now_us,
                             Action::Read {
                                 token,
                                 number: ask.number.0,
-                                focus: matches!(read.purpose, Purpose::Focus),
+                                focus: keep,
                             },
                         ));
                     }

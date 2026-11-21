@@ -2,7 +2,8 @@
 //! each read is an entry of its own asked of the node's window, each caret
 //! move a request of the index mark's entry, its speech carries its
 //! starting key's number, and stopping it withdraws its read.
-use verbatim_model::request::CandidateAnswer;
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 
 use verbatim_model::request::{
     Cancel, CancelReason, Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire,
@@ -42,11 +43,7 @@ fn committed(name: &str, role: Role) -> Held {
     let _ = feed_at(&mut state, 500, Input::Foreground(IN_FRONT));
     let mut read = focus_read(None);
     read.focus.read.values = values(name, role);
-    let _ = feed_at(
-        &mut state,
-        600,
-        answer(OUTPOST, 1, Reply::Candidate(CandidateAnswer::focused(read))),
-    );
+    let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(read));
     state
 }
 

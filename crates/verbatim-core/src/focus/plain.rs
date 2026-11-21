@@ -188,8 +188,6 @@ impl PlainObject {
                     relation: relation.map(|query| self.relation(query)),
                     descendants: Vec::new(),
                     ancestors: Vec::new(),
-                    met: None,
-                    route: None,
                 })))
             }
         }
@@ -304,12 +302,7 @@ fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
             )),
             ObjectRef::Kept { .. } | ObjectRef::Msaa { .. } => None,
         },
-        Wire::CompleteUia(_)
-        | Wire::MsaaRun(_)
-        | Wire::CurrentFocus { .. }
-        | Wire::DumpTree { .. }
-        | Wire::ShellItems { .. }
-        | Wire::ShellItemPosition { .. } => None,
+        Wire::DumpTree { .. } | Wire::ShellItems { .. } | Wire::ShellItemPosition { .. } => None,
     }
 }
 

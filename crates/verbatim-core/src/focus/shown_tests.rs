@@ -6,8 +6,8 @@
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
-    CandidateAnswer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Front, HeldIds, MsaaIds,
-    NodeRead, NodeWindow, PressAction, QueueInput, Reply, Request as Wire,
+    FocusAncestor, FocusCaret, FocusNode, FocusRead, Front, HeldIds, MsaaIds, NodeRead, NodeWindow,
+    PressAction, QueueInput, Request as Wire,
 };
 use verbatim_model::tell::{AcceptanceFacts, EventObject, Relation, TellWindow, WindowFacet};
 use verbatim_model::{
@@ -16,12 +16,14 @@ use verbatim_model::{
 };
 
 use crate::entries::tests::{
-    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, answer, msaa_tell, node, ready,
+    APP, GENERATION, Held, LISTENER, NOTHING, OUTPOST, found, msaa_tell, node, ready,
 };
 use crate::entries::{Entry, feed};
 use crate::event_queue::{Foreground, Input, Instance, Reader, Timed};
+use crate::readers::Found;
 use verbatim_model::Effect;
-use verbatim_model::request::QueueEffect;
+use verbatim_model::batch::{Op, Subject};
+use verbatim_model::request::{Question, QueueEffect};
 
 /// The settings dialog that owns the file dialog, in front before it.
 const OWNER: u64 = 4;
@@ -193,9 +195,9 @@ fn window_of(handle: u64, top_level: u64, owner: u64) -> NodeWindow {
     }
 }
 
-/// The hidden dialog as the outpost answers it.
-fn hidden_dialog() -> Reply {
-    Reply::HiddenDialog(window_of(DIALOG, DIALOG, OWNER))
+/// The hidden dialog as the outpost finds it.
+fn hidden_dialog() -> Found {
+    Found::HiddenDialog(window_of(DIALOG, DIALOG, OWNER))
 }
 
 fn focus_node(number: u64, window: NodeWindow, name: &str, role: Role) -> FocusNode {
@@ -216,8 +218,8 @@ fn read_of(
     window: NodeWindow,
     ancestors: Vec<FocusAncestor>,
     ids: (u64, i32),
-) -> Reply {
-    Reply::Candidate(CandidateAnswer::focused(FocusRead {
+) -> Found {
+    Found::Read(FocusRead {
         focus: focus_node(number, window, name, role),
         msaa: Some(HeldIds {
             event: MsaaIds {
@@ -233,7 +235,7 @@ fn read_of(
         value_from_selection: false,
         runtime_id_reused: false,
         caret: FocusCaret::NoText,
-    }))
+    })
 }
 
 /// The dialog as an ancestor, with the text it gives once shown, or none
@@ -262,7 +264,7 @@ fn dialog_ancestor(text: Option<&str>) -> FocusAncestor {
 
 /// The File name field read, under the dialog with `text`: the stand-in
 /// for the dialog's read once shown, whose focus is the field.
-fn field_read(text: Option<&str>) -> Reply {
+fn field_read(text: Option<&str>) -> Found {
     read_of(
         (21, "File name:", Role::EditableText),
         window_of(FIELD, DIALOG, OWNER),
@@ -272,7 +274,7 @@ fn field_read(text: Option<&str>) -> Reply {
 }
 
 /// The owner's button read, under the owner.
-fn owner_button_read() -> Reply {
+fn owner_button_read() -> Found {
     read_of(
         (11, "Import...", Role::Button),
         window_of(OWNER_BUTTON, OWNER, OWNER),
@@ -299,11 +301,9 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => Some(format!(
-                "send {:?} {}",
-                to.reader,
-                sent(&crate::event_queue::legacy_for_tests(&ask.request))
-            )),
+            Effect::Queue(QueueEffect::Send { to, ask }) => {
+                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
+            }
             Effect::Queue(QueueEffect::Cancel { to, cancel }) => {
                 Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
             }
@@ -335,7 +335,7 @@ fn spoken(said: &Said) -> Option<String> {
 /// What answering the read out with `reply` at `at_us` said, each
 /// utterance with the key number its speech is fenced by, which the key's
 /// cut compares: speech carrying a lower number than the key's is cut.
-fn keyed(held: &mut Held, at_us: u64, reply: Reply) -> Vec<(String, Option<u64>)> {
+fn keyed(held: &mut Held, at_us: u64, reply: Found) -> Vec<(String, Option<u64>)> {
     fn of(said: &Said) -> Option<(String, Option<u64>)> {
         match said {
             Said::Speak(utterance, key) => Some((
@@ -353,29 +353,48 @@ fn keyed(held: &mut Held, at_us: u64, reply: Reply) -> Vec<(String, Option<u64>)
         }
     }
     let number = out(held);
-    feed(
-        &mut held.state,
-        &mut held.runtime,
-        Timed {
-            at_us,
-            input: answer(OUTPOST, number, reply),
-        },
-    )
-    .unwrap()
-    .iter()
-    .filter_map(of)
-    .collect()
+    let input = found(held, OUTPOST, number, reply);
+    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
+        .unwrap()
+        .iter()
+        .filter_map(of)
+        .collect()
 }
 
-/// A request as these tests name it.
-fn sent(request: &Wire) -> String {
-    match request {
-        Wire::MsaaRun(run) => format!("MsaaRun {} {:?}", run.candidate.ids.window.0, run.hidden),
-        Wire::CurrentFocus { hidden, .. } => format!("CurrentFocus {hidden:?}"),
-        Wire::CompleteUia(complete) => format!("CompleteUia {:?}", complete.hidden),
-        Wire::ReadObject(_) => "ReadObject".to_owned(),
-        Wire::Follow(_) => "Follow".to_owned(),
-        other => format!("{other:?}"),
+/// A request as these tests name it: a focus read by its kind and whether
+/// it checks for a hidden dialog first.
+fn sent(request: &Question) -> String {
+    let batch = match request {
+        Question::Batch(batch) => batch,
+        Question::Legacy(Wire::ReadObject(_)) => return "ReadObject".to_owned(),
+        Question::Legacy(other) => return format!("{other:?}"),
+    };
+    let checks = |batch: &verbatim_model::batch::Batch| {
+        if batch.steps.iter().any(|step| {
+            matches!(
+                step.op,
+                Op::Test {
+                    subject: Subject::Window { .. },
+                    ..
+                }
+            )
+        }) {
+            "Check"
+        } else {
+            "ReadAnyway"
+        }
+    };
+    let candidate = batch.steps.iter().find_map(|step| match step.op.subject() {
+        Some(Subject::Msaa { ids, .. }) => Some(ids.window.0),
+        _ => None,
+    });
+    if batch.reads_focus_first() {
+        return format!("CurrentFocus {}", checks(batch));
+    }
+    match crate::entries::tests::batch_kind(batch) {
+        "Candidate" => format!("Candidate {} {}", candidate.unwrap_or(0), checks(batch)),
+        "Completion" => format!("Completion {}", checks(batch)),
+        kind => kind.to_owned(),
     }
 }
 
@@ -384,7 +403,7 @@ fn out(held: &Held) -> u64 {
     held.state.queue.last_number_for_tests()
 }
 
-const ASK_DIALOG: &str = "send Outpost(Pid(40)) MsaaRun 30 Check";
+const ASK_DIALOG: &str = "send Outpost(Pid(40)) Candidate 30 Check";
 const ASK_CURRENT: &str = "send Outpost(Pid(40)) CurrentFocus Check";
 const ASK_AS_IT_IS: &str = "send Outpost(Pid(40)) CurrentFocus ReadAnyway";
 
@@ -408,7 +427,7 @@ const KEYED: [(&str, Option<u64>); 2] = [
 fn dialog_asked() -> Held {
     let mut held = ready();
     step(&mut held, 100, in_front(OWNER, OWNER, APP));
-    let _ = step(&mut held, 200, answer(OUTPOST, 1, owner_button_read()));
+    let _ = found_step(&mut held, 200, (OUTPOST, 1), owner_button_read());
     let _ = step(&mut held, 900, press(1, 900, typed("\r")));
     assert_eq!(
         step(&mut held, 1_000, in_front(DIALOG, OWNER, APP)),
@@ -431,9 +450,21 @@ fn postponed() -> Held {
 }
 
 /// Answers the read out with `reply` at `at_us`.
-fn answer_out(held: &mut Held, at_us: u64, reply: Reply) -> Vec<String> {
+fn answer_out(held: &mut Held, at_us: u64, reply: Found) -> Vec<String> {
     let number = out(held);
-    step(held, at_us, answer(OUTPOST, number, reply))
+    found_step(held, at_us, (OUTPOST, number), reply)
+}
+
+/// What `from` answers its request `number` with, having found `found`,
+/// did at `at_us`.
+fn found_step(
+    held: &mut Held,
+    at_us: u64,
+    (from, number): (Instance, u64),
+    reader_found: Found,
+) -> Vec<String> {
+    let input = found(held, from, number, reader_found);
+    step(held, at_us, input)
 }
 
 fn shown(held: &mut Held, at_us: u64) -> Vec<String> {
@@ -475,8 +506,8 @@ fn right_arrow() -> PressAction {
 #[test]
 fn what_leaves_the_dialog_for_its_show() {
     let hidden = Some(hidden_dialog());
-    let field = Some("send Outpost(Pid(40)) MsaaRun 31 Check");
-    let elsewhere = Some("send Outpost(Pid(40)) MsaaRun 6 Check");
+    let field = Some("send Outpost(Pid(40)) Candidate 31 Check");
+    let elsewhere = Some("send Outpost(Pid(40)) Candidate 6 Check");
     let cases = [
         (field_focus(1_150), field, hidden.clone()),
         (key(right_arrow()), None, None),
@@ -608,30 +639,51 @@ fn the_same_dialog_postponed_again_keeps_the_older_fence() {
     assert_eq!(keyed(&mut held, 1_200, field_read(None)), expected);
 }
 
-/// A hidden dialog answered to the read at a press, made as it is, breaks
-/// its rule: undecodable, where a read made to check decodes it.
+/// The hidden-dialog check, the first step of a focus read that checks:
+/// its test matched answers the dialog's window; a hidden window whose role
+/// could not be read answers the read not there; a shown window, or a
+/// check not done, lets the read go on.
 #[test]
-fn a_hidden_dialog_answered_to_a_read_as_it_is_is_undecodable() {
-    use super::super::retake::{AsItIs, CurrentFocusRead};
-    use crate::event_queue::Request;
-    let window = crate::event_queue::RequestWindow::of_node(&window_of(5, 5, 5));
-    let as_it_is = CurrentFocusRead::<AsItIs> {
-        window,
-        known: Vec::new(),
-        details: verbatim_model::TextDetails::NONE,
-        set: Vec::new(),
-        depth: std::marker::PhantomData,
+fn the_hidden_dialog_check_is_judged_by_its_test() {
+    use super::super::shown::{Check, judge};
+    use crate::batch::Got;
+    use verbatim_model::batch::{Missing, Tested};
+    let dialog = window_of(DIALOG, DIALOG, OWNER);
+    let tested = |matched, values: Vec<(PropertyId, Option<PropertyValue>)>| Tested {
+        matched,
+        node: NodeRead {
+            node: None,
+            window: dialog,
+            values: verbatim_model::property::PropertyValues(
+                values
+                    .into_iter()
+                    .map(|(id, value)| PropertyAnswer { id, value })
+                    .collect(),
+            ),
+        },
     };
-    assert!(as_it_is.decode(hidden_dialog()).is_none());
-    let checking = CurrentFocusRead::<crate::focus::msaa_run::Full> {
-        window,
-        known: Vec::new(),
-        details: verbatim_model::TextDetails::NONE,
-        set: Vec::new(),
-        depth: std::marker::PhantomData,
-    };
-    let checked = checking.decode(hidden_dialog());
-    assert!(matches!(checked, Some(super::Hidden::Dialog(_))));
+    let hidden = (PropertyId::WindowShown, Some(PropertyValue::Flag(false)));
+    let shown = (PropertyId::WindowShown, Some(PropertyValue::Flag(true)));
+    let dialog_role = (PropertyId::Role, Some(PropertyValue::Role(Role::Dialog)));
+    let matched = tested(true, vec![hidden.clone(), dialog_role]);
+    assert!(matches!(judge(&Got::Done(&matched)), Some(Check::Dialog(window)) if window == dialog));
+    let unread = tested(false, vec![hidden.clone(), (PropertyId::Role, None)]);
+    assert!(matches!(judge(&Got::Done(&unread)), Some(Check::Gone)));
+    let no_dialog = tested(
+        false,
+        vec![
+            hidden,
+            (PropertyId::Role, Some(PropertyValue::Role(Role::Window))),
+        ],
+    );
+    assert!(matches!(judge(&Got::Done(&no_dialog)), Some(Check::Shown)));
+    let visible = tested(false, vec![shown]);
+    assert!(matches!(judge(&Got::Done(&visible)), Some(Check::Shown)));
+    assert!(matches!(
+        judge(&Got::NotThere(Missing::Object)),
+        Some(Check::Shown)
+    ));
+    assert!(judge(&Got::Skipped).is_none());
 }
 
 /// Escape closing Import, alone before its show or after "a": Escape
@@ -662,7 +714,7 @@ fn escape_closing_the_hidden_dialog_says_the_return() {
         let owner = (OWNER, OWNER, OWNER);
         let foreground = tell(EventKind::Foreground, owner, (OWNER, 2_011), (APP, true));
         let asked = step(&mut held, 2_011, foreground);
-        assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 4 Check"]);
+        assert_eq!(asked, ["send Outpost(Pid(40)) Candidate 4 Check"]);
         assert_eq!(
             answer_out(&mut held, 2_100, owner_button_read()),
             [
@@ -695,7 +747,7 @@ fn tab_while_hidden_in_both_orders() {
     let said = answer_out(&mut held, 1_200, field_read(None));
     assert_eq!(said[..2], KEYED.map(|(said, _)| said));
     let asked = step(&mut held, 1_250, focus());
-    assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 32 Check"]);
+    assert_eq!(asked, ["send Outpost(Pid(40)) Candidate 32 Check"]);
     assert_eq!(answer_out(&mut held, 1_260, hidden_dialog()), NOTHING);
     assert_eq!(shown(&mut held, 1_300), [ASK_CURRENT]);
     let said = answer_out(&mut held, 1_350, files.clone());
@@ -728,10 +780,10 @@ fn the_outpost_ending_postpones_again_and_the_show_speaks() {
     held.state.queue.start_for_tests(next);
     let ready_next = Input::ReaderReady(next);
     assert_eq!(step(&mut held, 1_160, ready_next), [ASK_CURRENT]);
-    let hidden = answer(next, out(&held), hidden_dialog());
+    let hidden = found(&held, next, out(&held), hidden_dialog());
     assert_eq!(step(&mut held, 1_170, hidden), NOTHING);
     assert_eq!(shown(&mut held, 1_200), [ASK_CURRENT]);
-    let read = answer(next, out(&held), field_read(Some("File name:")));
+    let read = found(&held, next, out(&held), field_read(Some("File name:")));
     assert_eq!(step(&mut held, 1_250, read), DIALOG_SPOKEN);
 }
 
@@ -812,11 +864,9 @@ fn the_secure_desktop_while_postponed() {
         .said()
         .into_iter()
         .filter_map(|said| match said {
-            Said::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => Some(format!(
-                "send {:?} {}",
-                to.reader,
-                sent(&crate::event_queue::legacy_for_tests(&ask.request))
-            )),
+            Said::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => {
+                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
+            }
             _ => None,
         })
         .collect();
@@ -855,9 +905,9 @@ fn a_hang_or_a_dialog_never_shown_holds_nothing() {
 #[test]
 fn a_uia_completion_postpones_and_the_show_reads_the_current_focus() {
     let mut held = crate::entries::tests::asked_completion();
-    let hidden = Reply::HiddenDialog(crate::entries::tests::win(4));
+    let hidden = Found::HiddenDialog(crate::entries::tests::win(4));
     assert_eq!(
-        step(&mut held, 3_000, answer(OUTPOST, 2, hidden.clone())),
+        found_step(&mut held, 3_000, (OUTPOST, 2), hidden.clone()),
         NOTHING
     );
     assert!(held.state.versions.postponed.is_some());
@@ -885,7 +935,7 @@ fn an_owned_message_box_in_either_order() {
         let _ = answer_out(&mut held, 1_100, hidden_dialog());
         let _ = step(&mut held, 1_150, in_front(BOX, OWNER, APP));
         let asked = step(&mut held, 1_160, box_foreground(1_160));
-        assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 40 Check"]);
+        assert_eq!(asked, ["send Outpost(Pid(40)) Candidate 40 Check"]);
         let said = answer_out(&mut held, 1_200, box_read());
         assert_eq!(said, ["Label(\"Replace it?\") Role(Dialog)"]);
         assert_eq!(held.state.versions.postponed, None);
@@ -910,7 +960,7 @@ fn a_tray_menu_over_a_hidden_dialog_then_escape() {
     assert_eq!(answer_out(&mut held, 200, hidden_dialog()), [ASK_CURRENT]);
     assert_eq!(answer_out(&mut held, 300, hidden_dialog()), NOTHING);
     let asked = step(&mut held, 1_150, menu_start(APP, 1_150));
-    assert_eq!(asked, ["send Outpost(Pid(40)) MsaaRun 50 ReadAnyway"]);
+    assert_eq!(asked, ["send Outpost(Pid(40)) Candidate 50 ReadAnyway"]);
     let said = answer_out(&mut held, 1_200, menu_read());
     assert_eq!(said, ["Label(\"Context\") Role(Menu)"]);
     let mut end = msaa_tell(-4);
@@ -933,7 +983,7 @@ fn owner_control_focus(window: u64, front: u64, at_us: u64) -> Input<Entry> {
 }
 
 /// The owner's control in window `window` read, named `name`.
-fn owner_control_read(window: u64, name: &str) -> Reply {
+fn owner_control_read(window: u64, name: &str) -> Found {
     read_of(
         (12, name, Role::Button),
         window_of(window, OWNER, OWNER),
@@ -962,7 +1012,7 @@ fn box_foreground(at_us: u64) -> Input<Entry> {
     )
 }
 
-fn box_read() -> Reply {
+fn box_read() -> Found {
     read_of(
         (40, "Replace it?", Role::Dialog),
         window_of(BOX, BOX, OWNER),
@@ -982,25 +1032,21 @@ fn menu_start(process: Pid, at_us: u64) -> Input<Entry> {
 }
 
 /// The popup menu read: its role, read for a menu start, and the menu.
-fn menu_read() -> Reply {
-    let Reply::Candidate(mut answer) = read_of(
+fn menu_read() -> Found {
+    let Found::Read(read) = read_of(
         (50, "Context", Role::Menu),
         window_of(MENU, MENU, MENU),
         Vec::new(),
         (MENU, -4),
     ) else {
-        unreachable!("a candidate's answer")
+        unreachable!("a read in full")
     };
-    answer.facts = verbatim_model::request::CandidateFacts::Found {
-        focused: None,
-        role: Some(Role::Menu),
-    };
-    Reply::Candidate(answer)
+    Found::Role(Some(Role::Menu), Some(read))
 }
 
-/// An answer finding a candidate without the focused state.
-fn unfocused() -> Reply {
-    Reply::Candidate(crate::entries::tests::not_focused())
+/// A candidate found without the focused state.
+fn unfocused() -> Found {
+    Found::Unfocused
 }
 
 /// A key press of `action`, the `seq`th key.

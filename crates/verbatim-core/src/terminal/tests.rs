@@ -9,6 +9,8 @@
 //! ([`super::speech`]); the rest of the reducer is driven with its inputs.
 //! Playback is simulated by reaching each utterance's index mark in turn.
 
+use crate::entries::tests::found_at;
+use crate::readers::Found;
 use std::collections::VecDeque;
 
 use verbatim_model::{
@@ -34,7 +36,7 @@ fn id(number: u64) -> NodeId {
 /// after its baseline: what its reads say is given as the model hands it
 /// on ([`Playback`]).
 fn terminal() -> SrState {
-    use crate::entries::tests::{OUTPOST, answer, feed_at, focus_read, ready, values};
+    use crate::entries::tests::{OUTPOST, feed_at, focus_read, ready, values};
     let mut held = ready();
     let _ = feed_at(
         &mut held,
@@ -51,17 +53,7 @@ fn terminal() -> SrState {
     );
     let mut read = focus_read(None);
     read.focus.read.values = values("Terminal", Role::Terminal);
-    let _ = feed_at(
-        &mut held,
-        600,
-        answer(
-            OUTPOST,
-            1,
-            verbatim_model::request::Reply::Candidate(
-                verbatim_model::request::CandidateAnswer::focused(read),
-            ),
-        ),
-    );
+    let _ = found_at(&mut held, 600, (OUTPOST, 1), Found::Read(read));
     assert_eq!(
         held.state.focused().map(|(_, node)| node.id),
         Some(id(TERMINAL))
@@ -1671,17 +1663,15 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
         verbatim_model::OutpostId(replacement.generation),
         TERMINAL,
     ));
+    let outcome =
+        crate::readers::outcome(&state.queue.batch_for_tests(4).unwrap(), &Found::Read(read));
     playback.feed(
         &mut state,
         &queue_input(verbatim_model::request::QueueInput::Answer {
             from: replacement,
             answer: verbatim_model::request::Answer {
                 number: verbatim_model::request::RequestNumber(4),
-                outcome: verbatim_model::request::Outcome::Result(
-                    verbatim_model::request::Reply::Candidate(
-                        verbatim_model::request::CandidateAnswer::focused(read),
-                    ),
-                ),
+                outcome,
                 probes: Vec::new(),
                 detail: String::new(),
             },

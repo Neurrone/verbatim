@@ -119,12 +119,18 @@ fn core_ask(number: u64) -> Input {
         number: verbatim_model::request::RequestNumber(number),
         window: verbatim_model::WindowHandle(9),
         verdict: verbatim_model::request::WindowVerdict::Msaa,
-        request: verbatim_model::request::Request::CurrentFocus {
-            hidden: verbatim_model::request::HiddenRoot::Check,
-            set: Vec::new(),
-            known: Vec::new(),
-            details: verbatim_model::TextDetails::NONE,
-            depth: verbatim_model::request::FocusDepth::Full,
+        request: verbatim_model::batch::Batch {
+            steps: vec![verbatim_model::batch::Step {
+                op: verbatim_model::batch::Op::FocusRead {
+                    subject: verbatim_model::batch::Subject::Focus,
+                    known: Vec::new(),
+                    set: Vec::new(),
+                    details: verbatim_model::TextDetails::NONE,
+                },
+                when: None,
+            }],
+            placement: verbatim_model::batch::Placement::Queue,
+            spare: None,
         }
         .into(),
     }))

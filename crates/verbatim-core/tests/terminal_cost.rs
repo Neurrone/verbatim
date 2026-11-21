@@ -24,6 +24,8 @@
     reason = "a measurement, timed by the monotonic clock: listed under the determinism rule's exceptions"
 )]
 
+#[path = "support/readers.rs"]
+mod readers;
 mod terminal_support;
 
 use std::fmt::Write as _;
