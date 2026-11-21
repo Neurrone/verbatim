@@ -291,8 +291,50 @@ them yet.
   `AcceptanceFacts::in_foreground` is the one test of their relation to
   the foreground) and what the
   listener's check thread found at delivery (`Checked`).
+- `batch`: the request list, closed (ADR 0003, "A new command adds no
+  kind of request"). A `Batch` is at most four `Step`s, each an `Op` of
+  seventeen (`OpKind`) with an optional `Condition` on one earlier step
+  (`Check::Matched` of a `Test`, `Check::Found`, or their negation;
+  `Condition::gate` gives the condition table: a skipped step skips its
+  dependants, a refused, missing or failed one makes the check false),
+  its `Placement` in the reader's order and a `spare` node and anchor
+  held while it is out. An operation names its object by a `Subject`: a
+  node, a listener's `Kept` element with its `keep` mark, an `Msaa`
+  object with or without NVDA's redirect, a `Route`, a `Window` by
+  `WindowOf` with its backend and `visible`, the application's `Focus`,
+  or an earlier step's `Result` or `Item` by `Place`; a text operation
+  starts at a `Point`, one Core names or `Point::Of` an earlier caret or
+  chunk start. Each step answers a `StepOutcome`: `Done` with its kind's
+  result (`Done`: today's `NodeRead`, `FocusRead` and `SentenceMoved`
+  among them, and `Tested`, `Ancestry`, `Descended`, `CaretAt`, `Chunks`,
+  `RangeText`, `SelectionCompared`, `Selected`, `Located`, `Waited`),
+  `Refused` (`StepRefusal`), `NotThere` (`Missing`), `Failed` or
+  `Skipped`. `parse` turns a batch as it arrives into a `Parsed` one for
+  a `ReaderKind`, or refuses it whole with a `Malformed` reason: more than
+  `MAX_STEPS` steps, a reference not to an earlier step or to one of the
+  wrong kind, a `Bound` broken (depth, node cap, limit, count, poll, wait),
+  a caret wait not first, a matcher value of another type, two `keep`
+  marks on one element, an operation the reader does not run (the
+  listener reads only `LISTENER_MSAA_SET` of an MSAA object), a subject
+  the operation does not take, or an anchor on a subject that is no node.
+  `Batch::visit_nodes` and `visit_outcomes` are the one walk each over the
+  node ids (and the outcomes' anchors) Core stamps and an outpost keeps;
+  `Batch::anchors` lists each text step's node with the anchors it names,
+  the spare's last; `Batch::reads_focus_first` is the shell's test for the
+  answer in front.
+- `matcher`: `Matcher`, a test on one node's properties (a value, absent,
+  any of a list, a state, `All`, `Any`, `Not`), and its one evaluator,
+  `Matcher::evaluate`, which reads through a callback lazily in the
+  matcher's order, each property once, stopping at the first value that
+  decides. The property table holds the four a batch's reads add:
+  `FocusedWithin`, `MsaaAddress` (`PropertyValue::MsaaAddress`, a
+  `HeldIds`), `WindowShown` and `IsContent`.
 - `request`: the shared request list. `Ask` is a request as Core sends it,
-  numbered (`RequestNumber`) and naming its window; `Request` holds the
+  numbered (`RequestNumber`) and naming its window, asking a `Question`: a
+  `Batch`, or, until each is converted, one of the kinds of request
+  before the list closed (`Question::Legacy`), answered with
+  `Reply::Steps` for a batch, one outcome per step, and refused
+  `Refusal::Malformed` when it does not parse; `Request` holds the
   generic read of the object an event names (`ReadObject`, with its
   property set, relation to nodes Core names, descendants, the walk up to
   the ancestors Core already knows and its purpose), and the properties,

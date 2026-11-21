@@ -185,6 +185,29 @@ Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
 each rule of Table 2 and every ending, a late answer dropped by number and
 an answer from an instance the request did not go to dropped.
 
+### Batches
+
+A function writes a batch with `batch::Builder` (`cx.batch(|| ())`) and
+asks it as one request (`Sent::of`, the one `Request` a batch is); its
+answer is parsed once against the batch sent into `batch::Answers`, each
+step read by its handle (`Answers::get`, a `Got` of the step's kind), and
+an answer that does not fit is undecodable. A handle (`Ref`) carries its
+step's place, its result kind (`batch::kind`) and the batch's brand, the
+type of the closure written where the batch is built, so a handle of
+another call site or of a kind with no such point does not compile (the
+`compile_fail` examples in `crates/verbatim-core/src/batch.rs`). The one
+loop that builds batches numbers them (`cx.batch_numbered`): a handle of
+another number is left off as an input, with every step naming it, and
+read as failed, each logged as a defect (`QueueEffect::ForeignHandle`)
+through the driver's ledger. A batch on Core's want list takes a brand
+named for its one call site (`Builder::named`, a constant `Ref::named`
+handle), and its answer is parsed against the batch held with the want.
+A batch whose first step reads the focused window or the application's
+focus alone takes what the shell read in front (`Answers::in_front`).
+
+Tests: `crates/verbatim-core/src/batch_tests.rs` and the queue's tests of
+a batch asked, refused as undecodable, answered in front and numbered.
+
 ### A dialog read once it is shown
 
 The behaviour is the focus design's
