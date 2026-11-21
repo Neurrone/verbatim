@@ -16,9 +16,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{
-    MsaaIds, PressAction, Probe, QueueEffect, QueueInput, Request as Wire,
-};
+use verbatim_model::request::{MsaaIds, PressAction, Probe, Question, QueueEffect, QueueInput};
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, TellWindow,
 };
@@ -491,7 +489,7 @@ pub(crate) fn exempt_from_foreground(entry: &Entry, window: &RequestWindow) -> b
 /// say-all's read withdrawn by a key.
 fn withdraws(
     facts: &SrState,
-    (front, request): (&Entry, &Wire),
+    (front, request): (&Entry, &Question),
     arriving: &Entry,
     backend: &BackendCache,
     (now_us, foreground): (u64, Option<Foreground>),
@@ -524,7 +522,7 @@ fn withdraws(
 
 /// Whether the front entry `front` no longer needs `request`, its request
 /// out: the caret key's or say-all's.
-fn unneeded(facts: &SrState, front: &Entry, request: &Wire) -> bool {
+fn unneeded(facts: &SrState, front: &Entry, request: &Question) -> bool {
     if let Some(caret) = crate::keys::caret_key::of_entry(front) {
         return crate::keys::caret_key::unneeded(facts, &caret, request);
     }
@@ -644,7 +642,7 @@ impl Logic for Entries {
         }
     }
 
-    fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Wire>)>, entry: &mut Entry) {
+    fn arrival(facts: &mut SrState, front: Option<(&Entry, Option<&Question>)>, entry: &mut Entry) {
         // A UI Automation change or selection records whether its element
         // was on the focus line as it joined.
         match entry {
@@ -825,7 +823,10 @@ impl Logic for Entries {
             .collect()
     }
 
-    fn plain_answer(facts: &SrState, request: &Wire) -> Option<verbatim_model::request::Outcome> {
+    fn plain_answer(
+        facts: &SrState,
+        request: &Question,
+    ) -> Option<verbatim_model::request::Outcome> {
         crate::focus::plain::answer(&facts.plain, request)
     }
 

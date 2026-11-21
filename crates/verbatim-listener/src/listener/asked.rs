@@ -105,7 +105,9 @@ impl UiaReading {
 
     /// Runs request `ask` of `pid`'s on `thread`.
     fn request(&self, thread: &mut ReadingThread, ask: &Ask) -> (Outcome, Option<KeptRead>) {
-        let Request::ReadObject(read) = &ask.request else {
+        // A batch is refused unread until the listener runs batches, from
+        // the readers' step of the request list's build.
+        let Some(Request::ReadObject(read)) = ask.request.legacy() else {
             return (Outcome::Refused(Refusal::Unsupported), None);
         };
         match &read.object {
@@ -406,7 +408,10 @@ impl Read {
                         }
                         // Read by the outpost that holds the node, when Core
                         // asks it of a node; the parent's automation id by
-                        // the check thread, for a focus tell alone.
+                        // the check thread, for a focus tell alone; the four
+                        // a batch's operations read, which the listener runs
+                        // from the readers' step of the request list's
+                        // build, and no kind of request names.
                         PropertyId::HasKeyboardFocus
                         | PropertyId::TextSummary
                         | PropertyId::Suggestions
@@ -414,7 +419,11 @@ impl Read {
                         | PropertyId::WindowClass
                         | PropertyId::ComboBoxList
                         | PropertyId::ParentAutomationId
-                        | PropertyId::ChildCount => None,
+                        | PropertyId::ChildCount
+                        | PropertyId::FocusedWithin
+                        | PropertyId::MsaaAddress
+                        | PropertyId::WindowShown
+                        | PropertyId::IsContent => None,
                     },
                 })
                 .collect(),

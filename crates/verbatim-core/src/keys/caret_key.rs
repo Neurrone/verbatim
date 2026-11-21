@@ -7,7 +7,7 @@
 //! unsent from the stroke line, each when needed, never stored on the
 //! entry.
 
-use verbatim_model::request::{CancelReason, CaretBinding, Reply, Request as Wire};
+use verbatim_model::request::{CancelReason, CaretBinding, Question, Reply, Request as Wire};
 use verbatim_model::{
     CaretKey, CaretMotion, KeySeq, NodeId, SentenceMove, SentenceMoved, Started, StartingRead,
     StartingUnit, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
@@ -123,11 +123,11 @@ impl Request for StartingReadRequest {
         self.0.window
     }
 
-    fn wire(&self) -> Wire {
-        self.0.wire()
+    fn wire(&self) -> Question {
+        Question::Legacy(self.0.wire())
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             TextReply::Started(started) => Some(*started),
             _ => None,
@@ -150,11 +150,11 @@ impl Request for WatchRequest {
         self.0.window
     }
 
-    fn wire(&self) -> Wire {
-        self.0.wire()
+    fn wire(&self) -> Question {
+        Question::Legacy(self.0.wire())
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             TextReply::Watched(watched) => Some(*watched),
             _ => None,
@@ -177,11 +177,11 @@ impl Request for SentenceRequest {
         self.0.window
     }
 
-    fn wire(&self) -> Wire {
-        self.0.wire()
+    fn wire(&self) -> Question {
+        Question::Legacy(self.0.wire())
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             TextReply::Sentence(moved) => Some(*moved),
             _ => None,
@@ -192,9 +192,9 @@ impl Request for SentenceRequest {
 /// Whether the front entry `front`, a caret key, no longer needs
 /// `request`: its starting read, once its stroke went by its 150 ms
 /// release or was dropped at a switch away from the user's desktop.
-pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Wire) -> bool {
+pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
     let starting = match request {
-        Wire::Text { op, .. } => match op {
+        Question::Legacy(Wire::Text { op, .. }) => match op {
             TextOp::StartingRead(_) => true,
             TextOp::ReadTerminal(read) => read.starting.is_some(),
             _ => false,
@@ -271,9 +271,9 @@ enum CaretStage {
 
 impl CaretStage {
     /// The stage `request`, out for `press`, puts the key in.
-    fn of(press: &CaretPress, request: &Wire) -> Option<Self> {
+    fn of(press: &CaretPress, request: &Question) -> Option<Self> {
         match request {
-            Wire::Text { op, .. } => match op {
+            Question::Legacy(Wire::Text { op, .. }) => match op {
                 TextOp::StartingRead(_) => Some(Self::Starting {
                     deletes_back: press.key.motion.deletes_back(),
                 }),
@@ -283,7 +283,9 @@ impl CaretStage {
                 TextOp::MoveBySentence(_) => Some(Self::Sentence),
                 _ => None,
             },
-            Wire::MsaaRun(run) if run.depth == Depth::Facts => Some(Self::Confirming),
+            Question::Legacy(Wire::MsaaRun(run)) if run.depth == Depth::Facts => {
+                Some(Self::Confirming)
+            }
             _ => None,
         }
     }
@@ -323,9 +325,9 @@ enum TerminalStage {
 
 impl TerminalStage {
     /// The stage `request` puts a terminal's key in.
-    fn of(request: &Wire) -> Option<Self> {
+    fn of(request: &Question) -> Option<Self> {
         match request {
-            Wire::Text { op, .. } => match op {
+            Question::Legacy(Wire::Text { op, .. }) => match op {
                 TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
                 TextOp::ReadTerminal(_) => Some(Self::Final),
                 TextOp::Watch(watch) => Some(Self::Watching {
@@ -333,7 +335,9 @@ impl TerminalStage {
                 }),
                 _ => None,
             },
-            Wire::MsaaRun(run) if run.depth == Depth::Facts => Some(Self::Confirming),
+            Question::Legacy(Wire::MsaaRun(run)) if run.depth == Depth::Facts => {
+                Some(Self::Confirming)
+            }
             _ => None,
         }
     }
@@ -370,7 +374,7 @@ fn terminal_path(press: &CaretPress) -> bool {
 
 /// Whether `arrival`, joining behind the front caret key `front`,
 /// withdraws `request`, by the stage table of the key's path.
-pub(crate) fn withdrawn_by(front: &CaretPress, request: &Wire, arrival: Arrival) -> bool {
+pub(crate) fn withdrawn_by(front: &CaretPress, request: &Question, arrival: Arrival) -> bool {
     if terminal_path(front) {
         TerminalStage::of(request).is_some_and(|stage| stage.withdrawn_by(arrival))
     } else {

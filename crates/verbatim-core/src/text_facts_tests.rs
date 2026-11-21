@@ -34,8 +34,8 @@ fn a_watch_and_a_sentence_move_name_their_starting_point() {
         },
     });
     assert_eq!(
-        named_by(&on_node(watch)),
-        Some((node(2), vec![TextAnchor(50)]))
+        named_by(&verbatim_model::request::Question::from(on_node(watch))),
+        [(node(2), vec![TextAnchor(50)])]
     );
     let moving = TextOp::MoveBySentence(SentenceMove {
         provider: TextProvider::EditMessages,
@@ -44,8 +44,8 @@ fn a_watch_and_a_sentence_move_name_their_starting_point() {
         details: TextDetails::ALL,
     });
     assert_eq!(
-        named_by(&on_node(moving)),
-        Some((node(2), vec![TextAnchor(51)]))
+        named_by(&verbatim_model::request::Question::from(on_node(moving))),
+        [(node(2), vec![TextAnchor(51)])]
     );
 }
 
@@ -60,14 +60,16 @@ fn a_selection_names_both_ends_and_both_points_past_them() {
         }),
     };
     assert_eq!(
-        named_by(&on_node(select)),
-        Some((
+        named_by(&verbatim_model::request::Question::from(on_node(select))),
+        [(
             node(2),
             vec![TextAnchor(1), TextAnchor(2), TextAnchor(3), TextAnchor(4)]
-        ))
+        )]
     );
     assert_eq!(
-        named_by(&on_node(TextOp::MoveCaret(TextPoint::Caret))),
-        Some((node(2), Vec::new()))
+        named_by(&verbatim_model::request::Question::from(on_node(
+            TextOp::MoveCaret(TextPoint::Caret)
+        ))),
+        [(node(2), Vec::new())]
     );
 }

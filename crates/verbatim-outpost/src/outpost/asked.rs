@@ -37,8 +37,9 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CandidateAnswer, CandidateFacts, CandidateKind, Depth, FindScope, FocusAncestor,
     FocusCaret, FocusDepth, FocusNode, FocusRead, HeldIds, HiddenRoot, KnownAncestor, MsaaIds,
-    MsaaRun, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose, ReadObject,
-    Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate, WindowVerdict,
+    MsaaRun, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose, Question,
+    ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd, RunCandidate,
+    WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -75,10 +76,23 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     // A request that carries "probe first" and whose handling consults no
     // verdict of its own still answers its window's probe, so that Core
     // records the verdict rather than count the probe timed out.
-    if !consults_verdict(&ask.request) {
+    let request = match &ask.request {
+        Question::Legacy(request) => request,
+        // The outpost runs batches from the readers' step of the request
+        // list's build; until then it refuses each unread.
+        Question::Batch(_) => {
+            return Answer {
+                number: ask.number,
+                outcome: Outcome::Refused(Refusal::Unsupported),
+                probes,
+                detail: String::new(),
+            };
+        }
+    };
+    if !consults_verdict(request) {
         let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
     }
-    let outcome = match &ask.request {
+    let outcome = match request {
         Request::ReadObject(read) => read_object(context, client, ask, read, &mut probes),
         Request::Properties { node, set } => match properties(context, client, *node, set) {
             Ok(values) => Outcome::Result(Reply::Properties(values)),
@@ -182,7 +196,11 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
 /// ([`NodeDetailSet::named_by`]); every detail for the control plane's tree
 /// dump, which records them all; none for a request that reads no node's
 /// properties.
-pub(super) fn node_details(request: &Request) -> NodeDetailSet {
+pub(super) fn node_details(request: &Question) -> NodeDetailSet {
+    let Question::Legacy(request) = request else {
+        // A batch is refused unread until the outpost runs batches.
+        return NodeDetailSet::NONE;
+    };
     match request {
         Request::ReadObject(ReadObject { set, .. })
         | Request::Properties { set, .. }
@@ -389,7 +407,10 @@ pub(super) fn values(
                     PropertyId::Cell => details.cell.map(PropertyValue::Cell),
                     PropertyId::TableCounts => details.table_counts.map(PropertyValue::TableCounts),
                     // Not in a snapshot: read by the listener, by the text
-                    // requests, or apart ([`read_apart`]).
+                    // requests, or apart ([`read_apart`]); the four a
+                    // batch's operations read, which the outpost runs from
+                    // the readers' step of the request list's build, and no
+                    // kind of request names.
                     PropertyId::AutomationId
                     | PropertyId::HasTextPattern
                     | PropertyId::RangeValue
@@ -400,7 +421,11 @@ pub(super) fn values(
                     | PropertyId::WindowClass
                     | PropertyId::ComboBoxList
                     | PropertyId::ParentAutomationId
-                    | PropertyId::ChildCount => None,
+                    | PropertyId::ChildCount
+                    | PropertyId::FocusedWithin
+                    | PropertyId::MsaaAddress
+                    | PropertyId::WindowShown
+                    | PropertyId::IsContent => None,
                 },
             })
             .collect(),

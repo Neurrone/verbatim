@@ -6,8 +6,7 @@
 //! here.
 
 use verbatim_model::request::{
-    Answer, CancelReason, OutsideOutcome, Probe, ProcessFact, QueueEffect, Request as Wire,
-    RequestNumber,
+    Answer, CancelReason, OutsideOutcome, Probe, ProcessFact, Question, QueueEffect, RequestNumber,
 };
 use verbatim_model::{Effect, Pid, WindowHandle};
 
@@ -82,7 +81,7 @@ pub(crate) enum Input<E> {
         /// The window it names.
         window: RequestWindow,
         /// The request.
-        request: Wire,
+        request: Question,
         /// How long Core waits for it.
         due_after_us: u64,
     },
@@ -111,7 +110,7 @@ pub(crate) struct CoreRequest {
     /// The window it names.
     pub(crate) window: RequestWindow,
     /// The request.
-    pub(crate) request: Wire,
+    pub(crate) request: Question,
     /// How long Core waits for it.
     pub(crate) due_after_us: u64,
 }

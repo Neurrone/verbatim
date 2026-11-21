@@ -1480,10 +1480,10 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         assert!(
             matches!(
                 ask.request,
-                Wire::Text {
+                verbatim_model::request::Question::Legacy(Wire::Text {
                     op: TextOp::ReadTerminal(_),
                     ..
-                }
+                })
             ),
             "{ask:?}"
         );

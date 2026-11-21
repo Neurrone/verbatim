@@ -214,7 +214,7 @@ fn replay(name: &str) -> Replayed {
                         .collect(),
                 ),
                 Effect::Queue(QueueEffect::Send { to, ask }) if to.reader == Reader::Listener => {
-                    if let Request::ReadObject(read) = &ask.request
+                    if let Some(Request::ReadObject(read)) = ask.request.legacy()
                         && let ObjectRef::Kept { token, .. } = read.object
                     {
                         listener.pending.push((

@@ -30,7 +30,7 @@ use std::task::{Context, Poll, Waker};
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{
-    Outcome as WireOutcome, QueueEffect, Reply, Request as Wire, RequestNumber,
+    Outcome as WireOutcome, Question, QueueEffect, Reply, RequestNumber,
 };
 use verbatim_model::{Earcon, Effect};
 
@@ -77,6 +77,10 @@ pub(crate) struct Shared<L: Logic> {
     /// when every ending, the plain reader's included, comes from the
     /// checkpoint's record and nothing is delivered at once.
     rebuilding: bool,
+    /// The numbers given to numbered batches, and the defects a
+    /// function's batches found while it ran, taken into `effects` after
+    /// each poll.
+    ledger: crate::batch::Ledger,
 }
 
 /// A request about to begin: who asks it, what it names and when Core
@@ -89,7 +93,7 @@ pub(super) struct Beginning {
     /// When Core stops waiting for it.
     pub(super) due_us: u64,
     /// The request.
-    pub(super) request: Wire,
+    pub(super) request: Question,
     /// Who gets its ending.
     pub(super) owner: Owner,
 }
@@ -333,7 +337,7 @@ impl<E, F> Queue<E, F> {
 
     /// Every request waiting or out, as sent: the ids each names stay held
     /// (design, "Held anchors").
-    pub(crate) fn requests(&self) -> impl Iterator<Item = &verbatim_model::request::Request> {
+    pub(crate) fn requests(&self) -> impl Iterator<Item = &Question> {
         self.table.requests()
     }
 
@@ -369,7 +373,7 @@ impl<E, F> Queue<E, F> {
     }
 
     /// The requests waiting or out, as sent.
-    pub(crate) fn table_for_tests(&self) -> Vec<Wire> {
+    pub(crate) fn table_for_tests(&self) -> Vec<verbatim_model::request::Request> {
         self.table.requests_for_tests()
     }
 
@@ -392,7 +396,7 @@ impl<E, F> Queue<E, F> {
 #[cfg(test)]
 impl<E, F> Checkpoint<E, F> {
     /// The requests recorded as asked, to change.
-    pub(crate) fn asked_for_tests(&mut self) -> &mut Vec<Wire> {
+    pub(crate) fn asked_for_tests(&mut self) -> &mut Vec<Question> {
         &mut self.asked
     }
 }
@@ -405,7 +409,7 @@ pub(crate) struct Checkpoint<E, F> {
     /// The state when the entry started, with no checkpoint of its own.
     base: State<E, F>,
     /// Each request the function asked, in order.
-    asked: Vec<Wire>,
+    asked: Vec<Question>,
     /// Each ending it had, in order, with the time of the input that
     /// brought it.
     answers: Vec<(u64, Ending)>,
@@ -483,6 +487,7 @@ impl<L: Logic> Core<L> {
                 unanswered: 0,
                 at_once: Vec::new(),
                 rebuilding: false,
+                ledger: crate::batch::Ledger::default(),
             })),
             task: None,
             #[cfg(test)]
@@ -769,6 +774,8 @@ impl<L: Logic> Core<L> {
         self.shared.borrow_mut().parked = false;
         let polled = task.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         let mut shared = self.shared.borrow_mut();
+        let found = shared.ledger.take();
+        shared.effects.extend(found.into_iter().map(Effect::Queue));
         match polled {
             Poll::Pending => {
                 assert!(
@@ -824,15 +831,17 @@ pub(crate) trait Slot {
     fn deliver(&self, ending: Ending) -> (Shown, bool);
 }
 
-/// The slot of a request of type `R`, holding its outcome from the moment
-/// the queue decodes it until the function's next poll takes it.
+/// The slot of a request of type `R`, holding the request, against which
+/// its answer decodes, and its outcome from the moment the queue decodes
+/// it until the function's next poll takes it.
 struct Typed<R: Request> {
+    request: R,
     outcome: Cell<Option<Outcome<R::Reply>>>,
 }
 
 impl<R: Request> Typed<R> {
-    fn decode(reply: Reply) -> Result<R::Reply, Undecodable> {
-        R::decode(reply).ok_or(Undecodable)
+    fn decode(&self, reply: Reply) -> Result<R::Reply, Undecodable> {
+        self.request.decode(reply).ok_or(Undecodable)
     }
 }
 
@@ -863,12 +872,12 @@ pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
 impl<R: Request> Slot for Typed<R> {
     fn deliver(&self, ending: Ending) -> (Shown, bool) {
         let (outcome, undecodable) = match ending {
-            Ending::InFront(front) => match R::decode_in_front(front) {
+            Ending::InFront(front) => match self.request.decode_in_front(front) {
                 Some(reply) => (Outcome::Result(reply), false),
                 None => (Outcome::Refused(Refused::Undecodable), true),
             },
             ending => match outcome_of(ending) {
-                Ok(reply) => match Self::decode(reply) {
+                Ok(reply) => match self.decode(reply) {
                     Ok(reply) => (Outcome::Result(reply), false),
                     Err(Undecodable) => (Outcome::Refused(Refused::Undecodable), true),
                 },
@@ -1109,6 +1118,42 @@ impl<L: Logic> Cx<L> {
         Core::<L>::begin_core(&mut shared, wanted);
     }
 
+    /// A builder of one batch, branded by the type of `brand`, a closure
+    /// written where the batch is built (`cx.batch(|| ())`): every closure
+    /// expression has a type of its own, so a handle of one call site's
+    /// batch is no input to, and cannot be read from the answers of,
+    /// another's.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the conversions to batches use it from the readers' step on"
+        )
+    )]
+    #[expect(
+        clippy::unused_self,
+        reason = "a batch is begun where its function's context is, as a numbered one is"
+    )]
+    pub(crate) fn batch<B: FnOnce()>(&self, brand: B) -> crate::batch::Builder<B> {
+        crate::batch::batch(brand)
+    }
+
+    /// A builder of one batch built in a loop, whose batches share the
+    /// closure's brand: each is numbered too, and a handle given to, or
+    /// read from the answers of, a batch of another number is a defect,
+    /// logged and answered failed.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the conversions to batches use it from the readers' step on"
+        )
+    )]
+    pub(crate) fn batch_numbered<B: FnOnce()>(&self, brand: B) -> crate::batch::Builder<B> {
+        let _ = brand;
+        crate::batch::Builder::numbered(&self.shared.borrow().ledger)
+    }
+
     /// Asks `request` under the due time `due_us` and waits for its one
     /// outcome.
     pub(crate) fn ask<R: Request>(&mut self, request: R, due_us: u64) -> Asking<'_, L, R> {
@@ -1140,17 +1185,20 @@ impl<L: Logic, R: Request> Future for Asking<'_, L, R> {
         let mut shared = this.cx.shared.borrow_mut();
         match std::mem::replace(&mut this.stage, AskStage::Done) {
             AskStage::Unsent { request, due_us } => {
+                let wire = request.wire();
+                let window = request.window();
+                let reader = request.reader();
                 let slot = Rc::new(Typed::<R> {
+                    request,
                     outcome: Cell::new(None),
                 });
                 let owner: Rc<dyn Slot> = slot.clone();
-                let wire = request.wire();
                 if let Some(checkpoint) = shared.state.queue.checkpoint.as_mut() {
                     checkpoint.asked.push(wire.clone());
                 }
                 let number = shared.begin(Beginning {
-                    reader: request.reader(),
-                    window: request.window(),
+                    reader,
+                    window,
                     due_us,
                     request: wire,
                     owner: Owner::Queue,

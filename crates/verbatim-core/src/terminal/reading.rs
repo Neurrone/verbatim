@@ -163,9 +163,11 @@ fn token(state: &mut SrState) -> u64 {
 /// Wants `request` of the outpost of `window`'s application, naming
 /// `window`, awaited under `token` or by nothing.
 fn want(state: &mut SrState, token: Option<u64>, window: RequestWindow, request: Wire) {
-    state
-        .wants
-        .want(token, (Reader::Outpost(window.process), window), request);
+    state.wants.want(
+        token,
+        (Reader::Outpost(window.process), window),
+        request.into(),
+    );
 }
 
 /// The `Follow` request naming `terminal`.
@@ -1126,14 +1128,14 @@ impl Request for EntryRead {
         self.terminal.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Text {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Text {
             node: self.terminal.node,
             op: TextOp::ReadTerminal(self.read),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             TextReply::TerminalRead(read) => Some(read),
             _ => None,

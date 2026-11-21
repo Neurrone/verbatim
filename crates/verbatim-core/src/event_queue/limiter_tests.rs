@@ -91,14 +91,14 @@ impl Request for HoldRead {
         }
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Properties {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Properties {
             node: NodeId::new(1),
             set: vec![PropertyId::Name],
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,

@@ -151,21 +151,23 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
 
 fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
-        Effect::Queue(QueueEffect::Send { ask, to }) => match ask.request {
-            Wire::Text { node, op } => step.text.push((ask.number.0, node.number(), op)),
-            Wire::MsaaRun(run) => step.runs.push((
-                ask.number.0,
-                run.candidate.ids.object,
-                to.reader,
-                run.depth,
-                run.spare.map(|(_, anchor)| anchor),
-            )),
-            other => step.other.push(match other {
-                Wire::ReadObject(_) => "ReadObject",
-                Wire::Follow(_) => "Follow",
-                _ => "other",
-            }),
-        },
+        Effect::Queue(QueueEffect::Send { ask, to }) => {
+            match crate::event_queue::legacy_for_tests(&ask.request) {
+                Wire::Text { node, op } => step.text.push((ask.number.0, node.number(), op)),
+                Wire::MsaaRun(run) => step.runs.push((
+                    ask.number.0,
+                    run.candidate.ids.object,
+                    to.reader,
+                    run.depth,
+                    run.spare.map(|(_, anchor)| anchor),
+                )),
+                other => step.other.push(match other {
+                    Wire::ReadObject(_) => "ReadObject",
+                    Wire::Follow(_) => "Follow",
+                    _ => "other",
+                }),
+            }
+        }
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
             step.cancelled.push((cancel.number.0, cancel.reason));
         }

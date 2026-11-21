@@ -753,7 +753,9 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             detail: String::new(),
         });
     };
-    let Request::ReadObject(read) = &ask.request else {
+    // A batch is refused unread until the listener runs batches, from the
+    // readers' step of the request list's build.
+    let Some(Request::ReadObject(read)) = ask.request.legacy() else {
         answer(Outcome::Refused(Refusal::Unsupported));
         return;
     };
@@ -1676,7 +1678,7 @@ mod tests {
             number: RequestNumber(number),
             window,
             verdict: verbatim_model::request::WindowVerdict::Uia,
-            request: Request::ReadObject(read),
+            request: Request::ReadObject(read).into(),
         })
     }
 

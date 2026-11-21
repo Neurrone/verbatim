@@ -251,7 +251,7 @@ impl Driven {
         let counted = Rc::clone(&count);
         let mut act = Some(act);
         self.core.observe_sends(Some(Box::new(move |ask, outpost| {
-            let Request::Text { op, .. } = &ask.request else {
+            let Some(Request::Text { op, .. }) = ask.request.legacy() else {
                 return;
             };
             if !of(op) {

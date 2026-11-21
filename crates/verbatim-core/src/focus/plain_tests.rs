@@ -483,7 +483,12 @@ fn disabled_values() -> PropertyValues {
 #[test]
 fn the_plain_reader_answers_each_kind_as_a_plain_window() {
     let state = disabled_plain();
-    let answer = |request: Wire| super::answer(&state.state.plain, &request);
+    let answer = |request: Wire| {
+        super::answer(
+            &state.state.plain,
+            &verbatim_model::request::Question::from(request),
+        )
+    };
     let node = plain_node(1);
     assert_eq!(
         answer(Wire::Properties {
@@ -579,7 +584,10 @@ fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
         purpose: Purpose::Other,
     });
     assert_eq!(
-        super::answer(&state.state.plain, &read),
+        super::answer(
+            &state.state.plain,
+            &verbatim_model::request::Question::from(read)
+        ),
         Some(WireOutcome::Result(Reply::Object(Box::new(ObjectRead {
             object: NodeRead {
                 node: Some(node),
@@ -629,7 +637,10 @@ fn a_request_on_an_older_plain_node_is_not_there() {
         node: plain_node(1),
     };
     assert_eq!(
-        super::answer(&state.state.plain, &older),
+        super::answer(
+            &state.state.plain,
+            &verbatim_model::request::Question::from(older)
+        ),
         Some(WireOutcome::NotThere)
     );
 }
@@ -690,10 +701,10 @@ fn the_ghost_destroyed_under_the_plain_focus_says_window_invisible() {
     assert_eq!(
         super::answer(
             &state.state.plain,
-            &Wire::Properties {
+            &verbatim_model::request::Question::from(Wire::Properties {
                 node: plain_node(1),
                 set: asked_set(),
-            }
+            })
         ),
         Some(WireOutcome::Result(Reply::Properties(destroyed_values())))
     );
@@ -748,9 +759,9 @@ fn another_windows_destroy_leaves_the_ghost_and_the_next_commit_replaces_the_dea
     assert_eq!(
         super::answer(
             &state.state.plain,
-            &Wire::Activate {
+            &verbatim_model::request::Question::from(Wire::Activate {
                 node: plain_node(1),
-            }
+            })
         ),
         Some(WireOutcome::NotThere)
     );
@@ -886,7 +897,8 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
                 request: Wire::Properties {
                     node: plain_node(1),
                     set: vec![PropertyId::Role],
-                },
+                }
+                .into(),
                 due_after_us: 11_000_000,
             },
         },

@@ -10,7 +10,7 @@
 //! function that wanted it ([`crate::event_queue::Cx::send_wanted`]).
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::Request as Wire;
+use verbatim_model::request::Question;
 
 use crate::event_queue::{CoreRequest, OTHER_DUE_US, Reader, RequestWindow};
 
@@ -21,7 +21,7 @@ struct Wanted {
     token: Option<u64>,
     reader: Reader,
     window: RequestWindow,
-    request: Wire,
+    request: Question,
 }
 
 /// The requests Core's facts want sent, and the last token given.
@@ -48,7 +48,7 @@ impl Wants {
         &mut self,
         token: Option<u64>,
         (reader, window): (Reader, RequestWindow),
-        request: Wire,
+        request: Question,
     ) {
         self.wanted.push(Wanted {
             token,
@@ -80,10 +80,17 @@ impl Wants {
     /// The requests wanted, taken, each with its token and what it asks,
     /// for the tests.
     #[cfg(test)]
-    pub(crate) fn take_for_tests(&mut self) -> Vec<(Option<u64>, Wire)> {
+    pub(crate) fn take_for_tests(
+        &mut self,
+    ) -> Vec<(Option<u64>, verbatim_model::request::Request)> {
         std::mem::take(&mut self.wanted)
             .into_iter()
-            .map(|wanted| (wanted.token, wanted.request))
+            .map(|wanted| {
+                (
+                    wanted.token,
+                    crate::event_queue::legacy_for_tests(&wanted.request),
+                )
+            })
             .collect()
     }
 }

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{
-    Ask, CancelReason, Front, Outcome as WireOutcome, Request as Wire, RequestNumber, WindowVerdict,
+    Ask, CancelReason, Front, Outcome as WireOutcome, Question, RequestNumber, WindowVerdict,
 };
 use verbatim_model::{Pid, WindowHandle};
 
@@ -71,7 +71,7 @@ pub(crate) struct Live {
     /// When Core stops waiting for it.
     pub(crate) due_us: u64,
     /// The request.
-    pub(crate) request: Wire,
+    pub(crate) request: Question,
     /// Who gets its ending.
     pub(crate) owner: Owner,
     /// Where it is.
@@ -151,6 +151,17 @@ pub(crate) enum Order {
     Cancel(Instance, verbatim_model::request::Cancel),
 }
 
+/// `question` as one of the kinds of request not yet converted to a
+/// batch, for the tests that state today's requests; a batch fails the
+/// test, since no feature asks one until the conversions begin.
+#[cfg(test)]
+pub(crate) fn legacy_for_tests(question: &Question) -> verbatim_model::request::Request {
+    match question {
+        Question::Legacy(request) => request.clone(),
+        Question::Batch(batch) => panic!("a batch where a kind of request was expected: {batch:?}"),
+    }
+}
+
 /// The request table, the recovery set and the half-second round.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Table {
@@ -175,10 +186,10 @@ pub(crate) struct Table {
 impl Table {
     /// The requests waiting or out, as sent.
     #[cfg(test)]
-    pub(crate) fn requests_for_tests(&self) -> Vec<Wire> {
+    pub(crate) fn requests_for_tests(&self) -> Vec<verbatim_model::request::Request> {
         self.live
             .values()
-            .map(|live| live.request.clone())
+            .map(|live| legacy_for_tests(&live.request))
             .collect()
     }
 
@@ -189,7 +200,7 @@ impl Table {
     }
 
     /// The requests waiting or out, as sent.
-    pub(crate) fn requests(&self) -> impl Iterator<Item = &Wire> {
+    pub(crate) fn requests(&self) -> impl Iterator<Item = &Question> {
         self.live.values().map(|live| &live.request)
     }
 

@@ -188,11 +188,11 @@ impl<D: ReadDepth> Request for RunRequest<D> {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::MsaaRun(self.run.clone())
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::MsaaRun(self.run.clone()))
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         D::parse(reply)
     }
 }

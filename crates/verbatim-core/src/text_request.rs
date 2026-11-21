@@ -35,14 +35,14 @@ impl Request for TextRequest {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Text {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Text {
             node: self.node,
             op: self.op.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<TextReply> {
+    fn decode(&self, reply: Reply) -> Option<TextReply> {
         match reply {
             Reply::Text(reply) => Some(reply),
             _ => None,

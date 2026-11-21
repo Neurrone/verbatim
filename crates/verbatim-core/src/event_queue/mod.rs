@@ -44,6 +44,8 @@ pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Input, Timed};
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
+#[cfg(test)]
+pub(crate) use table::legacy_for_tests;
 pub(crate) use table::{Asker, Live};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
@@ -325,7 +327,7 @@ pub(crate) trait Logic: Sized + 'static {
     /// request a reader process answers (`crate::focus::plain`).
     fn plain_answer(
         facts: &Self::Facts,
-        request: &verbatim_model::request::Request,
+        request: &verbatim_model::request::Question,
     ) -> Option<verbatim_model::request::Outcome> {
         let _ = (facts, request);
         None
@@ -432,7 +434,7 @@ pub(crate) trait Logic: Sized + 'static {
     /// entry dropped at its arrival never joins.
     fn arrival(
         facts: &mut Self::Facts,
-        front: Option<(&Self::Entry, Option<&verbatim_model::request::Request>)>,
+        front: Option<(&Self::Entry, Option<&verbatim_model::request::Question>)>,
         entry: &mut Self::Entry,
     ) {
         let _ = (facts, front, entry);

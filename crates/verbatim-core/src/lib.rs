@@ -51,6 +51,7 @@
 
 mod announcements;
 mod applications;
+pub mod batch;
 mod caret_location;
 mod caret_tell;
 mod changes;

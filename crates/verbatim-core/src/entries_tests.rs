@@ -321,7 +321,7 @@ pub(crate) fn uia_focus_read(
 }
 
 pub(crate) fn kind(ask: &Ask) -> &'static str {
-    match &ask.request {
+    match &crate::event_queue::legacy_for_tests(&ask.request) {
         Wire::ReadObject(_) => "ReadObject",
         Wire::CompleteUia(_) => "CompleteUia",
         Wire::MsaaRun(_) => "MsaaRun",
@@ -500,10 +500,12 @@ fn sent_completion(held: &mut Held, at_us: u64, input: Input<Entry>) -> Option<B
         .unwrap()
         .into_iter()
         .find_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
-                Wire::CompleteUia(complete) => Some(complete),
-                _ => None,
-            },
+            Effect::Queue(QueueEffect::Send { ask, .. }) => {
+                match crate::event_queue::legacy_for_tests(&ask.request) {
+                    Wire::CompleteUia(complete) => Some(complete),
+                    _ => None,
+                }
+            }
             _ => None,
         })
 }
@@ -1614,7 +1616,8 @@ fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
         window: taskbar(),
         request: Wire::ShellItems {
             kind: verbatim_model::ShellItemKind::SystemTray,
-        },
+        }
+        .into(),
     }
 }
 

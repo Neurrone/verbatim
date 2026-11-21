@@ -369,10 +369,12 @@ impl Reducer {
                 if self.stopping {
                     return;
                 }
-                if let verbatim_model::request::Request::Text {
-                    node,
-                    op: TextOp::Watch(watch),
-                } = &ask.request
+                if let verbatim_model::request::Question::Legacy(
+                    verbatim_model::request::Request::Text {
+                        node,
+                        op: TextOp::Watch(watch),
+                    },
+                ) = &ask.request
                 {
                     self.watches
                         .arrive((ask.number, ask.window, *node), *watch, now.wall_us);

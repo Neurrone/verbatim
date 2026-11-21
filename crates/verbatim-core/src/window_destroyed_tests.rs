@@ -60,7 +60,12 @@ fn read(effects: &[Said]) -> Vec<String> {
                 format!("destroyed {window:?} to {:?} {}", to.reader, to.generation)
             }
             Said::Queue(QueueEffect::Send { to, ask }) => {
-                format!("send {:?} {} {:?}", to.reader, ask.number.0, ask.request)
+                format!(
+                    "send {:?} {} {:?}",
+                    to.reader,
+                    ask.number.0,
+                    crate::event_queue::legacy_for_tests(&ask.request)
+                )
             }
             other => format!("{other:?}"),
         })

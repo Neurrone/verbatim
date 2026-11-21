@@ -131,14 +131,14 @@ impl Request for SelectionReadRequest {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Text {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Text {
             node: self.node,
             op: TextOp::ReadSelection(self.read),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             TextReply::SelectionRead(read) => Some(*read),
             _ => None,

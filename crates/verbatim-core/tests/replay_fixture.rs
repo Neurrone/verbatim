@@ -183,7 +183,7 @@ fn seen(effect: Effect) -> Seen {
         Effect::Queue(QueueEffect::Send { to, ask }) => Seen::Sent(
             to.reader,
             ask.number.0,
-            match ask.request {
+            match legacy(&ask.request) {
                 Wire::ReadObject(_) => "ReadObject",
                 Wire::CompleteUia(_) => "CompleteUia",
                 Wire::Follow(_) => "Follow",
@@ -343,4 +343,12 @@ fn regenerate_fixture() {
     let path = fixture_path();
     fs::create_dir_all(path.parent().expect("fixtures dir")).expect("creates fixtures dir");
     fs::write(path, buffer).expect("writes fixture");
+}
+
+/// `question` as one of the kinds of request not yet converted to a
+/// batch: these tests state today's requests, and a batch fails them.
+fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+    question
+        .legacy()
+        .expect("a kind of request, where no feature asks a batch yet")
 }

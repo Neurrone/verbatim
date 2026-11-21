@@ -127,10 +127,12 @@ fn heard_of(effect: Effect) -> Option<Heard> {
         Effect::CopyToClipboard(text) => Some(Heard::Copied(text)),
         Effect::SettingsChanged(settings) => Some(Heard::Settings(settings)),
         Effect::KeepDisplayOn(on) => Some(Heard::Display(on)),
-        Effect::Queue(QueueEffect::Send { ask, .. }) => Some(match ask.request {
-            Wire::Text { op, .. } => Heard::Asked(op),
-            other => Heard::Sent(desk::kind(&other)),
-        }),
+        Effect::Queue(QueueEffect::Send { ask, .. }) => {
+            Some(match desk::legacy(&ask.request).clone() {
+                Wire::Text { op, .. } => Heard::Asked(op),
+                other => Heard::Sent(desk::kind(&other)),
+            })
+        }
         Effect::Queue(QueueEffect::SendStrokes(sent)) => Some(Heard::Strokes(sent.len())),
         Effect::Queue(QueueEffect::Cancel { .. }) => Some(Heard::Cancelled),
         Effect::Observed(_) | Effect::Queue(_) => None,
@@ -213,7 +215,7 @@ impl Text {
         let mut heard = Vec::new();
         for effect in effects {
             if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
-                && let Wire::Text { op, .. } = &ask.request
+                && let Wire::Text { op, .. } = desk::legacy(&ask.request)
                 && let Some(chunk) = self.unchanged(op)
             {
                 let answer = QueueInput::Answer {
@@ -229,9 +231,10 @@ impl Text {
                 continue;
             }
             if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
-                && !matches!(ask.request, Wire::Follow(_))
+                && !matches!(desk::legacy(&ask.request), Wire::Follow(_))
             {
-                self.out.push((ask.number.0, *to, ask.request.clone()));
+                self.out
+                    .push((ask.number.0, *to, desk::legacy(&ask.request).clone()));
             }
             let own = match &effect {
                 Effect::ForKey(_, effect) => effect.as_ref(),

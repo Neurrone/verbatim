@@ -46,6 +46,7 @@
     )
 )]
 
+pub mod batch;
 mod calls;
 pub mod class;
 mod event;
@@ -54,6 +55,7 @@ mod gesture;
 pub mod hung;
 mod key_seq;
 mod limits;
+pub mod matcher;
 pub mod property;
 pub mod protocol;
 pub mod request;

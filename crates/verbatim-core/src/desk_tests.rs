@@ -227,9 +227,10 @@ fn heard_of(effects: Vec<Effect>) -> (Vec<Heard>, Sent, Vec<(u64, WindowVerdict)
     for effect in effects {
         match effect {
             Effect::Queue(QueueEffect::Send { to, ask }) => {
-                heard.push(Heard::Sent(to.reader, kind(&ask.request)));
+                let request = crate::event_queue::legacy_for_tests(&ask.request);
+                heard.push(Heard::Sent(to.reader, kind(&request)));
                 verdicts.push((ask.number.0, ask.verdict));
-                sent.push((ask.number.0, to.reader, ask.request));
+                sent.push((ask.number.0, to.reader, request));
             }
             said => heard.extend(said_heard(said)),
         }

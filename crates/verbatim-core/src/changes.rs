@@ -33,8 +33,8 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, RuntimeId};
 use verbatim_model::request::{
-    FocusNode, MsaaIds, NodeRead, ObjectRead, ObjectRef, Purpose, ReadObject, RelationFound,
-    RelationQuery, Reply, Request as Wire,
+    FocusNode, MsaaIds, NodeRead, ObjectRead, ObjectRef, Purpose, Question, ReadObject,
+    RelationFound, RelationQuery, Reply, Request as Wire,
 };
 use verbatim_model::tell::{Event, Payload};
 use verbatim_model::{Backend, NodeId, OutpostId, PropertyChange, Role, State, StateSet, TraceId};
@@ -111,12 +111,13 @@ impl AtArrival {
 /// registers its element as the completion reaches it, so a change it
 /// tells of the element was raised after that, when NVDA hears it too.
 fn in_flight<'a>(
-    front: Option<(&'a crate::entries::Entry, Option<&Wire>)>,
+    front: Option<(&'a crate::entries::Entry, Option<&Question>)>,
 ) -> Option<&'a RuntimeId> {
     match front? {
-        (crate::entries::Entry::UiaFocus(focus), Some(Wire::CompleteUia(complete)))
-            if complete.completes == verbatim_model::request::CompletionFor::Focus =>
-        {
+        (
+            crate::entries::Entry::UiaFocus(focus),
+            Some(Question::Legacy(Wire::CompleteUia(complete))),
+        ) if complete.completes == verbatim_model::request::CompletionFor::Focus => {
             Some(&focus.runtime_id)
         }
         _ => None,
@@ -128,7 +129,7 @@ fn in_flight<'a>(
 /// the focus in flight.
 pub(crate) fn arrived(
     facts: &SrState,
-    front: Option<(&crate::entries::Entry, Option<&Wire>)>,
+    front: Option<(&crate::entries::Entry, Option<&Question>)>,
     change: &mut UiaChange,
 ) {
     let committed = facts
@@ -261,11 +262,11 @@ impl Request for ChangeRead {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::ReadObject(self.read.clone())
+    fn wire(&self) -> Question {
+        Question::Legacy(Wire::ReadObject(self.read.clone()))
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Object(read) => Some(read),
             _ => None,
@@ -293,14 +294,14 @@ impl Request for ChildCountRead {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Properties {
+    fn wire(&self) -> Question {
+        Question::Legacy(Wire::Properties {
             node: self.node,
             set: vec![PropertyId::ChildCount],
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Properties(values) => Some(
                 match values

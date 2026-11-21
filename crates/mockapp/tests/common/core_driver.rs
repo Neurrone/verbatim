@@ -964,6 +964,9 @@ impl CoreDriver {
             QueueEffect::Mismatch { replayed, original } => {
                 panic!("Core's checkpoint did not replay: {replayed} against {original}")
             }
+            QueueEffect::ForeignHandle { batch, handle } => {
+                panic!("a handle of batch {handle:?} was given to batch {batch:?}")
+            }
         }
     }
 
@@ -1013,7 +1016,7 @@ impl CoreDriver {
 
     /// The listener's read for Core's `ask` of the element it keeps.
     fn listener_read(&mut self, ask: &Ask) -> Answer {
-        let Request::ReadObject(read) = &ask.request else {
+        let Some(Request::ReadObject(read)) = ask.request.legacy() else {
             panic!(
                 "Core asked the listener {:?}, which it reads no other way",
                 ask.request

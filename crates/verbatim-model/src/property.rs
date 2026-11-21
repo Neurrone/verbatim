@@ -16,6 +16,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::request::HeldIds;
 use crate::{CellPosition, Pid, Rect, Role, StateSet, TableCounts, WindowHandle};
 
 /// One property of the table, as a request names it and an answer carries
@@ -101,6 +102,19 @@ pub enum PropertyId {
     /// (`docs/nvda/speech.md`, "How many items an expanded tree view item
     /// holds").
     ChildCount,
+    /// Whether the object, or an ancestor up to the desktop, has the
+    /// focused state, by a walk of MSAA parents; absent for a UI
+    /// Automation object, whose focus is read in full.
+    FocusedWithin,
+    /// The MSAA ids an object was reached at after NVDA's focus redirect,
+    /// with the child id the reader holds it by; read with no call.
+    MsaaAddress,
+    /// Whether the object's own window, or its nearest ancestor's, is
+    /// visible, read from Windows with no call into the application.
+    WindowShown,
+    /// Whether UI Automation counts the object both a control and a
+    /// content element.
+    IsContent,
 }
 
 impl PropertyId {
@@ -136,6 +150,10 @@ impl PropertyId {
             Self::ComboBoxList => &COMBO_BOX_LIST,
             Self::ParentAutomationId => &PARENT_AUTOMATION_ID,
             Self::ChildCount => &CHILD_COUNT,
+            Self::FocusedWithin => &FOCUSED_WITHIN,
+            Self::MsaaAddress => &MSAA_ADDRESS,
+            Self::WindowShown => &WINDOW_SHOWN,
+            Self::IsContent => &IS_CONTENT,
         }
     }
 
@@ -179,6 +197,8 @@ pub enum ValueKind {
     TableCounts,
     /// A [`TextSummary`].
     TextSummary,
+    /// A [`HeldIds`].
+    MsaaAddress,
 }
 
 /// How much a property costs to read, which the bulk-read gate judges: a
@@ -261,6 +281,13 @@ pub enum UiaConversion {
     /// to the parent and its live `AutomationId`, absent when empty, never
     /// from the element's own cache.
     ParentAutomationId,
+    /// Whether the native window handle's window, else the nearest
+    /// ancestor's window the reader knows, is visible, by
+    /// `IsWindowVisible`.
+    NearestWindowShown,
+    /// Whether both booleans, the control and the content element's, are
+    /// true.
+    ControlAndContent,
 }
 
 /// How MSAA reads a property: an `IAccessible` call, or a read of the
@@ -294,6 +321,14 @@ pub enum MsaaRead {
     /// messages from its first child (`TVGN_CHILD`) through each next
     /// sibling (`TVGN_NEXT`); absent for any other object.
     TreeViewChildCount,
+    /// Whether the object or an ancestor up to the desktop has the focused
+    /// state, by `accState` up the `accParent` chain.
+    FocusedWithin,
+    /// The ids the object was reached at, with the child id it is held by:
+    /// no call.
+    Address,
+    /// Whether the object's window is visible, by `IsWindowVisible`.
+    WindowShown,
 }
 
 /// How `IAccessible2` reads a property. Empty until `IAccessible2` is read
@@ -436,6 +471,8 @@ mod uia {
     pub(super) const AUTOMATION_ID: i32 = 30011;
     pub(super) const CLASS_NAME: i32 = 30012;
     pub(super) const HELP_TEXT: i32 = 30013;
+    pub(super) const IS_CONTROL_ELEMENT: i32 = 30016;
+    pub(super) const IS_CONTENT_ELEMENT: i32 = 30017;
     pub(super) const IS_PASSWORD: i32 = 30019;
     pub(super) const NATIVE_WINDOW_HANDLE: i32 = 30020;
     pub(super) const IS_REQUIRED_FOR_FORM: i32 = 30025;
@@ -878,6 +915,56 @@ const CHILD_COUNT: PropertyEntry = PropertyEntry {
     detail: None,
 };
 
+const FOCUSED_WITHIN: PropertyEntry = PropertyEntry {
+    id: PropertyId::FocusedWithin,
+    name: "focused within",
+    kind: ValueKind::Flag,
+    uia: None,
+    msaa: Some(MsaaRead::FocusedWithin),
+    ia2: None,
+    cost: Cost::Alone,
+    detail: None,
+};
+
+const MSAA_ADDRESS: PropertyEntry = PropertyEntry {
+    id: PropertyId::MsaaAddress,
+    name: "msaa address",
+    kind: ValueKind::MsaaAddress,
+    uia: None,
+    msaa: Some(MsaaRead::Address),
+    ia2: None,
+    cost: Cost::Cheap,
+    detail: None,
+};
+
+const WINDOW_SHOWN: PropertyEntry = PropertyEntry {
+    id: PropertyId::WindowShown,
+    name: "window shown",
+    kind: ValueKind::Flag,
+    uia: Some(UiaRead {
+        cached: &[uia::NATIVE_WINDOW_HANDLE],
+        conversion: UiaConversion::NearestWindowShown,
+    }),
+    msaa: Some(MsaaRead::WindowShown),
+    ia2: None,
+    cost: Cost::Cheap,
+    detail: None,
+};
+
+const IS_CONTENT: PropertyEntry = PropertyEntry {
+    id: PropertyId::IsContent,
+    name: "is content",
+    kind: ValueKind::Flag,
+    uia: Some(UiaRead {
+        cached: &[uia::IS_CONTROL_ELEMENT, uia::IS_CONTENT_ELEMENT],
+        conversion: UiaConversion::ControlAndContent,
+    }),
+    msaa: None,
+    ia2: None,
+    cost: Cost::Cheap,
+    detail: None,
+};
+
 /// The whole table, in [`PropertyId`] order.
 pub const PROPERTIES: &[PropertyEntry] = &[
     NAME,
@@ -908,6 +995,10 @@ pub const PROPERTIES: &[PropertyEntry] = &[
     COMBO_BOX_LIST,
     PARENT_AUTOMATION_ID,
     CHILD_COUNT,
+    FOCUSED_WITHIN,
+    MSAA_ADDRESS,
+    WINDOW_SHOWN,
+    IS_CONTENT,
 ];
 
 /// A UI Automation runtime id.
@@ -959,6 +1050,9 @@ pub enum PropertyValue {
     TableCounts(TableCounts),
     /// What an object's text says of it.
     TextSummary(TextSummary),
+    /// The MSAA ids an object was reached at, and the child id it is held
+    /// by.
+    MsaaAddress(HeldIds),
 }
 
 /// What an object's text says of it, as NVDA's object speech reads it
@@ -991,6 +1085,7 @@ impl PropertyValue {
             Self::Cell(_) => ValueKind::Cell,
             Self::TableCounts(_) => ValueKind::TableCounts,
             Self::TextSummary(_) => ValueKind::TextSummary,
+            Self::MsaaAddress(_) => ValueKind::MsaaAddress,
         }
     }
 }
@@ -1247,6 +1342,22 @@ pub mod props {
         /// [`PropertyId::ValueFromSelection`].
         ValueFromSelection, bool, Flag
     );
+    marker!(
+        /// [`PropertyId::FocusedWithin`].
+        FocusedWithin, bool, Flag
+    );
+    marker!(
+        /// [`PropertyId::MsaaAddress`].
+        MsaaAddress, crate::request::HeldIds, MsaaAddress
+    );
+    marker!(
+        /// [`PropertyId::WindowShown`].
+        WindowShown, bool, Flag
+    );
+    marker!(
+        /// [`PropertyId::IsContent`].
+        IsContent, bool, Flag
+    );
 }
 
 /// Declares a set of properties fixed at compile time: a struct with one
@@ -1373,7 +1484,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(PROPERTIES.len(), 28);
+        assert_eq!(PROPERTIES.len(), 32);
     }
 
     #[test]

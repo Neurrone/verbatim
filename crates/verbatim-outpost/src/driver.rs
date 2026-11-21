@@ -63,7 +63,7 @@ impl<'a> Driver<'a> {
                 number,
                 window,
                 verdict,
-                request,
+                request: request.into(),
             })));
         number
     }

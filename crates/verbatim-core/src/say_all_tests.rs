@@ -171,13 +171,15 @@ fn reduce(held: &mut Held, input: &verbatim_model::Input) -> Step {
 
 fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
-        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
-            Wire::Text { node: asked, op } => {
-                assert_eq!(asked, node(2));
-                step.sent.push((ask.number.0, op));
+        Effect::Queue(QueueEffect::Send { ask, .. }) => {
+            match crate::event_queue::legacy_for_tests(&ask.request) {
+                Wire::Text { node: asked, op } => {
+                    assert_eq!(asked, node(2));
+                    step.sent.push((ask.number.0, op));
+                }
+                other => panic!("a text request: {other:?}"),
             }
-            other => panic!("a text request: {other:?}"),
-        },
+        }
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => step.cancelled.push(cancel),
         Effect::Queue(QueueEffect::AnswerDropped { number, .. }) => step.dropped.push(number.0),
         Effect::Queue(QueueEffect::StartOutpost(process)) => step.started.push(process),

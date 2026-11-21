@@ -7,12 +7,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Waker};
 
+use verbatim_model::batch::{
+    Batch, CaretAt, Done, Edges, HeldPoint, Missing, Op, Placement, Step, StepOutcome, Subject,
+};
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{
     Answer, Ask, Cancel, CancelReason, Outcome as WireOutcome, Refusal, Reply, Request as Wire,
     RequestNumber, WindowVerdict,
 };
 use verbatim_model::{NodeId, Pid, WindowHandle};
+
+use crate::batch::On;
 
 use super::driver::{Core, Cx};
 use super::inbox::{Input, Timed};
@@ -101,6 +106,12 @@ enum Entry {
     /// Asks a read of the plain node, which Core's plain reader answers at
     /// once, then a read of the outpost's node, saying each outcome.
     PlainThenRead,
+    /// Asks one batch, a read of the application's focus and a caret, and
+    /// says each step's outcome.
+    Batch,
+    /// Asks two numbered batches in a loop, the second given and read by
+    /// the first's handle, and says what the second answers by it.
+    Numbered,
 }
 
 /// The tests' read.
@@ -118,11 +129,11 @@ impl Request for ReadName {
         WINDOW
     }
 
-    fn wire(&self) -> Wire {
-        wire()
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(wire())
     }
 
-    fn decode(reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,
@@ -145,11 +156,11 @@ impl Request for ReadPlain {
         WINDOW
     }
 
-    fn wire(&self) -> Wire {
-        plain_wire()
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(plain_wire())
     }
 
-    fn decode(reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,
@@ -211,6 +222,52 @@ impl Logic for Test {
                 }
                 Entry::Recovered(window) => cx.emit(emitted(format!("recovered {}", window.0))),
                 Entry::Stray => std::future::pending::<()>().await,
+                Entry::Batch => {
+                    let due_us = cx.due_in(OTHER_DUE_US);
+                    let mut read = cx.batch(|| ());
+                    let focus = read.read(On::focus(), &[PropertyId::Name]);
+                    let caret = read.caret(NodeId::new(1), None);
+                    let asked = cx.ask(read.finish().of(OUTPOST.reader, WINDOW), due_us);
+                    let words = match asked.await {
+                        Outcome::Result(answers) => format!(
+                            "in front {}, focus {}, caret {}",
+                            answers.in_front().is_some(),
+                            got(&answers.get(focus)),
+                            got(&answers.get(caret)),
+                        ),
+                        other => format!("{other:?}"),
+                    };
+                    cx.emit(emitted(words));
+                }
+                Entry::Numbered => {
+                    let due_us = cx.due_in(OTHER_DUE_US);
+                    let mut earlier = None;
+                    for _ in 0..2 {
+                        let mut read = cx.batch_numbered(|| ());
+                        let caret = read.caret(NodeId::new(1), None);
+                        if let Some(earlier) = earlier {
+                            let _ = read.read_text(
+                                NodeId::new(1),
+                                crate::batch::Ref::caret(earlier),
+                                None,
+                                verbatim_model::TextUnit::Line,
+                                1,
+                                verbatim_model::TextDetails::NONE,
+                            );
+                        }
+                        let asked = cx.ask(read.finish().of(OUTPOST.reader, WINDOW), due_us);
+                        let answers = asked.await;
+                        if let (Some(earlier), Outcome::Result(answers)) = (earlier, &answers) {
+                            let words = format!(
+                                "own {}, another's {}",
+                                got(&answers.get(caret)),
+                                got(&answers.get(earlier))
+                            );
+                            cx.emit(emitted(words));
+                        }
+                        earlier = Some(caret);
+                    }
+                }
                 Entry::PlainThenRead => {
                     let due_us = cx.due_in(OTHER_DUE_US);
                     let plain = cx.ask(ReadPlain, due_us).await;
@@ -244,8 +301,8 @@ impl Logic for Test {
     }
 
     /// The plain node's read is answered with a result.
-    fn plain_answer(_: &u32, request: &Wire) -> Option<WireOutcome> {
-        (*request == plain_wire()).then(result)
+    fn plain_answer(_: &u32, request: &verbatim_model::request::Question) -> Option<WireOutcome> {
+        (request.legacy() == Some(&plain_wire())).then(result)
     }
 
     fn place(_: &u32, _: &Entry) -> Place {
@@ -293,7 +350,7 @@ fn send(number: u64) -> Effect {
             number: RequestNumber(number),
             window: WINDOW.handle,
             verdict: WindowVerdict::Msaa,
-            request: wire(),
+            request: wire().into(),
         },
     })
 }
@@ -349,7 +406,7 @@ fn ask_outside() -> Input<Entry> {
         asker: ASKER,
         reader: OUTPOST.reader,
         window: WINDOW,
-        request: wire(),
+        request: wire().into(),
         due_after_us: OTHER_DUE_US,
     }
 }
@@ -522,7 +579,7 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
                 number: RequestNumber(1),
                 window: WINDOW.handle,
                 verdict: WindowVerdict::Msaa,
-                request: wire(),
+                request: wire().into(),
             },
         })]
     );
@@ -840,7 +897,7 @@ fn a_waiting_request_outside_the_queue_waits_for_the_next_reader_when_one_fails(
                 number: RequestNumber(1),
                 window: WINDOW.handle,
                 verdict: WindowVerdict::Msaa,
-                request: wire(),
+                request: wire().into(),
             },
         })]
     );
@@ -1548,7 +1605,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
             "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
             "due_us: 11002000, ",
-            "request: Properties { node: NodeId { issuer: Outpost(OutpostId(0)), number: 1 }, set: [Name] }, ",
+            "request: Legacy(Properties { node: NodeId { issuer: Outpost(OutpostId(0)), number: 1 }, set: [Name] }), ",
             "owner: Queue, stage: Out { to: Instance { reader: Outpost(Pid(1)), generation: 1 }, ",
             "probing: None } }}, ",
             "late: {RequestNumber(1): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
@@ -1584,12 +1641,12 @@ impl Request for ReadProbed {
         PROBED
     }
 
-    fn wire(&self) -> Wire {
-        wire()
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(wire())
     }
 
-    fn decode(reply: Reply) -> Option<PropertyValues> {
-        ReadName::decode(reply)
+    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
+        ReadName.decode(reply)
     }
 }
 
@@ -1668,7 +1725,7 @@ fn send_probed(number: u64, verdict: WindowVerdict) -> Effect {
             number: RequestNumber(number),
             window: PROBED.handle,
             verdict,
-            request: wire(),
+            request: wire().into(),
         },
     })
 }
@@ -1924,7 +1981,7 @@ fn a_plain_read_from_outside_the_queue_is_answered_at_once() {
                 asker: ASKER,
                 reader: Reader::Outpost(Pid(9)),
                 window: WINDOW,
-                request: plain_wire(),
+                request: plain_wire().into(),
                 due_after_us: OTHER_DUE_US,
             }
         ),
@@ -1934,4 +1991,169 @@ fn a_plain_read_from_outside_the_queue_is_answered_at_once() {
         })]
     );
     assert!(core.shared.borrow().state.queue.idle());
+}
+
+/// A step's outcome as an entry says it.
+fn got<T>(got: &crate::batch::Got<'_, T>) -> &'static str {
+    match got {
+        crate::batch::Got::Done(_) => "done",
+        crate::batch::Got::Refused(_) => "refused",
+        crate::batch::Got::NotThere(_) => "not there",
+        crate::batch::Got::Failed => "failed",
+        crate::batch::Got::Skipped => "skipped",
+    }
+}
+
+/// The batch [`Entry::Batch`] asks: a read of the focus, then a caret.
+fn focus_and_caret() -> Batch {
+    Batch {
+        steps: vec![
+            Step {
+                op: Op::Read {
+                    subject: Subject::Focus,
+                    set: vec![PropertyId::Name],
+                },
+                when: None,
+            },
+            caret_step(),
+        ],
+        placement: Placement::Queue,
+        spare: None,
+    }
+}
+
+/// A caret read of node 1.
+fn caret_step() -> Step {
+    Step {
+        op: Op::Caret {
+            subject: Subject::Node(NodeId::new(1)),
+            adopt: None,
+        },
+        when: None,
+    }
+}
+
+/// The send of request `number`, asking `batch`.
+fn send_batch(number: u64, batch: Batch) -> Effect {
+    Effect::Queue(QueueEffect::Send {
+        to: OUTPOST,
+        ask: Ask {
+            number: RequestNumber(number),
+            window: WINDOW.handle,
+            verdict: WindowVerdict::Msaa,
+            request: batch.into(),
+        },
+    })
+}
+
+/// A caret read's result.
+fn caret_done() -> StepOutcome {
+    let point = HeldPoint {
+        anchor: verbatim_model::TextAnchor(4),
+        edges: Edges::default(),
+    };
+    StepOutcome::Done(Done::Caret(CaretAt {
+        caret: point,
+        selection: None,
+        held: verbatim_model::TextAnchor(5),
+        offsets: None,
+    }))
+}
+
+/// The answer to request `number`: these steps' outcomes.
+fn steps(number: u64, outcomes: Vec<StepOutcome>) -> Input<Entry> {
+    answer(OUTPOST, number, WireOutcome::Result(Reply::Steps(outcomes)))
+}
+
+/// A batch is asked as one request and its answer read step by step, each
+/// outcome of its own step's kind.
+#[test]
+fn a_batch_is_asked_as_one_request_and_read_by_its_handles() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::Entry(Entry::Batch)),
+        [send_batch(1, focus_and_caret())]
+    );
+    assert_eq!(
+        feed(
+            &mut core,
+            2_000,
+            steps(
+                1,
+                vec![StepOutcome::NotThere(Missing::Object), caret_done()]
+            )
+        ),
+        [said("in front false, focus not there, caret done")]
+    );
+}
+
+/// An answer that does not fit the batch sent, a step's result of another
+/// operation's kind or a step too few, is undecodable.
+#[test]
+fn an_answer_that_does_not_fit_its_batch_is_undecodable() {
+    for outcomes in [vec![caret_done(), caret_done()], vec![StepOutcome::Failed]] {
+        let mut core = core_with(IN_FRONT);
+        assert_eq!(
+            feed(&mut core, 1_000, Input::Entry(Entry::Batch)),
+            [send_batch(1, focus_and_caret())]
+        );
+        assert_eq!(
+            feed(&mut core, 2_000, steps(1, outcomes)),
+            [
+                Effect::Queue(QueueEffect::Undecodable(RequestNumber(1))),
+                said("Refused(Undecodable)"),
+            ]
+        );
+    }
+}
+
+/// A batch whose first step reads the application's focus takes what the
+/// shell read in front, no step of it run.
+#[test]
+fn a_batch_reading_the_focus_first_takes_what_is_in_front() {
+    let mut core = core_with(IN_FRONT);
+    assert_eq!(
+        feed(&mut core, 1_000, Input::Entry(Entry::Batch)),
+        [send_batch(1, focus_and_caret())]
+    );
+    assert_eq!(
+        feed(
+            &mut core,
+            1_500,
+            Input::InFront {
+                number: RequestNumber(1),
+                front: verbatim_model::request::Front::Hung,
+            }
+        ),
+        [said("in front true, focus skipped, caret skipped")]
+    );
+}
+
+/// In the loop that numbers its batches, the first batch's handle given to
+/// the second leaves its step off the second, and read from the second's
+/// answers is failed: each a defect, logged.
+#[test]
+fn a_numbered_batch_takes_no_handle_of_another() {
+    let mut core = core_with(IN_FRONT);
+    let one_caret = Batch {
+        steps: vec![caret_step()],
+        placement: Placement::Queue,
+        spare: None,
+    };
+    assert_eq!(
+        feed(&mut core, 1_000, Input::Entry(Entry::Numbered)),
+        [send_batch(1, one_caret.clone())]
+    );
+    let foreign = Effect::Queue(QueueEffect::ForeignHandle {
+        batch: Some(2),
+        handle: Some(1),
+    });
+    assert_eq!(
+        feed(&mut core, 2_000, steps(1, vec![caret_done()])),
+        [send_batch(2, one_caret), foreign.clone()]
+    );
+    assert_eq!(
+        feed(&mut core, 3_000, steps(2, vec![caret_done()])),
+        [said("own done, another's failed"), foreign]
+    );
 }

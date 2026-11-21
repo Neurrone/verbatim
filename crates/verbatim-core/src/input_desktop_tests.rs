@@ -89,13 +89,15 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
     .into_iter()
     .filter_map(|said| match said {
         Said::StopSpeech => Some("cut".to_owned()),
-        Said::Queue(QueueEffect::Send { to, ask }) => Some(match ask.request {
-            Wire::Follow(Follow { node }) => format!("send {:?} Follow {node:?}", to.reader),
-            Wire::CurrentFocus { known, .. } => {
-                format!("send {:?} CurrentFocus known {}", to.reader, known.len())
-            }
-            _ => format!("send {:?} other", to.reader),
-        }),
+        Said::Queue(QueueEffect::Send { to, ask }) => {
+            Some(match crate::event_queue::legacy_for_tests(&ask.request) {
+                Wire::Follow(Follow { node }) => format!("send {:?} Follow {node:?}", to.reader),
+                Wire::CurrentFocus { known, .. } => {
+                    format!("send {:?} CurrentFocus known {}", to.reader, known.len())
+                }
+                _ => format!("send {:?} other", to.reader),
+            })
+        }
         Said::Speak(utterance, _) => Some(
             utterance
                 .segments

@@ -105,10 +105,12 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     let mut step = Step::default();
     for effect in effects {
         match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
-                Wire::Text { op, .. } => step.text.push((ask.number.0, op)),
-                _ => step.other += 1,
-            },
+            Effect::Queue(QueueEffect::Send { ask, .. }) => {
+                match crate::event_queue::legacy_for_tests(&ask.request) {
+                    Wire::Text { op, .. } => step.text.push((ask.number.0, op)),
+                    _ => step.other += 1,
+                }
+            }
             Said::Speak(utterance, _) => step.said.push(
                 utterance
                     .segments
@@ -877,10 +879,12 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
     )
     .unwrap();
     effects.into_iter().find_map(|effect| match effect {
-        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
-            Wire::MsaaRun(run) => Some(run.details),
-            _ => None,
-        },
+        Effect::Queue(QueueEffect::Send { ask, .. }) => {
+            match crate::event_queue::legacy_for_tests(&ask.request) {
+                Wire::MsaaRun(run) => Some(run.details),
+                _ => None,
+            }
+        }
         _ => None,
     })
 }

@@ -70,14 +70,14 @@ impl Request for FocusProperties {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Properties {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Properties {
             node: self.node,
             set: self.set.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,

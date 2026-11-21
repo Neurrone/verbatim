@@ -973,7 +973,7 @@ impl SrState {
         // waiting or out, and a caret key bound at its press to a node that
         // may no longer be the focus (design, "Held anchors").
         for request in self.queue.requests() {
-            if let Some((node, _)) = crate::text_facts::named_by(request) {
+            for (node, _) in crate::text_facts::named_by(request) {
                 insert(node);
             }
         }
@@ -1115,7 +1115,7 @@ impl SrState {
             }
         }
         for request in self.queue.requests() {
-            if let Some((node, anchors)) = crate::text_facts::named_by(request) {
+            for (node, anchors) in crate::text_facts::named_by(request) {
                 for anchor in anchors {
                     insert(node, TextPosition::at(anchor));
                 }

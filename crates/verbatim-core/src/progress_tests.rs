@@ -31,13 +31,15 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
-                Wire::ReadObject(read) => format!(
-                    "send {:?} {} ReadObject {:?} {:?}",
-                    to.reader, ask.number.0, read.object, read.set
-                ),
-                other => format!("send {:?} {} {other:?}", to.reader, ask.number.0),
-            }),
+            Effect::Queue(QueueEffect::Send { to, ask }) => {
+                Some(match &crate::event_queue::legacy_for_tests(&ask.request) {
+                    Wire::ReadObject(read) => format!(
+                        "send {:?} {} ReadObject {:?} {:?}",
+                        to.reader, ask.number.0, read.object, read.set
+                    ),
+                    other => format!("send {:?} {} {other:?}", to.reader, ask.number.0),
+                })
+            }
             Effect::PlayEarcon(earcon) => Some(format!("{earcon:?}")),
             Effect::Speak(utterance, _) => Some(
                 utterance

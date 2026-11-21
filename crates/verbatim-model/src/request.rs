@@ -5,15 +5,17 @@
 //! Every call into an application is made for a request from Core; the
 //! request carries what it needs and gets one answer, with one of five
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
-//! features and the extension surface ([`Request`]): properties of an
-//! object, navigation, find a descendant by property, a node's children,
-//! text reads and actions, and one generic read of the object an event
-//! names ([`ReadObject`]). A new command adds no kind of request.
+//! features and the extension surface: a batch of operations from one
+//! closed list ([`crate::batch`]). A new command adds no kind of request.
+//! The kinds of request of the shared list before it ([`Request`]) are
+//! carried beside it until each is converted to a batch
+//! ([`Question::Legacy`]).
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::{Batch, Malformed, Placement, StepOutcome};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
 use crate::tell::ElementToken;
 use crate::{
@@ -73,7 +75,52 @@ pub struct Ask {
     /// probes, and Core takes nothing from its answer about the window.
     pub verdict: WindowVerdict,
     /// What is asked.
-    pub request: Request,
+    pub request: Question,
+}
+
+/// What a request asks: a batch, or one of the kinds of request each later
+/// step of the request list's build converts to a batch and deletes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Question {
+    /// A batch of operations.
+    Batch(Batch),
+    /// A kind of request not yet converted to a batch; the last of them,
+    /// the terminal's three text operations, go with the terminal's
+    /// rebuild.
+    Legacy(Request),
+}
+
+impl From<Request> for Question {
+    fn from(request: Request) -> Self {
+        Self::Legacy(request)
+    }
+}
+
+impl From<Batch> for Question {
+    fn from(batch: Batch) -> Self {
+        Self::Batch(batch)
+    }
+}
+
+impl Question {
+    /// The kind of request it is, `None` for a batch.
+    #[must_use]
+    pub const fn legacy(&self) -> Option<&Request> {
+        match self {
+            Self::Legacy(request) => Some(request),
+            Self::Batch(_) => None,
+        }
+    }
+
+    /// Whether Core asks it from outside the event queue
+    /// ([`Request::outside_the_queue`], [`Placement::Outside`]).
+    #[must_use]
+    pub fn outside_the_queue(&self) -> bool {
+        match self {
+            Self::Batch(batch) => batch.placement == Placement::Outside,
+            Self::Legacy(request) => request.outside_the_queue(),
+        }
+    }
 }
 
 /// Core's backend verdict for a request's window as it is sent
@@ -875,6 +922,9 @@ pub enum Reply {
     /// when the window's top-level window is hidden and its client object's
     /// role is a dialog's: that window's facts, and nothing read.
     HiddenDialog(NodeWindow),
+    /// The answer to a batch ([`Question::Batch`]): one outcome per step,
+    /// in order. Once the old kinds are gone a result is this alone.
+    Steps(Vec<StepOutcome>),
 }
 
 /// Why a reader refused a request.
@@ -888,8 +938,12 @@ pub enum Refusal {
     /// The probe found the window read through MSAA, so a UI Automation
     /// completion of it is not made.
     ReadThroughMsaa,
-    /// The object does not support what was asked.
+    /// The object does not support what was asked; a reader that does
+    /// not yet run batches refuses every batch so.
     Unsupported,
+    /// The batch did not parse ([`crate::batch::parse`]), and none of it
+    /// ran: a defect of Core's.
+    Malformed(Malformed),
 }
 
 /// The five outcomes of a request.
@@ -937,7 +991,14 @@ impl Ask {
                 }
             }
         }
-        match &mut self.request {
+        let request = match &mut self.request {
+            Question::Batch(batch) => {
+                batch.visit_nodes(&mut unstamp);
+                return;
+            }
+            Question::Legacy(request) => request,
+        };
+        match request {
             Request::ReadObject(read) => {
                 if let ObjectRef::Node(node) = &mut read.object {
                     unstamp(node);
@@ -1022,56 +1083,30 @@ impl Answer {
     /// [`crate::protocol::OutpostToCore::assign_outpost`] stamps every
     /// message on an outpost's pipe.
     pub fn assign_outpost(&mut self, outpost: crate::OutpostId) {
-        self.visit_nodes(&mut |node| *node = node.with_outpost(outpost));
+        self.visit(&mut |node| *node = node.with_outpost(outpost), &mut |_| {});
     }
 
-    /// The node ids and selection baselines the answer carries, in order,
-    /// but for a text reply's anchors, which the protocol's own walk of a
-    /// text reply names.
+    /// The node ids and text anchors the answer carries, in order, but for
+    /// a text reply's anchors, which the protocol's own walk of a text
+    /// reply names.
     #[must_use]
     pub fn named(&self) -> (Vec<NodeId>, Vec<TextAnchor>) {
         let mut copy = self.clone();
         let mut nodes = Vec::new();
-        copy.visit_nodes(&mut |node| nodes.push(*node));
         let mut anchors = Vec::new();
-        if let Outcome::Result(reply) = &self.outcome {
-            let mut caret = |caret: &FocusCaret| {
-                if let FocusCaret::Read(read) = caret {
-                    anchors.push(read.caret.line.start);
-                    if let Some(selection) = &read.caret.selection {
-                        anchors.push(selection.range.start.anchor);
-                        anchors.push(selection.range.end.anchor);
-                    }
-                    anchors.push(read.baseline);
-                }
-            };
-            match reply {
-                Reply::Focus(focus) => caret(&focus.caret),
-                Reply::Candidate(answer) => {
-                    if let Some(focus) = &answer.read {
-                        caret(&focus.caret);
-                    }
-                }
-                Reply::Object(_)
-                | Reply::Properties(_)
-                | Reply::Navigated(_)
-                | Reply::Found(_)
-                | Reply::Children(_)
-                | Reply::Text(_)
-                | Reply::Activated(_)
-                | Reply::Followed
-                | Reply::CandidateSame
-                | Reply::Tree(_)
-                | Reply::ShellItems(_)
-                | Reply::ShellItemPosition(_)
-                | Reply::HiddenDialog(_) => {}
-            }
-        }
+        copy.visit(&mut |node| nodes.push(*node), &mut |anchor| {
+            anchors.push(*anchor);
+        });
         (nodes, anchors)
     }
 
-    /// Calls `visit` on every node id the answer carries.
-    fn visit_nodes(&mut self, visit: &mut dyn FnMut(&mut NodeId)) {
+    /// Calls `nodes` on every node id and `anchors` on every text anchor
+    /// the answer carries, but for a text reply's anchors.
+    fn visit(
+        &mut self,
+        nodes: &mut dyn FnMut(&mut NodeId),
+        anchors: &mut dyn FnMut(&mut TextAnchor),
+    ) {
         fn read(read: &mut NodeRead, visit: &mut dyn FnMut(&mut NodeId)) {
             if let Some(node) = &mut read.node {
                 visit(node);
@@ -1083,42 +1118,34 @@ impl Answer {
                 tree(child, visit);
             }
         }
-        fn focus(focus: &mut FocusRead, visit: &mut dyn FnMut(&mut NodeId)) {
-            read(&mut focus.focus.read, visit);
-            for ancestor in &mut focus.ancestors {
-                read(&mut ancestor.node.read, visit);
-            }
-            if let Some(foreground) = &mut focus.foreground {
-                read(&mut foreground.read, visit);
-            }
-        }
         let Outcome::Result(reply) = &mut self.outcome else {
             return;
         };
         match reply {
             Reply::Object(object) => {
-                read(&mut object.object, visit);
+                read(&mut object.object, nodes);
                 for node in object
                     .descendants
                     .iter_mut()
                     .chain(object.ancestors.iter_mut())
                 {
-                    read(node, visit);
+                    read(node, nodes);
                 }
             }
-            Reply::Focus(read) => focus(read, visit),
+            Reply::Focus(focus) => focus.visit(nodes, anchors),
             Reply::Candidate(answer) => {
-                if let Some(read) = &mut answer.read {
-                    focus(read, visit);
+                if let Some(focus) = &mut answer.read {
+                    focus.visit(nodes, anchors);
                 }
             }
-            Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, visit),
+            Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, nodes),
             Reply::Children(children) => {
                 for child in children {
-                    read(child, visit);
+                    read(child, nodes);
                 }
             }
-            Reply::Tree(dumped) => tree(&mut dumped.root, visit),
+            Reply::Tree(dumped) => tree(&mut dumped.root, nodes),
+            Reply::Steps(outcomes) => crate::batch::visit_outcomes(outcomes, nodes, anchors),
             Reply::Navigated(None)
             | Reply::Found(None)
             | Reply::Properties(_)
@@ -1129,6 +1156,42 @@ impl Answer {
             | Reply::ShellItems(_)
             | Reply::ShellItemPosition(_)
             | Reply::HiddenDialog(_) => {}
+        }
+    }
+}
+
+impl FocusRead {
+    /// Calls `nodes` on every node id the read carries, the focus, its
+    /// ancestors and the foreground, and `anchors` on every text anchor of
+    /// its caret: its line's start, the selection's ends and the baseline.
+    pub fn visit(
+        &mut self,
+        nodes: &mut dyn FnMut(&mut NodeId),
+        anchors: &mut dyn FnMut(&mut TextAnchor),
+    ) {
+        let reads = std::iter::once(&mut self.focus.read)
+            .chain(
+                self.ancestors
+                    .iter_mut()
+                    .map(|ancestor| &mut ancestor.node.read),
+            )
+            .chain(
+                self.foreground
+                    .iter_mut()
+                    .map(|foreground| &mut foreground.read),
+            );
+        for read in reads {
+            if let Some(node) = &mut read.node {
+                nodes(node);
+            }
+        }
+        if let FocusCaret::Read(read) = &mut self.caret {
+            anchors(&mut read.caret.line.start);
+            if let Some(selection) = &mut read.caret.selection {
+                anchors(&mut selection.range.start.anchor);
+                anchors(&mut selection.range.end.anchor);
+            }
+            anchors(&mut read.baseline);
         }
     }
 }
@@ -1391,7 +1454,7 @@ pub enum QueueInput {
         /// target's main window for a tree dump.
         window: NodeWindow,
         /// The request, one of the shared list's.
-        request: Request,
+        request: Question,
     },
     /// The asker of a request outside the queue no longer needs it: its
     /// dialog closed or its client left.
@@ -1682,6 +1745,16 @@ pub enum QueueEffect {
     /// A frame of an instance that is not its reader's current one was
     /// dropped: log it.
     StaleFrame(Instance),
+    /// A handle of one numbered batch was given to another, a defect in
+    /// Core: log it. The step that took it, or the read of it, was
+    /// answered failed.
+    ForeignHandle {
+        /// The number of the batch the handle was given to, `None` for a
+        /// batch not numbered.
+        batch: Option<u64>,
+        /// The number of the batch the handle belongs to, likewise.
+        handle: Option<u64>,
+    },
 }
 
 #[cfg(test)]
@@ -1756,7 +1829,8 @@ mod tests {
                 descendants: false,
                 walk: Some(vec![KnownAncestor::Uia(RuntimeId(vec![42, 1]))]),
                 purpose: Purpose::Focus,
-            }),
+            })
+            .into(),
         };
         let json = serde_json::to_string(&ask).unwrap();
         assert_eq!(serde_json::from_str::<Ask>(&json).unwrap(), ask);

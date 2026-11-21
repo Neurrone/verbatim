@@ -83,15 +83,15 @@ impl Request for Navigate {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Navigate {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Navigate {
             node: self.node,
             direction: self.direction,
             set: self.set.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Navigated(read) => Some(read),
             _ => None,
@@ -117,11 +117,11 @@ impl Request for Activate {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Activate { node: self.node }
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Activate { node: self.node })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Activated(action) => Some(action),
             _ => None,
@@ -149,14 +149,14 @@ impl Request for Properties {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Properties {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Properties {
             node: self.node,
             set: self.set.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,

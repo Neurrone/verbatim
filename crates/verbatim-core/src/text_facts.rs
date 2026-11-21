@@ -5,7 +5,7 @@
 //! facts").
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{FocusCaret, Request as Wire};
+use verbatim_model::request::{FocusCaret, Question, Request as Wire};
 use verbatim_model::{
     EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextPoint, TextProvider, TextThrough,
 };
@@ -135,9 +135,19 @@ pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
         .map(|baseline| (focus.context.snapshot.id, baseline))
 }
 
-/// The node `request` is about and every text anchor it names, which stay
-/// held while it waits or is out.
-pub(crate) fn named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
+/// The nodes whose text `request` is about, each with the text anchors it
+/// names there, which stay held while it waits or is out: a batch's by its
+/// one list ([`verbatim_model::batch::Batch::anchors`]).
+pub(crate) fn named_by(request: &Question) -> Vec<(NodeId, Vec<TextAnchor>)> {
+    match request {
+        Question::Batch(batch) => batch.anchors(),
+        Question::Legacy(request) => legacy_named_by(request).into_iter().collect(),
+    }
+}
+
+/// The node a kind of request not yet converted to a batch is about, and
+/// every text anchor it names.
+fn legacy_named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
     // A caret key's confirmation keeps the key's starting point held.
     if let Wire::MsaaRun(run) = request {
         return run.spare.map(|(node, anchor)| (node, vec![anchor]));

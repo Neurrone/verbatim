@@ -22,7 +22,8 @@ fn ask(number: u64) -> Input {
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
             depth: verbatim_model::request::FocusDepth::Full,
-        },
+        }
+        .into(),
     }))
 }
 
@@ -268,7 +269,7 @@ fn follow(number: u64, window: u64) -> Input {
         number: RequestNumber(number),
         window: WindowHandle(window),
         verdict: WindowVerdict::Uia,
-        request: CoreRequest::Follow(verbatim_model::request::Follow { node: None }),
+        request: CoreRequest::Follow(verbatim_model::request::Follow { node: None }).into(),
     }))
 }
 
@@ -291,7 +292,7 @@ fn asked_on(number: u64, window: u64, request: CoreRequest) -> Input {
         number: RequestNumber(number),
         window: WindowHandle(window),
         verdict: WindowVerdict::Msaa,
-        request,
+        request: request.into(),
     }))
 }
 

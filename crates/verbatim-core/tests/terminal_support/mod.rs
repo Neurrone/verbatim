@@ -717,7 +717,7 @@ impl Session {
     /// answers one; any other "not responding".
     fn answer(&mut self, ask: Ask) {
         if self.hung {
-            let refused = match &ask.request {
+            let refused = match legacy(&ask.request) {
                 Wire::CurrentFocus { .. } => QueueInput::InFront {
                     number: ask.number,
                     front: verbatim_model::request::Front::Hung,
@@ -729,7 +729,7 @@ impl Session {
             self.take(effects, None);
             return;
         }
-        let outcome = match &ask.request {
+        let outcome = match legacy(&ask.request) {
             Wire::Follow(_) => Outcome::Result(Reply::Followed),
             Wire::CurrentFocus { .. } => Outcome::Result(Reply::Candidate(
                 verbatim_model::request::CandidateAnswer::focused(focus_read(
@@ -871,7 +871,7 @@ impl Session {
         let Wire::Text {
             op: TextOp::ReadTerminal(read),
             ..
-        } = &ask.request
+        } = legacy(&ask.request)
         else {
             panic!("a read held back");
         };
@@ -885,7 +885,7 @@ impl Session {
 
     /// Records what `ask` asks of the terminal.
     fn record(&mut self, ask: &Ask) {
-        let Wire::Text { op, .. } = &ask.request else {
+        let Wire::Text { op, .. } = legacy(&ask.request) else {
             return;
         };
         let asked = match op {
@@ -1069,7 +1069,7 @@ impl Session {
         self.take(effects, None);
         let ask = self.pending.pop_front().expect("the read after the return");
         assert!(
-            matches!(ask.request, Wire::CurrentFocus { .. }),
+            matches!(legacy(&ask.request), Wire::CurrentFocus { .. }),
             "the read after the return: {ask:?}"
         );
         let mut read = focus_read(self.depth, self.console);
@@ -1095,4 +1095,12 @@ impl Session {
     pub fn requests(&mut self) -> Vec<Asked> {
         std::mem::take(&mut self.requests)
     }
+}
+
+/// `question` as one of the kinds of request not yet converted to a
+/// batch: these tests state today's requests, and a batch fails them.
+fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+    question
+        .legacy()
+        .expect("a kind of request, where no feature asks a batch yet")
 }

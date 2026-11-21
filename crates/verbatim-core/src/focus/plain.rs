@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
-    ObjectRead, ObjectRef, Outcome as WireOutcome, Refusal, RelationFound, RelationQuery, Reply,
-    Request as Wire,
+    ObjectRead, ObjectRef, Outcome as WireOutcome, Question, Refusal, RelationFound, RelationQuery,
+    Reply, Request as Wire,
 };
 use verbatim_model::{
     Issuer, NodeId, Pid, Role, State, StateSet, TextReply, WindowFacts, WindowHandle,
@@ -313,7 +313,23 @@ fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
 /// given at once from `reader`'s facts: "not there" for a node of a
 /// generation no longer held. `None` for a request a reader process
 /// answers.
-pub(crate) fn answer(reader: &PlainReader, request: &Wire) -> Option<WireOutcome> {
+pub(crate) fn answer(reader: &PlainReader, request: &Question) -> Option<WireOutcome> {
+    let request = match request {
+        Question::Legacy(request) => request,
+        // A batch naming a plain node is refused until the plain reader
+        // answers operations from its facts, the readers' step of the
+        // request list's build.
+        Question::Batch(batch) => {
+            let plain = batch.steps.iter().any(|step| {
+                matches!(
+                    step.op.subject(),
+                    Some(verbatim_model::batch::Subject::Node(node))
+                        if matches!(node.issuer(), Issuer::Plain(_))
+                )
+            });
+            return plain.then_some(WireOutcome::Refused(Refusal::Unsupported));
+        }
+    };
     let (node, asked) = subject(request)?;
     let Issuer::Plain(_) = node.issuer() else {
         return None;

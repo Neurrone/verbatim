@@ -431,6 +431,7 @@ impl Seam {
             | QueueEffect::AnswerDropped { .. }
             | QueueEffect::Undecodable(_)
             | QueueEffect::Mismatch { .. }
+            | QueueEffect::ForeignHandle { .. }
             | QueueEffect::StartOutpost(_)
             | QueueEffect::EndOutpost(_)
             | QueueEffect::StaleFrame(_) => Vec::new(),
@@ -493,7 +494,7 @@ impl Seam {
     /// the key at the front; the focus's completion the script's; the rest
     /// at once.
     fn latency(&self, ask: &Ask) -> Us {
-        match &ask.request {
+        match legacy(&ask.request) {
             Wire::Text {
                 op: TextOp::StartingRead(_),
                 ..
@@ -604,7 +605,7 @@ impl Seam {
 
     /// What `verbatim-outpost`'s program answers to `ask`, read from `app`.
     fn reply(&mut self, ask: &Ask, app: &App) -> Reply {
-        match &ask.request {
+        match legacy(&ask.request) {
             Wire::CurrentFocus { .. } => {
                 Reply::Candidate(CandidateAnswer::focused(self.field_read(app)))
             }
@@ -1030,4 +1031,12 @@ fn heard(parts: &[SegmentContent]) -> Heard {
         ] => Heard::Focus(name.clone()),
         other => Heard::Other(format!("{other:?}")),
     }
+}
+
+/// `question` as one of the kinds of request not yet converted to a
+/// batch: this seam states today's requests, and a batch fails it.
+fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+    question
+        .legacy()
+        .expect("a kind of request, where no feature asks a batch yet")
 }

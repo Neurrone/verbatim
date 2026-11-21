@@ -46,14 +46,14 @@ impl Request for FollowUp {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Text {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Text {
             node: self.node,
             op: self.op.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
             reply @ (TextReply::TerminalHistory { .. } | TextReply::TerminalFound { .. }) => {
                 Some(reply)
@@ -334,6 +334,23 @@ mod tests {
     /// reply of another op's or request's kind is malformed.
     #[test]
     fn a_follow_ups_failures_decode_and_another_reply_does_not() {
+        let follow_up = FollowUp {
+            window: crate::event_queue::RequestWindow {
+                handle: verbatim_model::WindowHandle(1),
+                top_level: verbatim_model::WindowHandle(1),
+                root_owner: verbatim_model::WindowHandle(1),
+                process: verbatim_model::Pid(1),
+                thread: 1,
+                by_class: None,
+            },
+            node: NodeId::new(1),
+            op: TextOp::TerminalHistory {
+                above: 0,
+                whole: false,
+                start: verbatim_model::TextAnchor(1),
+                height: 1,
+            },
+        };
         for (reply, failure) in [
             (TextReply::NoText, TextFailure::NoText),
             (TextReply::Unsupported, TextFailure::Unsupported),
@@ -346,18 +363,18 @@ mod tests {
             (TextReply::Unanswered, TextFailure::Unanswered),
         ] {
             assert_eq!(
-                FollowUp::decode(Reply::Text(reply)),
+                follow_up.decode(Reply::Text(reply)),
                 Some(Err(failure)),
                 "{failure:?}"
             );
         }
         assert_eq!(
-            FollowUp::decode(Reply::Text(TextReply::Range {
+            follow_up.decode(Reply::Text(TextReply::Range {
                 text: String::new(),
                 truncated: false,
             })),
             None
         );
-        assert_eq!(FollowUp::decode(Reply::Followed), None);
+        assert_eq!(follow_up.decode(Reply::Followed), None);
     }
 }

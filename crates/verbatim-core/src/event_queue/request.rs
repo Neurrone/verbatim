@@ -5,7 +5,7 @@
 
 use std::fmt::Debug;
 
-use verbatim_model::request::{CancelReason, Front, Refusal, Reply, Request as Wire};
+use verbatim_model::request::{CancelReason, Front, Question, Refusal, Reply};
 
 use super::{Reader, RequestWindow};
 
@@ -19,19 +19,20 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     /// foreground rule tests.
     fn window(&self) -> RequestWindow;
     /// The request as it is sent.
-    fn wire(&self) -> Wire;
-    /// A result as it arrived, decoded. The reply type holds every result
-    /// a correct reader can answer the request with, its failures
-    /// included (a text request's [`verbatim_model::TextFailure`]), so
+    fn wire(&self) -> Question;
+    /// A result as it arrived, decoded against the request sent. The
+    /// reply type holds every result a correct reader can answer the
+    /// request with, its failures included (a text request's
+    /// [`verbatim_model::TextFailure`], a batch's step outcomes), so
     /// `None` is only for a malformed answer: a result of another
-    /// request's kind.
-    fn decode(reply: Reply) -> Option<Self::Reply>;
+    /// request's kind or shape.
+    fn decode(&self, reply: Reply) -> Option<Self::Reply>;
 
     /// The shell's answer to a read of an application's current focus it
     /// refused because the window was hung, what it read in front,
     /// decoded: only that read's reply holds it, so for any other request
     /// it is `None`, a defect, logged as an undecodable answer.
-    fn decode_in_front(front: Front) -> Option<Self::Reply> {
+    fn decode_in_front(&self, front: Front) -> Option<Self::Reply> {
         let _ = front;
         None
     }

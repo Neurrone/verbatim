@@ -2,7 +2,7 @@
 //! (`docs/design/readers-tell-core-asks-build1.md`, Table 14): queued in
 //! the order Core sent them, the event queue's requests (`Follow` and a
 //! terminal's baseline among them) ahead of every request from outside
-//! the queue still waiting ([`Request::outside_the_queue`]: a tree dump,
+//! the queue still waiting ([`Question::outside_the_queue`]: a tree dump,
 //! the taskbar's reads, a terminal's reads for its output), so that keys
 //! never wait behind them; run one at a time ahead of the outpost's own
 //! work, each answered once with one of the five outcomes.
@@ -27,13 +27,20 @@
 use std::collections::VecDeque;
 
 use verbatim_model::WindowHandle;
-use verbatim_model::request::{Answer, Ask, Cancel, ObjectRef, Outcome, Request, RequestNumber};
+use verbatim_model::request::{
+    Answer, Ask, Cancel, ObjectRef, Outcome, Question, Request, RequestNumber,
+};
 
 /// The window of the MSAA ids `request`'s subject is named by, for the
 /// kinds that name one: a read of an object by its ids and a run's
 /// candidate. Every kind is classed, so a new one is classed where it is
 /// added.
-fn ids_window(request: &Request) -> Option<WindowHandle> {
+fn ids_window(request: &Question) -> Option<WindowHandle> {
+    // A batch is refused unread until the outpost runs batches, which
+    // names the window of its MSAA subjects here.
+    let Question::Legacy(request) = request else {
+        return None;
+    };
     match request {
         Request::ReadObject(read) => match read.object {
             ObjectRef::Msaa { window, .. } => Some(window),
@@ -81,9 +88,9 @@ impl Asks {
     /// answers are returned.
     pub fn push(&mut self, ask: Box<Ask>) -> Vec<Answer> {
         let mut replaced = Vec::new();
-        if matches!(ask.request, Request::Follow(_)) {
+        if matches!(ask.request, Question::Legacy(Request::Follow(_))) {
             self.queued.retain(|queued| {
-                let follow = matches!(queued.request, Request::Follow(_));
+                let follow = matches!(queued.request, Question::Legacy(Request::Follow(_)));
                 if follow {
                     replaced.push(ended(queued.number, "replaced by a newer Follow"));
                 }
@@ -189,7 +196,8 @@ mod tests {
                 known: Vec::new(),
                 details: verbatim_model::TextDetails::NONE,
                 depth: verbatim_model::request::FocusDepth::Full,
-            },
+            }
+            .into(),
         })
     }
 
@@ -198,7 +206,7 @@ mod tests {
             number: RequestNumber(number),
             window: WindowHandle(window),
             verdict: WindowVerdict::Uia,
-            request: Request::Follow(Follow { node: None }),
+            request: Request::Follow(Follow { node: None }).into(),
         })
     }
 
@@ -211,7 +219,7 @@ mod tests {
             number: RequestNumber(number),
             window: WindowHandle(1),
             verdict: WindowVerdict::Uia,
-            request: Request::DumpTree { locations: false },
+            request: Request::DumpTree { locations: false }.into(),
         })
     }
 

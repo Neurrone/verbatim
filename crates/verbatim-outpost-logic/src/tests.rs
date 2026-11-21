@@ -125,7 +125,8 @@ fn core_ask(number: u64) -> Input {
             known: Vec::new(),
             details: verbatim_model::TextDetails::NONE,
             depth: verbatim_model::request::FocusDepth::Full,
-        },
+        }
+        .into(),
     }))
 }
 

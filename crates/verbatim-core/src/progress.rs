@@ -178,7 +178,7 @@ fn read(facts: &mut SrState, ids: MsaaIds, window: RequestWindow) {
     facts.wants.want(
         Some(token),
         (Reader::Listener, window),
-        Wire::ReadObject(read),
+        Wire::ReadObject(read).into(),
     );
 }
 

@@ -1142,7 +1142,10 @@ fn the_recorded_import_dialog_is_said_with_its_text_at_its_show() {
         .flatten()
         .find_map(|effect| match effect {
             Effect::Queue(QueueEffect::Send { ask, .. })
-                if matches!(ask.request, Request::CurrentFocus { .. }) =>
+                if matches!(
+                    ask.request,
+                    verbatim_model::request::Question::Legacy(Request::CurrentFocus { .. })
+                ) =>
             {
                 Some(ask.number)
             }

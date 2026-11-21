@@ -1110,11 +1110,11 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
     let counted = Rc::clone(&moves);
     core.observe_sends(Some(Box::new(move |ask, _| {
         if matches!(
-            &ask.request,
-            Request::Text {
+            ask.request.legacy(),
+            Some(Request::Text {
                 op: TextOp::MoveCaret(_),
                 ..
-            }
+            })
         ) {
             counted.set(counted.get() + 1);
         }

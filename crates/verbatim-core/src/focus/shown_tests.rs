@@ -299,9 +299,11 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { to, ask }) => {
-                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
-            }
+            Effect::Queue(QueueEffect::Send { to, ask }) => Some(format!(
+                "send {:?} {}",
+                to.reader,
+                sent(&crate::event_queue::legacy_for_tests(&ask.request))
+            )),
             Effect::Queue(QueueEffect::Cancel { to, cancel }) => {
                 Some(format!("cancel {:?} {:?}", to.reader, cancel.reason))
             }
@@ -612,8 +614,23 @@ fn the_same_dialog_postponed_again_keeps_the_older_fence() {
 fn a_hidden_dialog_answered_to_a_read_as_it_is_is_undecodable() {
     use super::super::retake::{AsItIs, CurrentFocusRead};
     use crate::event_queue::Request;
-    assert!(CurrentFocusRead::<AsItIs>::decode(hidden_dialog()).is_none());
-    let checked = CurrentFocusRead::<crate::focus::msaa_run::Full>::decode(hidden_dialog());
+    let window = crate::event_queue::RequestWindow::of_node(&window_of(5, 5, 5));
+    let as_it_is = CurrentFocusRead::<AsItIs> {
+        window,
+        known: Vec::new(),
+        details: verbatim_model::TextDetails::NONE,
+        set: Vec::new(),
+        depth: std::marker::PhantomData,
+    };
+    assert!(as_it_is.decode(hidden_dialog()).is_none());
+    let checking = CurrentFocusRead::<crate::focus::msaa_run::Full> {
+        window,
+        known: Vec::new(),
+        details: verbatim_model::TextDetails::NONE,
+        set: Vec::new(),
+        depth: std::marker::PhantomData,
+    };
+    let checked = checking.decode(hidden_dialog());
     assert!(matches!(checked, Some(super::Hidden::Dialog(_))));
 }
 
@@ -795,9 +812,11 @@ fn the_secure_desktop_while_postponed() {
         .said()
         .into_iter()
         .filter_map(|said| match said {
-            Said::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => {
-                Some(format!("send {:?} {}", to.reader, sent(&ask.request)))
-            }
+            Said::Queue(verbatim_model::request::QueueEffect::Send { to, ask }) => Some(format!(
+                "send {:?} {}",
+                to.reader,
+                sent(&crate::event_queue::legacy_for_tests(&ask.request))
+            )),
             _ => None,
         })
         .collect();

@@ -871,7 +871,10 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
             match effect {
                 Effect::Queue(QueueEffect::Send { ask, .. }) => {
                     asked += 1;
-                    out.push((ask.number.0, ask.request));
+                    out.push((
+                        ask.number.0,
+                        crate::event_queue::legacy_for_tests(&ask.request),
+                    ));
                 }
                 verbatim_model::Effect::Speak(utterance, _) => said.push(
                     utterance

@@ -147,17 +147,17 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::CurrentFocus {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::CurrentFocus {
             hidden: D::HIDDEN,
             set: self.set.clone(),
             known: self.known.clone(),
             details: self.details,
             depth: D::DEPTH,
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         if D::HIDDEN == HiddenRoot::ReadAnyway && matches!(reply, Reply::HiddenDialog(_)) {
             return None;
         }
@@ -167,7 +167,7 @@ impl<D: FocusReadDepth> Request for CurrentFocusRead<D> {
         })
     }
 
-    fn decode_in_front(front: Front) -> Option<Self::Reply> {
+    fn decode_in_front(&self, front: Front) -> Option<Self::Reply> {
         Some(Hidden::Read(Focused::InFront(front)))
     }
 }

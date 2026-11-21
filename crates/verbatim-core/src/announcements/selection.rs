@@ -40,11 +40,13 @@ impl Request for ItemCompletion {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::CompleteUia(Box::new(self.complete.clone()))
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::CompleteUia(Box::new(
+            self.complete.clone(),
+        )))
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Object(read) => Some(read),
             _ => None,
@@ -74,14 +76,14 @@ impl Request for NodeProperties {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Properties {
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Properties {
             node: self.node,
             set: self.set.clone(),
-        }
+        })
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Properties(values) => Some(values),
             _ => None,

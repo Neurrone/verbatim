@@ -87,11 +87,11 @@ impl Request for FollowRequest {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::Follow(self.follow.clone())
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::Follow(self.follow.clone()))
     }
 
-    fn decode(reply: Reply) -> Option<()> {
+    fn decode(&self, reply: Reply) -> Option<()> {
         matches!(reply, Reply::Followed).then_some(())
     }
 }

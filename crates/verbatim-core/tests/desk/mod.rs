@@ -264,7 +264,7 @@ fn heard_of(effect: Effect) -> Option<Heard> {
         Effect::CopyToClipboard(text) => Some(Heard::Copied(text)),
         Effect::ForKey(_, effect) => heard_of(*effect),
         Effect::Queue(QueueEffect::Send { to, ask }) => {
-            Some(Heard::Sent(to.reader, kind(&ask.request)))
+            Some(Heard::Sent(to.reader, kind(legacy(&ask.request))))
         }
         Effect::Observed(_) | Effect::Queue(_) => None,
         other => panic!("an effect these tests do not expect: {other:?}"),
@@ -571,8 +571,10 @@ impl Desk {
                         pending.push(QueueInput::ReaderReady(app.instance()));
                     }
                     Effect::Queue(QueueEffect::Send { to, ask }) => {
-                        self.sent.push((ask.number.0, *to, ask.request.clone()));
-                        self.asked.push((ask.number.0, *to, ask.request.clone()));
+                        self.sent
+                            .push((ask.number.0, *to, legacy(&ask.request).clone()));
+                        self.asked
+                            .push((ask.number.0, *to, legacy(&ask.request).clone()));
                     }
                     Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = *wake,
                     Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
@@ -745,4 +747,12 @@ impl Desk {
     pub fn mark(&mut self, mark: verbatim_model::SpeechMark) -> Vec<Heard> {
         self.step(QueueInput::MarkReached(mark))
     }
+}
+
+/// `question` as one of the kinds of request not yet converted to a
+/// batch: these tests state today's requests, and a batch fails them.
+pub fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+    question
+        .legacy()
+        .expect("a kind of request, where no feature asks a batch yet")
 }

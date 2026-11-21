@@ -41,11 +41,11 @@ impl Request for ListenerRead {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::ReadObject(self.read.clone())
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::ReadObject(self.read.clone()))
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         match reply {
             Reply::Object(read) => Some(read),
             _ => None,
@@ -74,11 +74,13 @@ impl Request for Completion {
         self.window
     }
 
-    fn wire(&self) -> Wire {
-        Wire::CompleteUia(Box::new(self.complete.clone()))
+    fn wire(&self) -> verbatim_model::request::Question {
+        verbatim_model::request::Question::Legacy(Wire::CompleteUia(Box::new(
+            self.complete.clone(),
+        )))
     }
 
-    fn decode(reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
         Hidden::parse(reply, |reply| match reply {
             Reply::Focus(read) => Some(read),
             _ => None,

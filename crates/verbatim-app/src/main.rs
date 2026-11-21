@@ -1676,6 +1676,13 @@ impl ReducerThread<'_> {
                     "a malformed answer: its result is no reply its request can have"
                 );
             }
+            QueueEffect::ForeignHandle { batch, handle } => {
+                tracing::error!(target: verbatim_model::DEFECT_TARGET,
+                    ?batch,
+                    ?handle,
+                    "a handle of one numbered batch was given to another, a defect in Core"
+                );
+            }
             QueueEffect::Mismatch { replayed, original } => {
                 tracing::error!(target: verbatim_model::DEFECT_TARGET,
                     replayed,
@@ -1716,10 +1723,12 @@ impl ReducerThread<'_> {
         // reads it (Dickson, 2026-11-19).
         if matches!(
             ask.request,
-            verbatim_model::request::Request::CurrentFocus {
-                depth: verbatim_model::request::FocusDepth::FullIfFocused,
-                ..
-            }
+            verbatim_model::request::Question::Legacy(
+                verbatim_model::request::Request::CurrentFocus {
+                    depth: verbatim_model::request::FocusDepth::FullIfFocused,
+                    ..
+                }
+            )
         ) && hang_check::nothing_in_front()
         {
             self.follow_ups.push(queued(QueueInput::InFront {
@@ -1732,12 +1741,20 @@ impl ReducerThread<'_> {
             // A read of an application's current focus is answered with
             // what is in front, which Core judges; every other request is
             // answered "not responding".
-            let refused = match ask.request {
-                verbatim_model::request::Request::CurrentFocus { .. } => QueueInput::InFront {
+            let in_front = match &ask.request {
+                verbatim_model::request::Question::Legacy(request) => matches!(
+                    request,
+                    verbatim_model::request::Request::CurrentFocus { .. }
+                ),
+                verbatim_model::request::Question::Batch(batch) => batch.reads_focus_first(),
+            };
+            let refused = if in_front {
+                QueueInput::InFront {
                     number,
                     front: hang_check::front(),
-                },
-                _ => QueueInput::RefusedHung(number),
+                }
+            } else {
+                QueueInput::RefusedHung(number)
             };
             self.follow_ups.push(queued(refused));
             return;
@@ -1795,7 +1812,7 @@ impl ReducerThread<'_> {
                 &verbatim_win32::window_facts::SystemReads,
                 main,
             ),
-            request: verbatim_model::request::Request::DumpTree { locations },
+            request: verbatim_model::request::Request::DumpTree { locations }.into(),
         });
     }
 
@@ -1834,7 +1851,7 @@ impl ReducerThread<'_> {
                 &verbatim_win32::window_facts::SystemReads,
                 taskbar,
             ),
-            request,
+            request: request.into(),
         });
     }
 

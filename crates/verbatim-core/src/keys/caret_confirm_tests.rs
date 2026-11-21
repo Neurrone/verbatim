@@ -154,16 +154,25 @@ fn the_stage_is_derived_from_the_request_out() {
         })
     };
     assert_eq!(
-        CaretStage::of(&press, &run(Depth::Facts)),
+        CaretStage::of(
+            &press,
+            &verbatim_model::request::Question::from(run(Depth::Facts))
+        ),
         Some(CaretStage::Confirming)
     );
-    assert_eq!(CaretStage::of(&press, &run(Depth::Full)), None);
+    assert_eq!(
+        CaretStage::of(
+            &press,
+            &verbatim_model::request::Question::from(run(Depth::Full))
+        ),
+        None
+    );
     let watch = Wire::Text {
         node: node(2),
         op: watch(CaretMotion::NextCharacter, 5_000, true),
     };
     assert_eq!(
-        CaretStage::of(&press, &watch),
+        CaretStage::of(&press, &verbatim_model::request::Question::from(watch)),
         Some(CaretStage::Watching {
             bound_at_us: 105_000
         })

@@ -136,7 +136,7 @@ fn sent(effects: &[Effect], kind: fn(&Wire) -> bool) -> u64 {
     let numbers: Vec<u64> = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) if kind(&ask.request) => {
+            Effect::Queue(QueueEffect::Send { ask, .. }) if kind(legacy(&ask.request)) => {
                 Some(ask.number.0)
             }
             _ => None,
@@ -422,4 +422,12 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         large.log.last().map(|(_, effects)| effects.clone())
     );
     assert_eq!(small_bytes, large_bytes);
+}
+
+/// `question` as one of the kinds of request not yet converted to a
+/// batch: these tests state today's requests, and a batch fails them.
+fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+    question
+        .legacy()
+        .expect("a kind of request, where no feature asks a batch yet")
 }
