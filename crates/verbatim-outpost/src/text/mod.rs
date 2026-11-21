@@ -32,6 +32,7 @@
 pub mod check;
 mod color;
 pub mod edit;
+pub mod fused;
 pub mod held;
 pub mod ops;
 pub mod sentence;
@@ -892,7 +893,7 @@ impl<P: Clone> NodeText<'_, P> {
 
     /// What `position` names, with no call: a position kept, or one some
     /// text after a kept one; `None` when its anchor was forgotten.
-    fn point_from(&self, position: TextPosition) -> Option<PointFrom<P>> {
+    pub(crate) fn point_from(&self, position: TextPosition) -> Option<PointFrom<P>> {
         let key = (position.anchor.0, position.offset);
         if let Some(slot) = self.anchors.reported.get(&key) {
             return Some(PointFrom::At(slot.at.clone()));
@@ -1112,6 +1113,25 @@ fn chunk<S: TextSource>(
     (offset, at): (usize, S::Pos),
     (runs, formats): (Vec<(usize, usize, String)>, &[Formatting]),
 ) -> TextChunk {
+    chunk_from(
+        source,
+        anchors,
+        (unit, kind),
+        (offset, Some(at)),
+        (runs, formats),
+    )
+}
+
+/// [`chunk`], remembering the point at its offset as `at` only when that
+/// is known: a point not remembered is found from the chunk's start when
+/// a request names it.
+pub(crate) fn chunk_from<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (unit, kind): (&Unit<S::Pos>, TextUnit),
+    (offset, at): (usize, Option<S::Pos>),
+    (runs, formats): (Vec<(usize, usize, String)>, &[Formatting]),
+) -> TextChunk {
     let mut wanted = vec![offset];
     for (start, end, _) in &runs {
         wanted.push(*start);
@@ -1158,13 +1178,15 @@ fn chunk<S: TextSource>(
     let (first, last) = source.edges(unit, kind);
     let start = anchors.mint(unit.start.clone(), &text);
     let offset = u32::try_from(mapped[0]).unwrap_or(u32::MAX);
-    anchors.remember(
-        TextPosition {
-            anchor: start,
-            offset,
-        },
-        at,
-    );
+    if let Some(at) = at {
+        anchors.remember(
+            TextPosition {
+                anchor: start,
+                offset,
+            },
+            at,
+        );
+    }
     TextChunk {
         unit: kind,
         text,
@@ -1311,7 +1333,7 @@ fn report_for<S: TextSource>(
                 report: report.clone(),
             },
         ),
-        line: line.clone(),
+        line: Some(line.clone()),
         read_at_us,
         unit: None,
     });
@@ -1365,16 +1387,21 @@ fn format_span(unit: TextUnit) -> Option<FormatSpan> {
 /// character cut from its line, the unit it fetched when that is the same
 /// kind, or else its line.
 fn before_unit_text<P>(last: &LastRead<P>, unit: TextUnit) -> String {
+    let line = last.line.as_ref();
     if unit == TextUnit::Character {
-        let line = &last.line;
-        return verbatim_text::grapheme_at(&line.text, line.offset as usize)
-            .map(|range| line.text[range].to_owned())
+        return line
+            .and_then(|line| {
+                verbatim_text::grapheme_at(&line.text, line.offset as usize)
+                    .map(|range| line.text[range].to_owned())
+            })
             .unwrap_or_default();
     }
     last.unit
         .as_ref()
         .filter(|chunk| chunk.unit == unit)
-        .map_or_else(|| last.line.text.clone(), |chunk| chunk.text.clone())
+        .or(line)
+        .map(|chunk| chunk.text.clone())
+        .unwrap_or_default()
 }
 
 /// Whether caret states `a` and `b` have the same caret and selection.

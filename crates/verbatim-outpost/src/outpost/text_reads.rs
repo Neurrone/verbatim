@@ -618,6 +618,54 @@ pub(super) fn caret_step(
     })
 }
 
+/// A run of a batch's fusable text steps on UI Automation node `node_id`
+/// through the program builder ([`text::fused::run`]), `first` being the
+/// place of its first step and `earlier` the outcomes of the steps before
+/// it: each step's outcome, its anchors committed with the program's text
+/// writes. A `Caret` adopts the element of the caret tell it names first,
+/// as [`caret_step`] does. `None` when the node's text is not read through
+/// UI Automation or cannot be opened, for the steps to run one at a time.
+pub(super) fn fused_steps(
+    context: &RequestContext<'_>,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    (steps, first, earlier): (
+        &[verbatim_model::batch::Step],
+        usize,
+        &[verbatim_model::batch::StepOutcome],
+    ),
+) -> Option<Vec<verbatim_model::batch::StepOutcome>> {
+    for step in steps {
+        if let verbatim_model::batch::Op::Caret {
+            adopt: Some(adopt), ..
+        } = step.op
+        {
+            adopt_told(context, node_id, Some(adopt));
+        }
+    }
+    let Ok(Source::Uia(mut source)) = source(context, node_id, TextDetails::NONE) else {
+        return None;
+    };
+    let named = text::fused::named(steps, first, earlier);
+    let mut call = uia_call(context, node_id, &named);
+    let window = super::asked::known_nearest_of(context, node_id);
+    let read_at_us = context.observed_now();
+    let answer = text::fused::run(
+        uia,
+        (node_id, &mut source, &mut call.text()),
+        (steps, first, earlier),
+        (window, read_at_us),
+    );
+    put_uia(context, node_id, call);
+    keep_support(context, node_id, &source);
+    if answer.read_classically
+        && let Some(window) = window
+    {
+        context.read_classically(window);
+    }
+    Some(answer.outcomes)
+}
+
 /// A batch's `CompareSelection` of `node_id` between the held reads
 /// `before` and `after` ([`text::ops::compare_selection`]).
 pub(super) fn compare_step(

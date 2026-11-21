@@ -64,6 +64,12 @@ pub fn check<S: TextSource>(
     read_at_us: u64,
 ) -> TextResult<Option<Watched>> {
     let start = anchors.held_read(ask.point).ok_or(TextError::Gone)?;
+    // A starting point is held by a caret key's starting read, which reads
+    // the caret's line; a batch's `Caret`, which reads none, is never one.
+    if start.line.is_none() {
+        tracing::error!(target: verbatim_model::DEFECT_TARGET, "a watch's starting point holds no line");
+        return Err(TextError::Gone);
+    }
     let (unit, at_effect) = match ask.final_read {
         WatchFinalRead::Unit { unit, .. } => (unit, false),
         WatchFinalRead::UnitAtEffect { unit, .. } => (unit, true),
@@ -341,8 +347,13 @@ fn compare_texts<P>(
 ) -> Compared {
     let (text, mapped, _) = to_utf8(line, MAX_CHUNK_BYTES, &[offset]);
     let at = mapped.first().copied().unwrap_or_default();
-    let beside_changed = beside(&text, at) != beside(&start.line.text, start.line.offset as usize);
-    let line_changed = text != start.line.text;
+    // `check` refuses a starting point that holds no line.
+    let (was, was_at) = start
+        .line
+        .as_ref()
+        .map_or(("", 0), |line| (line.text.as_str(), line.offset as usize));
+    let beside_changed = beside(&text, at) != beside(was, was_at);
+    let line_changed = text != was;
     let unit_changed = word.is_some_and(|word| word != before_unit_text(start, TextUnit::Word));
     Compared {
         caret_moved,

@@ -73,8 +73,9 @@ pub struct LastRead<P> {
     pub caret: P,
     /// The selection, when something was selected.
     pub selection: Option<ReadSelection<P>>,
-    /// The caret's line, with the caret at the chunk's offset.
-    pub line: TextChunk,
+    /// The caret's line, with the caret at the chunk's offset, when the
+    /// read read it: a batch's `Caret` reads no line.
+    pub line: Option<TextChunk>,
     /// When the read began, in microseconds on the shared clock.
     pub read_at_us: u64,
     /// The key's unit at the caret when the read fetched one, for the next
@@ -177,7 +178,10 @@ impl<P: Clone> NodeAnchors<P> {
     pub fn part(&self, named: &[u64]) -> (Self, BTreeSet<u64>) {
         let mut part = Self::default();
         let mut copied = BTreeSet::new();
-        let line = self.last.iter().map(|last| last.line.start.0);
+        let line = self
+            .last
+            .iter()
+            .filter_map(|last| last.line.as_ref().map(|line| line.start.0));
         for number in named.iter().copied().chain(line) {
             if !copied.insert(number) {
                 continue;
@@ -497,7 +501,7 @@ mod tests {
                     },
                 },
             }),
-            line: TextChunk {
+            line: Some(TextChunk {
                 unit: TextUnit::Line,
                 text: String::new(),
                 start: verbatim_model::TextAnchor(1),
@@ -507,7 +511,7 @@ mod tests {
                 last: false,
                 truncated: false,
                 formats: Vec::new(),
-            },
+            }),
             read_at_us: 0,
             unit: None,
         }

@@ -72,7 +72,13 @@ pub struct UiaPos {
 }
 
 impl UiaPos {
-    fn new(
+    /// The end `endpoint` of `range`, `collapsed` when the range is known
+    /// to be collapsed. Local: the range is kept, not read.
+    ///
+    /// # Errors
+    ///
+    /// [`TextError::Failed`] when the range cannot be kept.
+    pub fn new(
         range: &IUIAutomationTextRange,
         endpoint: Endpoint,
         collapsed: bool,
@@ -106,6 +112,13 @@ impl UiaPos {
     /// [`TextError::Failed`] when the range cannot be had on this thread.
     pub fn range_end(&self) -> TextResult<(IUIAutomationTextRange, Endpoint)> {
         Ok((self.range()?, self.endpoint))
+    }
+
+    /// Whether its range is known to be collapsed, so either end is the
+    /// position. Local.
+    #[must_use]
+    pub fn collapsed(&self) -> bool {
+        self.collapsed
     }
 
     /// A point a remote operation found.
@@ -150,7 +163,7 @@ fn with_from<R>(from: &PointFrom<UiaPos>, f: impl FnOnce(TextFrom<'_>) -> R) -> 
 /// The character counts `prefix` may be to a provider, distinct, in the
 /// order they are tried: UTF-16 code units, code points, grapheme
 /// clusters.
-fn character_counts(prefix: &[u16]) -> Vec<i32> {
+pub(crate) fn character_counts(prefix: &[u16]) -> Vec<i32> {
     let text = String::from_utf16_lossy(prefix);
     let mut counts = Vec::new();
     for count in [
@@ -168,7 +181,7 @@ fn character_counts(prefix: &[u16]) -> Vec<i32> {
 
 /// A unit a remote operation read, as a [`UnitRead`], its text cut to a
 /// chunk's limit.
-fn unit_text(read: verbatim_uia_rops::UnitText) -> TextResult<UnitRead<UiaPos>> {
+pub(crate) fn unit_text(read: verbatim_uia_rops::UnitText) -> TextResult<UnitRead<UiaPos>> {
     let mut text = read.text;
     let truncated = text.len() > MAX_CHUNK_UNITS;
     text.truncate(MAX_CHUNK_UNITS);
@@ -333,21 +346,70 @@ impl UiaText {
     /// its text: a character's one stretch has no length read; it covers
     /// the character, as the caller takes it.
     fn formats_of(&self, runs: Vec<verbatim_uia_rops::Run>) -> Vec<Formatting> {
-        let mut formats = Vec::with_capacity(runs.len());
-        let mut at = 0;
-        for run in runs {
-            formats.push((
-                at,
-                at + run.length,
-                attributes_of(&run.attributes, self.details),
-            ));
-            at += run.length;
+        formats_with(runs, self.details)
+    }
+
+    /// What a read of units fetching `details` reads of their formatting:
+    /// the attributes the details name that the control is not known to
+    /// lack, and of those, the ones whose support is still learned, the
+    /// annotations never learned that way.
+    #[must_use]
+    pub fn format_reads(&self, details: TextDetails) -> (Attributes, Attributes) {
+        let attributes = attributes_for(details).without(self.support.unsupported);
+        let learning = attributes
+            .without(self.support.supported)
+            .without(Attributes::NONE.with(TextAttribute::Annotations));
+        (attributes, learning)
+    }
+
+    /// Takes in what a read of `learning`'s attributes learned: those the
+    /// provider answered "not supported" for over the unit read
+    /// (`unsupported`), the rest being supported; nothing when it learned
+    /// nothing.
+    pub fn learned(&mut self, learning: Attributes, unsupported: Option<Attributes>) {
+        if let Some(unsupported) = unsupported {
+            self.support.unsupported = self.support.unsupported.union(unsupported);
+            self.support.supported = self.support.supported.union(learning.without(unsupported));
+        }
+    }
+
+    /// A unit's formatting read for `details`, stretch by stretch, as
+    /// UTF-16 ranges of its text: a character's one stretch, which has no
+    /// length read, covers the character's `length` units.
+    #[must_use]
+    pub fn formats_read(
+        runs: Vec<verbatim_uia_rops::Run>,
+        details: TextDetails,
+        character: Option<usize>,
+    ) -> Vec<Formatting> {
+        let mut formats = formats_with(runs, details);
+        if let (Some(length), [(start, end, _)]) = (character, formats.as_mut_slice()) {
+            *start = 0;
+            *end = length;
         }
         formats
     }
 
+    /// UI Automation's unit for `unit`, `None` for one this text does not
+    /// have.
+    #[must_use]
+    pub fn provider_unit(
+        &self,
+        unit: TextUnit,
+    ) -> Option<windows::Win32::UI::Accessibility::TextUnit> {
+        self.unit(unit)
+    }
+
+    /// Whether reads may run remote programs: the setting allows them and
+    /// the window is not marked for classic reading.
+    #[must_use]
+    pub fn tries_remote(&self) -> bool {
+        self.remote
+    }
+
     /// The text, as remote operations take it.
-    fn target(&self) -> TextTarget<'_> {
+    #[must_use]
+    pub fn target(&self) -> TextTarget<'_> {
         TextTarget {
             element: &self.element,
             pattern: &self.pattern,
@@ -626,10 +688,7 @@ impl TextSource for UiaText {
                 .unit(unit)
                 .map(verbatim_uia_rops::CaretUnit::BeforeCaret),
         });
-        let attributes = attributes_for(self.details).without(self.support.unsupported);
-        let learning = attributes
-            .without(self.support.supported)
-            .without(Attributes::NONE.with(TextAttribute::Annotations));
+        let (attributes, learning) = self.format_reads(self.details);
         let query = CaretQuery {
             element: &self.element,
             pattern: &self.pattern,
@@ -651,10 +710,7 @@ impl TextSource for UiaText {
         let (answer, path) =
             verbatim_uia_rops::caret_read(&query, self.remote).map_err(rops_failed)?;
         self.note(path);
-        if let Some(unsupported) = answer.unsupported {
-            self.support.unsupported = self.support.unsupported.union(unsupported);
-            self.support.supported = self.support.supported.union(learning.without(unsupported));
-        }
+        self.learned(learning, answer.unsupported);
         let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
         let selection = match &answer.selection {
             Some(range) => Some((
@@ -929,6 +985,18 @@ fn unit_read(read: verbatim_uia_rops::UnitRead) -> TextResult<(Unit<UiaPos>, usi
     ))
 }
 
+/// A span's formatting as its stretches were read, as UTF-16 ranges of
+/// its text, each stretch's attributes in the words `details` asks for.
+fn formats_with(runs: Vec<verbatim_uia_rops::Run>, details: TextDetails) -> Vec<Formatting> {
+    let mut formats = Vec::with_capacity(runs.len());
+    let mut at = 0;
+    for run in runs {
+        formats.push((at, at + run.length, attributes_of(&run.attributes, details)));
+        at += run.length;
+    }
+    formats
+}
+
 /// The attributes to read for the details a request names.
 fn attributes_for(details: TextDetails) -> Attributes {
     let format = |attribute| details.formats.contains(attribute);
@@ -1070,7 +1138,7 @@ fn rops_failed(error: verbatim_uia_rops::Error) -> TextError {
 }
 
 /// A screen coordinate in whole pixels.
-fn round(value: f64) -> i32 {
+pub(crate) fn round(value: f64) -> i32 {
     // Screen coordinates fit an i32; a value that does not saturates.
     #[expect(
         clippy::cast_possible_truncation,

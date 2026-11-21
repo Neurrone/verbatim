@@ -948,7 +948,19 @@ item through `verbatim_uia_rops::batch::run_batch`), `Ancestors` and
 `Descendants` by the ancestor and children walks, `IsOneOf` by NVDA's
 equality for the equal node and by address for the others, `FocusRead`
 as `asked::candidate_read` or `asked::focus_now`, and the text
-operations through the node's text (`text::ops` for `Caret` and
+operations through the node's text. A run of consecutive text steps
+(`Caret`, `ReadText`, `ReadRange`, `CompareSelection`, `Select`,
+`Locate`) on one UI Automation node is one segment of
+`verbatim_uia_rops::batch::run_batch` (`text_reads::fused_steps`,
+`text::fused`): points the run names in an earlier segment are resolved
+to the positions held, a condition or reference on an earlier segment is
+decided before it runs, and each result is made the model's, a `Caret`'s
+points held as anchors and its read held as the next selection baseline
+with no line (`NodeText::hold_caret`), with the selection's text a
+`CompareSelection` of the run read, a `ReadText`'s chunks minted with
+the formatting its details name, the control's support of each
+attribute learned as the caret read learns it. An edit control's text
+steps run one at a time by its messages (`text::ops` for `Caret` and
 `CompareSelection`, today's text requests for the rest). A `Route`
 subject, whose completion needs what the listener read of each step, is
 refused, and `WaitForCaret` is refused until the caret keys convert to

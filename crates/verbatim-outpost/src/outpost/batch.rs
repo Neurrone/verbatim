@@ -11,7 +11,11 @@
 //! candidate's acquisition, focused-state walk and full read, the focus-now
 //! read, an activation, a `Follow`, and the text reads through each
 //! backend's adapter. The controller-for relation and the first selected
-//! item run through the program builder ([`verbatim_uia_rops::batch`]).
+//! item run through the program builder ([`verbatim_uia_rops::batch`]), as
+//! does each run of consecutive text steps on one UI Automation node
+//! (`Caret`, `ReadText`, `ReadRange`, `CompareSelection`, `Select`,
+//! `Locate`); an edit control's text is read by its messages, step by
+//! step.
 
 #![forbid(unsafe_code)]
 
@@ -104,7 +108,24 @@ pub(super) fn answer(
     if let Some(refused) = run.backend_refusal(parsed.steps()) {
         return refused;
     }
-    for step in parsed.steps() {
+    let steps = parsed.steps();
+    let mut at = 0;
+    // The end of a run of fusable text steps found to be read one at a
+    // time, so it is not tried again for each of its steps.
+    let mut single_until = 0;
+    while at < steps.len() {
+        if at >= single_until {
+            let end = run.fusable_end(steps, at);
+            if end > at {
+                if let Some(outcomes) = run.fused(&steps[at..end], at) {
+                    run.outcomes.extend(outcomes);
+                    at = end;
+                    continue;
+                }
+                single_until = end;
+            }
+        }
+        let step = &steps[at];
         let outcome = match step.gate(&run.outcomes) {
             Ok(Gate::Skip) => StepOutcome::Skipped,
             Ok(Gate::Run) => match run.step(&step.op) {
@@ -117,6 +138,7 @@ pub(super) fn answer(
             }
         };
         run.outcomes.push(outcome);
+        at += 1;
     }
     Outcome::Result(Reply::Steps(run.outcomes))
 }
@@ -320,6 +342,52 @@ impl Run<'_, '_> {
                 _ => Err(StepOutcome::Refused(StepRefusal::Unsupported)),
             },
         })
+    }
+
+    /// The end of the run of fusable text steps on one UI Automation node
+    /// that starts at `at` (the request list's design, section 5): `at`
+    /// when the step there is not one.
+    fn fusable_end(&self, steps: &[verbatim_model::batch::Step], at: usize) -> usize {
+        let node_of = |op: &Op| match op {
+            Op::Caret { subject, .. }
+            | Op::ReadText { subject, .. }
+            | Op::ReadRange { subject, .. }
+            | Op::CompareSelection { subject, .. }
+            | Op::Select { subject, .. }
+            | Op::Locate { subject, .. } => match subject {
+                Subject::Node(node) => Some(*node),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(node) = steps.get(at).and_then(|step| node_of(&step.op)) else {
+            return at;
+        };
+        if self.context.store.runtime_id_of(node).is_none() {
+            return at;
+        }
+        at + steps[at..]
+            .iter()
+            .take_while(|step| node_of(&step.op) == Some(node))
+            .count()
+    }
+
+    /// Runs `steps`, a run of fusable text steps on one UI Automation node
+    /// starting at place `first`, through the program builder: their
+    /// outcomes, or `None` when the node's text is read otherwise, for the
+    /// steps to run one at a time.
+    fn fused(
+        &mut self,
+        steps: &[verbatim_model::batch::Step],
+        first: usize,
+    ) -> Option<Vec<StepOutcome>> {
+        let subject = steps.first()?.op.subject()?;
+        let Ok(Ok(node)) = self.node(subject) else {
+            return None;
+        };
+        let context = self.context;
+        let uia = self.client.uia()?;
+        text_reads::fused_steps(context, uia, node, (steps, first, &self.outcomes))
     }
 
     fn step(&mut self, op: &Op) -> Stepped {

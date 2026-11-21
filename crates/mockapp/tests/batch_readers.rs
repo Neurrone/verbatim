@@ -329,6 +329,120 @@ fn text_operations_read_and_select_through_the_nodes_text() {
     app.quit();
 }
 
+/// A run of text steps on a UI Automation node is one remote program, its
+/// unit read with the formatting its details name: on mockapp's text, its
+/// bold "alpha" then its misspelt "beta", the caret at the start, the
+/// caret, the word at it with its font attributes and spelling errors,
+/// and the line with no details are read by one call, the word bold and
+/// not misspelt, the line with no formatting; then the word after it, read
+/// from the earlier batch's caret in a batch of its own, is one call too,
+/// and misspelt.
+#[expect(clippy::too_many_lines, reason = "two batches, each with its assertions")]
+fn a_run_of_text_steps_is_one_program_with_its_formatting() {
+    use verbatim_model::batch::{Point, PointOf};
+    use verbatim_model::{FormatAttribute, FormatSet, TextDetails, TextMovement, TextUnit};
+    common::init_com();
+    let title = common::unique_title("mockapp-batch-text-formats");
+    let mut app = common::spawn_visible("text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    app.send("set-focus doc");
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = verbatim_uia::Uia::new().expect("a UIA client");
+    outpost.read_focus_as(
+        common::listener_focus(&uia, hwnd.0 as isize)
+            .live()
+            .element(),
+    );
+    let node = doc_node(&outpost, hwnd);
+    let details = TextDetails {
+        formats: FormatSet::of(&[FormatAttribute::FontAttributes]),
+        spelling_errors: true,
+        ..TextDetails::NONE
+    };
+    let step = |op| Step { op, when: None };
+    let doc = Subject::Node(node);
+    let read = |at, movement, unit, details| Op::ReadText {
+        subject: doc.clone(),
+        at,
+        movement,
+        unit,
+        count: 1,
+        details,
+    };
+    let caret = Point::Of(Place(0), PointOf::Caret);
+    let (answer, calls) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        batch(vec![
+            step(Op::Caret {
+                subject: doc.clone(),
+                adopt: None,
+            }),
+            step(read(caret, None, TextUnit::Word, details)),
+            step(read(caret, None, TextUnit::Line, TextDetails::NONE)),
+        ]),
+    );
+    assert_eq!(calls.total(), 1, "one program: {calls:?}");
+    let read_steps = steps(answer.outcome);
+    let chunk = |outcome: &StepOutcome| match outcome {
+        StepOutcome::Done(Done::ReadText(read)) => read.chunks[0].clone(),
+        other => panic!("a read's chunks, not {other:?}"),
+    };
+    let word = chunk(&read_steps[1]);
+    assert_eq!(word.text, "alpha ");
+    let attributes: Vec<_> = word
+        .formats
+        .iter()
+        .map(|run| {
+            (
+                &word.text[run.start as usize..run.end as usize],
+                run.attributes.bold,
+                run.attributes.spelling_error,
+            )
+        })
+        .collect();
+    assert_eq!(
+        attributes,
+        [("alpha", Some(true), false), (" ", Some(false), false)]
+    );
+    let line = chunk(&read_steps[2]);
+    assert_eq!(
+        (line.text.as_str(), line.formats.len()),
+        ("alpha beta\n", 0)
+    );
+    let Some(StepOutcome::Done(Done::Caret(at))) = read_steps.first() else {
+        panic!("the caret: {read_steps:?}");
+    };
+    // The next word, from the caret the first batch held.
+    let (next, calls) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        batch(vec![step(read(
+            Point::At(verbatim_model::TextPoint::At(
+                verbatim_model::TextPosition::at(at.caret.anchor),
+            )),
+            Some(TextMovement {
+                unit: TextUnit::Word,
+                count: 1,
+            }),
+            TextUnit::Word,
+            details,
+        ))]),
+    );
+    assert_eq!(calls.total(), 1, "one program: {calls:?}");
+    let next = steps(next.outcome);
+    let word = chunk(&next[0]);
+    assert_eq!(word.text, "beta");
+    assert!(
+        word.formats
+            .iter()
+            .all(|run| run.attributes.spelling_error && run.attributes.bold == Some(false)),
+        "{word:?}"
+    );
+    drop(outpost);
+    app.quit();
+}
+
 /// The node of the document in focus, as a batch's focus read mints it.
 fn doc_node(outpost: &OutpostUnderTest, hwnd: HWND) -> verbatim_model::NodeId {
     use verbatim_model::TextDetails;
@@ -360,7 +474,7 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
     let step = |op| Step { op, when: None };
     let doc = Subject::Node(node);
     let caret = Point::Of(Place(0), PointOf::Caret);
-    let (read, _) = outpost.batch(
+    let (read, calls) = outpost.batch(
         hwnd,
         WindowVerdict::Uia,
         batch(vec![
@@ -388,6 +502,7 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
             }),
         ]),
     );
+    assert_eq!(calls.total(), 1, "one program: {calls:?}");
     let read = steps(read.outcome);
     let Some(StepOutcome::Done(Done::Caret(at))) = read.first() else {
         panic!("the caret: {read:?}");
@@ -416,7 +531,7 @@ gamma
         "{:?}",
         read[3]
     );
-    let (selected, _) = outpost.batch(
+    let (selected, calls) = outpost.batch(
         hwnd,
         WindowVerdict::Uia,
         batch(vec![
@@ -437,6 +552,8 @@ gamma
             }),
         ]),
     );
+    // A program ends after its act: the select, then the reads after it.
+    assert_eq!(calls.total(), 2, "two programs: {calls:?}");
     let selected = steps(selected.outcome);
     assert!(
         matches!(selected[0], StepOutcome::Done(Done::Select(_))),
@@ -476,6 +593,10 @@ fn main() {
         (
             "text_operations_read_and_select_through_the_nodes_text",
             text_operations_read_and_select_through_the_nodes_text,
+        ),
+        (
+            "a_run_of_text_steps_is_one_program_with_its_formatting",
+            a_run_of_text_steps_is_one_program_with_its_formatting,
         ),
     ]);
 }

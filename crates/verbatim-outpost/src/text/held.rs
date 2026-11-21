@@ -15,6 +15,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+
 use verbatim_model::{
     CaretReport, SelectionChange, SelectionDifference, Started, StartingUnit, TextAnchor,
     TextChunk, TextOp, TextReply, TextUnit,
@@ -126,6 +128,10 @@ struct CaretFound<P> {
 /// gives one): a text as long is cut, and is read whole by its range.
 const SELECTION_TEXT_CAP: usize = 513;
 
+/// A selection a batch's caret read holds: its two ends, how they were
+/// reported, and its text when read.
+pub(crate) type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection, Option<Vec<u16>>);
+
 /// What a selection read found ([`read_selection`]).
 pub struct SelectionFound<P> {
     /// The caret as it is now.
@@ -162,12 +168,43 @@ impl<P: Clone> NodeText<'_, P> {
     }
 
     /// The read held under `baseline`, its positions as the source's.
-    pub(super) fn held_read(&self, baseline: TextAnchor) -> Option<super::LastRead<P>> {
+    #[must_use]
+    pub fn held_read(&self, baseline: TextAnchor) -> Option<super::LastRead<P>> {
         self.anchors
             .held
             .get(&baseline.0)
             .cloned()
             .and_then(|read| read.filter_map(|slot| Some(slot.at)))
+    }
+
+    /// Holds a batch's caret read, begun at `read_at_us`, as the node's
+    /// last read and under a new id, the next selection baseline: the
+    /// caret, and the selection's two ends with how they were reported and
+    /// its text when a step of the batch read it. It holds no line, which a
+    /// batch reads by a step of its own.
+    pub(crate) fn hold_caret(
+        &mut self,
+        caret: P,
+        selection: Option<HeldEnds<P>>,
+        read_at_us: u64,
+    ) -> TextAnchor {
+        let read = super::LastRead {
+            caret: super::Slot::new(caret),
+            selection: selection.map(|((start, end), report, text)| super::ReadSelection {
+                start: super::Slot::new(start),
+                end: super::Slot::new(end),
+                text: text.map(Arc::from),
+                report,
+            }),
+            line: None,
+            read_at_us,
+            unit: None,
+        };
+        let number = self.next_number();
+        self.anchors.held.insert(number, read.clone());
+        self.anchors.last = Some(read);
+        self.touch(number);
+        TextAnchor(number)
     }
 }
 
