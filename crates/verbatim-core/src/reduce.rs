@@ -29,7 +29,7 @@ use crate::focus_rules::{
 };
 use crate::foreground::ForegroundFact;
 use crate::state::{CellMemory, FocusContext, Navigator, SpokenRecord, SrState};
-use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
+use crate::{editing, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity/focus-events.md`, "Event
@@ -168,8 +168,7 @@ pub(crate) fn activation_completed(
 /// Keeps the navigator's copy of the focus current: a name, value, or state
 /// change, or a fresher report of the same focus, applies to the navigator
 /// too while it rests on the focus, so reporting the current object or
-/// reviewing it reads what the object is now, as NVDA reads it live. The
-/// review position is kept where it is still inside the text.
+/// reviewing it reads what the object is now, as NVDA reads it live.
 fn sync_navigator_with_focus(state: &mut SrState) {
     let (Some(focus), Some(navigator)) = (
         state.versions.focus().map(|focus| &focus.context),
@@ -181,10 +180,6 @@ fn sync_navigator_with_focus(state: &mut SrState) {
         return;
     }
     navigator.object = focus.snapshot.clone();
-    let text = review::text_of(&navigator.object);
-    if !text.is_char_boundary(navigator.review_offset) {
-        navigator.review_offset = 0;
-    }
 }
 
 /// The parts of a `FocusChanged` event the focus handling reads.
@@ -1108,167 +1103,6 @@ pub(crate) fn clipboard_text(node: &NodeSnapshot) -> String {
 /// `text` spelled character by character, a space spoken as "space".
 pub(crate) fn spelled(text: &str) -> Vec<UtteranceSegment> {
     text::spelled(text, false, None)
-}
-
-/// Runs a review-cursor text command over the navigator object's review
-/// text (see [`review`]), as NVDA's review commands do: moves the cursor and
-/// speaks the line, word, or character it lands on. A motion that cannot
-/// move says "Top", "Bottom", "Left", or "Right" and reads the current unit;
-/// character motions stop at the ends of the line; an empty unit is
-/// "blank". Pressed twice, the current line or word is spelled, and three
-/// times spelled with character descriptions; the current character
-/// pressed twice gives its description, and three times its code in
-/// decimal and hexadecimal. Commands flat text has nothing for (pages, the
-/// selection, location) say "Not supported in this document"; the start
-/// marker and select then copy work on the flat text
-/// (`review_text::flat_extra`).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one motion table and one speech table, which read best together"
-)]
-pub(crate) fn flat_review_command(
-    state: &mut SrState,
-    trace_id: TraceId,
-    command: ReviewCommand,
-    repeat: u8,
-    text: &str,
-) -> Vec<Effect> {
-    if let Some(effects) = review_text::flat_extra(state, trace_id, command, repeat, text) {
-        return effects;
-    }
-    let Some(navigator) = state.navigator.as_mut() else {
-        return Vec::new();
-    };
-    let offset = navigator.review_offset.min(text.len());
-    let line = review::line_span(text, offset);
-    let char_at = |at: usize| review::char_span(text, at).unwrap_or((at, at));
-
-    let (new_offset, spoken, edge) = match command {
-        ReviewCommand::ReviewTop => (0, review::line_span(text, 0), None),
-        ReviewCommand::ReviewBottom => {
-            let start = review::line_span(text, text.len()).0;
-            (start, review::line_span(text, start), None)
-        }
-        ReviewCommand::ReviewPreviousLine => match review::previous_char(text, line.0) {
-            Some(target) => {
-                let span = review::line_span(text, target);
-                (span.0, span, None)
-            }
-            None => (line.0, line, Some(Message::Top)),
-        },
-        ReviewCommand::ReviewNextLine => match review::next_line_span(text, line.0) {
-            Some(span) => (span.0, span, None),
-            None => (line.0, line, Some(Message::Bottom)),
-        },
-        // The current line leaves the position where it was, as NVDA's sets
-        // none (`globalCommands.py` 1975 to 1990); start of line lands at
-        // the line's start, reading the whole line.
-        ReviewCommand::ReviewCurrentLine => (offset, line, None),
-        ReviewCommand::ReviewStartOfLine => (line.0, line, None),
-        ReviewCommand::ReviewEndOfLine => (line.1, line, None),
-        ReviewCommand::ReviewPreviousWord
-        | ReviewCommand::ReviewNextWord
-        | ReviewCommand::ReviewCurrentWord => {
-            let words = review::words(text);
-            let current = text::word_at(&words, offset)
-                .map_or((offset, offset), |word| (word.start, word.end));
-            let target = match command {
-                ReviewCommand::ReviewPreviousWord => review::previous_word(&words, offset),
-                ReviewCommand::ReviewNextWord => review::next_word(&words, offset),
-                _ => Some(current.0..current.1),
-            };
-            match target {
-                Some(word) => (word.start, (word.start, word.end), None),
-                None if command == ReviewCommand::ReviewPreviousWord => {
-                    (offset, current, Some(Message::Top))
-                }
-                None => (offset, current, Some(Message::Bottom)),
-            }
-        }
-        ReviewCommand::ReviewPreviousCharacter => match review::previous_char(text, offset) {
-            Some(target) if target >= line.0 => (target, char_at(target), None),
-            _ => (offset, char_at(offset), Some(Message::Left)),
-        },
-        ReviewCommand::ReviewNextCharacter => match review::char_span(text, offset) {
-            Some((_, next)) if next < line.1 => (next, char_at(next), None),
-            _ => (offset, char_at(offset), Some(Message::Right)),
-        },
-        ReviewCommand::ReviewCurrentCharacter => (offset, char_at(offset), None),
-        _ => return Vec::new(),
-    };
-
-    navigator.review_offset = new_offset;
-    let (start, end) = spoken;
-    let slice = text.get(start..end).unwrap_or("");
-    let mut segments: Vec<UtteranceSegment> = edge
-        .map(|edge| UtteranceSegment::new(SegmentContent::Message(edge)))
-        .into_iter()
-        .collect();
-    let repeated_current = matches!(
-        command,
-        ReviewCommand::ReviewCurrentLine
-            | ReviewCommand::ReviewCurrentWord
-            | ReviewCommand::ReviewCurrentCharacter
-    ) && repeat > 0;
-    let by_character = matches!(
-        command,
-        ReviewCommand::ReviewPreviousCharacter
-            | ReviewCommand::ReviewNextCharacter
-            | ReviewCommand::ReviewCurrentCharacter
-    );
-    // A unit with nothing to read is "blank"; spelled, or read as one
-    // character, a space is "space", as with a text pattern.
-    let blank = slice.is_empty() || (!repeated_current && !by_character && text::is_blank(slice));
-    if blank {
-        segments.push(UtteranceSegment::new(SegmentContent::Message(
-            Message::Blank,
-        )));
-    } else if repeated_current && command == ReviewCommand::ReviewCurrentCharacter && repeat > 1 {
-        // The character's code, in decimal and then spelled in hexadecimal.
-        for ch in slice.chars() {
-            let code = u32::from(ch);
-            segments.push(UtteranceSegment::text(format!("{code},")));
-            segments.extend(spelled(&format!("{code:#x}")));
-        }
-    } else if repeated_current && command == ReviewCommand::ReviewCurrentCharacter {
-        // The character's description, from the character table.
-        for grapheme in verbatim_text::graphemes(slice)
-            .into_iter()
-            .filter_map(|range| slice.get(range))
-        {
-            segments.push(UtteranceSegment::new(SegmentContent::CharacterDescription(
-                grapheme.to_owned(),
-            )));
-        }
-    } else if repeated_current {
-        // Spelled, and on a third press spelled with descriptions.
-        segments.extend(text::spelled(slice, repeat > 1, None));
-    } else if by_character {
-        // A single character is spoken as NVDA spells it, so a capital is
-        // raised in pitch.
-        segments.extend(spelled(slice));
-    } else if matches!(
-        command,
-        ReviewCommand::ReviewPreviousWord
-            | ReviewCommand::ReviewNextWord
-            | ReviewCommand::ReviewCurrentWord
-    ) {
-        // A word of one character, a punctuation mark, by its name.
-        segments.extend(text::word_segments(slice, None));
-    } else {
-        segments.push(UtteranceSegment::text(slice.to_owned()));
-    }
-    vec![Effect::Speak(
-        Utterance {
-            trace_id,
-            priority: SpeechPriority::Queued,
-            segments,
-            source: None,
-            say_all: false,
-            validity: None,
-        },
-        None,
-    )]
 }
 
 /// A node selected inside an element the focus controls ("Selection in a

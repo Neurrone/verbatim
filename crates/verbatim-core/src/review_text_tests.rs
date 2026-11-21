@@ -291,6 +291,43 @@ fn an_object_without_text_reviews_its_live_read_as_flat_text() {
     );
 }
 
+/// Flat text holds the description whatever the theme reports, as NVDA's
+/// basic text does (`NVDAObjects/__init__.py` 1450 to 1463; source-derived,
+/// no capture): with descriptions off, the live read still asks for it,
+/// review current line says it, and the navigator's object keeps none.
+#[test]
+fn flat_text_reads_the_description_with_descriptions_off() {
+    use verbatim_model::property::{
+        NodeDetail, NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue,
+    };
+    let mut state = committed("Inbox", Role::ListItem);
+    state.state.reported.node = NodeDetailSet::ALL.without(NodeDetail::Description);
+    let _ = feed_at(
+        &mut state,
+        1_000,
+        press(1, ReviewCommand::ReviewCurrentLine, 0),
+    );
+    let Wire::Properties { set, .. } = asked(&state) else {
+        panic!("a live read of the object");
+    };
+    assert!(set.contains(&PropertyId::Description), "{set:?}");
+    let mut read = values("Inbox", Role::ListItem);
+    read.0.push(PropertyAnswer {
+        id: PropertyId::Description,
+        value: Some(PropertyValue::Text("3 unread".to_owned())),
+    });
+    assert_eq!(
+        feed_at(
+            &mut state,
+            1_100,
+            answer(OUTPOST, 3, Reply::Properties(read))
+        ),
+        ["Text(\"Inbox 3 unread\")"]
+    );
+    let object = &state.navigator.as_ref().unwrap().object;
+    assert_eq!(object.details.description, None);
+}
+
 /// A field that answers it has no text is reviewed flat from then on.
 #[test]
 fn a_field_with_no_text_is_reviewed_as_flat_text() {

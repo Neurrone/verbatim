@@ -41,6 +41,14 @@ pub(crate) fn walk_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> 
     set_keeping(state, base, &[PropertyId::Description])
 }
 
+/// [`node_set`], with the description kept whatever the settings: a live
+/// read of an object reviewed as flat text, whose text, NVDA's basic text,
+/// holds the description whatever the theme reports
+/// (`crate::review_text::flat_text`).
+pub(crate) fn description_kept(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
+    set_keeping(state, base, &[PropertyId::Description])
+}
+
 /// [`node_set`], with the properties of `kept` kept whatever the settings.
 fn set_keeping(state: &SrState, base: &[PropertyId], kept: &[PropertyId]) -> Vec<PropertyId> {
     base.iter()

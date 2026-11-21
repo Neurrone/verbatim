@@ -774,7 +774,7 @@ impl Logic for Entries {
             // that minted them (design, "Held anchors").
             if facts
                 .start_marker
-                .is_some_and(|marker| marker.node().outpost() == Some(outpost))
+                .is_some_and(|marker| marker.node.outpost() == Some(outpost))
             {
                 facts.start_marker = None;
             }

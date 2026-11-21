@@ -354,10 +354,6 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
         if !navigator.object.details.desktop_window {
             navigator.object = live;
         }
-        let flat = crate::review::text_of(&navigator.object);
-        if !flat.is_char_boundary(navigator.review_offset) {
-            navigator.review_offset = 0;
-        }
         (navigator.object.clone(), of_focus)
     };
     let has_text = editing::may_have_text(object.role);

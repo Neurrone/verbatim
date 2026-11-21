@@ -748,7 +748,7 @@ NVDA speaks carriage returns and line feeds inside text as
 spaces ("Line breaks in spoken text" in [Speech](../nvda/speech.md)).
 Verbatim: **matched (unverified)**, for every kind of line break, at
 the presentation stage; text Core splits into lines itself (an object's
-value reviewed as flat text) ends a line at a carriage return and line
+flat text reviewed) ends a line at a carriage return and line
 feed, either alone (Windows 11 Notepad's bare carriage return), or
 Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
 

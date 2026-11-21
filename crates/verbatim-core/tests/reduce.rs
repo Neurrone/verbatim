@@ -2723,11 +2723,15 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
     assert_eq!(menu_item_of_focus(&menu), None, "a UIA item");
 }
 
-/// Review command `command` pressed on `desk`, each read it asks of the
-/// navigator answered as `navigator` still is: every effect after its
-/// requests.
-fn review(desk: &mut Desk, command: ReviewCommand, navigator: &NodeSnapshot) -> Vec<Heard> {
-    let mut heard = desk.command(command, 0);
+/// Review command `command` pressed on `desk`, `repeat` extra times, each
+/// read it asks of the navigator answered as `navigator` still is: every
+/// effect after its requests.
+fn review(
+    desk: &mut Desk,
+    (command, repeat): (ReviewCommand, u8),
+    navigator: &NodeSnapshot,
+) -> Vec<Heard> {
+    let mut heard = desk.command(command, repeat);
     loop {
         let Some((_, _, request)) = one_sent(desk) else {
             return heard;
@@ -2750,16 +2754,17 @@ fn spelling_marks_capitals_for_a_raised_pitch() {
         ONE,
         140,
         Role::StaticText,
-        Some("Body"),
+        None,
         Some("Hi"),
         StateSet::new(),
     );
     let _ = desk.focus(ONE, &body, &[]);
     assert_eq!(
-        review(&mut desk, ReviewCommand::ReviewCurrentCharacter, &body),
-        vec![queued(vec![UtteranceSegment::new(
-            SegmentContent::SpelledCapital("H".to_owned())
-        )])]
+        review(&mut desk, (ReviewCommand::ReviewCurrentLine, 1), &body),
+        vec![queued(vec![
+            UtteranceSegment::new(SegmentContent::SpelledCapital("H".to_owned())),
+            UtteranceSegment::text("i"),
+        ])]
     );
 }
 

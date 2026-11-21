@@ -114,10 +114,6 @@ impl FocusContext {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Navigator {
     pub(crate) object: NodeSnapshot,
-    /// The review cursor's character offset into the object's review text
-    /// (see `review::text_of`), used while the object is reviewed as flat
-    /// text. Always a valid boundary within that text.
-    pub(crate) review_offset: usize,
     /// How the review cursor reviews the object's text (milestone M4).
     pub(crate) text: ReviewText,
     /// The object's window, as the read that put the navigator there
@@ -136,7 +132,6 @@ impl Navigator {
     ) -> Self {
         Self {
             object,
-            review_offset: 0,
             text: ReviewText::Unknown,
             window,
         }
@@ -156,9 +151,10 @@ pub(crate) enum ReviewText {
     /// text, and reviewing the flat text of any other.
     #[default]
     Unknown,
-    /// The object has no text interface: its value or name is reviewed as
-    /// flat text (`review`), as NVDA's object review falls back to.
-    Flat,
+    /// The object has no text interface: its flat text, NVDA's basic text
+    /// (`review_text::flat_text`), read afresh at each press, is reviewed
+    /// through the text path, with the review cursor at this place in it.
+    Flat(FlatPosition),
     /// A position in the object's text, with the line it is on.
     At(ReviewPosition),
     /// At the caret, following it, and not moved away since. Core's copy of
@@ -172,6 +168,16 @@ pub(crate) enum ReviewText {
     /// say-all from the review cursor leaves it; the next review command
     /// reads the line there first.
     Point(TextPosition),
+}
+
+/// The review cursor in an object's flat text: its byte offset into the
+/// whole flat text and its column, which a press keeps only while the
+/// offset is a character boundary of the text it reads, at most its
+/// length, and otherwise resets both to 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FlatPosition {
+    pub(crate) offset: usize,
+    pub(crate) column: usize,
 }
 
 /// The review cursor in a text: the line it is on, its byte offset into
@@ -232,10 +238,10 @@ pub(crate) enum TextFollowUp {
     Land(Landing),
     /// A select then copy selected the text.
     Selected,
-    /// A select then copy read the text to copy, for the start marker
-    /// whose [`SrState::start_marker_generation`] this is: the copy clears
-    /// that marker only, not one set while the read was in flight.
-    Copy { marker: u64 },
+    /// A select then copy read the text to copy: the copy clears the start
+    /// marker, and no marker can be set while its read is in flight, since
+    /// a review press holds the event queue until its last answer.
+    Copy,
     /// A location report.
     Location,
 }
@@ -286,36 +292,19 @@ pub(crate) enum LandingPlace {
     BeforePoint,
 }
 
-/// The select-then-copy start marker: where in which node's text.
+/// The select-then-copy start marker: a position in a node's text, `at`,
+/// and `after`, just past the character there; and the review cursor's
+/// character, by the same two positions, that a select then copy's first
+/// press selected through, which its second press copies
+/// (`docs/parity/review.md`, "Select then copy from the review cursor").
+/// In flat text a position's anchor is the byte offset where its line
+/// starts in the flat text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum StartMarker {
-    /// A position in a node's text, `at`, and `after`, just past the
-    /// character there; and the review cursor's character, by the same two
-    /// positions, that a select then copy's first press selected through,
-    /// which its second press copies (`docs/parity/review.md`, "Select then
-    /// copy from the review cursor").
-    Text {
-        node: NodeId,
-        at: TextPosition,
-        after: TextPosition,
-        selected_to: Option<(TextPosition, TextPosition)>,
-    },
-    /// A byte offset into a node's flat text, and the review cursor's
-    /// offset when a select then copy's first press built its range, which
-    /// flat text cannot select but its second press copies.
-    Flat {
-        node: NodeId,
-        offset: usize,
-        selected_to: Option<usize>,
-    },
-}
-
-impl StartMarker {
-    pub(crate) fn node(self) -> NodeId {
-        match self {
-            Self::Text { node, .. } | Self::Flat { node, .. } => node,
-        }
-    }
+pub(crate) struct StartMarker {
+    pub(crate) node: NodeId,
+    pub(crate) at: TextPosition,
+    pub(crate) after: TextPosition,
+    pub(crate) selected_to: Option<(TextPosition, TextPosition)>,
 }
 
 /// A piece of text say-all read and has not yet handed to speech: the
@@ -479,11 +468,6 @@ pub struct SrState {
     pub(crate) toggle_keys: std::collections::VecDeque<(verbatim_model::LockKey, u64)>,
     /// The select-then-copy start marker.
     pub(crate) start_marker: Option<StartMarker>,
-    /// How many times a start marker has been set: which marker a copy's
-    /// read was made for, so its reply clears that one and keeps a marker
-    /// set since (`docs/parity/review.md`, "Select then copy from the
-    /// review cursor").
-    pub(crate) start_marker_generation: u64,
     /// The say-all in progress.
     pub(crate) say_all: Option<SayAll>,
     /// The word typed so far, for typed word echo; at most
@@ -950,7 +934,7 @@ impl SrState {
         }
         // Nodes whose text the state holds positions in or waits on.
         if let Some(marker) = self.start_marker {
-            insert(marker.node());
+            insert(marker.node);
         }
         if let Some(say_all) = &self.say_all {
             insert(say_all.node);
@@ -1051,10 +1035,10 @@ impl SrState {
                     insert(navigator.object.id, TextPosition::at(position.line.start));
                 }
                 ReviewText::Point(point) => insert(navigator.object.id, *point),
-                ReviewText::Unknown | ReviewText::Flat | ReviewText::Caret => {}
+                ReviewText::Unknown | ReviewText::Flat(_) | ReviewText::Caret => {}
             }
         }
-        if let Some(StartMarker::Text {
+        if let Some(StartMarker {
             node,
             at,
             after,

@@ -17,7 +17,11 @@
 //!
 //! The navigator object's review starts at its caret, or its start when it
 //! has none, as NVDA's object review does. An object with no text interface
-//! is reviewed as flat text (`review`), the M3 behavior.
+//! is reviewed through the same path over its flat text, NVDA's basic text
+//! ([`flat_text`]), read live at each press, whose requests Core answers
+//! itself ([`flat_answer`]), as NVDA reviews such an object through an
+//! offsets text info over its basic text (`NVDAObjects/__init__.py` 54 to
+//! 79).
 
 use std::sync::Arc;
 
@@ -33,8 +37,8 @@ use crate::keys::entry::Fence;
 use crate::keys::entry::ReviewPress;
 use crate::navigator::Found;
 use crate::state::{
-    Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
-    StartMarker, TextFollowUp,
+    FlatPosition, Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk,
+    SrState, StartMarker, TextFollowUp,
 };
 use crate::text;
 use crate::text_request::TextRequest;
@@ -92,7 +96,8 @@ fn answers_from_line(command: ReviewCommand) -> bool {
 
 /// What a review press does next: its words, a read of the navigator's
 /// text followed up by a [`TextFollowUp`], a live read of the navigator
-/// object for flat review, or say-all from the review cursor.
+/// object for flat review, the press run on flat text, or say-all from the
+/// review cursor.
 #[derive(Debug)]
 pub(crate) enum Next {
     /// These words, and the press ends.
@@ -101,16 +106,11 @@ pub(crate) enum Next {
     Text(NodeId, TextOp, TextFollowUp),
     /// A live read of the navigator object, whose text is reviewed flat.
     ReadObject,
+    /// The press run on this flat text of the navigator object, every
+    /// request it makes answered from the text.
+    Flat(String),
     /// Say-all from this point of `node`'s text.
     SayAll(NodeId, TextPoint),
-}
-
-/// What a live read of the navigator object found.
-pub(crate) enum ObjectRead {
-    /// The object as it is now.
-    Read(Box<verbatim_model::NodeSnapshot>),
-    /// The object is gone: it reviews as empty flat text.
-    Gone,
 }
 
 /// What a review press does first against the navigator's text: the line
@@ -127,7 +127,7 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
         }
         ReviewText::At(position) => execute(state, press.trace_id, press, node, &position),
         ReviewText::Point(point) => seed(press, node, TextPoint::At(point)),
-        ReviewText::Flat => Next::ReadObject,
+        ReviewText::Flat(_) => Next::ReadObject,
         // The caret as the outpost finds it, never Core's copy, which can
         // lag behind a key the application has already handled.
         ReviewText::Caret => seed(press, node, TextPoint::Caret),
@@ -140,7 +140,7 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
             if has_caret || may_have_text(navigator.object.role) {
                 seed(press, node, TextPoint::Caret)
             } else {
-                navigator.text = ReviewText::Flat;
+                navigator.text = ReviewText::Flat(FlatPosition::default());
                 Next::ReadObject
             }
         }
@@ -173,7 +173,8 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
 /// navigator's `window`, under the due time `due_us`; a read of the
 /// focused terminal's text is answered from Core's memory after one fresh
 /// read a command (`docs/design/readers-tell-core-asks-build3.md`,
-/// "Review commands as chained requests"), `fresh` when it was taken.
+/// "Review commands as chained requests"), `fresh` when it was taken; and
+/// a read of flat text from the text the press read ([`flat_answer`]).
 async fn run_next(
     mut cx: Cx<Entries>,
     (press, fence): (ReviewPress, Fence),
@@ -182,6 +183,7 @@ async fn run_next(
     (due_us, mut fresh): (u64, bool),
 ) {
     let trace_id = press.trace_id;
+    let mut flat: Option<String> = None;
     loop {
         next = match next {
             Next::Said(effects) => {
@@ -189,6 +191,22 @@ async fn run_next(
                     cx.emit(effect);
                 }
                 return;
+            }
+            Next::Flat(text) => {
+                let next = on_flat(&mut cx.facts_mut(), press, &text);
+                flat = Some(text);
+                next
+            }
+            Next::Text(node, op, then) if flat.is_some() => {
+                let reply = flat_answer(flat.as_deref().unwrap_or_default(), &op);
+                answered(&mut cx.facts_mut(), trace_id, (node, press), then, reply)
+            }
+            Next::SayAll(_, at) if flat.is_some() => {
+                // Say-all from the review cursor in flat text speaks the
+                // rest of it at once, with no caret or reading to move.
+                let text = flat.as_deref().unwrap_or_default();
+                let rest = proven::text_in(text, flat_offset(text, at)..);
+                Next::Said(vec![speak(trace_id, text::text_segments(rest, None))])
             }
             Next::Text(node, op, then)
                 if crate::terminal::commands::answers(&cx.facts(), node, &op) =>
@@ -234,12 +252,17 @@ async fn run_next(
                 else {
                     return;
                 };
+                // The description is read whatever the theme reports, as
+                // NVDA's basic text has it.
                 let request = crate::navigator::Properties {
                     window,
                     node: object.id,
-                    set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
+                    set: crate::details::description_kept(
+                        &cx.facts(),
+                        &crate::report_focus::ANNOUNCED_SET,
+                    ),
                 };
-                let read = match cx.ask(request, due_us).await {
+                match cx.ask(request, due_us).await {
                     Outcome::Result(values) => {
                         let read = verbatim_model::request::NodeRead {
                             node: Some(object.id),
@@ -247,14 +270,13 @@ async fn run_next(
                             values,
                         };
                         match crate::navigator::snapshot(read, &object) {
-                            Some(live) => ObjectRead::Read(Box::new(live)),
+                            Some(live) => Next::Flat(object_read(&mut cx.facts_mut(), live)),
                             None => return,
                         }
                     }
-                    Outcome::NotThere => ObjectRead::Gone,
+                    Outcome::NotThere => Next::Flat(String::new()),
                     _ => return,
-                };
-                Next::Said(object_read(&mut cx.facts_mut(), trace_id, press, read))
+                }
             }
             Next::SayAll(node, at) => Next::Said(crate::say_all::start_in_queue(
                 &mut cx.facts_mut(),
@@ -606,8 +628,7 @@ fn execute(
             landing(LandingPlace::BeforePoint, TextUnit::Character, None),
         ),
         ReviewCommand::SetStartMarker => {
-            state.start_marker_generation = state.start_marker_generation.saturating_add(1);
-            state.start_marker = Some(StartMarker::Text {
+            state.start_marker = Some(StartMarker {
                 node,
                 at: cursor,
                 after: after_cursor(),
@@ -617,27 +638,21 @@ fn execute(
         }
         ReviewCommand::MoveToStartMarker => match marker_in(state, node) {
             Err(effect) => return Next::Said(vec![speak(trace_id, effect)]),
-            Ok(StartMarker::Text { at, .. }) => read_line(
+            Ok(StartMarker { at, .. }) => read_line(
                 None,
                 TextPoint::At(at),
                 landing(LandingPlace::Point, TextUnit::Character, None),
             ),
-            Ok(StartMarker::Flat { .. }) => {
-                return Next::Said(vec![speak(trace_id, message(Message::NoStartMarker))]);
-            }
         },
         ReviewCommand::SelectThenCopy => {
-            let (at, after, selected_to) = match marker_in(state, node) {
+            let StartMarker {
+                at,
+                after,
+                selected_to,
+                ..
+            } = match marker_in(state, node) {
                 Err(effect) => return Next::Said(vec![speak(trace_id, effect)]),
-                Ok(StartMarker::Text {
-                    at,
-                    after,
-                    selected_to,
-                    ..
-                }) => (at, after, selected_to),
-                Ok(StartMarker::Flat { .. }) => {
-                    return Next::Said(vec![speak(trace_id, message(Message::NoStartMarker))]);
-                }
+                Ok(marker) => marker,
             };
             // From the earlier of the marker and the review cursor through
             // the character at the later, whichever that is
@@ -665,7 +680,7 @@ fn execute(
                 // The second press copies the range this one selects, as
                 // NVDA's does, wherever the review cursor has gone since:
                 // the caret the selection moved may have taken it along.
-                state.start_marker = Some(StartMarker::Text {
+                state.start_marker = Some(StartMarker {
                     node,
                     at,
                     after,
@@ -689,9 +704,7 @@ fn execute(
                         end,
                         through,
                     },
-                    TextFollowUp::Copy {
-                        marker: state.start_marker_generation,
-                    },
+                    TextFollowUp::Copy,
                 )
             }
         }
@@ -713,7 +726,7 @@ fn execute(
 /// "Select then copy from the review cursor").
 fn marker_in(state: &SrState, node: NodeId) -> Result<StartMarker, Vec<UtteranceSegment>> {
     match state.start_marker {
-        Some(marker) if marker.node() == node => Ok(marker),
+        Some(marker) if marker.node == node => Ok(marker),
         _ => Err(message(Message::NoStartMarker)),
     }
 }
@@ -766,10 +779,17 @@ fn code_segments(character: &str) -> Vec<UtteranceSegment> {
     segments
 }
 
-/// Sets the navigator's review position.
+/// Sets the navigator's review position: in flat text its offset in the
+/// whole text, the line's anchor being where the line starts there.
 fn set_position(state: &mut SrState, position: ReviewPosition) {
     if let Some(navigator) = state.navigator.as_mut() {
-        navigator.text = ReviewText::At(position);
+        navigator.text = match navigator.text {
+            ReviewText::Flat(_) => ReviewText::Flat(FlatPosition {
+                offset: flat_start(&position.line).saturating_add(position.offset),
+                column: position.column,
+            }),
+            _ => ReviewText::At(position),
+        };
     }
 }
 
@@ -831,53 +851,209 @@ pub(crate) fn answered(
         // A dead object: one rule at the boundary, the press run on empty
         // flat text. A copy clears its marker as it does for any answer,
         // and says nothing.
-        (then @ TextFollowUp::Copy { .. }, TextReply::Gone) => reply_to(
+        (then @ TextFollowUp::Copy, TextReply::Gone) => reply_to(
             state,
             trace_id,
             press,
             PendingText { node, then },
             TextReply::Gone,
         ),
-        (_, TextReply::Gone) => Next::Said(crate::reduce::flat_review_command(
-            state,
-            trace_id,
-            press.command,
-            press.repeat,
-            "",
-        )),
+        (_, TextReply::Gone) => {
+            if let Some(navigator) = state.navigator.as_mut() {
+                navigator.text = ReviewText::Flat(FlatPosition::default());
+            }
+            Next::Flat(String::new())
+        }
         (_, TextReply::Unanswered) => Next::Said(Vec::new()),
         (then, reply) => reply_to(state, trace_id, press, PendingText { node, then }, reply),
     }
 }
 
-/// A live read of the navigator object answered: a flat review command is
-/// run on its text and Report Current Object on it. Gone, a dead object
-/// reviews as empty flat text and the report says nothing; a read that
-/// gets no answer says nothing at all.
-pub(crate) fn object_read(
-    state: &mut SrState,
-    trace_id: TraceId,
-    press: ReviewPress,
-    read: ObjectRead,
-) -> Vec<Effect> {
-    let text = match read {
-        ObjectRead::Read(object) => {
-            let flat = crate::review::text_of(&object);
-            if let Some(navigator) = state.navigator.as_mut() {
-                // The desktop window keeps the name Core gives it, which a
-                // live read of the window does not carry.
-                if !navigator.object.details.desktop_window {
-                    navigator.object = *object;
-                }
-                if !flat.is_char_boundary(navigator.review_offset) {
-                    navigator.review_offset = 0;
-                }
-            }
-            flat
-        }
-        ObjectRead::Gone => String::new(),
+/// A live read of the navigator object answered: the object becomes the
+/// navigator's, and its flat text is what the press reviews. The
+/// description, read whatever the theme reports, is kept only where the
+/// theme reports it.
+fn object_read(state: &mut SrState, mut live: verbatim_model::NodeSnapshot) -> String {
+    let text = flat_text(&live);
+    if crate::details::node_set(state, &[verbatim_model::property::PropertyId::Description])
+        .is_empty()
+    {
+        live.details.description = None;
+    }
+    if let Some(navigator) = state.navigator.as_mut()
+        // The desktop window keeps the name Core gives it, which a live
+        // read of the window does not carry.
+        && !navigator.object.details.desktop_window
+    {
+        navigator.object = live;
+    }
+    text
+}
+
+/// The flat text of `object`, NVDA's basic text: its name, value and
+/// description, each one that is not empty or only white space, joined by
+/// spaces (`NVDAObjects/__init__.py` 1450 to 1463).
+pub(crate) fn flat_text(object: &verbatim_model::NodeSnapshot) -> String {
+    [
+        object.name.as_deref(),
+        object.value.as_deref(),
+        object.details.description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.chars().all(char::is_whitespace))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+/// A press on flat text `text` at its turn: the review cursor at its flat
+/// position, kept where it is still a character boundary of the text and
+/// otherwise at the start, on the line there, and the press run there.
+fn on_flat(state: &mut SrState, press: ReviewPress, text: &str) -> Next {
+    let Some(navigator) = state.navigator.as_mut() else {
+        return Next::Said(Vec::new());
     };
-    crate::reduce::flat_review_command(state, trace_id, press.command, press.repeat, &text)
+    let node = navigator.object.id;
+    let at = match navigator.text {
+        ReviewText::Flat(at) if at.offset <= text.len() && text.is_char_boundary(at.offset) => at,
+        _ => FlatPosition::default(),
+    };
+    navigator.text = ReviewText::Flat(at);
+    let line = Arc::new(flat_line(text, at.offset));
+    let position = ReviewPosition {
+        offset: at.offset.saturating_sub(flat_start(&line)),
+        column: at.column,
+        line,
+    };
+    execute(state, press.trace_id, press, node, &position)
+}
+
+/// Where `line`, a line of flat text, starts in the text: its anchor.
+fn flat_start(line: &verbatim_model::TextChunk) -> usize {
+    usize::try_from(line.start.0).unwrap_or(usize::MAX)
+}
+
+/// The byte offset in flat `text` of `point`, a position Core made in it
+/// (its line's start plus its offset), the text's start or its end; held
+/// across presses, it is moved back onto the text read now.
+fn flat_offset(text: &str, point: TextPoint) -> usize {
+    let offset = match point {
+        TextPoint::At(position) => usize::try_from(position.anchor.0)
+            .unwrap_or(usize::MAX)
+            .saturating_add(text::byte_offset(position.offset)),
+        TextPoint::End => text.len(),
+        _ => 0,
+    };
+    text::boundary(text, offset)
+}
+
+/// The index of the line of `lines` holding byte `offset`.
+fn flat_line_index(lines: &[std::ops::Range<usize>], offset: usize) -> usize {
+    lines
+        .iter()
+        .rposition(|line| line.start <= offset)
+        .unwrap_or_default()
+}
+
+/// The line of flat `text` holding byte `offset`, as the outpost would read
+/// it: its text with its line break, its anchor the byte offset where it
+/// starts in `text`, the offset in it, and whether it is the first or the
+/// last.
+fn flat_line(text: &str, offset: usize) -> verbatim_model::TextChunk {
+    let lines = verbatim_text::lines(text);
+    flat_chunk(text, &lines, flat_line_index(&lines, offset), offset)
+}
+
+/// Line `index` of flat `text`, whose `lines` they are, with `offset` in
+/// it where it falls there, else at its end.
+fn flat_chunk(
+    text: &str,
+    lines: &[std::ops::Range<usize>],
+    index: usize,
+    offset: usize,
+) -> verbatim_model::TextChunk {
+    let start = lines.get(index).map_or(0, |line| line.start);
+    let end = lines
+        .get(index.saturating_add(1))
+        .map_or(text.len(), |next| next.start);
+    let line = proven::text_in(text, start..end);
+    verbatim_model::TextChunk {
+        unit: TextUnit::Line,
+        text: line.to_owned(),
+        start: verbatim_model::TextAnchor(u64::try_from(start).unwrap_or(u64::MAX)),
+        offset: u32::try_from(offset.saturating_sub(start).min(line.len())).unwrap_or(u32::MAX),
+        languages: Vec::new(),
+        first: index == 0,
+        last: index.saturating_add(1) >= lines.len(),
+        truncated: false,
+        formats: Vec::new(),
+    }
+}
+
+/// The answer to `op` over flat `text`, as Core answers a review press's
+/// request on an object with no text interface: a line read at a point,
+/// the start or the end, moving by line or not, and a range read for a
+/// copy. A move that cannot move answers the review cursor's own line.
+/// Flat text has no screen place, selection or caret, so a selection, a
+/// location or a selection point is unsupported, and it has no pages.
+fn flat_answer(text: &str, op: &TextOp) -> TextReply {
+    match op {
+        TextOp::Read(TextRead {
+            at: at @ (TextPoint::At(_) | TextPoint::Start | TextPoint::End),
+            movement,
+            unit: TextUnit::Line,
+        }) => {
+            let offset = flat_offset(text, *at);
+            let lines = verbatim_text::lines(text);
+            let index = flat_line_index(&lines, offset);
+            let target = match movement {
+                None => index,
+                Some(TextMovement {
+                    unit: TextUnit::Line,
+                    count,
+                }) => index
+                    .checked_add_signed(isize::try_from(*count).unwrap_or_default())
+                    .filter(|target| *target < lines.len())
+                    .unwrap_or(index),
+                Some(TextMovement { unit, .. }) => return TextReply::UnsupportedUnit(*unit),
+            };
+            if target == index {
+                return TextReply::Read {
+                    moved: 0,
+                    chunk: flat_chunk(text, &lines, index, offset),
+                };
+            }
+            let moved = i32::try_from(target.abs_diff(index)).unwrap_or(i32::MAX);
+            TextReply::Read {
+                moved: if target < index {
+                    moved.saturating_neg()
+                } else {
+                    moved
+                },
+                chunk: flat_chunk(text, &lines, target, 0),
+            }
+        }
+        TextOp::Read(TextRead { unit, .. }) if *unit != TextUnit::Line => {
+            TextReply::UnsupportedUnit(*unit)
+        }
+        TextOp::ReadRange {
+            start,
+            end,
+            through,
+        } => {
+            let (start, end) = (flat_offset(text, *start), flat_offset(text, *end));
+            let (from, to) = match through {
+                Some(through) if end < start => (end, flat_offset(text, through.start)),
+                Some(through) => (start, flat_offset(text, through.end)),
+                None => (start.min(end), start.max(end)),
+            };
+            TextReply::Range {
+                text: proven::text_in(text, from..to.max(from)).to_owned(),
+                truncated: false,
+            }
+        }
+        _ => TextReply::Unsupported,
+    }
 }
 
 /// The caret's or the review cursor's location answered.
@@ -933,10 +1109,8 @@ fn reply_to(
         // read was in flight; a range with nothing in it copies nothing and
         // says nothing (`docs/parity/review.md`, "Select then copy from
         // the review cursor").
-        (TextFollowUp::Copy { marker }, reply) => {
-            if state.start_marker_generation == marker {
-                state.start_marker = None;
-            }
+        (TextFollowUp::Copy, reply) => {
+            state.start_marker = None;
             match reply {
                 TextReply::Range { text, .. } if !text.is_empty() => {
                     vec![Effect::CopyToClipboard(text)]
@@ -992,7 +1166,7 @@ fn reply_to(
         }
         (TextFollowUp::Seed { .. }, TextReply::NoText) => {
             if let Some(navigator) = state.navigator.as_mut() {
-                navigator.text = ReviewText::Flat;
+                navigator.text = ReviewText::Flat(FlatPosition::default());
             }
             return Next::ReadObject;
         }
@@ -1048,12 +1222,16 @@ fn land(
     if let Some(edge) = landing.edge
         && moved == 0
     {
-        let Some(ReviewText::At(position)) = state
-            .navigator
-            .as_ref()
-            .map(|navigator| navigator.text.clone())
-        else {
-            return Vec::new();
+        let position = match state.navigator.as_ref().map(|navigator| &navigator.text) {
+            Some(ReviewText::At(position)) => position.clone(),
+            // Flat text answers a move that could not move with the
+            // review cursor's own line.
+            Some(ReviewText::Flat(at)) => ReviewPosition {
+                offset: text::byte_offset(chunk.offset),
+                column: at.column,
+                line: Arc::new(chunk),
+            },
+            _ => return Vec::new(),
         };
         let content = text::line_content(&position.line.text, grid);
         let language = position.line.language_at(position.offset);
@@ -1110,101 +1288,10 @@ fn land(
     vec![speak(trace_id, segments)]
 }
 
-/// Starts or reads the review command's flat-text counterparts that M3's
-/// flat review does not have: page movement, the selection, location, and
-/// say-all have nothing to work on in flat text; the start marker and
-/// select then copy work on its byte offsets.
-pub(crate) fn flat_extra(
-    state: &mut SrState,
-    trace_id: TraceId,
-    command: ReviewCommand,
-    repeat: u8,
-    flat: &str,
-) -> Option<Vec<Effect>> {
-    let navigator = state.navigator.as_ref()?;
-    let node = navigator.object.id;
-    let offset = navigator.review_offset;
-    Some(match command {
-        ReviewCommand::ReviewPreviousPage
-        | ReviewCommand::ReviewNextPage
-        | ReviewCommand::ReviewSelectionStart
-        | ReviewCommand::ReviewSelectionEnd
-        | ReviewCommand::ReportReviewLocation => {
-            vec![speak(trace_id, message(Message::NotSupported))]
-        }
-        ReviewCommand::SayAllFromReview => {
-            let rest = flat.get(offset..).unwrap_or("");
-            vec![speak(trace_id, text::text_segments(rest, None))]
-        }
-        ReviewCommand::SetStartMarker => {
-            state.start_marker_generation = state.start_marker_generation.saturating_add(1);
-            state.start_marker = Some(StartMarker::Flat {
-                node,
-                offset,
-                selected_to: None,
-            });
-            vec![speak(trace_id, message(Message::StartMarked))]
-        }
-        ReviewCommand::MoveToStartMarker => match marker_in(state, node) {
-            Ok(StartMarker::Flat { offset, .. }) if flat.is_char_boundary(offset) => {
-                if let Some(navigator) = state.navigator.as_mut() {
-                    navigator.review_offset = offset;
-                }
-                let character = text::grapheme_at(flat, offset).and_then(|range| flat.get(range));
-                vec![speak(trace_id, text::character_segments(character, None))]
-            }
-            Ok(_) => vec![speak(trace_id, message(Message::NoStartMarker))],
-            Err(segments) => vec![speak(trace_id, segments)],
-        },
-        ReviewCommand::SelectThenCopy => match marker_in(state, node) {
-            Ok(StartMarker::Flat {
-                offset: start,
-                selected_to,
-                ..
-            }) => {
-                if repeat == 0 && selected_to.is_some() {
-                    vec![speak(trace_id, message(Message::PressTwiceToCopy))]
-                } else if repeat == 0 {
-                    // Flat text cannot be selected, but the range is built
-                    // now, and the second press copies it wherever the
-                    // review cursor has gone since.
-                    state.start_marker = Some(StartMarker::Flat {
-                        node,
-                        offset: start,
-                        selected_to: Some(offset),
-                    });
-                    vec![speak(trace_id, message(Message::CannotSelect))]
-                } else {
-                    // From the earlier of the marker and the review cursor
-                    // through the character at the later
-                    // (`docs/parity/review.md`, "Select then copy from the
-                    // review cursor"), the review cursor taken where a first
-                    // press found it.
-                    let end = selected_to.unwrap_or(offset);
-                    let after =
-                        |at: usize| text::grapheme_at(flat, at).map_or(at, |range| range.end);
-                    let (from, to) = if end < start {
-                        (end, after(start))
-                    } else {
-                        (start, after(end))
-                    };
-                    // The copy clears the marker whatever it found.
-                    state.start_marker = None;
-                    match flat.get(from..to) {
-                        Some(copied) if !copied.is_empty() => {
-                            vec![Effect::CopyToClipboard(copied.to_owned())]
-                        }
-                        _ => Vec::new(),
-                    }
-                }
-            }
-            Ok(_) => vec![speak(trace_id, message(Message::NoStartMarker))],
-            Err(segments) => vec![speak(trace_id, segments)],
-        },
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 #[path = "review_text_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "flat_review_tests.rs"]
+mod flat_tests;

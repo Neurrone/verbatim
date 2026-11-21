@@ -1675,11 +1675,12 @@ fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text(
         text.command(ReviewCommand::ReviewCurrentLine, 0),
         [Heard::Asked(line_read(TextPoint::Caret, None))]
     );
-    // With no text, the object is read afresh and its value reviewed.
+    // With no text, the object is read afresh and its flat text reviewed:
+    // its name and value joined, NVDA's basic text.
     assert_eq!(text.reply(TextReply::NoText), [Heard::Sent("Properties")]);
     assert_eq!(
         text.properties(&edit),
-        words(vec![UtteranceSegment::text("flat value")])
+        words(vec![UtteranceSegment::text("Body flat value")])
     );
 }
 
@@ -1816,7 +1817,9 @@ fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
 fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
     // The copy clears the marker it copied from, not one set after the
     // second press and before its read was answered
-    // (`docs/parity/review.md`, "Select then copy from the review cursor").
+    // (`docs/parity/review.md`, "Select then copy from the review cursor"):
+    // the marker's press waits in the event queue behind the copy's, which
+    // holds the queue until its last answer.
     let mut text = reviewing("hello world\n", 0);
     selected_from_the_marker(&mut text);
     let _ = text.command(ReviewCommand::SelectThenCopy, 1);

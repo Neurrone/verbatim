@@ -276,16 +276,19 @@ location in text not measured by offsets (UI Automation's and a rich
 edit's), when the text gives no place for it, says "Not supported in
 this document" (offset-measured text says its percentage alone), where NVDA says the navigator object's location instead
 and "No location information" only when that is missing too. An object
-with no text interface is reviewed by its value or name,
-NVDA's fallback, through the M3 flat walk, which walks
-the same grapheme clusters and words as text with a text pattern;
-different, as a follow-up: its start and end of line still speak the
-line rather than the character there. Different, not yet matched:
-flat review's current-line command moves the review position to the
-line's start, where NVDA's current-line command leaves the review
-position where it is, so a following character or word command starts
-from a different place; it is fixed with the review cursor on objects
-that no longer exist ([the roadmap](../roadmap.md), M4.2).
+with no text interface is reviewed by NVDA's basic text, its name, value
+and description joined (`NVDAObjects/__init__.py` 1450 to 1463), the
+description read whatever the theme reports, through the same review
+path as text, so its start and end of line speak the character there and
+its current line leaves the review position where it was. **Matched**
+against NVDA's capture on File Explorer's window
+(`crates/verbatim-core/tests/fixtures/b9-flat-review.jsonl`: start of
+line "v", end of line "r", current line the window's name), pinned by
+`flat_review_says_the_character_at_the_lines_start_and_end_as_nvdas_capture`;
+the description in the basic text is source-derived
+(`flat_text_reads_the_description_with_descriptions_off`). Moving to
+another line of flat text keeps the column, as in any text (Dickson,
+2026-10-06, "Review cursor columns").
 
 ### Review bottom on a final empty line
 

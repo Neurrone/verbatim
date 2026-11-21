@@ -76,7 +76,6 @@ mod progress;
 mod recorder;
 mod reduce;
 mod report_focus;
-mod review;
 mod review_text;
 mod say_all;
 mod shell;

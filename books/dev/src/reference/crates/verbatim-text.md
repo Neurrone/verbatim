@@ -42,7 +42,7 @@ time Chinese text is segmented and kept for the life of the process.
   There is no list of abbreviations, so "Dr. " ends a sentence; a decimal
   point and an ellipsis do not.
 - `is_line_break`, `lines`, and `line_at`: lines of text Core holds whole,
-  such as an object's value reviewed as flat text. A carriage return and
+  such as an object's flat text reviewed. A carriage return and
   line feed together are one break; a carriage return alone, a line feed
   alone, the vertical tab, the form feed, the next-line control, and
   Unicode's line and paragraph separators are each one. An offset in a

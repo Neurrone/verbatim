@@ -805,13 +805,30 @@ text). A navigation that finds no neighbour or a dead object says the
 direction's edge and the navigator stays (`docs/parity/review.md`, "Dead
 objects"); `Unanswered` says nothing for the press. A dead object reviews
 as empty flat text, one rule at the boundary (`review_text::answered` and
-`review_text::object_read`); Report Current Object says nothing.
+`review_text::run_next`); Report Current Object says nothing.
 
-An object with no text interface is reviewed as flat text, its value or
-name, read live as the queue's request (`review_text::Next::ReadObject`),
-in the pure `review` module, by the same units as text: grapheme clusters, and words
-from `text::words`, chosen from the text since flat text carries no
-language.
+An object with no text interface is reviewed as flat text through the
+same path as text, `execute` and `land`. Its flat text is NVDA's basic
+text, `review_text::flat_text`: the name, value and description, each
+that is not blank, joined by spaces. Each press reads the object live as
+the queue's request (`review_text::Next::ReadObject`), the description
+asked whatever the theme reports and kept on the navigator only where it
+reports it, then runs on that text (`Next::Flat`): the review cursor is
+`ReviewText::Flat(FlatPosition)`, a byte offset into the whole flat text
+and a column, kept while the offset is a character boundary of the text
+read and reset to the start otherwise. Core makes the line there as the
+outpost would read it, its anchor the byte offset where the line starts
+in the flat text, and answers every request the press makes from the
+text itself (`review_text::flat_answer`): a line read at a point, the
+start or the end, moving by line or not, and a range read for a copy. A
+selection, a location or a selection point is answered unsupported, and
+a page move unsupported by unit, since flat text has no screen place or
+caret (Claude, 2026-11-21). Say-all from the review cursor in flat text
+speaks the rest of the text at once. A start marker in flat text is an
+ordinary `StartMarker` at a flat position; its anchors are flat offsets,
+not the outpost's, which `SrState::held_anchors` still sends the
+outpost, so the outpost keeps an anchor of that number alive, if it has
+one, until the marker is set again or copied (Claude, 2026-11-21).
 
 ## What the shell learns
 
@@ -1011,7 +1028,9 @@ Which objects have text: a focus or navigator whose role is an edit
 field, a document, or a terminal, and any node the outpost sent a caret
 report for. The first review command reads the line at the caret, and a
 `NoText` answer makes the object flat text. Any other object is flat text
-without asking.
+without asking. A copy clears the start marker whatever it finds: no
+marker can be set while its read is in flight, since a review press holds
+the event queue until its last answer.
 
 ### The caret key on the event queue
 

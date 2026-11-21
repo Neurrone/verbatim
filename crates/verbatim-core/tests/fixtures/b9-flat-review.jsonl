@@ -1,0 +1,16 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch without the foreground right explorer.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\captures\\s2-explorer-forms-output\\verbatim-e2e-b9","step":0}
+{"label":"front explorer.exe \"verbatim-e2e-b9\"","step":1}
+{"kind":"event","ms":49,"step":1,"text":"cancel"}
+{"kind":"speech","ms":52,"step":1,"tag":"Normal","text":"verbatim-e 2e-b 9 - File Explorer"}
+{"label":"home","step":2}
+{"kind":"event","ms":3,"step":2,"text":"cancel"}
+{"label":"shift+numpad1","step":3}
+{"kind":"event","ms":4,"step":3,"text":"cancel"}
+{"kind":"speech","ms":7,"step":3,"tag":"Normal","text":"v"}
+{"label":"shift+numpad3","step":4}
+{"kind":"event","ms":5,"step":4,"text":"cancel"}
+{"kind":"speech","ms":6,"step":4,"tag":"Normal","text":"r"}
+{"label":"numpad8","step":5}
+{"kind":"event","ms":3,"step":5,"text":"cancel"}
+{"kind":"speech","ms":4,"step":5,"tag":"Normal","text":"verbatim-e 2e-b 9 - File Explorer"}

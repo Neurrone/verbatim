@@ -651,7 +651,7 @@ read, its watch, the sentence move and a caret tell's read are under
   `TerminalFound { matches, read }` with a `TerminalMatch` for each.
 
 Any request can also be answered `NoText` (no text interface; Core reviews
-the value or name as flat text), `AnchorLost`, `Gone` (the node no longer
+its flat text, its name, value and description), `AnchorLost`, `Gone` (the node no longer
 exists), `Unanswered` (no answer in time, or the read failed),
 `Unsupported` or `UnsupportedUnit`. These six are the `TextFailure`s
 (`TextReply::into_failure`), which Core's typed text requests decode

@@ -121,12 +121,6 @@ pub(crate) fn is_blank(text: &str) -> bool {
     text.chars().all(verbatim_text::is_space)
 }
 
-/// The grapheme cluster of `content` starting at or containing `offset`,
-/// or `None` at or past the end.
-pub(crate) fn grapheme_at(content: &str, offset: usize) -> Option<Range<usize>> {
-    verbatim_text::grapheme_at(content, offset)
-}
-
 /// The start of the grapheme cluster before the one at `offset`, or `None`
 /// at the start.
 pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<usize>> {
