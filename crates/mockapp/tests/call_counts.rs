@@ -3313,7 +3313,10 @@ fn caret_tell_reads_cost_exactly() {
 /// Through an edit control's window messages, the caret's and the text's
 /// length, then the line's, then the unit's, each found from its line's
 /// messages: 6, and 21 with a unit before the caret.
-#[expect(clippy::too_many_lines, reason = "each text's cases, then the edit control's")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "each text's cases, then the edit control's"
+)]
 fn starting_reads_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -3538,31 +3541,73 @@ fn starting_batch_calls(
     measured
 }
 
-/// A line key's wait's check that finds the caret moved
-/// (`verbatim_outpost::text::check::check`): remotely one program;
-/// classically the check's calls. Its formatting, the batch's later reads,
-/// is read by those reads.
+/// A line key's wait's polls, as the outpost's worker runs each
+/// (`verbatim_outpost::text::fused::poll`): a poll that finds nothing, and
+/// the poll that finds the caret moved, which reads the batch's later
+/// steps, the caret and its line with the default theme's formatting, in
+/// the same program. Remotely one program each, the ending poll included
+/// (the watch the batch replaced made its check and final read in one
+/// program too); classically each step's calls: 14 for a check alone, 33
+/// with the caret and the line's formatting read after it (the watch's
+/// classic check made 13, and 8 more for the line's formatting).
+#[expect(clippy::too_many_lines, reason = "the wait's batch, then each poll's case")]
 fn watch_checks_cost_exactly() {
+    use verbatim_model::batch::{Check, Condition, Op, Place, Point, PointOf, Step, Subject};
     common::init_com();
     let mut ratchet = Ratchet::default();
-    for (operation, remote, details, expected) in [
+    let node = verbatim_model::NodeId::new(1);
+    let gated = Some(Condition {
+        on: Place(0),
+        check: Check::Found,
+        negated: false,
+    });
+    let later = [
+        Step {
+            op: Op::Caret {
+                subject: Subject::Node(node),
+                adopt: None,
+            },
+            when: gated,
+        },
+        Step {
+            op: Op::ReadText {
+                subject: Subject::Node(node),
+                at: Point::Of(Place(1), PointOf::Caret),
+                movement: None,
+                unit: TextUnit::Line,
+                count: 1,
+                details: Theme::builtin_default().reported().text,
+            },
+            when: None,
+        },
+    ];
+    for (operation, remote, (moves, expected)) in [
         (
-            "UIA line key's check, no details, classically",
-            false,
-            verbatim_model::TextDetails::NONE,
-            calls(13, 0, 0),
+            "UIA line key's poll, nothing found, remotely",
+            true,
+            (false, calls(1, 0, 0)),
         ),
         (
-            "UIA line key's check, remotely",
+            "UIA line key's poll, nothing found, classically",
+            false,
+            (false, calls(14, 0, 0)),
+        ),
+        (
+            "UIA line key's poll that ends its wait, remotely",
             true,
-            verbatim_model::TextDetails::NONE,
-            calls(1, 0, 0),
+            (true, calls(1, 0, 0)),
+        ),
+        (
+            "UIA line key's poll that ends its wait, classically",
+            false,
+            (true, calls(33, 0, 0)),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-watch-check");
         let mut app = common::spawn_visible("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
-        let mut source = uia_notes(hwnd).remote(remote).details(details);
+        let uia = Uia::new().expect("a UIA client");
+        let mut source = uia_notes(hwnd).remote(remote);
         let mut store = Anchors::new(Arc::default());
         let mut anchors = store.node(1);
         common::apply(&mut app, hwnd, "caret doc 0");
@@ -3582,7 +3627,6 @@ fn watch_checks_cost_exactly() {
             verbatim_model::TextReply::Read { chunk, .. } => chunk,
             other => panic!("the caret's line, not {other:?}"),
         };
-        let start = anchors.held_read(at.held).expect("the read held");
         let wait = verbatim_model::batch::CaretWait {
             from: at.held,
             line: line.text,
@@ -3597,25 +3641,34 @@ fn watch_checks_cost_exactly() {
             bound_us: 100_000,
             events: false,
         };
-        common::apply(&mut app, hwnd, "caret doc 11");
+        if moves {
+            common::apply(&mut app, hwnd, "caret doc 11");
+        }
         let _ = verbatim_win32::calls::take();
-        let watched = verbatim_outpost::text::check::check(
-            &mut source,
-            &start,
-            verbatim_outpost::text::check::CheckAsk {
-                wait: &wait,
-                word: false,
-                last: false,
-            },
+        let polled = verbatim_outpost::text::fused::poll(
+            &uia,
+            (node, &mut source, &mut anchors),
+            (&wait, false, false),
+            &later,
+            (None, 2),
         )
-        .expect("the check");
+        .expect("the poll");
         let measured = verbatim_win32::calls::take();
         app.quit();
-        assert_eq!(
-            watched,
-            Some(verbatim_model::batch::Waited::Effect),
-            "{operation}"
-        );
+        match polled.ended {
+            None => assert!(!moves, "{operation}"),
+            Some((verbatim_model::batch::Waited::Effect, Some(read))) => {
+                assert!(moves, "{operation}");
+                let line = match read.get(1) {
+                    Some(verbatim_model::batch::StepOutcome::Done(
+                        verbatim_model::batch::Done::ReadText(line),
+                    )) => line.chunks[0].text.clone(),
+                    other => panic!("{operation}: the line, not {other:?}"),
+                };
+                assert_eq!(line, "gamma\n", "{operation}");
+            }
+            other => panic!("{operation}: {other:?}"),
+        }
         ratchet.check_calls(operation, measured, expected);
     }
     ratchet.finish();

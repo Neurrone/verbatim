@@ -111,11 +111,32 @@ pub(super) fn answer(
     run.steps(parsed.steps())
 }
 
+/// Runs one poll of a caret wait's batch, `program`'s: the batch's answer
+/// when the poll ends the wait, with the outcomes of its later steps the
+/// poll's program read, or, when it read none, those steps run after it;
+/// `None` while the wait goes on.
+pub(super) fn poll(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    program: &verbatim_outpost_logic::WatchProgram,
+) -> Option<Outcome> {
+    let ended = text_reads::watch(context, client.uia(), program)?;
+    Some(match ended {
+        text_reads::WaitEnded::NotThere => Outcome::NotThere,
+        text_reads::WaitEnded::Waited(waited, Some(later)) => {
+            let mut outcomes = vec![StepOutcome::Done(Done::WaitForCaret(waited))];
+            outcomes.extend(later);
+            Outcome::Result(Reply::Steps(outcomes))
+        }
+        text_reads::WaitEnded::Waited(waited, None) => after_wait(context, client, program, waited),
+    })
+}
+
 /// The answer to a caret wait's batch, `program`'s, its wait ended
 /// `waited`: the steps after the wait run in order under their
 /// conditions, as any batch's do (the request list's design, section 5,
 /// `WaitForCaret`).
-pub(super) fn after_wait(
+fn after_wait(
     context: &RequestContext<'_>,
     client: &mut Client,
     program: &verbatim_outpost_logic::WatchProgram,

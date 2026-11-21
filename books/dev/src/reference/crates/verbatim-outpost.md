@@ -845,13 +845,16 @@ reads behind ids Core names, released as anchors are (Table 16):
   sentence; the next baseline held. A source with no sentence unit
   answers `UnsupportedUnit`, a starting point no longer held
   `AnchorLost`.
-- `Watch`, a caret key's watch, waits in the reducer's table
-  (`verbatim-outpost-logic`'s `watch`), whose checks and final read run as
-  programs of their own (`text_reads::watch`, `text::check`): each check
-  reads the caret, and the character or word at it, against the starting
-  point, and the final read answers the key's unit at the effect or the
-  bound (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and
-  Table 15).
+- A batch whose first step is `WaitForCaret`, a caret key's wait, waits
+  in the reducer's table (`verbatim-outpost-logic`'s `watch`), whose
+  polls run as programs of their own (`batch::poll`,
+  `text_reads::watch`): through UI Automation each poll is one program,
+  the check of the caret, its line and the word at it against the
+  starting point followed by the batch's later reads, gated on the caret
+  or the selection having moved or the bound (`text::fused::poll`); an
+  edit control's check is made by parts (`text::check`), and the later
+  steps run after it (`docs/design/readers-tell-core-asks-build1.md`,
+  "The watch" and Table 15).
 
 - A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event

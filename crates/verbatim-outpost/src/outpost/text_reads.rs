@@ -648,22 +648,66 @@ pub(super) fn compare_step(
     )
 }
 
-/// How a caret wait's check ended the wait.
+/// How a caret wait's poll ended the wait.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum WaitEnded {
-    /// The effect was seen, or the bound passed.
-    Waited(verbatim_model::batch::Waited),
+    /// The effect was seen, or the bound passed: with the outcomes of the
+    /// batch's later steps when the poll's program read them.
+    Waited(
+        verbatim_model::batch::Waited,
+        Option<Vec<verbatim_model::batch::StepOutcome>>,
+    ),
     /// The node, or the starting point, is no longer held.
     NotThere,
 }
 
-/// Runs a caret wait's check ([`text::check::check`]): how it ended the
-/// wait, `None` for a check that shows no effect before the bound or whose
-/// read failed, which counts as no effect.
-pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Option<WaitEnded> {
+/// Runs one poll of a caret wait: how it ended the wait, `None` for a
+/// check that shows no effect before the bound or whose read failed, which
+/// counts as no effect. Through UI Automation one program, the check with
+/// the batch's later reads fused after it ([`text::fused::poll`]); an edit
+/// control's text, or with no UI Automation client, the check by parts
+/// ([`text::check::check`]).
+pub(super) fn watch(
+    context: &RequestContext<'_>,
+    uia: Option<&verbatim_uia::Uia>,
+    program: &WatchProgram,
+) -> Option<WaitEnded> {
     let node_id = program.node;
     let wait = &program.wait;
     let WatchWork::Check { word, last } = program.work;
+    if let (Some(uia), Ok(Source::Uia(mut source))) =
+        (uia, source(context, node_id, TextDetails::NONE))
+    {
+        let later = program.batch.steps.get(1..).unwrap_or_default();
+        let named: Vec<u64> = std::iter::once(wait.from.0)
+            .chain(text::fused::named(later, 0, &[]))
+            .collect();
+        let mut call = uia_call(context, node_id, &named);
+        let window = super::asked::known_nearest_of(context, node_id);
+        let read_at_us = context.observed_now();
+        let polled = text::fused::poll(
+            uia,
+            (node_id, &mut source, &mut call.text()),
+            (wait, word, last),
+            later,
+            (window, read_at_us),
+        );
+        put_uia(context, node_id, call);
+        keep_support(context, node_id, &source);
+        return match polled {
+            Ok(answer) => {
+                if answer.read_classically
+                    && let Some(window) = window
+                {
+                    context.read_classically(window);
+                }
+                answer
+                    .ended
+                    .map(|(waited, later)| WaitEnded::Waited(waited, later))
+            }
+            Err(error) => watch_outcome(Ok(Err(error))),
+        };
+    }
     let ran = on_text!(
         context,
         node_id,
@@ -699,7 +743,7 @@ fn watch_outcome(
             tracing::debug!(reason, "a wait's read failed");
             None
         }
-        Ok(Ok(waited)) => waited.map(WaitEnded::Waited),
+        Ok(Ok(waited)) => waited.map(|waited| WaitEnded::Waited(waited, None)),
     }
 }
 

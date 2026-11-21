@@ -153,6 +153,40 @@ pub enum Input<'a> {
         /// The point.
         at: Point<'a>,
     },
+    /// One poll's check of a [`verbatim_model::batch::Op::WaitForCaret`],
+    /// the first step of the poll's program, the batch's later steps fused
+    /// after it under its gate ([`Found::found`]).
+    WaitCheck(WaitCheck<'a>),
+}
+
+/// What a caret wait's check compares, as [`crate::WatchQuery`] takes it.
+#[derive(Clone, Copy)]
+pub struct WaitCheck<'a> {
+    /// The text.
+    pub text: TextTarget<'a>,
+    /// The starting point's caret.
+    pub start: Position<'a>,
+    /// The starting point's selection's ends, both the caret when nothing
+    /// was selected.
+    pub start_selection: (Position<'a>, Position<'a>),
+    /// Whether the word at the caret is read.
+    pub word: bool,
+    /// Whether this is the check at the bound, after which the steps gated
+    /// on it read whatever it shows.
+    pub last: bool,
+    /// The most UTF-16 code units of a line or a word read.
+    pub max_text: i32,
+}
+
+/// [`Input::WaitCheck`]'s result.
+#[derive(Debug)]
+pub struct Checked {
+    /// What the check read.
+    pub answer: crate::WatchAnswer,
+    /// Whether the steps gated on it read: the caret or the selection
+    /// moved, or it is the check at the bound. A check that shows the
+    /// effect only by the text leaves them unread.
+    pub reads_after: bool,
 }
 
 /// A step's outcome the outpost decided without a call: a refusal (no
@@ -333,6 +367,8 @@ pub enum Found {
     /// [`Input::Locate`]'s: the left and top of the character at the
     /// point, in screen pixels, when the provider tells.
     Locate(Option<(f64, f64)>),
+    /// [`Input::WaitCheck`]'s.
+    WaitCheck(Checked),
 }
 
 impl Found {
@@ -344,6 +380,7 @@ impl Found {
             Self::Related(related) => Some(!related.nodes.is_empty()),
             Self::Ancestors(ancestors) => Some(matches!(ancestors.walk, AncestorWalk::MetKnown(_))),
             Self::Descendants(descendants) => Some(!descendants.nodes.is_empty()),
+            Self::WaitCheck(checked) => Some(checked.reads_after),
             Self::Caret(_)
             | Self::ReadText(_)
             | Self::ReadRange(_)
@@ -649,7 +686,7 @@ fn references(input: &Input<'_>) -> Vec<Place> {
         places
     };
     let places = match input {
-        Input::Answered(_) | Input::Caret { .. } => Vec::new(),
+        Input::Answered(_) | Input::Caret { .. } | Input::WaitCheck(_) => Vec::new(),
         Input::Read { subject, .. }
         | Input::Related { subject, .. }
         | Input::Descendants { subject, .. } => vec![object(subject)],
@@ -681,6 +718,7 @@ fn kind_name(input: &Input<'_>) -> &'static str {
         Input::CompareSelection { .. } => "compare selection",
         Input::Select { .. } => "select",
         Input::Locate { .. } => "locate",
+        Input::WaitCheck(_) => "wait check",
     }
 }
 

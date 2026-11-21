@@ -19,9 +19,9 @@
 use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 
 use verbatim_model::batch::{
-    Before, CaretAt, Chunks, Condition, Done, Edges, Gate, HeldPoint, HeldSelection, KindMismatch,
-    Located, Missing, Op, Place, Point, PointOf, RangeText, Selected, SelectionCompared, Step,
-    StepOutcome, StepRefusal,
+    Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, Edges, Gate, HeldPoint,
+    HeldSelection, KindMismatch, Located, Missing, Op, Place, Point, PointOf, RangeText, Selected,
+    SelectionCompared, Step, StepOutcome, StepRefusal, Subject, Waited,
 };
 use verbatim_model::{
     CaretSelection, MAX_RANGE_BYTES, MAX_READ_AHEAD_TEXT, NodeId, Selection, SelectionDifference,
@@ -31,14 +31,14 @@ use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{
     Compared, Ends, Found, Fused, Input, Point as Spot, Prior, Ran, Segment, UnitsFound, UnitsRead,
-    Unrun,
+    Unrun, WaitCheck,
 };
 use verbatim_uia_rops::{Movement, Position, TextFrom};
 
 use super::uia::{UiaPos, UiaText, character_counts, round, unit_text};
 use super::{
-    MAX_CHUNK_UNITS, MAX_RANGE_UNITS, NodeText, PointFrom, TextResult, change, change_of,
-    chunk_from, keep_whole_characters, to_utf8,
+    MAX_CHUNK_UNITS, MAX_RANGE_UNITS, NodeText, PointFrom, TextError, TextResult, change,
+    change_of, chunk_from, keep_whole_characters, to_utf8,
 };
 
 /// The most UTF-16 code units of a selection's text a program reads
@@ -277,44 +277,7 @@ pub fn run(
         .iter()
         .zip(&whens)
         .enumerate()
-        .map(|(index, (plan, when))| Fused {
-            place: Place(u8::try_from(first + index).unwrap_or(u8::MAX)),
-            when: *when,
-            input: match plan {
-                Plan::Answered(unrun) => Input::Answered(*unrun),
-                // Its failure replaces whatever the segment answers.
-                Plan::Failed => Input::Answered(Unrun::Skipped),
-                Plan::Caret => Input::Caret { text: target },
-                Plan::ReadText { at, read, .. } => Input::ReadText {
-                    text: target,
-                    at: at.spot(),
-                    read: *read,
-                },
-                Plan::ReadRange(ends) => Input::ReadRange {
-                    text: target,
-                    ends: ends.ends(),
-                    max_text: i32::try_from(MAX_RANGE_UNITS + 1).unwrap_or(i32::MAX),
-                },
-                Plan::Compare { before, after } => Input::CompareSelection {
-                    text: target,
-                    before: match before {
-                        PlannedPrior::Baseline(held, _) => Prior::Baseline(held.position()),
-                        PlannedPrior::SelectionOf(place) => Prior::SelectionOf(*place),
-                    },
-                    after: *after,
-                    max_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
-                },
-                Plan::Select(ends) => Input::Select {
-                    text: target,
-                    ends: ends.ends(),
-                },
-                Plan::Locate(at) => Input::Locate {
-                    text: target,
-                    at: at.spot(),
-                },
-            },
-            calls_only: false,
-        })
+        .map(|(index, (plan, when))| fused_step(plan, target, (first + index, *when)))
         .collect();
     let segment = Segment {
         uia,
@@ -343,6 +306,268 @@ pub fn run(
     FusedAnswer {
         outcomes,
         read_classically: answer.read_classically,
+    }
+}
+
+/// How a poll of a caret wait ended it, and whether a program could not
+/// run at all, so the window is read classically from now on.
+pub struct PollAnswer {
+    /// `None` when the check showed no effect before the bound; else how
+    /// the wait ended, with the outcomes of the batch's later steps when
+    /// the poll's program read them.
+    pub ended: Option<(Waited, Option<Vec<StepOutcome>>)>,
+    /// A program could not run at all.
+    pub read_classically: bool,
+}
+
+/// One poll of a caret wait (the request list's design, section 5,
+/// `WaitForCaret`): one program, the check of the caret against the
+/// starting point held under `wait`'s anchor followed by the fused run of
+/// the batch's `later` steps, which read only when the caret or the
+/// selection moved or at the bound (`last`), so the poll that ends the
+/// wait takes no program of its own for them. The check is judged by
+/// `wait`'s effect test ([`super::check::effect_of`]); a check whose caret
+/// moved while it read runs again, as the check by parts does. The later
+/// steps' results are taken only when the wait ends, each under its own
+/// condition on how it ended; with the effect shown only by the text,
+/// their reads did not run, and the caller runs them. Later steps that are
+/// not all fusable text steps of `node` without an act, under no
+/// condition but on the wait's effect, are left to the caller whole.
+///
+/// # Errors
+///
+/// [`TextError::Gone`] when the node or the starting point is gone;
+/// [`TextError::Failed`] when the check could not be read, which counts
+/// as no effect.
+pub fn poll(
+    uia: &Uia,
+    (node, source, anchors): (NodeId, &mut UiaText, &mut NodeText<'_, UiaPos>),
+    (wait, word, last): (&CaretWait, bool, bool),
+    later: &[Step],
+    (window, read_at_us): (Option<isize>, u64),
+) -> TextResult<PollAnswer> {
+    let start = anchors.held_read(wait.from).ok_or(TextError::Gone)?;
+    let (was_start, was_end) = start.selection.as_ref().map_or_else(
+        || (start.caret.clone(), start.caret.clone()),
+        |selection| (selection.start.clone(), selection.end.clone()),
+    );
+    let starting = [
+        HeldAt::new(start.caret.clone())?,
+        HeldAt::new(was_start)?,
+        HeldAt::new(was_end)?,
+    ];
+    let fused_later = later.iter().all(|step| fusable_in_poll(step, node));
+    let gate = Condition {
+        on: Place(0),
+        check: Check::Found,
+        negated: false,
+    };
+    let plans: Vec<Plan> = if fused_later {
+        later
+            .iter()
+            .map(|step| plan(source, anchors, step, 0, &[]).0)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let target = source.target();
+    let mut steps = vec![Fused {
+        place: Place(0),
+        when: None,
+        input: Input::WaitCheck(WaitCheck {
+            text: target,
+            start: starting[0].position(),
+            start_selection: (starting[1].position(), starting[2].position()),
+            word,
+            last,
+            max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+        }),
+        calls_only: false,
+    }];
+    steps.extend(
+        plans
+            .iter()
+            .enumerate()
+            .map(|(index, plan)| fused_step(plan, target, (1 + index, Some(gate)))),
+    );
+    let segment = Segment {
+        uia,
+        steps,
+        remote: source.tries_remote(),
+        window,
+    };
+    let (ended, read_classically) = run_poll(&segment, wait, last)?;
+    let Some(PollRan {
+        waited,
+        checked,
+        ran,
+        began_us,
+    }) = ended
+    else {
+        return Ok(PollAnswer {
+            ended: None,
+            read_classically,
+        });
+    };
+    drop(segment);
+    if !fused_later || !checked.reads_after {
+        return Ok(PollAnswer {
+            ended: Some((waited, None)),
+            read_classically,
+        });
+    }
+    let mut made = Made {
+        node,
+        source,
+        anchors,
+        first: 1,
+        read_at_us,
+        carets: Vec::new(),
+    };
+    let outcomes = made.later(waited, (later, plans), (ran, began_us));
+    Ok(PollAnswer {
+        ended: Some((waited, Some(outcomes))),
+        read_classically,
+    })
+}
+
+/// A poll's program that ended the wait.
+struct PollRan {
+    waited: Waited,
+    checked: verbatim_uia_rops::batch::Checked,
+    /// The later steps' outcomes as run.
+    ran: Vec<Ran>,
+    /// When the program began.
+    began_us: u64,
+}
+
+/// Runs a poll's `segment`, again while its caret moved as it read, at
+/// most [`super::check::TORN_READS`] times: the run that ended the wait
+/// judged by `wait`'s effect test, `None` while the wait goes on, and
+/// whether a program could not run at all.
+fn run_poll(
+    segment: &Segment<'_>,
+    wait: &CaretWait,
+    last: bool,
+) -> TextResult<(Option<PollRan>, bool)> {
+    let mut read_classically = false;
+    let mut tries = 0;
+    loop {
+        let began_us = verbatim_process::clock::now_us();
+        let answer = verbatim_uia_rops::batch::run_batch(segment);
+        read_classically |= answer.read_classically;
+        let mut ran = answer.steps.into_iter();
+        let checked = match ran.next() {
+            Some(Ran::Done(Found::WaitCheck(checked))) => checked,
+            Some(Ran::Gone) => return Err(TextError::Gone),
+            other => {
+                return Err(TextError::Failed(format!(
+                    "the wait's check was not read: {other:?}"
+                )));
+            }
+        };
+        let read = &checked.answer;
+        let effect = super::check::effect_of(
+            wait,
+            (read.caret_moved, read.selection_moved),
+            (&read.line.text, read.line.offset),
+            read.word.as_ref().map(|word| word.text.as_slice()),
+        );
+        if !effect && !last {
+            return Ok((None, read_classically));
+        }
+        if read.moved_while_read {
+            tries += 1;
+            if tries < super::check::TORN_READS {
+                continue;
+            }
+            if !last {
+                return Ok((None, read_classically));
+            }
+        }
+        let waited = if effect {
+            Waited::Effect
+        } else {
+            Waited::Bound
+        };
+        let ended = PollRan {
+            waited,
+            checked,
+            ran: ran.collect(),
+            began_us,
+        };
+        return Ok((Some(ended), read_classically));
+    }
+}
+
+/// Whether `step`, a step of a caret wait's batch after the wait, is read
+/// in each poll's program: a fusable text step of `node` that is no act,
+/// under no condition but the wait's effect.
+fn fusable_in_poll(step: &Step, node: NodeId) -> bool {
+    let on_node = matches!(step.op.subject(), Some(Subject::Node(subject)) if *subject == node);
+    let fusable = matches!(
+        step.op,
+        Op::Caret { .. }
+            | Op::ReadText { .. }
+            | Op::ReadRange { .. }
+            | Op::CompareSelection { .. }
+            | Op::Locate { .. }
+    );
+    let condition = match step.when {
+        None => true,
+        Some(Condition {
+            on,
+            check: Check::Found,
+            negated: false,
+        }) => on == Place(0),
+        Some(_) => false,
+    };
+    on_node && fusable && condition
+}
+
+/// The segment's step `plan` makes at batch place `place`, under `when`.
+fn fused_step<'p>(
+    plan: &'p Plan,
+    target: verbatim_uia_rops::TextTarget<'p>,
+    (place, when): (usize, Option<Condition>),
+) -> Fused<'p> {
+    Fused {
+        place: Place(u8::try_from(place).unwrap_or(u8::MAX)),
+        when,
+        input: match plan {
+            Plan::Answered(unrun) => Input::Answered(*unrun),
+            // Its failure replaces whatever the segment answers.
+            Plan::Failed => Input::Answered(Unrun::Skipped),
+            Plan::Caret => Input::Caret { text: target },
+            Plan::ReadText { at, read, .. } => Input::ReadText {
+                text: target,
+                at: at.spot(),
+                read: *read,
+            },
+            Plan::ReadRange(ends) => Input::ReadRange {
+                text: target,
+                ends: ends.ends(),
+                max_text: i32::try_from(MAX_RANGE_UNITS + 1).unwrap_or(i32::MAX),
+            },
+            Plan::Compare { before, after } => Input::CompareSelection {
+                text: target,
+                before: match before {
+                    PlannedPrior::Baseline(held, _) => Prior::Baseline(held.position()),
+                    PlannedPrior::SelectionOf(place) => Prior::SelectionOf(*place),
+                },
+                after: *after,
+                max_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
+            },
+            Plan::Select(ends) => Input::Select {
+                text: target,
+                ends: ends.ends(),
+            },
+            Plan::Locate(at) => Input::Locate {
+                text: target,
+                at: at.spot(),
+            },
+        },
+        calls_only: false,
     }
 }
 
@@ -684,6 +909,37 @@ impl Made<'_, '_> {
             },
             StepOutcome::Done,
         )
+    }
+
+    /// The outcomes of a caret wait's `later` steps, planned as `plans`,
+    /// that a poll which ended the wait `waited` ran as `ran` from
+    /// `began_us`: each read under the check's gate in the program, decided
+    /// now under its own condition on how the wait ended.
+    fn later(
+        &mut self,
+        waited: Waited,
+        (later, plans): (&[Step], Vec<Plan>),
+        (ran, began_us): (Vec<Ran>, u64),
+    ) -> Vec<StepOutcome> {
+        let texts = selection_texts(&plans, &ran, self.first);
+        let mut outcomes = vec![StepOutcome::Done(Done::WaitForCaret(waited))];
+        for (index, ((step, plan), ran)) in later.iter().zip(plans).zip(ran).enumerate() {
+            let outcome = match step.gate(&outcomes) {
+                Ok(Gate::Run) => self.outcome(index, plan, ran, (&texts, began_us)),
+                Ok(Gate::Skip) => {
+                    self.carets.push(None);
+                    StepOutcome::Skipped
+                }
+                Err(KindMismatch) => {
+                    self.carets.push(None);
+                    tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
+                    StepOutcome::Failed
+                }
+            };
+            outcomes.push(outcome);
+        }
+        outcomes.remove(0);
+        outcomes
     }
 
     /// A `Caret`'s result: its points held, and its read held as the next

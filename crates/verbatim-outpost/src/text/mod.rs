@@ -75,37 +75,6 @@ pub enum FormatSpan {
     Line,
 }
 
-/// What a caret wait's check reads, for [`TextSource::watch_read`]
-/// (`check`): the caret and the selection compared with the starting
-/// point's, the caret's line, and the word when the wait compares it, so a
-/// source that can read them in one go does.
-pub struct WatchRequest<'a, P> {
-    /// The starting point's caret.
-    pub start: &'a P,
-    /// The starting point's selection's ends, both its caret when nothing
-    /// was selected.
-    pub start_selection: (&'a P, &'a P),
-    /// Whether to read the word at the caret.
-    pub word: bool,
-}
-
-/// The answer to a [`WatchRequest`].
-pub struct WatchRead<P> {
-    /// The caret and the selection.
-    pub state: CaretState<P>,
-    /// The caret is not the starting point's: a compare the source refuses
-    /// counts as a move.
-    pub caret_moved: bool,
-    /// The selection's ends are not the starting point's.
-    pub selection_moved: bool,
-    /// The caret's line and the caret's UTF-16 offset in it.
-    pub line: (Unit<P>, usize),
-    /// The word at the caret and the caret's offset in it, when asked.
-    pub word: Option<(Unit<P>, usize)>,
-    /// The caret read again at the end was not where it was first read.
-    pub moved_while_read: bool,
-}
-
 /// What a caret read covers, for [`TextSource::caret_read`]: everything a
 /// caret report or a caret key's answer needs, so a source that can read it
 /// in one go does.
@@ -520,21 +489,6 @@ pub trait TextSource {
         &mut self,
         _request: &CaretRequest<'_, Self::Pos>,
     ) -> TextResult<Option<CaretRead<Self::Pos>>> {
-        Ok(None)
-    }
-
-    /// Makes a caret key's watch check's reads at once, where the source
-    /// can do it in one round trip (UIA's remote operations, with its
-    /// classic reads behind them); `None` for a source that reads them one
-    /// at a time, which the check then does.
-    ///
-    /// # Errors
-    ///
-    /// As [`caret`](Self::caret).
-    fn watch_read(
-        &mut self,
-        _request: &WatchRequest<'_, Self::Pos>,
-    ) -> TextResult<Option<WatchRead<Self::Pos>>> {
         Ok(None)
     }
 

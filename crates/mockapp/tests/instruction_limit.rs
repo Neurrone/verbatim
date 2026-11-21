@@ -27,16 +27,16 @@ use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, CaretUnit, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
     RangeAction, RangeEnd, RangeQuery, SnapshotQuery, StatesQuery, Status, StepQuery,
-    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery, caret_read_remote,
+    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, caret_read_remote,
     controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
     focus_states_remote, navigation_step_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote, tree_dump_remote, watch_check_remote,
+    text_units_remote, tree_dump_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, TextUnit_Line, TextUnit_Paragraph,
-    TextUnit_Word, TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, IUIAutomationTextPattern, TextUnit_Line, TextUnit_Word,
+    TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -825,166 +825,94 @@ fn tree_dumps_execute_exactly() {
     );
 }
 
-/// A caret key's watch check (`docs/design/readers-tell-core-asks-build1.md`,
-/// "The watch"), with a selection made since the starting point: at its
-/// worst, the check at the bound of a deleting key, reading the word and a
-/// paragraph as its unit; a check that finds the caret moved and reads the
-/// word as its unit; and, typically, a check that finds nothing; and the
-/// final read after an event, the caret read of the line and a word with
-/// no formatting.
-fn watch_checks_execute_exactly() {
+/// A caret wait's poll (`docs/design/readers-tell-core-asks-build1.md`,
+/// "The watch"; the request list's design, section 5, `WaitForCaret`):
+/// one program, the check followed by the batch's later reads, the caret
+/// and its line with every attribute's formatting, gated on the check's
+/// caret or selection having moved or its being at the bound. Typically a
+/// poll that finds nothing, its later reads skipped by their gate; a line
+/// key's poll that finds the caret moved, reading the line's one stretch
+/// in `text.json`; a deleting key's at the bound with a selection made
+/// since the starting point, reading the word too; and in `mixed.json`,
+/// where every stretch is walked by words and characters, the poll at the
+/// bound over a line of 16 stretches, counted, and the worst, over a line
+/// of 80 cut at 64 stretches, which the counting form cannot run, since it
+/// executes twice as many: run as Verbatim runs it, it stays under the
+/// limit, one program. The check and the reads it gates were the watch
+/// check's one program before (91, 190, 110 without formatting, and 2,181
+/// for the 17 stretches): a poll that finds nothing executes 139, its
+/// gated reads' tests among them.
+fn wait_polls_execute_exactly() {
+    use verbatim_uia_rops::batch::{Found, Ran, Segment, run_batch};
     common::init_com();
-    let mut fixture = Fixture::start("text.json", "mockapp-instructions-watch");
-    let notes = fixture.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
-        .expect("the selection")
-        .remove(0);
-    let start = RangeEnd {
-        range: &before,
-        endpoint: Endpoint::Start,
-    };
-    let query = |word: bool, unit, last: bool| WatchQuery {
-        element: &notes,
-        pattern: &pattern,
-        start,
-        start_selection: (start, start),
-        word,
-        unit: Some(unit),
-        last,
-        formats: None,
-        attributes: Attributes::NONE,
-        max_text: 1024,
-    };
-    let typical = counted(|| {
-        let answer = watch_check_remote(&query(false, TextUnit_Word, false)).expect("the check");
-        assert!(!answer.caret_moved && answer.unit.is_none());
-    });
-    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 6 10");
-    let moved = counted(|| {
-        let answer = watch_check_remote(&query(true, TextUnit_Word, false)).expect("the check");
-        assert!(answer.caret_moved && answer.unit.is_some());
-    });
-    let worst = counted(|| {
-        let answer = watch_check_remote(&query(true, TextUnit_Paragraph, true)).expect("the check");
-        assert!(answer.selection.is_some() && answer.unit.is_some());
-    });
-    let final_read = counted(|| {
-        let answer = caret_read_remote(&CaretQuery {
-            element: &notes,
-            pattern: &pattern,
-            since: None,
-            previous_selection: None,
-            previous_collapsed: false,
-            unit: Some(CaretUnit::At(TextUnit_Word)),
-            formats: None,
-            attributes: Attributes::NONE,
-            learning: Attributes::NONE,
-            max_text: 1024,
-            max_change_text: 1024,
-            recheck: false,
-            read_selection_text: false,
-            read_previous_text: false,
-        })
-        .expect("the final read");
-        assert!(answer.unit.is_some());
-    });
-    fixture.app.quit();
-    assert_eq!(
-        [worst, moved, typical, final_read],
-        [110, 102, 91, 46],
-        "watch check worst, moved and typical, and the final read"
-    );
-    assert!(worst < LIMIT / 2);
-}
-
-/// A caret key's watch check reading its unit's formatting with every
-/// attribute (`emit_formats`): a check that finds nothing pays only the
-/// branch's test, 10 instructions over the check without formatting
-/// (`watch_checks_execute_exactly`'s typical 91); a line key whose check finds the caret moved reads the
-/// line's stretches in `text.json`; and in `mixed.json`, where every
-/// stretch is walked by words and characters, a line of 16 stretches at
-/// the bound, counted, and the worst, the check at the bound of a
-/// paragraph key over a line of 80 cut at 64 stretches, which the counting
-/// form cannot run, since it executes twice as many: run as Verbatim runs
-/// it, it stays under the limit.
-fn watch_check_formatting_executes_exactly() {
-    common::init_com();
-    let mut plain = Fixture::start("text.json", "mockapp-instructions-watch-formats");
-    let notes = plain.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let mut plain = Fixture::start("text.json", "mockapp-instructions-poll");
+    let text = batch::Text::of(plain.find("Notes"));
     common::apply(&mut plain.app, plain.hwnd, "caret doc 0");
-    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+    let before = verbatim_uia::text::TextPatternExt::selection(&text.pattern)
         .expect("the selection")
         .remove(0);
-    let start = RangeEnd {
+    let start = Position {
         range: &before,
         endpoint: Endpoint::Start,
+        collapsed: true,
     };
-    let line = |last: bool| WatchQuery {
-        element: &notes,
-        pattern: &pattern,
-        start,
-        start_selection: (start, start),
-        word: false,
-        unit: None,
-        last,
-        formats: Some(FormatSpan::Line),
-        attributes: Attributes::ALL,
-        max_text: 1024,
+    let poll = |text: &batch::Text, (word, last): (bool, bool)| {
+        let steps = batch::wait_poll(text, start, (word, last));
+        run_batch(&Segment {
+            uia: &plain.uia,
+            steps,
+            remote: true,
+            window: None,
+        })
     };
-    let nothing = counted(|| {
-        let answer = watch_check_remote(&line(false)).expect("the check");
-        assert!(!answer.caret_moved && answer.runs.is_none());
-    });
+    let read_after = |answer: &verbatim_uia_rops::batch::Answer| match &answer.steps[..] {
+        [Ran::Done(Found::WaitCheck(checked)), ..] => checked.reads_after,
+        other => panic!("the check: {other:?}"),
+    };
+    let typical = counted(|| assert!(!read_after(&poll(&text, (false, false)))));
     common::apply(&mut plain.app, plain.hwnd, "caret doc 11");
-    let moved = counted(|| {
-        let answer = watch_check_remote(&line(false)).expect("the check");
-        assert_eq!(answer.runs.map(|runs| runs.len()), Some(1));
-    });
+    let moved = counted(|| assert!(read_after(&poll(&text, (false, false)))));
+    common::apply(&mut plain.app, plain.hwnd, "caret doc 6 10");
+    let deleting = counted(|| assert!(read_after(&poll(&text, (true, true)))));
     plain.app.quit();
 
-    let mut mixed = Fixture::start("mixed.json", "mockapp-instructions-watch-mixed");
-    let notes = mixed.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let mut mixed = Fixture::start("mixed.json", "mockapp-instructions-poll-mixed");
+    let text = batch::Text::of(mixed.find("Notes"));
     common::apply(&mut mixed.app, mixed.hwnd, "caret doc 0");
-    let before = verbatim_uia::text::TextPatternExt::selection(&pattern)
+    let before = verbatim_uia::text::TextPatternExt::selection(&text.pattern)
         .expect("the selection")
         .remove(0);
-    let start = RangeEnd {
+    let start = Position {
         range: &before,
         endpoint: Endpoint::Start,
+        collapsed: true,
     };
-    let at_bound = |unit: Option<_>, formats| WatchQuery {
-        element: &notes,
-        pattern: &pattern,
-        start,
-        start_selection: (start, start),
-        word: false,
-        unit,
-        last: true,
-        formats: Some(formats),
-        attributes: Attributes::ALL,
-        max_text: 1024,
+    let at_bound = |text: &batch::Text| {
+        run_batch(&Segment {
+            uia: &mixed.uia,
+            steps: batch::wait_poll(text, start, (false, true)),
+            remote: true,
+            window: None,
+        })
     };
-    let sixteen = counted(|| {
-        let answer = watch_check_remote(&at_bound(None, FormatSpan::Line)).expect("the check");
-        assert_eq!(answer.runs.map(|runs| runs.len()), Some(17));
-    });
+    let stretches = |answer: &verbatim_uia_rops::batch::Answer| match answer.steps.get(2) {
+        Some(Ran::Done(Found::ReadText(line))) => line.runs.len(),
+        other => panic!("the line: {other:?}"),
+    };
+    let sixteen = counted(|| assert_eq!(stretches(&at_bound(&text)), 17));
     common::apply(&mut mixed.app, mixed.hwnd, "caret doc 50");
-    let worst = watch_check_remote(&at_bound(Some(TextUnit_Paragraph), FormatSpan::Unit))
-        .map(|answer| answer.runs.map(|runs| runs.len()));
+    let _ = verbatim_win32::calls::take();
+    let worst = at_bound(&text);
+    let worst_calls = verbatim_win32::calls::take();
     mixed.app.quit();
     assert_eq!(
-        [nothing, moved, sixteen],
-        [101, 190, 2181],
-        "a check that finds nothing, a moved line key's, and 17 mixed stretches at the bound"
+        [typical, moved, deleting, sixteen],
+        [139, 315, 542, 2306],
+        "a poll that finds nothing, a moved line key's, a deleting key's at the bound, \
+         and 17 mixed stretches at the bound"
     );
-    match worst {
-        Ok(runs) => assert_eq!(runs, Some(64)),
-        Err(error) => panic!("80 characters at the bound: {error}"),
-    }
+    assert_eq!(stretches(&worst), 64, "80 characters at the bound");
+    assert_eq!(worst_calls.uia, 1, "the worst poll, one program");
 }
 
 /// A focus completion's read after the focus's registration
@@ -1288,11 +1216,7 @@ fn main() {
             terminal_colours_execute_exactly,
         ),
         ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
-        ("watch_checks_execute_exactly", watch_checks_execute_exactly),
-        (
-            "watch_check_formatting_executes_exactly",
-            watch_check_formatting_executes_exactly,
-        ),
+        ("wait_polls_execute_exactly", wait_polls_execute_exactly),
         ("focus_states_execute_exactly", focus_states_execute_exactly),
         (
             "batch_text_shapes_execute_exactly",

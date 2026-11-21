@@ -37,6 +37,7 @@ use crate::operation::{Import, Outcome, ProgramCache, Value};
 use crate::text::{
     FoundPoint, Movement, TextFrom, UnitsRegisters, emit_after, emit_between, emit_units,
 };
+use crate::watch::emit_check;
 
 /// The most instructions one run may execute.
 pub(super) const LIMIT: u32 = 10_000;
@@ -94,8 +95,14 @@ fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
         }
         Input::CompareSelection { .. } => 120,
         Input::Locate { at, .. } => 20 + point_cost(at),
+        Input::WaitCheck(_) => WAIT_CHECK,
     }
 }
+
+/// What a caret wait's check may execute at most: its caret read twice,
+/// three comparisons with the starting point, its line and word, and its
+/// gate's test.
+const WAIT_CHECK: u32 = 120;
 
 /// What finding a point may execute at most.
 fn point_cost(point: &Point<'_>) -> u32 {
@@ -284,6 +291,10 @@ enum Low {
     Compare(usize, Before, After, i32),
     Select(usize, LowEnds),
     Locate(usize, Pt),
+    /// The element, the starting caret's and selection's ends as imports
+    /// and whether each is its range's end, whether the word is read,
+    /// whether it is the check at the bound, and the text read's limit.
+    WaitCheck(usize, [(usize, bool); 3], bool, bool, i32),
 }
 
 /// A step's condition on a step of the same program.
@@ -519,6 +530,26 @@ impl<'p> Planner<'p, '_, '_> {
         Ok((before, after))
     }
 
+    /// A caret wait's check lowered: its element and starting points as
+    /// imports.
+    fn wait_check(&mut self, check: &super::WaitCheck<'_>) -> Low {
+        let element = self.import(Import::Element(check.text.element.clone()));
+        let mut held = |position: &crate::text::Position<'_>| {
+            let (range, end, _) = self.held(
+                position.range,
+                position.endpoint == Endpoint::End,
+                position.collapsed,
+            );
+            (range, end)
+        };
+        let points = [
+            held(&check.start),
+            held(&check.start_selection.0),
+            held(&check.start_selection.1),
+        ];
+        Low::WaitCheck(element, points, check.word, check.last, check.max_text)
+    }
+
     /// The step at `index` lowered, with its gate inside the program; its
     /// outcome when the program does not run it.
     fn lower(&mut self, index: usize) -> Result<(Low, Gate), Ran> {
@@ -614,6 +645,7 @@ impl<'p> Planner<'p, '_, '_> {
                 let element = text(self, target);
                 Low::Locate(element, self.point(at, index)?)
             }
+            Input::WaitCheck(check) => self.wait_check(check),
         };
         Ok((low, gate))
     }
@@ -688,6 +720,11 @@ enum Regs {
     },
     Select(Reg<kind::Bool>),
     Locate(Reg<kind::Array>),
+    WaitCheck {
+        check: Box<crate::watch::CheckRegisters>,
+        /// Whether the steps gated on it read.
+        reads_after: Reg<kind::Bool>,
+    },
 }
 
 /// A unit read's registers, its first unit's formatting's, and whether
@@ -885,6 +922,7 @@ impl Emit<'_> {
                     let none = b.uint(0);
                     b.compare(size, none, Comparison::GreaterThan)
                 }
+                Regs::WaitCheck { reads_after, .. } => *reads_after,
                 _ => b.bool(true),
             };
             b.set(holds, found);
@@ -1007,6 +1045,9 @@ impl Emit<'_> {
                 let rectangles = b.text_range_get_bounding_rectangles(range);
                 Regs::Locate(b.add_to_results(rectangles))
             }
+            (Low::WaitCheck(text, points, word, last, max), _) => {
+                self.wait_check(b, (*text, points), (*word, *last, *max))
+            }
             _ => unreachable_import(),
         }
     }
@@ -1091,6 +1132,39 @@ impl Emit<'_> {
             *table = reads_cell(fill).then(|| read_table(b, neighbour));
         }
         regs
+    }
+
+    /// Emits [`Input::WaitCheck`]: the check of the text of the element
+    /// imported at `text` against the starting `points`, and its gate's
+    /// value, whether the steps gated on it read: the caret or the
+    /// selection moved, or `last`.
+    fn wait_check(
+        &self,
+        b: &mut Builder,
+        (text, points): (usize, &[(usize, bool); 3]),
+        (word, last, max): (bool, bool, i32),
+    ) -> Regs {
+        let c = Constants {
+            max_text: b.int(max),
+            ..*self.c
+        };
+        let point =
+            |(range, end): (usize, bool)| (self.range(range), if end { c.end } else { c.start });
+        let element = self.element(text);
+        let check = emit_check(
+            b,
+            &c,
+            element,
+            (point(points[0]), point(points[1]), point(points[2])),
+            word,
+        );
+        let reads_after = b.new_bool(last);
+        let moved = b.or(check.caret_moved, check.selection_moved);
+        b.or_assign(reads_after, moved);
+        Regs::WaitCheck {
+            check: Box::new(check),
+            reads_after,
+        }
     }
 
     /// Emits [`Input::Caret`]: the caret and the selection as the classic
@@ -1663,6 +1737,14 @@ impl State<'_, '_> {
                         .get(*held)?
                         .then(|| text(*previous_text))
                         .transpose()?,
+                })
+            }
+            (Regs::WaitCheck { check, .. }, Input::WaitCheck(input)) => {
+                let answer = check.read(outcome)?;
+                let reads_after = input.last || answer.caret_moved || answer.selection_moved;
+                Found::WaitCheck(super::Checked {
+                    answer,
+                    reads_after,
                 })
             }
             (Regs::Locate(rectangles), _) => {

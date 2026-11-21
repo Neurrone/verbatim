@@ -111,6 +111,7 @@ pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran
         Input::Locate { text, at } => point(state, index, *text, at)
             .and_then(|at| classic_location(&at))
             .map(Found::Locate),
+        Input::WaitCheck(check) => wait_check(check),
     };
     match found {
         Ok(found) => Ran::Done(found),
@@ -406,6 +407,29 @@ fn range(
         &end,
         through.as_ref().map(|(start, end)| (start, end)),
     )
+}
+
+/// A caret wait's check the classic way ([`crate::watch_check_classic`]).
+fn wait_check(check: &super::WaitCheck<'_>) -> Result<Found, Error> {
+    fn end<'p>(position: &crate::text::Position<'p>) -> RangeEnd<'p> {
+        RangeEnd {
+            range: position.range,
+            endpoint: position.endpoint,
+        }
+    }
+    let answer = crate::watch_check_classic(&crate::WatchQuery {
+        element: check.text.element,
+        pattern: check.text.pattern,
+        start: end(&check.start),
+        start_selection: (end(&check.start_selection.0), end(&check.start_selection.1)),
+        word: check.word,
+        max_text: check.max_text,
+    })?;
+    let reads_after = check.last || answer.caret_moved || answer.selection_moved;
+    Ok(Found::WaitCheck(super::Checked {
+        answer,
+        reads_after,
+    }))
 }
 
 /// The formatting of `unit` read the classic way, with what was learned of

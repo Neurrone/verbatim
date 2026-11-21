@@ -290,12 +290,7 @@ fn run_watch(
     request: Request,
     watch: &WatchProgram,
 ) {
-    let outcome = super::text_reads::watch(request_context, watch).map(|ended| match ended {
-        super::text_reads::WaitEnded::Waited(waited) => {
-            super::batch::after_wait(request_context, client, watch, waited)
-        }
-        super::text_reads::WaitEnded::NotThere => verbatim_model::request::Outcome::NotThere,
-    });
+    let outcome = super::batch::poll(request_context, client, watch);
     if let Some(observer) = context.request_calls.get() {
         observer(watch.number, take_calls());
     }

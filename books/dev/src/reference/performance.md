@@ -1122,26 +1122,26 @@ the caret against the starting point at once and then every 10 ms, every
 passes, then makes one final read. Core alone judges what the key says.
 
 - Minimum and today: one round trip per check; met
-  (`watch_checks_execute_exactly`). Through UI Automation the check that
-  shows the effect goes on to read the final read's fields in the same
-  program, so a key found by a check costs one round trip; at the bound
-  the final read is its own program.
+  (`watch_checks_cost_exactly`, `wait_polls_execute_exactly`). Through UI
+  Automation each poll is one program, the check followed by the wait
+  batch's later reads, the caret, its line and the key's unit with their
+  formatting, gated on the caret or the selection having moved or the
+  bound, so the poll that ends the wait costs one round trip.
 - A key that moves nothing pays every check to its bound: 10 in a text
   field, 20 in the console host, 30 in Windows Terminal.
 - In a UI Automation text field other than a terminal, a caret or text
   change event of the watched node within 60 ms of the pass brings a
   check forward, one round trip more than the polls; a key whose event
   comes with no move still pays every check to its bound.
-- The unit's formatting, which the key says: remotely read in the check
-  that shows the effect, in the same program, at no call of its own; a
-  check that finds nothing pays 10 instructions for the branch's test
-  (`watch_check_formatting_executes_exactly`: 101 against 91, 190 for a
-  moved line key, 2,181 at the bound for 17 mixed stretches, and the
-  64-stretch worst runs under the limit). Classically a line key's check
-  costs 13 calls and its line's formatting 8 more, with the default
-  theme's details or every detail (`watch_checks_cost_exactly`). A check
-  that finds the effect only by the text reads the caret, the unit and
-  its formatting in one more round trip.
+- The unit's formatting, which the key says: read by the batch's later
+  reads in the poll that ends the wait, at no call of its own; a poll
+  that finds nothing pays its gated reads' tests (139 instructions, 315
+  for a moved line key reading its line's formatting, 2,306 at the bound
+  for 17 mixed stretches, and the 64-stretch worst runs under the limit
+  as one program). Classically a poll that finds nothing costs 14 calls,
+  and the one that ends the wait 33 with the caret and the line's
+  formatting. A check that finds the effect only by the text runs the
+  later reads in one more round trip.
 
 ### A caret report, UIA
 
@@ -1161,7 +1161,8 @@ character with nothing selected, then "al" selected from the caret.
   is one whole change, as NVDA speaks it, with no comparison placing it),
   the change's text (a copy, its two ends moved, its text), the
   selection's text, and, at its line's start, whether it is the text's
-  start (2): 19 for "alpha" selected (`caret_tell_reads_cost_exactly`).
+  start (2): 23 for "alpha" selected, the batch's steps by calls
+  (`caret_tell_reads_cost_exactly`).
   The caret is the selection's start, so where the selection starts costs
   nothing more. When the last
   selection held something, what its ends now hold is read too, up to 513
@@ -1176,16 +1177,17 @@ its turn and its starting read
 (`books/dev/src/explanation/design/key-holding.md`), which takes the
 caret and the key's unit (`starting_reads_cost_exactly`).
 
-- Today: 1 UIA call remotely, 8 classically, 5 window messages in a
-  Win32 edit control: the caret report's read, the unit taken from the
-  line it read.
+- Today: 1 UIA call remotely, the starting batch's `Caret` and the
+  caret's line in one program; 12 classically, each step's calls, the
+  caret's and the selection's edges among them; 6 window messages in a
+  Win32 edit control.
 - Backspace's and Control+Backspace's, which read the character or the
   word around the character before the caret, the text the key would
-  delete: 1 UIA call remotely, the unit read in the same program; 15
-  classically, the caret's copy moved back a character, expanded, and its
-  text and its part before the caret read; 20 window messages in a Win32
-  edit control, the character before the caret and the unit around it
-  each found from its line's messages.
+  delete: 1 UIA call remotely, the unit read in the same program; 20 and
+  23 classically, the caret's copy moved back a character, expanded, and
+  its text and its part before the caret read; 21 window messages in a
+  Win32 edit control, the character before the caret and the unit around
+  it each found from its line's messages (`starting_reads_cost_exactly`).
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals, measured with the read before each key

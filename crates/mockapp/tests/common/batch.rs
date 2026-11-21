@@ -11,6 +11,7 @@ use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 use verbatim_uia::{Cached, Fill, Node, Shape, Uia};
 use verbatim_uia_rops::batch::{
     Answer, Descend, Ends, Found, Fused, Input, Judged, Object, Point, Prior, Ran, UnitsRead,
+    WaitCheck,
 };
 use verbatim_uia_rops::{Attributes, Movement, Position, TextFrom, TextTarget};
 use windows::Win32::UI::Accessibility::{
@@ -168,6 +169,41 @@ pub fn caret_tell<'a>(text: &'a Text, baseline: Position<'a>) -> Vec<Fused<'a>> 
                 max_text: MAX_TEXT,
             },
         ),
+    ]
+}
+
+/// A caret wait's poll: the check of the caret against the starting
+/// caret `start`, nothing selected there, with the word when `word` and at
+/// the bound when `last`; then the caret and its line with every
+/// attribute's formatting, each gated on the check.
+pub fn wait_poll<'a>(
+    text: &'a Text,
+    start: Position<'a>,
+    (word, last): (bool, bool),
+) -> Vec<Fused<'a>> {
+    let mut line = units(None, TextUnit_Line, 1);
+    line.formats = Attributes::ALL;
+    line.learning = Attributes::ALL;
+    vec![
+        step(
+            0,
+            Input::WaitCheck(WaitCheck {
+                text: text.target(),
+                start,
+                start_selection: (start, start),
+                word,
+                last,
+                max_text: MAX_TEXT,
+            }),
+        ),
+        when_found(
+            1,
+            0,
+            Input::Caret {
+                text: text.target(),
+            },
+        ),
+        when_found(2, 0, read_text(text, of(1, PointOf::Caret), line)),
     ]
 }
 

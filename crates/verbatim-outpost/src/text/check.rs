@@ -3,6 +3,11 @@
 //! `WaitForCaret`): it compares the caret with the starting point by the
 //! effect test, the starting texts given with the wait.
 //!
+//! This is the check call by call, an edit control's; through UI
+//! Automation the check is the first step of each poll's program
+//! (`super::fused::poll`), which judges it by the same test
+//! ([`effect_of`]).
+//!
 //! A check reads the caret and the selection's ends and compares them with
 //! the starting point's, held under the wait's anchor; it reads the
 //! caret's line, for the characters beside the caret and, where the effect
@@ -21,13 +26,13 @@ use verbatim_model::{Compared, TextUnit, had_effect};
 
 use super::{
     CaretState, LastRead, MAX_CHUNK_BYTES, MAX_CHUNK_UNITS, TextError, TextResult, TextSource,
-    WatchRequest, beside, caret_line, same_state, to_utf8,
+    beside, caret_line, same_state, to_utf8,
 };
 
 /// How many times a check reads again when the caret moved while it read,
 /// before it counts as showing nothing: the next check, 10 ms later, reads
 /// again in any case.
-const TORN_READS: usize = 3;
+pub(crate) const TORN_READS: usize = 3;
 
 /// What a check is asked: the wait, whether to compare the word at the
 /// caret, and whether it is the check at the bound.
@@ -55,12 +60,8 @@ pub fn check<S: TextSource>(
 ) -> TextResult<Option<Waited>> {
     let mut tries = 0;
     let found = loop {
-        let found = match read_at_once(source, start, ask)? {
-            Some(found) => found,
-            None => match read_by_parts(source, start, ask)? {
-                Some(found) => found,
-                None => return Ok(None),
-            },
+        let Some(found) = read_by_parts(source, start, ask)? else {
+            return Ok(None);
         };
         if !found.effect && !ask.last {
             return Ok(None);
@@ -88,44 +89,6 @@ pub fn check<S: TextSource>(
 struct Found {
     effect: bool,
     torn: bool,
-}
-
-/// One try of a check in one go, where the source can make its reads at
-/// once ([`TextSource::watch_read`]); `None` for a source that cannot.
-fn read_at_once<S: TextSource>(
-    source: &mut S,
-    start: &LastRead<S::Pos>,
-    ask: CheckAsk<'_>,
-) -> TextResult<Option<Found>> {
-    let start_selection = start
-        .selection
-        .as_ref()
-        .map_or((&start.caret, &start.caret), |selection| {
-            (&selection.start, &selection.end)
-        });
-    let request = WatchRequest {
-        start: &start.caret,
-        start_selection,
-        word: ask.word,
-    };
-    let Some(read) = source.watch_read(&request)? else {
-        return Ok(None);
-    };
-    let (line, offset) = &read.line;
-    let word = read
-        .word
-        .as_ref()
-        .map(|(word, _)| to_utf8(&word.text, MAX_CHUNK_BYTES, &[]).0);
-    let compared = compare_texts(
-        ask.wait,
-        (read.caret_moved, read.selection_moved),
-        (&line.text, *offset),
-        word,
-    );
-    Ok(Some(Found {
-        effect: had_effect(compared, ask.wait.effect),
-        torn: read.moved_while_read,
-    }))
 }
 
 /// One try of a check call by call: `None` when it shows no effect before
@@ -176,6 +139,21 @@ fn compare<S: TextSource>(
         (&line.text, offset),
         word,
     ))
+}
+
+/// Whether a check that read whether the caret and the selection moved,
+/// the caret's line now with the caret's UTF-16 offset in it, and the word
+/// at the caret now when it is compared, shows the key's effect by
+/// `wait`'s effect test: a check made in one program, through UI
+/// Automation (`super::fused::poll`).
+pub(crate) fn effect_of(
+    wait: &CaretWait,
+    moved: (bool, bool),
+    line: (&[u16], usize),
+    word: Option<&[u16]>,
+) -> bool {
+    let word = word.map(|word| to_utf8(word, MAX_CHUNK_BYTES, &[]).0);
+    had_effect(compare_texts(wait, moved, line, word), wait.effect)
 }
 
 /// The comparison with the wait's starting texts, given whether the caret
