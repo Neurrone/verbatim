@@ -37,8 +37,8 @@ use crate::keys::entry::Fence;
 use crate::keys::entry::ReviewPress;
 use crate::navigator::Found;
 use crate::state::{
-    FlatPosition, Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk,
-    SrState, StartMarker, TextFollowUp,
+    FlatPosition, Landing, LandingPlace, Marked, MarkerEnds, PendingText, ReviewPosition,
+    ReviewText, SharedChunk, SrState, StartMarker, TextFollowUp,
 };
 use crate::text;
 use crate::text_request::TextRequest;
@@ -628,28 +628,30 @@ fn execute(
             landing(LandingPlace::BeforePoint, TextUnit::Character, None),
         ),
         ReviewCommand::SetStartMarker => {
-            state.start_marker = Some(StartMarker {
+            state.start_marker = Some(marker(
+                state,
                 node,
-                at: cursor,
-                after: after_cursor(),
-                selected_to: None,
-            });
+                Marked {
+                    at: cursor,
+                    after: after_cursor(),
+                    selected_to: None,
+                },
+            ));
             return Next::Said(vec![speak(trace_id, message(Message::StartMarked))]);
         }
         ReviewCommand::MoveToStartMarker => match marker_in(state, node) {
             Err(effect) => return Next::Said(vec![speak(trace_id, effect)]),
-            Ok(StartMarker { at, .. }) => read_line(
+            Ok(Marked { at, .. }) => read_line(
                 None,
                 TextPoint::At(at),
                 landing(LandingPlace::Point, TextUnit::Character, None),
             ),
         },
         ReviewCommand::SelectThenCopy => {
-            let StartMarker {
+            let Marked {
                 at,
                 after,
                 selected_to,
-                ..
             } = match marker_in(state, node) {
                 Err(effect) => return Next::Said(vec![speak(trace_id, effect)]),
                 Ok(marker) => marker,
@@ -680,12 +682,15 @@ fn execute(
                 // The second press copies the range this one selects, as
                 // NVDA's does, wherever the review cursor has gone since:
                 // the caret the selection moved may have taken it along.
-                state.start_marker = Some(StartMarker {
+                state.start_marker = Some(marker(
+                    state,
                     node,
-                    at,
-                    after,
-                    selected_to: Some((cursor, after_cursor())),
-                });
+                    Marked {
+                        at,
+                        after,
+                        selected_to: Some((cursor, after_cursor())),
+                    },
+                ));
                 let (start, end, through) = range((cursor, after_cursor()));
                 (
                     TextOp::Select {
@@ -720,13 +725,42 @@ fn execute(
     Next::Text(node, op, then)
 }
 
-/// The start marker, when it is in `node`'s text; otherwise what to say:
-/// "No start marker set" whether there is none or it is in another object,
-/// which keeps it for when the navigator returns (`docs/parity/review.md`,
-/// "Select then copy from the review cursor").
-fn marker_in(state: &SrState, node: NodeId) -> Result<StartMarker, Vec<UtteranceSegment>> {
-    match state.start_marker {
-        Some(marker) if marker.node == node => Ok(marker),
+/// Whether the navigator's text is reviewed flat, the text a press on it
+/// runs over.
+fn reviewing_flat(state: &SrState) -> bool {
+    state
+        .navigator
+        .as_ref()
+        .is_some_and(|navigator| matches!(navigator.text, ReviewText::Flat(_)))
+}
+
+/// The start marker at `marked` in `node`'s text, positions the press made
+/// in the navigator's text: in flat text, each its byte offset in the
+/// whole flat text, which is no anchor of the provider's.
+fn marker(state: &SrState, node: NodeId, marked: Marked<TextPosition>) -> StartMarker {
+    let ends = if reviewing_flat(state) {
+        MarkerEnds::Flat(marked.map(flat_place))
+    } else {
+        MarkerEnds::Text(marked)
+    };
+    StartMarker { node, ends }
+}
+
+/// The start marker's places, when it is in `node`'s text as the press
+/// reviews it, flat or not, as positions in that text; otherwise what to
+/// say: "No start marker set" whether there is none or it is in another
+/// object, which keeps it for when the navigator returns
+/// (`docs/parity/review.md`, "Select then copy from the review cursor").
+fn marker_in(state: &SrState, node: NodeId) -> Result<Marked<TextPosition>, Vec<UtteranceSegment>> {
+    let ends = state
+        .start_marker
+        .filter(|start| start.node == node)
+        .map(|start| start.ends);
+    match (ends, reviewing_flat(state)) {
+        (Some(MarkerEnds::Text(places)), false) => Ok(places),
+        (Some(MarkerEnds::Flat(places)), true) => Ok(places.map(flat_position)),
+        // None, or a marker in the other kind of text, which a press on
+        // this one cannot place.
         _ => Err(message(Message::NoStartMarker)),
     }
 }
@@ -942,13 +976,27 @@ fn flat_start(line: &verbatim_model::TextChunk) -> usize {
 /// across presses, it is moved back onto the text read now.
 fn flat_offset(text: &str, point: TextPoint) -> usize {
     let offset = match point {
-        TextPoint::At(position) => usize::try_from(position.anchor.0)
-            .unwrap_or(usize::MAX)
-            .saturating_add(text::byte_offset(position.offset)),
+        TextPoint::At(position) => flat_place(position),
         TextPoint::End => text.len(),
         _ => 0,
     };
     text::boundary(text, offset)
+}
+
+/// The byte offset in the whole flat text of `position`, a position Core
+/// made in it: its line's start plus its offset.
+fn flat_place(position: TextPosition) -> usize {
+    usize::try_from(position.anchor.0)
+        .unwrap_or(usize::MAX)
+        .saturating_add(text::byte_offset(position.offset))
+}
+
+/// The position Core makes in flat text at byte `offset` of the whole of
+/// it, which [`flat_offset`] reads back.
+fn flat_position(offset: usize) -> TextPosition {
+    TextPosition::at(verbatim_model::TextAnchor(
+        u64::try_from(offset).unwrap_or(u64::MAX),
+    ))
 }
 
 /// The index of the line of `lines` holding byte `offset`.

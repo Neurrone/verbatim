@@ -61,7 +61,8 @@ guide maps those behaviors onto the crate's types and modules.
   - `held_nodes()` and `held_anchors()`: every node id and every text
     anchor the state refers to, grouped by the outpost that issued it
     (the anchors are the caret's line and selection, the review cursor's
-    line or point, the start marker, and say-all's positions). The shell
+    line or point, a start marker set outside flat text, and say-all's
+    positions). The shell
     sends each outpost its own, which keeps them alive
     ([verbatim-model](verbatim-model.md), "The text protocol").
   - `held_told()`: the tokens of the caret tells' elements Core holds in
@@ -830,11 +831,13 @@ start or the end, moving by line or not, and a range read for a copy. A
 selection, a location or a selection point is answered unsupported, and
 a page move unsupported by unit, since flat text has no screen place or
 caret (Claude, 2026-11-21). Say-all from the review cursor in flat text
-speaks the rest of the text at once. A start marker in flat text is an
-ordinary `StartMarker` at a flat position; its anchors are flat offsets,
-not the outpost's, which `SrState::held_anchors` still sends the
-outpost, so the outpost keeps an anchor of that number alive, if it has
-one, until the marker is set again or copied (Claude, 2026-11-21).
+speaks the rest of the text at once. A `StartMarker` holds its places as
+`MarkerEnds::Text`, positions at the outpost's anchors, or, set in flat
+text, `MarkerEnds::Flat`, byte offsets into the whole flat text, so a
+flat marker cannot reach `SrState::held_anchors` as anchors for the
+outpost to keep (Claude, 2026-11-21). A press reads the marker back only
+in the kind of text it was set in; in the other kind it is no start
+marker.
 
 ## What the shell learns
 

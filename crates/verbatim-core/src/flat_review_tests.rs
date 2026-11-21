@@ -350,6 +350,22 @@ fn flat_review_moves_to_the_start_marker() {
     );
 }
 
+/// A start marker in flat text, set and then selected through, is a place
+/// in Core's own text, not in the provider's, so Core asks the outpost to
+/// keep no text anchor for it.
+#[test]
+fn a_flat_start_marker_holds_no_anchor_in_the_outpost() {
+    let (mut desk, body) = reviewing("ab\ncd");
+    let _ = review(&mut desk, &body, ReviewCommand::ReviewNextLine, 0);
+    let _ = review(&mut desk, &body, ReviewCommand::SetStartMarker, 0);
+    let _ = review(&mut desk, &body, ReviewCommand::ReviewNextCharacter, 0);
+    let _ = review(&mut desk, &body, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(
+        desk.held.state.held_anchors(),
+        verbatim_model::HeldAnchors::new()
+    );
+}
+
 /// Flat text has no pages, selection or screen place: those commands say
 /// "Not supported in this document", and say-all from the review cursor
 /// speaks the rest of the text at once.

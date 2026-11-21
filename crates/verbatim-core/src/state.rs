@@ -292,19 +292,49 @@ pub(crate) enum LandingPlace {
     BeforePoint,
 }
 
-/// The select-then-copy start marker: a position in a node's text, `at`,
-/// and `after`, just past the character there; and the review cursor's
-/// character, by the same two positions, that a select then copy's first
-/// press selected through, which its second press copies
+/// The select-then-copy start marker: where it is in `node`'s text
 /// (`docs/parity/review.md`, "Select then copy from the review cursor").
-/// In flat text a position's anchor is the byte offset where its line
-/// starts in the flat text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StartMarker {
     pub(crate) node: NodeId,
-    pub(crate) at: TextPosition,
-    pub(crate) after: TextPosition,
-    pub(crate) selected_to: Option<(TextPosition, TextPosition)>,
+    pub(crate) ends: MarkerEnds,
+}
+
+/// Which text a start marker is in. A marker in flat text holds byte
+/// offsets into the whole flat text, which Core reads and no outpost
+/// minted, so it can never be sent to an outpost as anchors to keep
+/// (Claude, 2026-11-21).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum MarkerEnds {
+    /// In the provider's text, at positions whose anchors its outpost
+    /// minted and keeps.
+    Text(Marked<TextPosition>),
+    /// In the object's flat text, at byte offsets into the whole of it.
+    Flat(Marked<usize>),
+}
+
+/// A start marker's places: `at`, and `after`, just past the character
+/// there; and the review cursor's character, by the same two places, that
+/// a select then copy's first press selected through, which its second
+/// press copies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Marked<P> {
+    pub(crate) at: P,
+    pub(crate) after: P,
+    pub(crate) selected_to: Option<(P, P)>,
+}
+
+impl<P: Copy> Marked<P> {
+    /// The same places, each turned by `place`.
+    pub(crate) fn map<Q>(self, place: impl Fn(P) -> Q) -> Marked<Q> {
+        Marked {
+            at: place(self.at),
+            after: place(self.after),
+            selected_to: self
+                .selected_to
+                .map(|(end, end_after)| (place(end), place(end_after))),
+        }
+    }
 }
 
 /// A piece of text say-all read and has not yet handed to speech: the
@@ -1008,9 +1038,9 @@ impl SrState {
 
     /// Every text anchor the state refers to, grouped by the outpost that
     /// minted it: the caret's line and selection, the review cursor's line or
-    /// point, the start marker, and say-all's positions. The shell sends
-    /// each outpost its own set with its held nodes, and the outpost keeps
-    /// these anchors (`verbatim_model::TextAnchor`).
+    /// point, a start marker outside flat text, and say-all's positions.
+    /// The shell sends each outpost its own set with its held nodes, and
+    /// the outpost keeps these anchors (`verbatim_model::TextAnchor`).
     #[must_use]
     pub fn held_anchors(&self) -> HeldAnchors {
         let mut held = HeldAnchors::new();
@@ -1038,11 +1068,15 @@ impl SrState {
                 ReviewText::Unknown | ReviewText::Flat(_) | ReviewText::Caret => {}
             }
         }
+        // A marker in flat text holds no anchor of the provider's.
         if let Some(StartMarker {
             node,
-            at,
-            after,
-            selected_to,
+            ends:
+                MarkerEnds::Text(Marked {
+                    at,
+                    after,
+                    selected_to,
+                }),
         }) = self.start_marker
         {
             insert(node, at);
