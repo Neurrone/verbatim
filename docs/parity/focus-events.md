@@ -649,7 +649,8 @@ would name such a window, so keys behind it are freed. On that stop the
 reader abandons a thread still inside the call and starts a fresh one,
 since the window may still answer for a later request; the call's answer,
 if it comes, is dropped by its request's number. Core's
-`a_request_out_stops_when_the_foreground_leaves_its_window_even_in_its_own_application`,
+`the_one_judge_ends_the_front_for_each_cause` (the foreground leaving the
+window, even in its own application),
 `a_request_out_stays_when_the_foreground_holds_its_window` and
 `a_waiting_request_ends_unsent_when_the_foreground_leaves_its_window`;
 no end-to-end scenario makes an application slow enough to show it. By

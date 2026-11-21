@@ -93,9 +93,6 @@ fn main() {
             "a_provider_held_raising_its_event_holds_only_its_own_events",
             hung_focus::a_provider_held_raising_its_event_holds_only_its_own_events,
         ),
-        (
-            "a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone",
-            focus_scope::a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone,
-        ),
+
     ]);
 }

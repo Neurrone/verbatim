@@ -967,7 +967,7 @@ makes no probe.
 
 Core speaks a selection only inside a focused list or tab control, and a
 selection of the focus or an ancestor as a change of its state
-(`a_selection_is_read_in_full_only_inside_a_focused_list`,
+(mockapp's `a_selection_beside_the_focus_says_nothing` and
 `msaa_state_change_costs_exactly`).
 
 - Today: outside a focused container, the acquisition alone (mockapp

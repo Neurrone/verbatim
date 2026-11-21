@@ -10,7 +10,7 @@ D13's listener, which exists to hold the one desktop-wide focus registration whi
 
 ## Method
 
-The kept CI tests, in `crates/mockapp/tests/uia_bugs/focus_events_cannot_be_limited_to_one_application.rs`, cover E-scope, P1 and P5: `a_focus_handler_on_one_window_is_refused`, `a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alone`, `a_focus_event_in_a_group_on_a_proxied_window_hears_none_of_its_focus` and `a_core_api_focus_registration_on_one_window_hears_that_applications_focus_alone`. The program covers only what they do not count: P2's and E-cost's provider calls per focus event, which vary from one event to the next.
+The kept CI tests, in `crates/mockapp/tests/uia_bugs/focus_events_cannot_be_limited_to_one_application.rs`, cover E-scope and P1: `a_focus_handler_on_one_window_is_refused`, `a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alone` and `a_focus_event_in_a_group_on_a_proxied_window_hears_none_of_its_focus`. The core API's route (P5), which Verbatim does not call, is recorded, not reproduced: its outputs are kept below, and its CI test is in git at commit e29c8f3a. The program covers only what the tests do not count: P2's and E-cost's provider calls per focus event, which vary from one event to the next.
 
 - `cost`: A is the provider program's UIA window. Each registered process is a listening process holding the focus event in an event handler group on A's window, subtree scope, with one of P2's cache requests: none, the process id, or NVDA's base cache request (thirteen properties and the text pattern). A moves its focus between nodes 5 and 6 and raises the focus event 10 times, each once every registered process has heard the one before. A's log counts every provider call and `WM_GETOBJECT` from the first raise to the last delivery; over 10, that is one event's cost. With 1 and then 4 processes registered, the rise over 3 is the cost per registered process. P2 counted 0, 1, 2, 4 and 8 processes; 1 and 4 give the same slope with less running.
 
@@ -26,9 +26,9 @@ Judged: the cost per registered process against 40 to 60 for no cache and the pr
 
 ## How to rerun
 
-`uia-facts/build.ps1`, then `target\debug\focus-events-cannot-be-limited-to-one-application.exe`. No desktop or application. The tests: `cargo test -p mockapp --test uia_bugs -- --exact a_focus_handler_on_one_window_is_refused`, and the same with the other three names.
+`uia-facts/build.ps1`, then `target\debug\focus-events-cannot-be-limited-to-one-application.exe`. No desktop or application. The tests: `cargo test -p mockapp --test uia_bugs -- --exact a_focus_handler_on_one_window_is_refused`, and the same with the other two names.
 
 ## Evidence kept
 
 - `recorded/p2_cost.out` and `recorded/p2_cost.summary.txt`: P2's raw counts and their summary. Cited: `provider_calls_per_event` of the `group` lines, by cache and number of processes.
-- `recorded/p1_scope.run1.out` to `run3.out` and `recorded/p5_core1.out`, `p5_core2.out`: P1's and P5's outputs, the CI tests' evidence. Cited: the refusal's HRESULT and message, and the senders each registration heard.
+- `recorded/p1_scope.run1.out` to `run3.out` and `recorded/p5_core1.out`, `p5_core2.out`: P1's outputs, the CI tests' evidence, and P5's, the core API route's. Cited: the refusal's HRESULT and message, and the senders each registration heard.
