@@ -21,7 +21,12 @@ Public API:
   wait for the calls in progress; `RegistrationCallPassedTimeout` (the
   registration's id), each of `verbatim-uia`'s registration calls whose
   time passed UIA's connection timeout, since such a call reports
-  success; and `WindowMessageSent` (`(window, message, timeout,
+  success; `ProgramStepFails`, `ProgramStops`, `ProgramOverruns` and
+  `ProgramAnswerLost` (a `u8`, the place in its batch of the step, or for
+  the last of the program's first step), where `verbatim-uia-rops`'s
+  generated program fails a step inside its try block, stops before a
+  step, loops past the instruction limit before a step, or loses its
+  answer after it ran; and `WindowMessageSent` (`(window, message, timeout,
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries
@@ -55,14 +60,14 @@ in their binary, or select subjects no other test of the binary makes.
 
 Where the points are and who turns them on: the crates whose points
 another crate's tests reach have a `faults` feature, `verbatim-supervisor`,
-`verbatim-outpost` and `verbatim-uia`, and mockapp's
-`faults` feature turns on optional normal dependencies on the last two,
+`verbatim-outpost`, `verbatim-uia` and `verbatim-uia-rops`, and mockapp's
+`faults` feature turns on optional normal dependencies on the last three,
 since a feature cannot name a dev-dependency. Nothing turns a `faults`
 feature on but `cargo xtask faults`, which `cargo xtask ci` runs as its
 fault step on Windows: clippy of each of those crates, `verbatim-audio`
 and mockapp with the feature, one package at a time, then the fault test
 targets (`verbatim-supervisor`'s `fault_paths` and mockapp's
-`failure_paths`, `shutdown`, `terminal_reading` and `time_limits`), each declared with `required-features =
+`batch_faults`, `failure_paths`, `shutdown`, `terminal_reading` and `time_limits`), each declared with `required-features =
 ["faults"]` so the ordinary steps skip it, and `verbatim-audio`'s `mixer`,
 into `target/debug`. `verbatim-audio` is platform-neutral, so it cannot
 depend on this crate: its `faults` feature has no dependency and compiles

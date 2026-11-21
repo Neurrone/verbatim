@@ -586,7 +586,8 @@ and the inherited pipe handles.
   for a window whose element cannot be imported (a proxy, marked for the
   window's life), the per-hop walk is used. Every remote operation that
   falls back to the classic calls, and every window marked for classic
-  reading, is logged once, by `remote_fell_back` and `read_classically`,
+  reading, is logged once, by `remote_fell_back` (`verbatim-uia-rops`'s
+  one fallback log) and `read_classically`,
   to the `verbatim::remote_fallback` target, with the program, its error
   and the window, which fails an end-to-end scenario. Each UIA node it answers keeps
   a route to its element (`completion::keep_read_routes`), made from the

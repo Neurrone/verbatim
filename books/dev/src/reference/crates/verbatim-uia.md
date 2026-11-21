@@ -681,7 +681,7 @@ patterns its request holds.
   read: `new`, `element()`, `runtime_id()`, `refresh(request)`
   (`BuildUpdatedCache` into a shape), `find_first(scope, condition,
   request)`, `walk(walker, direction, request)` (one step, `Direction`
-  naming the neighbour, into a shape), `step(walker, direction)` (the same
+  naming the neighbour, the last child among them, into a shape), `step(walker, direction)` (the same
   step with no cache, for a walk that compares runtime ids alone) and
   `normalize(walker, request)`.
 - `Fill<S>`: the token `verbatim-uia-rops` fills a remote program's

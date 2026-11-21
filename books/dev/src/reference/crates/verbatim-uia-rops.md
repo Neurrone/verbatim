@@ -22,6 +22,89 @@ UIA path in the outpost that makes a sequence of calls to the application
 runs through one of them; "Where remote operations are not used" lists
 the rest.
 
+## The request list's executors
+
+`batch` runs the request list's fusable operations on UI Automation
+subjects (`Read`, `Related`, `Ancestors`, `Descendants`, `Caret`,
+`ReadText`, `ReadRange`, `CompareSelection`, `Select`, `Locate`;
+`verbatim_model::batch`). Its input is a `Segment`: consecutive steps of
+one parsed batch, each a `Fused` holding its place, its condition and an
+`Input`, the operation with the subjects the outpost resolved: an
+`Object` (an element it holds, or an earlier step's node or list), a
+`TextTarget`, a `Point` (one the outpost resolved as a `TextFrom`, or a
+point of an earlier step's result), a `Prior` selection, and the `Fill`
+each node read takes. A step the outpost answers itself, a refusal, a
+node or anchor it no longer holds, or a condition on an earlier segment
+that does not hold, is `Input::Answered`. `Fused::calls_only` sends a
+step to the calls whatever the mode: its subject is served only by UI
+Automation's proxies inside the outpost, or it steps from a top-level
+window. A `Descend` carries the walk's caps and its `judge`, the
+outpost's matchers evaluated in Rust on each node read. The answer is a
+`Ran` for each step (`Done(Found)`, `Unrun`, `Gone`, `TimedOut`,
+`Failed`) and whether the window is to be read classically from now on.
+
+`run_batch` cuts the segment into programs. A program ends after the
+act, `Select`, so the act is its program's last step and runs only if
+every earlier step of its program finished; after a walk down the tree,
+whose later runs come before anything reads it; and before a step whose
+declared worst case would take the program past the platform's limit of
+10,000 executed instructions. `Ancestors`, whose stops before each hop
+are calls to Windows no program can make, and a walk of the control
+view, since a program's `Navigate` walks the raw view, run by calls
+(Claude, 2026-11-21). Each step is lowered to a shape that holds no
+object of UI Automation's (its imports by their place, a point's text
+found by its prefix as a constant, since a program imports only
+elements and ranges), and the shapes key the thread's `ProgramCache`, so
+a caret key's starting read and each later one bind one built and
+checked program to their own imports. Each emitted step runs in a try
+block with its own status register, written "not reached" before any
+step runs; a gate inside the program tests the statuses of the steps of
+the same program it names, and a condition's found-or-not on one of
+them is a register taken as it is or negated, never compared. A node
+read fills the element's cache inside the provider with the absent
+record of `RemoteCache`, so a property the element lacks reads absent
+as it does by calls.
+
+The fallback rule. After a run whose statuses are known (it ran, or
+stopped partway with `InstructionLimitExceeded` or
+`UnhandledException`, whose registers stay readable), the first step
+that failed other than by its element being gone or the provider timing
+out, or that the run did not reach, and every step after it in the
+segment, run again by calls; a gone or timed-out step stands. A run
+whose answer is lost (`ExecutionFailure`, or the call failing) leaves no
+status: a program holding the act reruns its own steps, the act among
+them, and the next program runs as usual; any other reruns the rest of
+the segment. A program that could not run at all, an import refused or
+an instruction unsupported, reruns the rest of the segment and marks the
+window for classic reading. A run past the instruction limit is a
+defect of an emitter's declared worst case, logged to
+`verbatim_model::DEFECT_TARGET` and never run again. Every step run
+again is logged through `remote_fell_back`, the one fallback log, to
+`verbatim_model::REMOTE_FALLBACK_TARGET`. A controller-for relation
+longer than a program reads (16) runs by calls with what follows it, a
+size limit and no fallback.
+
+A walk down the tree (`batch::walk`) reads breadth first: each run the
+children of up to 64 waiting elements, at most 60 children and what the
+rest of the limit holds, the walk's first run fused into its program;
+the outpost's matchers judge each node between runs, a pruned subtree is
+not read, and a walk that prunes reads one level a run so that each node
+is judged before its children are read. An element whose children no
+run can hold is read by one call. The walk stops once nothing waiting
+could come before the last node its limit answers, and answers in tree
+order, each node with its parent's place and its start's.
+
+`run_calls` runs each step through the classic calls the twins made,
+re-cut per operation and shared with them (`text::classic_units`,
+`classic_range`, `classic_location`, `classic_caret`, the walk's
+`Uia::children`, `Uia::ancestors`). The developer setting with remote
+operations off, a window marked for classic reading, and the fallback's
+reruns use it. mockapp's `batch.rs` runs every converted shape through
+both executors and requires the same answer, and `batch_faults.rs`
+makes each case of the fallback rule happen at a fault point
+(`ProgramStepFails`, `ProgramStops`, `ProgramOverruns`,
+`ProgramAnswerLost`); `instruction_limit.rs` pins each shape's count.
+
 ## Layer 1: instructions and the builder
 
 - `Opcode` is the table NVDA uses and five more, 109 opcodes
