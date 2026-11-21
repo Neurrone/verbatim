@@ -67,7 +67,6 @@
 //!   answered with whether it is the foreground window.
 //! - `show <w>` and `hide <w>`: shows or hides window w, without changing
 //!   the foreground.
-
 //! - `menu <w>`: shows window w, brings it to the foreground and opens a
 //!   popup menu of its own over it (`TrackPopupMenuEx`), with the items
 //!   `Menu first item` and `Menu second item`, the first selected by a Down
@@ -76,7 +75,6 @@
 //!   thread dispatching. `menu-close <w>` ends it.
 //! - `parent <w> <hwnd>`: makes window w a visible child window of window
 //!   `hwnd`, of this process or another, on window w's UI thread.
-
 //! - `log`: prints every log entry since the last `log`, one
 //!   `entry <start µs> <end µs> <kind> <name> <w> <n> <thread id> <extra>`
 //!   line each, then `ok <count>`. Kinds are `call` (a provider method),
@@ -442,7 +440,6 @@ fn handle(line: &str) -> String {
             let _ = unsafe { ShowWindow(hwnd, command) };
             "ok".to_owned()
         }
-
         "parent" => {
             let (Some(index), Some(parent)) =
                 (number(0), rest.get(1).and_then(|s| s.parse::<isize>().ok()))

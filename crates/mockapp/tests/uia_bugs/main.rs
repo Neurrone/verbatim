@@ -93,6 +93,5 @@ fn main() {
             "a_provider_held_raising_its_event_holds_only_its_own_events",
             hung_focus::a_provider_held_raising_its_event_holds_only_its_own_events,
         ),
-
     ]);
 }
