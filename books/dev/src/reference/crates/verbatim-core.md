@@ -426,7 +426,9 @@ code is in `reduce.rs` unless named.
   desktop, layout entries included, but for the MSAA reader's window
   objects, so it can be empty; each UI Automation ancestor carries
   whether UI Automation counts it a control and content
-  (`FocusAncestor::uia_layout`, kept as `NodeDetails::uia_layout`). The
+  (`FocusAncestor::uia_layout`, kept as `NodeDetails::uia_layout`) and
+  whether it has a description whatever the theme (`described`), which
+  the layout judgment reads. The
   reducer joins it to the previous focus line where they meet
   (`focus_line`), NVDA's focus difference level over the whole chain, and
   speaks the presentable containers (`is_presentable_container`, which

@@ -362,6 +362,7 @@ pub(crate) fn focus_read_of(
                 node: focus_node(app, ancestor),
                 simple_child: false,
                 uia_layout: ancestor.details.uia_layout,
+                described: ancestor.details.described,
             })
             .collect(),
         met: None,

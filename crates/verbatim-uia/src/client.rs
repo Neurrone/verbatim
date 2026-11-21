@@ -1029,6 +1029,11 @@ fn take_shaped_ancestor(
     take_reported(parent.ancestor_snapshot(registry), stops.known, chain)
 }
 
+/// Whether `text` is there and not blank.
+pub(crate) fn has_text(text: Option<&str>) -> bool {
+    text.is_some_and(|text| !text.trim().is_empty())
+}
+
 /// Whether `hwnd` is the desktop window, whose element is UI Automation's
 /// root. Local.
 fn is_desktop(hwnd: isize) -> bool {
@@ -1056,6 +1061,7 @@ fn take_ancestor_parts(
     let parts = &parent.parts;
     let mut details = parts.details.clone();
     details.uia_layout = !parent.content;
+    details.described = has_text(parts.details.description.as_deref());
     let snapshot = NodeSnapshot {
         id: registry.id_for(&parts.runtime_id),
         backend: verbatim_model::Backend::Uia,

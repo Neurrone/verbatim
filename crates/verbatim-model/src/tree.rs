@@ -605,6 +605,15 @@ pub struct NodeDetails {
     /// every other node. Left out of the message when `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uia_layout: bool,
+    /// Whether the node has a description that is not blank, whatever the
+    /// theme reports, which NVDA's layout judgment reads whatever its
+    /// setting (`presentationType`, `NVDAObjects/__init__.py` 947 to 948),
+    /// so Core presents an unnamed grouping, window or property page that
+    /// has one as focus context with descriptions off. Set only on a UI
+    /// Automation ancestor of a focus; `false` on every other node. Left
+    /// out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub described: bool,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

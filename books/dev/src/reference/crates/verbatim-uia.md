@@ -193,10 +193,11 @@ Every ancestor below the desktop is reported, layout ones included, as
 NVDA's focus ancestry holds every object; the desktop's root element
 ends the walk unreported, since a focus's chain ends below the desktop
 (Claude, 2026-11-21). Each carries whether UI Automation counts it both a
-control and content (`NodeDetails::uia_layout`, set by
-`Cached<Ancestor>::ancestor_snapshot`), and Core alone judges which are
-focus context, by NVDA's `isPresentableFocusAncestor`, over the whole
-chain.
+control and content (`NodeDetails::uia_layout`) and whether it has a
+description whatever the theme (`NodeDetails::described`, from the
+ungated description), both set by `Cached<Ancestor>::ancestor_snapshot`
+and by the chain from parts, and Core alone judges which are focus
+context, by NVDA's `isPresentableFocusAncestor`, over the whole chain.
 
 - `Uia::ancestors_from(parents, registry, stops)` gives the same result
   from ancestors already fetched as `Ancestor`s, nearest first, such as

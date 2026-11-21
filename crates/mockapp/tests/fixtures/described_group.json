@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Described Group Fixture",
+  "children": [
+    {
+      "id": "volume",
+      "role": "group",
+      "description": "How loud speech is",
+      "children": [
+        { "id": "louder", "role": "button", "name": "Louder", "states": ["focusable"] }
+      ]
+    }
+  ]
+}

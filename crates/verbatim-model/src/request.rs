@@ -762,6 +762,11 @@ pub struct FocusAncestor {
     /// reader reports for Core to judge it by; `false` for an MSAA node.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uia_layout: bool,
+    /// Whether it has a description that is not blank, whatever the theme
+    /// reports ([`crate::NodeDetails::described`]), which the reader
+    /// reports for Core to judge it by; `false` for an MSAA node.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub described: bool,
 }
 
 /// A focus answer: what Core keeps with the committed focus, each carried

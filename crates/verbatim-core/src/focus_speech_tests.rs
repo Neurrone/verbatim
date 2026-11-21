@@ -2451,3 +2451,32 @@ fn focus_context_is_judged_over_the_whole_chain_as_nvdas_capture() {
         )
     );
 }
+
+/// An unnamed grouping with a description is focus context whatever the
+/// theme reports, as NVDA's layout judgment reads the description whatever
+/// its setting (`NVDAObjects/__init__.py` 947 to 948): with descriptions
+/// off the reader sends the grouping without its description but marked
+/// described, and Core says "grouping" before "Louder button".
+#[test]
+fn an_unnamed_grouping_with_a_description_is_entered_with_descriptions_off() {
+    let mut desk = Desk::new();
+    let window = frame(ONE, "Mockapp Described Group Fixture");
+    let mut group = node(ONE, 2, Role::Group, None, None, StateSet::new());
+    group.details.described = true;
+    let louder = node(ONE, 3, Role::Button, Some("Louder"), None, StateSet::new());
+    assert_eq!(
+        desk.focus(ONE, &louder, &[window, group]),
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 3, &[FRAME, 2]),
+            vec![
+                vec![
+                    UtteranceSegment::label("Mockapp Described Group Fixture"),
+                    role(Role::Window)
+                ],
+                vec![role(Role::Group)],
+                vec![UtteranceSegment::label("Louder"), role(Role::Button)],
+            ]
+        )
+    );
+}

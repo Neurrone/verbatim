@@ -256,6 +256,7 @@ fn dialog_ancestor(text: Option<&str>) -> FocusAncestor {
         node,
         simple_child: false,
         uia_layout: false,
+        described: false,
     }
 }
 
@@ -284,6 +285,7 @@ fn owner_button_read() -> Reply {
             ),
             simple_child: false,
             uia_layout: false,
+            described: false,
         }],
         (OWNER_BUTTON, -4),
     )
@@ -925,6 +927,7 @@ fn owner_control_read(window: u64, name: &str) -> Reply {
             ),
             simple_child: false,
             uia_layout: false,
+            described: false,
         }],
         (window, -4),
     )

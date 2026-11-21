@@ -252,9 +252,11 @@ then lacks `FullDescription` and `HelpText`, so the provider is not asked
 for either; the read sets the description to `None` without touching the
 cache, so no failed read is made; and Core receives no description, as the
 setting asks. The focus's ancestors are read as `Ancestor`, whose ungated
-description the layout judgment reads, so an unnamed grouping with a
-description is focus context whatever the theme (decision 4), while the
-ancestor's spoken description still follows the gate.
+description tells Core whether the ancestor has one
+(`NodeDetails::described`), which Core's layout judgment reads, so an
+unnamed grouping with a description is focus context whatever the theme
+(decision 4), while the ancestor's spoken description still follows the
+gate.
 
 ### 4.3 What the compiler cannot check
 
@@ -399,11 +401,14 @@ Settled by Dickson on 2026-10-13 unless dated otherwise.
   Decided: the absent record, from the program's existing support test; it
   is part of the audited trust boundary (section 3.5, item 9).
 - Decision 4. The description of ancestors and the layout judgment
-  (section 5). The layout judgment always has ancestors' descriptions,
-  whatever the theme, as NVDA's `presentationType` does: `Ancestor` holds
-  an ungated `Description` group beside `Node`'s gated one, so the outpost
-  judges ancestors as the listener does. It costs two properties per
-  ancestor read by the outpost with descriptions off.
+  (section 5). The layout judgment always knows whether an ancestor has a
+  description, whatever the theme, as NVDA's `presentationType` does:
+  `Ancestor` holds an ungated `Description` group beside `Node`'s gated
+  one, and Core's walked listener read keeps the description, so each
+  ancestor reaches Core marked described or not
+  (`FocusAncestor::described`), and Core judges ancestors the same
+  whichever reader read them. It costs two properties per ancestor read by
+  the outpost with descriptions off.
 - Decision 5. Dialog text (section 5). Dialog text always includes each
   control's description, whatever the theme, as NVDA's `basicText` does,
   through an ungated `Description` group in `DialogText`; and nothing of

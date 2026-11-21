@@ -2204,6 +2204,7 @@ fn read_snapshot_with(
             above_boundary: false,
             desktop_window: false,
             uia_layout: false,
+            described: false,
         },
     }
 }

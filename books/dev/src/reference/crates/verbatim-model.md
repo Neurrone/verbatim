@@ -93,7 +93,9 @@ recorder unchanged. What the reducer does with each type is in
   never a nearest window, and left out of the message when absent), and
   `uia_layout` (a UI Automation ancestor that UI Automation does not
   count both a control and content, which Core does not present as focus
-  context; carried to Core on `FocusAncestor::uia_layout`).
+  context; carried to Core on `FocusAncestor::uia_layout`) and
+  `described` (such an ancestor has a description whatever the theme,
+  which Core's layout judgment reads; on `FocusAncestor::described`).
   Everything in `NodeDetails` defaults
   to "not reported", and its serde default keeps older recordings
   deserializing.

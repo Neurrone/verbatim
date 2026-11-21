@@ -1686,7 +1686,10 @@ fn committed_top(state: &SrState) -> Option<WindowHandle> {
 /// - A menu bar, menu, or menu item: entering one is silent, as in NVDA.
 /// - A `Window`, `Group`, or `PropertyPage` with neither a name nor a
 ///   description, which would speak as a bare role. NVDA treats these as
-///   layout; a named window is announced on entry like any container.
+///   layout; a named window is announced on entry like any container. A
+///   UI Automation ancestor's description counts whatever the theme
+///   reports ([`verbatim_model::NodeDetails::described`]), as NVDA's
+///   judgment reads it.
 /// - `StaticText` with no text, which is nothing.
 /// - Any node that is invisible ([`State::Invisible`]), which NVDA counts
 ///   unavailable, never presented in the focus ancestry.
@@ -1705,7 +1708,7 @@ fn is_presentable_container(node: &NodeSnapshot) -> bool {
         return false;
     }
     let named = has_text(node.name.as_deref());
-    let described = has_text(node.details.description.as_deref());
+    let described = node.details.described || has_text(node.details.description.as_deref());
     match node.role {
         // Never context: item-level and text-entry roles, structural roles
         // with no semantics, and menus. See this function's doc for the rule.

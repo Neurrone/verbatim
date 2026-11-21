@@ -28,10 +28,15 @@ pub(crate) fn focus_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId>
     )
 }
 
-/// [`node_set`], with the description kept whatever the settings: a live
-/// read of an object reviewed as flat text, whose text, NVDA's basic text,
-/// holds the description whatever the theme reports
-/// (`crate::review_text::flat_text`).
+/// [`node_set`], with the description kept whatever the settings, as NVDA
+/// reads it whatever its setting: a live read of an object reviewed as
+/// flat text, whose text, NVDA's basic text, holds it
+/// (`crate::review_text::flat_text`); and a listener read whose walk a
+/// completion reports, which tells Core whether each ancestor has one
+/// (`verbatim_model::NodeDetails::described`) for its layout judgment,
+/// while the completion reports the description itself only as
+/// [`node_set`] names it. The listener reads it with every element of the
+/// walk in any case, so this adds no call.
 pub(crate) fn description_kept(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
     set_keeping(state, base, &[PropertyId::Description])
 }

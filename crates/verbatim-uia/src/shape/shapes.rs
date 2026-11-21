@@ -785,6 +785,7 @@ impl Node {
             above_boundary: false,
             desktop_window: false,
             uia_layout: false,
+            described: false,
         };
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);
         parts_of(
@@ -933,7 +934,7 @@ impl Ancestor {
         self.content && self.control
     }
 
-    /// Its description whatever the theme.
+    /// Its description whatever the theme, as the layout judgment reads it.
     #[must_use]
     pub fn layout_description(&self) -> Option<String> {
         let mut description = self.description.description();
@@ -957,12 +958,16 @@ impl Cached<Ancestor> {
 
     /// [`Cached::snapshot`] as a focus ancestor is reported: with whether
     /// UI Automation counts it both a control and content
-    /// ([`verbatim_model::NodeDetails::uia_layout`]), which Core judges it
+    /// ([`verbatim_model::NodeDetails::uia_layout`]) and whether it has a
+    /// description whatever the theme
+    /// ([`verbatim_model::NodeDetails::described`]), which Core judges it
     /// by. Local.
     #[must_use]
     pub fn ancestor_snapshot(&self, registry: &dyn Interning) -> NodeSnapshot {
         let mut snapshot = self.snapshot(registry);
-        snapshot.details.uia_layout = !self.read().is_control_and_content();
+        let read = self.read();
+        snapshot.details.uia_layout = !read.is_control_and_content();
+        snapshot.details.described = crate::client::has_text(read.layout_description().as_deref());
         snapshot
     }
 }

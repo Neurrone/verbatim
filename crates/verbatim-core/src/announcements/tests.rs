@@ -400,6 +400,7 @@ fn paris_read(ancestor: Option<(&str, Role)>) -> Reply {
                 },
                 simple_child: false,
                 uia_layout: false,
+                described: false,
             },
         );
     }

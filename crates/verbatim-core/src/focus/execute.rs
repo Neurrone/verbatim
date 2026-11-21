@@ -324,6 +324,7 @@ fn ready(
     for ancestor in &read.ancestors {
         let mut entry = snapshot(&ancestor.node, node_backend(&ancestor.node, backend))?;
         entry.details.uia_layout = ancestor.uia_layout;
+        entry.details.described = ancestor.described;
         ancestors.push(LineEntry {
             snapshot: entry,
             runtime_id: ancestor.node.runtime_id.clone(),

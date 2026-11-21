@@ -119,7 +119,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, focus: UiaFocus) {
                 listener: focus.listener,
                 token: focus.token,
             },
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+            set: crate::details::description_kept(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(walk),

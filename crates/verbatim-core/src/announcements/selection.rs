@@ -167,7 +167,7 @@ async fn selected(
                 listener: kept.listener,
                 token: kept.token,
             },
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
+            set: crate::details::description_kept(&cx.facts(), FOCUS_SET),
             relation: None,
             descendants: false,
             walk: Some(Known::of(&cx.facts(), None).sent),
