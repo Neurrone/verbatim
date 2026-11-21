@@ -644,45 +644,76 @@ code is in `reduce.rs` unless named.
   its value"): the listener's `Input::Progress` plays `Earcon::Progress`
   once the value moves a percent from the last one indicated at the same
   place on screen (`SrState::progress_reported`, the last 32 places).
-- Announcements (`announcements/`; `docs/parity/alerts.md`). Each kind is
-  an event-queue entry, one `Announcement` with what its kind parsed from
-  its tell, judged at its turn by its kind's function, whose module states
-  its rules:
-  - A UI Automation notification makes no request. It is dropped when its
-    check found no window, unless it is the shell's window-snap results,
-    when it is not from the committed focus's application, or the
-    application in front with no committed focus, and when its text is
-    empty; else its display string is spoken, interrupting for
-    `MostRecent` and `ImportantMostRecent`, at Next for them during
-    say-all, queued otherwise.
-  - A toast is dropped when its element is not native, its nearest
-    window is not a Windows Runtime core window, or it repeats the toast
-    spoken last within a second, judged at its turn; else the listener
-    reads it and it is announced as an object.
-  - A UI Automation selection is judged as `announcements/selection.rs`
-    says. It is dropped when not native, with no committed focus, when
-    refused, except an item of a Windows Forms combo box's `ComboLBox`
-    list, and when the committed focus changes between its two reads.
-  - An MSAA alert is moved once behind the entries waiting after it when
-    a focus that counts as pending is among them, and its acceptance is
-    checked; its one request asks whether it is one of the focus line's
-    objects (`RelationQuery::OneOf`), and else its snapshot with the
-    descendants NVDA speaks.
+- Announcements (`announcements/`; NVDA's behaviour is in
+  `docs/parity/alerts.md` and `docs/parity/changes-and-selection.md`).
+  Each kind is an event-queue entry, one `Announcement` with what its kind
+  parsed from its tell, judged at its turn by its kind's async function;
+  any outcome but a result drops it unspoken.
+  - A UI Automation notification makes no request. It is spoken when it
+    is from the committed focus's application, or, with no committed
+    focus, the application in front; the shell's window-snap results are
+    spoken from File Explorer whatever the focus, queued and never
+    cutting, and take the desktop window. Any other notification whose
+    check found no window, or whose text is empty, is dropped. One
+    processed "most recent" or "important most recent" cuts speech, or
+    during say-all is spoken at Next, after the line being read, until
+    M6.3 gives speech an interrupt-and-resume priority; every other is
+    queued.
+  - A toast, a UI Automation window opened whose nearest window is a
+    Windows Runtime core window (NVDA's toast test), is dropped when its
+    element is not native or it repeats the toast spoken last within a
+    second (ruled 2026-11-12), judged at its turn; else the listener reads
+    its name, value, states, description and position, and it is
+    announced as NVDA's `Notification.event_alert` speaks the object,
+    queued.
+  - A UI Automation selection is dropped when not native, with no
+    committed focus, or when refused, but for the Windows Forms list
+    below. On the committed focus or one of its kept ancestors it is that
+    node's state change, judged on the states its tell carries, with no
+    request, and spoken only when its element was the committed focus as
+    its tell joined the queue; an ancestor's states are compared with
+    those last spoken of it. Otherwise the listener reads the item and the
+    item's outpost completes it, under one due time, the completion
+    reading the committed focus's controller-for relation live; the
+    selection is dropped when the committed focus changed between the two
+    reads. An item that is an object the focus controls, or inside one, is
+    spoken as a focus. A list item without the keyboard focus whose parent
+    is the committed focus gives that focus's value change, its value read
+    live, when the focus is a combo box whose value is its selected item's,
+    or has the `Value` pattern in a window whose class begins with
+    `Windows.UI.Core`. A list item in a `ComboLBox` window of the focus's
+    process, while the focus is a combo box, is taken whatever acceptance
+    says once Core has asked the focus for its `ComboBoxList`, present only
+    for the classic .NET Framework Windows Forms combo box, and gives the
+    focus's value change. Anything else is a state change of the item,
+    which says nothing.
+  - An MSAA alert is moved once behind the entries waiting after it when a
+    focus that counts as pending is among them, as NVDA runs its whole
+    queue first, and its acceptance is checked. Its one request asks
+    whether it is one of the focus line's objects
+    (`RelationQuery::OneOf`), and else its snapshot with its descendants.
+    It is dropped when it is on the focus line, not of role alert, or has
+    no name, description or child; else it is spoken, then each
+    descendant NVDA speaks: one that is focusable, or, when the alert has
+    no description, a list or list item. Queued. No application is known
+    to reach this path.
   - A show asks a request only for `tooltips_class32` that passes
-    acceptance, and speaks a help balloon.
-  - The virtual desktop's name (`announcements/desktop_name.rs`), an MSAA
-    name change on the desktop window, is read by the listener and kept
-    until the next focus Core takes says it before its entered
-    containers, or 250 ms later, when it is said alone.
+    acceptance, a snapshot judged by its role: a help balloon is spoken,
+    from any application, an ordinary tooltip is not, as NVDA's tooltip
+    reporting is off by default. NVDA's other five show classes wait for
+    application support. Queued.
+  - The virtual desktop's name, an MSAA name change on the desktop window,
+    is read by the listener, the name alone, and kept until the next focus
+    Core takes says it before its entered containers, or 250 ms later,
+    when it is said alone (`desktop.rs`).
 
   A notification, a toast and a show are exempt from the foreground stop,
   and so are a selection, an alert and the desktop's name accepted other
-  than by the foreground relation (`Announcement::exempt_from_foreground`);
-  any other outcome than a result drops an announcement unspoken. Neither
-  notifications nor UI Automation selections merge a waiting entry: each
-  is handled in arrival order (ADR 0003, "Flood limiters and the merge").
-  An MSAA selection, alert, show or desktop name replaces the older
-  waiting entry of the same kind, ids and thread, searching back no
+  than by the foreground relation (`Announcement::exempt_from_foreground`).
+  Neither notifications nor UI Automation selections merge a waiting
+  entry: each is handled in arrival order (ADR 0003, "Flood limiters and
+  the merge"). An MSAA selection, alert, show or desktop name replaces the
+  older waiting entry of the same kind, ids and thread, searching back no
   further than a focus-kind item, and joins the back; a show also removes
   a waiting hide of its object, and a hide a waiting show.
 - Outpost replacement (`docs/parity/focus-events.md`, "Recovery after an

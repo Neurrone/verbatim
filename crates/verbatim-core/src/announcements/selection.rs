@@ -1,36 +1,6 @@
-//! A UI Automation selection at its turn (Table 12), NVDA's rule
-//! (`NVDAObjects/UIA/__init__.py` 2508 to 2509 routing it to
-//! `event_selection`, `NVDAObjects/__init__.py` 1314 to 1340):
-//!
-//! - on the committed focus or one of its kept ancestors, it is that
-//!   node's state change, judged on the states its tell carries, with no
-//!   request, and spoken only when its element was the committed focus as
-//!   its tell joined the queue, NVDA's focus when the event was delivered
-//!   (`docs/parity/changes-and-selection.md`, "State changes and the focus
-//!   line"); an ancestor's states are compared with those last spoken of
-//!   it, which an ancestor that was the previous focus keeps from its own
-//!   focus;
-//! - otherwise Core asks the listener to read the item and the item's
-//!   outpost to complete it, under one due time; the completion reads the
-//!   committed focus's controller-for relation live, as NVDA reads
-//!   `focus.controllerFor` at the selection. An item that is an object the
-//!   focus controls, or inside one, is spoken as a focus;
-//! - a list item without the keyboard focus whose parent is the committed
-//!   focus gives that focus's value change, its value read live, as NVDA's
-//!   `ListItem.event_stateChange` fires it (`NVDAObjects/UIA/__init__.py`
-//!   2786 to 2800), when the focus is a combo box whose value is its
-//!   selected item's, or has the `Value` pattern in a window whose class
-//!   begins with `Windows.UI.Core`, both read with its value in one
-//!   request;
-//! - a list item in a `ComboLBox` window of the committed focus's process,
-//!   while the focus is a combo box, is taken whatever the acceptance test
-//!   says once Core has asked the focus for its `ComboBoxList`, present
-//!   only for NVDA's classic .NET Framework Windows Forms combo box, which
-//!   asks for these events (`requestEvents`, 2734 to 2744); after the
-//!   selection's own handling, an item in that list gives the focus's value
-//!   change (`ListItem.event_UIA_elementSelected`, 2770 to 2784);
-//! - anything else is a state change of the item, which says nothing,
-//!   since it is neither the focus nor one of its ancestors.
+//! A UI Automation selection at its turn
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+//! objects", its announcements).
 
 use std::iter;
 

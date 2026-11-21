@@ -1,14 +1,6 @@
-//! A UI Automation notification at its turn (Table 12;
-//! `docs/parity/alerts.md`, "UIA notification events"): spoken with no
-//! request when it is from the committed focus's application; the shell's
-//! window-snap results are spoken from File Explorer whatever the focus,
-//! queued and never cutting. A notification whose check found no window is
-//! dropped, but the snap results, which take the desktop window.
-//!
-//! Speech: a notification processed "most recent" or "important most
-//! recent" cuts speech, or during say-all is spoken at Next, after the
-//! line being read, until M6.3 gives speech an interrupt-and-resume
-//! priority; every other processing is queued.
+//! A UI Automation notification at its turn
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+//! objects", its announcements).
 
 use verbatim_model::tell::TellWindow;
 use verbatim_model::{

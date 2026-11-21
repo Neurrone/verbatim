@@ -76,7 +76,7 @@ pub(crate) struct Place {
 impl Place {
     /// Whether `window` is a top-level window unrelated to this place:
     /// neither its top-level window, nor its root owner, nor an ancestor's
-    /// window (Table 3, columns D and E). The last holds only for a focus
+    /// window. The last holds only for a focus
     /// in Verbatim's popup menu, which has no owner yet keeps the hidden
     /// frame as its outermost ancestor: the frame coming to the front
     /// leaves no focus in the menu (Verbatim-only).
@@ -123,7 +123,8 @@ impl LastFocus {
 }
 
 /// What Core keeps with a committed focus a reader read, each from its
-/// focus answer (design, "Focus and foreground"), beside what it spoke.
+/// focus answer (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "Focus, events and objects"), beside what it spoke.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Kept {
     /// How it was read.
@@ -137,7 +138,7 @@ pub(crate) struct Kept {
     pub(crate) foreground: Option<NodeId>,
     /// Whether its value comes from its selection.
     pub(crate) value_from_selection: bool,
-    /// Its selection baseline and text-changed flag (Table 17).
+    /// Its selection baseline and text-changed flag.
     pub(crate) selection: crate::text_facts::SelectionFacts,
     /// Whether it is a console host's terminal: a terminal whose tell's
     /// window, or, for a focus Core read itself, whose nearest ancestor
@@ -232,7 +233,8 @@ impl Focus {
     }
 }
 
-/// The committed focus, as Table 3's rows tell it apart.
+/// The committed focus: nothing at startup, a reader's focus whose
+/// reader lives or ended, or Core's own.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Committed {
     /// Nothing committed yet: startup.
@@ -262,7 +264,7 @@ pub(crate) struct Versions {
     pub(crate) postponed: Option<super::shown::Postponed>,
 }
 
-/// What the committed focus's reader ending does (Table 3, column F).
+/// What the committed focus's reader ending does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReaderEnd {
     /// Nothing: the ended reader held no committed node.
@@ -273,7 +275,7 @@ pub(crate) enum ReaderEnd {
 }
 
 impl Versions {
-    /// A reader's focus executes (column B), for an entry of speech fence
+    /// A reader's focus executes, for an entry of speech fence
     /// `since`: both versions become it.
     pub(crate) fn execute(&mut self, focus: Focus, since: Fence) {
         self.last = Some(focus.last(since));
@@ -289,7 +291,7 @@ impl Versions {
         self.committed = Committed::Read(focus);
     }
 
-    /// Core commits its own focus (column C): the committed focus becomes
+    /// Core commits its own focus: the committed focus becomes
     /// it; the readers' last focus is unchanged.
     pub(crate) fn commit_own(&mut self) {
         self.committed = Committed::Own;
@@ -306,7 +308,7 @@ impl Versions {
     }
 
     /// A foreground marker for `window`, of root owner `root_owner`,
-    /// reaches the front (columns D and E): the readers' last focus is
+    /// reaches the front: the readers' last focus is
     /// emptied when the window is a top-level window unrelated to the
     /// committed focus then. With nothing committed, or Core's own focus,
     /// nothing is related, so a set last focus is emptied.
@@ -320,7 +322,7 @@ impl Versions {
     }
 
     /// The reader holding the committed focus's node, generation
-    /// `outpost`, ended (column F).
+    /// `outpost`, ended.
     pub(crate) fn outpost_ended(&mut self, outpost: OutpostId) -> ReaderEnd {
         match std::mem::take(&mut self.committed) {
             Committed::Read(mut focus) | Committed::Ended(mut focus)
@@ -377,7 +379,7 @@ impl Versions {
     }
 
     /// The ancestors Core already knows, sent with a focus request to the
-    /// outpost generation `asked` (column H): a reader's committed focus
+    /// outpost generation `asked`: a reader's committed focus
     /// itself and its ancestors, only while the readers' last focus is set,
     /// a node only when the answering generation minted it; nothing of an
     /// ended generation, whose ids name nothing, but the ancestors another
@@ -432,7 +434,7 @@ impl Versions {
         known
     }
 
-    /// Whether a system caret tell has a target (column G): the readers'
+    /// Whether a system caret tell has a target: the readers'
     /// last focus is set and is the committed focus, a reader's focus
     /// whose reader lives. The console terminal's drop is the caret rule's.
     pub(crate) fn caret_target(&self) -> Option<&Focus> {

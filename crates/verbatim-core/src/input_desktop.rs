@@ -16,7 +16,7 @@ use crate::state::SrState;
 /// the return is asked: NVDA's `core.callLater(200, ...)`.
 pub(crate) const RETURN_DELAY_US: u64 = 200_000;
 
-/// Which input desktop is up, as Table 8's rows tell them apart.
+/// Which input desktop is up: the user's, another, or a return pending.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum InputDesktop {
     /// The user's desktop.
@@ -66,7 +66,7 @@ pub(crate) struct Switched {
 }
 
 /// The input desktop switched at `now_us`; `open` when Verbatim could open
-/// the new one, the user's (Table 8, columns A and B).
+/// the new one, the user's.
 pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched {
     if open {
         state.desktop.input = InputDesktop::ReturnPending {
@@ -80,7 +80,7 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     state.desktop.input = InputDesktop::Other;
     state.desktop.switches_away = state.desktop.switches_away.wrapping_add(1);
     state.versions.commit_own();
-    // The focused terminal, if any, is left (build 3, Table 1, column H).
+    // The focused terminal, if any, is left.
     crate::terminal::reading::committed(state, None, Vec::new(), now_us);
     // The keys held before the switch never reach the application: the
     // hook's line is cleared with its modifiers, and the front's
@@ -92,7 +92,8 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     }
 }
 
-/// The session's lock state was told (Table 8, columns C, D and H).
+/// The session's lock state was told, by a notification or the startup
+/// query.
 pub(crate) fn lock(state: &mut SrState, lock: SessionLock) {
     state.desktop.lock = lock;
 }
@@ -105,7 +106,7 @@ pub(crate) fn due(state: &SrState) -> Option<u64> {
     }
 }
 
-/// The time `now_us` came (Table 8, column G): when the read after the
+/// The time `now_us` came: when the read after the
 /// return is due, the user's desktop is up again, and the read is
 /// returned to join the back, naming the window in front, `front`;
 /// nothing is read when no window is in front.

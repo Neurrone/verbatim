@@ -13,8 +13,8 @@ use verbatim_model::{
 use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::state::SrState;
 
-/// Table 17's state for the committed focus: T1 to T4 are the four
-/// combinations of the two facts, each moved by its own rule.
+/// The committed focus's text facts: the baseline and the flag, each
+/// moved by its own rule.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SelectionFacts {
     /// The selection baseline the focus's outpost generation holds, `None`
@@ -37,8 +37,8 @@ pub(crate) fn provider(kept: &Kept) -> TextProvider {
 /// Whether `focus` is editable text with automatic selection detection,
 /// whose value changes set the text-changed flag: every text control
 /// Verbatim reads detects selection changes automatically, and a terminal
-/// has no selection baseline (design, "The hook and Core's stroke line";
-/// "Terminals").
+/// has no selection baseline (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "Caret tells and Core's text facts" and "Terminals").
 pub(crate) fn detects_selection(focus: &Focus) -> bool {
     let role = focus.context.snapshot.role;
     crate::editing::may_have_text(role) && !crate::editing::is_grid(role)
@@ -54,9 +54,9 @@ fn committed_on(state: &mut SrState, node: NodeId) -> Option<&mut Kept> {
         .map(|focus| &mut focus.kept)
 }
 
-/// Core's own move or selection on `node` minted `baseline` (Table 17,
-/// column F): when `node` is the committed focus, it becomes the
-/// baseline, nothing said, the flag kept. Verbatim-only, today's
+/// Core's own move or selection on `node` minted `baseline`: when `node`
+/// is the committed focus, it becomes the baseline, nothing said, the flag
+/// kept. Verbatim-only, today's
 /// `keep_made`: Verbatim's own moves are not spoken as selection changes.
 pub(crate) fn minted(state: &mut SrState, node: NodeId, baseline: TextAnchor) {
     if let Some(kept) = committed_on(state, node) {
@@ -84,14 +84,14 @@ pub(crate) fn no_text(state: &mut SrState, node: NodeId) {
 }
 
 /// A value change of the committed focus, editable text with automatic
-/// selection detection, reached its turn (column G): the flag is set, with
+/// selection detection, reached its turn: the flag is set, with
 /// no request and nothing said. NVDA: `NVDAObjects/IAccessible/__init__.py`
 /// 2017 to 2021.
 pub(crate) fn value_changed(kept: &mut Kept) {
     kept.selection.text_changed = true;
 }
 
-/// The committed focus's outpost generation `outpost` ended (column H):
+/// The committed focus's outpost generation `outpost` ended:
 /// its baseline's anchor ended with it; the flag is the focus's and stays.
 pub(crate) fn outpost_ended(focus: &mut Focus, outpost: OutpostId) {
     if focus.context.snapshot.id.outpost() == Some(outpost) {
@@ -109,7 +109,7 @@ pub(crate) fn edit_selection_repeated(state: &mut SrState, now: EditSelection) -
 }
 
 /// A focus answer's caret, `caret`, for a focus being committed whose
-/// text facts are `facts` (Table 17, columns A to C): a caret read mints
+/// text facts are `facts` by a focus answer: a caret read mints
 /// the baseline and clears the flag, silently, a repeated focus's too, as
 /// NVDA's `initAutoSelectDetection` sets the baseline of the object gaining
 /// focus (`editableText.py` 417 to 427; Dickson, 2026-11-17); no caret
@@ -136,7 +136,7 @@ pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
 }
 
 /// The node `request` is about and every text anchor it names, which stay
-/// held while it waits or is out (design, "Held anchors").
+/// held while it waits or is out.
 pub(crate) fn named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
     // A caret key's confirmation keeps the key's starting point held.
     if let Wire::MsaaRun(run) = request {

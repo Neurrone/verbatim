@@ -1,9 +1,6 @@
-//! The virtual desktop's name at its turn (`books/dev/src/reference/crates/verbatim-core.md`,
-//! "Focus, events and objects", its announcements): an MSAA name change on the desktop window is
-//! read by the listener, the name alone, and kept until the next focus
-//! Core takes says it before its entered containers, or until 250 ms
-//! later, when it is said alone (`crate::desktop`). Any outcome but a
-//! result keeps nothing.
+//! The virtual desktop's name at its turn
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+//! objects", its announcements).
 
 use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{ObjectRef, Purpose, ReadObject};

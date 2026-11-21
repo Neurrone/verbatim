@@ -42,7 +42,8 @@ pub const BACKOFF: (Duration, Duration, Duration) = (
 );
 
 /// One application's outpost, by the stage of its generation's life
-/// (Table 5's rows; none is the application's absence from the record).
+/// (launching, starting, ready or waiting out a backoff; none is the
+/// application's absence from the record).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Stage {
     /// Core asked for an outpost; no process has been reported.
@@ -95,8 +96,8 @@ impl Application {
     }
 }
 
-/// What a failure leaves of an application's record (Table 5, columns C
-/// and E): a first failure since the count started again is replaced at
+/// What a failure leaves of an application's record (a failed launch, or
+/// a generation that ended): a first failure since the count started again is replaced at
 /// once, a later one waits out its backoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Replaced {

@@ -1,6 +1,6 @@
-//! Announcements at their turn (Table 12), against the committed UI
-//! Automation focus of the entries' tests: the button "OK", node 2 in
-//! window 5, runtime id `[42, 1]`, under the frame "Editor", node 1.
+//! Announcements at their turn, against the committed UI Automation
+//! focus of the entries' tests: the button "OK", node 2 in window 5,
+//! runtime id `[42, 1]`, under the frame "Editor", node 1.
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{

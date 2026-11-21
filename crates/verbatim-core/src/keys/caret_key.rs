@@ -191,7 +191,7 @@ impl Request for SentenceRequest {
 
 /// Whether the front entry `front`, a caret key, no longer needs
 /// `request`: its starting read, once its stroke went by its 150 ms
-/// release or was dropped. Table 7, S3, columns D and H.
+/// release or was dropped at a switch away from the user's desktop.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Wire) -> bool {
     let starting = match request {
         Wire::Text { op, .. } => match op {
@@ -246,7 +246,7 @@ impl Arrival {
 }
 
 /// The stage of a caret key in an edit field, derived from the request it
-/// has out, never stored (design, "Stage and arrival"; ADR 0003 rejects
+/// has out, never stored (ADR 0003 rejects
 /// "Core's sequences written as step functions in a reducer, each wait a
 /// named stage", so the key stays an async function and this only reads
 /// its request).
@@ -289,7 +289,7 @@ impl CaretStage {
     }
 
     /// Whether `arrival` withdraws the request of this stage: one arm per
-    /// cell of the edit path's stage table (design, "The stage table").
+    /// cell of the edit path's stage table.
     fn withdrawn_by(self, arrival: Arrival) -> bool {
         match self {
             Self::Starting { deletes_back } => arrival.counts() && !deletes_back,
@@ -395,7 +395,7 @@ enum Confirmed {
 /// naming the candidate's window, so that the hang check, the
 /// not-responding sound and the foreground stop all judge the window
 /// being read; `spare`, the key's node and starting point, stays held
-/// while it is out (design, "Confirming, and its bound").
+/// while it is out (the key's confirming place).
 async fn confirm(
     cx: &mut Cx<Entries>,
     trace: TraceId,
@@ -452,7 +452,7 @@ async fn starting_read(
     }
 }
 
-/// The caret key's function at its turn (Table 7), then what the
+/// The caret key's function at its turn, then what the
 /// character it types does to the word being typed ([`typed_at_end`]),
 /// unless it was dropped and never reached the application.
 pub(crate) async fn run(mut cx: Cx<Entries>, press: CaretPress) {
@@ -471,7 +471,7 @@ enum Reached {
     Dropped,
 }
 
-/// The caret key at its turn, to its end (Table 7).
+/// The caret key at its turn, to its end.
 async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     let status = if press.held {
         cx.facts().strokes.status(press.key_seq)
@@ -484,7 +484,7 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
             return Reached::Dropped;
         }
         StrokeStatus::Sent => {
-            // S2: released by its 150 ms timer, or never held. Its selection
+            // Waiting, its stroke sent: released by its 150 ms timer, or never held. Its selection
             // words, if any, come from its caret tell. A held key bound to
             // the focused terminal passed at its release, which its model
             // takes now. Its script never ran, so the word typed is kept,
@@ -580,7 +580,7 @@ fn new_line_typed(cx: &mut Cx<Entries>, press: &CaretPress) {
 }
 
 /// After the pass: the key judges what waits behind it by the one
-/// definition until its bound (design, "Confirming, and its bound"). A
+/// definition until its bound. A
 /// focus that counts silences it; an unconfirmed one is confirmed by a
 /// read of its facts, then judged again; with neither, the watch runs
 /// for the rest of the bound. A withdrawn watch or confirmation judges
@@ -796,7 +796,7 @@ enum WatchEnd {
     Withdrawn,
 }
 
-/// S4: the watch, then the key's words by its script.
+/// Watching: the watch, then the key's words by its script.
 async fn watching(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
@@ -864,7 +864,7 @@ async fn watching(
     WatchEnd::Ended
 }
 
-/// S5: the move by sentence from the starting point, its words said
+/// Moving by sentence: the move by sentence from the starting point, its words said
 /// unless the key is marked by the time it answers.
 async fn sentence(
     cx: &mut Cx<Entries>,
@@ -889,7 +889,7 @@ async fn sentence(
         return;
     };
     // The answer mints the next selection baseline, as Verbatim's own move,
-    // whether or not the key speaks (Table 17, column F).
+    // whether or not the key speaks.
     let (line, words, baseline) = match moved {
         SentenceMoved::Moved {
             sentence,

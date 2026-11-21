@@ -1,11 +1,6 @@
-//! A toast at its turn (Table 12): a UI Automation window opened whose
-//! nearest window is a Windows Runtime core window, NVDA's toast test
-//! (`NVDAObjects/UIA/__init__.py` 1282 to 1287), not a repeat of the toast
-//! spoken last within a second (ruled 2026-11-12), is read by the listener,
-//! its name, value, states, description and position, and announced as
-//! NVDA's `Notification.event_alert` speaks the object
-//! (`NVDAObjects/behaviors.py` 1008 to 1013), queued behind current
-//! speech, as today. Any outcome but a result drops it unspoken.
+//! A toast at its turn
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+//! objects", its announcements).
 
 use verbatim_model::request::{ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, NodeId, SpeechPriority, ToastId};

@@ -207,7 +207,7 @@ impl Announcement {
     }
 
     /// How it waits: an MSAA kind by its key, a UI Automation kind merging
-    /// nothing (Table 12, column F). A toast's repeat is dropped at its
+    /// nothing. A toast's repeat is dropped at its
     /// turn instead.
     pub(crate) fn place(&self) -> Place {
         let msaa = |ids: &MsaaIds, class: MsaaClass| Place::Msaa {
@@ -255,7 +255,7 @@ impl Announcement {
 
     /// Whether the foreground stop does not reach it: a toast and a show,
     /// accepted by their class, and an entry accepted by something other
-    /// than the foreground relation (Table 12, column E).
+    /// than the foreground relation.
     pub(crate) fn exempt_from_foreground(&self) -> bool {
         match &self.kind {
             Kind::Notification { .. } | Kind::Toast(_) | Kind::Show { .. } => true,

@@ -1,15 +1,6 @@
-//! An MSAA alert at its turn (Table 12; `docs/parity/alerts.md`, "Other
-//! alerts"): with a focus pending behind it, it is moved once behind every
-//! pending entry, as NVDA runs its whole queue first; then Core asks its
-//! application's outpost one request, whether the object is one of the
-//! committed focus's ancestors, and else its snapshot with its
-//! descendants, since its tell carries only ids. At the answer it is
-//! dropped when it is among the committed focus's ancestors, not of role
-//! alert, or has no name, description or child; else the object is
-//! spoken, then each descendant NVDA speaks: one that is focusable, or,
-//! when the alert has no description, a list or list item. Spoken queued.
-//! No application is known to reach this path; its differences from NVDA
-//! are recorded as unverified gaps in the parity entry.
+//! An MSAA alert at its turn
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+//! objects", its announcements).
 
 use verbatim_model::request::{
     FocusNode, NodeRead, ObjectRef, Purpose, ReadObject, RelationFound, RelationQuery,
