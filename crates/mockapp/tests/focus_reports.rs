@@ -3802,6 +3802,35 @@ fn a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest() {
     app.quit();
 }
 
+/// A toast renamed between its event and Core's read of it is spoken by
+/// the name its event's cache had, as NVDA's object for the event reads
+/// it: the listener's lone read of a kept element answers that name, its
+/// other properties read afresh.
+fn a_toast_is_spoken_by_the_name_its_events_cache_had() {
+    let title = common::unique_title("mockapp-toast-renamed");
+    let mut app = common::spawn_visible("toast_element.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let mut core = CoreDriver::new(&app, OutpostUnderTest::new(&app));
+
+    let element = toast_element(&client);
+    app.send("set-name toast Renamed notification");
+    let step = core.uia_event(EventKind::UiaWindowOpened, &element, None, Payload::None);
+    assert_eq!(
+        step.spoken(),
+        [vec![
+            SegmentContent::Label("New notification".to_owned()),
+            SegmentContent::Role(Role::Window),
+            SegmentContent::Position {
+                position: 1,
+                set_size: Some(1)
+            }
+        ]]
+    );
+
+    drop(core);
+    app.quit();
+}
+
 /// A toast candidate whose nearest window is of another class is dropped
 /// by Core, which asks nothing for it.
 fn a_toast_candidate_under_another_window_class_is_dropped() {
@@ -3824,6 +3853,10 @@ fn main() {
         (
             "a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest",
             a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest,
+        ),
+        (
+            "a_toast_is_spoken_by_the_name_its_events_cache_had",
+            a_toast_is_spoken_by_the_name_its_events_cache_had,
         ),
         (
             "a_toast_candidate_under_another_window_class_is_dropped",

@@ -626,8 +626,8 @@ pub(crate) struct ElementAsk {
 
 impl ElementAsk {
     /// What a batch's `steps` read of their kept element: the union of the
-    /// sets of its `Read` and `Ancestors` steps, its ancestors when a step
-    /// asks for them, the name read afresh.
+    /// sets of its `Read` and `Ancestors` steps, and its ancestors when a
+    /// step asks for them.
     fn of(steps: &[Step]) -> Self {
         let mut set: Vec<PropertyId> = Vec::new();
         let mut walk = None;
@@ -645,6 +645,15 @@ impl ElementAsk {
             }
         }
         Self { set, walk }
+    }
+
+    /// Whether the element's name is the one read afresh: for a read that
+    /// walks its ancestors, a focus's or a selected item's, whose caller
+    /// chooses between it and the tell's cached name; a lone read, a
+    /// toast's, answers its event's cached name, as NVDA's object for the
+    /// event reads it (Claude, 2026-11-21).
+    fn fresh_name(&self) -> bool {
+        self.walk.is_some()
     }
 }
 
@@ -689,7 +698,7 @@ pub(crate) fn read_element(
         (reading.walk.as_ref().map(|(_, depth)| *depth), &known),
         calls,
     );
-    let mut element = element_read(&fields, sender, &mut walked);
+    let mut element = element_read(&fields, sender, &mut walked, reading.fresh_name());
     if reading.set.contains(&PropertyId::States)
         && wants_legacy_checked_state(element.parts.role, element.parts.states)
     {
@@ -879,15 +888,17 @@ fn walk(
 }
 
 /// The element as a read answers it: its class from its event's cache, as
-/// NVDA's object for the event reads it; its name, role, value, states and
-/// details as read afresh, or from the event's cache when they were not,
-/// Core choosing the cached name where it speaks that one (the request
-/// list's design, section 6); and a value taken from its first selected
-/// item's name when that is its value.
+/// NVDA's object for the event reads it; its role, value, states and
+/// details as read afresh, or from the event's cache when they were not;
+/// its name too when `fresh_name`, Core choosing the cached name where it
+/// speaks that one (the request list's design, section 6), else its
+/// event's cache's; and a value taken from its first selected item's name
+/// when that is its value.
 fn element_read(
     fields: &ListenerEvent,
     sender: &Cached<ListenerEvent>,
     walked: &mut Walked,
+    fresh_name: bool,
 ) -> Read {
     let event = fields.parts(sender.runtime_id());
     let (mut read, from_selection) = walked.fresh.take().unwrap_or_else(|| {
@@ -904,6 +915,9 @@ fn element_read(
             false,
         )
     });
+    if !fresh_name {
+        read.parts.name.clone_from(&event.name);
+    }
     read.parts
         .details
         .class_name
