@@ -14,14 +14,24 @@
 //! mostly within rows cannot walk the whole history (`books/dev/src/reference/performance.md`,
 //! "A terminal's upward search").
 //!
-//! A `FindText` that fails, or whose range's calls fail, as Windows
-//! Terminal's not-found range does (a range rather than null, whose
-//! `GetText`, `CompareEndpoints` and `MoveEndpointByRange` fail with
-//! `E_FAIL` or `E_INVALIDARG`; seen in Windows Terminal 1.24.12741 on 2026-10-24), means not
-//! found in that direction, never an error: the search goes on in the
-//! other direction only. A remote program does it in one round trip and a
+//! A `FindText` that fails, or whose range's calls fail, means not found
+//! in that direction, never an error: the search goes on in the other
+//! direction only. A remote program does it in one round trip and a
 //! classic implementation call by call; [`terminal_find`] is the one
-//! function callers use.
+//! function callers use, and [`finds_remotely`] says where the program
+//! cannot run.
+//!
+//! Windows Terminal's `FindText` answers a search that finds nothing in
+//! its range with a range rather than null, and calls on that range fail,
+//! some with `RPC_E_SERVERFAULT`, the provider's exception: `Clone` when
+//! the text is elsewhere in the document, `GetText`, `CompareEndpoints`
+//! and `MoveEndpointByRange` when it is nowhere. Inside a remote operation
+//! that failure ends the whole run with `ExecutionFailure` whatever try
+//! block holds the call, so the program, each of whose directions ends in
+//! such a search, fails every time there; the classic implementation
+//! takes the failed call as not found (seen in Windows Terminal
+//! 1.25.3131 on Windows 11 26300, 2026-11-21, and on GitHub's runner in
+//! run 44906034038).
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Line,
@@ -51,6 +61,16 @@ pub const FIND_CALLS: usize = 5 * FIND_MATCHES;
 
 /// More rows than any terminal holds, for counting rows to the end.
 const FAR: i32 = 1_000_000;
+
+/// Whether a terminal's search can run as the remote program in an element
+/// of UIA class `class_name`: not in Windows Terminal's control
+/// (`TermControl`), whose not-found range ends a remote operation (the
+/// module's documentation), so there the search is the classic
+/// implementation's alone.
+#[must_use]
+pub fn finds_remotely(class_name: Option<&str>) -> bool {
+    class_name != Some("TermControl")
+}
 
 /// What [`terminal_find`] is asked.
 #[derive(Clone, Copy)]
@@ -380,4 +400,18 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finds_remotely;
+
+    /// Windows Terminal's control searches the classic way, and an
+    /// element of another class or none remotely.
+    #[test]
+    fn only_windows_terminals_control_searches_the_classic_way() {
+        assert!(!finds_remotely(Some("TermControl")));
+        assert!(finds_remotely(Some("WPFTermControl")));
+        assert!(finds_remotely(None));
+    }
 }

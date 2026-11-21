@@ -520,9 +520,8 @@ fn find_on_path(
         .collect()
 }
 
-/// A provider whose `FindText` fails (`terminal_find_fails.json`), as
-/// Windows Terminal's not-found range does: the search finds nothing, and
-/// is no error.
+/// A provider whose `FindText` fails (`terminal_find_fails.json`): the
+/// search finds nothing, and is no error.
 fn a_failing_search_finds_nothing(remote: bool) {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-find-fails");
