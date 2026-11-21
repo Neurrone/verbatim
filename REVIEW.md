@@ -1,55 +1,32 @@
 # Code review in this repository
 
-This file says what a review is for here, what a finding must carry, what is fixed in the review loop and what is not, and when the loop stops. `CLAUDE.md`'s standing rules point here; the `port` skill's phase 9 and every review brief follow it. The targets a reviewer looks for are in `.claude/skills/port/references/review.md`.
+A review checks a finished change, or a design, against the code, NVDA's pinned source and Dickson's rulings. It finds defects. It does not add requirements, ask for more evidence than the change needs, or propose features. `CLAUDE.md`, "How work is done", says when a review happens.
 
-## What failure looks like here
+## What a review looks for
 
-A change has failed review when any of these holds:
+- A claim about NVDA that its pinned source or a capture contradicts.
+- A spoken expectation with no capture or cited source line behind it.
+- A test that accepts two outcomes, waits on time rather than evidence, runs a copy of Verbatim's own code, or passes when the behaviour it names is removed (`books/dev/src/reference/testing.md`).
+- A race hidden by a retry, a sleep or a bound added for one failure.
+- A wake-up, call into another process, lock or timer added on the event or speech path that the change does not account for.
+- State in the code that its design's state table does not list, or a flag or optional field that stands in for a state.
+- An addition to shared machinery (a kind of request or reply, a queue hook, a copied fact) that the change does not need.
+- A document that describes removed code, or a decision attributed to Dickson that he did not take.
+- A removal that something still depends on.
 
-- a parity claim that the pinned NVDA source or a capture contradicts, or a spoken expectation taken from anywhere but a capture;
-- a test that accepts two outcomes, times something, exercises a copy or stand-in of Verbatim's own code, tests at a second level what a cheaper one already asserts on the real code, or passes under a mutation that removes the behaviour it names;
-- a call into another process, wake-up, lock or timer added on the event or speech path that the design's costing does not state, or a call count that its call-count test does not pin; an allocation, a copy or a local call is a finding only when a measurement shows it costs, since code shaped to avoid one adds complexity for nothing, and a document that copies a figure a test pins is a finding;
-- a race hidden by a retry, a sleep or a bound added without evidence that the proper fix is not enough;
-- a document that describes a removed mechanism, or a decision attributed to Dickson that he did not take;
-- a removal or a protocol change that a remaining caller, document or wire version still depends on.
-- state in the code that does not match the design's table of states, or a new flag or optional field that encodes a state the table does not list;
-- a waiting state, message, timer or lifecycle held in two places that the design's list of what it adds does not name;
-- a decision outside Core whose decider does not see, in order, the facts it depends on, where a wrong guess can change what is spoken.
-- an addition to shared machinery (a kind of request, reply, text operation or waiting request, a queue hook, a state, a document restating another) that the design does not justify, or a size past the design's budget.
+## What a finding carries
 
-## What a finding must carry
+Each finding gives:
 
-Every finding gives the file and line, the defect in one sentence, and a concrete counterexample, a violated invariant or the missing evidence. A finding without one of those is an observation and is not posted as a finding. Style, diagnostic and cleanup-only remarks are left out: they bury the findings that matter.
+- the file and line;
+- the defect in one sentence;
+- a concrete counterexample: a sequence, a failing test, or a source line.
 
-Each finding is tagged:
+Anything without one is left out. Each finding is tagged **must-fix**, meaning wrong behaviour, a wrong claim, or a test that proves nothing, or **nit**. Style remarks are left out. The report opens with the count of must-fixes.
 
-- **Important**: wrong behaviour, a wrong parity claim, a cost on the per-event path, a test that proves nothing, a wrong attribution. Fixed in the review loop.
-- **Nit**: wording, a doc that lags the code by a detail, a test that could be tighter without being wrong. Collected, not fixed in the loop.
-- **Pre-existing**: not introduced by the change under review. Listed with its evidence in the report as a proposed follow-up, added to `docs/roadmap.md` only once Dickson approves it, and not fixed in the loop unless the change cannot work without it.
+## The loop
 
-The reviewer's summary starts with the count of Important findings and says plainly when there is nothing to fix.
-
-## Before an Important finding is built
-
-An Important finding is reproduced before anything is built on it: the fixing subagent runs the counterexample (a unit test that fails, a scenario run whose log shows it, a line of the pinned source), or a second read-only reviewer confirms it. A finding that cannot be reproduced is recorded with what was tried, and nothing is built. A finding whose recommended fix changes behaviour beyond the counterexample is a design question for Dickson, not a fix.
-
-## The unit of review
-
-The unit is a completed step, not a commit: the whole implementation of a milestone step or of the scope a brief defines, with its tests and documents, reviewed as one diff against the commit the step started from. A step is complete when its brief's end condition holds and its related scenarios pass. Builders commit as they go; nothing is pushed before the step's review. A step's design is reviewed before implementation (the `port` skill's phase 4), so that the review at the end judges the implementation against a design already agreed, and a finding that the approach is wrong is rare and goes back to the design rather than into a fix round.
-
-## The loop, and when it stops
-
-1. The completed step is reviewed once, in full, by a separate read-only subagent with this file, the targets list, the step's brief and design, and the evidence of its runs. It asks first what the step adds to shared machinery and whether each addition can be removed, as `CLAUDE.md` says, and only then looks for sequences.
-2. Important findings are reproduced, then fixed in one commit. Nits from the review are fixed in the same commit only when they touch lines the fix already changes; the rest wait.
-3. When the fix is large, the fix commit is re-reviewed on its diff only, against the counterexamples of the first review; a small fix gets no re-review. New findings outside that diff are recorded, not pursued, except a defect in the mechanism the step builds, which is fixed in the step rather than deferred.
-4. After the re-review, or after the fix when there is none, the loop stops. What remains at Nit or Pre-existing goes into one documents-and-nits commit for the step, which needs no review, or into the report's proposed follow-ups. If the re-review still finds an Important defect, the parent asks whether the design is wrong rather than opening a third round. The third fix commit in one mechanism after its implementation review ends the loop and goes to Dickson, as `CLAUDE.md` says.
-
-Trivial changes need no review: a title string, a format fix, a log line, a doc correction, a nits commit. A change is not made trivial by being small; a one-line change to a key, a bound or a drop reason is nontrivial and is reviewed with its step.
-
-## Evidence over reading
-
-A reviewer reads the evidence before the code: the test output, the scenario logs, the mutation checks the implementer reports, the call-count tests' output. A claim without evidence in the report is a finding. The end-to-end suite and the mockapp tests are the judge of behaviour; a review that finds no defect does not make a change correct, and a suite failure after a clean review is answered by asking which check should have caught it, then adding that check, not another review round.
-
-## Decisions
-
-A decision outside Dickson's areas is Claude's, as `CLAUDE.md` says: it is recorded with its reason as "(Claude, <date>)", naming no model in documents and commit messages, listed for him in the report so that he can override it, and never written as his. A decision in his areas is never taken pending: its build waits for him. A decision he took keeps "(Dickson, <date>)".
+1. The fixing agent reproduces each must-fix before fixing it.
+2. The fixes go in, `cargo xtask ci` passes, and the loop ends. A large fix gets one look at its own diff.
+3. Nits are fixed only where the fix already touches the lines.
+4. A must-fix that contradicts one of Dickson's rulings goes in the report instead of being fixed.

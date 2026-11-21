@@ -4,8 +4,7 @@ The protocol that governs the review, its severity tags and when the loop
 stops is `REVIEW.md` at the repository root; this file lists only what to
 look for. Give this list to the review subagent in phase 9. Review the change as if it
 is subtly wrong despite passing its tests. Ask first what the change adds
-to shared machinery and whether each addition can be removed (`CLAUDE.md`,
-standing rules). Then look especially for:
+to shared machinery and whether each addition can be removed (`REVIEW.md`). Then look especially for:
 
 - an omitted stage in the NVDA causal path;
 - a source behavior accidentally mistaken for an implementation detail;

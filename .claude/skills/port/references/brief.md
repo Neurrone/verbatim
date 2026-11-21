@@ -22,13 +22,13 @@ the subagent's context with what it does not need. Read parity entries and
 NVDA or design sections with
 `python -I .claude/skills/port/scripts/entry.py <file> "<name>"`.
 
-## Standing rules
+## How work is done
 
-Point to the "Standing rules" section of `CLAUDE.md`.
+Point to the "How work is done" section of `CLAUDE.md`.
 
 ## Build and test policy
 
-The "Standing rules" section of `CLAUDE.md` covers building, test runs and
+The "How work is done" section of `CLAUDE.md` covers building, test runs and
 pushing. The brief adds only what is specific to this task: the target
 directory this subagent builds into, which end-to-end scenarios are the
 related ones, what it may or may not run live, and that it does not push
@@ -42,7 +42,7 @@ here in the brief.
 
 ## Cleanup
 
-The "Standing rules" section of `CLAUDE.md` covers cleanup. The brief adds
+The "How work is done" section of `CLAUDE.md` covers cleanup. The brief adds
 only what is specific to this task, such as a worktree or a process this
 subagent is to leave in place.
 

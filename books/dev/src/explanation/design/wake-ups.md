@@ -8,7 +8,7 @@ Raising thread priorities had cut some latency but made typed echoes
 slower and hid a writer and an audio thread waking each other thousands
 of times a second, so priorities were reverted and every thread's
 wake-ups were counted and each source fixed where it starts. The rule
-that follows is a standing one (`CLAUDE.md`, "Standing rules"): every
+that follows is a standing one (`CLAUDE.md`, "How work is done"): every
 change is judged on wake-ups and processor time as well as latency. The
 current figures per workload are in `books/dev/src/reference/performance.md`; the
 communication design's baseline is `docs/design/communication.md`,

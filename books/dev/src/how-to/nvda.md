@@ -214,7 +214,7 @@ its menu with `--open-menu`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 
 A capture that an expectation cites is committed beside the test that
-cites it (`CLAUDE.md`, standing rules); other captures are working
+cites it (`CLAUDE.md`, "How work is done"); other captures are working
 material, not kept: they serve exploratory testing and comparing what
 Verbatim says with what NVDA says.
 

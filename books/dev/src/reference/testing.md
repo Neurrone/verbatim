@@ -39,7 +39,7 @@ Where a scenario exists for two targets, each target's scenario is its own code:
 - A mismatch is reported with the expected and actual sequences, escaped, and the first utterance and character that differ.
 - Counts are exact numbers, not bounds. State is compared whole, not as a subset.
 - A test's expectation is fixed before it runs. It never reads Verbatim's answer to decide what to expect next; when it needs the system's state, such as a lock key's, it reads that state independently first.
-- Every expected utterance comes from an NVDA capture committed beside the test that cites it, or is marked as Verbatim's own with the ruling that allows it, and a check compares each expectation with its capture (`CLAUDE.md`, standing rules). Reason: on 2026-11-20, 4 of 105 scenarios cited a capture that still existed and 18 cited captures lost with `target/`.
+- Every expected utterance comes from what NVDA was heard to say before the expectation was written (a capture, or compare mode used to explore), from a cited line of NVDA's pinned source, or is marked as Verbatim's own with the ruling that allows it (`CLAUDE.md`, "How work is done"); compare mode's output is never committed or checked (Dickson, 2026-11-21). Reason: on 2026-11-20, 4 of 105 scenarios cited a capture that still existed.
 - Reducer tests assert every effect an input produces, not only the first.
 
 ### Optional utterances

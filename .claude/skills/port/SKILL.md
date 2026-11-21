@@ -27,7 +27,7 @@ The requested scope defines what success means. The steps that reach it are chos
 
 Divide the labour this way. The parent conversation reads the relevant sections of the durable docs, makes the design decisions with Dickson, writes briefs, reads reports, decides, and has the work reviewed twice: the design before implementation (phase 4) and the implementation once it is complete (phase 9). Subagents commit their work as their brief says, and do the NVDA research, returning the causal path and the preserve, replace, and omit list rather than file contents; the implementation and test work; and the review. The parent does not run cargo build, test, clippy, or `cargo xtask ci` itself, does not read source files at length, and does not re-run what a subagent has reported, because in past sessions that, not the hand-offs, was where the tokens went. Research subagents that only read and summarize can be Sonnet; implementation and review subagents are Opus.
 
-Write every brief from `references/brief.md`, and point it at the "Standing rules" section of `CLAUDE.md`, because subagents see neither this conversation nor Claude's memory.
+Write every brief from `references/brief.md`, and point it at the "How work is done" section of `CLAUDE.md`, because subagents see neither this conversation nor Claude's memory.
 
 ## The durable sources of truth
 
@@ -110,7 +110,7 @@ Ported code in the Windows-tier (GPL) crates cites, in a comment, the NVDA sourc
 
 ## Phase 8: Verify progressively
 
-Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed step, and `cargo xtask ci` under the repository's normal rules. Run only the scenarios `CLAUDE.md`'s standing rules allow, never the whole suite or a family locally; GitHub's run from the push is the wider check.
+Use cheap proofs before expensive ones: the narrowest unit or crate checks after a local change, the targeted cross-process or end-to-end scenarios after a completed step, and `cargo xtask ci` under the repository's normal rules. Run only the scenarios `CLAUDE.md`'s "How work is done" allows, never the whole suite or a family locally; GitHub's run from the push is the wider check.
 
 A passing compiler is not behavioral evidence, and a newly written test passing does not by itself prove that it asserts the right contract.
 

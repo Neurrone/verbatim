@@ -254,3 +254,38 @@ while `VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with
 `--verbatim-exe <path>` instead, because the commands once discarded the
 variable silently, so a comparison of two builds measured the current
 build in both arms.
+
+**A script's capture or measurement fails at once on the desktop.** These
+traps each broke a capture or measurement script on its first run, so a
+script is run by its author before it is handed over:
+
+- Windows gives the foreground only to a program that the injecting
+  process started, or after it sent the last input. A window a script
+  starts itself is brought forward with the capture tool's `--front`,
+  after a key the agent sends (Shift alone does nothing), not with
+  `--await-front`, which waits for the program to take the foreground by
+  itself.
+- A notification can hold the front, for example a browser's request to
+  pin itself to the taskbar, and Windows then refuses every
+  `SetForegroundWindow`. Find it with UI Automation and press its
+  "Move this notification to Notification Center" button, which answers
+  neither yes nor no.
+- The capture tool's agent ends what it launched when the capture ends, so
+  a window that a later step still needs is started by the script.
+- Under `Set-StrictMode -Version Latest`, a missing hashtable key fails as
+  `$h.Key`; read it as `$h['Key']`. Cargo writes its progress to stderr,
+  which `$ErrorActionPreference = 'Stop'` raises as an error: run cargo
+  under `Continue` and judge `$LASTEXITCODE`.
+- `Start-Process -PassThru` reports no exit code unless the script reads
+  `$p.Handle` before the process exits.
+- A process's standard input writer in Windows PowerShell puts a
+  byte-order mark before the first line, which mockapp rejects as a
+  command; write an empty first line, or wrap the base stream in a UTF-8
+  writer without one.
+- A browser profile or an NVDA configuration copy can pass 260 characters
+  in its paths; keep such folders short, under `%TEMP%\vbcap`, and delete
+  them with `cmd /c rd /s /q "\?\<path>"`.
+- A shell whose working directory is inside an output folder locks it
+  against deletion.
+- A full disk shows as a Windows "Low disk space" window, which the
+  harness refuses to start beside; keep the C: drive above 20 GB free.
