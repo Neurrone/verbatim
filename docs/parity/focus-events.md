@@ -74,10 +74,9 @@ duplicate.
   the element that is the readers' last focus, with no read of its own.
   So a focus checked before Core handled an earlier one on the same
   element finds it kept, as the console's repeated terminal focus is
-  (`a_second_focus_checked_before_the_first_is_handled_is_said_once`, the
-  replay `the_consoles_repeated_focus_says_terminal_once`), and an element
-  Core refused is let go within one pipe hop
-  (`refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone`). A
+  (the replay `the_consoles_repeated_focus_says_terminal_once`), and an
+  element Core refused is let go within one pipe hop (the replay
+  `refused_text_box_focuses_are_let_go_so_each_check_reads_its_own_focus`). A
   failed read, or a last focus the listener no longer holds (after a
   re-take, whose focus an outpost read), means not a duplicate. Core's
   `a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate`,

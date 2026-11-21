@@ -49,7 +49,7 @@
 //!   the change or release after which no text fact names it, or with its
 //!   node. No rule of the reducer reads the text facts, so the store holds
 //!   them; their type stays in `verbatim-outpost-logic`, pure data tested
-//!   on any host (Claude, 2026-11-21).
+//!   on any host (Dickson's confirmed default, 2026-11-20).
 
 #![forbid(unsafe_code)]
 

@@ -777,7 +777,7 @@ UIA's connection timeout does not bound it; its transaction timeout
 every Verbatim process, `verbatim_uia::UIA_TRANSACTION_TIMEOUT`) does, with
 `ExecutionFailure` and extended error `UIA_E_TIMEOUT`, as a classic call
 fails in the same time. So the outpost's worker calls `Execute` directly,
-and its watchdog covers both the same way; a program is one wait where a
+and an abandonment for the foreground covers both the same way; a program is one wait where a
 classic walk against a provider that stalls partway is one wait per
 remaining hop. When the provider's process has exited, `Execute` returns
 at once with `UIA_E_ELEMENTNOTAVAILABLE`.

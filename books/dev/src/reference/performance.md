@@ -351,9 +351,10 @@ range value change anywhere wakes the listener's UIA thread, and its
 cache holds two properties more for a bar, its rectangle and whether it
 is off the screen; a progress bar's then wakes its application's check
 thread for NVDA's native-element calls, the nearest window, its probe and
-the window's acceptance facts, and costs no call to read it. The wake-up,
-processor time and flood figures of this path are the progress-bar
-build's measurement series, recorded with that build.
+the window's acceptance facts, and costs no call to read it. A classic
+bar has one read out at a time, so a flood of one bar's changes costs one
+request out however long it runs
+(`a_flood_of_one_classic_bars_changes_keeps_one_read_out`).
 
 ### The listener's reads in a window the outpost judges MSAA
 
@@ -372,9 +373,8 @@ fact").
   (`a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe`),
   and the held view written after that pass lets its element go.
   - Calls: 1 or 2 keyboard-focus calls: the element's own, and one kept
-    element whose view is still in flight
-    (`refused_focuses_are_let_go_so_each_check_reads_its_own_focus_alone`;
-    the replay of `measure_focus_text_box`'s recording,
+    element whose view is still in flight (the replay of
+    `measure_focus_text_box`'s recording,
     `refused_text_box_focuses_are_let_go_so_each_check_reads_its_own_focus`).
     Before Core's held view released told elements, the count grew from 1
     to 22 over 20 returns (measured 2026-11-18, release, at about 0.3 ms

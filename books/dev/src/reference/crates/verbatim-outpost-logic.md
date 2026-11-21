@@ -98,8 +98,8 @@ Public API:
   (`NodeAnchors::held`: a caret key's starting point and a selection
   baseline, numbered and released as anchors are, Table 16), which the
   outpost's object store holds and the reducer does not, since no rule of
-  it reads them, their type here as pure data tested on any host (Claude,
-  2026-11-21); and
+  it reads them, their type here as pure data tested on any host
+  (Dickson's confirmed default, 2026-11-20); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.
 

@@ -622,7 +622,7 @@ Consequences:
   requests; the reducer never sees COM.
 - **Only the reducer speaks** (Dickson, 2026-10-24). Every utterance and
   earcon is an `Effect` of `reduce`; the shell's other threads (the
-  clipboard, the GUI, the watchdog) turn what they learn into `Input`s and
+  clipboard and the GUI) turn what they learn into `Input`s and
   never call the speech manager themselves, so all speech is ordered,
   cancellable and recorded in one place. Every speaking function of the
   speech manager takes a token only the reducer thread holds, so the

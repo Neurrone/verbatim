@@ -12,14 +12,9 @@
 //! logs and for the end-to-end harness to match them with its own.
 
 use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
-
-/// What time it is on the monotonic clock: [`Instant::now`] unless a test
-/// sets its own, for the lifetime of a kept verdict and the time budget of
-/// a classic walk.
-pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 /// What time it is on the run's shared clock, in microseconds
 /// ([`now_us`]), for the stamp an observation is judged at: the shared

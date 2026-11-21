@@ -61,7 +61,7 @@ pub fn write_coverage_profile() {
 
 /// Installs a tracing subscriber writing to this process's stderr (which the
 /// supervisor redirects to a log file). Respects `RUST_LOG`, defaulting to
-/// `info` so the worker and watchdog diagnostics land without extra
+/// `info` so the worker's diagnostics land without extra
 /// configuration. Never a hard failure: if a subscriber is somehow already
 /// set, `try_init` returns an error that is ignored.
 pub fn init_tracing() {

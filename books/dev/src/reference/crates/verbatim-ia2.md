@@ -328,8 +328,7 @@ Public API:
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected:
   `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
-  (stopping at a known ancestor, `Walked::MetKnown`; when the caller's
-  `out_of_time` check says its time is up, or at `max_hops`, `Walked::Cut`
+  (stopping at a known ancestor, `Walked::MetKnown`; at `max_hops`, `Walked::Cut`
   with the outermost ancestor's window, which the outpost completes by
   plain windows; and `Walked::Onward` with the window the chain goes on
   from by its own object, for a parent in a different window that
@@ -347,10 +346,7 @@ top-level window reached from a child window's window object is acquired
 at its own address and read there instead of the object `accParent` gave,
 as NVDA reads its foreground object, so it is the node any other path
 gives that client, marked `top_level_client` by the rule above and said
-by Core on entering the window: one acquisition; `progress`, an
-  `AncestorProgress`, is told each ancestor as it is read with the window
-  the walk is then in, so the outpost's watchdog can publish the walk as
-  it stands while its next call is under way) (per-hop `accParent` walks, outermost first, with the simple-child
+by Core on entering the window: one acquisition) (per-hop `accParent` walks, outermost first, with the simple-child
   special case its doc explains — a bare child id has no `accParent` of
   its own, so its first hop is the object it is a child of; MSAA has no
   remote-ops analog, so unlike UIA's equivalent this stays the permanent

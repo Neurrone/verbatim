@@ -143,9 +143,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   of nodes, roles, states, and events that both backends map into.
   [verbatim-model](crates/verbatim-model.md).
 - **Object store** — the outpost's monitor that owns node identity,
-  the application objects it keeps and each node's mint tag, and
-  releases a node only when no live request and no message can still
-  name it. [verbatim-outpost](crates/verbatim-outpost.md).
+  the application objects it keeps, and releases a node only between
+  programs, when no program and no message can still name it. [verbatim-outpost](crates/verbatim-outpost.md).
 - **Outpost** — the per-application process owning that app's event
   hooks, queries, and announcements (D9); also the binary
   `verbatim-outpost.exe` it runs. Each process generation has an
@@ -244,8 +243,8 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   [verbatim-model](crates/verbatim-model.md).
 - **Worker** — the one thread per outpost that takes entries from the
   intake queue in order and is the only thread that calls into the
-  application; a **watchdog** thread replaces it when a call passes its
-  deadline. [verbatim-outpost](crates/verbatim-outpost.md).
+  application; the outpost abandons and replaces it when Core cancels
+  its request for the foreground. [verbatim-outpost](crates/verbatim-outpost.md).
 - **Utterance** — the structured unit of speech (a sequence of spans
   plus source metadata) emitted by the reducer (D12).
   [verbatim-speech](crates/verbatim-speech.md).

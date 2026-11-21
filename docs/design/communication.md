@@ -165,7 +165,7 @@ The policy (`crates/verbatim-process/src/scheduling.rs`, decision 14):
 - A thread that only moves messages, microseconds per wake, then waits again, runs at `THREAD_PRIORITY_HIGHEST`: the keyboard hook thread, verbatim.exe's relay thread, each child's I/O thread, and the `WinEvent` threads. A thread made ready at normal priority waits for a running normal-priority thread's quantum, which matched the measured 2 to 30 ms tails; a higher-priority thread pre-empts at once. Measured (section 11, step 3), this took verbatim.exe's own stage's maximum from about 4 ms to under half a millisecond, with no measurable change in processor time or wake-ups.
 - A thread that computes on the path, sometimes for milliseconds, or calls into an application, runs at normal priority: the reducer, the speech queue and synth threads, each host's thread, each outpost's worker, and the listener's per-application reading threads. Raising them to above normal made typed echoes slower, and was withdrawn.
 - The audio thread keeps MMCSS "Pro Audio".
-- Everything else is normal (the GUI, the control plane, launch and retire helpers, the listener's watchdog).
+- Everything else is normal (the GUI, the control plane, launch and retire helpers).
 - No process or thread is opted out of power throttling: the measurement found no latency gain from it, and it costs energy for every unit of work. The power plan stays Balanced.
 - Timer resolution is not raised: nothing on the path waits on a timer.
 - Threads Verbatim does not own (UIA's callback threads) keep their priority. Verbatim does no lasting work on them: they encode and write one frame, or hand the event to an owned thread.

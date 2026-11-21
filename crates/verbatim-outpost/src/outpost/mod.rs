@@ -285,10 +285,9 @@ pub type FocusedElementReader =
     Arc<dyn Fn(&Uia, &Request<Node>) -> windows::core::Result<Cached<Node>> + Send + Sync>;
 
 /// The outpost's shared state as one program sees it: the store's handle
-/// for the request ([`store::Nodes`]), carrying its mint tag, and its
-/// copies of the facts it reads. The store tags every
-/// node the request issues or looks up with it, and a program's text
-/// writes are made only with a commit the reducer accepts.
+/// for the request ([`store::Nodes`]) and its copies of the facts it
+/// reads; a program's text writes are made only with a commit the reducer
+/// accepts.
 struct RequestContext<'a> {
     context: &'a Context,
     nodes: store::Nodes<'a>,

@@ -19,9 +19,11 @@
 //! `sysTreeView32.py`. Those messages are sent with `SendMessageTimeoutW`
 //! ([`crate::window`]), so a wedged application fails them after half a
 //! second, or at once when Windows judges it hung. The `IAccessible` calls
-//! here have no bound of their own: every caller of this module runs on
-//! the outpost's deadline-guarded worker (never the event thread), whose
-//! watchdog abandons a call that passes the entry's deadline.
+//! here have no bound of their own: every caller of this module runs on a
+//! thread that may block (an outpost's worker or a listener's reading
+//! thread, never an event thread), which is abandoned when Core cancels
+//! its request for the foreground, and Core stops waiting at the
+//! request's due time.
 
 use windows::Win32::Foundation::{
     CO_E_OBJNOTCONNECTED, RPC_E_DISCONNECTED, RPC_E_SERVER_DIED, RPC_E_SERVER_DIED_DNE,
@@ -893,8 +895,6 @@ pub fn ancestor_chain(
         known: &|_| false,
         read_by_other_api: &|_| false,
         plain: &|_| false,
-        out_of_time: None,
-        progress: None,
         candidates: None,
     };
     ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
@@ -920,22 +920,10 @@ pub struct AncestorLimits<'a> {
     /// before a parent an `accParent` named in such a window, unread
     /// ([`Walked::Onward`]).
     pub plain: &'a dyn Fn(isize) -> bool,
-    /// Whether the walk's time is up, checked between its calls: it is
-    /// then cut ([`Walked::Cut`]).
-    pub out_of_time: Option<&'a dyn Fn() -> bool>,
-    /// Told each ancestor as it is read, nearest first, with the window
-    /// the walk is then in, from which plain windows would complete the
-    /// chain should the walk be cut there ([`Walked::Cut`]): so a watchdog
-    /// can publish the walk as it stands while its next call is under way.
-    pub progress: Option<AncestorProgress<'a>>,
     /// The kept nodes each ancestor no lookup places is compared with by
     /// NVDA's equality ([`Candidates`]); `None` compares with none.
     pub candidates: Option<&'a Candidates>,
 }
-
-/// What is told each ancestor a walk reads, with the window the walk is
-/// then in ([`AncestorLimits::progress`]).
-pub type AncestorProgress<'a> = &'a dyn Fn(&NodeSnapshot, isize);
 
 /// How an ancestor walk ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -944,7 +932,7 @@ pub enum Walked {
     Complete,
     /// It reached this known ancestor, the outermost one in the chain.
     MetKnown(NodeId),
-    /// It ran out of time or reached its hop limit with ancestors left: the
+    /// It reached its hop limit with ancestors left: the
     /// chain is completed by plain windows from this window, the outermost
     /// ancestor's own, included (`books/dev/src/reference/adr/0001-focus.md`, "When an
     /// application's call fails").
@@ -982,12 +970,6 @@ pub fn ancestor_chain_until(
         compare: limits.candidates,
         ..Reading::default()
     };
-    let out_of_time = || limits.out_of_time.is_some_and(|out_of_time| out_of_time());
-    let told = |snapshot: &NodeSnapshot, hwnd: isize| {
-        if let Some(progress) = limits.progress {
-            progress(snapshot, hwnd);
-        }
-    };
     let mut walked = Walked::Complete;
     let (acc, (hwnd, id_object, _), at) = locate(node, registry)?;
     let mut chain = Vec::new();
@@ -1012,16 +994,11 @@ pub fn ancestor_chain_until(
                 registry,
             );
             let id = snapshot.id;
-            told(&snapshot, hwnd);
             chain.push(snapshot);
             hops_used += 1;
             current_acc_id = parent_acc_id;
             if (limits.known)(id) {
                 walked = Walked::MetKnown(id);
-                break;
-            }
-            if out_of_time() {
-                walked = Walked::Cut(hwnd);
                 break;
             }
         }
@@ -1035,10 +1012,6 @@ pub fn ancestor_chain_until(
     // its parent window's client.
     let mut at_window_object = false;
     while walked == Walked::Complete {
-        if out_of_time() {
-            walked = Walked::Cut(current_hwnd);
-            break;
-        }
         // The hop limit cuts the chain only where an ancestor is left: the
         // object a simple child belongs to, or a parent found.
         if !at_self {
@@ -1054,7 +1027,6 @@ pub fn ancestor_chain_until(
             let snapshot = read_snapshot_with(&current, self_key, context(self_at), registry);
             let id = snapshot.id;
             at_window_object = snapshot.role == Role::Window;
-            told(&snapshot, self_hwnd);
             chain.push(snapshot);
             current_hwnd = self_hwnd;
             at_self = true;
@@ -1179,7 +1151,6 @@ pub fn ancestor_chain_until(
         );
         let id = snapshot.id;
         let is_window_object = snapshot.role == Role::Window;
-        told(&snapshot, parent_hwnd);
         chain.push(snapshot);
         hops_used += 1;
         current = parent_acc;
@@ -1199,7 +1170,6 @@ pub fn ancestor_chain_until(
             let group_key = (group_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             let snapshot = read_snapshot_with(&group, group_key, context(true), registry);
             let id = snapshot.id;
-            told(&snapshot, group_hwnd);
             chain.push(snapshot);
             hops_used += 1;
             current = group;

@@ -1155,8 +1155,6 @@ fn msaa_ancestors(
         known: &known,
         read_by_other_api: &read_by_uia,
         plain: &plain,
-        out_of_time: None,
-        progress: None,
         candidates,
     };
     let (chain, walked) =

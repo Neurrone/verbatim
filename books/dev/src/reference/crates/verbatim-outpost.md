@@ -888,7 +888,8 @@ no comparison Core did not ask for.
   programs as they are. They change only by a program's commits
   (`TextChange`) and a release, and the store lets go of each UIA range
   no fact names any more as it makes the change. No rule of the reducer
-  reads them, so the store holds them (Claude, 2026-11-21).
+  reads them, so the store holds them (Dickson's confirmed default,
+  2026-11-20).
 - A report's selection starts where Core can read before it: at the
   caret, in the caret's line, since a UIA caret is the selection's start,
   as NVDA's is (`CaretRead::selection_start`).

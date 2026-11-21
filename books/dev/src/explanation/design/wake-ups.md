@@ -38,15 +38,12 @@ The items keep their numbers, since code and the crate guides cite them.
    Verbatim is silent, and no Verbatim process raises the global timer
    resolution, idle or speaking (15.625 ms throughout, read with
    `NtQueryTimerResolution`).
-3. Each outpost's watchdog woke to arm and disarm the deadline for every
-   entry its worker took, about 1,000 times a second in a console flood,
-   more than the worker itself. Fixed: the worker sets and cancels a
-   waitable timer, which wakes no thread, so the watchdog wakes only when
-   a deadline or grace passes (`books/dev/src/reference/crates/verbatim-outpost.md`, the
-   worker and its watchdog). The listener's reading threads' watchdog
-   sleeps on the same kind of alarm, set as each read starts, and
-   cancelled once no read is under way, so it wakes only for a read still
-   under way at its grace or deadline.
+3. No thread watches a call into an application with a timer. An
+   outpost's worker and a listener's reading thread are abandoned only
+   when Core cancels the request they run for the foreground, a message
+   each acts on as it arrives, so a flood of short calls arms and wakes
+   nothing (`books/dev/src/reference/crates/verbatim-outpost.md`, "The
+   outpost"; `books/dev/src/reference/crates/verbatim-listener.md`).
 4. Core answered each outpost message with its list of held nodes
    (`NodesHeld`), a round trip per message in a terminal flood. Fixed: a
    changed list waits in the outpost's writer and goes in the same write

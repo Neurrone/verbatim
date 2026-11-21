@@ -434,8 +434,7 @@ Settled by Dickson on 2026-10-13 unless dated otherwise.
   registration's cache holds both, the listener's progress bars'
   (`ListenerProgress`), so that a bar's change is told with its place
   and no call, at the cost of two properties in every range value
-  change's cache (Claude, 2026-11-21, measured by the build's flood
-  series); no other's does, `PropertyEvent`'s among them, so a state
+  change's cache (Claude, 2026-11-21); no other's does, `PropertyEvent`'s among them, so a state
   change's set, which replaces the focus's, is never off the screen. The shell's tray and taskbar list reads `IsOffscreen` for every
   button, to leave hidden ones out, and, for a click, the position of each
   button with the clicked item's runtime id or name, normally one, never

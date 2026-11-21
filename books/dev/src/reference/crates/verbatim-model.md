@@ -433,7 +433,7 @@ that carries them on the pipes is
     `WindowDestroyed` (a window of the outpost's application destroyed:
     the outpost answers "not there" the queued reads whose MSAA ids name
     it and the watches waiting on it, and forgets its MSAA nodes, text
-    facts, kept verdicts and classic-read mark before any later work).
+    facts and classic-read mark before any later work).
   - `CoreToListener`: `ApplicationExited` (answered by `ExitHandled`),
     `Ping`, `IdleQuery`, `Shutdown`, `Request`, `Cancel` and
     `ElementsHeld { generation, tokens, acknowledged }`, the told elements
