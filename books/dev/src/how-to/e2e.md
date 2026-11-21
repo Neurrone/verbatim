@@ -554,6 +554,12 @@ losing any of them fails the run:
   as in `wait-chains.txt`, with a first line saying so when no window is
   reported as not responding. The same lines are appended to the failure
   message.
+- `verbatim-<pid>.txt` and `verbatim-<pid>.dmp`, only when the body
+  failed because a wait for speech ran out (an utterance not queued, not
+  started or not ended in time): Verbatim's state, processor time and
+  modules, one fact a line as in `launched-process-<pid>.txt` below, and
+  its minidump, read once the wait chains above are. A line summing them
+  up is appended to the failure message.
 - `launched-process-<pid>.txt`, beside `wait-chains.txt` and only with
   it: the process the harness launched to open the window, as the agent
   read it when the wait ran out. One fact a line: whether it still runs

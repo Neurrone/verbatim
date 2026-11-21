@@ -30,7 +30,9 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   whose sender's cached window the listener's one readability reader
   answers hung or ghosted is dropped there, as NVDA's UIA handlers drop
   it (`_shouldSkipEventForHungWindow`); a sender with no cached window is
-  not tested. A terminal text area's notifications and a window opened
+  not tested. A drop of a hung window reports it, as a `WinEvent`'s drop
+  does (below), placed behind the pending foreground; an event not
+  dropped unmarks its sender's window's thread as it is handed on. A terminal text area's notifications and a window opened
   that is no toast candidate are dropped by their cached class and
   automation id. Every other event goes to its application's check thread (`listener::checking`,
   `Checks`), which makes the calls NVDA's handler for the event's kind
@@ -169,7 +171,18 @@ section 6.3).
   (`verbatim_listener_logic::tell`): the window of 0 or an invalid one
   mapped or dropped, a destruction of anything but a window, Windows Live
   Messenger's hidden window, a show of neither a client nor a custom
-  object, and a hung or ghosted window. A window's destruction is no tell:
+  object, and a hung or ghosted window. A drop of a hung or ghosted
+  window reports it instead (`ListenerToCore::Hung`, `Held::Hung`, placed
+  in the tells' order as a tell is, on the lane that never merges), a
+  ghost as the window it stands for (`EventReads::stood_for`), once per
+  stall of the window's thread: each application's record keeps its
+  marks (`verbatim_model::hung::Marks`), a hung window's thread marked
+  as it is reported and unmarked when a tested event of a window on it
+  is read responsive, and every foreground event clears every
+  application's marks before it is judged, so a hung window brought back
+  to the front is reported again. The record goes when its process has
+  exited, and its marks with it. The `WinEvent` path reaches the record
+  through `Known`. A window's destruction is no tell:
   it goes as `ListenerToCore::Destroyed` with the window, the process of
   the raising thread, or none when that thread cannot be opened (a
   ghost's, raised on the desktop window manager's thread, or an exited

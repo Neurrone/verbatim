@@ -242,8 +242,11 @@ played at once for an event, which reads as `sound:` and its indication
   one value: asserting, collecting only, or comparing with NVDA.
 
 A failed assertion unwinds with a `SpeechFailure`, without the panic
-hook, carrying its message and its `FailurePoint`: the failing step's
-trace, its entries on the timeline, and the instant it failed. Any other
+hook, carrying its message, its `FailurePoint` (the failing step's
+trace, its entries on the timeline, and the instant it failed), and
+`waited_out`, whether a wait for speech ran out rather than speech
+differing; the registry dumps Verbatim for such a failure
+(`Scenario::record_verbatim_dump`). Any other
 failure's point is the step under way when the body ended
 (`FailurePoint::now`), or at the end of the run for a problem found after
 the body. Once the logs are collected the run panics with the whole

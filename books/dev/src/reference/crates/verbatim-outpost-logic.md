@@ -72,6 +72,14 @@ Public API:
 - A program runs until it ends: it has no deadline, and the outpost
   judges no hang and no user moving on. Core bounds its requests by their
   due times and judges a hang itself.
+- As it hands an entry to the worker, the reducer steps its marks of the
+  application's hung threads (`verbatim_model::hung::Marks`) with the
+  window state the entry's callback read: a hung window whose thread is
+  not marked is reported to Core (`OutpostToCore::Hung`) before the
+  entry is dispatched, so before its own tell, once per stall of the
+  thread; a responsive window unmarks its thread. The marks end with the
+  outpost, which serves one application. The intake's merge keeps the
+  newer entry, so the later read stands.
 - The program in flight is the generation in charge's (`InCharge`, the
   `charge` module), numbered by `Request` within its generation so that a
   dead generation's and an earlier program's results are refused. What it

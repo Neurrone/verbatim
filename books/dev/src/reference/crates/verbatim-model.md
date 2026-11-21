@@ -363,7 +363,19 @@ them yet.
   `QueueInput::WindowDestroyed { from, window, process }`, its process
   `None` when the listener could not open the raising thread, and Core
   passes it on in `QueueEffect::WindowDestroyed` to the outpost of that
-  process when one is ready.
+  process when one is ready. A reader's report of a hung window arrives
+  as `QueueInput::WindowHung { from, hung }`, admitted only from the
+  reader's current instance.
+- `tell::Hung` is that report: the hung window's `WindowFacet`, its
+  top-level window's and its root owner's, and when the reader observed
+  the event it found the window hung at. `hung::Marks` is the pure
+  reducer both readers keep of the threads they have reported hung (ADR
+  0003, "A frozen window"): `step` takes an event's window as read, a
+  `hung::WindowState` (`Responsive { thread }`, thread 0 for no window,
+  or `Hung(Hung)`), and returns the report to send when the thread was
+  not marked, marking it, while a responsive window's thread is
+  unmarked; `foreground` clears every mark. So a stall of one thread is
+  reported once, however many of its windows' events arrive.
   The `stroke` module holds `Stroke`, `HeldStroke` with its `Modifier`s,
   and `SentTransition`.
 - A caret key's text requests (`TextOp`): `StartingRead`, answered
@@ -451,12 +463,15 @@ that carries them on the pipes is
     `Follow` registration or a console host's hook delivered, with the
     value it carried) and `Answer` (one per `Request`; its node ids are
     stamped by `Answer::assign_outpost`, named by `Answer::named`, and it
-    counts toward `NodesHeld`'s positions when it carries a result).
+    counts toward `NodesHeld`'s positions when it carries a result) and
+    `Hung` (a window of its application read hung as one of its events
+    arrived, sent before that event's tell).
   - `ListenerToCore`: `Ready`, `ExitHandled`, `Foreground`,
     `Tell` (a tell, `tell::Event`, which the supervisor hands to Core),
     `Destroyed { window, process, at_us }` (a window destroyed, with the
     raising thread's process or none, which the supervisor hands to Core
-    too), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
+    too), `Hung` (a window whose event it dropped as hung, handed to Core
+    likewise), `Answer`, `Pong`, `Fault` and `IdleAnswer`.
 - The module denies wildcard matches over its enums, and `samples` gives
   one sample of each `OutpostToCore` variant, from a chain whose matches
   name every variant, for the tests that must cover each.

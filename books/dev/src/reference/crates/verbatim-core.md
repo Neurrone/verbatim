@@ -172,7 +172,14 @@ a token (a terminal's output reads and baseline).
   a malformed answer: refused as undecodable and logged, the reader not
   replaced.
 - The table also keeps the recovery set, the windows found hung, which the
-  shell checks every half second until each answers again.
+  shell checks every half second until each answers again. A window
+  joins it by a refusal or a stop as hung, or by a reader's report
+  (`QueueInput::WindowHung`, `Input::WindowHung`, handled at once like a
+  destroy, since it changes no entry), through one function,
+  `Shared::hung_if_attended`: while the window's application holds
+  attention, the not-responding sound plays when no window of that
+  application is in the set yet (`Table::recovering`), and the window is
+  watched (Claude, 2026-11-21).
 
 Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
 each rule of Table 2 and every ending, a late answer dropped by number and
@@ -844,8 +851,9 @@ marker.
 Only the reducer speaks (`books/dev/src/explanation/architecture.md`, section 2), so what the
 shell's threads learn comes in as inputs (`shell.rs`): `Input::Started`,
 `ErrorLogged` play their sounds (the not-responding sound is the event
-queue's, played for a request's hung window only while its application
-holds attention, `sound_if_attended` in `event_queue/driver.rs`);
+queue's, played for the first window of an application to join the
+recovery set while the application holds attention, `hung_if_attended`
+in `event_queue/driver.rs`);
 `Exiting` cancels speech, then plays the exit sound, unless a new
 instance replaces this one, and sets `SrState::exiting`, after which
 `reduce` does nothing for any input, so nothing is said after the exit
@@ -903,9 +911,10 @@ gone says nothing and watches nothing; a hung window with no ghost plays
 the sound and is watched. Every other such read, the
 switcher's check, the re-take, the recovery read and a UI Automation
 focus's read afresh, plays the sound and watches the window whatever is
-in front. Watching and the sound are the entry's (`Cx::watch_if_attended`,
-`Cx::sound_if_attended`), each only while the window's application holds
-attention.
+in front. Watching and the sound are the entry's (`Cx::watch_if_attended`
+for the ghost, `Cx::hung_if_attended` otherwise), each only while the
+window's application holds attention, the sound only for the first
+window of the application to join the recovery set.
 
 The plain object is an ordinary object in Core's model: its node is
 issued by Core's plain reader (`SrState::plain`, one `PlainObject` at a

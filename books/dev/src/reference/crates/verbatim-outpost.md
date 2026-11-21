@@ -329,7 +329,14 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   Core's commands, and the workers' commits and ends only append to it,
   under its one lock, and return. A UIA callback keeps the cached parts and
   window handle, and parks its element in the store (`store::Parked`),
-  the entry carrying the key.
+  the entry carrying the key. Every event a callback takes in
+  (`Context::take_in`) carries its window's state, read as it arrives
+  with calls to Windows only (`Context::window_state`): the event's own
+  window, or for an element that is no window, the followed node's
+  nearest window; hung or ghosted with its report
+  (`verbatim_model::hung::WindowState::Hung`), or responsive with its
+  thread, thread 0 when there is no window to read. The reducer sends
+  the report (ADR 0003, "A frozen window").
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds Core's requests
@@ -374,7 +381,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   it as its thread ends: once its generation is abandoned, every counted
   call fails with `CallError::Abandoned` and makes no call, which no
   caller reads as a fact about the application. Nothing is refused for a
-  hung window: Core judges a hang. An event's check before its first call
+  hung window: Core judges a hang, and every event heard is handled and
+  told, a hung window's included. An event's check before its first call
   (`Worker::readable`) still drops an event of a window that cannot be
   read, by the outpost's reader. The pong reports the abandoned workers
   that have not returned (`parked_count`), one value (`Lock<usize>`) written when a

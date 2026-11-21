@@ -582,8 +582,8 @@ it.
   answer read for it, the top ancestor only when that could not be read,
   as NVDA's `doPreGainFocus` moves its foreground object.
 - Attention decides whether the "not responding" sound plays and whether
-  a window Core stopped waiting on as hung is watched for its recovery
-  ("A window that stops responding").
+  a hung window, stopped, refused or reported, is watched for its
+  recovery ("A window that stops responding").
 
 ### Background events
 
@@ -911,16 +911,20 @@ it reads in front, any other "not responding"; while any request is out it asks 
 every half second for each, and stops waiting for one whose window is
 hung, telling its reader to cancel and leaving the reader's thread
 inside the call. The readers make no hang check of their own before a
-call and report no hang. A step of a reader's walk that reaches a
+call; each reports a hung window, once per stall of its thread (below).
+A step of a reader's walk that reaches a
 ghost's or a hung application's window ends the walk there ("A focus
 whose element is gone before its read").
 
-The "not responding" sound plays once for each request Core refuses, or
-stops waiting for, because its window is hung, while its application
-holds attention, so a hang met in the background is never sounded; a
-read of the focus NVDA makes itself that finds a ghost in front plays
-none (below). A window Core refused or stopped waiting on as hung, or
-whose ghost it spoke, joins its recovery set: while its application holds attention and the window lives, the
+The "not responding" sound plays once when the first window of an
+application joins the recovery set, by a refusal, a stop or a reader's
+report, while the application holds attention; a window joining while
+another of its application is there plays nothing (Claude, 2026-11-21).
+So a hang met in the background is never sounded, and a stall heard
+through several windows sounds once; a read of the focus NVDA makes
+itself that finds a ghost in front plays none (below). A window Core
+refused or stopped waiting on as hung, a reader reported hung, or whose
+ghost Core spoke, joins its recovery set: while its application holds attention and the window lives, the
 half-second check goes on with it, and when Windows no longer reports
 it hung, Core asks that application's outpost for its current focus and
 judges the answer as the re-take after a reader's replacement ("Recovery
@@ -935,8 +939,34 @@ and
 `a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_a_duplicate`.
 
 - Different: a key, command or focus whose request is stopped or
-  refused as hung plays the sound, where NVDA plays nothing
+  refused as hung plays the sound, for the first window of its
+  application to join the recovery set, where NVDA plays nothing
   (`docs/nvda/main-loop-and-watchdog.md`).
+- Different (Dickson, 2026-11-21): a window whose events are dropped as
+  hung is reported to Core, where NVDA says nothing. The focus listener
+  drops a hung window's events as NVDA drops them and reports the
+  window, a ghost as the window it stands for; an outpost tells every
+  event it hears and reports its application's window when the event's
+  window, read as it arrived, is hung. Each reports once per stall of
+  the window's thread, a foreground event letting the listener report
+  again (ADR 0003, "A frozen window"). While the application holds
+  attention, "not responding" plays once and the window's focus is read
+  when it answers. The incident is `theme_panel` on GitHub (run
+  44883440325): the Remove Theme confirmation's events arrived while
+  Verbatim's own GUI thread was flagged hung, and NVDA's drops left 75 s
+  of silence. NVDA's speech there: nothing. Verbatim's: "not
+  responding", then "Remove Theme dialog Remove the theme Default copy?
+  This cannot be undone." and "No button Alt+N" about half a second
+  after the window answers (Core's
+  `a_dialog_whose_events_arrive_while_its_window_is_hung_is_spoken_once_it_answers`,
+  `a_report_while_attended_plays_the_sound_and_watches_the_window`,
+  `a_second_window_of_the_same_application_is_watched_with_no_sound`;
+  `verbatim-model`'s `twenty_drops_from_one_hung_thread_report_once`).
+  An application in front whose UI thread updates its focused progress
+  bar 20 times during a 20 s loop says "not responding" once, at the
+  first change, where NVDA is silent. A UIA element of an outpost's with
+  no window it or its followed node names is not reported, as NVDA's
+  test passes such an event.
 - Matched: a control in a hanging application is spoken with its line
   when the application answers, as NVDA speaks it (capture of
   2026-11-07), by the read after the window recovers, up to about half a

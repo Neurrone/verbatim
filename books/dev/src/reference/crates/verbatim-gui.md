@@ -117,7 +117,11 @@ The private modules:
   the `GuiThread` token, which also keeps it on that thread. Menus and
   modal dialogs run nested event loops that call back into it, so every
   method takes `&self`, its state sits in `RefCell`s, and no borrow is
-  ever held across a call into C++.
+  ever held across a call into C++. `native_modal` logs each native
+  message box as it shows and as it returns, with the milliseconds it
+  took, which the C++ layer times on the steady clock around the box
+  (`NativeModalTimer`), so a stall of the GUI thread around a box can be
+  measured in Verbatim's log.
 - `lifecycle` — the menu's and dialogs' lifecycle as one tested state
   machine: the menu is popped once at a time; the settings dialog and the
   shell item list are singletons, a second request focusing the open one;
