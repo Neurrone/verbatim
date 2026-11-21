@@ -236,6 +236,35 @@ fn the_current_word_is_the_texts_own_word_at_the_review_cursor() {
     );
 }
 
+/// Review current word at the end of a Windows Forms password box's text
+/// says "blank", against NVDA's capture `tests/fixtures/b13-password.jsonl`
+/// (six stars; Home, Control+Right Arrow and review current word, steps 3
+/// to 5, then Control+Right Arrow and review current word again, steps 6
+/// and 7): past the stars, which are one word, the edit control's word is
+/// empty (mockapp's `text` test, `the_word_at_an_edits_end_is_empty`), and
+/// an empty word is said as "blank" each time.
+#[test]
+fn the_current_word_at_a_password_boxs_end_is_blank_as_nvdas_capture() {
+    let mut state = reviewing();
+    let end = || vec![text_batches::word(0, "", 106)];
+    word_presses(
+        &mut state,
+        4,
+        vec![
+            (
+                (ReviewCommand::ReviewCurrentWord, 100, 0),
+                end(),
+                "Message(Blank)",
+            ),
+            (
+                (ReviewCommand::ReviewCurrentWord, 100, 0),
+                end(),
+                "Message(Blank)",
+            ),
+        ],
+    );
+}
+
 /// A word press: the command and where the review cursor is (anchor and
 /// offset), the batch's answer, and what it says.
 type WordPress<'a> = (

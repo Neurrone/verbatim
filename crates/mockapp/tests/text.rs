@@ -1278,7 +1278,31 @@ fn edit_control_text(fixture: &str, past_last_line: isize) {
         EDIT_SECOND_WORD,
     );
     runs_of_one_mark_are_words(&mut app, hwnd, &mut source, &mut anchors);
+    the_word_at_an_edits_end_is_empty(&mut app, hwnd, &mut source, &mut anchors);
     app.quit();
+}
+
+/// The edit control's word at the caret at its text's end, past a
+/// password field's six stars, is empty, as NVDA expands a collapsed
+/// position there to no word; Core says it as "blank"
+/// (`verbatim-core`'s
+/// `the_current_word_at_a_password_boxs_end_is_blank_as_nvdas_capture`).
+fn the_word_at_an_edits_end_is_empty(
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    source: &mut EditText,
+    anchors: &mut NodeText<'_, u32>,
+) {
+    common::apply(app, hwnd, "set-text doc ******");
+    common::apply(app, hwnd, "caret doc 6");
+    let (moved, word) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Caret,
+        None,
+        TextUnit::Word,
+    ));
+    assert_eq!((moved, word.text.as_str(), word.offset), (0, "", 0));
 }
 
 /// A run of one punctuation mark is one word of the edit control, with the
