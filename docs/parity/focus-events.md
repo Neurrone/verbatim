@@ -129,12 +129,12 @@ duplicate.
   return to a list after a click whose read failed is spoken ("Alpha 1
   of 3"). An MSAA focus of an equal fence, whose last focus is held by a
   child id above 0 and is the committed focus, is asked unless it is that
-  focus (`FullUnlessSame`): the outpost compares the reached ids and, if
-  equal, the object's states, role, position in its set and the set's
-  size where the control gives them with no walk (a `SysListView32`
-  item's), name and value, in that order, stopping at the first that
-  differs and then reading in full; an object that reads as named is
-  answered `CandidateSame` and Core makes it a duplicate. The position
+  focus: the candidate's test compares the reached ids and, if equal,
+  the object's states, role, position in its set and the set's size
+  where the control gives them with no walk (a `SysListView32` item's),
+  name and value, in that order, stopping at the first that differs, and
+  the full read runs unless it matched; an object that reads as named
+  matches and Core makes it a duplicate. The position
   and size are read whatever the position-reporting setting, which
   decides only whether they are spoken (Dickson, 2026-11-18). A pending
   judgement makes no identity read, so a child id above 0 is never a

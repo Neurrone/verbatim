@@ -34,10 +34,10 @@ answered once (`OutpostToCore::Answer`). An outpost hears nothing of the
 desktop but its console host's events and its `Follow` registration, and
 calls into its application only for a request.
 
-The requests an outpost answers: the completion of a UI Automation focus
-from the listener's route (`Request::CompleteUia`, `outpost::completion`),
-one MSAA candidate read to the depth Core asks (`MsaaRun`), the
-application's current focus (`CurrentFocus`), a node's properties,
+The requests an outpost answers: Core's batches (`outpost::batch`),
+among them the focus reads, a `FocusRead` of the element the listener
+read by its route (`outpost::completion`), of one MSAA candidate, or of
+the application's current focus, and the tests before them; a node's properties,
 navigation, children and finds, a node's text (`Text`), an activation,
 the registration that follows the committed focus (`Follow`), a tree dump
 and the shell's items. At the start, and after an outpost or the
@@ -283,8 +283,8 @@ the same tables and code, which the arbitrator's own lists are built from.
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
   thread waiting on the target sends `TargetExited`.
 - `run_attach` watches a pid, asks for its focus through the request driver
-  (`driver::Driver`, a `Request::CurrentFocus` of its main window, as Core
-  asks at its start), and prints each outbound
+  (`driver::Driver`, a `FocusRead` of the application's focus naming its
+  main window), and prints each outbound
   message as the model's JSON on stdout: the development mode.
 - `OutpostOptions::remote_operations` (`verbatim_process::arguments`) says whether a UIA focus's ancestry
   may be read with a remote operation (on; `--classic-uia` turns it off).
@@ -564,8 +564,8 @@ and the inherited pipe handles.
 
 ### The current focus
 
-- The answer to Core's `CurrentFocus` request (`asked::current_focus`)
-  is the focused control (`hwndFocus`, through its window's backend) with
+- A `FocusRead` of the application's focus (`asked::focus_now`) is the
+  focused control (`hwndFocus`, through its window's backend) with
   its ancestors up to one Core already knows, the selected item that is
   its value where it has one, and its caret (a console's text area reads as a nameless terminal,
   `read::console_text_area`); and, for a focus that met no ancestor Core
@@ -657,20 +657,18 @@ and the inherited pipe handles.
   `read::FocusRead::NoRoute`), and kept only when its runtime id is the
   focus's and its process is the outpost's own. It finds the element only
   while the element still has the keyboard focus, a limit.
-- An MSAA focus is one candidate per request (`MsaaRun`), acquired with
-  NVDA's child-0-on-a-list redirect and the `accFocus` redirect
+- An MSAA focus is one candidate per batch, its `Msaa` subject acquired
+  once with NVDA's child-0-on-a-list redirect and the `accFocus` redirect
   (`focus_candidate`); a menu start with neither, at its event's address
-  (`menu_start_candidate`), as NVDA builds it. The outpost reports facts and judges none: a focus
-  event's focused state over the object and its ancestors, read live; a
-  menu start's role. It then reads it in full unless the depth is
-  `Facts`, or `FullIfFocused` with the object not focused, even when it
-  repeats the focus, since Core judges repeats; a redirected focus names
-  the child's ids as its event ids, as NVDA builds the redirected object
-  with the child's id as its event's. At `FullUnlessSame`, a focused
-  object reached at the ids Core names whose identity reads as Core names
-  it (`FocusCandidate::reads_as`) is answered `Reply::CandidateSame`, with
-  nothing more read: the outpost computes the comparison as a fact against
-  the values Core names, and Core decides the duplicate.
+  (`menu_start_candidate`), as NVDA builds it. The outpost reports facts
+  and judges none: a `Test` reads the focused state over the object and
+  its ancestors (`FocusedWithin`, read live) and, for the identity check,
+  the ids it was reached at and what it reads as, each read alone
+  (`FocusCandidate::property`) in the matcher's order and stopping at the
+  first that decides; a menu start's role is a `Read`. Core's conditions
+  decide whether its `FocusRead` runs; a redirected focus names the
+  child's ids as its event ids, as NVDA builds the redirected object with
+  the child's id as its event's.
 - A focus walk stops at the ancestors Core already knows, which its
   request names, comparing what it reads with them by NVDA's equality,
   and gathers the text of every dialog below them, which the focus
@@ -920,18 +918,17 @@ no comparison Core did not ask for.
 
 ### Core's requests
 
-A focus read Core asks with `HiddenRoot::Check` (an MSAA candidate's,
-the current focus's, a completion's) first takes its window's top-level
-window and whether it is visible, two local calls; only for a hidden one
-does it read its client object's role, two counted calls
-(`verbatim_ia2::acquire::client_role`), and a dialog's role, a dialog,
-an alert or a property page, answers `Reply::HiddenDialog` with that
-window's facts and nothing more (`asked::hidden_root`, Dickson,
-2026-11-19). A hidden root of any other role is read as it is; a role
-read that fails answers "not there". The outpost judges nothing of it:
-Core postpones the dialog to its show, and asks `ReadAnyway` for a read
-that must not check. Tests: `outpost::hidden_root_tests`, the check's cost
-pinned at no call for a shown root and two for a hidden one.
+The hidden-dialog check Core puts before a focus read (an MSAA
+candidate's, the current focus's, a route's) is a `Test` of the
+top-level window's own object through MSAA (`batch::window_property`):
+whether it is shown, a local call; only for a hidden one its client
+object's role, two counted calls (`verbatim_ia2::acquire::client_role`),
+answered absent when the read fails (Dickson, 2026-11-19). The window of
+`WindowOf::Focused` is the top-level window of the window with the
+keyboard focus, taken once per batch (Claude, 2026-11-22). The outpost
+judges nothing of it: Core postpones a hidden dialog to its show. Tests:
+`outpost::hidden_root_tests`, the check's cost pinned at no call for a
+shown root and two for a hidden one.
 
 A batch (`outpost/batch.rs`) is parsed once as it arrives and refused
 whole when it does not parse. Each subject is resolved once, at its
@@ -994,21 +991,21 @@ window before it is handled.
   a UI Automation node, controls nothing; a relation read that fails
   answers the whole read not there. A selection's relation falls
   back to its place among the nodes Core names.
-- `MsaaRun`: one candidate, answered skipped when its window is read
-  through UI Automation, not there when no object is at its address, else
-  its facts and, to the depth asked, its full read with its ancestors up
-  to the first Core already knows, or, at `FullUnlessSame`, the same as
-  named.
-- `CurrentFocus`: the focus-now read, its walk up through either API
-  stopping at the first ancestor Core already knows. The window with the
-  keyboard focus is taken first, before any call that can block, the
-  request's probe included, as NVDA's fake focus takes it when its timer
-  fires. It answers a `CandidateAnswer`; with `FullIfFocused`, the check
-  after a menu end, an MSAA focus's focused state over it and every
-  ancestor up to the desktop is read as a fact, and the focus read in full
-  only when it has it.
-- `CompleteUia` (`outpost/completion.rs`): refused "read through MSAA"
-  when its window is; else the outpost's own copy of the element is found
+- A candidate's batch is refused "read through UI Automation" when its
+  window is; its object not at its address is not there; its
+  `FocusRead` reads it in full with its ancestors up to the first Core
+  already knows.
+- The application's focus (`Subject::Focus`): the focus-now read, its
+  walk up through either API stopping at the first ancestor Core already
+  knows. The window with the keyboard focus is taken first, before any
+  call that can block, the request's probe included, as NVDA's fake focus
+  takes it when its timer fires. A `Test` of it, the check after a menu
+  end, reads an MSAA focus's focused state over it and every ancestor up
+  to the desktop, and the focus in full only when it has it, kept for
+  the `FocusRead` after it.
+- A route (`Subject::Route`, `outpost/completion.rs`): refused "read
+  through MSAA" when its window is; else the outpost's own copy of the
+  element is found
   by the route, which goes on, when the listener's walk met an ancestor
   Core already knows, from that ancestor: a window's own element, or the
   route kept for its node (`FocusPath::above`); a text focus whose walk
@@ -1020,9 +1017,9 @@ window before it is handled.
   the id was reused; a focus's event registration is moved to the
   element on the registering thread and waited for, keeping the node
   `Follow` named, then the node's states are read; the ancestors are the listener's reads, completed
-  above as a focus read's are; a selection's item is answered as an
-  object read, with its relation to the committed focus read live and its
-  ancestors, its parent first. Where the listener's walk met an ancestor
+  above as a focus read's are (`completion::focus`); a `Read` of a route,
+  a selection's item, mints the element alone (`completion::object`).
+  Where the listener's walk met an ancestor
   Core already knows, the route's end names it, and the completion makes
   no read to find it.
 - `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,

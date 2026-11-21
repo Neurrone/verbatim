@@ -212,13 +212,15 @@ a batch asked, refused as undecodable, answered in front and numbered.
 
 The behaviour is the focus design's
 (`books/dev/src/explanation/design/focus.md`, "A dialog read once it is
-shown"). A focus read whose window's top-level window is a hidden dialog
-is answered with that window (`Reply::HiddenDialog`), parsed into
-`focus::shown::Hidden` by the read's own reply type. Every focus read
-asked with `HiddenRoot::Check` (an MSAA candidate at its turn, the
-current focus, the menu check, a UI Automation focus's completion or
-read afresh) asks through `shown::ask`, the one place a hidden answer is
-decided: it sets the one fact, `Versions::postponed`, a
+shown"). A focus read that checks (an MSAA candidate at its turn, the
+current focus, the menu check, a UI Automation focus's route or its read
+afresh) begins its batch with the hidden-dialog check, a `Test` of its
+window's top-level window through MSAA (`shown::check`): hidden, and a
+dialog's role. The read after it runs unless it matched. `shown::judge`
+takes the check's outcome: matched, the dialog's window; hidden with its
+role unread, the read not there (the request list's design, section 6,
+"Orders kept"). A hidden dialog goes to `shown::postpone_dialog`, the
+one place a hidden answer is decided: it sets the one fact, `Versions::postponed`, a
 `shown::Postponed` of the dialog's window and the front entry's speech
 fence (`entries::front_fence`), keeping the older fence for the same
 dialog, and returns `None`, ending the entry. `Versions::execute` and
@@ -226,7 +228,7 @@ dialog, and returns `None`, ending the entry. `Versions::execute` and
 destruction (`Logic::window_destroyed`); `Versions::respoken` leaves it.
 
 A `Show` tell of a top-level window whose class is none of NVDA's show
-classes becomes a `CurrentFocus` entry of `Why::Shown` (`shown::of_show`),
+classes becomes a current-focus entry of `Why::Shown` (`shown::of_show`),
 and the foreground marker naming the postponed dialog joins one
 (`shown::marker`); at its turn it reads only while the fact names its
 window and the foreground record names it in front (`shown::shown_due`).
@@ -910,9 +912,10 @@ the check entry 50 ms later (`focus::menus`, NVDA's fake focus), one for
 the ends of one pump that noted the same committed focus
 (`event_queue::PUMP_WINDOW_US`): with the
 committed focus's node unchanged (`Versions::committed_node`), it asks the foreground application's current
-focus at depth `FullIfFocused` (`Request::CurrentFocus`), the outpost
-reading an MSAA focus's focused state over every ancestor up to the
-desktop as a fact; the answer is judged by the one definition's
+focus with its focused state first (`retake::current_if_focused`: a
+`Test` of the focus whose matcher holds of one without the focused
+state, then its `FocusRead` unless it matched), the outpost reading an
+MSAA focus's focused state over every ancestor up to the desktop; the answer is judged by the one definition's
 menu-check rows, the focused state and the duplicate test for an MSAA
 answer, as NVDA's `processFocusNVDAEvent` tests IAccessible objects
 only, so a UI Automation answer of the focus Core holds is spoken again.
@@ -1027,8 +1030,10 @@ the caret and selection facts.
 `validity::depth` gives an MSAA focus `TurnDepth::UnlessSame` when its
 fence equals `since`, the last focus is held by a child id above 0, and
 it is the committed focus; the `Identity` is made from the committed
-snapshot then and kept nowhere. The outpost's `Reply::CandidateSame`
-parses to `TurnAnswer::SameAsNamed`, which `validity::judge_same` makes a
+snapshot then and kept nowhere. The candidate's `Test` then holds of an
+object without the focused state or of the object at those ids reading
+as that identity, in ADR 0004's order (`UnlessSame::matcher`); matched
+with the focused state, it is `TurnAnswer::SameAsNamed`, which `validity::judge_same` makes a
 duplicate unless a row before the duplicate test now refuses the
 candidate. A focus read asks the position in the set and the set's size
 whatever the settings (`details::focus_set`), and speech leaves them out
@@ -1096,8 +1101,8 @@ the starting read (but Backspace's), the watch and the sentence move; an
 unconfirmed MSAA focus raised before the bound withdraws the watch. After
 the pass the key judges what waits behind it with `pending_behind` up to
 its bound: a focus that counts leaves it silent; an unconfirmed one is
-confirmed by an `MsaaRun` at depth `Facts` naming the candidate's window,
-its `spare` keeping the key's starting point held, its answer stored on
+confirmed by a batch of its facts alone (`msaa_run::facts`) naming the
+candidate's window, its `spare` keeping the key's starting point held, its answer stored on
 the waiting candidate and judged again; with neither, the watch runs for
 the rest of the bound. Silent, Backspace and Control+Backspace still say
 what they deleted from the starting read. Whether a key is marked is read
@@ -1131,7 +1136,7 @@ The key's places, each read from its request out or its stroke's status:
   taken and spoken before the stroke goes. A switch away from the user's
   desktop drops the stroke, so the read is unneeded and withdrawn as the
   queue settles.
-- Confirming: an `MsaaRun` at depth `Facts` of an unconfirmed focus
+- Confirming: a batch of the facts alone of an unconfirmed focus
   raised before the bound, which withdrew the watch. A later key
   withdraws it, and a marked sentence key then moves by sentence; a
   counting focus withdraws it, silent. Its facts, or an outpost ended or

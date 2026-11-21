@@ -430,7 +430,8 @@ knowing for review:
   responsive or gone, each a read of Windows' own over a trait its unit
   tests stand in for), any other "not responding"
   (`QueueInput::RefusedHung`). The check after a menu, popup or switcher
-  end (`FocusDepth::FullIfFocused`) finding no window in front
+  end (a batch that tests the focus's focused state before reading it,
+`Batch::reads_focus_if_focused`) finding no window in front
   (`hang_check::nothing_in_front`) is answered unsent the same way; one that cannot be
   written is answered "reader ended"; a cancel goes with its reason; a
   hang check is answered with `IsHungAppWindow`. The `hang_check` module

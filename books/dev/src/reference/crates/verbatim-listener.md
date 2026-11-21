@@ -64,27 +64,28 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   a job on its application's reading thread, which has a UI Automation
   client; never under a lock or on a callback thread, since a release can
   call into the application.
-- Requests (`listener::asked`). Core's `CoreToListener::Request` is the
-  generic read of the object an event names (`Request::ReadObject`); any
-  other request, a relation, or descendants are refused unsupported, and a
-  node is none of the listener's. A kept element is read on its
-  application's reading thread: the element afresh, its name and class
-  from its event's cache, as NVDA's object for the event reads them,
-  except a selection's item (`Purpose::Selection`), whose name is the one
-  read afresh in the same cache request, by Dickson's ruling of
-  2026-10-20 ([changes and
+- Requests (`listener::asked`). Core's `CoreToListener::Request` is a
+  batch, or the generic read of the object an event names
+  (`Request::ReadObject`); any other request, a relation, or descendants
+  are refused unsupported, and a node is none of the listener's. A kept
+  element is read on its application's reading thread
+  (`asked::read_element`): the element afresh, its class from its event's
+  cache, and its name too for a generic read, as NVDA's object for the
+  event reads them, where a batch's is the one read afresh in the same
+  cache request (Core chooses the event's name for a focus and the fresh
+  one for a selection's item, by Dickson's ruling of 2026-10-20, [changes
+  and
   selection](https://github.com/Neurrone/verbatim/blob/main/docs/parity/changes-and-selection.md),
-  "Selection in a list the focus controls"), the
-  focused state added for a focus read, a menu item's legacy checked
-  state; for a read that walks, its ancestors by the classic walk up to
-  the first Core already knows (a window by its own element's runtime
-  id), the desktop root or the process boundary, with the element's route
-  (`Route`: each element read with its runtime id, its own window and
-  whether it is a control and content element, and where the chain goes
-  on: at the known ancestor it met, naming it, at the process boundary or
-  at the root, from a window after a failed step or at a ghost's or hung
-  application's window, or by plain windows after the depth limit of
-  64). Each node read carries its nearest window's facts (`NodeWindow`,
+  "Selection in a list the focus controls"), and a menu item's legacy
+  checked state; for a batch's `Ancestors` step, its ancestors by the
+  classic walk up to the first Core already knows (a window by its own
+  element's runtime id), the desktop root or the process boundary, and
+  where the walk ended: at the known ancestor it met, by its place in
+  Core's list, at the process boundary or at the top, from a window after
+  a failed step or at a ghost's or hung application's window, or by plain
+  windows after the depth limit of 64. Each element read with its runtime
+  id, its own window and whether it is a control and content element
+  (`IsContent`) gives Core the route it makes. Each node read carries its nearest window's facts (`NodeWindow`,
   `verbatim_win32::window_facts::node_window`) and the properties of the
   request's set; the listener answers none for a keyboard focus or an
   object's text, which are the check's and the outpost's. An MSAA object
@@ -100,8 +101,7 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   `keep` mark, by the union of its `Read` and `Ancestors` steps' sets, its
   name read afresh and no focused state added, its ancestors in the same
   walk when a step asks for them (the walk's end answered as the
-  `Ancestors` step's, a known ancestor met by its place in the step's
-  list); a `Read` of an MSAA object is read at its event's address. A
+  `Ancestors` step's); a `Read` of an MSAA object is read at its event's address. A
   batch naming two kept elements is refused, and `Descendants` and
   `IsOneOf`, which no batch to the listener asks yet, answer refused.
 - Reading threads (`reading`, the shell of
@@ -121,13 +121,14 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
 - Calls. Every call waits for the application, up to UIA's transaction
   timeout. A call over a second is logged at info
   (the private `call_log` module's `CallLog`).
-- `read_object` is the listener's answer to Core's generic read of an
-  element, the read a reading thread makes for a kept element, for a test
-  that stands in for the listener holding the element itself, and
-  `read_msaa_object` its read of an MSAA object at an event's address;
-  `read_object_observed` is the same read, telling a test the name of
-  each call before it makes it (`CallObserver`), so the test can change
-  the application's windows between two of them.
+- `read_object` is the listener's answer to Core's batch on a kept
+  element, run as a reading thread runs it, `read_kept_object` its answer
+  to a generic read of one, for a test that stands in for the listener
+  holding the element itself, and `read_msaa_object` its read of an MSAA
+  object at an event's address; `read_object_observed` is the batch's
+  run, telling a test the name of each call before it makes it
+  (`CallObserver`), so the test can change the application's windows
+  between two of them.
 
 ## A window's show
 

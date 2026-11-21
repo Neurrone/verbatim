@@ -340,29 +340,13 @@ them yet.
   `Reply::Steps` for a batch, one outcome per step, and refused
   `Refusal::Malformed` when it does not parse; `Request` holds the
   generic read of the object an event names (`ReadObject`, with its
-  property set, relation to nodes Core names, descendants, the walk up to
-  the ancestors Core already knows and its purpose), and the properties,
-  navigation, find, children, text and activate requests, and the focus
-  requests: `CompleteUia` (the completion of a UI Automation read from the
-  listener's `Route`), `MsaaRun` (one `RunCandidate` of a
-  `CandidateKind`, a focus, a foreground or a menu start, read to the
-  `Depth` Core asks, `Facts`, `FullIfFocused`, `Full` or
-  `FullUnlessSame`, which names the ids and the `Identity` (states, role,
-  position and set size, name, value) of the readers' last focus, with a
-  `spare`
-  node and anchor Core keeps held while it is out) and the current focus
-  (`CurrentFocus`, with its `FocusDepth`, which has no depth stopping at
-  the facts), both answered with a
-  `CandidateAnswer`: the `CandidateFacts` the outpost found (skipped, not
-  there, or found, with its focused state when asked and a menu start's
-  role), and the full read when the depth asked for one; or, at
-  `FullUnlessSame`, `Reply::CandidateSame` when the object reached is the
-  one named. Both, and the completion, carry a `HiddenRoot`: with
-  `Check`, a read whose window's top-level window is a hidden dialog is
-  answered `Reply::HiddenDialog` with that window's `NodeWindow` and
-  nothing read; with `ReadAnyway` it is read as it is. The
-  completion and a candidate's full read are
-  a `FocusRead`, which carries what Core keeps with the
+  property set, relation to nodes Core names, descendants and its
+  purpose), and the properties, navigation, find, children, text and
+  activate requests. The focus reads are batches: a `FocusRead` of an
+  MSAA candidate, the application's focus or a `Route`, the outpost's
+  own copy of an element the listener read, which carries the route's
+  steps, where its walk ended and what the listener read of each
+  element (`Route::read`). Each answers a `FocusRead`, which carries what Core keeps with the
   committed focus and its `FocusCaret`: no text, text not read, or the
   caret read (`FocusCaretRead`), its line with the formatting the
   request's `details` name, and the selection baseline the outpost
