@@ -36,9 +36,9 @@ use crate::scenario::Scenario;
 const CATEGORIES: [(&str, &str, &str, &str); 6] = [
     (
         "Roles collapsed 1 of 6 level 0",
-        "level 1 window: speech 1 of 71",
+        "level 1 window: speech 1 of 73",
         "level 0 Roles expanded 1 of 6",
-        "71 items",
+        "73 items",
     ),
     (
         "States collapsed 2 of 6 level 0",
