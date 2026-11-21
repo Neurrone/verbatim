@@ -1892,36 +1892,26 @@ mod tests {
                 StepOutcome::NotThere(Missing::Object),
             ]))
         );
-        batch(
-            2,
-            vec![
-                read(client, &[PropertyId::Name]),
-                read(client, &[PropertyId::Description]),
-            ],
-        );
-        assert_eq!(
-            outcome(parts.next()),
-            Outcome::Refused(Refusal::Malformed(Malformed::NotRun {
-                step: Place(1),
-                op: OpKind::Read,
-            }))
-        );
-        batch(
-            3,
-            vec![Step {
-                op: Op::Activate {
-                    subject: at(client),
-                },
-                when: None,
-            }],
-        );
-        assert_eq!(
-            outcome(parts.next()),
-            Outcome::Refused(Refusal::Malformed(Malformed::NotRun {
-                step: Place(0),
-                op: OpKind::Activate,
-            }))
-        );
+        let activate = Step {
+            op: Op::Activate {
+                subject: at(client),
+            },
+            when: None,
+        };
+        let description = read(client, &[PropertyId::Description]);
+        for (number, steps, (step, op)) in [
+            (2, vec![read(client, &[]), description], (1, OpKind::Read)),
+            (3, vec![activate], (0, OpKind::Activate)),
+        ] {
+            batch(number, steps);
+            assert_eq!(
+                outcome(parts.next()),
+                Outcome::Refused(Refusal::Malformed(Malformed::NotRun {
+                    step: Place(step),
+                    op,
+                }))
+            );
+        }
         assert_eq!(parts.stop(), []);
     }
 

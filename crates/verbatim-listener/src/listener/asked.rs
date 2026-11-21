@@ -233,7 +233,7 @@ impl UiaReading {
         for step in steps {
             let outcome = match step.gate(&outcomes) {
                 Ok(Gate::Skip) => StepOutcome::Skipped,
-                Ok(Gate::Run) => self.batch_step(&step.op, whole.as_ref()),
+                Ok(Gate::Run) => batch_step(self.read_at_event, &step.op, whole.as_ref()),
                 Err(KindMismatch) => {
                     tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a listener step's condition names a result it cannot test");
                     StepOutcome::Failed
@@ -289,74 +289,74 @@ impl UiaReading {
             (&read, depth),
         )
     }
+}
 
-    /// One step of a batch, run on what the kept element's read answered,
-    /// `whole`, or at an MSAA object's address.
-    fn batch_step(&self, op: &Op, whole: Option<&ObjectRead>) -> StepOutcome {
-        let only = |values: &PropertyValues, set: &[PropertyId]| {
-            PropertyValues(
-                set.iter()
-                    .map(|&id| PropertyAnswer {
-                        id,
-                        value: values.answer(id).and_then(|answer| answer.value.clone()),
+/// One step of a batch, run on what the kept element's read answered,
+/// `whole`, or at an MSAA object's address through `read_at_event`.
+fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ObjectRead>) -> StepOutcome {
+    let only = |values: &PropertyValues, set: &[PropertyId]| {
+        PropertyValues(
+            set.iter()
+                .map(|&id| PropertyAnswer {
+                    id,
+                    value: values.answer(id).and_then(|answer| answer.value.clone()),
+                })
+                .collect(),
+        )
+    };
+    match (op, whole) {
+        (
+            Op::Read {
+                subject: Subject::Msaa { ids, .. },
+                set,
+            },
+            _,
+        ) => {
+            let hwnd = isize::from(ids.window);
+            match read_at_event(hwnd, ids.object, ids.child, set) {
+                Some(values) => StepOutcome::Done(Done::Read(NodeRead {
+                    node: None,
+                    window: node_window(&SystemReads, hwnd),
+                    values,
+                })),
+                None => StepOutcome::NotThere(Missing::Object),
+            }
+        }
+        (Op::Read { set, .. }, Some(whole)) => StepOutcome::Done(Done::Read(NodeRead {
+            node: None,
+            window: whole.object.window,
+            values: only(&whole.object.values, set),
+        })),
+        (Op::Ancestors { until, set, .. }, Some(whole)) => {
+            let end = match whole.route.as_ref().map(|route| &route.end) {
+                Some(RouteEnd::Known(known)) => {
+                    let place = until.iter().position(|each| each == known);
+                    match place.and_then(|place| u32::try_from(place).ok()) {
+                        Some(place) => AncestorsEnd::Met(place),
+                        None => return StepOutcome::Failed,
+                    }
+                }
+                Some(RouteEnd::ProcessBoundary) => AncestorsEnd::ProcessBoundary,
+                Some(RouteEnd::Root) => AncestorsEnd::Top,
+                Some(RouteEnd::ContinueFrom(window)) => AncestorsEnd::ContinueFrom(*window),
+                Some(RouteEnd::PlainFrom(window)) => AncestorsEnd::PlainFrom(*window),
+                // A walk always answers its route.
+                None => return StepOutcome::Failed,
+            };
+            StepOutcome::Done(Done::Ancestors(Ancestry {
+                ancestors: whole
+                    .ancestors
+                    .iter()
+                    .map(|ancestor| NodeRead {
+                        node: None,
+                        window: ancestor.window,
+                        values: only(&ancestor.values, set),
                     })
                     .collect(),
-            )
-        };
-        match (op, whole) {
-            (
-                Op::Read {
-                    subject: Subject::Msaa { ids, .. },
-                    set,
-                },
-                _,
-            ) => {
-                let hwnd = isize::from(ids.window);
-                match (self.read_at_event)(hwnd, ids.object, ids.child, set) {
-                    Some(values) => StepOutcome::Done(Done::Read(NodeRead {
-                        node: None,
-                        window: node_window(&SystemReads, hwnd),
-                        values,
-                    })),
-                    None => StepOutcome::NotThere(Missing::Object),
-                }
-            }
-            (Op::Read { set, .. }, Some(whole)) => StepOutcome::Done(Done::Read(NodeRead {
-                node: None,
-                window: whole.object.window,
-                values: only(&whole.object.values, set),
-            })),
-            (Op::Ancestors { until, set, .. }, Some(whole)) => {
-                let end = match whole.route.as_ref().map(|route| &route.end) {
-                    Some(RouteEnd::Known(known)) => {
-                        let place = until.iter().position(|each| each == known);
-                        match place.and_then(|place| u32::try_from(place).ok()) {
-                            Some(place) => AncestorsEnd::Met(place),
-                            None => return StepOutcome::Failed,
-                        }
-                    }
-                    Some(RouteEnd::ProcessBoundary) => AncestorsEnd::ProcessBoundary,
-                    Some(RouteEnd::Root) => AncestorsEnd::Top,
-                    Some(RouteEnd::ContinueFrom(window)) => AncestorsEnd::ContinueFrom(*window),
-                    Some(RouteEnd::PlainFrom(window)) => AncestorsEnd::PlainFrom(*window),
-                    // A walk always answers its route.
-                    None => return StepOutcome::Failed,
-                };
-                StepOutcome::Done(Done::Ancestors(Ancestry {
-                    ancestors: whole
-                        .ancestors
-                        .iter()
-                        .map(|ancestor| NodeRead {
-                            node: None,
-                            window: ancestor.window,
-                            values: only(&ancestor.values, set),
-                        })
-                        .collect(),
-                    end,
-                }))
-            }
-            _ => StepOutcome::Refused(StepRefusal::Unsupported),
+                end,
+            }))
         }
+        _ => StepOutcome::Refused(StepRefusal::Unsupported),
     }
 }
 
@@ -1039,6 +1039,79 @@ fn nearest_windows((hwnd, nearest): (isize, isize), ancestors: &[Read]) -> Vec<i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A batch's steps on a kept element take what its one read answered:
+    /// each step its own set's values, and an `Ancestors` step the end of
+    /// the walk, a known ancestor met by its place in the step's list.
+    #[test]
+    fn a_kept_elements_steps_take_their_sets_and_the_walks_end_from_its_one_read() {
+        let value = |id, text: &str| PropertyAnswer {
+            id,
+            value: Some(PropertyValue::Text(text.to_owned())),
+        };
+        let window = node_window(&SystemReads, 0);
+        let known = KnownAncestor::Uia(RuntimeId(vec![7, 1]));
+        let whole = ObjectRead {
+            object: NodeRead {
+                node: None,
+                window,
+                values: PropertyValues(vec![
+                    value(PropertyId::Name, "OK"),
+                    value(PropertyId::Description, "Saves"),
+                ]),
+            },
+            relation: None,
+            descendants: Vec::new(),
+            ancestors: vec![NodeRead {
+                node: None,
+                window,
+                values: PropertyValues(vec![value(PropertyId::Name, "Pane")]),
+            }],
+            met: None,
+            route: Some(Route {
+                window: WindowHandle(0),
+                steps: Vec::new(),
+                end: RouteEnd::Known(known.clone()),
+            }),
+        };
+        let kept = Subject::Kept {
+            listener: 1,
+            token: ElementToken(3),
+            keep: true,
+        };
+        let nothing: MsaaReads = |_, _, _, _| None;
+        assert_eq!(
+            batch_step(
+                nothing,
+                &Op::Read {
+                    subject: kept.clone(),
+                    set: vec![PropertyId::Name],
+                },
+                Some(&whole),
+            ),
+            StepOutcome::Done(Done::Read(NodeRead {
+                node: None,
+                window,
+                values: PropertyValues(vec![value(PropertyId::Name, "OK")]),
+            }))
+        );
+        assert_eq!(
+            batch_step(
+                nothing,
+                &Op::Ancestors {
+                    subject: kept,
+                    until: vec![KnownAncestor::Window(WindowHandle(9)), known],
+                    depth: 60,
+                    set: vec![PropertyId::Name],
+                },
+                Some(&whole),
+            ),
+            StepOutcome::Done(Done::Ancestors(Ancestry {
+                ancestors: whole.ancestors.clone(),
+                end: AncestorsEnd::Met(1),
+            }))
+        );
+    }
 
     /// A walk stops at the UI Automation ancestors and windows Core knows,
     /// a window by its own element's runtime id, each answered by its place
