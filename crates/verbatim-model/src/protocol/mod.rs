@@ -542,33 +542,6 @@ impl Named {
     fn text_reply(&mut self, reply: &TextReply) {
         match reply {
             TextReply::Read { chunk, .. } => self.chunk(chunk),
-            TextReply::Started(started) => {
-                self.anchors.push(started.point);
-                self.caret(&started.caret);
-                self.chunk(&started.unit);
-                if let Some(word) = &started.word {
-                    self.chunk(word);
-                }
-            }
-            TextReply::Watched(watched) => match &**watched {
-                crate::Watched::Effect(read) | crate::Watched::Bound(read) => {
-                    self.caret(&read.caret);
-                    self.chunk(&read.unit);
-                }
-                crate::Watched::BoundUnread | crate::Watched::EffectUnread => {}
-            },
-            TextReply::Sentence(moved) => match &**moved {
-                crate::SentenceMoved::Moved { line, baseline, .. }
-                | crate::SentenceMoved::StayedAtStart { line, baseline, .. }
-                | crate::SentenceMoved::End { line, baseline } => {
-                    self.chunk(line);
-                    self.anchors.push(*baseline);
-                }
-            },
-            TextReply::SelectionRead(read) => {
-                self.caret(&read.caret);
-                self.anchors.push(read.baseline);
-            }
             TextReply::CaretPlaced { baseline } | TextReply::SelectionPlaced { baseline, .. } => {
                 self.anchors.push(*baseline);
             }

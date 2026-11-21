@@ -75,11 +75,10 @@ pub enum FormatSpan {
     Line,
 }
 
-/// What a caret key's watch check reads, for [`TextSource::watch_read`]
+/// What a caret wait's check reads, for [`TextSource::watch_read`]
 /// (`check`): the caret and the selection compared with the starting
-/// point's, the caret's line, the word when a deleting key compares it,
-/// and the final read's unit once the caret or the selection moved or at
-/// the bound, so a source that can read them in one go does.
+/// point's, the caret's line, and the word when the wait compares it, so a
+/// source that can read them in one go does.
 pub struct WatchRequest<'a, P> {
     /// The starting point's caret.
     pub start: &'a P,
@@ -88,13 +87,6 @@ pub struct WatchRequest<'a, P> {
     pub start_selection: (&'a P, &'a P),
     /// Whether to read the word at the caret.
     pub word: bool,
-    /// The final read's unit beyond the line, as [`extra_unit`] gives it.
-    pub unit: Option<TextUnit>,
-    /// Whose formatting the final read reads, with the unit, as
-    /// [`format_span`] gives it.
-    pub formats: Option<FormatSpan>,
-    /// Whether this is the check at the bound.
-    pub last: bool,
 }
 
 /// The answer to a [`WatchRequest`].
@@ -110,13 +102,6 @@ pub struct WatchRead<P> {
     pub line: (Unit<P>, usize),
     /// The word at the caret and the caret's offset in it, when asked.
     pub word: Option<(Unit<P>, usize)>,
-    /// The final read's unit at the caret and the caret's offset in it,
-    /// when asked and read.
-    pub unit: Option<(Unit<P>, usize)>,
-    /// The formatting of [`WatchRequest::formats`]'s span, UTF-16 ranges
-    /// of its text, when asked and read with the unit; `None` when not
-    /// read.
-    pub formats: Option<Vec<Formatting>>,
     /// The caret read again at the end was not where it was first read.
     pub moved_while_read: bool,
 }
@@ -139,9 +124,6 @@ pub struct CaretRequest<'a, P> {
     /// report's comparison; a key's read, for which a caret that moved is a
     /// selection that moved, leaves it false).
     pub previous_collapsed: bool,
-    /// A unit to read besides the caret's line: a word, a paragraph or a
-    /// page at the caret, or the unit a Backspace deletes before it.
-    pub unit: Option<CaretUnit>,
     /// Whose formatting to read, with the attributes the theme asks for.
     pub formats: Option<FormatSpan>,
     /// Whether to read the caret again once everything else is read, to
@@ -160,16 +142,6 @@ pub struct CaretRequest<'a, P> {
     pub read_previous_text: bool,
 }
 
-/// A unit a caret read reads besides the caret's line, and where.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CaretUnit {
-    /// The unit at the caret.
-    At(TextUnit),
-    /// The unit around the character before the caret, what a Backspace
-    /// deletes ([`verbatim_model::StartingUnit::BeforeCaret`]).
-    BeforeCaret(TextUnit),
-}
-
 /// The answer to a [`CaretRequest`].
 pub struct CaretRead<P> {
     /// The caret and the selection.
@@ -184,8 +156,6 @@ pub struct CaretRead<P> {
     pub selection_moved: bool,
     /// The caret's line and the caret's UTF-16 offset in it.
     pub line: (Unit<P>, usize),
-    /// The request's unit, with the caret's offset in it.
-    pub unit: Option<(Unit<P>, usize)>,
     /// The formatting of the request's span, UTF-16 ranges of its text.
     pub formats: Vec<Formatting>,
     /// With [`CaretRequest::previous`], how the selection changed from it
@@ -761,13 +731,6 @@ pub fn named_anchors(op: &TextOp) -> Vec<u64> {
             point(start).into_iter().chain(point(end)).collect()
         }
         TextOp::MoveCaret(at) | TextOp::Location(at) => point(at).into_iter().collect(),
-        TextOp::ReadSelection(read) => read
-            .baseline
-            .map(|baseline| baseline.0)
-            .into_iter()
-            .collect(),
-        TextOp::Watch(watch) => vec![watch.point.0],
-        TextOp::MoveBySentence(moved) => vec![moved.point.0],
         TextOp::ReadTerminal(read) => read.start.map(|start| start.0).into_iter().collect(),
         TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
             vec![start.0]
@@ -1200,14 +1163,6 @@ pub(crate) fn chunk_from<S: TextSource>(
     }
 }
 
-/// Keeps the unit a read found as part of the node's last read, for the
-/// next read to compare with.
-fn keep_unit<P>(anchors: &mut NodeText<'_, P>, unit: Option<&TextChunk>) {
-    if let Some(last) = anchors.anchors.last.as_mut() {
-        last.unit = unit.cloned();
-    }
-}
-
 /// The report for a caret read another program already made, begun at
 /// `read_at_us` (a terminal's, read with its new output). With
 /// `keeps_last_read` the node's last read stays as it was, while a key's
@@ -1251,9 +1206,6 @@ fn caret_line<S: TextSource>(
     let offset = source.offset_in(&line, &state.caret)?;
     Ok((line, offset))
 }
-
-/// A unit read at the caret and the caret's UTF-16 offset in it.
-type UnitAt<P> = (Unit<P>, usize);
 
 /// A unit read at the caret: the unit, the caret's UTF-16 offset in it, and
 /// its formatting, UTF-16 ranges of its text (empty when none was read).
@@ -1354,56 +1306,6 @@ fn beside(line: &str, offset: usize) -> (String, String) {
     (before, at)
 }
 
-/// The unit a caret key's answer reads besides the line, as the source has
-/// it: none for a character (cut from the line), a line, or the document;
-/// the paragraph for a sentence where the source splits text by paragraph,
-/// and none where it has no sentences.
-fn extra_unit<S: TextSource>(source: &S, unit: TextUnit) -> Option<TextUnit> {
-    match unit {
-        TextUnit::Character | TextUnit::Line | TextUnit::Document => None,
-        TextUnit::Sentence => match source.sentences() {
-            Sentences::Unsupported => None,
-            Sentences::ByParagraph => Some(TextUnit::Paragraph),
-        },
-        other => Some(other),
-    }
-}
-
-/// Whose formatting a caret key's final read reads: the character, the
-/// word, the paragraph or the line spoken, every key's unit (a page key
-/// and a sentence key speak the line). For a paragraph the request's
-/// details leave out spelling and grammar errors, as NVDA does for speed
-/// (`speech/speech.py` 1595 to 1597); every other attribute is read.
-fn format_span(unit: TextUnit) -> Option<FormatSpan> {
-    match unit {
-        TextUnit::Character => Some(FormatSpan::Character),
-        TextUnit::Word | TextUnit::Paragraph => Some(FormatSpan::Unit),
-        TextUnit::Line => Some(FormatSpan::Line),
-        _ => None,
-    }
-}
-
-/// The unit at the caret in `last`, the node's last read, as text: the
-/// character cut from its line, the unit it fetched when that is the same
-/// kind, or else its line.
-fn before_unit_text<P>(last: &LastRead<P>, unit: TextUnit) -> String {
-    let line = last.line.as_ref();
-    if unit == TextUnit::Character {
-        return line
-            .and_then(|line| {
-                verbatim_text::grapheme_at(&line.text, line.offset as usize)
-                    .map(|range| line.text[range].to_owned())
-            })
-            .unwrap_or_default();
-    }
-    last.unit
-        .as_ref()
-        .filter(|chunk| chunk.unit == unit)
-        .or(line)
-        .map(|chunk| chunk.text.clone())
-        .unwrap_or_default()
-}
-
 /// Whether caret states `a` and `b` have the same caret and selection.
 fn same_state<S: TextSource>(
     source: &mut S,
@@ -1419,74 +1321,6 @@ fn same_state<S: TextSource>(
             == Ordering::Equal
             && source.compare(a_end, b_end)? == Ordering::Equal),
         _ => Ok(false),
-    }
-}
-
-/// The key's unit at the caret, as a chunk: `None` for a line, which the
-/// caret's line already is, and for a unit the source does not have. A
-/// character is cut from the line already read; any other unit is the one
-/// already read (`read`), or read now. `formats` is the formatting read for
-/// the unit, UTF-16 ranges of its text; a character's covers it.
-fn unit_at_caret<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    (state, line): (&CaretState<S::Pos>, &TextChunk),
-    unit: TextUnit,
-    (read, formats): (Option<UnitAt<S::Pos>>, Vec<Formatting>),
-) -> TextResult<Option<TextChunk>> {
-    match unit {
-        TextUnit::Line | TextUnit::Document => Ok(None),
-        TextUnit::Character => {
-            let offset = line.offset as usize;
-            let text = verbatim_text::grapheme_at(&line.text, offset)
-                .map(|range| line.text[range].to_owned())
-                .unwrap_or_default();
-            // The character's formatting, read for it alone, covers it.
-            let formats = formats
-                .into_iter()
-                .next()
-                .map(|(_, _, attributes)| FormatRun {
-                    start: 0,
-                    end: u32::try_from(text.len()).unwrap_or(u32::MAX),
-                    attributes,
-                })
-                .into_iter()
-                .collect();
-            let start = anchors.mint(state.caret.clone(), &text);
-            anchors.remember(TextPosition::at(start), state.caret.clone());
-            Ok(Some(TextChunk {
-                unit: TextUnit::Character,
-                text,
-                start,
-                offset: 0,
-                languages: Vec::new(),
-                first: false,
-                last: false,
-                truncated: false,
-                formats,
-            }))
-        }
-        other => {
-            let Some(reported) = extra_unit(source, other) else {
-                return Ok(None);
-            };
-            let (found, offset) = if let Some(read) = read {
-                read
-            } else {
-                let Some(found) = source.unit_at(&state.caret, reported, MAX_CHUNK_UNITS)? else {
-                    return Ok(None);
-                };
-                let offset = source.offset_in(&found, &state.caret)?;
-                (found, offset)
-            };
-            Ok(Some(chunk(
-                source,
-                anchors,
-                (&found, reported),
-                (offset, state.caret.clone()),
-                (Vec::new(), &formats),
-            )))
-        }
     }
 }
 

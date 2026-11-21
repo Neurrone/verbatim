@@ -203,9 +203,29 @@ impl Outpost {
             above: usize::try_from(snapshot.above).expect("rows"),
         };
         let colours = request.colours.then(|| self.colours());
-        let wire = snapshot_of(&read, false, colours.as_deref());
+        let mut wire = snapshot_of(&read, false, colours.as_deref());
         let start = self.mint(snapshot.next_start);
         let point = request.starting.map(|_| self.mint(snapshot.next_start));
+        // The caret a key's starting point is minted from, as the outpost
+        // reports it with the point: its line, the caret at its column.
+        if let Some(point) = point {
+            let line = read.caret_line.trim_end().to_owned();
+            let offset = u32::try_from(read.caret_column.min(line.len())).expect("a short row");
+            wire.caret = Some(verbatim_model::CaretReport {
+                line: verbatim_model::TextChunk {
+                    unit: verbatim_model::TextUnit::Line,
+                    text: line,
+                    start: point,
+                    offset,
+                    languages: Vec::new(),
+                    first: false,
+                    last: false,
+                    truncated: false,
+                    formats: Vec::new(),
+                },
+                selection: None,
+            });
+        }
         let reply = TerminalReadReply {
             snapshot: wire,
             start,
@@ -460,8 +480,8 @@ pub struct Session {
     pub requests: Vec<Asked>,
     /// How many output reads Core asked.
     pub output_reads: usize,
-    /// Every caret key's watch Core sent, in order.
-    pub watches: Vec<verbatim_model::Watch>,
+    /// Every caret key's wait Core sent, in order.
+    pub watches: Vec<verbatim_model::batch::CaretWait>,
     /// Every full read the outpost answered, in order.
     pub answered_reads: Vec<verbatim_model::TerminalSnapshot>,
     /// Every event Core gave the control plane's stream, in order.
@@ -733,6 +753,19 @@ impl Session {
             return;
         }
         if let verbatim_model::request::Question::Batch(batch) = &ask.request {
+            // A key's wait sees its effect at once: the terminal's full
+            // read follows it.
+            if let Some(verbatim_model::batch::Op::WaitForCaret { .. }) =
+                batch.steps.first().map(|step| &step.op)
+            {
+                let waited = verbatim_model::batch::StepOutcome::Done(
+                    verbatim_model::batch::Done::WaitForCaret(
+                        verbatim_model::batch::Waited::Effect,
+                    ),
+                );
+                self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
+                return;
+            }
             let found = Found::Read(focus_read(self.depth, self.console));
             let outcome = readers::outcome(batch, &found);
             self.reply(&ask, outcome);
@@ -786,9 +819,6 @@ impl Session {
                         )))
                     }
                 }
-                TextOp::Watch(_) => Outcome::Result(Reply::Text(TextReply::Watched(Box::new(
-                    verbatim_model::Watched::EffectUnread,
-                )))),
                 other => panic!("an unexpected text request: {other:?}"),
             },
             other => panic!("an unexpected request: {other:?}"),
@@ -888,6 +918,14 @@ impl Session {
 
     /// Records what `ask` asks of the terminal.
     fn record(&mut self, ask: &Ask) {
+        if let verbatim_model::request::Question::Batch(batch) = &ask.request
+            && let Some(verbatim_model::batch::Op::WaitForCaret { wait, .. }) =
+                batch.steps.first().map(|step| &step.op)
+        {
+            self.watches.push((**wait).clone());
+            self.requests.push(Asked::Watch);
+            return;
+        }
         let verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) = &ask.request else {
             return;
         };
@@ -913,10 +951,6 @@ impl Session {
                 from: *from,
                 rows: *rows,
             },
-            TextOp::Watch(watch) => {
-                self.watches.push(*watch);
-                Asked::Watch
-            }
             _ => return,
         };
         self.requests.push(asked);

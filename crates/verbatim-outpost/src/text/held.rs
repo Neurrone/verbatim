@@ -18,14 +18,12 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretReport, SelectionChange, SelectionDifference, Started, StartingUnit, TextAnchor,
-    TextChunk, TextOp, TextReply, TextUnit,
+    CaretReport, SelectionChange, SelectionDifference, TextAnchor, TextOp, TextReply,
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, CaretUnit, FormatSpan, MAX_CHUNK_UNITS, NodeText,
-    TextError, TextResult, TextSource, Unit, UnitAt, change, change_of, chunk, keep_unit, perform,
-    report_for, selection_changes, unit_at_caret,
+    CaretRead, CaretRequest, CaretState, FormatSpan, NodeText, TextError, TextResult, TextSource,
+    change, change_of, perform, report_for, selection_changes,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -45,29 +43,10 @@ fn read_caret<S: TextSource>(
     read_at_us: u64,
     (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, Option<FormatSpan>),
 ) -> TextResult<CaretFound<S::Pos>> {
-    read_caret_with(
-        source,
-        anchors,
-        read_at_us,
-        (selection, previous, formats),
-        None,
-    )
-}
-
-/// [`read_caret`], reading `unit` too where the read is made in one go;
-/// [`CaretFound::unit`] is what it found.
-fn read_caret_with<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
-    (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, Option<FormatSpan>),
-    unit: Option<CaretUnit>,
-) -> TextResult<CaretFound<S::Pos>> {
     let request = CaretRequest {
         since: None,
         previous: previous.map(|(ends, _)| ends),
         previous_collapsed: previous.is_some_and(|(_, collapsed)| collapsed),
-        unit,
         formats,
         recheck: false,
         read_selection_text: selection,
@@ -90,7 +69,6 @@ fn read_caret_with<S: TextSource>(
             report,
             changes: read.changes,
             selection_text: read.selection_text,
-            unit: read.unit,
         });
     }
     let state = source.caret()?;
@@ -100,7 +78,6 @@ fn read_caret_with<S: TextSource>(
         report,
         changes: None,
         selection_text: None,
-        unit: None,
     })
 }
 
@@ -118,9 +95,6 @@ struct CaretFound<P> {
     changes: Option<Vec<(bool, Vec<u16>)>>,
     /// The selection's text, as [`super::CaretRead::selection_text`].
     selection_text: Option<Vec<u16>>,
-    /// The unit asked for, with the caret's offset in it, as
-    /// [`super::CaretRead::unit`]; `None` from a read by parts.
-    unit: Option<UnitAt<P>>,
 }
 
 /// The most UTF-16 code units of a selection's text a read in one go
@@ -345,40 +319,12 @@ fn caret_and_selected<S: TextSource>(
     Ok((report, selected))
 }
 
-/// A held caret key's starting read: the caret and the selection, held
-/// as the starting point, with the key's unit where `unit` says (the line
-/// where the text has no such unit). It compares no selection and holds
-/// no baseline. The unit before the caret a Backspace deletes is read in
-/// the caret's read where the source reads it in one go.
-///
-/// # Errors
-///
-/// When the application does not answer or the node is gone.
-pub fn starting_read<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
-    unit: StartingUnit,
-) -> TextResult<Started> {
-    let before = match unit {
-        StartingUnit::BeforeCaret(unit) => Some(CaretUnit::BeforeCaret(unit)),
-        StartingUnit::At(_) | StartingUnit::AtWithWord(_) => None,
-    };
-    let CaretFound {
-        state,
-        report,
-        unit: read,
-        ..
-    } = read_caret_with(source, anchors, read_at_us, (false, None, None), before)?;
-    started_at(source, anchors, (state, report), (unit, read))
-}
-
-/// [`starting_read`] from the caret, selection and line `read` already
-/// found, read at `read_at_us`: a terminal's full read reads them in its
-/// own round trip, so a caret key's starting read mints its starting point
-/// with no call of its own for the caret
+/// A terminal key's starting point, from the caret, selection and line
+/// `read` already found, read at `read_at_us`: a terminal's full read reads
+/// them in its own round trip, so the key's starting point is minted with
+/// no call of its own for the caret
 /// (`docs/design/readers-tell-core-asks-build3.md`, "The full read request
-/// and its starts").
+/// and its starts"). The caret's report, and the starting point held.
 ///
 /// # Errors
 ///
@@ -388,8 +334,7 @@ pub fn starting_from<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     read: CaretRead<S::Pos>,
     read_at_us: u64,
-    unit: TextUnit,
-) -> TextResult<Started> {
+) -> TextResult<(CaretReport, TextAnchor)> {
     let (line, offset) = read.line;
     let report = report_for(
         source,
@@ -401,108 +346,8 @@ pub fn starting_from<S: TextSource>(
         ),
         None,
     )?;
-    started_at(
-        source,
-        anchors,
-        (read.state, report),
-        (StartingUnit::At(unit), None),
-    )
-}
-
-/// The starting point held from the caret `state` and its `report`, with
-/// the key's unit where `unit` says, `read` being the unit before the
-/// caret when the caret's read already read it.
-fn started_at<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    (state, report): (CaretState<S::Pos>, CaretReport),
-    (unit, read): (StartingUnit, Option<UnitAt<S::Pos>>),
-) -> TextResult<Started> {
-    if let StartingUnit::BeforeCaret(unit) = unit {
-        let unit_read = unit_before_caret(source, anchors, &state, unit, read)?;
-        // Backspace's checks compare the line and the caret, never a unit.
-        keep_unit(anchors, None);
-        let point = anchors.hold_last()?;
-        return Ok(Started {
-            point,
-            caret: report,
-            unit: unit_read,
-            word: None,
-        });
-    }
-    let word = matches!(unit, StartingUnit::AtWithWord(_));
-    let unit = unit.unit();
-    let mut at_caret = |anchors: &mut NodeText<'_, S::Pos>, unit| -> TextResult<TextChunk> {
-        Ok(unit_at_caret(
-            source,
-            anchors,
-            (&state, &report.line),
-            unit,
-            (None, Vec::new()),
-        )?
-        .unwrap_or_else(|| report.line.clone()))
-    };
-    let unit_read = at_caret(anchors, unit)?;
-    let word = if word {
-        Some(at_caret(anchors, TextUnit::Word)?)
-    } else {
-        None
-    };
-    // Delete's check compares the word at the caret with the word read
-    // here; every other check compares the character, cut from the line.
-    keep_unit(anchors, Some(word.as_ref().unwrap_or(&unit_read)));
     let point = anchors.hold_last()?;
-    Ok(Started {
-        point,
-        caret: report,
-        unit: unit_read,
-        word,
-    })
-}
-
-/// The `unit` around the character before the caret of `state`, as NVDA's
-/// Backspace scripts read what they delete (`editableText.py` 291 to 319):
-/// the caret moved back one character, then expanded to the unit; at the
-/// text's start, where the caret cannot move back, an empty unit at the
-/// caret. `read` is the unit the caret's read already found, else it is
-/// read now.
-fn unit_before_caret<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    state: &CaretState<S::Pos>,
-    unit: TextUnit,
-    read: Option<UnitAt<S::Pos>>,
-) -> TextResult<TextChunk> {
-    let (found, offset) = match read {
-        Some(read) => read,
-        None => match source.move_by(&state.caret, TextUnit::Character, -1)? {
-            Some((before, -1)) => {
-                let Some(found) = source.unit_at(&before, unit, MAX_CHUNK_UNITS)? else {
-                    return Err(TextError::Failed(format!(
-                        "the text has no {unit:?} before the caret"
-                    )));
-                };
-                let offset = source.offset_in(&found, &state.caret)?;
-                (found, offset)
-            }
-            _ => (
-                Unit {
-                    start: state.caret.clone(),
-                    end: state.caret.clone(),
-                    text: Vec::new(),
-                    truncated: false,
-                },
-                0,
-            ),
-        },
-    };
-    Ok(chunk(
-        source,
-        anchors,
-        (&found, unit),
-        (offset, state.caret.clone()),
-        (Vec::new(), &[]),
-    ))
+    Ok((report, point))
 }
 
 /// Carries out `op` for an event-queue entry: as [`perform`] does, but a

@@ -493,17 +493,18 @@ pub struct Compared {
     pub line_changed: bool,
 }
 
-/// Whether `compared` is evidence of what a key of `motion` did: the caret
-/// having left where it was, the characters beside it changing, the unit at
-/// the caret changing after Delete, the caret's line changing after a key
-/// that deletes, or the selection changing (`docs/parity/text.md`).
+/// Whether `compared` is evidence of a key's effect, by its wait's effect
+/// test `effect`: the caret having left where it was, the characters
+/// beside it changing, the selection changing, and where the test counts
+/// them, the unit at the caret changing (Delete) and the caret's line
+/// changing (a key that deletes) (`docs/parity/text.md`).
 #[must_use]
-pub fn had_effect(compared: Compared, motion: CaretMotion) -> bool {
+pub fn had_effect(compared: Compared, effect: crate::batch::EffectTest) -> bool {
     compared.caret_moved
         || compared.selection_moved
         || compared.beside_changed
-        || (motion.compares_unit() && compared.unit_changed)
-        || (motion.deletes() && compared.line_changed)
+        || (effect.unit && compared.unit_changed)
+        || (effect.line && compared.line_changed)
 }
 
 /// A movement by whole units, positive forward and negative back.
@@ -708,162 +709,6 @@ impl TextDetails {
     };
 }
 
-/// A held caret key's starting read, asked at its turn before Core sends
-/// the key on: the caret and the selection's ends, held by the outpost as
-/// the starting point, with the key's unit ([`StartingUnit`]) and the line
-/// at the caret. It compares no selection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StartingRead {
-    /// How the node's text is read.
-    pub provider: TextProvider,
-    /// What the read fetches beyond the text.
-    pub details: TextDetails,
-    /// The key's unit, and where it is read.
-    pub unit: StartingUnit,
-}
-
-/// Which unit a caret key's starting read reads, and where.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StartingUnit {
-    /// The key's unit at the caret.
-    At(TextUnit),
-    /// The key's unit at the caret, and the word at the caret, which the
-    /// watch of Delete and Control+Delete compares.
-    AtWithWord(TextUnit),
-    /// The key's unit around the character before the caret, what
-    /// Backspace and Control+Backspace delete, as NVDA's Backspace scripts
-    /// read it: the caret moved back one character, then expanded to the
-    /// unit; nothing at the text's start (`docs/parity/text.md`, "What
-    /// Backspace and Delete say").
-    BeforeCaret(TextUnit),
-}
-
-impl StartingUnit {
-    /// What `motion`'s starting read reads.
-    #[must_use]
-    pub const fn for_motion(motion: CaretMotion) -> Self {
-        match motion {
-            CaretMotion::Delete | CaretMotion::DeleteWord => Self::AtWithWord(motion.unit()),
-            CaretMotion::Backspace | CaretMotion::BackspaceWord => Self::BeforeCaret(motion.unit()),
-            // Enter's script reads only where the caret is before the key.
-            CaretMotion::NewLine => Self::At(TextUnit::Character),
-            _ => Self::At(motion.unit()),
-        }
-    }
-
-    /// The unit read.
-    #[must_use]
-    pub const fn unit(self) -> TextUnit {
-        match self {
-            Self::At(unit) | Self::AtWithWord(unit) | Self::BeforeCaret(unit) => unit,
-        }
-    }
-}
-
-/// The answer to [`TextOp::StartingRead`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Started {
-    /// The starting point the outpost holds, which the key's watch and
-    /// sentence move name.
-    pub point: TextAnchor,
-    /// The caret: the line at it, with the caret at its offset, and the
-    /// selection.
-    pub caret: CaretReport,
-    /// The key's unit where [`StartingUnit`] says, the line where the text
-    /// has no such unit; empty before the caret at the text's start.
-    pub unit: TextChunk,
-    /// The word at the caret, when the request asked for it.
-    #[serde(default)]
-    pub word: Option<TextChunk>,
-}
-
-/// What a watch reads once it ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WatchFinalRead {
-    /// The caret, its line and the key's unit, at the effect or the bound.
-    Unit {
-        /// The key's unit.
-        unit: TextUnit,
-        /// What the read fetches beyond the text.
-        details: TextDetails,
-    },
-    /// The same, but only at the effect: at the bound nothing is read,
-    /// since Core moves by sentence from the starting point instead (a
-    /// sentence key in text with a sentence unit).
-    UnitAtEffect {
-        /// The key's unit.
-        unit: TextUnit,
-        /// What the read fetches beyond the text.
-        details: TextDetails,
-    },
-    /// Nothing: a terminal's key, whose final read is Core's full read of
-    /// the terminal, sent once the watch answers.
-    Terminal,
-}
-
-/// Look for a key's effect: compare the application's caret with the
-/// starting point about every `poll_us` from the pass until `bound_us`
-/// after it, and end with the final read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Watch {
-    /// How the node's text is read.
-    pub provider: TextProvider,
-    /// The starting point, minted by the key's starting read.
-    pub point: TextAnchor,
-    /// The key's motion, which selects the effect test.
-    pub motion: CaretMotion,
-    /// When Core sent the key, in microseconds on the run's shared clock.
-    pub passed_at_us: u64,
-    /// How often a check runs.
-    pub poll_us: u32,
-    /// Whether a UI Automation caret or text-change event of the node
-    /// heard within 60 ms of the pass is the key's effect.
-    pub events: bool,
-    /// How long after the pass the watch looks.
-    pub bound_us: u32,
-    /// What it reads once it ends.
-    pub final_read: WatchFinalRead,
-}
-
-/// A watch's final read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WatchedRead {
-    /// The caret as it is now.
-    pub caret: CaretReport,
-    /// The key's unit at the caret, the line where the text has no such
-    /// unit.
-    pub unit: TextChunk,
-}
-
-/// The answer to [`TextOp::Watch`]: how it ended, with its final read.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Watched {
-    /// The key's effect was seen.
-    Effect(WatchedRead),
-    /// The bound passed with no effect seen.
-    Bound(WatchedRead),
-    /// The bound passed with no effect seen, and nothing was read
-    /// ([`WatchFinalRead::UnitAtEffect`] and [`WatchFinalRead::Terminal`]).
-    BoundUnread,
-    /// The key's effect was seen, and nothing was read
-    /// ([`WatchFinalRead::Terminal`]).
-    EffectUnread,
-}
-
-/// Move the caret by sentence from a key's starting point, in text whose
-/// provider has a sentence unit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SentenceMove {
-    /// How the node's text is read.
-    pub provider: TextProvider,
-    /// The starting point.
-    pub point: TextAnchor,
-    /// Forward, or else back.
-    pub forward: bool,
-    /// What the read fetches beyond the text.
-    pub details: TextDetails,
-}
-
 /// The answer to [`TextOp::MoveBySentence`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SentenceMoved {
@@ -895,27 +740,6 @@ pub enum SentenceMoved {
     },
 }
 
-/// A caret tell's read (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's
-/// text facts"): the caret, and the selection
-/// compared with the selection baseline Core names, against the
-/// baseline's range as it now is, its ends where the provider has moved
-/// them with the edits. The outpost mints the next baseline from the
-/// selection it read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SelectionRead {
-    /// How the node's text is read.
-    pub provider: TextProvider,
-    /// The selection baseline to compare with, `None` when Core holds
-    /// none.
-    pub baseline: Option<TextAnchor>,
-    /// The element whose event the tell is, which the outpost adopts as
-    /// the node's when the node's own element answered it has no text
-    /// pattern, forgetting that answer, as only an element with text
-    /// raises a caret event; `None` for a tell with no element of the
-    /// outpost's (the system caret's).
-    pub adopt: Option<crate::tell::ElementToken>,
-}
-
 /// How the selection differs from the selection baseline's range as it
 /// now is, in both the terms Core may speak it in: Core chooses at the
 /// answer, by its text-changed flag and the value changes waiting.
@@ -940,36 +764,10 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// The answer to [`TextOp::ReadSelection`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SelectionReadReply {
-    /// The caret as it is now: the line at it, with the caret at its
-    /// offset, and the selection.
-    pub caret: CaretReport,
-    /// The next selection baseline, minted from the selection read.
-    pub baseline: TextAnchor,
-    /// The difference from the named baseline; `None` when the request
-    /// named none, or one the outpost no longer holds ("no baseline").
-    pub difference: Option<SelectionDifference>,
-    /// The selection's offsets, read through an edit control's messages;
-    /// `None` through any other provider.
-    pub edit_selection: Option<EditSelection>,
-}
-
 /// One operation Core asks an outpost to perform on a node's text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextOp {
-    /// A held caret key's starting read: answered [`TextReply::Started`].
-    StartingRead(StartingRead),
-    /// A caret key's watch: answered [`TextReply::Watched`].
-    Watch(Watch),
-    /// A sentence key's move from its starting point: answered
-    /// [`TextReply::Sentence`].
-    MoveBySentence(SentenceMove),
-    /// A caret tell's read, compared with the selection baseline: answered
-    /// [`TextReply::SelectionRead`].
-    ReadSelection(SelectionRead),
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
     /// Read the text between two points, in document order whichever comes
@@ -1102,14 +900,6 @@ pub struct TerminalReadReply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextReply {
-    /// The answer to [`TextOp::StartingRead`].
-    Started(Box<Started>),
-    /// The answer to [`TextOp::Watch`].
-    Watched(Box<Watched>),
-    /// The answer to [`TextOp::MoveBySentence`].
-    Sentence(Box<SentenceMoved>),
-    /// The answer to [`TextOp::ReadSelection`].
-    SelectionRead(Box<SelectionReadReply>),
     /// The answer to [`TextOp::Read`]: `moved` is how many units the
     /// movement really went, which is less than asked (and zero for a
     /// movement that could not start) at the document's ends; movement
@@ -1258,11 +1048,7 @@ impl TextReply {
             TextReply::AnchorLost => Ok(TextFailure::AnchorLost),
             TextReply::Gone => Ok(TextFailure::Gone),
             TextReply::Unanswered => Ok(TextFailure::Unanswered),
-            own @ (TextReply::Started(_)
-            | TextReply::Watched(_)
-            | TextReply::Sentence(_)
-            | TextReply::SelectionRead(_)
-            | TextReply::Read { .. }
+            own @ (TextReply::Read { .. }
             | TextReply::Chunks { .. }
             | TextReply::Range { .. }
             | TextReply::Moved { .. }
@@ -1420,25 +1206,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_judgement_counts_what_the_decisions_define() {
+    fn the_judgement_counts_what_the_effect_test_names() {
+        use crate::batch::EffectTest;
+        let moves = EffectTest {
+            unit: false,
+            line: false,
+        };
+        let deletes_back = EffectTest {
+            unit: false,
+            line: true,
+        };
+        let deletes = EffectTest {
+            unit: true,
+            line: true,
+        };
         let caret = Compared {
             caret_moved: true,
             ..Compared::default()
         };
-        assert!(had_effect(caret, CaretMotion::NextCharacter));
+        assert!(had_effect(caret, moves));
         let unit = Compared {
             unit_changed: true,
             ..Compared::default()
         };
-        assert!(!had_effect(unit, CaretMotion::NextCharacter));
-        assert!(!had_effect(unit, CaretMotion::Backspace));
-        assert!(had_effect(unit, CaretMotion::Delete));
+        assert!(!had_effect(unit, moves));
+        assert!(!had_effect(unit, deletes_back));
+        assert!(had_effect(unit, deletes));
         let line = Compared {
             line_changed: true,
             ..Compared::default()
         };
-        assert!(!had_effect(line, CaretMotion::NextCharacter));
-        assert!(had_effect(line, CaretMotion::Backspace));
+        assert!(!had_effect(line, moves));
+        assert!(had_effect(line, deletes_back));
     }
 
     #[test]

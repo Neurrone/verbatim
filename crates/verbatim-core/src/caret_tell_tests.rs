@@ -6,18 +6,41 @@
 
 use crate::entries::tests::found_at;
 use crate::readers::Found;
+use verbatim_model::batch::{Batch, Missing, Op, StepOutcome, StepRefusal};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::{
-    FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply, Request as Wire,
-};
+use verbatim_model::request::{FocusCaret, FocusCaretRead, Outcome as WireOutcome, Refusal, Reply};
 use verbatim_model::tell::{ElementToken, EventObject, Payload};
 use verbatim_model::{
     Backend, CaretReport, CaretSelection, EditSelection, Effect as Said, NormalizedEvent, Observed,
-    Phrase, Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionRead,
-    SelectionReadReply, SelectionText, TextAnchor, TextChunk, TextDetails, TextOp, TextPosition,
-    TextProvider, TextReply, TextUnit, WindowHandle,
+    Phrase, Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionText,
+    TextAnchor, TextChunk, TextDetails, TextPosition, TextProvider, TextUnit, WindowHandle,
 };
+
+use crate::caret_batches;
+use caret_batches::Facts;
+
+std::thread_local! {
+    /// Each caret tell's batch asked, by its request number.
+    static ASKED: std::cell::RefCell<std::collections::BTreeMap<u64, Batch>> =
+        std::cell::RefCell::default();
+}
+
+/// The batch asked as request `number`.
+fn asked(number: u64) -> Batch {
+    ASKED
+        .with(|asked| asked.borrow().get(&number).cloned())
+        .unwrap_or_else(|| panic!("request {number} is a caret tell's batch"))
+}
+
+/// The answer to request `number` whose first step ends `first`, every
+/// later step skipped after it.
+fn failing(number: u64, first: StepOutcome) -> Input<Entry> {
+    let steps = asked(number).steps.len();
+    let mut outcomes = vec![first];
+    outcomes.resize(steps, StepOutcome::Skipped);
+    answer(OUTPOST, number, Reply::Steps(outcomes))
+}
 
 use crate::entries::tests::{
     APP, Held, LISTENER, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, held,
@@ -90,7 +113,7 @@ fn value_change() -> Input<Entry> {
 /// control plane's stream carries.
 #[derive(Debug, Default, PartialEq)]
 struct Step {
-    text: Vec<(u64, TextOp)>,
+    text: Vec<(u64, Batch)>,
     other: usize,
     said: Vec<Vec<String>>,
     observed: Vec<Observed>,
@@ -103,8 +126,14 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     for effect in effects {
         match effect {
             Effect::Queue(QueueEffect::Send { ask, .. }) => match &ask.request {
-                verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) => {
-                    step.text.push((ask.number.0, op.clone()));
+                verbatim_model::request::Question::Batch(batch)
+                    if matches!(
+                        batch.steps.first().map(|step| &step.op),
+                        Some(Op::Caret { .. })
+                    ) =>
+                {
+                    ASKED.with(|asked| asked.borrow_mut().insert(ask.number.0, batch.clone()));
+                    step.text.push((ask.number.0, batch.clone()));
                 }
                 _ => step.other += 1,
             },
@@ -123,23 +152,19 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
     step
 }
 
-/// A caret tell's read through `provider` naming `baseline`, adopting the
-/// UI Automation tell's element (token 9) or, for the system caret's,
-/// none.
-fn read_naming(provider: TextProvider, baseline: Option<u64>) -> TextOp {
+/// A caret tell's batch naming `baseline`, adopting the UI Automation
+/// tell's element (token 9) or, for the system caret's, none, whatever
+/// the provider.
+fn read_naming(provider: TextProvider, baseline: Option<u64>) -> Batch {
     read_adopting(provider, baseline, Some(ElementToken(9)))
 }
 
 fn read_adopting(
-    provider: TextProvider,
+    _provider: TextProvider,
     baseline: Option<u64>,
     adopt: Option<ElementToken>,
-) -> TextOp {
-    TextOp::ReadSelection(SelectionRead {
-        provider,
-        baseline: baseline.map(TextAnchor),
-        adopt,
-    })
+) -> Batch {
+    caret_batches::told(node(2), baseline.map(TextAnchor), adopt)
 }
 
 fn line(text: &str, offset: u32) -> TextChunk {
@@ -176,6 +201,21 @@ fn caret(offset: u32, selected: u32) -> CaretReport {
     }
 }
 
+/// The caret report Core takes from a caret tell's batch read as
+/// `report`: the selection's end the anchor its `Caret` holds there.
+fn told_caret(report: CaretReport) -> CaretReport {
+    let selection = report.selection.map(|selection| CaretSelection {
+        range: Selection {
+            end: TextPosition::at(selection.range.end.anchor),
+            ..selection.range
+        },
+    });
+    CaretReport {
+        selection,
+        ..report
+    }
+}
+
 fn change(selected: bool, text: &str) -> SelectionChange {
     SelectionChange {
         selected,
@@ -193,15 +233,17 @@ fn selection_read(
     difference: Option<SelectionDifference>,
     edit_selection: Option<EditSelection>,
 ) -> Input<Entry> {
+    let facts = Facts {
+        caret: Some(caret),
+        held: Some(TextAnchor(baseline)),
+        difference,
+        offsets: edit_selection,
+        ..Facts::default()
+    };
     answer(
         OUTPOST,
         number,
-        Reply::Text(TextReply::SelectionRead(Box::new(SelectionReadReply {
-            caret,
-            baseline: TextAnchor(baseline),
-            difference,
-            edit_selection,
-        }))),
+        Reply::Steps(caret_batches::answer(&asked(number), &facts)),
     )
 }
 
@@ -276,7 +318,8 @@ fn text_change() -> Observed {
 /// The edit control's value change is the control plane's text change
 /// whether or not the field detects selection, which the harness waits on
 /// after a paste (`text_box.rs`, `paste`); a caret tell's read is its caret
-/// move.
+/// move, with no selection changes when Core held no baseline to compare
+/// with.
 #[test]
 fn an_edit_controls_value_change_and_a_caret_read_are_the_control_planes_events() {
     let mut held = edit_control();
@@ -302,8 +345,8 @@ fn an_edit_controls_value_change_and_a_caret_read_are_the_control_planes_events(
             window: None,
             event: NormalizedEvent::CaretMoved {
                 node_id: node(2),
-                caret: caret(1, 3),
-                selection_changes: vec![change(true, "lph")],
+                caret: told_caret(caret(1, 3)),
+                selection_changes: Vec::new(),
             },
         }]
     );
@@ -495,7 +538,7 @@ fn a_caret_read_answered_no_text_decodes_says_nothing_and_drops_the_caret_and_se
     let answered = step(
         &mut held,
         2_100,
-        answer(OUTPOST, 3, Reply::Text(TextReply::NoText)),
+        failing(3, StepOutcome::Refused(StepRefusal::NoText)),
     );
     assert_eq!(answered, Step::default());
     assert_eq!(baseline(&held), None);
@@ -509,11 +552,11 @@ fn a_caret_read_answered_no_text_decodes_says_nothing_and_drops_the_caret_and_se
 #[test]
 fn a_caret_read_answered_with_a_failure_decodes_and_keeps_the_baseline_and_the_flag() {
     for (index, failure) in [
-        TextReply::Unsupported,
-        TextReply::UnsupportedUnit(TextUnit::Sentence),
-        TextReply::AnchorLost,
-        TextReply::Gone,
-        TextReply::Unanswered,
+        StepOutcome::Refused(StepRefusal::Unsupported),
+        StepOutcome::Refused(StepRefusal::NoSuchUnit),
+        StepOutcome::NotThere(Missing::Anchor(TextAnchor(70))),
+        StepOutcome::NotThere(Missing::Node(node(2))),
+        StepOutcome::Failed,
     ]
     .into_iter()
     .enumerate()
@@ -522,11 +565,8 @@ fn a_caret_read_answered_with_a_failure_decodes_and_keeps_the_baseline_and_the_f
         with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
         let _ = step(&mut held, 1_500, value_change());
         let _ = step(&mut held, 2_000, system_caret());
-        let answered = step(
-            &mut held,
-            2_100,
-            answer(OUTPOST, 3, Reply::Text(failure.clone())),
-        );
+        let answered = step(&mut held, 2_100, failing(3, failure.clone()));
+
         assert_eq!(answered, Step::default(), "failure {index}: {failure:?}");
         assert_eq!(baseline(&held), Some(TextAnchor(70)), "{failure:?}");
         assert!(text_changed(&held), "{failure:?}");

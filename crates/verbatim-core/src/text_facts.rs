@@ -124,6 +124,42 @@ pub(crate) fn focus_answered(facts: &mut SelectionFacts, caret: &FocusCaret) {
     };
 }
 
+/// The caret report a batch's `Caret` result `caret` and the caret's
+/// `line`, read from its caret, make. The selection, when something is
+/// selected, starts at the caret, as NVDA's caret is the selection's start
+/// (the readers' caret is), so its start is the caret's place in the line,
+/// unless the line was cut before the caret, when the start is the
+/// position the `Caret` holds, in no line reported; its end is the end the
+/// `Caret` holds. A selection starting at the text's start marks its line
+/// the text's first, as the caret reads made it; a caret alone there does
+/// not, so Backspace there after a focus says nothing, as it did
+/// (Claude, 2026-11-22).
+pub(crate) fn caret_report(
+    caret: &verbatim_model::batch::CaretAt,
+    mut line: verbatim_model::TextChunk,
+) -> verbatim_model::CaretReport {
+    let cut_before =
+        line.truncated && usize::try_from(line.offset).is_ok_and(|offset| offset >= line.text.len());
+    let selection = caret.selection.map(|selection| {
+        let start = if cut_before {
+            verbatim_model::TextPosition::at(selection.start.anchor)
+        } else {
+            line.first |= selection.start.edges.start;
+            verbatim_model::TextPosition {
+                anchor: line.start,
+                offset: line.offset,
+            }
+        };
+        verbatim_model::CaretSelection {
+            range: verbatim_model::Selection {
+                start,
+                end: verbatim_model::TextPosition::at(selection.end.anchor),
+            },
+        }
+    });
+    verbatim_model::CaretReport { line, selection }
+}
+
 /// The selection baseline the committed focus's text facts hold, with
 /// the node whose text it is in.
 pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
@@ -167,9 +203,6 @@ fn legacy_named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
             .collect::<Vec<_>>()
     };
     let anchors = match op {
-        TextOp::Watch(watch) => vec![watch.point],
-        TextOp::MoveBySentence(moving) => vec![moving.point],
-        TextOp::ReadSelection(read) => read.baseline.into_iter().collect(),
         TextOp::Read(read) => point(&read.at).into_iter().collect(),
         TextOp::ReadAhead(read) => point(&read.at).into_iter().collect(),
         TextOp::ReadRange {

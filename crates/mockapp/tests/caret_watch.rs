@@ -28,8 +28,8 @@ use verbatim_ia2::WinEventKind;
 use verbatim_model::request::{Outcome, Reply, Request};
 use verbatim_model::{
     CaretKey, CaretMotion, Message, NodeId, Phrase, Role, SegmentContent, SelectionChange,
-    SelectionDifference, SelectionRead, SelectionReadReply, SelectionText, TextAnchor, TextFormat,
-    TextOp, TextPoint, TextPosition, TextProvider, TextReply,
+    SelectionDifference, SelectionText, TextAnchor, TextFormat, TextOp, TextPoint, TextPosition,
+    TextReply,
 };
 use verbatim_outpost::Heard;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -648,25 +648,91 @@ fn text_answer(outpost: &OutpostUnderTest, hwnd: HWND, node: NodeId, op: TextOp)
     }
 }
 
-/// A caret tell's read of `node` naming `baseline`.
+/// What a caret tell's batch read, as Core takes it: the caret's report,
+/// the next baseline, and the difference from the baseline named.
+struct Told {
+    caret: verbatim_model::CaretReport,
+    baseline: TextAnchor,
+    difference: Option<SelectionDifference>,
+}
+
+/// A caret tell's batch on `node` naming `baseline`: the caret, its line,
+/// and the selection compared with the baseline (the request list's
+/// design, section 6, `ReadSelection`), its answer made into the caret's
+/// report as Core makes it (`text_facts::caret_report`): the selection's
+/// start the caret, its end the anchor its `Caret` holds there, and a
+/// caret at the text's start on its first line.
 fn read_selection(
     outpost: &OutpostUnderTest,
     hwnd: HWND,
     node: NodeId,
     baseline: TextAnchor,
-) -> SelectionReadReply {
-    match text_answer(
-        outpost,
+) -> Told {
+    use verbatim_model::batch::{
+        Batch, Before, Done, Missing, Op, Place, Placement, Point, PointOf, Step, StepOutcome,
+        Subject,
+    };
+    let step = |op| Step { op, when: None };
+    let subject = Subject::Node(node);
+    let (answer, _) = outpost.batch(
         hwnd,
-        node,
-        TextOp::ReadSelection(SelectionRead {
-            provider: TextProvider::Uia,
-            baseline: Some(baseline),
-            adopt: None,
-        }),
-    ) {
-        TextReply::SelectionRead(read) => *read,
-        other => panic!("the outpost answered {other:?}, not the selection's read"),
+        verbatim_model::request::WindowVerdict::Uia,
+        Batch {
+            steps: vec![
+                step(Op::Caret {
+                    subject: subject.clone(),
+                    adopt: None,
+                }),
+                step(Op::ReadText {
+                    subject: subject.clone(),
+                    at: Point::Of(Place(0), PointOf::Caret),
+                    movement: None,
+                    unit: verbatim_model::TextUnit::Line,
+                    count: 1,
+                    details: verbatim_model::TextDetails::NONE,
+                }),
+                step(Op::CompareSelection {
+                    subject,
+                    before: Before::Baseline(baseline),
+                    after: Place(0),
+                }),
+            ],
+            placement: Placement::Queue,
+            spare: None,
+        },
+    );
+    let Outcome::Result(Reply::Steps(steps)) = answer.outcome else {
+        panic!("the caret tell's steps, not {:?}", answer.outcome);
+    };
+    let (Some(StepOutcome::Done(Done::Caret(at))), Some(StepOutcome::Done(Done::ReadText(line)))) =
+        (steps.first(), steps.get(1))
+    else {
+        panic!("the caret and its line: {steps:?}");
+    };
+    let mut line = line.chunks[0].clone();
+    line.first |= at.caret.edges.start;
+    let selection = at
+        .selection
+        .map(|selection| verbatim_model::CaretSelection {
+            range: verbatim_model::Selection {
+                start: TextPosition {
+                    anchor: line.start,
+                    offset: line.offset,
+                },
+                end: TextPosition::at(selection.end.anchor),
+            },
+        });
+    let difference = match steps.get(2) {
+        Some(StepOutcome::Done(Done::CompareSelection(compared))) => {
+            Some(compared.difference.clone())
+        }
+        Some(StepOutcome::NotThere(Missing::Anchor(_))) => None,
+        other => panic!("the comparison: {other:?}"),
+    };
+    Told {
+        caret: verbatim_model::CaretReport { line, selection },
+        baseline: at.held,
+        difference,
     }
 }
 

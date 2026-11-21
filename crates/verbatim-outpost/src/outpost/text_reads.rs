@@ -32,17 +32,15 @@ use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
-use verbatim_model::request::{FocusCaret, FocusCaretRead, Outcome, Reply};
-use verbatim_model::{
-    NodeId, Role, SelectionReadReply, TextDetails, TextOp, TextReply, WatchFinalRead,
-};
+use verbatim_model::request::{FocusCaret, FocusCaretRead};
+use verbatim_model::{NodeId, Role, TextDetails, TextOp, TextReply};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
 use verbatim_uia_rops::Path;
 
 use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
-use crate::text::{self, NodeTextCopy, Slot, TextError, TextSource as _};
+use crate::text::{self, NodeTextCopy, Slot, TextError};
 use verbatim_model::class::normalize;
 use verbatim_win32::window::window_class_name;
 
@@ -484,23 +482,6 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
         .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
 }
 
-/// What `op` fetches beyond the text, as Core named it in the request: a
-/// read that names none fetches nothing more, since it reads no
-/// formatting.
-fn details_of(op: &TextOp) -> TextDetails {
-    match op {
-        TextOp::StartingRead(read) => read.details,
-        TextOp::MoveBySentence(moved) => moved.details,
-        TextOp::Watch(watch) => match watch.final_read {
-            WatchFinalRead::Unit { details, .. } | WatchFinalRead::UnitAtEffect { details, .. } => {
-                details
-            }
-            WatchFinalRead::Terminal => TextDetails::NONE,
-        },
-        _ => TextDetails::NONE,
-    }
-}
-
 /// Runs `$read` on `$node_id`'s text, through whichever source it has,
 /// fetching `$details` beyond the text,
 /// with a copy of its facts holding the anchors `$named`, committing what
@@ -560,46 +541,10 @@ pub(super) fn answer_asked(
     op: &TextOp,
 ) -> TextReply {
     let named = text::named_anchors(op);
-    let details = details_of(op);
-    let read_at_us = context.observed_now();
-    let replied = match op {
-        TextOp::StartingRead(read) => {
-            on_text!(context, node_id, details, &named, |source, text| {
-                text::held::starting_read(source, text, read_at_us, read.unit)
-                    .map_or_else(failed_reply, |started| {
-                        TextReply::Started(Box::new(started))
-                    })
-            })
-        }
-        TextOp::ReadSelection(read) => {
-            adopt_told(context, node_id, read.adopt);
-            on_text!(context, node_id, details, &named, |source, text| {
-                text::held::read_selection(source, text, read_at_us, read.baseline).map_or_else(
-                    failed_reply,
-                    |found| {
-                        TextReply::SelectionRead(Box::new(SelectionReadReply {
-                            edit_selection: source.edit_selection(&found.state),
-                            caret: found.report,
-                            baseline: found.baseline,
-                            difference: found.difference,
-                        }))
-                    },
-                )
-            })
-        }
-        TextOp::MoveBySentence(moved) => {
-            on_text!(context, node_id, details, &named, |source, text| {
-                text::sentence::move_by_sentence(source, text, (moved.point, moved.forward))
-                    .unwrap_or_else(failed_reply)
-            })
-        }
-        // A watch waits in the reducer's table, which runs its checks and
-        // final read as programs of their own ([`watch`]).
-        TextOp::Watch(_) => Ok(TextReply::Unsupported),
-        other => on_text!(context, node_id, details, &named, |source, text| {
-            text::held::perform_placed(source, text, other)
-        }),
-    };
+    let details = TextDetails::NONE;
+    let replied = on_text!(context, node_id, details, &named, |source, text| {
+        text::held::perform_placed(source, text, op)
+    });
     replied.unwrap_or_else(|reply| reply)
 }
 
@@ -666,6 +611,24 @@ pub(super) fn fused_steps(
     Some(answer.outcomes)
 }
 
+/// A batch's `MoveBySentence` of `node_id` from the starting point held
+/// under `from` ([`text::sentence::move_by_sentence`]), its reads fetching
+/// `details`: `Ok(Err)` with the step's outcome for a text with no
+/// sentences or a starting point no longer held.
+pub(super) fn sentence_step(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (from, forward): (verbatim_model::TextAnchor, bool),
+    details: TextDetails,
+) -> Result<
+    text::TextResult<Result<verbatim_model::SentenceMoved, verbatim_model::batch::StepOutcome>>,
+    TextReply,
+> {
+    on_text!(context, node_id, details, &[from.0], |source, text| {
+        text::sentence::move_by_sentence(source, text, (from, forward))
+    })
+}
+
 /// A batch's `CompareSelection` of `node_id` between the held reads
 /// `before` and `after` ([`text::ops::compare_selection`]).
 pub(super) fn compare_step(
@@ -685,62 +648,58 @@ pub(super) fn compare_step(
     )
 }
 
-/// Runs a watch's check or final read
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The watch", Table 15):
-/// the watch's answer when the program ends it, `None` for a check that
-/// shows no effect before the bound or whose read failed, which counts as
-/// no effect. A final read that fails answers nothing, and the reducer
-/// answers the watch failed.
-pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Option<Outcome> {
+/// How a caret wait's check ended the wait.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum WaitEnded {
+    /// The effect was seen, or the bound passed.
+    Waited(verbatim_model::batch::Waited),
+    /// The node, or the starting point, is no longer held.
+    NotThere,
+}
+
+/// Runs a caret wait's check ([`text::check::check`]): how it ended the
+/// wait, `None` for a check that shows no effect before the bound or whose
+/// read failed, which counts as no effect.
+pub(super) fn watch(context: &RequestContext<'_>, program: &WatchProgram) -> Option<WaitEnded> {
     let node_id = program.node;
-    let named = [program.watch.point.0];
-    let read_at_us = context.observed_now();
-    // A terminal's watch reads no unit at its end: Core's full read of the
-    // terminal follows (build 3).
-    let details = match program.watch.final_read {
-        WatchFinalRead::Unit { details, .. } | WatchFinalRead::UnitAtEffect { details, .. } => {
-            details
+    let wait = &program.wait;
+    let WatchWork::Check { word, last } = program.work;
+    let ran = on_text!(
+        context,
+        node_id,
+        TextDetails::NONE,
+        &[wait.from.0],
+        |source, text| {
+            match text.held_read(wait.from) {
+                Some(start) => {
+                    text::check::check(source, &start, text::check::CheckAsk { wait, word, last })
+                }
+                None => Err(TextError::Gone),
+            }
         }
-        WatchFinalRead::Terminal => TextDetails::NONE,
-    };
-    let ran = on_text!(context, node_id, details, &named, |source, text| {
-        let WatchWork::Check { word, last } = program.work;
-        text::check::check(
-            source,
-            text,
-            text::check::CheckAsk {
-                point: program.watch.point,
-                motion: program.watch.motion,
-                word,
-                last,
-                final_read: program.watch.final_read,
-            },
-            read_at_us,
-        )
-    });
+    );
     watch_outcome(ran)
 }
 
-/// What a watch's check that `ran` answers: not there for a node gone; no
-/// answer, as no effect, for a read that failed, the node's text not
-/// opened included, as NVDA's wait counts a caret it could not read as
-/// one that did not move (`editableText.py` 121 to 127); else the check's
-/// answer, if it ended the watch.
+/// What a wait's check that `ran` gives: not there for a node or starting
+/// point gone; no end, as no effect, for a read that failed, the node's
+/// text not opened included, as NVDA's wait counts a caret it could not
+/// read as one that did not move (`editableText.py` 121 to 127); else the
+/// check's end, if it ended the wait.
 fn watch_outcome(
-    ran: Result<crate::text::TextResult<Option<verbatim_model::Watched>>, TextReply>,
-) -> Option<Outcome> {
+    ran: Result<crate::text::TextResult<Option<verbatim_model::batch::Waited>>, TextReply>,
+) -> Option<WaitEnded> {
     match ran {
-        Err(TextReply::Gone) | Ok(Err(TextError::Gone)) => Some(Outcome::NotThere),
+        Err(TextReply::Gone) | Ok(Err(TextError::Gone)) => Some(WaitEnded::NotThere),
         Err(reply) => {
-            tracing::debug!(?reply, "a watch's text could not be opened");
+            tracing::debug!(?reply, "a wait's text could not be opened");
             None
         }
         Ok(Err(TextError::Failed(reason))) => {
-            tracing::debug!(reason, "a watch's read failed");
+            tracing::debug!(reason, "a wait's read failed");
             None
         }
-        Ok(Ok(watched)) => watched
-            .map(|watched| Outcome::Result(Reply::Text(TextReply::Watched(Box::new(watched))))),
+        Ok(Ok(waited)) => waited.map(WaitEnded::Waited),
     }
 }
 
@@ -902,7 +861,7 @@ fn terminal_caret(
     else {
         return Ok(None);
     };
-    let Some(unit) = starting else {
+    if starting.is_none() {
         answer.snapshot.caret = crate::text::caret_report_from(
             source,
             &mut call.text(),
@@ -911,11 +870,11 @@ fn terminal_caret(
         )
         .ok();
         return Ok(None);
-    };
-    match text::held::starting_from(source, &mut call.text(), found, answer.started_us, unit) {
-        Ok(started) => {
-            answer.snapshot.caret = Some(started.caret);
-            Ok(Some(started.point))
+    }
+    match text::held::starting_from(source, &mut call.text(), found, answer.started_us) {
+        Ok((caret, point)) => {
+            answer.snapshot.caret = Some(caret);
+            Ok(Some(point))
         }
         Err(TextError::Gone) => Err(TextReply::Gone),
         Err(TextError::Failed(reason)) => {
@@ -1017,9 +976,9 @@ pub(super) fn terminal_find(
 mod watch_tests {
     use super::*;
 
-    /// A watch whose node's text cannot be opened, or whose read fails,
-    /// goes on as if the check showed no effect; only a node gone ends it
-    /// as not there.
+    /// A wait whose node's text cannot be opened, or whose read fails,
+    /// goes on as if the check showed no effect; only a node or starting
+    /// point gone ends it as not there.
     #[test]
     fn a_watch_read_that_fails_is_no_effect_and_only_a_gone_node_is_not_there() {
         for failed in [TextReply::Unanswered, TextReply::NoText] {
@@ -1029,13 +988,13 @@ mod watch_tests {
             watch_outcome(Ok(Err(TextError::Failed("busy".to_owned())))),
             None
         );
-        assert!(matches!(
+        assert_eq!(
             watch_outcome(Err(TextReply::Gone)),
-            Some(Outcome::NotThere)
-        ));
-        assert!(matches!(
+            Some(WaitEnded::NotThere)
+        );
+        assert_eq!(
             watch_outcome(Ok(Err(TextError::Gone))),
-            Some(Outcome::NotThere)
-        ));
+            Some(WaitEnded::NotThere)
+        );
     }
 }

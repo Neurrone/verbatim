@@ -32,14 +32,14 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
+use verbatim_model::batch::Waited;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyId;
 use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
 use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
-    CallCounts, CaretMotion, NodeId, TerminalRead, TerminalReadReply, TerminalScope,
-    TerminalSnapshot, TextAnchor, TextOp, TextProvider, TextReply, TextUnit, Watch, WatchFinalRead,
-    Watched,
+    CallCounts, CaretReport, NodeId, TerminalRead, TerminalReadReply, TerminalScope,
+    TerminalSnapshot, TextAnchor, TextOp, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
@@ -449,14 +449,20 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
 
 /// A caret key's starting read of the terminal, the caret where mockapp
 /// has it: the caret starting point it mints.
-fn starting_point(terminal: &Terminal) -> TextAnchor {
+fn starting_point(terminal: &Terminal) -> (TextAnchor, CaretReport) {
     let read = terminal.read(TerminalRead {
         starting: Some(TextUnit::Character),
         output: false,
         ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
     });
-    read.point
-        .expect("a starting read mints the starting point")
+    let point = read
+        .point
+        .expect("a starting read mints the starting point");
+    let caret = read
+        .snapshot
+        .caret
+        .expect("a starting read reports the caret it held");
+    (point, caret)
 }
 
 /// Core's watch of a terminal's caret key from `point`, passed now, as
@@ -465,7 +471,11 @@ fn starting_point(terminal: &Terminal) -> TextAnchor {
 /// every 10 ms to 300 ms in Windows Terminal, and no unit is read at its
 /// end (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"). Returns the request's
 /// number.
-fn watch(terminal: &Terminal, point: TextAnchor) -> verbatim_model::request::RequestNumber {
+fn watch(
+    terminal: &Terminal,
+    (point, caret): (TextAnchor, CaretReport),
+) -> verbatim_model::request::RequestNumber {
+    use verbatim_model::batch::{Batch, CaretWait, EffectTest, Op, Placement, Step, Subject};
     let (poll_us, bound_us) = if terminal.console {
         (5_000, 100_000)
     } else {
@@ -473,27 +483,42 @@ fn watch(terminal: &Terminal, point: TextAnchor) -> verbatim_model::request::Req
     };
     terminal.outpost.request(
         terminal.hwnd,
-        Request::Text {
-            node: terminal.node,
-            op: TextOp::Watch(Watch {
-                provider: TextProvider::Uia,
-                point,
-                motion: CaretMotion::NextCharacter,
-                passed_at_us: common::outpost::now_us(),
-                poll_us,
-                events: false,
-                bound_us,
-                final_read: WatchFinalRead::Terminal,
-            }),
-        },
+        verbatim_model::request::Question::Batch(Batch {
+            steps: vec![Step {
+                op: Op::WaitForCaret {
+                    subject: Subject::Node(terminal.node),
+                    wait: Box::new(CaretWait {
+                        from: point,
+                        line: caret.line.text,
+                        offset: caret.line.offset,
+                        word: None,
+                        effect: EffectTest {
+                            unit: false,
+                            line: false,
+                        },
+                        passed_at_us: common::outpost::now_us(),
+                        poll_us,
+                        bound_us,
+                        events: false,
+                    }),
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
+        }),
     )
 }
 
-/// How the watch `number` ended, which must be the outpost's next message.
-fn watched(terminal: &Terminal, number: verbatim_model::request::RequestNumber) -> Watched {
+/// How the wait `number` ended, which must be the outpost's next message.
+fn watched(terminal: &Terminal, number: verbatim_model::request::RequestNumber) -> Waited {
+    use verbatim_model::batch::{Done, StepOutcome};
     match terminal.outpost.answer(number).outcome {
-        Outcome::Result(Reply::Text(TextReply::Watched(watched))) => *watched,
-        other => panic!("the outpost answered {other:?}, not the watch"),
+        Outcome::Result(Reply::Steps(steps)) => match steps[..] {
+            [StepOutcome::Done(Done::WaitForCaret(waited))] => waited,
+            _ => panic!("the wait's outcome, not {steps:?}"),
+        },
+        other => panic!("the outpost answered {other:?}, not the wait"),
     }
 }
 
@@ -508,7 +533,7 @@ fn a_terminal_watch_finds_a_caret_moved_with_no_event() {
     let point = starting_point(&terminal);
     terminal.app.send("caret term 1");
     let number = watch(&terminal, point);
-    assert_eq!(watched(&terminal, number), Watched::EffectUnread);
+    assert_eq!(watched(&terminal, number), Waited::Effect);
     terminal.outpost.settled();
     terminal.quit();
 }
@@ -527,7 +552,7 @@ fn a_caret_event_is_not_a_terminal_watchs_effect() {
     terminal.app.send("caret-event term");
     terminal.outpost.heard(&[Heard::UiaTextSelection]);
     terminal.told();
-    assert_eq!(watched(&terminal, number), Watched::BoundUnread);
+    assert_eq!(watched(&terminal, number), Waited::Bound);
     terminal.outpost.settled();
     terminal.quit();
 }
@@ -643,7 +668,7 @@ fn a_console_caret_event_without_a_move_leaves_the_watch_polling() {
         .outpost
         .heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
     terminal.told();
-    assert_eq!(watched(&terminal, number), Watched::BoundUnread);
+    assert_eq!(watched(&terminal, number), Waited::Bound);
     terminal.outpost.settled();
     terminal.quit();
 }
@@ -655,7 +680,7 @@ fn a_console_watch_finds_a_caret_moved_with_no_event() {
     let point = starting_point(&terminal);
     terminal.app.send("caret text 1");
     let number = watch(&terminal, point);
-    assert_eq!(watched(&terminal, number), Watched::EffectUnread);
+    assert_eq!(watched(&terminal, number), Waited::Effect);
     terminal.outpost.settled();
     terminal.quit();
 }

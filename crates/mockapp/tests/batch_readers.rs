@@ -337,7 +337,10 @@ fn text_operations_read_and_select_through_the_nodes_text() {
 /// not misspelt, the line with no formatting; then the word after it, read
 /// from the earlier batch's caret in a batch of its own, is one call too,
 /// and misspelt.
-#[expect(clippy::too_many_lines, reason = "two batches, each with its assertions")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "two batches, each with its assertions"
+)]
 fn a_run_of_text_steps_is_one_program_with_its_formatting() {
     use verbatim_model::batch::{Point, PointOf};
     use verbatim_model::{FormatAttribute, FormatSet, TextDetails, TextMovement, TextUnit};

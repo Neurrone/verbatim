@@ -174,12 +174,9 @@ fn the_stage_is_derived_from_the_request_out() {
         Some(CaretStage::Confirming)
     );
     assert_eq!(CaretStage::of(&press, &candidate(false)), None);
-    let watch = Wire::Text {
-        node: node(2),
-        op: watch(CaretMotion::NextCharacter, 5_000, true),
-    };
+    let watch = watch(CaretMotion::NextCharacter, 5_000, true);
     assert_eq!(
-        CaretStage::of(&press, &verbatim_model::request::Question::from(watch)),
+        CaretStage::of(&press, &verbatim_model::request::Question::Batch(watch)),
         Some(CaretStage::Watching {
             bound_at_us: 105_000
         })

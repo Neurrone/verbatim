@@ -77,7 +77,6 @@ use std::time::Duration;
 
 use self::charge::{Abandoned, InCharge};
 use self::watch::WatchCancelled;
-use verbatim_model::TextOp;
 use verbatim_model::hung::Marks;
 use verbatim_model::protocol::OutpostToCore;
 
@@ -88,7 +87,9 @@ pub use self::text::{
     Anchor, KeptSelection, LastRead, NodeAnchors, RangeKey, ReadSelection, TextChange, TextFacts,
 };
 pub use self::waiting::{Asks, Cancelled};
-pub use self::watch::{EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches};
+pub use self::watch::{
+    EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches, caret_wait,
+};
 
 /// The time an input comes at: the shell's monotonic clock, from the
 /// outpost's start, and the observation clock events are stamped with, in
@@ -369,15 +370,32 @@ impl Reducer {
                 if self.stopping {
                     return;
                 }
-                if let verbatim_model::request::Question::Legacy(
-                    verbatim_model::request::Request::Text {
-                        node,
-                        op: TextOp::Watch(watch),
-                    },
-                ) = &ask.request
+                // A caret wait waits in the table; a batch that does not
+                // parse is refused whole, as the worker refuses one.
+                if let verbatim_model::request::Question::Batch(batch) = &ask.request
+                    && let Some((node, wait)) = watch::caret_wait(batch)
                 {
-                    self.watches
-                        .arrive((ask.number, ask.window, *node), *watch, now.wall_us);
+                    let wait = wait.clone();
+                    match verbatim_model::batch::parse(
+                        batch.clone(),
+                        verbatim_model::batch::ReaderKind::Outpost,
+                    ) {
+                        Ok(parsed) => self.watches.arrive(
+                            (ask.number, ask.window, node),
+                            (wait, parsed),
+                            now.wall_us,
+                        ),
+                        Err(malformed) => effects.push(Effect::Send(Box::new(
+                            OutpostToCore::Answer(verbatim_model::request::Answer {
+                                number: ask.number,
+                                outcome: verbatim_model::request::Outcome::Refused(
+                                    verbatim_model::request::Refusal::Malformed(malformed),
+                                ),
+                                probes: Vec::new(),
+                                detail: String::new(),
+                            }),
+                        ))),
+                    }
                     return;
                 }
                 for replaced in self.asks.push(ask) {

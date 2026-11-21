@@ -3,9 +3,7 @@
 
 use std::sync::atomic::AtomicU64;
 
-use verbatim_model::{
-    CaretMotion, SelectionDifference, SentenceMoved, TextDetails, WatchFinalRead, Watched,
-};
+use verbatim_model::{CaretMotion, SelectionDifference, SentenceMoved};
 
 use super::*;
 
@@ -768,34 +766,43 @@ fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_by_none() {
     assert_eq!(lost.difference, None);
 }
 
-/// A caret key's starting read holds its starting point with, for
-/// Delete, the word at the caret, which its check compares.
+/// A batch's `Caret` holds the caret's read under its held anchor, the
+/// starting point a caret key's wait and its move by sentence name: the
+/// caret, and no line, which the batch reads by a step of its own.
 #[test]
-fn a_starting_read_holds_the_point_with_the_keys_unit_and_word() {
-    let mut source = Fake::new("alpha beta\n", 6);
+fn a_caret_holds_the_read_a_wait_starts_from() {
+    let mut source = Fake::new(
+        "alpha beta
+",
+        6,
+    );
     let mut anchors = store();
-    let started = held::starting_read(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT,
-        verbatim_model::StartingUnit::AtWithWord(TextUnit::Character),
-    )
-    .expect("the fake answers");
-    assert_eq!(started.unit.text, "b");
-    assert_eq!(started.word.map(|word| word.text), Some("beta".to_owned()));
-    assert_eq!(started.caret.line.offset, 6);
+    let at = ops::caret(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
+    assert!(at.selection.is_none());
     let held = anchors
         .node(1)
         .anchors
         .held
-        .get(&started.point.0)
-        .map(|read| {
-            (
-                read.caret.at,
-                read.unit.as_ref().map(|unit| unit.text.clone()),
-            )
-        });
-    assert_eq!(held, Some((6, Some("beta".to_owned()))));
+        .get(&at.held.0)
+        .map(|read| (read.caret.at, read.line.is_some()));
+    assert_eq!(held, Some((6, false)));
+}
+
+/// The line read at the caret `at` held, as a batch's `ReadText` of it
+/// reads it.
+fn line_at(source: &mut Fake, anchors: &mut NodeText<'_, usize>, at: TextAnchor) -> TextChunk {
+    match perform(
+        source,
+        anchors,
+        &TextOp::Read(TextRead {
+            at: TextPoint::At(TextPosition::at(at)),
+            movement: None,
+            unit: TextUnit::Line,
+        }),
+    ) {
+        TextReply::Read { chunk, .. } => chunk,
+        other => panic!("a line, not {other:?}"),
+    }
 }
 
 /// Verbatim's own caret move and selection answer with the next baseline,
@@ -858,31 +865,29 @@ fn a_move_and_a_selection_for_an_entry_hold_the_next_baseline() {
 /// Moves by sentence from a starting point held at `caret` in
 /// "One. Two.\nThree.", `forward` or back: what it answered and where the
 /// caret is after.
-fn sentence_from(caret: usize, forward: bool) -> (TextReply, usize) {
+fn sentence_from(
+    caret: usize,
+    forward: bool,
+) -> (
+    Result<SentenceMoved, verbatim_model::batch::StepOutcome>,
+    usize,
+) {
     let mut source = Fake::new("One. Two.\nThree.", caret);
     let mut anchors = store();
-    let started = held::starting_read(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT,
-        verbatim_model::StartingUnit::At(TextUnit::Sentence),
-    )
-    .expect("the fake answers");
-    let reply =
-        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (started.point, forward))
-            .expect("the fake answers");
-    (reply, source.caret)
+    let at = ops::caret(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
+    let moved = sentence::move_by_sentence(&mut source, &mut anchors.node(1), (at.held, forward))
+        .expect("the fake answers");
+    (moved, source.caret)
 }
 
 /// The sentence and line a move answered, `None` for another answer.
-fn moved_to(reply: &TextReply) -> Option<(String, String, u32)> {
-    match reply {
-        TextReply::Sentence(moved) => match &**moved {
-            SentenceMoved::Moved { sentence, line, .. } => {
-                Some((sentence.clone(), line.text.clone(), line.offset))
-            }
-            _ => None,
-        },
+fn moved_to(
+    moved: &Result<SentenceMoved, verbatim_model::batch::StepOutcome>,
+) -> Option<(String, String, u32)> {
+    match moved {
+        Ok(SentenceMoved::Moved { sentence, line, .. }) => {
+            Some((sentence.clone(), line.text.clone(), line.offset))
+        }
         _ => None,
     }
 }
@@ -904,11 +909,8 @@ fn a_sentence_move_forward_finds_the_next_sentence_then_paragraph_then_the_end()
     );
     assert_eq!(caret, 10);
     let (reply, caret) = sentence_from(12, true);
-    let TextReply::Sentence(moved) = reply else {
-        panic!("a sentence move, not {reply:?}");
-    };
-    let SentenceMoved::End { line, .. } = *moved else {
-        panic!("the end, not {moved:?}");
+    let Ok(SentenceMoved::End { line, .. }) = reply else {
+        panic!("the end, not {reply:?}");
     };
     assert_eq!((line.text.as_str(), line.offset), ("Three.", 6));
     assert_eq!(caret, 16);
@@ -931,11 +933,8 @@ fn a_sentence_move_back_finds_the_one_before_then_stays_at_the_start() {
     );
     assert_eq!(caret, 5);
     let (reply, caret) = sentence_from(0, false);
-    let TextReply::Sentence(moved) = reply else {
-        panic!("a sentence move, not {reply:?}");
-    };
-    let SentenceMoved::StayedAtStart { sentence, .. } = *moved else {
-        panic!("stayed at the start, not {moved:?}");
+    let Ok(SentenceMoved::StayedAtStart { sentence, .. }) = reply else {
+        panic!("stayed at the start, not {reply:?}");
     };
     assert_eq!(sentence, "One. ");
     assert_eq!(caret, 0);
@@ -949,129 +948,114 @@ fn a_sentence_move_without_sentences_or_its_point_moves_nothing() {
     let mut anchors = store();
     assert_eq!(
         sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
-        Ok(TextReply::AnchorLost)
+        Ok(Err(verbatim_model::batch::StepOutcome::NotThere(
+            verbatim_model::batch::Missing::Anchor(TextAnchor(77))
+        )))
     );
     source.sentences = Sentences::Unsupported;
     assert_eq!(
         sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
-        Ok(TextReply::UnsupportedUnit(TextUnit::Sentence))
+        Ok(Err(verbatim_model::batch::StepOutcome::Refused(
+            verbatim_model::batch::StepRefusal::NoSuchUnit
+        )))
     );
     assert_eq!(source.caret, 0);
 }
 
-/// A watch's check of the key in `source` from its starting read made on
-/// `before`, at the bound when `last`.
+/// A wait's check of the key of `motion` in `before`, from the `Caret`
+/// read there, after `after`, at the bound when `last`; the wait's
+/// starting texts the line read then and, for a key that compares it,
+/// `word`.
 fn watched(
     before: &mut Fake,
     after: impl FnOnce(&mut Fake),
-    (motion, last, final_read): (CaretMotion, bool, WatchFinalRead),
-) -> TextResult<Option<Watched>> {
+    (motion, last, word): (CaretMotion, bool, Option<&str>),
+) -> TextResult<Option<verbatim_model::batch::Waited>> {
     let mut anchors = store();
-    let started = held::starting_read(
-        before,
-        &mut anchors.node(1),
-        REPORTED_AT,
-        verbatim_model::StartingUnit::for_motion(motion),
-    )
-    .expect("the fake answers");
+    let at = ops::caret(before, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
+    let line = line_at(before, &mut anchors.node(1), at.caret.anchor);
+    let start = anchors.node(1).held_read(at.held).expect("the read held");
+    let wait = verbatim_model::batch::CaretWait {
+        from: at.held,
+        line: line.text,
+        offset: line.offset,
+        word: word.map(str::to_owned),
+        effect: verbatim_model::batch::EffectTest {
+            unit: motion.compares_unit(),
+            line: motion.deletes(),
+        },
+        passed_at_us: REPORTED_AT,
+        poll_us: 10_000,
+        bound_us: 100_000,
+        events: false,
+    };
     after(before);
     check::check(
         before,
-        &mut anchors.node(1),
+        &start,
         check::CheckAsk {
-            point: started.point,
-            motion,
-            word: motion.compares_unit(),
+            wait: &wait,
+            word: word.is_some(),
             last,
-            final_read,
         },
-        REPORTED_AT + 1,
     )
 }
 
-const CHARACTER: WatchFinalRead = WatchFinalRead::Unit {
-    unit: TextUnit::Character,
-    details: TextDetails::ALL,
-};
-
-/// The caret and the unit a watch answered.
-fn said(watched: Option<Watched>) -> Option<(&'static str, u32, String)> {
-    match watched? {
-        Watched::Effect(read) => Some(("effect", read.caret.line.offset, read.unit.text)),
-        Watched::Bound(read) => Some(("bound", read.caret.line.offset, read.unit.text)),
-        Watched::BoundUnread => Some(("bound unread", 0, String::new())),
-        Watched::EffectUnread => Some(("effect unread", 0, String::new())),
-    }
-}
-
-/// A check that finds the caret moved from the starting point answers the
-/// effect with the final read made in the same program.
+/// A check that finds the caret moved from the starting point ends the
+/// wait with the effect.
 #[test]
-fn a_check_that_finds_the_caret_moved_answers_the_effect_with_its_final_read() {
+fn a_check_that_finds_the_caret_moved_answers_the_effect() {
     let found = watched(
         &mut Fake::new("alpha beta\n", 2),
         |fake| fake.caret = 3,
-        (CaretMotion::NextCharacter, false, CHARACTER),
+        (CaretMotion::NextCharacter, false, None),
     );
     assert_eq!(
-        said(found.expect("read")),
-        Some(("effect", 3, "h".to_owned()))
+        found.expect("read"),
+        Some(verbatim_model::batch::Waited::Effect)
     );
 }
 
-/// A check that finds nothing before the bound answers nothing; at the
-/// bound it answers with its final read, or nothing read for a final
-/// read only at the effect.
+/// A check that finds nothing before the bound ends nothing; at the bound
+/// it ends the wait at its bound.
 #[test]
 fn a_check_with_no_effect_waits_until_the_bound() {
     let early = watched(
         &mut Fake::new("alpha\n", 5),
         |_| {},
-        (CaretMotion::NextCharacter, false, CHARACTER),
+        (CaretMotion::NextCharacter, false, None),
     );
-    assert_eq!(said(early.expect("read")), None);
+    assert_eq!(early.expect("read"), None);
     let last = watched(
         &mut Fake::new("alpha\n", 0),
         |_| {},
-        (CaretMotion::PreviousCharacter, true, CHARACTER),
+        (CaretMotion::PreviousCharacter, true, None),
     );
     assert_eq!(
-        said(last.expect("read")),
-        Some(("bound", 0, "a".to_owned()))
+        last.expect("read"),
+        Some(verbatim_model::batch::Waited::Bound)
     );
-    let unread = watched(
-        &mut Fake::new("alpha\n", 0),
-        |_| {},
-        (
-            CaretMotion::NextSentence,
-            true,
-            WatchFinalRead::UnitAtEffect {
-                unit: TextUnit::Line,
-                details: TextDetails::ALL,
-            },
-        ),
-    );
-    assert_eq!(unread.expect("read"), Some(Watched::BoundUnread));
 }
 
-/// Delete's effect: the character at the caret changed, the caret not.
+/// Delete's effect: the word at the caret changed, the caret not, compared
+/// with the starting word the wait names.
 #[test]
-fn deletes_effect_is_the_character_at_the_caret_changing() {
+fn deletes_effect_is_the_word_at_the_caret_changing() {
     let found = watched(
         &mut Fake::new("alpha\n", 1),
         |fake| {
             fake.text.remove(1);
         },
-        (CaretMotion::Delete, false, CHARACTER),
+        (CaretMotion::Delete, false, Some("alpha")),
     );
     assert_eq!(
-        said(found.expect("read")),
-        Some(("effect", 1, "p".to_owned()))
+        found.expect("read"),
+        Some(verbatim_model::batch::Waited::Effect)
     );
 }
 
 /// A caret that moved while the check read it is read again rather than
-/// answered torn.
+/// ending on a torn read.
 #[test]
 fn a_check_whose_caret_moved_while_read_reads_again() {
     let mut source = Fake::new("alpha\n", 0);
@@ -1081,48 +1065,11 @@ fn a_check_whose_caret_moved_while_read_reads_again() {
             fake.caret = 1;
             fake.moves_on_read = Some((fake.caret_reads + 2, 2));
         },
-        (CaretMotion::NextCharacter, false, CHARACTER),
+        (CaretMotion::NextCharacter, false, None),
     );
     assert_eq!(
-        said(found.expect("read")),
-        Some(("effect", 2, "p".to_owned()))
+        found.expect("read"),
+        Some(verbatim_model::batch::Waited::Effect)
     );
-}
-
-/// A starting point the outpost no longer holds answers the node gone.
-#[test]
-fn a_check_of_a_point_no_longer_held_is_gone() {
-    let mut source = Fake::new("alpha\n", 0);
-    let mut anchors = store();
-    let checked = check::check(
-        &mut source,
-        &mut anchors.node(1),
-        check::CheckAsk {
-            point: TextAnchor(9_999),
-            motion: CaretMotion::NextCharacter,
-            word: false,
-            last: false,
-            final_read: CHARACTER,
-        },
-        REPORTED_AT,
-    );
-    assert!(matches!(checked, Err(TextError::Gone)), "{checked:?}");
-}
-
-/// The final read after an event reads the caret and the key's unit.
-#[test]
-fn a_final_read_reads_the_caret_and_the_keys_unit() {
-    let mut source = Fake::new("alpha beta\n", 6);
-    let mut anchors = store();
-    let read = check::final_read(
-        &mut source,
-        &mut anchors.node(1),
-        (TextUnit::Word, None),
-        REPORTED_AT,
-    )
-    .expect("the fake answers");
-    assert_eq!(
-        (read.caret.line.offset, read.unit.text),
-        (6, "beta".to_owned())
-    );
+    assert_eq!(source.caret, 2, "read again where the caret came to rest");
 }

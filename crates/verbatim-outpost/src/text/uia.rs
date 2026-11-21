@@ -56,10 +56,10 @@ use verbatim_uia_rops::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, CaretUnit, FormatSpan, Formatting, Located,
-    MAX_CHUNK_UNITS, MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter,
-    SelectionStart, Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer,
-    UnitsRead, UnitsRequest, WatchRead, WatchRequest,
+    CaretRead, CaretRequest, CaretState, FormatSpan, Formatting, Located, MAX_CHUNK_UNITS,
+    MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart,
+    Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead,
+    UnitsRequest, WatchRead, WatchRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -331,7 +331,6 @@ impl UiaText {
             moved: answer.moved,
             selection_moved: answer.selection_moved,
             line: unit_read(answer.line)?,
-            unit: None,
             formats: Vec::new(),
             changes: None,
             since_place: None,
@@ -681,13 +680,6 @@ impl TextSource for UiaText {
             )),
             None => None,
         };
-        // A unit this text does not have is not read.
-        let unit = request.unit.and_then(|unit| match unit {
-            CaretUnit::At(unit) => self.unit(unit).map(verbatim_uia_rops::CaretUnit::At),
-            CaretUnit::BeforeCaret(unit) => self
-                .unit(unit)
-                .map(verbatim_uia_rops::CaretUnit::BeforeCaret),
-        });
         let (attributes, learning) = self.format_reads(self.details);
         let query = CaretQuery {
             element: &self.element,
@@ -697,7 +689,7 @@ impl TextSource for UiaText {
                 .as_ref()
                 .map(|(start, end)| (end_of(start), end_of(end))),
             previous_collapsed: request.previous_collapsed,
-            unit,
+            unit: None,
             formats: request.formats.map(rops_span),
             attributes,
             learning,
@@ -720,7 +712,6 @@ impl TextSource for UiaText {
             None => None,
         };
         let line = unit_read(answer.line)?;
-        let unit = answer.unit.map(unit_read).transpose()?;
         let formats = self.formats_of(answer.runs);
         Ok(Some(CaretRead {
             state: CaretState { caret, selection },
@@ -730,7 +721,6 @@ impl TextSource for UiaText {
                 .map(|(start, end)| (start.cmp(&0), end.cmp(&0))),
             selection_moved: answer.selection_moved,
             line,
-            unit,
             formats,
             changes: answer.changes.map(|changes| {
                 changes
@@ -763,17 +753,16 @@ impl TextSource for UiaText {
                 request.start_selection.1.endpoint,
             ),
         );
-        let attributes = attributes_for(self.details).without(self.support.unsupported);
         let query = WatchQuery {
             element: &self.element,
             pattern: &self.pattern,
             start: end_of(&start),
             start_selection: (end_of(&start_selection.0), end_of(&start_selection.1)),
             word: request.word,
-            unit: request.unit.and_then(|unit| self.unit(unit)),
-            last: request.last,
-            formats: request.formats.map(rops_span),
-            attributes,
+            unit: None,
+            last: false,
+            formats: None,
+            attributes: Attributes::NONE,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
         };
         let (answer, path) =
@@ -793,14 +782,6 @@ impl TextSource for UiaText {
             selection_moved: answer.selection_moved,
             line: unit_read(answer.line)?,
             word: answer.word.map(unit_read).transpose()?,
-            unit: answer.unit.map(unit_read).transpose()?,
-            // With no attribute to read, there is no formatting to wait for.
-            formats: if attributes == Attributes::NONE {
-                Some(Vec::new())
-            } else {
-                answer.runs.map(|runs| self.formats_of(runs))
-            },
-
             moved_while_read: answer.moved_while_read,
         }))
     }

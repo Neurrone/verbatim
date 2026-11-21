@@ -32,8 +32,8 @@ use verbatim_model::request::{
     Reply, Route,
 };
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, QueryKind, SentenceMove, TextAnchor, TextOp, TextPoint,
-    TextPosition, TextProvider, TextRead, TextReadAhead, TextReply, TextThrough,
+    Backend, NodeId, NodeSnapshot, QueryKind, TextAnchor, TextOp, TextPoint, TextPosition,
+    TextRead, TextReadAhead, TextReply, TextThrough,
 };
 
 use super::RequestContext;
@@ -97,7 +97,7 @@ pub(super) fn answer(
     let mut run = Run {
         context,
         client,
-        ask,
+        given: ask.verdict,
         probes,
         focus,
         focus_read,
@@ -108,39 +108,33 @@ pub(super) fn answer(
     if let Some(refused) = run.backend_refusal(parsed.steps()) {
         return refused;
     }
-    let steps = parsed.steps();
-    let mut at = 0;
-    // The end of a run of fusable text steps found to be read one at a
-    // time, so it is not tried again for each of its steps.
-    let mut single_until = 0;
-    while at < steps.len() {
-        if at >= single_until {
-            let end = run.fusable_end(steps, at);
-            if end > at {
-                if let Some(outcomes) = run.fused(&steps[at..end], at) {
-                    run.outcomes.extend(outcomes);
-                    at = end;
-                    continue;
-                }
-                single_until = end;
-            }
-        }
-        let step = &steps[at];
-        let outcome = match step.gate(&run.outcomes) {
-            Ok(Gate::Skip) => StepOutcome::Skipped,
-            Ok(Gate::Run) => match run.step(&step.op) {
-                Ok(outcome) => outcome,
-                Err(whole) => return whole,
-            },
-            Err(KindMismatch) => {
-                tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
-                StepOutcome::Failed
-            }
-        };
-        run.outcomes.push(outcome);
-        at += 1;
-    }
-    Outcome::Result(Reply::Steps(run.outcomes))
+    run.steps(parsed.steps())
+}
+
+/// The answer to a caret wait's batch, `program`'s, its wait ended
+/// `waited`: the steps after the wait run in order under their
+/// conditions, as any batch's do (the request list's design, section 5,
+/// `WaitForCaret`).
+pub(super) fn after_wait(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    program: &verbatim_outpost_logic::WatchProgram,
+    waited: verbatim_model::batch::Waited,
+) -> Outcome {
+    let mut probes = Vec::new();
+    let run = Run {
+        context,
+        client,
+        given: verbatim_model::request::WindowVerdict::ProbeFirst,
+        probes: &mut probes,
+        focus: None,
+        focus_read: None,
+        verdicts: Vec::new(),
+        held: Vec::new(),
+        outcomes: vec![StepOutcome::Done(Done::WaitForCaret(waited))],
+    };
+    let later = program.batch.steps.get(1..).unwrap_or_default();
+    run.steps(later)
 }
 
 /// An object a subject names, resolved once per batch.
@@ -163,7 +157,8 @@ enum Held {
 struct Run<'r, 'c> {
     context: &'r RequestContext<'c>,
     client: &'r mut Client,
-    ask: &'r Ask,
+    /// The verdict Core gave for the request's window.
+    given: verbatim_model::request::WindowVerdict,
     probes: &'r mut Vec<Probe>,
     /// The focused window, taken before anything else when the first step
     /// reads the focus.
@@ -188,6 +183,44 @@ struct Run<'r, 'c> {
 type Stepped = Result<StepOutcome, Outcome>;
 
 impl Run<'_, '_> {
+    /// Runs `steps`, the batch's from the next place on, each under its
+    /// condition: the batch's answer.
+    fn steps(mut self, steps: &[verbatim_model::batch::Step]) -> Outcome {
+        let mut at = 0;
+        // The end of a run of fusable text steps found to be read one at a
+        // time, so it is not tried again for each of its steps.
+        let mut single_until = 0;
+        while at < steps.len() {
+            if at >= single_until {
+                let end = self.fusable_end(steps, at);
+                if end > at {
+                    let first = self.outcomes.len();
+                    if let Some(outcomes) = self.fused(&steps[at..end], first) {
+                        self.outcomes.extend(outcomes);
+                        at = end;
+                        continue;
+                    }
+                    single_until = end;
+                }
+            }
+            let step = &steps[at];
+            let outcome = match step.gate(&self.outcomes) {
+                Ok(Gate::Skip) => StepOutcome::Skipped,
+                Ok(Gate::Run) => match self.step(&step.op) {
+                    Ok(outcome) => outcome,
+                    Err(whole) => return whole,
+                },
+                Err(KindMismatch) => {
+                    tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
+                    StepOutcome::Failed
+                }
+            };
+            self.outcomes.push(outcome);
+            at += 1;
+        }
+        Outcome::Result(Reply::Steps(self.outcomes))
+    }
+
     /// The place in `held` of what `subject` names, resolved at its first
     /// use: `Err` with the whole batch's outcome when the subject's window
     /// is read through the other backend.
@@ -216,7 +249,7 @@ impl Run<'_, '_> {
             },
             // Read through Core's verdict for the request's window, as the
             // listener's element is UI Automation's.
-            Subject::Route(route) => match self.verdict_of(route.window, self.ask.verdict) {
+            Subject::Route(route) => match self.verdict_of(route.window, self.given) {
                 Some(true) => Ok(Held::Route(route.clone())),
                 Some(false) => return Err(Outcome::Refused(Refusal::ReadThroughMsaa)),
                 None => Err(Missing::Object),
@@ -278,7 +311,7 @@ impl Run<'_, '_> {
                     (self.verdict_of(ids.window, given) == Some(true))
                         .then_some(Refusal::ReadThroughUia)
                 }
-                Some(Subject::Route(route)) => (self.verdict_of(route.window, self.ask.verdict)
+                Some(Subject::Route(route)) => (self.verdict_of(route.window, self.given)
                     == Some(false))
                 .then_some(Refusal::ReadThroughMsaa),
                 _ => None,
@@ -1007,12 +1040,32 @@ impl Run<'_, '_> {
                     },
                 ));
             }
-            Op::WaitForCaret { .. } => {
-                // The wait runs from the outpost's table of waiting
-                // requests, which the caret keys' step converts.
-                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
+            Op::MoveBySentence {
+                from,
+                forward,
+                details,
+                ..
+            } => {
+                return Ok(
+                    match text_reads::sentence_step(context, node, (*from, *forward), *details) {
+                        Err(reply) => text_refused(&reply, node, None),
+                        Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+                        Ok(Err(TextError::Failed(reason))) => {
+                            tracing::debug!(reason, "a move by sentence failed");
+                            StepOutcome::Failed
+                        }
+                        Ok(Ok(Err(outcome))) => outcome,
+                        Ok(Ok(Ok(moved))) => StepOutcome::Done(Done::MoveBySentence(moved)),
+                    },
+                );
             }
-            op => match self.legacy(op, node) {
+            Op::WaitForCaret { .. } => {
+                // A wait is only ever a batch's first step, and such a
+                // batch waits in the table of waiting requests.
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, "a caret wait reached the worker's batch");
+                return Ok(StepOutcome::Failed);
+            }
+            op => match self.legacy(op) {
                 Some(legacy) => legacy,
                 None => return Ok(StepOutcome::Failed),
             },
@@ -1049,7 +1102,6 @@ impl Run<'_, '_> {
                     offset: None,
                 })
             }
-            TextReply::Sentence(moved) => Done::MoveBySentence(*moved),
             other => return Ok(text_refused(&other, node, named)),
         }))
     }
@@ -1057,7 +1109,7 @@ impl Run<'_, '_> {
     /// The text request of node `node` that a read or move by points runs
     /// as, its points resolved: `None` when a point names a result not of
     /// its kind, which the parse rules out.
-    fn legacy(&self, op: &Op, node: NodeId) -> Option<TextOp> {
+    fn legacy(&self, op: &Op) -> Option<TextOp> {
         let point = |point: &Point| self.point(*point);
         Some(match op {
             Op::ReadText {
@@ -1120,21 +1172,6 @@ impl Run<'_, '_> {
                 }
             }
             Op::Locate { at, .. } => TextOp::Location(point(at)?),
-            Op::MoveBySentence {
-                from,
-                forward,
-                details,
-                ..
-            } => TextOp::MoveBySentence(SentenceMove {
-                provider: if self.context.store.runtime_id_of(node).is_some() {
-                    TextProvider::Uia
-                } else {
-                    TextProvider::EditMessages
-                },
-                point: *from,
-                forward: *forward,
-                details: *details,
-            }),
             _ => return None,
         })
     }

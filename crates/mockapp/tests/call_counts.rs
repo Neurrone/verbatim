@@ -66,8 +66,8 @@ use verbatim_model::{
     CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
 use verbatim_model::{
-    StartingUnit, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead,
-    TextReply, TextThrough, TextUnit, Theme,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough,
+    TextUnit, Theme,
 };
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
@@ -3187,28 +3187,74 @@ fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
     (step.spoken(), step.calls)
 }
 
-/// The program of a caret tell's read on this thread, as the outpost's
-/// worker runs it (`verbatim_outpost::text::held::read_selection`), with
-/// `verbatim_uia_rops`'s counting on: mockapp's "Notes" document, the
-/// caret at `caret`'s command, compared with the baseline read before it
-/// at the text's start. The instructions its one program executed.
+/// The program of a caret tell's batch on this thread, as the outpost's
+/// worker runs a run of text steps (`verbatim_outpost::text::fused::run`),
+/// with `verbatim_uia_rops`'s counting on: mockapp's "Notes" document, the
+/// caret at `caret`'s command, its `Caret`, its line read from it, and its
+/// selection compared with the baseline a `Caret` held before it at the
+/// text's start. The instructions its one program executed.
 fn caret_tell_program(caret: &str) -> u32 {
+    use verbatim_model::batch::{
+        Before, Done, Op, Place, Point, PointOf, Step, StepOutcome, Subject,
+    };
     let title = common::unique_title("mockapp-counts-caret-tell-program");
     let mut app = common::spawn_visible("caret_watch.json", "uia", &title);
     let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
     let mut source = uia_notes(hwnd);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
+    let node = verbatim_model::NodeId::new(1);
+    let subject = Subject::Node(node);
+    let step = |op| Step { op, when: None };
+    let caret_step = step(Op::Caret {
+        subject: subject.clone(),
+        adopt: None,
+    });
     common::apply(&mut app, hwnd, "caret doc 0");
-    let baseline = verbatim_outpost::text::held::read_selection(&mut source, &mut anchors, 1, None)
-        .expect("the baseline's read")
-        .baseline;
+    let held = verbatim_outpost::text::fused::run(
+        &uia,
+        (node, &mut source, &mut anchors),
+        (std::slice::from_ref(&caret_step), 0, &[]),
+        (None, 1),
+    );
+    let Some(StepOutcome::Done(Done::Caret(baseline))) = held.outcomes.first() else {
+        panic!("the baseline's caret: {:?}", held.outcomes);
+    };
+    let told = [
+        caret_step.clone(),
+        step(Op::ReadText {
+            subject: subject.clone(),
+            at: Point::Of(Place(0), PointOf::Caret),
+            movement: None,
+            unit: TextUnit::Line,
+            count: 1,
+            details: verbatim_model::TextDetails::NONE,
+        }),
+        step(Op::CompareSelection {
+            subject,
+            before: Before::Baseline(baseline.held),
+            after: Place(0),
+        }),
+    ];
     common::apply(&mut app, hwnd, caret);
     verbatim_uia_rops::counting::start();
-    verbatim_outpost::text::held::read_selection(&mut source, &mut anchors, 2, Some(baseline))
-        .expect("the caret tell's read");
+    let answer = verbatim_outpost::text::fused::run(
+        &uia,
+        (node, &mut source, &mut anchors),
+        (&told, 0, &[]),
+        (None, 2),
+    );
     let counts = verbatim_uia_rops::counting::stop();
     app.quit();
+    assert!(
+        answer
+            .outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, StepOutcome::Done(_))),
+        "the caret tell's batch: {:?}",
+        answer.outcomes
+    );
     match counts.as_slice() {
         [Some(count)] => *count,
         counts => panic!("one counted program, not {counts:?}"),
@@ -3216,20 +3262,17 @@ fn caret_tell_program(caret: &str) -> u32 {
 }
 
 /// A caret tell's read, the cost of each UI Automation caret event on the
-/// committed focus (`caret_tell_read`): remotely one program, which reads
-/// the caret, the selection, the caret's line, the selection's text and
-/// its changes from the baseline, the element and its text pattern being
-/// the focus's, held since its completion. Before the selection's text and
-/// changes were read in the program, they were read from the ranges after
-/// it, six calls more. Classically the read is the classic calls behind the
-/// program's signature, 19, the caret being the selection's start with no
-/// `TextPattern2` caret or search for where the selection starts.
-/// The program's instructions, under UI Automation's limit of 10,000
-/// (`instruction_limit.rs`): 90 for the selection "alpha" in a line of
-/// plain text, compared with a baseline at the text's start, and 48 for the
-/// caret alone moved inside the line; the caret read's worst case, the same
-/// program with every part asked, is pinned by `instruction_limit.rs`'s
-/// `caret_reads_execute_exactly`.
+/// committed focus (`caret_tell_read`): remotely one program, the batch's
+/// `Caret`, the caret's line and the selection's comparison with the
+/// baseline, with its text and its changes, the element and its text
+/// pattern being the focus's, held since its completion. Classically each
+/// step's calls in turn, 23: the caret, the selection and whether each is
+/// at the text's start or end, the line, then the comparison's (the read
+/// the batch replaced shared its reads of the caret among them, 19). The
+/// program's instructions, under UI Automation's limit of 10,000: 160 for
+/// the selection "alpha" in a line of plain text, compared with a baseline
+/// at the text's start, and 139 for the caret alone moved inside the line
+/// (the purpose-built program the batch replaced executed 90 and 48).
 fn caret_tell_reads_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -3238,7 +3281,7 @@ fn caret_tell_reads_cost_exactly() {
     )]];
     for (operation, remote, expected) in [
         ("UIA caret tell's read, remotely", true, calls(1, 0, 0)),
-        ("UIA caret tell's read, classically", false, calls(19, 0, 0)),
+        ("UIA caret tell's read, classically", false, calls(23, 0, 0)),
     ] {
         let (said, measured) = caret_tell_read(remote);
         assert_eq!(said, selected, "{operation}: what Core said");
@@ -3249,51 +3292,41 @@ fn caret_tell_reads_cost_exactly() {
             caret_tell_program("caret doc 0 5"),
             caret_tell_program("caret doc 3")
         ],
-        [90, 48],
+        [160, 139],
         "the caret tell's read's program, a selection and the caret alone"
     );
     ratchet.finish();
 }
 
-/// A held caret key's starting read (`TextOp::StartingRead`,
-/// `books/dev/src/explanation/design/key-holding.md`), the read each held
-/// key waits for before its stroke is sent: the caret, its line and the
-/// selection, and the key's unit at the caret, a character here, with no
-/// word, as the outpost's worker runs it
-/// (`verbatim_outpost::text::held::starting_read`) on mockapp's "Notes"
-/// document, the caret inside its first line, through UI Automation
-/// remotely and classically and through an edit control's window
-/// messages. Remotely one program; classically the caret report's 8
-/// calls, the unit read from the line already read; in the edit control
-/// the caret report's 5 window messages.
-///
-/// The starting reads of Backspace and Control+Backspace, the caret inside
-/// "alpha", read the character or the word around the character before
-/// the caret too (`StartingUnit::BeforeCaret`): remotely in the same
-/// program, one call; classically the caret read's calls and the unit's,
-/// the caret copied, moved back a character and expanded, its text and
-/// its part before the caret read, 15 calls in all; in the edit control
-/// the caret report's messages, then the character before the caret and
-/// the unit around it, each found from its line's messages, 20 window
-/// messages.
+/// A caret key's starting batch (the request list's design, section 6,
+/// `StartingRead`), as Core sends it and a real outpost runs it: the
+/// `Caret`, the caret's line read from it, and for Backspace and
+/// Control+Backspace the unit around the character before the caret (a
+/// `ReadText` from the caret moved back a character), on mockapp's "Notes"
+/// document, the caret inside its first line. Through UI Automation
+/// remotely the batch is one program, as the starting read it replaces was
+/// (the design's section 5); classically the steps' calls one by one: the
+/// caret, the selection and whether each is at the text's start or end,
+/// then each unit read from the caret held, 12 calls, and 23 and 20 with
+/// the word and the character before the caret (the starting read the
+/// batch replaced read the caret's line with it in 8, and the unit in 15).
+/// Through an edit control's window messages, the caret's and the text's
+/// length, then the line's, then the unit's, each found from its line's
+/// messages: 6, and 21 with a unit before the caret.
+#[expect(clippy::too_many_lines, reason = "each text's cases, then the edit control's")]
 fn starting_reads_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
-    let character = (StartingUnit::At(TextUnit::Character), "l");
-    let word = (StartingUnit::BeforeCaret(TextUnit::Word), "alpha ");
-    let before = (StartingUnit::BeforeCaret(TextUnit::Character), "a");
+    let arrow = (None, "");
+    let word = (Some(TextUnit::Word), "alpha ");
+    let before = (Some(TextUnit::Character), "a");
     for (operation, remote, read, expected) in [
-        (
-            "UIA starting read, remotely",
-            true,
-            character,
-            calls(1, 0, 0),
-        ),
+        ("UIA starting read, remotely", true, arrow, calls(1, 0, 0)),
         (
             "UIA starting read, classically",
             false,
-            character,
-            calls(8, 0, 0),
+            arrow,
+            calls(12, 0, 0),
         ),
         (
             "UIA Control+Backspace starting read, remotely",
@@ -3305,7 +3338,7 @@ fn starting_reads_cost_exactly() {
             "UIA Control+Backspace starting read, classically",
             false,
             word,
-            calls(15, 0, 0),
+            calls(23, 0, 0),
         ),
         (
             "UIA Backspace starting read, remotely",
@@ -3317,19 +3350,34 @@ fn starting_reads_cost_exactly() {
             "UIA Backspace starting read, classically",
             false,
             before,
-            calls(15, 0, 0),
+            calls(20, 0, 0),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-starting-read");
         let mut app = common::spawn_visible("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
-        let mut source = uia_notes(hwnd).remote(remote);
-        let measured = starting_read_calls(
-            &mut app,
-            hwnd,
-            &mut source,
-            (verbatim_win32::calls::take, read),
+        app.send("set-focus doc");
+        let outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
         );
+        let uia = Uia::new().expect("a UIA client");
+        outpost.read_focus_as(
+            common::listener_focus(&uia, hwnd.0 as isize)
+                .live()
+                .element(),
+        );
+        let node = text_node(
+            &outpost,
+            hwnd,
+            WindowVerdict::Uia,
+            verbatim_model::batch::Subject::Focus,
+        );
+        let measured =
+            starting_batch_calls(&mut app, (&outpost, hwnd, WindowVerdict::Uia), node, read);
+        drop(outpost);
         app.quit();
         ratchet.check_calls(operation, measured, expected);
     }
@@ -3346,64 +3394,154 @@ fn starting_reads_cost_exactly() {
         )
     }
     .expect("mockapp's edit control");
+    let outpost = OutpostUnderTest::new(&app);
+    let node = text_node(
+        &outpost,
+        edit,
+        WindowVerdict::Msaa,
+        verbatim_model::batch::Subject::Msaa {
+            ids: verbatim_model::request::MsaaIds {
+                window: verbatim_model::WindowHandle(edit.0 as u64),
+                object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                child: 0,
+            },
+            redirect: true,
+        },
+    );
     for (operation, read, expected) in [
-        ("Edit control starting read", character, calls(0, 0, 5)),
+        ("Edit control starting read", arrow, calls(0, 0, 6)),
         (
             "Edit control Control+Backspace starting read",
             word,
-            calls(0, 0, 20),
+            calls(0, 0, 21),
         ),
         (
             "Edit control Backspace starting read",
             before,
-            calls(0, 0, 20),
+            calls(0, 0, 21),
         ),
     ] {
-        let mut source = EditText::new(edit.0 as isize, 0);
-        let measured = starting_read_calls(
-            &mut app,
-            hwnd,
-            &mut source,
-            (verbatim_win32::calls::take, read),
-        );
+        let measured =
+            starting_batch_calls(&mut app, (&outpost, edit, WindowVerdict::Msaa), node, read);
         ratchet.check_calls(operation, measured, expected);
     }
+    drop(outpost);
     app.quit();
     ratchet.finish();
 }
 
-/// The calls of one starting read of `source` for `unit`, mockapp's
-/// "Notes" document, its caret moved to the second character, as `take`
-/// counts them; the read must find `text`, the unit's.
-fn starting_read_calls<S: TextSource>(
-    app: &mut common::MockApp,
+/// The node of the text `subject` names, as a batch's focus read of it
+/// mints it.
+fn text_node(
+    outpost: &OutpostUnderTest,
     hwnd: HWND,
-    source: &mut S,
-    (take, (unit, text)): (fn() -> CallCounts, (StartingUnit, &str)),
-) -> CallCounts {
-    let mut store = Anchors::new(Arc::default());
-    let mut anchors = store.node(1);
-    common::apply(app, hwnd, "caret doc 1");
-    let _ = take();
-    let started = verbatim_outpost::text::held::starting_read(source, &mut anchors, 1, unit)
-        .expect("the starting read");
-    let measured = take();
-    assert_eq!(
-        (started.caret.line.offset, started.unit.text.as_str()),
-        (1, text),
-        "the caret and the unit {unit:?}"
+    verdict: WindowVerdict,
+    subject: verbatim_model::batch::Subject,
+) -> verbatim_model::NodeId {
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome};
+    let (answer, _) = outpost.batch(
+        hwnd,
+        verdict,
+        Batch {
+            steps: vec![Step {
+                op: Op::FocusRead {
+                    subject,
+                    known: Vec::new(),
+                    set: common::outpost::focus_set(),
+                    details: verbatim_model::TextDetails::NONE,
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
+        },
     );
+    match answer.outcome {
+        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Steps(steps)) => {
+            match steps.first() {
+                Some(StepOutcome::Done(Done::FocusRead(read))) => {
+                    read.focus.read.node.expect("a node")
+                }
+                other => panic!("the focus read: {other:?}"),
+            }
+        }
+        other => panic!("a batch's steps, not {other:?}"),
+    }
+}
+
+/// The calls of one starting batch on `node` in the window and with the
+/// verdict given, mockapp's "Notes" text with its caret moved to the
+/// second character: the caret, its line, and with `unit` the unit
+/// around the character before the caret, which must be `text`.
+fn starting_batch_calls(
+    app: &mut common::MockApp,
+    (outpost, hwnd, verdict): (&OutpostUnderTest, HWND, WindowVerdict),
+    node: verbatim_model::NodeId,
+    (unit, text): (Option<TextUnit>, &str),
+) -> CallCounts {
+    use verbatim_model::batch::{
+        Batch, Done, Op, Place, Placement, Point, PointOf, Step, StepOutcome, Subject,
+    };
+    common::apply(app, hwnd, "caret doc 1");
+    let read_at_caret = |movement, unit| Step {
+        op: Op::ReadText {
+            subject: Subject::Node(node),
+            at: Point::Of(Place(0), PointOf::Caret),
+            movement,
+            unit,
+            count: 1,
+            details: verbatim_model::TextDetails::NONE,
+        },
+        when: None,
+    };
+    let mut steps = vec![
+        Step {
+            op: Op::Caret {
+                subject: Subject::Node(node),
+                adopt: None,
+            },
+            when: None,
+        },
+        read_at_caret(None, TextUnit::Line),
+    ];
+    if let Some(unit) = unit {
+        steps.push(read_at_caret(
+            Some(verbatim_model::TextMovement {
+                unit: TextUnit::Character,
+                count: -1,
+            }),
+            unit,
+        ));
+    }
+    let (answer, measured) = outpost.batch(
+        hwnd,
+        verdict,
+        Batch {
+            steps,
+            placement: Placement::Queue,
+            spare: None,
+        },
+    );
+    let verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Steps(steps)) =
+        answer.outcome
+    else {
+        panic!("a batch's steps, not {:?}", answer.outcome);
+    };
+    let chunk = |outcome: Option<&StepOutcome>| match outcome {
+        Some(StepOutcome::Done(Done::ReadText(read))) => read.chunks[0].clone(),
+        other => panic!("a read's chunks, not {other:?}"),
+    };
+    assert_eq!(chunk(steps.get(1)).offset, 1, "the caret on its line");
+    if unit.is_some() {
+        assert_eq!(chunk(steps.get(2)).text, text, "the unit before the caret");
+    }
     measured
 }
 
-/// A line key's watch check that finds the caret moved, the key's final
-/// read made with it (`verbatim_outpost::text::check::check`), its line's
-/// formatting read with the details the default theme reports and with
-/// every detail, and with none: remotely one program each way, the
-/// formatting read in it; classically the check's 13 calls, and 8 more for
-/// the formatting of mockapp's one-stretch line, whose annotation types
-/// and attributes are read with the default theme's details or every
-/// detail alike.
+/// A line key's wait's check that finds the caret moved
+/// (`verbatim_outpost::text::check::check`): remotely one program;
+/// classically the check's calls. Its formatting, the batch's later reads,
+/// is read by those reads.
 fn watch_checks_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -3415,28 +3553,10 @@ fn watch_checks_cost_exactly() {
             calls(13, 0, 0),
         ),
         (
-            "UIA line key's check, default details, remotely",
+            "UIA line key's check, remotely",
             true,
-            Theme::builtin_default().reported().text,
+            verbatim_model::TextDetails::NONE,
             calls(1, 0, 0),
-        ),
-        (
-            "UIA line key's check, default details, classically",
-            false,
-            Theme::builtin_default().reported().text,
-            calls(21, 0, 0),
-        ),
-        (
-            "UIA line key's check, every detail, remotely",
-            true,
-            verbatim_model::TextDetails::ALL,
-            calls(1, 0, 0),
-        ),
-        (
-            "UIA line key's check, every detail, classically",
-            false,
-            verbatim_model::TextDetails::ALL,
-            calls(21, 0, 0),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-watch-check");
@@ -3446,36 +3566,55 @@ fn watch_checks_cost_exactly() {
         let mut store = Anchors::new(Arc::default());
         let mut anchors = store.node(1);
         common::apply(&mut app, hwnd, "caret doc 0");
-        let started = verbatim_outpost::text::held::starting_read(
+        let at =
+            verbatim_outpost::text::ops::caret(&mut source, &mut anchors, 1).expect("the caret");
+        let caret =
+            verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at.caret.anchor));
+        let line = match perform(
             &mut source,
             &mut anchors,
-            1,
-            verbatim_model::StartingUnit::At(TextUnit::Line),
-        )
-        .expect("the starting read");
+            &verbatim_model::TextOp::Read(verbatim_model::TextRead {
+                at: caret,
+                movement: None,
+                unit: TextUnit::Line,
+            }),
+        ) {
+            verbatim_model::TextReply::Read { chunk, .. } => chunk,
+            other => panic!("the caret's line, not {other:?}"),
+        };
+        let start = anchors.held_read(at.held).expect("the read held");
+        let wait = verbatim_model::batch::CaretWait {
+            from: at.held,
+            line: line.text,
+            offset: line.offset,
+            word: None,
+            effect: verbatim_model::batch::EffectTest {
+                unit: false,
+                line: false,
+            },
+            passed_at_us: 1,
+            poll_us: 10_000,
+            bound_us: 100_000,
+            events: false,
+        };
         common::apply(&mut app, hwnd, "caret doc 11");
         let _ = verbatim_win32::calls::take();
         let watched = verbatim_outpost::text::check::check(
             &mut source,
-            &mut anchors,
+            &start,
             verbatim_outpost::text::check::CheckAsk {
-                point: started.point,
-                motion: verbatim_model::CaretMotion::NextLine,
+                wait: &wait,
                 word: false,
                 last: false,
-                final_read: verbatim_model::WatchFinalRead::Unit {
-                    unit: TextUnit::Line,
-                    details,
-                },
             },
-            2,
         )
         .expect("the check");
         let measured = verbatim_win32::calls::take();
         app.quit();
-        assert!(
-            matches!(&watched, Some(verbatim_model::Watched::Effect(read)) if read.caret.line.text == "gamma\n"),
-            "{operation}: {watched:?}"
+        assert_eq!(
+            watched,
+            Some(verbatim_model::batch::Waited::Effect),
+            "{operation}"
         );
         ratchet.check_calls(operation, measured, expected);
     }

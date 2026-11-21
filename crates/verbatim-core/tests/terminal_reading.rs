@@ -1339,9 +1339,20 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
     );
 }
 
+/// How a terminal key's wait polls: from its starting point, its pass, its
+/// poll, its bound, whether events count, and its effect test.
+type Polled = (
+    verbatim_model::TextAnchor,
+    u64,
+    u32,
+    u32,
+    bool,
+    verbatim_model::batch::EffectTest,
+);
+
 /// Up held in `session` at 200 ms, its starting read answered at 300 ms:
-/// the watch Core sent.
-fn held_up_watch(session: &mut Session) -> Vec<verbatim_model::Watch> {
+/// how the wait Core sent polls.
+fn held_up_watch(session: &mut Session) -> Vec<Polled> {
     session.at_ms = 300;
     session.press(&caret(
         TraceId::from_raw(9),
@@ -1357,7 +1368,25 @@ fn held_up_watch(session: &mut Session) -> Vec<verbatim_model::Watch> {
         [Asked::Starting, Asked::Watch, Asked::Fresh]
     );
     std::mem::take(&mut session.watches)
+        .into_iter()
+        .map(|wait| {
+            (
+                wait.from,
+                wait.passed_at_us,
+                wait.poll_us,
+                wait.bound_us,
+                wait.events,
+                wait.effect,
+            )
+        })
+        .collect()
 }
+
+/// Up's effect test: neither the unit at the caret nor the line counts.
+const MOVES: verbatim_model::batch::EffectTest = verbatim_model::batch::EffectTest {
+    unit: false,
+    line: false,
+};
 
 /// A terminal caret key's watch in the console host
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): from the starting point its
@@ -1373,16 +1402,14 @@ fn a_console_hosts_caret_key_is_watched_every_5_ms_to_100_ms_with_no_event() {
     let mut session = Session::in_console(Outpost::new(Flavor::ConsoleHost, 20, 4, 10));
     assert_eq!(
         held_up_watch(&mut session),
-        [verbatim_model::Watch {
-            provider: verbatim_model::TextProvider::Uia,
-            point: verbatim_model::TextAnchor(3),
-            motion: CaretMotion::PreviousLine,
-            passed_at_us: 300_000,
-            poll_us: 5_000,
-            events: false,
-            bound_us: 100_000,
-            final_read: verbatim_model::WatchFinalRead::Terminal,
-        }]
+        [(
+            verbatim_model::TextAnchor(3),
+            300_000,
+            5_000,
+            100_000,
+            false,
+            MOVES
+        )]
     );
 }
 
@@ -1396,16 +1423,14 @@ fn a_windows_terminal_caret_key_is_watched_every_10_ms_to_300_ms_with_no_event()
     let mut session = Session::new(Flavor::WindowsTerminal, 20, 4, 10);
     assert_eq!(
         held_up_watch(&mut session),
-        [verbatim_model::Watch {
-            provider: verbatim_model::TextProvider::Uia,
-            point: verbatim_model::TextAnchor(3),
-            motion: CaretMotion::PreviousLine,
-            passed_at_us: 300_000,
-            poll_us: 10_000,
-            events: false,
-            bound_us: 300_000,
-            final_read: verbatim_model::WatchFinalRead::Terminal,
-        }]
+        [(
+            verbatim_model::TextAnchor(3),
+            300_000,
+            10_000,
+            300_000,
+            false,
+            MOVES
+        )]
     );
 }
 

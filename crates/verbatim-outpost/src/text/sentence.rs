@@ -15,7 +15,8 @@
 
 use std::ops::Range;
 
-use verbatim_model::{SentenceMoved, TextAnchor, TextChunk, TextReply, TextUnit};
+use verbatim_model::batch::{Missing, StepOutcome, StepRefusal};
+use verbatim_model::{SentenceMoved, TextAnchor, TextChunk, TextUnit};
 
 use super::held::held_after_move;
 use super::{MAX_CHUNK_UNITS, NodeText, Sentences, TextResult, TextSource, Unit, chunk};
@@ -82,9 +83,9 @@ fn last_sentence(paragraph: &TextChunk) -> Sentence {
 
 /// Moves the caret by sentence from the starting point held under
 /// `point`, `forward` or back, and answers where it went, with the next
-/// selection baseline. A source with no sentence unit answers
-/// [`TextReply::UnsupportedUnit`], a starting point no longer held
-/// [`TextReply::AnchorLost`].
+/// selection baseline. A source with no sentence unit is refused no such
+/// unit, and a starting point no longer held is not there: `Ok(Err)` with
+/// the step's outcome.
 ///
 /// # Errors
 ///
@@ -93,15 +94,15 @@ pub fn move_by_sentence<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (point, forward): (TextAnchor, bool),
-) -> TextResult<TextReply> {
+) -> TextResult<Result<SentenceMoved, StepOutcome>> {
     if source.sentences() == Sentences::Unsupported {
-        return Ok(TextReply::UnsupportedUnit(TextUnit::Sentence));
+        return Ok(Err(StepOutcome::Refused(StepRefusal::NoSuchUnit)));
     }
     let Some(start) = anchors.held_read(point) else {
-        return Ok(TextReply::AnchorLost);
+        return Ok(Err(StepOutcome::NotThere(Missing::Anchor(point))));
     };
     let Some(here) = paragraph_at(source, anchors, &start.caret, Some(&start.caret))? else {
-        return Ok(TextReply::Unsupported);
+        return Ok(Err(StepOutcome::Refused(StepRefusal::Unsupported)));
     };
     let found = if forward {
         next_sentence(&here.1)
@@ -109,7 +110,7 @@ pub fn move_by_sentence<S: TextSource>(
         sentence_before(&here.1)
     };
     if let Some(sentence) = found {
-        return move_to(source, anchors, here, sentence);
+        return move_to(source, anchors, here, sentence).map(Ok);
     }
     let count = if forward { 1 } else { -1 };
     let beside = match source.move_by(&here.0.start, TextUnit::Paragraph, count)? {
@@ -119,21 +120,18 @@ pub fn move_by_sentence<S: TextSource>(
     match (beside, forward) {
         (Some(next), true) => {
             let sentence = first_sentence(&next.1);
-            move_to(source, anchors, next, sentence)
+            move_to(source, anchors, next, sentence).map(Ok)
         }
         (Some(previous), false) => {
             let sentence = last_sentence(&previous.1);
-            move_to(source, anchors, previous, sentence)
+            move_to(source, anchors, previous, sentence).map(Ok)
         }
         (None, true) => {
             let end = source.end()?;
             let mut line = here.1;
             line.offset = u32::try_from(line.text.len()).unwrap_or(u32::MAX);
             let baseline = place(source, anchors, &end)?;
-            Ok(TextReply::Sentence(Box::new(SentenceMoved::End {
-                line,
-                baseline,
-            })))
+            Ok(Ok(SentenceMoved::End { line, baseline }))
         }
         (None, false) => {
             let sentence = first_sentence(&here.1);
@@ -141,13 +139,11 @@ pub fn move_by_sentence<S: TextSource>(
             let read_at_us = verbatim_process::clock::now_us();
             let kept = anchors.anchors.last.as_ref().map(|last| last.read_at_us);
             let baseline = held_after_move(source, anchors, kept, read_at_us)?;
-            Ok(TextReply::Sentence(Box::new(
-                SentenceMoved::StayedAtStart {
-                    sentence: sentence.text,
-                    line: here.1,
-                    baseline,
-                },
-            )))
+            Ok(Ok(SentenceMoved::StayedAtStart {
+                sentence: sentence.text,
+                line: here.1,
+                baseline,
+            }))
         }
     }
 }
@@ -183,7 +179,7 @@ fn move_to<S: TextSource>(
     anchors: &mut NodeText<'_, S::Pos>,
     (unit, chunk): (Unit<S::Pos>, TextChunk),
     sentence: Sentence,
-) -> TextResult<TextReply> {
+) -> TextResult<SentenceMoved> {
     let prefix: Vec<u16> = chunk
         .text
         .get(..sentence.offset)
@@ -196,11 +192,11 @@ fn move_to<S: TextSource>(
         offset: u32::try_from(sentence.offset).unwrap_or(u32::MAX),
         ..chunk
     };
-    Ok(TextReply::Sentence(Box::new(SentenceMoved::Moved {
+    Ok(SentenceMoved::Moved {
         sentence: sentence.text,
         line,
         baseline,
-    })))
+    })
 }
 
 /// Puts the caret at `target` and holds the next baseline there.

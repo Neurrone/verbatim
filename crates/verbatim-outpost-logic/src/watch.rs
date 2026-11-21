@@ -1,7 +1,8 @@
-//! The watches in the outpost's waiting table
+//! The caret waits in the outpost's waiting table
 //! (`docs/design/readers-tell-core-asks-build1.md`, "The watch", Tables 14
-//! and 15): a caret key's watch enters with its first check due now and
-//! leaves when answered.
+//! and 15): a batch whose first step is `WaitForCaret` (the request list's
+//! design, section 3) enters with its first check due now and leaves when
+//! answered.
 //!
 //! A check compares the application's caret with the key's starting point
 //! by the effect test (`verbatim_model::had_effect`), the first at once and
@@ -9,8 +10,7 @@
 //! `bound_us` after the pass; the check due at the bound is the last, and a
 //! change it first sees counts as the effect, as NVDA's last try does
 //! (`editableText.py` 124 to 152). A check that shows the effect, and the
-//! last check whatever it shows, makes the final read in the same program
-//! and answers.
+//! last check whatever it shows, runs the batch's later steps and answers.
 //!
 //! Where the request says the event rule applies, a caret or text-change
 //! event of the watched node heard within 60 ms of the pass brings a check
@@ -30,11 +30,12 @@
 //! follows.
 //!
 //! A check that ends without answering showed no effect, or its read
-//! failed, which counts as no effect; a last check that ends so, its final
-//! read failed, is answered failed.
+//! failed, which counts as no effect; a last check that ends so is
+//! answered failed.
 
+use verbatim_model::batch::{Batch, CaretWait, Op, Parsed, Subject};
 use verbatim_model::request::{Answer, Cancel, Outcome, RequestNumber};
-use verbatim_model::{NodeId, Watch, WindowHandle};
+use verbatim_model::{NodeId, WindowHandle};
 
 /// How long after the pass a UI Automation event brings a check forward:
 /// NVDA's `_useEvents_maxTimeoutSec` (`editableText.py` 57).
@@ -47,18 +48,16 @@ pub const WORD_AFTER_US: u64 = 30_000;
 /// What a watch's program does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatchWork {
-    /// Compare the caret with the starting point; with the effect, make
-    /// the final read and answer [`verbatim_model::Watched::Effect`].
+    /// Compare the caret with the starting point; with the effect, run the
+    /// batch's later steps and answer it.
     Check {
-        /// Whether to compare the word at the caret as well: Delete and
-        /// Control+Delete, once 30 ms have passed since the pass or when
-        /// an event brought the check forward.
+        /// Whether to compare the word at the caret as well: a wait whose
+        /// effect test counts a change of the unit at the caret (Delete
+        /// and Control+Delete), once 30 ms have passed since the pass or
+        /// when an event brought the check forward.
         word: bool,
-        /// Whether this is the check at the bound: with no effect, it
-        /// makes the final read and answers
-        /// [`verbatim_model::Watched::Bound`], or
-        /// [`verbatim_model::Watched::BoundUnread`] for a final read only
-        /// at the effect.
+        /// Whether this is the check at the bound: with no effect, it runs
+        /// the batch's later steps and answers the wait's bound.
         last: bool,
     },
 }
@@ -70,10 +69,25 @@ pub struct WatchProgram {
     pub number: RequestNumber,
     /// The watched node.
     pub node: NodeId,
-    /// The watch.
-    pub watch: Watch,
+    /// The wait, the batch's first step.
+    pub wait: CaretWait,
+    /// The batch.
+    pub batch: Batch,
     /// What the program does.
     pub work: WatchWork,
+}
+
+/// The node and the wait of `batch`'s first step, when it is a
+/// `WaitForCaret` on a node: the one shape the waiting table takes.
+#[must_use]
+pub fn caret_wait(batch: &Batch) -> Option<(NodeId, &CaretWait)> {
+    match &batch.steps.first()?.op {
+        Op::WaitForCaret {
+            subject: Subject::Node(node),
+            wait,
+        } => Some((*node, wait)),
+        _ => None,
+    }
 }
 
 /// What follows a check that shows no effect (Table 15, W2, A).
@@ -113,28 +127,35 @@ struct Watching {
     number: RequestNumber,
     window: WindowHandle,
     node: NodeId,
-    watch: Watch,
+    /// The wait, a copy of the batch's first step.
+    wait: CaretWait,
+    batch: Batch,
     phase: Phase,
 }
 
 impl Watching {
+    /// Its wait, the batch's first step.
+    fn wait(&self) -> &CaretWait {
+        &self.wait
+    }
+
     /// When the bound passes, on the run's shared clock.
     fn bound_at(&self) -> u64 {
-        self.watch
-            .passed_at_us
-            .saturating_add(u64::from(self.watch.bound_us))
+        let wait = self.wait();
+        wait.passed_at_us.saturating_add(u64::from(wait.bound_us))
     }
 
     /// Whether an event heard at `at_us` brings a check forward.
     fn event_counts(&self, at_us: u64) -> bool {
-        self.watch.events && at_us <= self.watch.passed_at_us.saturating_add(EVENT_WINDOW_US)
+        let wait = self.wait();
+        wait.events && at_us <= wait.passed_at_us.saturating_add(EVENT_WINDOW_US)
     }
 
     /// The next poll's due time after a polled check begun at `began_us`:
     /// a poll later, but no later than the bound.
     fn next_poll(&self, began_us: u64) -> u64 {
         began_us
-            .saturating_add(u64::from(self.watch.poll_us))
+            .saturating_add(u64::from(self.wait().poll_us))
             .min(self.bound_at())
     }
 
@@ -174,19 +195,21 @@ impl Watches {
         self.table.is_empty()
     }
 
-    /// Watch `number` on `node` in `window` arrives at `now_us`: its first
-    /// check due now.
+    /// Watch `number` in `window` arrives at `now_us`: `parsed`, whose
+    /// first step is `wait` on `node` ([`caret_wait`]). Its first check is
+    /// due now.
     pub fn arrive(
         &mut self,
         (number, window, node): (RequestNumber, WindowHandle, NodeId),
-        watch: Watch,
+        (wait, parsed): (CaretWait, Parsed),
         now_us: u64,
     ) {
         self.table.push(Watching {
             number,
             window,
             node,
-            watch,
+            wait,
+            batch: parsed.into_batch(),
             phase: Phase::Waiting { due_us: now_us },
         });
     }
@@ -228,13 +251,15 @@ impl Watches {
             .min_by_key(|(due_us, _)| *due_us)
             .map(|(_, w)| w)?;
         let brought = matches!(watching.phase, Phase::Brought { .. });
-        let word = watching.watch.motion.compares_unit()
-            && (brought || now_us >= watching.watch.passed_at_us.saturating_add(WORD_AFTER_US));
+        let wait = watching.wait();
+        let word = wait.effect.unit
+            && (brought || now_us >= wait.passed_at_us.saturating_add(WORD_AFTER_US));
         let last = now_us >= watching.bound_at();
         Some(WatchProgram {
             number: watching.number,
             node: watching.node,
-            watch: watching.watch,
+            wait: wait.clone(),
+            batch: watching.batch.clone(),
             work: WatchWork::Check { word, last },
         })
     }
@@ -357,7 +382,7 @@ impl Watches {
     /// The anchors the waiting watches name, which a release spares
     /// (Table 15, I).
     pub fn anchors(&self) -> impl Iterator<Item = u64> + '_ {
-        self.table.iter().map(|w| w.watch.point.0)
+        self.table.iter().map(|w| w.wait().from.0)
     }
 
     /// The outpost shuts down: every watch is dropped unanswered (Table
@@ -394,29 +419,50 @@ fn not_there(number: RequestNumber) -> Answer {
 
 #[cfg(test)]
 mod tests {
+    use verbatim_model::TextAnchor;
+    use verbatim_model::batch::{Done, EffectTest, Placement, Step, StepOutcome, Waited};
     use verbatim_model::request::{CancelReason, Reply};
-    use verbatim_model::{
-        CaretMotion, TextAnchor, TextDetails, TextReply, TextUnit, WatchFinalRead, Watched,
-    };
 
     use super::*;
 
     const PASS: u64 = 1_000_000;
     const WINDOW: WindowHandle = WindowHandle(5);
 
-    fn watch(motion: CaretMotion, events: bool) -> Watch {
-        Watch {
-            provider: verbatim_model::TextProvider::Uia,
-            point: TextAnchor(9),
-            motion,
-            passed_at_us: PASS,
-            poll_us: 10_000,
-            events,
-            bound_us: 100_000,
-            final_read: WatchFinalRead::Unit {
-                unit: TextUnit::Character,
-                details: TextDetails::ALL,
-            },
+    /// A key, by the effect test its wait takes.
+    #[derive(Clone, Copy)]
+    enum CaretMotion {
+        /// A key that moves the caret.
+        NextCharacter,
+        /// Delete, whose wait compares the unit at the caret and the line.
+        Delete,
+    }
+
+    /// The wait of a key of `motion` on node 2 from anchor 9.
+    fn watch(motion: CaretMotion, events: bool) -> Batch {
+        let compares = matches!(motion, CaretMotion::Delete);
+        Batch {
+            steps: vec![Step {
+                op: Op::WaitForCaret {
+                    subject: Subject::Node(NodeId::new(2)),
+                    wait: Box::new(CaretWait {
+                        from: TextAnchor(9),
+                        line: "alpha".to_owned(),
+                        offset: 0,
+                        word: compares.then(|| "alpha".to_owned()),
+                        effect: EffectTest {
+                            unit: compares,
+                            line: compares,
+                        },
+                        passed_at_us: PASS,
+                        poll_us: 10_000,
+                        bound_us: 100_000,
+                        events,
+                    }),
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
         }
     }
 
@@ -426,11 +472,13 @@ mod tests {
     /// A table with watch 4 arrived at the pass.
     fn arrived(motion: CaretMotion, events: bool) -> Watches {
         let mut watches = Watches::default();
-        watches.arrive(
-            (RequestNumber(4), WINDOW, NodeId::new(2)),
-            watch(motion, events),
-            PASS,
-        );
+        let batch = watch(motion, events);
+        let (node, wait) = caret_wait(&batch).expect("a wait on a node");
+        let (node, wait) = (node, wait.clone());
+        let parsed =
+            verbatim_model::batch::parse(batch, verbatim_model::batch::ReaderKind::Outpost)
+                .expect("a wait parses");
+        watches.arrive((RequestNumber(4), WINDOW, node), (wait, parsed), PASS);
         watches
     }
 
@@ -454,9 +502,10 @@ mod tests {
     fn effect(number: u64) -> Answer {
         Answer {
             number: RequestNumber(number),
-            outcome: Outcome::Result(Reply::Text(TextReply::Watched(Box::new(
-                Watched::BoundUnread,
-            )))),
+            outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::WaitForCaret(
+                Waited::Bound,
+            ))])),
+
             probes: Vec::new(),
             detail: String::new(),
         }

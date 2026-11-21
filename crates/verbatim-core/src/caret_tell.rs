@@ -21,17 +21,17 @@
 //! focus (`UIAHandler/__init__.py`).
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::batch::{Missing, StepRefusal};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{MsaaIds, Reply, Request as Wire};
+use verbatim_model::request::MsaaIds;
 use verbatim_model::tell::{ElementToken, Event, EventObject};
-use verbatim_model::{
-    NodeId, SelectionRead, SelectionReadReply, TextFailure, TextOp, TextProvider, TextReply,
-};
+use verbatim_model::{NodeId, TextProvider};
 
+use crate::batch::Got;
 use crate::changes::MsaaChange;
 use crate::entries::{Entries, Entry, request_window};
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::focus::acceptance;
 use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::keys::entry::Fence;
@@ -112,38 +112,81 @@ pub(crate) fn merges(waiting: &CaretTell, arriving: &CaretTell) -> bool {
         && waiting.tell.thread == arriving.tell.thread
 }
 
-/// A caret tell's read on the committed focus's node.
+/// What a caret tell's batch read on the committed focus's node.
 #[derive(Debug)]
-struct SelectionReadRequest {
-    window: RequestWindow,
-    node: NodeId,
-    read: SelectionRead,
+struct Told {
+    /// The caret as it is now: the line at it, with the caret at its
+    /// offset, and the selection.
+    caret: verbatim_model::CaretReport,
+    /// The next selection baseline, the selection as the `Caret` held it.
+    baseline: verbatim_model::TextAnchor,
+    /// The difference from the baseline Core named; `None` when it named
+    /// none, or one the outpost no longer holds ("no baseline").
+    difference: Option<verbatim_model::SelectionDifference>,
+    /// The selection's offsets, where the text counts by offsets (an edit
+    /// control's).
+    edit_selection: Option<verbatim_model::EditSelection>,
 }
 
-impl Request for SelectionReadRequest {
-    type Reply = Result<SelectionReadReply, TextFailure>;
+/// How a caret tell's batch ended.
+enum Read {
+    /// It read the caret.
+    Told(Box<Told>),
+    /// The node has no text.
+    NoText,
+    /// It failed, or was not answered.
+    Failed,
+}
 
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Text {
-            node: self.node,
-            op: TextOp::ReadSelection(self.read),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            TextReply::SelectionRead(read) => Some(*read),
-            _ => None,
-        })
-    }
+/// Asks a caret tell's batch on `node` (the request list's design, section
+/// 6, `ReadSelection`): the caret, adopting the tell's element; the
+/// caret's line; and the selection compared with `baseline` when Core
+/// holds one.
+async fn read(
+    cx: &mut Cx<Entries>,
+    (window, node): (RequestWindow, NodeId),
+    (baseline, adopt): (Option<verbatim_model::TextAnchor>, Option<ElementToken>),
+    due_us: u64,
+) -> Read {
+    let mut batch = cx.batch(|| ());
+    let caret = batch.caret(node, adopt);
+    let line = batch.read_text(
+        node,
+        caret.caret(),
+        None,
+        verbatim_model::TextUnit::Line,
+        1,
+        verbatim_model::TextDetails::NONE,
+    );
+    let compared = baseline.map(|baseline| {
+        batch.compare_selection(node, crate::batch::Baseline::Held(baseline), caret)
+    });
+    let request = batch.finish().of(Reader::Outpost(window.process), window);
+    let Outcome::Result(answers) = cx.ask(request, due_us).await else {
+        return Read::Failed;
+    };
+    let at = match answers.get(caret) {
+        Got::Done(at) => at,
+        Got::Refused(StepRefusal::NoText) => return Read::NoText,
+        _ => return Read::Failed,
+    };
+    let Got::Done(line) = answers.get(line) else {
+        return Read::Failed;
+    };
+    let Some(line) = line.chunks.first() else {
+        return Read::Failed;
+    };
+    let difference = match compared.map(|compared| answers.get(compared)) {
+        None | Some(Got::NotThere(Missing::Anchor(_))) => None,
+        Some(Got::Done(compared)) => Some(compared.difference.clone()),
+        Some(_) => return Read::Failed,
+    };
+    Read::Told(Box::new(Told {
+        caret: crate::text_facts::caret_report(at, line.clone()),
+        baseline: at.held,
+        difference,
+        edit_selection: at.offsets,
+    }))
 }
 
 /// The committed focus `tell` is for, when its reader lives: the system
@@ -233,37 +276,24 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
     };
     let (kept, node) = (&focus.kept, focus.context.snapshot.id);
     let provider = crate::text_facts::provider(kept);
-    let request = SelectionReadRequest {
-        window: kept.asked,
-        node,
-        read: SelectionRead {
-            provider,
-            baseline: kept.selection.baseline,
-            adopt: tell.adopted(),
-        },
-    };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let read = match cx.ask(request, due_us).await {
-        Outcome::Result(Ok(read)) => read,
+    let read = match read(
+        &mut cx,
+        (kept.asked, node),
+        (kept.selection.baseline, tell.adopted()),
+        due_us,
+    )
+    .await
+    {
+        Read::Told(read) => *read,
         // The node has no text: no caret and no selection, nothing said.
-        Outcome::Result(Err(TextFailure::NoText)) => {
+        Read::NoText => {
             crate::text_facts::no_text(&mut cx.facts_mut(), node);
             return;
         }
         // A read that fails says nothing and keeps the baseline and the
         // flag (Table 17, column I). NVDA: `editableText.py` 433 to 436.
-        Outcome::Result(Err(
-            TextFailure::Unsupported
-            | TextFailure::UnsupportedUnit(_)
-            | TextFailure::AnchorLost
-            | TextFailure::Gone
-            | TextFailure::Unanswered,
-        ))
-        | Outcome::Refused(_)
-        | Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::ReaderEnded
-        | Outcome::NoLongerAwaited(_) => return,
+        Read::Failed => return,
     };
     answered(&mut cx, &tell, (&focus, provider), read);
 }
@@ -274,7 +304,7 @@ fn answered(
     cx: &mut Cx<Entries>,
     tell: &CaretTell,
     (focus, provider): (&Focus, TextProvider),
-    read: SelectionReadReply,
+    read: Told,
 ) {
     let (kept, node) = (&focus.kept, focus.context.snapshot.id);
     if let Some(offsets) = read.edit_selection

@@ -9,11 +9,11 @@
 //! call into the application in `verbatim-outpost`, and the listener's
 //! reads. Each program answers from the world's field as it is when the
 //! program ends, after the latency the script gives its read, and answers
-//! exactly what `verbatim-outpost` answers: a watch's check compares the
-//! field with the field as the key's starting read found it, by the
-//! effect test `verbatim_model::had_effect` (`text/check.rs`), and with the
-//! effect, or at the bound, makes the final read in the same program; a
-//! watch's final read reads the caret and the key's unit. Checks and final
+//! exactly what `verbatim-outpost` answers: a key's starting batch holds
+//! the field as its `Caret` read it; a wait's check compares the field with
+//! it by the wait's effect test (`verbatim_model::had_effect`,
+//! `text/check.rs`), and with the effect, or at the bound, the batch's
+//! later steps read the caret, its line and the key's unit. Checks and
 //! reads take no time, as the model's reads.
 //!
 //! The hook stands in too: a key is held, bound to the field, exactly when
@@ -40,6 +40,9 @@ use verbatim_model::request::{
 mod readers;
 
 use readers::Found;
+use verbatim_model::batch::{
+    Batch, CaretAt, Check, Chunks, Done, Edges, HeldPoint, Op, StepOutcome, Waited,
+};
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -47,9 +50,8 @@ use verbatim_model::tell::{
 };
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReport, Compared, Effect, Input as CoreInput, KeySeq, NodeDetails,
-    NodeId, OutpostId, Pid, Role, SegmentContent, Started, StartingUnit, StateSet, TextAnchor,
-    TextChunk, TextOp, TextProvider, TextReply, TextUnit, TraceId, WatchFinalRead, Watched,
-    WatchedRead, WindowHandle, had_effect,
+    NodeId, OutpostId, Pid, Role, SegmentContent, StateSet, TextAnchor, TextChunk, TextProvider,
+    TextUnit, TraceId, WindowHandle, had_effect,
 };
 use verbatim_outpost_logic::{
     Effect as OutpostEffect, Entry, Input as OutpostInput, Item, Now, Reducer, Request, UiaEvent,
@@ -500,10 +502,7 @@ impl Seam {
     /// at once.
     fn latency(&self, ask: &Ask) -> Us {
         match &ask.request {
-            Question::Legacy(Wire::Text {
-                op: TextOp::StartingRead(_),
-                ..
-            }) => self
+            Question::Batch(batch) if is_starting(batch) => self
                 .unsent
                 .values()
                 .next()
@@ -575,9 +574,7 @@ impl Seam {
                 if let Some(watched) = self.watched(&program, app) {
                     let answer = Answer {
                         number: program.number,
-                        outcome: Outcome::Result(Reply::Text(TextReply::Watched(Box::new(
-                            watched,
-                        )))),
+                        outcome: Outcome::Result(Reply::Steps(watched)),
                         probes: Vec::new(),
                         detail: String::new(),
                     };
@@ -613,6 +610,14 @@ impl Seam {
 
     /// What `verbatim-outpost`'s program answers to `ask`, read from `app`.
     fn reply(&mut self, ask: &Ask, app: &App) -> Reply {
+        if let Question::Batch(batch) = &ask.request
+            && is_starting(batch)
+        {
+            // The starting point holds the field as the `Caret` read it.
+            let point = self.anchor();
+            self.points.insert(point.0, app.clone());
+            return Reply::Steps(self.reads(batch, (0, point), &[], app));
+        }
         if let Question::Batch(batch) = &ask.request {
             let full = batch
                 .steps
@@ -634,73 +639,112 @@ impl Seam {
         }
         match legacy(&ask.request) {
             Wire::Follow(_) => Reply::Followed,
-            Wire::Text {
-                op: TextOp::StartingRead(read),
-                ..
-            } => {
-                let point = self.anchor();
-                self.points.insert(point.0, app.clone());
-                let (unit, word) = match read.unit {
-                    StartingUnit::At(unit) => (self.unit(unit, app), None),
-                    StartingUnit::AtWithWord(unit) => {
-                        (self.unit(unit, app), Some(self.unit(TextUnit::Word, app)))
-                    }
-                    // The character before the caret, as the outpost reads
-                    // what a Backspace deletes; the world presses no
-                    // Control+Backspace.
-                    StartingUnit::BeforeCaret(TextUnit::Character) => {
-                        let text = app.before().map(String::from).unwrap_or_default();
-                        let start = self.anchor();
-                        (chunk(TextUnit::Character, &text, start, 0), None)
-                    }
-                    StartingUnit::BeforeCaret(unit) => {
-                        panic!("the world presses no key that deletes a {unit:?}")
-                    }
-                };
-                Reply::Text(TextReply::Started(Box::new(Started {
-                    point,
-                    caret: self.caret(app),
-                    unit,
-                    word,
-                })))
-            }
             other => panic!("the stand-in answers no request {other:?}"),
         }
     }
 
-    /// What watch `program`'s check or final read answers, read from
-    /// `app`: `None` for a check that shows no effect before the bound.
-    fn watched(&mut self, program: &WatchProgram, app: &App) -> Option<Watched> {
-        let (unit, at_effect) = match program.watch.final_read {
-            WatchFinalRead::Unit { unit, .. } => (unit, false),
-            WatchFinalRead::UnitAtEffect { unit, .. } => (unit, true),
-            WatchFinalRead::Terminal => panic!("the stand-in is asked no terminal's watch"),
-        };
+    /// What wait `program`'s check answers, read from `app`: `None` for a
+    /// check that shows no effect before the bound; else the batch's
+    /// outcomes, its later steps read from `app`.
+    fn watched(&mut self, program: &WatchProgram, app: &App) -> Option<Vec<StepOutcome>> {
         let effect = match program.work {
             WatchWork::Check { word, .. } => {
                 let before = self
                     .points
-                    .get(&program.watch.point.0)
-                    .expect("a watch names a starting point the stand-in minted");
-                had_effect(compared(before, app, word), program.watch.motion)
+                    .get(&program.wait.from.0)
+                    .expect("a wait names a starting point the stand-in minted");
+                had_effect(compared(before, app, word), program.wait.effect)
             }
         };
         let last = matches!(program.work, WatchWork::Check { last: true, .. });
         if !effect && !last {
             return None;
         }
-        if !effect && at_effect {
-            return Some(Watched::BoundUnread);
-        }
-        let read = WatchedRead {
-            caret: self.caret(app),
-            unit: self.unit(unit, app),
-        };
-        Some(if effect {
-            Watched::Effect(read)
+        let waited = StepOutcome::Done(Done::WaitForCaret(if effect {
+            Waited::Effect
         } else {
-            Watched::Bound(read)
-        })
+            Waited::Bound
+        }));
+        let point = self.anchor();
+        Some(self.reads(&program.batch, (1, point), &[waited], app))
+    }
+
+    /// The outcomes of `batch`'s steps from place `from` on, after
+    /// `earlier`, read from `app`: a `Caret` held at `point`, a line read
+    /// at it, the character before it after a move back, any other unit at
+    /// it; a step whose condition does not hold, or that names a step not
+    /// done, is skipped.
+    fn reads(
+        &mut self,
+        batch: &Batch,
+        (from, point): (usize, TextAnchor),
+        earlier: &[StepOutcome],
+        app: &App,
+    ) -> Vec<StepOutcome> {
+        let mut outcomes = earlier.to_vec();
+        for step in &batch.steps[from..] {
+            let holds = step.when.is_none_or(|when| {
+                let found = matches!(
+                    outcomes.get(when.on.index()),
+                    Some(StepOutcome::Done(Done::WaitForCaret(Waited::Effect)))
+                );
+                when.check == Check::Found && found != when.negated
+            });
+            let outcome = match &step.op {
+                _ if !holds => StepOutcome::Skipped,
+                Op::Caret { .. } => {
+                    let anchor = self.anchor();
+                    StepOutcome::Done(Done::Caret(CaretAt {
+                        caret: HeldPoint {
+                            anchor,
+                            edges: Edges::default(),
+                        },
+                        selection: None,
+                        held: point,
+                        offsets: None,
+                    }))
+                }
+                Op::ReadText {
+                    at: verbatim_model::batch::Point::Of(place, _),
+                    ..
+                } if !matches!(outcomes.get(place.index()), Some(StepOutcome::Done(_))) => {
+                    StepOutcome::Skipped
+                }
+                Op::ReadText {
+                    unit: TextUnit::Line,
+                    ..
+                } => {
+                    let line = self.caret(app).line;
+                    StepOutcome::Done(Done::ReadText(Chunks {
+                        moved: 0,
+                        chunks: vec![line],
+                    }))
+                }
+                // The character before the caret, as the outpost reads what
+                // a Backspace deletes; the world presses no
+                // Control+Backspace.
+                Op::ReadText {
+                    movement: Some(_),
+                    unit,
+                    ..
+                } => {
+                    assert_eq!(*unit, TextUnit::Character, "the world deletes characters");
+                    let text = app.before().map(String::from).unwrap_or_default();
+                    let start = self.anchor();
+                    StepOutcome::Done(Done::ReadText(Chunks {
+                        moved: if text.is_empty() { 0 } else { -1 },
+                        chunks: vec![chunk(TextUnit::Character, &text, start, 0)],
+                    }))
+                }
+                Op::ReadText { unit, .. } => StepOutcome::Done(Done::ReadText(Chunks {
+                    moved: 0,
+                    chunks: vec![self.unit(*unit, app)],
+                })),
+                other => panic!("the stand-in reads no {other:?}"),
+            };
+            outcomes.push(outcome);
+        }
+        outcomes
     }
 
     fn anchor(&mut self) -> TextAnchor {
@@ -1051,4 +1095,13 @@ fn legacy(question: &verbatim_model::request::Question) -> &Wire {
     question
         .legacy()
         .expect("a kind of request, where no feature asks a batch yet")
+}
+
+/// Whether `batch` is a caret key's starting batch: its first step the
+/// caret.
+fn is_starting(batch: &Batch) -> bool {
+    matches!(
+        batch.steps.first().map(|step| &step.op),
+        Some(Op::Caret { .. })
+    )
 }

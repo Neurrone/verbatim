@@ -27,12 +27,12 @@ use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 use verbatim_model::request::Request;
 use verbatim_model::{
-    CaretReport, ReviewCommand, SegmentContent, SpeechMark, StartingUnit, TextChunk, TextMovement,
-    TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextOp,
+    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, NodeText, TextSource, check, held, perform};
+use verbatim_outpost::text::{Anchors, NodeText, TextSource, held, perform};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::{
@@ -265,7 +265,7 @@ const UIA_SECOND_WORD: &str = "beta";
 /// (`plain_word` in the outpost's `text/edit.rs`).
 const EDIT_SECOND_WORD: &str = "beta\r\n";
 
-/// A caret key's final read: the caret moved to 6 and the word there,
+/// A caret key's end read: the caret moved to 6 and the word read there,
 /// `second_word`; and then a selection of the first word read as selected
 /// from the baseline held with the caret at its start.
 fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
@@ -277,12 +277,14 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     common::apply(app, hwnd, "caret doc 0");
     caret_report(source, anchors, 1);
     common::apply(app, hwnd, "caret doc 6");
-    let read =
-        check::final_read(source, anchors, (TextUnit::Word, None), 2).expect("the final read");
-    assert_eq!(
-        (read.caret.line.offset, read.unit.text.as_str()),
-        (6, second_word)
-    );
+    let (_, word) = chunk(read(
+        source,
+        anchors,
+        TextPoint::Caret,
+        None,
+        TextUnit::Word,
+    ));
+    assert_eq!(word.text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
     let baseline = held::read_selection(source, anchors, 1, None)
@@ -1306,12 +1308,12 @@ fn runs_of_one_mark_are_words(
     backspace_reads(app, hwnd, source, anchors, (2, "*", "****  "));
 }
 
-/// What the starting reads of Backspace and Control+Backspace find with
-/// the caret at `caret` (`held::starting_read` with
-/// `StartingUnit::BeforeCaret`), as NVDA's Backspace scripts read what
+/// What the starting batches of Backspace and Control+Backspace read with
+/// the caret at `caret` (a `ReadText` from the caret moved back one
+/// character, expanded to the unit), as NVDA's Backspace scripts read what
 /// they delete: the `character` before the caret and the provider's whole
 /// `word` around that character, the caret at the word's end or inside
-/// it; and nothing at the text's start.
+/// it; and at the text's start no move, so nothing before the caret.
 fn backspace_reads<S: TextSource>(
     app: &mut common::MockApp,
     hwnd: HWND,
@@ -1320,10 +1322,18 @@ fn backspace_reads<S: TextSource>(
     (caret, character, word): (usize, &str, &str),
 ) {
     let before = |source: &mut S, anchors: &mut NodeText<'_, S::Pos>, unit| {
-        held::starting_read(source, anchors, 1, StartingUnit::BeforeCaret(unit))
-            .expect("the starting read")
-            .unit
-            .text
+        let (moved, chunk) = chunk(read(
+            source,
+            anchors,
+            TextPoint::Caret,
+            Some((TextUnit::Character, -1)),
+            unit,
+        ));
+        if moved == 0 {
+            String::new()
+        } else {
+            chunk.text
+        }
     };
     common::apply(app, hwnd, &format!("caret doc {caret}"));
     assert_eq!(

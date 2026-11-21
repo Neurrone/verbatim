@@ -1,11 +1,9 @@
 //! The ids a request of the event queue names, held while it waits or is
 //! out (design, "Held anchors").
 
+use verbatim_model::batch::{Batch, CaretWait, EffectTest, Op, Placement, Step, Subject};
 use verbatim_model::request::Request as Wire;
-use verbatim_model::{
-    CaretMotion, SentenceMove, TextAnchor, TextDetails, TextOp, TextPoint, TextPosition,
-    TextProvider, TextThrough, Watch, WatchFinalRead,
-};
+use verbatim_model::{TextAnchor, TextDetails, TextOp, TextPoint, TextPosition, TextThrough};
 
 use super::named_by;
 use crate::entries::tests::node;
@@ -18,35 +16,42 @@ fn on_node(op: TextOp) -> Wire {
     Wire::Text { node: node(2), op }
 }
 
+/// A batch of the one operation `op`.
+fn one(op: Op) -> verbatim_model::request::Question {
+    verbatim_model::request::Question::Batch(Batch {
+        steps: vec![Step { op, when: None }],
+        placement: Placement::Queue,
+        spare: None,
+    })
+}
+
 #[test]
-fn a_watch_and_a_sentence_move_name_their_starting_point() {
-    let watch = TextOp::Watch(Watch {
-        provider: TextProvider::Uia,
-        point: TextAnchor(50),
-        motion: CaretMotion::NextCharacter,
-        passed_at_us: 0,
-        poll_us: 10_000,
-        events: true,
-        bound_us: 100_000,
-        final_read: WatchFinalRead::Unit {
-            unit: CaretMotion::NextCharacter.unit(),
-            details: TextDetails::ALL,
-        },
-    });
-    assert_eq!(
-        named_by(&verbatim_model::request::Question::from(on_node(watch))),
-        [(node(2), vec![TextAnchor(50)])]
-    );
-    let moving = TextOp::MoveBySentence(SentenceMove {
-        provider: TextProvider::EditMessages,
-        point: TextAnchor(51),
+fn a_wait_and_a_sentence_move_name_their_starting_point() {
+    let wait = Op::WaitForCaret {
+        subject: Subject::Node(node(2)),
+        wait: Box::new(CaretWait {
+            from: TextAnchor(50),
+            line: String::new(),
+            offset: 0,
+            word: None,
+            effect: EffectTest {
+                unit: false,
+                line: false,
+            },
+            passed_at_us: 0,
+            poll_us: 10_000,
+            bound_us: 100_000,
+            events: true,
+        }),
+    };
+    assert_eq!(named_by(&one(wait)), [(node(2), vec![TextAnchor(50)])]);
+    let moving = Op::MoveBySentence {
+        subject: Subject::Node(node(2)),
+        from: TextAnchor(51),
         forward: true,
         details: TextDetails::ALL,
-    });
-    assert_eq!(
-        named_by(&verbatim_model::request::Question::from(on_node(moving))),
-        [(node(2), vec![TextAnchor(51)])]
-    );
+    };
+    assert_eq!(named_by(&one(moving)), [(node(2), vec![TextAnchor(51)])]);
 }
 
 #[test]

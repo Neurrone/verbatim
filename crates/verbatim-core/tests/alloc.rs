@@ -27,14 +27,37 @@ use std::cell::Cell;
 use desk::{Desk, LISTENER, ONE, focus_read_of, focus_tell, listener_read};
 use verbatim_model::request::{
     Answer, FocusCaret, FocusCaretRead, Instance, Outcome, Press, PressAction, QueueEffect,
-    QueueInput, Reply, Request as Wire, RequestNumber,
+    QueueInput, Reply, RequestNumber,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReport, Effect, KeySeq, NodeDetails, NodeSnapshot,
-    ReviewCommand, Role, SegmentContent, SpeechPriority, Started, StateSet, TextAnchor, TextChunk,
-    TextReply, TextUnit, TraceId, Utterance, UtteranceSegment, Watched, WatchedRead,
+    ReviewCommand, Role, SegmentContent, SpeechPriority, StateSet, TextAnchor, TextChunk, TextUnit,
+    TraceId, Utterance, UtteranceSegment,
 };
+
+#[path = "support/caret_batches.rs"]
+mod caret_batches;
+
+/// The one caret key's batch `effects` asked: its number and the batch.
+fn text_batch(effects: &[Effect]) -> (u64, verbatim_model::batch::Batch) {
+    let batches: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Queue(QueueEffect::Send { ask, .. }) => match &ask.request {
+                verbatim_model::request::Question::Batch(batch) => {
+                    Some((ask.number.0, batch.clone()))
+                }
+                verbatim_model::request::Question::Legacy(_) => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let [one] = &batches[..] else {
+        panic!("one batch asked: {effects:?}");
+    };
+    one.clone()
+}
 
 /// The system allocator, counting the bytes requested on each thread.
 struct Counting;
@@ -133,24 +156,6 @@ fn same(small: &mut Desk, large: &mut Desk, input: &QueueInput) -> Vec<Effect> {
     assert!(small_bytes > 0, "the step allocates its effects");
     assert_eq!(small_bytes, large_bytes, "{input:?}");
     small_effects
-}
-
-/// The one request of a kind not yet a batch, by `kind`, among
-/// `effects`.
-fn sent(effects: &[Effect], kind: fn(&Wire) -> bool) -> u64 {
-    let numbers: Vec<u64> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Queue(QueueEffect::Send { ask, .. }) if kind(legacy(&ask.request)) => {
-                Some(ask.number.0)
-            }
-            _ => None,
-        })
-        .collect();
-    let [number] = numbers[..] else {
-        panic!("one request asked: {effects:?}");
-    };
-    number
 }
 
 /// The answer to request `number` from `from`, `reply`.
@@ -363,32 +368,29 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         },
     }));
     let effects = same(&mut small, &mut large, &press);
-    let starting = sent(&effects, |request| matches!(request, Wire::Text { .. }));
+    let (starting, batch) = text_batch(&effects);
+    let facts = caret_batches::read(caret_on(long_line(10, 0)), character("w", 12));
     let effects = same(
         &mut small,
         &mut large,
         &answer(
             ONE.instance(),
             starting,
-            Reply::Text(TextReply::Started(Box::new(Started {
-                point: TextAnchor(50),
-                caret: caret_on(long_line(10, 0)),
-                unit: character("w", 12),
-                word: None,
-            }))),
+            Reply::Steps(caret_batches::answer(&batch, &facts)),
         ),
     );
-    let watch = sent(&effects, |request| matches!(request, Wire::Text { .. }));
+    let (watch, batch) = text_batch(&effects);
+    let facts = caret_batches::Facts {
+        waited: Some(verbatim_model::batch::Waited::Effect),
+        ..caret_batches::read(caret_on(long_line(13, 1)), character("o", 14))
+    };
     let effects = same(
         &mut small,
         &mut large,
         &answer(
             ONE.instance(),
             watch,
-            Reply::Text(TextReply::Watched(Box::new(Watched::Effect(WatchedRead {
-                caret: caret_on(long_line(13, 1)),
-                unit: character("o", 14),
-            })))),
+            Reply::Steps(caret_batches::answer(&batch, &facts)),
         ),
     );
     assert_eq!(
@@ -458,12 +460,4 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         large.log.last().map(|(_, effects)| effects.clone())
     );
     assert_eq!(small_bytes, large_bytes);
-}
-
-/// `question` as one of the kinds of request not yet converted to a
-/// batch: these tests state today's requests, and a batch fails them.
-fn legacy(question: &verbatim_model::request::Question) -> &Wire {
-    question
-        .legacy()
-        .expect("a kind of request, where no feature asks a batch yet")
 }

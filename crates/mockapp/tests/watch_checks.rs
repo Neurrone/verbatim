@@ -1,9 +1,9 @@
-//! A caret key's watch check and final read
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The watch") against
+//! A caret wait's check (`docs/design/readers-tell-core-asks-build1.md`,
+//! "The watch"; the request list's design, `WaitForCaret`) against
 //! mockapp's UIA text provider, through the remote program and through its
 //! classic reads, which must answer alike: a check showing no effect, one
-//! showing the caret moved, one showing a deletion's change of the word at
-//! the caret, and the final read's unit.
+//! showing the caret moved, and one showing a deletion's change of the
+//! word at the caret, each from the starting point a `Caret` held.
 //! Each test drives `verbatim-outpost`'s text module on this thread as the
 //! outpost's worker does once it has the node's text in hand, as
 //! `text.rs` does.
@@ -16,10 +16,11 @@ mod harness;
 
 use std::sync::Arc;
 
-use verbatim_model::{CaretMotion, TextDetails, TextUnit, WatchFinalRead, Watched, WatchedRead};
-use verbatim_outpost::text::check::{CheckAsk, check, final_read};
-use verbatim_outpost::text::held::starting_read;
-use verbatim_outpost::text::uia::UiaText;
+use verbatim_model::CaretMotion;
+use verbatim_model::batch::{CaretWait, EffectTest, Waited};
+use verbatim_outpost::text::check::{CheckAsk, check};
+use verbatim_outpost::text::ops::caret;
+use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, NodeText};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
@@ -48,32 +49,53 @@ fn start(prefix: &str) -> (common::MockApp, HWND) {
     (app, hwnd)
 }
 
-/// The check asked of a key of `motion` from `start`, its final read the
-/// key's unit.
-fn ask(
-    point: verbatim_model::TextAnchor,
-    motion: CaretMotion,
-    (word, last): (bool, bool),
-) -> CheckAsk {
-    CheckAsk {
-        point,
-        motion,
-        word,
-        last,
-        final_read: WatchFinalRead::Unit {
-            unit: motion.unit(),
-            details: TextDetails::ALL,
-        },
+/// The line read at the caret `at` held, as a batch's `ReadText` of it
+/// reads it.
+fn line_at(
+    source: &mut UiaText,
+    anchors: &mut NodeText<'_, UiaPos>,
+    at: verbatim_model::TextAnchor,
+) -> verbatim_model::TextChunk {
+    match verbatim_outpost::text::perform(
+        source,
+        anchors,
+        &verbatim_model::TextOp::Read(verbatim_model::TextRead {
+            at: verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at)),
+            movement: None,
+            unit: verbatim_model::TextUnit::Line,
+        }),
+    ) {
+        verbatim_model::TextReply::Read { chunk, .. } => chunk,
+        other => panic!("a line, not {other:?}"),
     }
 }
 
-/// A final read's line, the caret's offset in it, and its unit's text.
-fn summary(read: &WatchedRead) -> (String, u32, String) {
-    (
-        read.caret.line.text.clone(),
-        read.caret.line.offset,
-        read.unit.text.clone(),
-    )
+/// The wait of a key of `motion` from the `Caret` read held in
+/// `anchors` now, its starting word `word`, and that held read: the
+/// starting point a check compares with.
+fn wait_from(
+    source: &mut UiaText,
+    anchors: &mut NodeText<'_, UiaPos>,
+    (motion, word): (CaretMotion, Option<&str>),
+) -> (CaretWait, verbatim_outpost::text::LastRead<UiaPos>) {
+    let at = caret(source, anchors, READ_AT).expect("the caret");
+    let line = line_at(source, anchors, at.caret.anchor);
+    let start = anchors.held_read(at.held).expect("the read held");
+    let wait = CaretWait {
+        from: at.held,
+        line: line.text,
+        offset: line.offset,
+        word: word.map(str::to_owned),
+        effect: EffectTest {
+            unit: motion.compares_unit(),
+            line: motion.deletes(),
+        },
+        passed_at_us: READ_AT,
+        poll_us: 10_000,
+        bound_us: 100_000,
+        events: false,
+    };
+    (wait, start)
 }
 
 /// Runs `body` with the text read remotely and then classically, each on
@@ -98,129 +120,59 @@ fn both_ways(
     }
 }
 
-/// A check with nothing changed since the starting read shows no effect,
-/// and the check at the bound reads the key's unit all the same.
+/// A check with nothing changed since the starting point shows no effect,
+/// and the check at the bound ends the wait at its bound.
 fn a_check_with_nothing_changed_shows_no_effect() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-none");
     both_ways(&mut app, hwnd, |_, source, anchors| {
-        let started = starting_read(
-            source,
-            anchors,
-            READ_AT,
-            verbatim_model::StartingUnit::At(TextUnit::Word),
-        )
-        .expect("the starting read");
-        let motion = CaretMotion::NextWord;
-        assert_eq!(
-            check(
-                source,
-                anchors,
-                ask(started.point, motion, (false, false)),
-                READ_AT
-            ),
-            Ok(None)
-        );
-        match check(
-            source,
-            anchors,
-            ask(started.point, motion, (false, true)),
-            READ_AT,
-        ) {
-            Ok(Some(Watched::Bound(read))) => assert_eq!(
-                summary(&read),
-                ("alpha beta\n".to_owned(), 0, "alpha ".to_owned())
-            ),
-            other => panic!("the bound's read, not {other:?}"),
-        }
+        let (wait, start) = wait_from(source, anchors, (CaretMotion::NextWord, None));
+        let ask = |last| CheckAsk {
+            wait: &wait,
+            word: false,
+            last,
+        };
+        assert_eq!(check(source, &start, ask(false)), Ok(None));
+        assert_eq!(check(source, &start, ask(true)), Ok(Some(Waited::Bound)));
     });
     app.quit();
 }
 
-/// A check after the caret moved shows the effect, with the final read
-/// made from the caret it read: the line and the word at the caret.
+/// A check after the caret moved shows the effect.
 fn a_check_after_the_caret_moved_shows_the_effect() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-moved");
     both_ways(&mut app, hwnd, |app, source, anchors| {
-        let started = starting_read(
-            source,
-            anchors,
-            READ_AT,
-            verbatim_model::StartingUnit::At(TextUnit::Word),
-        )
-        .expect("the starting read");
+        let (wait, start) = wait_from(source, anchors, (CaretMotion::NextWord, None));
         common::apply(app, hwnd, "caret doc 6");
-        let checked = check(
-            source,
-            anchors,
-            ask(started.point, CaretMotion::NextWord, (false, false)),
-            READ_AT,
-        );
-        match checked {
-            Ok(Some(Watched::Effect(read))) => assert_eq!(
-                summary(&read),
-                ("alpha beta\n".to_owned(), 6, "beta".to_owned())
-            ),
-            other => panic!("the effect, not {other:?}"),
-        }
+        let ask = CheckAsk {
+            wait: &wait,
+            word: false,
+            last: false,
+        };
+        assert_eq!(check(source, &start, ask), Ok(Some(Waited::Effect)));
     });
     app.quit();
 }
 
 /// Delete with the caret where it was: the character after it went, so
-/// the word at the caret, compared once 30 ms have passed, changed, and
-/// the check shows the effect with the character now at the caret.
+/// the word at the caret, compared once 30 ms have passed, changed from
+/// the starting word, and the check shows the effect.
 fn a_check_after_a_deletion_shows_the_words_change() {
     common::init_com();
     let (mut app, hwnd) = start("mockapp-watch-deleted");
     both_ways(&mut app, hwnd, |app, source, anchors| {
         common::apply(app, hwnd, "caret doc 6");
-        let started = starting_read(
-            source,
-            anchors,
-            READ_AT,
-            verbatim_model::StartingUnit::AtWithWord(TextUnit::Character),
-        )
-        .expect("the starting read");
-        assert_eq!(
-            started.word.as_ref().map(|word| word.text.as_str()),
-            Some("beta")
-        );
+        let (wait, start) = wait_from(source, anchors, (CaretMotion::Delete, Some("beta")));
+        let ask = CheckAsk {
+            wait: &wait,
+            word: true,
+            last: false,
+        };
+        assert_eq!(check(source, &start, ask), Ok(None), "nothing deleted yet");
         common::apply(app, hwnd, r"set-text doc alpha eta\ngamma\n");
         common::apply(app, hwnd, "caret doc 6");
-        let checked = check(
-            source,
-            anchors,
-            ask(started.point, CaretMotion::Delete, (true, false)),
-            READ_AT,
-        );
-        match checked {
-            Ok(Some(Watched::Effect(read))) => assert_eq!(
-                summary(&read),
-                ("alpha eta\n".to_owned(), 6, "e".to_owned())
-            ),
-            other => panic!("the effect, not {other:?}"),
-        }
-    });
-    app.quit();
-}
-
-/// The final read: the caret's line and the key's unit at the caret.
-fn the_final_read_reads_the_keys_unit_at_the_caret() {
-    common::init_com();
-    let (mut app, hwnd) = start("mockapp-watch-final");
-    both_ways(&mut app, hwnd, |app, source, anchors| {
-        common::apply(app, hwnd, "caret doc 11");
-        let read =
-            final_read(source, anchors, (TextUnit::Word, None), READ_AT).expect("the final read");
-        assert_eq!(
-            summary(&read),
-            ("gamma\n".to_owned(), 0, "gamma".to_owned())
-        );
-        let read = final_read(source, anchors, (TextUnit::Character, None), READ_AT)
-            .expect("the final read");
-        assert_eq!(summary(&read), ("gamma\n".to_owned(), 0, "g".to_owned()));
+        assert_eq!(check(source, &start, ask), Ok(Some(Waited::Effect)));
     });
     app.quit();
 }
@@ -329,10 +281,6 @@ fn main() {
         (
             "a_check_after_a_deletion_shows_the_words_change",
             a_check_after_a_deletion_shows_the_words_change,
-        ),
-        (
-            "the_final_read_reads_the_keys_unit_at_the_caret",
-            the_final_read_reads_the_keys_unit_at_the_caret,
         ),
         (
             "the_program_and_its_classic_reads_agree",

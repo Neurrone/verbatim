@@ -228,7 +228,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     }
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let details = node_details_of(&work);
-    let mut request_context =
+    let request_context =
         RequestContext::for_program(context, details, request, Arc::clone(charge));
     let handled = catching(|| match work {
         Work::Entry(entry) => {
@@ -249,7 +249,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
                 answer: Box::new(answer),
             });
         }
-        Work::Watch(watch) => run_watch(context, &mut request_context, request, &watch),
+        Work::Watch(watch) => run_watch(context, (&request_context, client), request, &watch),
         Work::Forget(windows) => forget(&request_context, &windows),
     });
     // Text writes no commit after them carried: a program's text calls
@@ -281,16 +281,21 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     });
 }
 
-/// Runs a watch's check or final read, telling the observer of Core's
-/// requests' calls of the program's, and posting the watch's answer when
-/// the program ends it.
+/// Runs a caret wait's check, and the batch's later steps when it ends the
+/// wait, telling the observer of Core's requests' calls of the program's,
+/// and posting the batch's answer when the program ends it.
 fn run_watch(
     context: &Context,
-    request_context: &mut RequestContext<'_>,
+    (request_context, client): (&RequestContext<'_>, &mut Client),
     request: Request,
     watch: &WatchProgram,
 ) {
-    let outcome = super::text_reads::watch(request_context, watch);
+    let outcome = super::text_reads::watch(request_context, watch).map(|ended| match ended {
+        super::text_reads::WaitEnded::Waited(waited) => {
+            super::batch::after_wait(request_context, client, watch, waited)
+        }
+        super::text_reads::WaitEnded::NotThere => verbatim_model::request::Outcome::NotThere,
+    });
     if let Some(observer) = context.request_calls.get() {
         observer(watch.number, take_calls());
     }

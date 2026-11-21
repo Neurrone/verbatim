@@ -41,10 +41,36 @@ use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{Event, EventObject, Relation, TellWindow};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReport, CaretSelection, Effect, KeySeq, NodeDetails,
-    NodeSnapshot, Role, SegmentContent, Selection, SelectionChange, SelectionDifference,
-    SelectionReadReply, Started, StateSet, TextAnchor, TextChunk, TextPosition, TextReply,
-    TextUnit, Watched, WatchedRead, WindowHandle,
+    NodeSnapshot, Role, SegmentContent, Selection, SelectionChange, SelectionDifference, StateSet,
+    TextAnchor, TextChunk, TextPosition, TextUnit, WindowHandle,
 };
+
+#[path = "support/caret_batches.rs"]
+mod caret_batches;
+use caret_batches::Facts;
+
+/// Answers the one caret key's or caret tell's batch out at `at_us` from
+/// `facts`.
+fn text_answer(desk: &mut Desk, at_us: u64, facts: &Facts) {
+    let number = sent_of(desk, "Text");
+    let batch = desk
+        .asked
+        .iter()
+        .find_map(|(asked, _, request)| match request {
+            verbatim_model::request::Question::Batch(batch) if *asked == number => {
+                Some(batch.clone())
+            }
+            _ => None,
+        })
+        .expect("the text batch out");
+    answer_at(
+        desk,
+        at_us,
+        ONE,
+        number,
+        Reply::Steps(caret_batches::answer(&batch, facts)),
+    );
+}
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -505,20 +531,12 @@ fn left_arrow(desk: &mut Desk, at_us: u64) {
 /// The key's starting read answered at `at_us`: the caret at the start of
 /// the empty text.
 fn started(desk: &mut Desk, at_us: u64) {
-    let number = sent_of(desk, "Text");
     let mut unit = empty_line();
     unit.unit = TextUnit::Character;
-    answer_at(
+    text_answer(
         desk,
         at_us,
-        ONE,
-        number,
-        Reply::Text(TextReply::Started(Box::new(Started {
-            point: TextAnchor(50),
-            caret: caret_on(empty_line(), None),
-            unit,
-            word: None,
-        }))),
+        &caret_batches::read(caret_on(empty_line(), None), unit),
     );
 }
 
@@ -587,18 +605,15 @@ fn open_dialog(desk: &mut Desk, focused: bool) {
 /// The key's watch answered at its bound, at `at_us`: the caret at the
 /// start of the empty text.
 fn blank_at_bound(desk: &mut Desk, at_us: u64) {
-    let watch = sent_of(desk, "Text");
     let mut unit = empty_line();
     unit.unit = TextUnit::Character;
-    answer_at(
+    text_answer(
         desk,
         at_us,
-        ONE,
-        watch,
-        Reply::Text(TextReply::Watched(Box::new(Watched::Bound(WatchedRead {
-            caret: caret_on(empty_line(), None),
-            unit,
-        })))),
+        &Facts {
+            waited: Some(verbatim_model::batch::Waited::Bound),
+            ..caret_batches::read(caret_on(empty_line(), None), unit)
+        },
     );
 }
 
@@ -634,7 +649,6 @@ fn save_as(desk: &mut Desk) {
     let mut windows = file_name(desk, &events[0], "np.txt");
     let caret_at = 2_004_000;
     play(desk, &mut windows, &events[2..], caret_at);
-    let number = sent_of(desk, "Text");
     play(desk, &mut windows, &events[1..2], caret_at + 2_000);
     let mut line = empty_line();
     "np.txt".clone_into(&mut line.text);
@@ -643,13 +657,11 @@ fn save_as(desk: &mut Desk) {
         text: "n".to_owned(),
         characters: 1,
     };
-    answer_at(
+    text_answer(
         desk,
         caret_at + 3_000,
-        ONE,
-        number,
-        Reply::Text(TextReply::SelectionRead(Box::new(SelectionReadReply {
-            caret: caret_on(
+        &Facts {
+            caret: Some(caret_on(
                 line,
                 Some(CaretSelection {
                     range: Selection {
@@ -663,14 +675,14 @@ fn save_as(desk: &mut Desk) {
                         },
                     },
                 }),
-            ),
-            baseline: TextAnchor(71),
+            )),
+            held: Some(TextAnchor(71)),
             difference: Some(SelectionDifference {
                 changes: vec![selected.clone()],
                 new_selection: Some(selected),
             }),
-            edit_selection: None,
-        }))),
+            ..Facts::default()
+        },
     );
     answer_run(desk, caret_at + 5_000, unfocused());
 }

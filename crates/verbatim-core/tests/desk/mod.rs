@@ -240,6 +240,14 @@ pub fn kind(request: &Question) -> &'static str {
         Question::Legacy(_) => return "other",
         Question::Batch(batch) => batch,
     };
+    // A caret key's or a caret tell's batch: its first step a text
+    // operation.
+    if matches!(
+        batch.steps.first().map(|step| &step.op),
+        Some(Op::Caret { .. } | Op::WaitForCaret { .. } | Op::MoveBySentence { .. })
+    ) {
+        return "Text";
+    }
     let names = |subject: fn(&Subject) -> bool| {
         batch
             .steps

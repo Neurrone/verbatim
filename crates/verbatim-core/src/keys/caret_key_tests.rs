@@ -7,16 +7,56 @@
 use crate::entries::tests::found_at;
 use crate::readers::Found;
 
+use verbatim_model::batch::{Batch, Missing, Op, StepOutcome, StepRefusal, Waited};
 use verbatim_model::request::{
     CancelReason, CaretBinding, Outcome as WireOutcome, Press, PressAction, QueueEffect,
     QueueInput, Reply, Request as Wire,
 };
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
+
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReport, Effect as Said, KeySeq, OutpostId, Role, SentenceMove,
-    SentenceMoved, Started, StartingRead, TextAnchor, TextChunk, TextDetails, TextOp, TextProvider,
-    TextReply, TextUnit, TraceId, Watch, WatchFinalRead, Watched, WatchedRead, WindowHandle,
+    CaretKey, CaretMotion, CaretReport, Effect as Said, KeySeq, OutpostId, Role, SentenceMoved,
+    TextAnchor, TextChunk, TextDetails, TextProvider, TextUnit, TraceId, WindowHandle,
 };
+
+use crate::caret_batches;
+use caret_batches::Facts;
+
+std::thread_local! {
+    /// Each caret key's batch asked, by its request number, which an
+    /// answer is made for.
+    static ASKED: std::cell::RefCell<std::collections::BTreeMap<u64, Batch>> =
+        std::cell::RefCell::default();
+    /// The starting line, the caret's offset in it and the starting word
+    /// of the last starting batch answered, which the wait after it names.
+    static STARTED: std::cell::RefCell<(String, u32, Option<String>)> =
+        std::cell::RefCell::default();
+}
+
+/// The batch asked as request `number`.
+fn asked(number: u64) -> Batch {
+    ASKED
+        .with(|asked| asked.borrow().get(&number).cloned())
+        .unwrap_or_else(|| panic!("request {number} is a text batch"))
+}
+
+/// The answer to request `number` made from `facts`.
+fn answered(number: u64, facts: &Facts) -> Input<Entry> {
+    answer(
+        OUTPOST,
+        number,
+        Reply::Steps(caret_batches::answer(&asked(number), facts)),
+    )
+}
+
+/// Whether `batch` is a caret key's or a caret tell's: its first step a
+/// text operation.
+fn is_text(batch: &Batch) -> bool {
+    matches!(
+        batch.steps.first().map(|step| &step.op),
+        Some(Op::Caret { .. } | Op::WaitForCaret { .. } | Op::MoveBySentence { .. })
+    )
+}
 
 use crate::entries::tests::{
     APP, Held, OUTPOST, answer, answer_outcome, entry, feed_at, focus_read, node, ready, uia_tell,
@@ -114,9 +154,9 @@ fn pressed(key: u64, at_us: u64, action: PressAction) -> Input<Entry> {
 /// What one step did, as these tests read it.
 #[derive(Debug, Default, PartialEq)]
 struct Step {
-    /// Each text request sent: its number, its node's number and what it
+    /// Each text batch sent: its number, its node's number and what it
     /// asks.
-    text: Vec<(u64, u64, TextOp)>,
+    text: Vec<(u64, u64, Batch)>,
     /// Each other request sent, by its kind.
     other: Vec<&'static str>,
     /// Each utterance, by its segments.
@@ -190,8 +230,13 @@ fn read_effect(step: &mut Step, effect: Effect) {
                 return;
             }
             match ask.request {
-                verbatim_model::request::Question::Legacy(Wire::Text { node, op }) => {
-                    step.text.push((ask.number.0, node.number(), op));
+                verbatim_model::request::Question::Batch(batch) if is_text(&batch) => {
+                    let node = match batch.steps[0].op.subject() {
+                        Some(verbatim_model::batch::Subject::Node(node)) => node.number(),
+                        other => panic!("a text batch on a node, not {other:?}"),
+                    };
+                    ASKED.with(|asked| asked.borrow_mut().insert(ask.number.0, batch.clone()));
+                    step.text.push((ask.number.0, node, batch));
                 }
                 other => step.other.push(match &other {
                     verbatim_model::request::Question::Batch(batch) => {
@@ -260,33 +305,57 @@ fn caret_on(line: TextChunk) -> CaretReport {
     }
 }
 
-/// The starting read's answer: point 50, the caret on `line`, `unit` at it.
+/// The starting batch's answer: its caret on `line`, holding the starting
+/// point 50, and `unit` read at it, the word too.
 fn started(number: u64, line: TextChunk, unit: TextChunk) -> Input<Entry> {
-    answer(
-        OUTPOST,
-        number,
-        Reply::Text(TextReply::Started(Box::new(Started {
-            point: TextAnchor(50),
-            caret: caret_on(line),
-            unit,
-            word: None,
-        }))),
-    )
+    let word = asked(number)
+        .steps
+        .iter()
+        .any(|step| {
+            matches!(
+                step.op,
+                Op::ReadText {
+                    unit: TextUnit::Word,
+                    movement: None,
+                    ..
+                }
+            )
+        })
+        .then(|| unit.text.clone());
+    STARTED.with(|started| *started.borrow_mut() = (line.text.clone(), line.offset, word));
+    answered(number, &caret_batches::read(caret_on(line), unit))
+}
+
+/// How a key's wait ended, with what its reads read.
+enum Watched {
+    /// The effect was seen.
+    Effect(Facts),
+    /// The bound passed.
+    Bound(Facts),
+    /// The bound passed, and nothing was read.
+    BoundUnread,
 }
 
 fn watched(number: u64, watched: Watched) -> Input<Entry> {
-    answer(
-        OUTPOST,
-        number,
-        Reply::Text(TextReply::Watched(Box::new(watched))),
-    )
+    let facts = match watched {
+        Watched::Effect(read) => Facts {
+            waited: Some(Waited::Effect),
+            ..read
+        },
+        Watched::Bound(read) => Facts {
+            waited: Some(Waited::Bound),
+            ..read
+        },
+        Watched::BoundUnread => Facts {
+            waited: Some(Waited::Bound),
+            ..Facts::default()
+        },
+    };
+    answered(number, &facts)
 }
 
-fn read(line: TextChunk, unit: TextChunk) -> WatchedRead {
-    WatchedRead {
-        caret: caret_on(line),
-        unit,
-    }
+fn read(line: TextChunk, unit: TextChunk) -> Facts {
+    caret_batches::read(caret_on(line), unit)
 }
 
 /// What a key of `motion`'s reads fetch under settings that report
@@ -304,28 +373,30 @@ fn details(motion: CaretMotion) -> TextDetails {
     }
 }
 
-fn starting_read(motion: CaretMotion, provider: TextProvider) -> TextOp {
-    TextOp::StartingRead(StartingRead {
-        provider,
-        details: details(motion),
-        unit: verbatim_model::StartingUnit::for_motion(motion),
-    })
+/// A key of `motion`'s starting batch on node 2, whatever its provider.
+fn starting_read(motion: CaretMotion, _provider: TextProvider) -> Batch {
+    caret_batches::starting(node(2), motion)
 }
 
-fn watch(motion: CaretMotion, passed_at_us: u64, events: bool) -> TextOp {
-    TextOp::Watch(Watch {
-        provider: TextProvider::Uia,
-        point: TextAnchor(50),
+/// A key of `motion`'s wait batch on node 2 in UI Automation text, passed
+/// at `passed_at_us`, from the last starting batch answered.
+fn watch(motion: CaretMotion, passed_at_us: u64, events: bool) -> Batch {
+    watch_in(TextProvider::Uia, motion, passed_at_us, events)
+}
+
+/// [`watch`], in text read through `provider`.
+fn watch_in(provider: TextProvider, motion: CaretMotion, passed_at_us: u64, events: bool) -> Batch {
+    let (line, offset, word) = STARTED.with(|started| started.borrow().clone());
+    caret_batches::waiting(
+        (node(2), provider),
         motion,
-        passed_at_us,
-        poll_us: 10_000,
-        events,
-        bound_us: 100_000,
-        final_read: WatchFinalRead::Unit {
-            unit: motion.unit(),
-            details: details(motion),
-        },
-    })
+        caret_batches::wait(
+            motion,
+            (&line, offset, word.as_deref()),
+            (passed_at_us, 10_000, 100_000, events),
+        ),
+        details(motion),
+    )
 }
 
 /// `motion` pressed as key 1 at 1 ms on the field, its starting read
@@ -360,7 +431,8 @@ const BLANK: &str = "Message(Blank)";
 /// No utterance.
 const NO_WORDS: [Vec<String>; 0] = [];
 /// No text request.
-const NO_REQUESTS: [(u64, u64, TextOp); 0] = [];
+const NO_REQUESTS: [(u64, u64, Batch); 0] = [];
+
 /// No send of strokes.
 const NO_STROKES: [Vec<u32>; 0] = [];
 
@@ -747,6 +819,33 @@ fn backspace_with_a_focus_pending_at_its_starting_read_reads_then_says_its_delet
     assert_eq!(answered.other, ["ReadObject"]);
 }
 
+/// UI Automation text whose provider does not say its line is the
+/// text's first, the caret at the text's start with nothing selected:
+/// Backspace, with a focus pending at its starting read, says nothing, as
+/// the starting read it replaced left that line unmarked; only a
+/// selection starting there marks its line the text's first
+/// (Claude, 2026-11-22).
+#[test]
+fn backspace_with_a_focus_pending_at_the_start_of_uia_text_says_nothing() {
+    let mut held = editing();
+    let binding = bound(&held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::Backspace, 1_000, &binding),
+    );
+    let focus = step(&mut held, 2_000, entry(uia_tell(7, Vec::new())));
+    assert_eq!(focus, Step::default(), "Backspace's starting read goes on");
+    let facts = Facts {
+        at_start: true,
+        ..read(line("alpha", 7, 0), unit(TextUnit::Character, "", 8))
+    };
+    let answered = step(&mut held, 5_000, answered(3, &facts));
+    assert_eq!(answered.strokes, [vec![1]]);
+    assert_eq!(answered.said, NO_WORDS);
+    assert_eq!(answered.other, ["ReadObject"]);
+}
+
 #[test]
 fn a_focus_pending_withdraws_another_keys_starting_read_and_the_key_is_sent_silently() {
     let mut held = editing();
@@ -921,7 +1020,7 @@ fn a_key_whose_field_is_no_longer_the_focus_runs_on_that_field() {
         [(
             3,
             6,
-            starting_read(CaretMotion::EndOfLine, TextProvider::Uia)
+            caret_batches::starting(node(6), CaretMotion::EndOfLine)
         )]
     );
     let passed = step(
@@ -929,9 +1028,23 @@ fn a_key_whose_field_is_no_longer_the_focus_runs_on_that_field() {
         5_000,
         started(3, line("abc", 7, 0), unit(TextUnit::Character, "a", 8)),
     );
+    let wait = caret_batches::wait(
+        CaretMotion::EndOfLine,
+        ("abc", 0, None),
+        (5_000, 10_000, 100_000, false),
+    );
     assert_eq!(
         passed.text,
-        [(4, 6, watch(CaretMotion::EndOfLine, 5_000, false))]
+        [(
+            4,
+            6,
+            caret_batches::waiting(
+                (node(6), TextProvider::Uia),
+                CaretMotion::EndOfLine,
+                wait,
+                details(CaretMotion::EndOfLine)
+            )
+        )]
     );
     let ended = step(
         &mut held,
@@ -977,38 +1090,28 @@ fn sentence_watching() -> (Held, CaretBinding) {
         [(
             4,
             2,
-            TextOp::Watch(Watch {
-                provider: TextProvider::EditMessages,
-                point: TextAnchor(50),
-                motion: CaretMotion::NextSentence,
-                passed_at_us: 5_000,
-                poll_us: 10_000,
-                events: false,
-                bound_us: 100_000,
-                final_read: WatchFinalRead::UnitAtEffect {
-                    unit: TextUnit::Line,
-                    details: TextDetails::ALL,
-                },
-            })
+            watch_in(
+                TextProvider::EditMessages,
+                CaretMotion::NextSentence,
+                5_000,
+                false
+            )
         )]
     );
     (held, binding)
 }
 
-fn sentence_move() -> TextOp {
-    TextOp::MoveBySentence(SentenceMove {
-        provider: TextProvider::EditMessages,
-        point: TextAnchor(50),
-        forward: true,
-        details: TextDetails::ALL,
-    })
+fn sentence_move() -> Batch {
+    caret_batches::sentence(node(2), true, TextDetails::ALL)
 }
 
 fn moved(number: u64, moved: SentenceMoved) -> Input<Entry> {
-    answer(
-        OUTPOST,
+    answered(
         number,
-        Reply::Text(TextReply::Sentence(Box::new(moved))),
+        &Facts {
+            moved: Some(moved),
+            ..Facts::default()
+        },
     )
 }
 
@@ -1156,20 +1259,7 @@ fn alt_down_in_uia_text_that_does_not_move_says_nothing() {
         );
         assert_eq!(
             passed.text,
-            [(
-                4,
-                2,
-                TextOp::Watch(Watch {
-                    final_read: WatchFinalRead::UnitAtEffect {
-                        unit: TextUnit::Line,
-                        details: TextDetails::ALL,
-                    },
-                    ..match watch(CaretMotion::NextSentence, 5_000, true) {
-                        TextOp::Watch(watch) => watch,
-                        _ => unreachable!("a watch"),
-                    }
-                })
-            )]
+            [(4, 2, watch(CaretMotion::NextSentence, 5_000, true))]
         );
         held
     };
@@ -1346,7 +1436,7 @@ fn the_starting_point_is_held_while_its_watch_is_out_and_no_baseline_is_minted()
     assert_eq!(crate::text_facts::held(&held.state), None);
 }
 
-/// Italic text, as a key's unit carries it and a memory keeps it.
+/// Italic text, as a key's line carries it and a memory keeps it.
 fn italic() -> verbatim_model::TextAttributes {
     verbatim_model::TextAttributes {
         italic: Some(true),
@@ -1354,15 +1444,16 @@ fn italic() -> verbatim_model::TextAttributes {
     }
 }
 
-/// The character "i" in italic.
+/// The line "line 01" with the caret on its "i", in italic: a character
+/// key's character is cut from its line, with the line's formatting.
 fn italic_i() -> TextChunk {
     TextChunk {
         formats: vec![verbatim_model::FormatRun {
-            start: 0,
-            end: 1,
+            start: 1,
+            end: 2,
             attributes: italic(),
         }],
-        ..unit(TextUnit::Character, "i", 10)
+        ..line("line 01", 9, 1)
     }
 }
 
@@ -1386,7 +1477,10 @@ fn a_keys_formatting_memory_goes_back_to_its_record() {
     let ended = step(
         &mut held,
         20_000,
-        watched(4, Watched::Effect(read(line("line 01", 9, 1), italic_i()))),
+        watched(
+            4,
+            Watched::Effect(read(italic_i(), unit(TextUnit::Character, "i", 10))),
+        ),
     );
     assert_eq!(
         ended.said,
@@ -1416,8 +1510,12 @@ fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
     let ended = step(
         &mut held,
         20_000,
-        watched(4, Watched::Effect(read(line("line 01", 9, 1), italic_i()))),
+        watched(
+            4,
+            Watched::Effect(read(italic_i(), unit(TextUnit::Character, "i", 10))),
+        ),
     );
+
     assert_eq!(
         ended.said,
         [vec![
@@ -1431,21 +1529,35 @@ fn a_keys_formatting_memory_is_not_written_to_a_later_focus_record() {
     );
 }
 
-/// Every failure a caret key's starting read can be answered decodes as
-/// its answer (an undecodable one is an effect these tests do not read):
-/// the key passes unread and nothing is said or asked. A node with no
-/// text has no caret to report, as NVDA binds its caret scripts to
-/// editable text alone.
+/// The answer to request `number` whose first step ends `first`, every
+/// later step skipped after it.
+fn failing(number: u64, first: &StepOutcome) -> Input<Entry> {
+    let steps = asked(number).steps.len();
+    let mut outcomes = vec![first.clone()];
+    outcomes.resize(steps, StepOutcome::Skipped);
+    answer(OUTPOST, number, Reply::Steps(outcomes))
+}
+
+/// Every way a batch's first step can fail.
+fn failures() -> [StepOutcome; 6] {
+    [
+        StepOutcome::Refused(StepRefusal::NoText),
+        StepOutcome::Refused(StepRefusal::Unsupported),
+        StepOutcome::Refused(StepRefusal::NoSuchUnit),
+        StepOutcome::NotThere(Missing::Anchor(TextAnchor(50))),
+        StepOutcome::NotThere(Missing::Node(node(2))),
+        StepOutcome::Failed,
+    ]
+}
+
+/// Every failure a caret key's starting batch can be answered with
+/// decodes as its answer (an undecodable one is an effect these tests do
+/// not read): the key passes unread and nothing is said or asked. A node
+/// with no text has no caret to report, as NVDA binds its caret scripts
+/// to editable text alone.
 #[test]
 fn a_starting_read_answered_with_a_failure_passes_the_key_saying_nothing() {
-    for failure in [
-        TextReply::NoText,
-        TextReply::Unsupported,
-        TextReply::UnsupportedUnit(TextUnit::Character),
-        TextReply::AnchorLost,
-        TextReply::Gone,
-        TextReply::Unanswered,
-    ] {
+    for failure in failures() {
         let mut held = editing();
         let binding = bound(&held);
         let _ = step(
@@ -1453,11 +1565,7 @@ fn a_starting_read_answered_with_a_failure_passes_the_key_saying_nothing() {
             1_000,
             held_key(1, CaretMotion::NextCharacter, 1_000, &binding),
         );
-        let answered = step(
-            &mut held,
-            5_000,
-            answer(OUTPOST, 3, Reply::Text(failure.clone())),
-        );
+        let answered = step(&mut held, 5_000, failing(3, &failure));
         assert_eq!(
             answered,
             Step {
@@ -1469,25 +1577,17 @@ fn a_starting_read_answered_with_a_failure_passes_the_key_saying_nothing() {
     }
 }
 
-/// Every failure a watch can be answered decodes as its answer and says
-/// nothing, as a watch refused does.
+/// Every failure a wait can be answered with decodes as its answer and
+/// says nothing, as a wait refused does.
 #[test]
 fn a_watch_answered_with_a_failure_says_nothing() {
-    for failure in [
-        TextReply::NoText,
-        TextReply::Unsupported,
-        TextReply::Unanswered,
-    ] {
+    for failure in failures() {
         let mut held = watching(
             CaretMotion::NextCharacter,
             line("line 01", 7, 0),
             unit(TextUnit::Character, "l", 8),
         );
-        let ended = step(
-            &mut held,
-            20_000,
-            answer(OUTPOST, 4, Reply::Text(failure.clone())),
-        );
+        let ended = step(&mut held, 20_000, failing(4, &failure));
         assert_eq!(ended, Step::default(), "{failure:?}");
     }
 }
@@ -1498,22 +1598,11 @@ fn a_watch_answered_with_a_failure_says_nothing() {
 /// sentence unit, a starting point no longer held, no paragraph read.
 #[test]
 fn a_sentence_move_answered_with_a_failure_says_nothing() {
-    for failure in [
-        TextReply::UnsupportedUnit(TextUnit::Sentence),
-        TextReply::AnchorLost,
-        TextReply::Unsupported,
-        TextReply::NoText,
-        TextReply::Gone,
-        TextReply::Unanswered,
-    ] {
+    for failure in failures() {
         let (mut held, _) = sentence_watching();
         let _ = step(&mut held, 105_000, watched(4, Watched::BoundUnread));
         let before = crate::text_facts::held(&held.state);
-        let failed = step(
-            &mut held,
-            106_000,
-            answer(OUTPOST, 5, Reply::Text(failure.clone())),
-        );
+        let failed = step(&mut held, 106_000, failing(5, &failure));
         assert_eq!(failed, Step::default(), "{failure:?}");
         assert_eq!(crate::text_facts::held(&held.state), before, "{failure:?}");
     }

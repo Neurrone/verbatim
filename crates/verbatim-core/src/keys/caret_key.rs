@@ -7,18 +7,17 @@
 //! unsent from the stroke line, each when needed, never stored on the
 //! entry.
 
-use verbatim_model::request::{CancelReason, CaretBinding, Question, Reply, Request as Wire};
+use verbatim_model::batch::{CaretWait, EffectTest, Op, OpKind, StepRefusal, Waited};
+use verbatim_model::request::{CancelReason, CaretBinding, Question, Request as Wire};
 use verbatim_model::{
-    CaretKey, CaretMotion, KeySeq, NodeId, SentenceMove, SentenceMoved, Started, StartingRead,
-    StartingUnit, TextDetails, TextFailure, TextOp, TextProvider, TextReply, TraceId,
-    UtteranceSegment, Watch, WatchFinalRead, Watched, WatchedRead,
+    CaretKey, CaretMotion, CaretReport, KeySeq, NodeId, SentenceMoved, TextAnchor, TextChunk,
+    TextDetails, TextMovement, TextOp, TextProvider, TextUnit, TraceId, UtteranceSegment,
 };
 
-use verbatim_model::TextAnchor;
-
+use crate::batch::Got;
 use crate::editing;
 use crate::entries::{Entries, Entry};
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::focus::validity::{Pending, Within, pending_behind_front};
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
@@ -81,110 +80,47 @@ pub(crate) fn binding(state: &SrState) -> Option<CaretBinding> {
     })
 }
 
-/// One of a caret key's requests on its bound node.
+/// The window a caret key's batches name, its bound node's.
+fn window_of(binding: &CaretBinding) -> RequestWindow {
+    RequestWindow::of_node(&binding.window)
+}
+
+/// What a caret key's starting batch read before the key: the caret, the
+/// key's unit where it is read, and the word at the caret where the wait
+/// compares it. The caret's held read is the key's starting point, which
+/// its wait and its move by sentence name.
 #[derive(Clone, Debug)]
-struct OnNode {
-    window: RequestWindow,
-    node: NodeId,
-    op: TextOp,
+struct Start {
+    /// The starting point.
+    point: TextAnchor,
+    /// The caret: its line, with the caret at its offset, and the
+    /// selection.
+    caret: CaretReport,
+    /// For a key that deletes back, the provider's unit around the
+    /// character before the caret, empty at the text's start, or the line
+    /// where the text has no such unit; for any other key the line, whose
+    /// starting batch reads no unit (Claude, 2026-11-22).
+    unit: TextChunk,
+    /// The word at the caret, which the wait of a key that compares the
+    /// unit at the caret compares.
+    word: Option<String>,
 }
 
-impl OnNode {
-    fn of(binding: &CaretBinding, op: TextOp) -> Self {
-        Self {
-            window: RequestWindow::of_node(&binding.window),
-            node: binding.node,
-            op,
-        }
-    }
-
-    fn wire(&self) -> Wire {
-        Wire::Text {
-            node: self.node,
-            op: self.op.clone(),
-        }
-    }
+/// What a caret key's reads found at its end: the caret, and the key's
+/// unit at it.
+#[derive(Clone, Debug)]
+struct EndRead {
+    /// The caret: its line, with the caret at its offset, and the
+    /// selection.
+    caret: CaretReport,
+    /// The key's unit at the caret, the line where the text has no such
+    /// unit.
+    unit: TextChunk,
 }
 
-/// The starting read, answered with the starting point.
-#[derive(Debug)]
-struct StartingReadRequest(OnNode);
-
-impl Request for StartingReadRequest {
-    type Reply = Result<Started, TextFailure>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.0.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.0.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Legacy(self.0.wire())
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            TextReply::Started(started) => Some(*started),
-            _ => None,
-        })
-    }
-}
-
-/// The watch, answered with how it ended.
-#[derive(Debug)]
-struct WatchRequest(OnNode);
-
-impl Request for WatchRequest {
-    type Reply = Result<Watched, TextFailure>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.0.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.0.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Legacy(self.0.wire())
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            TextReply::Watched(watched) => Some(*watched),
-            _ => None,
-        })
-    }
-}
-
-/// The move by sentence from the starting point.
-#[derive(Debug)]
-struct SentenceRequest(OnNode);
-
-impl Request for SentenceRequest {
-    type Reply = Result<SentenceMoved, TextFailure>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.0.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.0.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Legacy(self.0.wire())
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            TextReply::Sentence(moved) => Some(*moved),
-            _ => None,
-        })
-    }
+/// Whether `batch`'s first step is `kind`.
+fn first_is(question: &Question, kind: OpKind) -> bool {
+    matches!(question, Question::Batch(batch) if batch.steps.first().map(|step| step.op.kind()) == Some(kind))
 }
 
 /// Whether the front entry `front`, a caret key, no longer needs
@@ -193,11 +129,10 @@ impl Request for SentenceRequest {
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
     let starting = match request {
         Question::Legacy(Wire::Text { op, .. }) => match op {
-            TextOp::StartingRead(_) => true,
             TextOp::ReadTerminal(read) => read.starting.is_some(),
             _ => false,
         },
-        _ => false,
+        question => first_is(question, OpKind::Caret),
     };
     starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
@@ -270,18 +205,15 @@ enum CaretStage {
 impl CaretStage {
     /// The stage `request`, out for `press`, puts the key in.
     fn of(press: &CaretPress, request: &Question) -> Option<Self> {
+        if let Some(bound_at_us) = wait_bound(request) {
+            return Some(Self::Watching { bound_at_us });
+        }
         match request {
-            Question::Legacy(Wire::Text { op, .. }) => match op {
-                TextOp::StartingRead(_) => Some(Self::Starting {
-                    deletes_back: press.key.motion.deletes_back(),
-                }),
-                TextOp::Watch(watch) => Some(Self::Watching {
-                    bound_at_us: watch.passed_at_us.saturating_add(u64::from(watch.bound_us)),
-                }),
-                TextOp::MoveBySentence(_) => Some(Self::Sentence),
-                _ => None,
-            },
             question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
+            question if first_is(question, OpKind::Caret) => Some(Self::Starting {
+                deletes_back: press.key.motion.deletes_back(),
+            }),
+            question if first_is(question, OpKind::MoveBySentence) => Some(Self::Sentence),
             _ => None,
         }
     }
@@ -322,13 +254,13 @@ enum TerminalStage {
 impl TerminalStage {
     /// The stage `request` puts a terminal's key in.
     fn of(request: &Question) -> Option<Self> {
+        if let Some(bound_at_us) = wait_bound(request) {
+            return Some(Self::Watching { bound_at_us });
+        }
         match request {
             Question::Legacy(Wire::Text { op, .. }) => match op {
                 TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
                 TextOp::ReadTerminal(_) => Some(Self::Final),
-                TextOp::Watch(watch) => Some(Self::Watching {
-                    bound_at_us: watch.passed_at_us.saturating_add(u64::from(watch.bound_us)),
-                }),
                 _ => None,
             },
             question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
@@ -354,6 +286,20 @@ impl TerminalStage {
             Self::Confirming => arrival == Arrival::Key || arrival.counts(),
             Self::Final => arrival == Arrival::Key || arrival.counts(),
         }
+    }
+}
+
+/// When the bound of `request`'s wait passes, when its first step is a
+/// caret wait.
+fn wait_bound(request: &Question) -> Option<u64> {
+    let Question::Batch(batch) = request else {
+        return None;
+    };
+    match &batch.steps.first()?.op {
+        Op::WaitForCaret { wait, .. } => {
+            Some(wait.passed_at_us.saturating_add(u64::from(wait.bound_us)))
+        }
+        _ => None,
     }
 }
 
@@ -425,30 +371,103 @@ async fn confirm(
     }
 }
 
-/// Asks a caret key's starting read: its answer, or `None` for any other
-/// outcome, after which the key only passes. A node with no text has no
-/// caret to report, as NVDA binds its caret scripts to editable text
-/// alone (`editableText.py`); any other failure passes the key unread.
+/// Asks a caret key's starting batch (the request list's design, section
+/// 6, `StartingRead`): the caret; its line; the key's unit at the caret,
+/// or for a key that deletes back the unit around the character before it,
+/// as NVDA's Backspace scripts read what they delete (`docs/parity/text.md`,
+/// "What Backspace and Delete say"); and for Delete the word at the caret,
+/// which its wait compares. Its answer, or `None` for any other outcome,
+/// after which the key only passes. A node with no text has no caret to
+/// report, as NVDA binds its caret scripts to editable text alone
+/// (`editableText.py`); any other failure passes the key unread.
 async fn starting_read(
     cx: &mut Cx<Entries>,
-    request: StartingReadRequest,
+    (binding, motion): (&CaretBinding, CaretMotion),
     due_us: u64,
-) -> Option<Started> {
-    match cx.ask(request, due_us).await {
-        Outcome::Result(Ok(started)) => Some(started),
-        Outcome::Result(Err(
-            TextFailure::NoText
-            | TextFailure::Unsupported
-            | TextFailure::UnsupportedUnit(_)
-            | TextFailure::AnchorLost
-            | TextFailure::Gone
-            | TextFailure::Unanswered,
-        ))
-        | Outcome::Refused(_)
-        | Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::ReaderEnded
-        | Outcome::NoLongerAwaited(_) => None,
+) -> Option<Start> {
+    let node = binding.node;
+    let mut start = cx.batch(|| ());
+    let caret = start.caret(node, None);
+    let line = start.read_text(
+        node,
+        caret.caret(),
+        None,
+        TextUnit::Line,
+        1,
+        TextDetails::NONE,
+    );
+    let back = TextMovement {
+        unit: TextUnit::Character,
+        count: -1,
+    };
+    let deleted = motion.deletes_back().then(|| {
+        start.read_text(
+            node,
+            caret.caret(),
+            Some(back),
+            motion.unit(),
+            1,
+            TextDetails::NONE,
+        )
+    });
+    let word = motion.compares_unit().then(|| {
+        start.read_text(
+            node,
+            caret.caret(),
+            None,
+            TextUnit::Word,
+            1,
+            TextDetails::NONE,
+        )
+    });
+    let request = start
+        .finish()
+        .of(Reader::Outpost(binding.window.process), window_of(binding));
+    let Outcome::Result(answers) = cx.ask(request, due_us).await else {
+        return None;
+    };
+    let (Got::Done(at), Got::Done(line)) = (answers.get(caret), answers.get(line)) else {
+        return None;
+    };
+    let line = line.chunks.first()?.clone();
+    let unit = match deleted.map(|deleted| answers.get(deleted)) {
+        None | Some(Got::Refused(StepRefusal::NoSuchUnit)) => line.clone(),
+        // At the text's start the caret cannot move back: nothing before it.
+        Some(Got::Done(read)) if read.moved == 0 => TextChunk {
+            text: String::new(),
+            offset: 0,
+            languages: Vec::new(),
+            truncated: false,
+            formats: Vec::new(),
+            ..line.clone()
+        },
+        Some(Got::Done(read)) => read.chunks.first()?.clone(),
+        Some(_) => return None,
+    };
+    // A text with no word unit compares its line, as the word read there.
+    let word = match word.map(|word| answers.get(word)) {
+        None => None,
+        Some(Got::Done(read)) => Some(read.chunks.first()?.text.clone()),
+        Some(Got::Refused(StepRefusal::NoSuchUnit)) => Some(line.text.clone()),
+        Some(_) => return None,
+    };
+    Some(Start {
+        point: at.held,
+        caret: crate::text_facts::caret_report(at, line),
+        unit,
+        word,
+    })
+}
+
+/// The unit a key of `motion` speaks at its end in text read through
+/// `provider`: the key's unit; a sentence as the paragraph where the
+/// provider splits sentences by paragraph, else as the line; a document as
+/// the line.
+fn key_unit(provider: TextProvider, motion: CaretMotion) -> TextUnit {
+    match motion.unit() {
+        TextUnit::Sentence if provider.has_sentences() => TextUnit::Paragraph,
+        TextUnit::Sentence | TextUnit::Document => TextUnit::Line,
+        unit => unit,
     }
 }
 
@@ -530,16 +549,11 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
         return pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
-    let starting = StartingRead {
-        provider: binding.provider,
-        details: key_details(cx, press),
-        unit: StartingUnit::for_motion(press.key.motion),
-    };
-    let request = StartingReadRequest(OnNode::of(&binding, TextOp::StartingRead(starting)));
     // A stroke dropped while the read is out withdraws it (`unneeded`).
-    let Some(started) = starting_read(cx, request, due_us).await else {
+    let Some(started) = starting_read(cx, (&binding, press.key.motion), due_us).await else {
         return pass(cx, press);
     };
+
     let passed_at_us = cx.now_us();
     if pass(cx, press) == Reached::Dropped {
         return Reached::Dropped;
@@ -588,7 +602,7 @@ fn new_line_typed(cx: &mut Cx<Entries>, press: &CaretPress) {
 async fn after_pass(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
-    (binding, started): (&CaretBinding, &Started),
+    (binding, started): (&CaretBinding, &Start),
     (passed_at_us, due_us): (u64, u64),
 ) {
     let bound_at_us = passed_at_us.saturating_add(u64::from(BOUND_US));
@@ -624,7 +638,7 @@ async fn after_pass(
 
 /// The key is silent because a focus counts or its read failed: Backspace
 /// and Control+Backspace still say what they deleted.
-fn silent(cx: &mut Cx<Entries>, press: &CaretPress, (binding, started): (&CaretBinding, &Started)) {
+fn silent(cx: &mut Cx<Entries>, press: &CaretPress, (binding, started): (&CaretBinding, &Start)) {
     if press.key.motion.deletes_back() {
         let words = deleted(binding, press.key, started);
         say(cx, press, words);
@@ -636,7 +650,7 @@ fn silent(cx: &mut Cx<Entries>, press: &CaretPress, (binding, started): (&CaretB
 async fn marked_end(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
-    (binding, started): (&CaretBinding, &Started),
+    (binding, started): (&CaretBinding, &Start),
     due_us: u64,
 ) {
     if moves_by_sentence(press, binding) {
@@ -677,22 +691,26 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     }
     // The starting point is the read's; a read that minted none, a
     // reader's fault, leaves the key's effect to the change it tells.
-    let Some(point) = started else {
+    let Some((point, caret)) = started else {
         return Reached::Sent;
     };
     let console = crate::terminal::reading::focused(&cx.facts())
         .is_some_and(|terminal| terminal.node == binding.node && terminal.console);
-    let watch = Watch {
-        provider: binding.provider,
-        point,
-        motion: press.key.motion,
+    let motion = press.key.motion;
+    // A terminal's starting read reads no word: the wait compares its
+    // line, as the word read there.
+    let wait = CaretWait {
+        from: point,
+        word: motion.compares_unit().then(|| caret.line.text.clone()),
+        line: caret.line.text,
+        offset: caret.line.offset,
+        effect: effect_test(motion),
         passed_at_us,
         poll_us: if console { CONSOLE_POLL_US } else { POLL_US },
-        events: false,
         bound_us: if console { BOUND_US } else { TERMINAL_BOUND_US },
-        final_read: WatchFinalRead::Terminal,
+        events: false,
     };
-    let bound_at_us = passed_at_us.saturating_add(u64::from(watch.bound_us));
+    let bound_at_us = passed_at_us.saturating_add(u64::from(wait.bound_us));
     // As the edit path judges after its pass, with the terminal's own
     // stages: a counting focus silences the key, an unconfirmed one is
     // confirmed, and with neither the watch runs for the rest of the bound.
@@ -707,12 +725,19 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
                 }
             }
             Pending::No => {
-                let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
+                // The wait alone: the terminal's full read follows it.
+                let mut watch = cx.batch(|| ());
+                let waited = watch.wait_for_caret(binding.node, wait.clone());
+                let request = watch
+                    .finish()
+                    .of(Reader::Outpost(binding.window.process), window_of(binding));
                 match cx.ask(request, due_us).await {
-                    Outcome::Result(Ok(_)) => break,
+                    Outcome::Result(answers) if matches!(answers.get(waited), Got::Done(_)) => {
+                        break;
+                    }
                     Outcome::NoLongerAwaited(CancelReason::Withdrawn) => true,
-                    // A watch answered with a failure ended as one refused.
-                    Outcome::Result(Err(_))
+                    // A wait that failed ended as one refused.
+                    Outcome::Result(_)
                     | Outcome::Refused(_)
                     | Outcome::NotThere
                     | Outcome::NotResponding
@@ -732,14 +757,15 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
 /// A terminal key's full read of `node`, its starting read when `starting`
 /// names the key's unit: the model takes its answer, and the terminal's
 /// waiting speech, then the read's own, is said. `None` when it brought no
-/// read; else the caret starting point it minted, if any.
+/// read; else the caret starting point it minted, if any, with the caret
+/// it was minted from.
 async fn terminal_read(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
     node: NodeId,
     starting: Option<verbatim_model::TextUnit>,
     due_us: u64,
-) -> Option<Option<verbatim_model::TextAnchor>> {
+) -> Option<Option<(TextAnchor, CaretReport)>> {
     let now_us = cx.now_us();
     let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now_us)?;
     let reply = match cx.ask(asked, due_us).await {
@@ -768,7 +794,7 @@ async fn terminal_read(
         (now_us, press.trace_id),
     );
     crate::terminal::reading::speak_read(cx, entry);
-    reply.map(|reply| reply.point)
+    reply.map(|reply| reply.point.zip(reply.snapshot.caret.clone()))
 }
 
 /// A terminal's held key passes: its stroke is sent, and the focused
@@ -796,70 +822,193 @@ enum WatchEnd {
     Withdrawn,
 }
 
-/// Watching: the watch, then the key's words by its script.
+/// The effect test of a key of `motion`'s wait: a change of the unit at
+/// the caret counts after Delete and Control+Delete, and a change of the
+/// line after a key that deletes (`docs/parity/text.md`).
+fn effect_test(motion: CaretMotion) -> EffectTest {
+    EffectTest {
+        unit: motion.compares_unit(),
+        line: motion.deletes(),
+    }
+}
+
+/// How a key's wait ended, with its end read when it made one.
+enum WaitEnd {
+    /// The effect was seen.
+    Effect(Option<EndRead>),
+    /// The bound passed.
+    Bound(Option<EndRead>),
+}
+
+/// Asks a key's wait (the request list's design, section 6, `Watch`):
+/// `WaitForCaret` from the starting point with the starting texts and the
+/// key's effect test, then the caret, its line and the key's unit at it,
+/// read only at the effect for a sentence key. The line carries the
+/// formatting a line or a character speaks, the unit that of a word or a
+/// paragraph. `None` for a wait that failed or was not answered; `Err`
+/// when an arrival withdrew it.
+async fn wait(
+    cx: &mut Cx<Entries>,
+    press: &CaretPress,
+    (binding, started): (&CaretBinding, &Start),
+    (passed_at_us, due_us): (u64, u64),
+) -> Result<Option<WaitEnd>, ()> {
+    let node = binding.node;
+    let motion = press.key.motion;
+    let details = key_details(cx, press);
+    let unit = key_unit(binding.provider, motion);
+    let mut watch = cx.batch(|| ());
+    let waited = watch.wait_for_caret(
+        node,
+        CaretWait {
+            from: started.point,
+            line: started.caret.line.text.clone(),
+            offset: started.caret.line.offset,
+            word: started.word.clone(),
+            effect: effect_test(motion),
+            passed_at_us,
+            poll_us: POLL_US,
+            bound_us: BOUND_US,
+            // NVDA's `caretMovementDetectionUsesEvents` holds for every UI
+            // Automation field but a terminal, whose keys this entry does
+            // not run: a caret or text-change event of the node within 60
+            // ms of the pass is the key's effect (Dickson, 2026-11-16). A
+            // node no longer the committed focus has no `Follow` to hear
+            // them.
+            events: binding.provider == TextProvider::Uia && committed(&cx.facts(), node),
+        },
+    );
+    // A sentence key reads only at its effect: at its bound it moves by
+    // sentence where the text has sentences and says nothing where it has
+    // none, as NVDA's move by a unit UI Automation lacks fails silently
+    // (`editableText.py` 253 to 265; `UIAHandler/__init__.py` 170 to 176).
+    if is_sentence_key(press) {
+        watch.when(waited.found());
+    }
+    let caret = watch.caret(node, None);
+    let spoken_by_line = matches!(unit, TextUnit::Line | TextUnit::Character);
+    let line = watch.read_text(
+        node,
+        caret.caret(),
+        None,
+        TextUnit::Line,
+        1,
+        if spoken_by_line {
+            details
+        } else {
+            TextDetails::NONE
+        },
+    );
+    let unit_read =
+        (!spoken_by_line).then(|| watch.read_text(node, caret.caret(), None, unit, 1, details));
+    let request = watch
+        .finish()
+        .of(Reader::Outpost(binding.window.process), window_of(binding));
+    let answers = match cx.ask(request, due_us).await {
+        Outcome::Result(answers) => answers,
+        Outcome::NoLongerAwaited(CancelReason::Withdrawn) => return Err(()),
+        Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => return Ok(None),
+    };
+    let read = match (answers.get(caret), answers.get(line)) {
+        (Got::Done(at), Got::Done(line)) => line.chunks.first().map(|line| {
+            let unit = match unit_read.map(|read| answers.get(read)) {
+                Some(Got::Done(read)) => read.chunks.first().cloned(),
+                None if unit == TextUnit::Character => Some(character_of(line)),
+                None | Some(_) => None,
+            };
+            EndRead {
+                unit: unit.unwrap_or_else(|| line.clone()),
+                caret: crate::text_facts::caret_report(at, line.clone()),
+            }
+        }),
+        _ => None,
+    };
+    Ok(match answers.get(waited) {
+        Got::Done(Waited::Effect) => Some(WaitEnd::Effect(read)),
+        Got::Done(Waited::Bound) => Some(WaitEnd::Bound(read)),
+        _ => None,
+    })
+}
+
+/// The character at the caret of `line`, cut from it with its formatting
+/// and languages, as a key that moves by character speaks it.
+fn character_of(line: &TextChunk) -> TextChunk {
+    let offset = crate::text::byte_offset(line.offset);
+    // The grapheme at the caret, as the outpost cut a character key's
+    // character from its line.
+    let range = verbatim_text::grapheme_at(&line.text, offset).unwrap_or(offset..offset);
+    let (start, end) = (
+        u32::try_from(range.start).unwrap_or(u32::MAX),
+        u32::try_from(range.end).unwrap_or(u32::MAX),
+    );
+    let clip = |(from, to): (u32, u32)| {
+        let (from, to) = (from.max(start), to.min(end));
+        (from < to).then(|| (from.saturating_sub(start), to.saturating_sub(start)))
+    };
+    TextChunk {
+        unit: TextUnit::Character,
+        text: line.text.get(range).unwrap_or_default().to_owned(),
+        offset: 0,
+        languages: line
+            .languages
+            .iter()
+            .filter_map(|run| {
+                clip((run.start, run.end)).map(|(start, end)| verbatim_model::LanguageRun {
+                    start,
+                    end,
+                    language: run.language.clone(),
+                })
+            })
+            .collect(),
+        formats: line
+            .formats
+            .iter()
+            .filter_map(|run| {
+                clip((run.start, run.end)).map(|(start, end)| verbatim_model::FormatRun {
+                    start,
+                    end,
+                    attributes: run.attributes.clone(),
+                })
+            })
+            .collect(),
+        first: false,
+        last: false,
+        ..line.clone()
+    }
+}
+
+/// Watching: the wait, then the key's words by its script.
 async fn watching(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
-    (binding, started): (&CaretBinding, &Started),
-    (passed_at_us, due_us): (u64, u64),
+    (binding, started): (&CaretBinding, &Start),
+    times: (u64, u64),
 ) -> WatchEnd {
-    let watch = Watch {
-        provider: binding.provider,
-        point: started.point,
-        motion: press.key.motion,
-        passed_at_us,
-        poll_us: POLL_US,
-        // NVDA's `caretMovementDetectionUsesEvents` holds for every UI
-        // Automation field but a terminal, whose keys this entry does not
-        // run: a caret or text-change event of the node within 60 ms of
-        // the pass is the key's effect (Dickson, 2026-11-16). A node no
-        // longer the committed focus has no `Follow` to hear them.
-        events: binding.provider == TextProvider::Uia && committed(&cx.facts(), binding.node),
-        bound_us: BOUND_US,
-        // A sentence key reads only at its effect: at its bound it moves by
-        // sentence where the text has sentences and says nothing where it
-        // has none, as NVDA's move by a unit UI Automation lacks fails
-        // silently (`editableText.py` 253 to 265; `UIAHandler/__init__.py`
-        // 170 to 176).
-        final_read: if is_sentence_key(press) {
-            WatchFinalRead::UnitAtEffect {
-                unit: press.key.motion.unit(),
-                details: key_details(cx, press),
-            }
-        } else {
-            WatchFinalRead::Unit {
-                unit: press.key.motion.unit(),
-                details: key_details(cx, press),
-            }
-        },
-    };
-    let request = WatchRequest(OnNode::of(binding, TextOp::Watch(watch)));
-    match cx.ask(request, due_us).await {
-        Outcome::Result(Ok(Watched::Effect(read))) => {
+    let (_, due_us) = times;
+    match wait(cx, press, (binding, started), times).await {
+        Err(()) => return WatchEnd::Withdrawn,
+        Ok(Some(WaitEnd::Effect(Some(read)))) => {
             let words = effect_words(&mut cx.facts_mut(), binding, press.key, (started, &read));
             finish(cx, press, binding, read, words);
             if press.key.motion == CaretMotion::NewLine {
                 new_line_typed(cx, press);
             }
         }
-        Outcome::Result(Ok(Watched::Bound(read))) => {
+        Ok(Some(WaitEnd::Bound(Some(read)))) => {
             let words = bound_words(&mut cx.facts_mut(), binding, press.key, &read);
             finish(cx, press, binding, read, words);
         }
-        Outcome::Result(Ok(Watched::BoundUnread | Watched::EffectUnread)) => {
+        Ok(Some(WaitEnd::Bound(None))) if is_sentence_key(press) => {
             if moves_by_sentence(press, binding) {
                 sentence(cx, press, (binding, started), due_us).await;
             }
         }
-        Outcome::NoLongerAwaited(CancelReason::Withdrawn) => return WatchEnd::Withdrawn,
-
-        // A watch answered with a failure says nothing, as one refused.
-        Outcome::Result(Err(_))
-        | Outcome::Refused(_)
-        | Outcome::NotThere
-        | Outcome::NotResponding
-        | Outcome::ReaderEnded
-        | Outcome::NoLongerAwaited(_) => {}
+        // A wait whose reads failed says nothing, as one refused.
+        Ok(Some(WaitEnd::Effect(None) | WaitEnd::Bound(None)) | None) => {}
     }
     WatchEnd::Ended
 }
@@ -869,25 +1018,26 @@ async fn watching(
 async fn sentence(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
-    (binding, started): (&CaretBinding, &Started),
+    (binding, started): (&CaretBinding, &Start),
     due_us: u64,
 ) {
     let forward = press.key.motion == CaretMotion::NextSentence;
-    let request = SentenceRequest(OnNode::of(
-        binding,
-        TextOp::MoveBySentence(SentenceMove {
-            provider: binding.provider,
-            point: started.point,
-            forward,
-            details: key_details(cx, press),
-        }),
-    ));
+    let mut batch = cx.batch(|| ());
+    let move_by =
+        batch.move_by_sentence(binding.node, started.point, forward, key_details(cx, press));
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(binding.window.process), window_of(binding));
     // A move that fails says nothing, as NVDA's sentence script swallows
     // its exception (`editableText.py` 240 to 264), a source with no
     // sentence unit or a starting point no longer held included.
-    let Outcome::Result(Ok(moved)) = cx.ask(request, due_us).await else {
+    let Outcome::Result(answers) = cx.ask(request, due_us).await else {
         return;
     };
+    let Got::Done(moved) = answers.get(move_by) else {
+        return;
+    };
+    let moved = moved.clone();
     // The answer mints the next selection baseline, as Verbatim's own move,
     // whether or not the key speaks.
     let (line, words, baseline) = match moved {
@@ -929,7 +1079,7 @@ fn finish(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
     binding: &CaretBinding,
-    read: WatchedRead,
+    read: EndRead,
     words: Vec<UtteranceSegment>,
 ) {
     if words.is_empty() {
@@ -1035,7 +1185,7 @@ fn moves_by_sentence(press: &CaretPress, binding: &CaretBinding) -> bool {
 /// What Backspace or Control+Backspace deleted, from the starting read:
 /// the text before the caret, or before the selection's start, "blank"
 /// at the text's start.
-fn deleted(binding: &CaretBinding, key: CaretKey, started: &Started) -> Vec<UtteranceSegment> {
+fn deleted(binding: &CaretBinding, key: CaretKey, started: &Start) -> Vec<UtteranceSegment> {
     let grid = editing::is_grid(binding.role);
     let before = editing::before_of_caret(grid, key.motion, (&started.caret, &started.unit));
     editing::focus_first_words(
@@ -1053,7 +1203,7 @@ fn effect_words(
     state: &mut SrState,
     binding: &CaretBinding,
     key: CaretKey,
-    (started, read): (&Started, &WatchedRead),
+    (started, read): (&Start, &EndRead),
 ) -> Vec<UtteranceSegment> {
     if editing::selects(key) || key.motion == CaretMotion::Other {
         return Vec::new();
@@ -1078,7 +1228,7 @@ fn unit_remembered(
     state: &mut SrState,
     binding: &CaretBinding,
     key: CaretKey,
-    read: &WatchedRead,
+    read: &EndRead,
 ) -> Vec<UtteranceSegment> {
     let mut reported = binding.formatting.clone();
     let words = editing::unit_with(
@@ -1097,7 +1247,7 @@ fn bound_words(
     state: &mut SrState,
     binding: &CaretBinding,
     key: CaretKey,
-    read: &WatchedRead,
+    read: &EndRead,
 ) -> Vec<UtteranceSegment> {
     if editing::selects(key)
         || key.motion.deletes_back()
