@@ -7,8 +7,9 @@
 //! never wait behind them; run one at a time ahead of the outpost's own
 //! work, each answered once with one of the five outcomes.
 //!
-//! A request queued is dispatched when no program runs. Cancel drops one
-//! still queued, answered cancelled. One running is abandoned with its
+//! A request queued is dispatched when no program runs; the reducer's
+//! record of the program in flight says which request runs, if one does.
+//! Cancel drops one still queued, answered cancelled. One running is abandoned with its
 //! worker replaced only when the reason is the foreground moving away,
 //! since a thread in a hung or slow window would stick again and a
 //! withdrawal must not cost a thread; for any other reason it is left to
@@ -67,12 +68,10 @@ pub enum Cancelled {
     Nothing,
 }
 
-/// Core's requests queued for the worker, and the one it runs.
+/// Core's requests queued for the worker.
 #[derive(Clone, Debug, Default)]
 pub struct Asks {
     queued: VecDeque<Box<Ask>>,
-    /// The request the program in flight answers, until it is answered.
-    running: Option<RequestNumber>,
 }
 
 impl Asks {
@@ -128,51 +127,15 @@ impl Asks {
         gone
     }
 
-    /// The next request to dispatch, which runs from now on, when none
-    /// runs.
+    /// The next request to dispatch, for the reducer to run when no
+    /// program runs.
     pub fn take_next(&mut self) -> Option<Box<Ask>> {
-        if self.running.is_some() {
-            return None;
-        }
-        let ask = self.queued.pop_front()?;
-        self.running = Some(ask.number);
-        Some(ask)
+        self.queued.pop_front()
     }
 
-    /// The request running, until it is answered.
-    #[must_use]
-    pub fn running(&self) -> Option<RequestNumber> {
-        self.running
-    }
-
-    /// Whether any request is queued.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.queued.is_empty()
-    }
-
-    /// The requests queued, in order.
-    pub fn queued(&self) -> impl Iterator<Item = &Ask> {
-        self.queued.iter().map(AsRef::as_ref)
-    }
-
-    /// The running request's answer, `answer`, is sent: it no longer runs.
-    /// `None` when `answer` is not the running request's.
-    pub fn answered(&mut self, answer: Answer) -> Option<Answer> {
-        self.running.take_if(|running| *running == answer.number)?;
-        Some(answer)
-    }
-
-    /// The program that ran the request ended: a request left unanswered
-    /// is answered failed.
-    pub fn ended(&mut self) -> Option<Answer> {
-        self.running
-            .take()
-            .map(|number| ended(number, "the outpost failed handling the request"))
-    }
-
-    /// Core's `cancel`.
-    pub fn cancel(&mut self, cancel: Cancel) -> Cancelled {
+    /// Core's `cancel`, with `running` the request the program in flight
+    /// runs and has not answered, if one.
+    pub fn cancel(&mut self, cancel: Cancel, running: Option<RequestNumber>) -> Cancelled {
         if let Some(place) = self
             .queued
             .iter()
@@ -181,19 +144,21 @@ impl Asks {
             self.queued.remove(place);
             return Cancelled::Dropped(ended(cancel.number, "cancelled"));
         }
-        if self.running == Some(cancel.number) && cancel.reason.abandons_call() {
-            self.running = None;
+        if running == Some(cancel.number) && cancel.reason.abandons_call() {
             return Cancelled::Abandon(ended(cancel.number, "abandoned"));
         }
         Cancelled::Nothing
     }
 
-    /// The outpost shuts down: the requests queued are dropped unanswered,
-    /// and the running one's answer is dropped.
+    /// The outpost shuts down: the requests queued are dropped unanswered.
     pub fn close(&mut self) {
         self.queued.clear();
-        self.running = None;
     }
+}
+
+/// The answer to request `number` whose program ended without answering.
+pub(crate) fn failed(number: RequestNumber) -> Answer {
+    ended(number, "the outpost failed handling the request")
 }
 
 /// The answer "ended or stopped" to request `number`, for the log
@@ -209,7 +174,7 @@ fn ended(number: RequestNumber, detail: &str) -> Answer {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::request::{CancelReason, Follow, Reply, WindowVerdict};
+    use verbatim_model::request::{CancelReason, Follow, WindowVerdict};
 
     use super::*;
 
@@ -238,25 +203,7 @@ mod tests {
     }
 
     fn numbers(asks: &Asks) -> Vec<u64> {
-        asks.queued().map(|ask| ask.number.0).collect()
-    }
-
-    /// A newer `Follow` replaces one still queued, answered "ended or
-    /// stopped"; the requests between them keep their places, and a
-    /// `Follow` running is left to run.
-    #[test]
-    fn a_newer_follow_replaces_a_queued_one_answered_ended() {
-        let mut asks = Asks::default();
-        assert_eq!(asks.push(follow(1, 1)), []);
-        let _ = asks.take_next();
-        assert_eq!(asks.push(follow(2, 1)), [], "the running one stays");
-        assert_eq!(asks.push(ask(3)), []);
-        assert_eq!(
-            asks.push(follow(4, 1)),
-            [ended(RequestNumber(2), "replaced by a newer Follow")]
-        );
-        assert_eq!(numbers(&asks), [3, 4]);
-        assert_eq!(asks.running(), Some(RequestNumber(1)));
+        asks.queued.iter().map(|ask| ask.number.0).collect()
     }
 
     fn outside(number: u64) -> Box<Ask> {
@@ -270,7 +217,7 @@ mod tests {
 
     /// The event queue's requests are made ahead of every request from
     /// outside the queue still queued, each class in the order Core sent
-    /// it; one already running is left to run (Table 14).
+    /// it; one already taken to run is not among them (Table 14).
     #[test]
     fn the_queues_requests_go_ahead_of_requests_from_outside_it() {
         let mut asks = Asks::default();
@@ -282,51 +229,6 @@ mod tests {
         let _ = asks.push(follow(5, 1));
         let _ = asks.push(ask(6));
         assert_eq!(numbers(&asks), [3, 5, 6, 2, 4]);
-        assert_eq!(asks.running(), Some(RequestNumber(1)));
-    }
-
-    /// A read of an object by MSAA ids in `window`.
-    fn by_ids(number: u64, window: u64) -> Box<Ask> {
-        Box::new(Ask {
-            number: RequestNumber(number),
-            window: WindowHandle(1),
-            verdict: WindowVerdict::Msaa,
-            request: Request::ReadObject(verbatim_model::request::ReadObject {
-                object: ObjectRef::Msaa {
-                    window: WindowHandle(window),
-                    object: -4,
-                    child: 0,
-                },
-                set: Vec::new(),
-                relation: None,
-                descendants: false,
-                walk: None,
-                purpose: verbatim_model::request::Purpose::Other,
-            }),
-        })
-    }
-
-    /// A window destroyed answers "not there" every queued read whose MSAA
-    /// ids name it, and leaves a request merely asked on it, the others
-    /// and the running one.
-    #[test]
-    fn a_destroyed_window_answers_the_queued_reads_its_ids_name_not_there() {
-        let mut asks = Asks::default();
-        let _ = asks.push(by_ids(1, 7));
-        let _ = asks.take_next();
-        let _ = asks.push(ask(2));
-        let _ = asks.push(by_ids(3, 7));
-        let _ = asks.push(follow(4, 7));
-        let _ = asks.push(by_ids(5, 8));
-        let gone = asks.destroyed(WindowHandle(7));
-        assert_eq!(
-            gone.iter()
-                .map(|answer| (answer.number.0, answer.outcome.clone()))
-                .collect::<Vec<_>>(),
-            [(3, Outcome::NotThere)]
-        );
-        assert_eq!(numbers(&asks), [2, 4, 5]);
-        assert_eq!(asks.running(), Some(RequestNumber(1)));
     }
 
     fn cancel(number: u64, reason: CancelReason) -> Cancel {
@@ -336,121 +238,6 @@ mod tests {
         }
     }
 
-    fn result(number: u64) -> Answer {
-        Answer {
-            number: RequestNumber(number),
-            outcome: Outcome::Result(Reply::Followed),
-            probes: Vec::new(),
-            detail: String::new(),
-        }
-    }
-
-    /// Requests are dispatched one at a time, in the order Core sent them.
-    #[test]
-    fn requests_run_one_at_a_time_in_sending_order() {
-        let mut asks = Asks::default();
-        let _ = asks.push(ask(1));
-        let _ = asks.push(ask(2));
-        assert_eq!(
-            asks.take_next().map(|ask| ask.number),
-            Some(RequestNumber(1))
-        );
-        assert_eq!(asks.take_next(), None, "one runs");
-        assert_eq!(asks.answered(result(1)), Some(result(1)));
-        assert_eq!(
-            asks.take_next().map(|ask| ask.number),
-            Some(RequestNumber(2))
-        );
-    }
-
-    /// A queued request cancelled for any reason is dropped and answered
-    /// cancelled, and never dispatched.
-    #[test]
-    fn a_queued_request_cancelled_is_dropped_and_answered_cancelled() {
-        for reason in [
-            CancelReason::Foreground,
-            CancelReason::Hung,
-            CancelReason::DueTime,
-            CancelReason::Withdrawn,
-        ] {
-            let mut asks = Asks::default();
-            let _ = asks.push(ask(1));
-            let _ = asks.push(ask(2));
-            let _ = asks.take_next();
-            assert_eq!(
-                asks.cancel(cancel(2, reason)),
-                Cancelled::Dropped(ended(RequestNumber(2), "cancelled")),
-                "{reason:?}"
-            );
-            let _ = asks.answered(result(1));
-            assert_eq!(asks.take_next(), None, "{reason:?}");
-        }
-    }
-
-    /// A running request cancelled because the foreground moved away is
-    /// abandoned and answered abandoned; the next is dispatched.
-    #[test]
-    fn a_running_request_cancelled_for_the_foreground_is_abandoned() {
-        let mut asks = Asks::default();
-        let _ = asks.push(ask(1));
-        let _ = asks.push(ask(2));
-        let _ = asks.take_next();
-        assert_eq!(
-            asks.cancel(cancel(1, CancelReason::Foreground)),
-            Cancelled::Abandon(ended(RequestNumber(1), "abandoned"))
-        );
-        assert_eq!(asks.running(), None);
-        assert_eq!(
-            asks.answered(result(1)),
-            None,
-            "its late answer is not sent"
-        );
-        assert_eq!(
-            asks.take_next().map(|ask| ask.number),
-            Some(RequestNumber(2))
-        );
-    }
-
-    /// A running request cancelled for a hang, its due time or a
-    /// withdrawal is left to run, and its answer is sent when it ends.
-    #[test]
-    fn a_running_request_cancelled_for_another_reason_is_left_alone() {
-        for reason in [
-            CancelReason::Hung,
-            CancelReason::DueTime,
-            CancelReason::Withdrawn,
-        ] {
-            let mut asks = Asks::default();
-            let _ = asks.push(ask(1));
-            let _ = asks.take_next();
-            assert_eq!(asks.cancel(cancel(1, reason)), Cancelled::Nothing);
-            assert_eq!(asks.running(), Some(RequestNumber(1)));
-            assert_eq!(asks.answered(result(1)), Some(result(1)), "{reason:?}");
-        }
-    }
-
-    /// A request whose program ends without answering is answered failed,
-    /// once.
-    #[test]
-    fn a_request_ended_unanswered_is_answered_failed_once() {
-        let mut asks = Asks::default();
-        let _ = asks.push(ask(1));
-        let _ = asks.take_next();
-        assert_eq!(
-            asks.ended(),
-            Some(ended(
-                RequestNumber(1),
-                "the outpost failed handling the request"
-            ))
-        );
-        assert_eq!(asks.ended(), None);
-        let mut answered = Asks::default();
-        let _ = answered.push(ask(2));
-        let _ = answered.take_next();
-        let _ = answered.answered(result(2));
-        assert_eq!(answered.ended(), None, "an answered request is not again");
-    }
-
     /// A cancel of a request the worker never had, or already answered,
     /// does nothing.
     #[test]
@@ -458,19 +245,17 @@ mod tests {
         let mut asks = Asks::default();
         let _ = asks.push(ask(1));
         let _ = asks.take_next();
-        let _ = asks.answered(result(1));
         assert_eq!(
-            asks.cancel(cancel(1, CancelReason::Foreground)),
+            asks.cancel(cancel(1, CancelReason::Foreground), None),
             Cancelled::Nothing
         );
         assert_eq!(
-            asks.cancel(cancel(9, CancelReason::Withdrawn)),
+            asks.cancel(cancel(9, CancelReason::Withdrawn), None),
             Cancelled::Nothing
         );
     }
 
-    /// At shutdown the queued requests are dropped unanswered and the
-    /// running one's answer is not sent.
+    /// At shutdown the queued requests are dropped unanswered.
     #[test]
     fn shutdown_drops_the_queued_requests_unanswered() {
         let mut asks = Asks::default();
@@ -479,7 +264,5 @@ mod tests {
         let _ = asks.take_next();
         asks.close();
         assert_eq!(asks.take_next(), None);
-        assert_eq!(asks.answered(result(1)), None);
-        assert_eq!(asks.ended(), None);
     }
 }

@@ -39,7 +39,6 @@ impl Replay {
         self.input(
             Input::Finished {
                 request,
-                reported: false,
                 panicked: false,
             },
             at_ms,

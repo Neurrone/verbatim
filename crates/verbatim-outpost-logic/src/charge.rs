@@ -93,6 +93,13 @@ impl<T> InCharge<T> {
             .map(|(request, item)| (*request, item))
     }
 
+    /// The program running and its item, to change.
+    pub fn running_mut(&mut self) -> Option<(Request, &mut T)> {
+        self.running
+            .as_mut()
+            .map(|(request, item)| (*request, item))
+    }
+
     /// A new request of the generation in charge, for a program that is
     /// not kept running.
     pub fn next_request(&mut self) -> Request {

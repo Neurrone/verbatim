@@ -555,7 +555,6 @@ impl Seam {
                 effects.extend(self.outpost.input(
                     OutpostInput::Finished {
                         request,
-                        reported: false,
                         panicked: false,
                     },
                     now_of(self.now),
@@ -584,7 +583,6 @@ impl Seam {
                 effects.extend(self.outpost.input(
                     OutpostInput::Finished {
                         request,
-                        reported: false,
                         panicked: false,
                     },
                     now_of(self.now),
@@ -595,7 +593,6 @@ impl Seam {
                 let effects = self.outpost.input(
                     OutpostInput::Finished {
                         request,
-                        reported: false,
                         panicked: false,
                     },
                     now_of(self.now),

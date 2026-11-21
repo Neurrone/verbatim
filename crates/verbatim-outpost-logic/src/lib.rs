@@ -193,9 +193,6 @@ pub enum Input {
     Finished {
         /// The request that ended.
         request: Request,
-        /// Unread since focus groups went with the event queue; kept until
-        /// the caret watch's seam test, which sets it, is next changed.
-        reported: bool,
         /// Whether it panicked.
         panicked: bool,
     },
@@ -225,11 +222,16 @@ pub enum Input {
     Close,
 }
 
-/// What the reducer keeps of the program in flight.
-#[derive(Clone, Debug)]
-struct Current {
-    /// The Core request it runs ([`Asks::running`]), if it runs one.
-    asked: Option<verbatim_model::request::RequestNumber>,
+/// What the program in flight runs, its one record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Current {
+    /// Core's request numbered so, until it is answered ([`waiting`]).
+    Ask(verbatim_model::request::RequestNumber),
+    /// A check of the watch numbered so ([`watch`]).
+    Watch(verbatim_model::request::RequestNumber),
+    /// Anything else, or Core's request once answered or once the outpost
+    /// closes.
+    Other,
 }
 
 /// The reducer.
@@ -339,6 +341,10 @@ impl Reducer {
             Input::Close => {
                 self.stopping = true;
                 self.forgets.clear();
+                // The running request's answer is dropped.
+                if let Some((_, current @ Current::Ask(_))) = self.flight.running_mut() {
+                    *current = Current::Other;
+                }
                 self.asks.close();
                 self.watches.close();
                 let unparked = self.intake.close();
@@ -383,13 +389,19 @@ impl Reducer {
             }
             Input::CancelAsk(cancel) => self.cancel_ask(cancel, effects),
             Input::Answered { request, answer } => {
-                if !self.accepts(request) {
-                    return;
-                }
-                let answer = if self.watches.runs(request) {
-                    self.watches.answered(request, *answer)
-                } else {
-                    self.asks.answered(*answer)
+                let answer = match self.flight.running_mut() {
+                    Some((running, Current::Watch(number))) if running == request => {
+                        self.watches.answered(*number, *answer)
+                    }
+                    Some((running, current @ Current::Ask(_))) if running == request => {
+                        if *current == Current::Ask(answer.number) {
+                            *current = Current::Other;
+                            Some(*answer)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
                 };
                 if let Some(answer) = answer {
                     effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
@@ -435,7 +447,11 @@ impl Reducer {
                 return;
             }
         }
-        match self.asks.cancel(cancel) {
+        let running = match self.flight.running() {
+            Some((_, Current::Ask(number))) => Some(*number),
+            _ => None,
+        };
+        match self.asks.cancel(cancel, running) {
             Cancelled::Dropped(answer) => {
                 effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
             }
@@ -490,17 +506,15 @@ impl Reducer {
         {
             return;
         }
-        if self.watches.runs(request)
-            && let Some(answer) = self.watches.ended(request)
-        {
-            effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
-        }
         let Some(current) = self.flight.end(request) else {
             return;
         };
-        if current.asked.is_some()
-            && let Some(answer) = self.asks.ended()
-        {
+        let answer = match current {
+            Current::Watch(number) => self.watches.ended(number),
+            Current::Ask(number) => Some(waiting::failed(number)),
+            Current::Other => None,
+        };
+        if let Some(answer) = answer {
             effects.push(Effect::Send(Box::new(OutpostToCore::Answer(answer))));
         }
     }
@@ -543,8 +557,8 @@ impl Reducer {
             }
             if let Some(program) = self.watches.due(now.wall_us) {
                 let program = Box::new(program);
-                let request = self.dispatch(Work::Watch(program.clone()), effects);
-                self.watches.running(&program, request, now.wall_us);
+                self.watches.running(&program, now.wall_us);
+                self.dispatch(Work::Watch(program), effects);
                 continue;
             }
             if let Some(ask) = self.asks.take_next() {
@@ -599,11 +613,10 @@ impl Reducer {
 
     /// Dispatches `work`.
     fn dispatch(&mut self, work: Work, effects: &mut Vec<Effect>) -> Request {
-        let current = Current {
-            asked: match &work {
-                Work::Ask(ask) => Some(ask.number),
-                _ => None,
-            },
+        let current = match &work {
+            Work::Ask(ask) => Current::Ask(ask.number),
+            Work::Watch(program) => Current::Watch(program.number),
+            Work::Entry(_) | Work::Drop | Work::Forget(_) => Current::Other,
         };
         let request = self.flight.start(current);
         effects.push(Effect::Dispatch(Box::new(Program { request, work })));

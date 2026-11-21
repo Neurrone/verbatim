@@ -263,10 +263,7 @@ the same tables and code, which the arbitrator's own lists are built from.
 - A timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`),
   which the worker reads through MSAA for the rest of its request. A
   probe on an abandoned worker sends nothing and keeps nothing.
-- `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
-  `Arbitrator::now` time the classic
-  walk budgets; `Outpost::set_clock` sets it for tests that count calls.
-  `Outpost::set_observation_clock` sets the clock the outpost's own
+- `Outpost::set_observation_clock` sets the clock the outpost's own
   events and the probes it reports are stamped by, for a test that moves
   that time on.
 - Both class lists are `verbatim_model::class`'s, written from
@@ -296,9 +293,6 @@ the same tables and code, which the arbitrator's own lists are built from.
   `FocusedElementReader` in place of `Uia::focused`);
   `set_foreground_reader` (a `verbatim_win32::window::ForegroundReader` in place of
   `GetForegroundWindow`, for acceptance and the window a focus entered);
-  `observe_foreground_programs` (a `ForegroundProgramObserver`, told on the
-  worker the window of each foreground change a program is about to
-  handle, so a test can hold the worker there);
   `set_focus_window_reader` (a `FocusWindowReader` for focus-now); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
   for the outpost's own events' stamps and the probes it reports).
 - `Outpost::settle` posts a barrier (`Item::Barrier` with

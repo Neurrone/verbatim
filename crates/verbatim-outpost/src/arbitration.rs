@@ -40,7 +40,6 @@ use std::time::Instant;
 use crate::outpost::lock::{Lock, LockGuard};
 
 use verbatim_model::class::{BAD, GOOD};
-use verbatim_process::clock::Clock;
 use verbatim_reader_rules::class::{
     ClassVerdict, WindowClasses, classify_with, post_probe_check, provider_usable,
 };
@@ -93,8 +92,6 @@ type Probe = Arc<dyn Fn(isize) -> verbatim_uia::RawProbe + Send + Sync>;
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
-    /// The time a classic walk's budget is measured by.
-    clock: Clock,
     /// The probe [`decide`] asks a window with.
     probe: Probe,
 }
@@ -119,7 +116,6 @@ impl Arbitrator {
         Self {
             good_classes,
             bad_classes,
-            clock: Arc::new(Instant::now),
             probe: Arc::new(verbatim_uia::raw_probe),
         }
     }
@@ -133,26 +129,6 @@ impl Arbitrator {
             *count.lock() += 1;
             outcome
         });
-    }
-
-    /// Reads the time from `clock` from now on, in place of the system's:
-    /// for a test that decides when a classic walk's time budget is spent.
-    pub fn set_clock(&mut self, clock: Clock) {
-        self.clock = clock;
-    }
-
-    /// The time by the arbitrator's clock, which a classic walk's budget is
-    /// measured in.
-    #[must_use]
-    pub fn now(&self) -> Instant {
-        (self.clock)()
-    }
-
-    /// The arbitrator's clock, which the outpost's classic walks measure
-    /// their time budgets by too.
-    #[must_use]
-    pub fn clock(&self) -> Clock {
-        Arc::clone(&self.clock)
     }
 
     /// The verdict the class lists give a window of `classes`:

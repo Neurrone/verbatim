@@ -367,11 +367,7 @@ impl Shell {
                 }
             }
 
-            Posted::Finished { request, panicked } => Input::Finished {
-                request,
-                reported: false,
-                panicked,
-            },
+            Posted::Finished { request, panicked } => Input::Finished { request, panicked },
             Posted::Returned(generation) => {
                 self.parked.remove(&generation);
                 self.count_parked();

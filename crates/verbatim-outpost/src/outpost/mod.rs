@@ -190,8 +190,8 @@ pub(crate) struct Context {
     store: store::Store,
     arbitrator: Lock<Arbitrator>,
     /// The clock the outpost's own hook and subscriptions stamp their
-    /// events' observations with, and its arbitrator its verdicts' keeps
-    /// by: the run's shared clock, unless a test sets its own
+    /// events' observations with, and the start of each probe it reports:
+    /// the run's shared clock, unless a test sets its own
     /// ([`Outpost::set_observation_clock`]).
     observation: OnceLock<verbatim_process::clock::ObservationClock>,
     /// The focus-following UIA subscription, one event handler group in
@@ -229,10 +229,6 @@ pub(crate) struct Context {
     /// Who is told of the calls each of Core's requests made
     /// ([`Outpost::observe_request_calls`]), if anyone.
     request_calls: OnceLock<RequestCallsObserver>,
-    /// Who is told, on the worker, of each foreground change a program is
-    /// about to handle ([`Outpost::observe_foreground_programs`]), if
-    /// anyone.
-    foreground_programs: OnceLock<ForegroundProgramObserver>,
     /// The failed cached reads the worker has made (`verbatim_uia::calls`),
     /// taken after each entry.
     failed_reads: AtomicU32,
@@ -272,10 +268,6 @@ pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 /// program, once for each program of a caret key's watch.
 pub type RequestCallsObserver =
     Arc<dyn Fn(verbatim_model::request::RequestNumber, verbatim_model::CallCounts) + Send + Sync>;
-
-/// Told, on the worker, of the window of each foreground change a program
-/// is about to handle ([`Outpost::observe_foreground_programs`]).
-pub type ForegroundProgramObserver = Arc<dyn Fn(isize) + Send + Sync>;
 
 /// Reads the handle of the window with the keyboard focus, `None` when
 /// there is none. An outpost reads the system's (`GetGUIThreadInfo`); a
@@ -478,11 +470,6 @@ impl Context {
         self.failed_reads
             .load(Ordering::Relaxed)
             .saturating_add(callbacks)
-    }
-
-    #[track_caller]
-    fn arbitrator(&self) -> LockGuard<'_, Arbitrator> {
-        self.arbitrator.lock()
     }
 
     /// Now on the clock the outpost stamps its own events' observations
@@ -824,7 +811,6 @@ impl Outpost {
             window_readability: Lock::new(Arc::new(verbatim_win32::window::readability)),
             heard: OnceLock::new(),
             request_calls: OnceLock::new(),
-            foreground_programs: OnceLock::new(),
             failed_reads: AtomicU32::new(0),
             event_thread: OnceLock::new(),
             console_hooked: std::sync::atomic::AtomicBool::new(false),
@@ -1046,14 +1032,6 @@ impl Outpost {
         self.context.failed_reads()
     }
 
-    /// Reads the time for the time budgets of the outpost's classic walks
-    /// from `clock` from now on, in place of the system's
-    /// ([`Arbitrator::set_clock`]): a test that counts an operation's calls
-    /// decides when a walk's time is up, however long its calls take.
-    pub fn set_clock(&self, clock: verbatim_process::clock::Clock) {
-        self.context.arbitrator().set_clock(clock);
-    }
-
     /// Stamps the observation of every event the outpost's own hook and
     /// subscriptions take in, and the start of every probe it reports, with
     /// `clock` from now on, in place of the run's shared clock. Set once; a
@@ -1110,17 +1088,6 @@ impl Outpost {
     /// counts; later calls change nothing.
     pub fn observe_request_calls(&self, observer: RequestCallsObserver) {
         let _ = self.context.request_calls.set(observer);
-    }
-
-    /// Tells `observer`, on the worker, the window of each foreground
-    /// change a program is about to handle, before it handles it, so that a
-    /// test can hold the worker in that program while it has the
-    /// application raise events, which then wait in the intake. The
-    /// outpost's test of the change against the foreground was made as the
-    /// reducer took it in, before this. Only the first observer counts;
-    /// later calls change nothing.
-    pub fn observe_foreground_programs(&self, observer: ForegroundProgramObserver) {
-        let _ = self.context.foreground_programs.set(observer);
     }
 
     /// Handles one command from Core, on the I/O thread. Pings are

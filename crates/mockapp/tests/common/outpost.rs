@@ -18,16 +18,7 @@
 //! call the system read is. The window with the keyboard focus is the one
 //! the test reads as the foreground ([`Outpost::set_focus_window_reader`]).
 //!
-//! The outpost reads the time from the test too ([`Outpost::set_clock`]):
-//! the time stands still unless the test moves it on
-//! ([`OutpostUnderTest::pass_time`], or
-//! [`OutpostUnderTest::run_out_of_time_after`] partway through a step), so
-//! a classic walk's time budget is spent only where the test says, however
-//! long the test and its calls take. The listener's reader has no time
-//! budget: it waits for every call. A test whose
-//! budget a real wait must spend, as a stalled window's raw probe spends
-//! it, makes the time the system's instead
-//! ([`OutpostUnderTest::follow_the_system_clock`]). The outpost stamps its
+//! The outpost stamps its
 //! own events' observations, and the start of each probe it reports, by the test's
 //! observation clock ([`Outpost::set_observation_clock`]), which a test
 //! chooses once, as it makes the outpost ([`ObservationTime`]): the run's
@@ -57,7 +48,7 @@
 //! ([`OutpostUnderTest::release`], [`OutpostUnderTest::release_all`]).
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -176,14 +167,11 @@ pub type FocusSlot = Arc<Mutex<Option<AgileReference<IUIAutomationElement>>>>;
 
 /// Has `outpost` read `foreground` as the foreground window, counting its
 /// reads, and as the window with the keyboard focus unless the test sets
-/// another in the window returned, and hold its worker as a foreground
-/// change's program begins while the test closes the gate returned: the
-/// program runs after the outpost's test of the change, made as its
-/// reducer took it in.
+/// another in the window returned.
 fn read_the_tests_foreground(
     outpost: &Outpost,
     foreground: &Arc<AtomicIsize>,
-) -> (Arc<ReadCount>, Arc<WorkerGate>, Arc<AtomicIsize>) {
+) -> (Arc<ReadCount>, Arc<AtomicIsize>) {
     let reader = Arc::clone(foreground);
     let foreground_reads = Arc::new(ReadCount::default());
     let reads = Arc::clone(&foreground_reads);
@@ -191,9 +179,6 @@ fn read_the_tests_foreground(
         reads.count();
         reader.load(Ordering::Relaxed)
     }));
-    let gate = Arc::new(WorkerGate::default());
-    let worker_gate = Arc::clone(&gate);
-    outpost.observe_foreground_programs(Arc::new(move |_| worker_gate.pass()));
     let focus_window = Arc::new(AtomicIsize::new(0));
     let (apart, front) = (Arc::clone(&focus_window), Arc::clone(foreground));
     outpost.set_focus_window_reader(Arc::new(move || {
@@ -202,7 +187,7 @@ fn read_the_tests_foreground(
             window => window,
         })
     }));
-    (foreground_reads, gate, focus_window)
+    (foreground_reads, focus_window)
 }
 
 /// How many times something was read, with the condition a test waits on
@@ -237,97 +222,6 @@ impl ReadCount {
             "the outpost read the foreground window {} times, never {count}",
             *reads
         );
-    }
-}
-
-/// Where the outpost's worker waits, as a foreground change's program
-/// begins, while a test holds it ([`OutpostUnderTest::hold_worker`]),
-/// so that events the test raises meanwhile wait in the outpost's intake and
-/// are planned as one batch once it lets the worker go on.
-#[derive(Default)]
-struct WorkerGate {
-    state: Mutex<GateState>,
-    changed: std::sync::Condvar,
-}
-
-#[derive(Default)]
-struct GateState {
-    /// Whether the next foreground change's program waits.
-    closed: bool,
-    /// Whether one is waiting.
-    waiting: bool,
-    /// How many times one has come to wait at the gate.
-    arrivals: u64,
-    /// How many waiting programs may go on while the gate stays closed
-    /// ([`OutpostUnderTest::step_worker`]).
-    passes: u64,
-}
-
-impl WorkerGate {
-    fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// On the worker: waits while the gate is closed, saying so, unless
-    /// the test lets it pass once.
-    fn pass(&self) {
-        let mut state = self.lock();
-        if !state.closed {
-            return;
-        }
-        state.waiting = true;
-        state.arrivals += 1;
-        self.changed.notify_all();
-        let (mut state, timeout) = self
-            .changed
-            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| {
-                state.closed && state.passes == 0
-            })
-            .unwrap_or_else(PoisonError::into_inner);
-        if state.closed {
-            state.passes = state.passes.saturating_sub(1);
-        }
-        state.waiting = false;
-        self.changed.notify_all();
-        assert!(!timeout.timed_out(), "the test never let the worker go on");
-    }
-
-    /// On the test: lets the program waiting at the closed gate and the
-    /// `changes - 1` after it go on, and waits for the worker to wait at
-    /// the gate with the program after those.
-    fn step(&self, changes: u64) {
-        let mut state = self.lock();
-        assert!(state.waiting, "the worker is not waiting at the gate");
-        let arrived = state.arrivals + changes;
-        state.passes += changes;
-        self.changed.notify_all();
-        let (state, timeout) = self
-            .changed
-            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| {
-                state.arrivals < arrived || !state.waiting
-            })
-            .unwrap_or_else(PoisonError::into_inner);
-        drop(state);
-        assert!(
-            !timeout.timed_out(),
-            "the worker never came back to the gate"
-        );
-    }
-
-    /// On the test: waits for the worker to wait at the gate.
-    fn wait_for_worker(&self) {
-        let state = self.lock();
-        let (state, timeout) = self
-            .changed
-            .wait_timeout_while(state, super::WAIT_TIMEOUT, |state| !state.waiting)
-            .unwrap_or_else(PoisonError::into_inner);
-        drop(state);
-        assert!(!timeout.timed_out(), "the worker never reached the gate");
-    }
-
-    fn set_closed(&self, closed: bool) {
-        self.lock().closed = closed;
-        self.changed.notify_all();
     }
 }
 
@@ -403,16 +297,6 @@ pub struct OutpostUnderTest {
     /// order they were queued ([`Outpost::observe_heard`]).
     heard: Receiver<Heard>,
     pub focus: FocusSlot,
-    /// Where the outpost's worker waits while the test holds it.
-    gate: Arc<WorkerGate>,
-    /// The time the outpost reads.
-    time: Arc<Mutex<Instant>>,
-    /// How many more reads of the time give it unchanged before it jumps an
-    /// hour on ([`Self::run_out_of_time_after`]), when set.
-    jump_after: Arc<Mutex<Option<u32>>>,
-    /// Whether the time read is the system's
-    /// ([`Self::follow_the_system_clock`]).
-    system_time: Arc<AtomicBool>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
     /// How many times the outpost has read the foreground window, which a
@@ -620,34 +504,8 @@ impl OutpostUnderTest {
         } else {
             Outpost::with_focused_element_reader(theirs, pid, options, read_focus)
         };
-        let time = Arc::new(Mutex::new(Instant::now()));
-        let jump_after = Arc::new(Mutex::new(None));
-        let system_time = Arc::new(AtomicBool::new(false));
-        let (clock, jump, system) = (
-            Arc::clone(&time),
-            Arc::clone(&jump_after),
-            Arc::clone(&system_time),
-        );
-        let clock: verbatim_process::clock::Clock = Arc::new(move || {
-            if system.load(Ordering::Relaxed) {
-                return Instant::now();
-            }
-            let mut jump = jump.lock().unwrap_or_else(PoisonError::into_inner);
-            let mut time = clock.lock().unwrap_or_else(PoisonError::into_inner);
-            match *jump {
-                Some(0) => {
-                    *time += Duration::from_secs(3600);
-                    *jump = None;
-                }
-                Some(reads) => *jump = Some(reads - 1),
-                None => {}
-            }
-            *time
-        });
-        outpost.set_clock(Arc::clone(&clock));
         let observation = observe_on_the_tests_time(&outpost, observation_time);
-        let (foreground_reads, gate, focus_window) =
-            read_the_tests_foreground(&outpost, &foreground);
+        let (foreground_reads, focus_window) = read_the_tests_foreground(&outpost, &foreground);
         let (heard_tx, heard) = mpsc::channel();
         outpost.observe_heard(Arc::new(move |event| {
             // The test may have finished with what the outpost hears.
@@ -663,10 +521,6 @@ impl OutpostUnderTest {
             messages,
             heard,
             focus,
-            gate,
-            time,
-            jump_after,
-            system_time,
             foreground,
             foreground_reads,
             focus_window,
@@ -752,15 +606,6 @@ impl OutpostUnderTest {
         self.observation.now()
     }
 
-    /// The time the outpost reads now.
-    fn now(&self) -> Instant {
-        if self.system_time.load(Ordering::Relaxed) {
-            Instant::now()
-        } else {
-            *self.time.lock().unwrap_or_else(PoisonError::into_inner)
-        }
-    }
-
     /// Starts the idle barrier's round `round`, as verbatim.exe does: the
     /// listener has nothing waiting, and the outpost is asked.
     pub fn idle_round(&self, round: u64) {
@@ -793,53 +638,12 @@ impl OutpostUnderTest {
         self.foreground_reads.wait_for(count);
     }
 
-    /// Moves the time the outpost reads on by `by`.
-    ///
-    /// # Panics
-    ///
-    /// Panics once the time is the system's
-    /// ([`follow_the_system_clock`](Self::follow_the_system_clock)), which
-    /// this cannot move.
+    /// Moves the outpost's observation clock on by `by`.
     pub fn pass_time(&self, by: Duration) {
-        self.assert_the_time_is_the_tests();
-        *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
         self.observation
             .pass(u64::try_from(by.as_micros()).unwrap_or(u64::MAX));
     }
 
-    /// Fails the test once the time is the system's, which the test can no
-    /// longer move.
-    fn assert_the_time_is_the_tests(&self) {
-        assert!(
-            !self.system_time.load(Ordering::Relaxed),
-            "the time follows the system's clock, which a test cannot move"
-        );
-    }
-
-    /// Lets the time the outpost reads be read `reads` more times
-    /// unchanged, and then jump an hour on, past every time budget, for a
-    /// step whose budget runs out at a chosen call.
-    ///
-    /// # Panics
-    ///
-    /// Panics once the time is the system's
-    /// ([`follow_the_system_clock`](Self::follow_the_system_clock)), which
-    /// cannot be made to jump.
-    pub fn run_out_of_time_after(&self, reads: u32) {
-        self.assert_the_time_is_the_tests();
-        *self
-            .jump_after
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(reads);
-    }
-
-    /// Makes the time the outpost reads the system's from now on, for a step whose time budget a real wait must
-    /// spend, as a stalled window's raw probe spends it. The test can no
-    /// longer move the time ([`pass_time`](Self::pass_time),
-    /// [`run_out_of_time_after`](Self::run_out_of_time_after)).
-    pub fn follow_the_system_clock(&self) {
-        self.system_time.store(true, Ordering::Relaxed);
-    }
     /// Sends Core's `request` about window `window` through the outpost's
     /// request driver (`verbatim_outpost::driver`), as Core's request table
     /// sends it, with no verdict in force for the window, and returns its

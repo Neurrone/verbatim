@@ -74,7 +74,11 @@ Public API:
   due times and judges a hang itself.
 - The program in flight is the generation in charge's (`InCharge`, the
   `charge` module), numbered by `Request` within its generation so that a
-  dead generation's and an earlier program's results are refused. A
+  dead generation's and an earlier program's results are refused. What it
+  runs is one record kept with it (`Current`): Core's request until it is
+  answered, a watch's check, or other work; `Asks` holds only the queued
+  requests and `Watches` a check's phase, with a window destroyed during
+  the check inside that phase. A
   generation is abandoned only when Core cancels the request its program
   runs because the foreground moved away; the reducer then emits
   `Abandon` and answers that request.

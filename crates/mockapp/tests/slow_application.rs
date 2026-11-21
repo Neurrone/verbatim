@@ -127,13 +127,8 @@ fn a_slow_navigation_step_answers_its_neighbor() {
 }
 
 /// A query on an ancestor of the focus whose element the outpost does not
-/// hold finds it by the classic walk down the focus's path; a walk during
-/// which the outpost's frozen clock passes the path's old budget of a
-/// second answers its node all the same. The time jumps an hour on at the
-/// outpost's third reading of it after the query is asked, the first
-/// between the walk's calls where the old budget was asked, its entry
-/// reading it first and the old budget's start second.
-fn a_slow_path_walk_answers_its_node() {
+/// hold finds it by the classic walk down the focus's path.
+fn a_path_walk_answers_an_ancestor_the_outpost_does_not_hold() {
     common::init_com();
     let title = common::unique_title("mockapp-slow-path");
     let mut app = common::spawn("ancestry.json", "uia", &title);
@@ -149,7 +144,6 @@ fn a_slow_path_walk_answers_its_node() {
     let focused = outpost.uia_focus_answer(&common::listener_focus(&uia, hwnd.0 as isize));
     let group = ancestor_named(&focused, "Inner group");
 
-    outpost.run_out_of_time_after(2);
     let (neighbor, _) = outpost.navigate(hwnd, group, QueryKind::FirstChild);
     assert_eq!(
         common::outpost::name_in(&neighbor.values),
@@ -311,8 +305,8 @@ fn main() {
             a_slow_navigation_step_answers_its_neighbor,
         ),
         (
-            "a_slow_path_walk_answers_its_node",
-            a_slow_path_walk_answers_its_node,
+            "a_path_walk_answers_an_ancestor_the_outpost_does_not_hold",
+            a_path_walk_answers_an_ancestor_the_outpost_does_not_hold,
         ),
         (
             "a_slow_dialog_text_is_reported_with_the_focus",

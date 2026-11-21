@@ -36,8 +36,6 @@
 use verbatim_model::request::{Answer, Cancel, Outcome, RequestNumber};
 use verbatim_model::{NodeId, Watch, WindowHandle};
 
-use crate::charge::Request;
-
 /// How long after the pass a UI Automation event brings a check forward:
 /// NVDA's `_useEvents_maxTimeoutSec` (`editableText.py` 57).
 pub const EVENT_WINDOW_US: u64 = 60_000;
@@ -97,13 +95,15 @@ enum Phase {
     /// W1, brought forward: an event heard at `heard_us` brought a check
     /// forward, due at once; the poll after it is due at `poll_us`.
     Brought { heard_us: u64, poll_us: u64 },
-    /// W2: a check runs as `request`; with no effect the next poll is due
-    /// at `poll_us`.
+    /// W2: its check runs, the program in flight; with no effect the next
+    /// poll is due at `poll_us`. `gone`: its window was destroyed while the
+    /// check ran, so it is answered not there when the check ends (Table
+    /// 15, W2, H).
     Checking {
-        request: Request,
         last: bool,
         poll_us: u64,
         then: Then,
+        gone: bool,
     },
 }
 
@@ -115,9 +115,6 @@ struct Watching {
     node: NodeId,
     watch: Watch,
     phase: Phase,
-    /// Its window was destroyed while its check ran: answered not there
-    /// when the check ends (Table 15, W2, H).
-    gone: bool,
 }
 
 impl Watching {
@@ -191,7 +188,6 @@ impl Watches {
             node,
             watch,
             phase: Phase::Waiting { due_us: now_us },
-            gone: false,
         });
     }
 
@@ -206,15 +202,15 @@ impl Watches {
                     poll_us: due_us,
                 },
                 Phase::Checking {
-                    request,
                     last,
                     poll_us,
                     then: Then::Poll,
+                    gone,
                 } => Phase::Checking {
-                    request,
                     last,
                     poll_us,
                     then: Then::Again(at_us),
+                    gone,
                 },
                 kept @ (Phase::Brought { .. } | Phase::Checking { .. }) => kept,
             };
@@ -222,7 +218,7 @@ impl Watches {
     }
 
     /// The check due at `now_us`, if one is: the earliest due. The caller
-    /// dispatches it and names its request with [`running`](Self::running).
+    /// marks it running with [`running`](Self::running) and dispatches it.
     #[must_use]
     pub fn due(&self, now_us: u64) -> Option<WatchProgram> {
         let watching = self
@@ -243,8 +239,8 @@ impl Watches {
         })
     }
 
-    /// `program`, from [`due`](Self::due), runs as `request` from `now_us`.
-    pub fn running(&mut self, program: &WatchProgram, request: Request, now_us: u64) {
+    /// `program`, from [`due`](Self::due), runs from `now_us`.
+    pub fn running(&mut self, program: &WatchProgram, now_us: u64) {
         let Some(watching) = self.table.iter_mut().find(|w| w.number == program.number) else {
             return;
         };
@@ -254,10 +250,10 @@ impl Watches {
             Phase::Checking { .. } => return,
         };
         watching.phase = Phase::Checking {
-            request,
             last: matches!(program.work, WatchWork::Check { last: true, .. }),
             poll_us,
             then: Then::Poll,
+            gone: false,
         };
     }
 
@@ -268,50 +264,42 @@ impl Watches {
         self.table.iter().filter_map(Watching::due_at).min()
     }
 
-    /// Whether `request` is a watch's check.
-    #[must_use]
-    pub fn runs(&self, request: Request) -> bool {
-        self.table
-            .iter()
-            .any(|w| running_of(w.phase) == Some(request))
-    }
-
-    /// Check `request` answers `answer`: the watch it runs leaves the
-    /// table, and the answer to send is returned. A check whose window was
-    /// destroyed while it ran answers not there.
-    pub fn answered(&mut self, request: Request, answer: Answer) -> Option<Answer> {
-        let place = self
-            .table
-            .iter()
-            .position(|w| running_of(w.phase) == Some(request) && w.number == answer.number)?;
+    /// The check of watch `number`, the program in flight, answers
+    /// `answer`: the watch leaves the table, and the answer to send is
+    /// returned. A check whose window was destroyed while it ran answers
+    /// not there. `None` when the watch is no longer here, or the answer
+    /// is another's.
+    pub fn answered(&mut self, number: RequestNumber, answer: Answer) -> Option<Answer> {
+        let place = self.table.iter().position(|w| {
+            w.number == number
+                && answer.number == number
+                && matches!(w.phase, Phase::Checking { .. })
+        })?;
         let watching = self.table.remove(place);
-        if watching.gone {
+        if let Phase::Checking { gone: true, .. } = watching.phase {
             return Some(not_there(watching.number));
         }
         Some(answer)
     }
 
-    /// Check `request` ended without answering: it showed no effect, or
-    /// its read failed, and the watch goes on, its next check brought
-    /// forward by an event heard while it ran, or else the next poll; a
-    /// last check that answered nothing is answered failed.
-    pub fn ended(&mut self, request: Request) -> Option<Answer> {
-        let (place, last, poll_us, then) =
-            self.table
-                .iter()
-                .enumerate()
-                .find_map(|(place, w)| match w.phase {
-                    Phase::Checking {
-                        request: running,
-                        last,
-                        poll_us,
-                        then,
-                    } if running == request => Some((place, last, poll_us, then)),
-                    _ => None,
-                })?;
+    /// The check of watch `number`, the program in flight, ended without
+    /// answering: it showed no effect, or its read failed, and the watch
+    /// goes on, its next check brought forward by an event heard while it
+    /// ran, or else the next poll; a last check that answered nothing is
+    /// answered failed.
+    pub fn ended(&mut self, number: RequestNumber) -> Option<Answer> {
+        let place = self.table.iter().position(|w| w.number == number)?;
         let watching = self.table.get_mut(place)?;
-        let number = watching.number;
-        if watching.gone {
+        let Phase::Checking {
+            last,
+            poll_us,
+            then,
+            gone,
+        } = watching.phase
+        else {
+            return None;
+        };
+        if gone {
             self.table.remove(place);
             return Some(not_there(number));
         }
@@ -357,8 +345,8 @@ impl Watches {
                     gone.push(not_there(watching.number));
                     false
                 }
-                Phase::Checking { .. } => {
-                    watching.gone = true;
+                Phase::Checking { ref mut gone, .. } => {
+                    *gone = true;
                     true
                 }
             }
@@ -376,14 +364,6 @@ impl Watches {
     /// 15, J).
     pub fn close(&mut self) {
         self.table.clear();
-    }
-}
-
-/// The check a watch in `phase` runs, if one runs.
-fn running_of(phase: Phase) -> Option<Request> {
-    match phase {
-        Phase::Checking { request, .. } => Some(request),
-        Phase::Waiting { .. } | Phase::Brought { .. } => None,
     }
 }
 
@@ -440,12 +420,8 @@ mod tests {
         }
     }
 
-    fn request(number: u64) -> Request {
-        Request {
-            generation: 0,
-            number,
-        }
-    }
+    /// The watch every test's table holds.
+    const WATCH: RequestNumber = RequestNumber(4);
 
     /// A table with watch 4 arrived at the pass.
     fn arrived(motion: CaretMotion, events: bool) -> Watches {
@@ -458,20 +434,20 @@ mod tests {
         watches
     }
 
-    /// A table with watch 4 arrived at the pass, its first check run as
-    /// request 1 and ended with no effect, so it waits for its poll at
+    /// A table with watch 4 arrived at the pass, its first check run and
+    /// ended with no effect, so it waits for its poll at
     /// 10 ms.
     fn polled(motion: CaretMotion, events: bool) -> Watches {
         let mut watches = arrived(motion, events);
-        let _ = run(&mut watches, PASS, 1);
-        assert_eq!(watches.ended(request(1)), None);
+        let _ = run(&mut watches, PASS);
+        assert_eq!(watches.ended(WATCH), None);
         watches
     }
 
-    /// Runs the program due at `at` as `program`, returning its work.
-    fn run(watches: &mut Watches, at: u64, program: u64) -> Option<WatchWork> {
+    /// Runs the program due at `at`, returning its work.
+    fn run(watches: &mut Watches, at: u64) -> Option<WatchWork> {
         let due = watches.due(at)?;
-        watches.running(&due, request(program), at);
+        watches.running(&due, at);
         Some(due.work)
     }
 
@@ -503,12 +479,12 @@ mod tests {
     #[test]
     fn checks_run_at_once_and_then_a_poll_after_each_began() {
         let mut watches = arrived(CaretMotion::NextCharacter, false);
-        assert_eq!(run(&mut watches, PASS, 1), Some(CHECK));
+        assert_eq!(run(&mut watches, PASS), Some(CHECK));
         assert_eq!(watches.due(PASS), None, "one check at a time");
-        assert_eq!(watches.ended(request(1)), None, "no effect: it waits");
+        assert_eq!(watches.ended(WATCH), None, "no effect: it waits");
         assert_eq!(watches.next_due(), Some(PASS + 10_000));
         assert_eq!(watches.due(PASS + 9_999), None);
-        assert_eq!(run(&mut watches, PASS + 10_000, 2), Some(CHECK));
+        assert_eq!(run(&mut watches, PASS + 10_000), Some(CHECK));
     }
 
     /// W1, E: the check due at the bound is the last, and a check begun
@@ -516,18 +492,18 @@ mod tests {
     #[test]
     fn the_check_at_the_bound_is_the_last() {
         let mut watches = arrived(CaretMotion::NextCharacter, false);
-        assert_eq!(run(&mut watches, PASS + 95_000, 1), Some(CHECK));
-        assert_eq!(watches.ended(request(1)), None);
+        assert_eq!(run(&mut watches, PASS + 95_000), Some(CHECK));
+        assert_eq!(watches.ended(WATCH), None);
         assert_eq!(watches.next_due(), Some(PASS + 100_000));
         assert_eq!(
-            run(&mut watches, PASS + 100_000, 2),
+            run(&mut watches, PASS + 100_000),
             Some(WatchWork::Check {
                 word: false,
                 last: true
             })
         );
         assert_eq!(
-            watches.ended(request(2)),
+            watches.ended(WATCH),
             Some(failed(RequestNumber(4))),
             "a last check that answered nothing failed"
         );
@@ -552,11 +528,10 @@ mod tests {
     #[test]
     fn a_check_that_answers_ends_the_watch() {
         let mut watches = arrived(CaretMotion::NextCharacter, false);
-        let _ = run(&mut watches, PASS, 1);
-        assert!(watches.runs(request(1)));
-        assert_eq!(watches.answered(request(1), effect(4)), Some(effect(4)));
+        let _ = run(&mut watches, PASS);
+        assert_eq!(watches.answered(WATCH, effect(4)), Some(effect(4)));
         assert!(watches.is_empty());
-        assert_eq!(watches.ended(request(1)), None);
+        assert_eq!(watches.ended(WATCH), None);
     }
 
     /// W1, A: an event within 60 ms of the pass brings a check forward,
@@ -566,8 +541,8 @@ mod tests {
         let mut watches = polled(CaretMotion::NextCharacter, true);
         watches.heard(PASS + 3_000);
         assert_eq!(watches.next_due(), Some(PASS + 3_000));
-        assert_eq!(run(&mut watches, PASS + 3_000, 2), Some(CHECK));
-        assert_eq!(watches.ended(request(2)), None, "no effect: it waits");
+        assert_eq!(run(&mut watches, PASS + 3_000), Some(CHECK));
+        assert_eq!(watches.ended(WATCH), None, "no effect: it waits");
         assert_eq!(watches.next_due(), Some(PASS + 10_000));
     }
 
@@ -576,12 +551,12 @@ mod tests {
     #[test]
     fn an_event_during_a_check_brings_another_check_at_once() {
         let mut watches = arrived(CaretMotion::NextCharacter, true);
-        let _ = run(&mut watches, PASS, 1);
+        let _ = run(&mut watches, PASS);
         watches.heard(PASS + 1);
-        assert_eq!(watches.ended(request(1)), None);
+        assert_eq!(watches.ended(WATCH), None);
         assert_eq!(watches.next_due(), Some(PASS + 1));
-        assert_eq!(run(&mut watches, PASS + 2, 2), Some(CHECK));
-        assert_eq!(watches.ended(request(2)), None);
+        assert_eq!(run(&mut watches, PASS + 2), Some(CHECK));
+        assert_eq!(watches.ended(WATCH), None);
         assert_eq!(watches.next_due(), Some(PASS + 10_000));
     }
 
@@ -592,7 +567,7 @@ mod tests {
         let mut watches = polled(CaretMotion::Delete, true);
         watches.heard(PASS + 5_000);
         assert_eq!(
-            run(&mut watches, PASS + 5_000, 2),
+            run(&mut watches, PASS + 5_000),
             Some(WatchWork::Check {
                 word: true,
                 last: false
@@ -606,12 +581,11 @@ mod tests {
     fn an_event_with_no_move_leaves_the_watch_polling_to_the_bound() {
         let mut watches = polled(CaretMotion::NextCharacter, true);
         watches.heard(PASS + 3_000);
-        assert_eq!(run(&mut watches, PASS + 3_000, 2), Some(CHECK));
-        assert_eq!(watches.ended(request(2)), None);
+        assert_eq!(run(&mut watches, PASS + 3_000), Some(CHECK));
+        assert_eq!(watches.ended(WATCH), None);
         let mut began = Vec::new();
-        let mut program = 3;
         while let Some(due) = watches.next_due() {
-            let work = run(&mut watches, due, program);
+            let work = run(&mut watches, due);
             began.push(due - PASS);
             if work
                 == Some(WatchWork::Check {
@@ -621,8 +595,7 @@ mod tests {
             {
                 break;
             }
-            assert_eq!(watches.ended(request(program)), None);
-            program += 1;
+            assert_eq!(watches.ended(WATCH), None);
         }
         assert_eq!(
             began,
@@ -630,10 +603,7 @@ mod tests {
                 10_000, 20_000, 30_000, 40_000, 50_000, 60_000, 70_000, 80_000, 90_000, 100_000
             ]
         );
-        assert_eq!(
-            watches.answered(request(program), effect(4)),
-            Some(effect(4))
-        );
+        assert_eq!(watches.answered(WATCH, effect(4)), Some(effect(4)));
         assert!(watches.is_empty());
     }
 
@@ -645,9 +615,9 @@ mod tests {
         waiting.heard(PASS + 60_001);
         assert_eq!(waiting.next_due(), Some(PASS + 10_000));
         let mut checking = polled(CaretMotion::NextCharacter, true);
-        let _ = run(&mut checking, PASS + 60_000, 2);
+        let _ = run(&mut checking, PASS + 60_000);
         checking.heard(PASS + 60_001);
-        assert_eq!(checking.ended(request(2)), None);
+        assert_eq!(checking.ended(WATCH), None);
         assert_eq!(checking.next_due(), Some(PASS + 70_000));
     }
 
@@ -685,14 +655,14 @@ mod tests {
     #[test]
     fn a_check_running_cancelled_commits_nothing() {
         let mut watches = arrived(CaretMotion::NextCharacter, false);
-        let _ = run(&mut watches, PASS, 1);
+        let _ = run(&mut watches, PASS);
         assert_eq!(
             watches.cancel(cancel(CancelReason::Withdrawn)),
             WatchCancelled::Answered(ended(RequestNumber(4), "cancelled"))
         );
-        assert_eq!(watches.answered(request(1), effect(4)), None);
+        assert_eq!(watches.answered(WATCH, effect(4)), None);
         let mut foreground = arrived(CaretMotion::NextCharacter, false);
-        let _ = run(&mut foreground, PASS, 1);
+        let _ = run(&mut foreground, PASS);
         assert_eq!(
             foreground.cancel(cancel(CancelReason::Foreground)),
             WatchCancelled::Abandon(ended(RequestNumber(4), "abandoned"))
@@ -712,16 +682,16 @@ mod tests {
         assert_eq!(brought.destroyed(WINDOW), [not_there(RequestNumber(4))]);
         assert!(brought.is_empty());
         let mut checking = arrived(CaretMotion::NextCharacter, false);
-        let _ = run(&mut checking, PASS, 1);
+        let _ = run(&mut checking, PASS);
         assert_eq!(checking.destroyed(WINDOW), []);
         assert_eq!(
-            checking.answered(request(1), effect(4)),
+            checking.answered(WATCH, effect(4)),
             Some(not_there(RequestNumber(4)))
         );
         let mut nothing = arrived(CaretMotion::NextCharacter, false);
-        let _ = run(&mut nothing, PASS, 1);
+        let _ = run(&mut nothing, PASS);
         let _ = nothing.destroyed(WINDOW);
-        assert_eq!(nothing.ended(request(1)), Some(not_there(RequestNumber(4))));
+        assert_eq!(nothing.ended(WATCH), Some(not_there(RequestNumber(4))));
         assert_eq!(
             arrived(CaretMotion::NextCharacter, false).destroyed(WindowHandle(6)),
             []

@@ -91,7 +91,6 @@ fn answers(effects: &[Effect]) -> Vec<Answer> {
 fn finished(request: Request) -> Input {
     Input::Finished {
         request,
-        reported: false,
         panicked: false,
     }
 }
@@ -206,6 +205,54 @@ fn a_queued_request_cancelled_never_runs() {
         "the first ended unanswered"
     );
     assert_eq!(dispatched(&effects), Vec::new());
+}
+
+/// A request whose program ends without answering is answered failed,
+/// once; one that answered is not answered again as its program ends.
+#[test]
+fn a_request_ended_unanswered_is_answered_failed_once() {
+    let mut reducer = Reducer::new();
+    let request = dispatched(&reducer.input(ask(1), now(0)))[0].0;
+    assert_eq!(
+        answers(&reducer.input(finished(request), now(1))),
+        [ended(1, "the outpost failed handling the request")]
+    );
+    assert_eq!(answers(&reducer.input(finished(request), now(2))), []);
+    let request = dispatched(&reducer.input(ask(2), now(3)))[0].0;
+    let effects = reducer.input(
+        Input::Answered {
+            request,
+            answer: Box::new(result(2)),
+        },
+        now(4),
+    );
+    assert_eq!(answers(&effects), [result(2)]);
+    assert_eq!(
+        answers(&reducer.input(finished(request), now(5))),
+        [],
+        "an answered request is not answered again"
+    );
+}
+
+/// At shutdown the running request's answer is not sent, nor a failure
+/// as its program ends, and the request queued behind it never runs.
+#[test]
+fn the_running_requests_answer_after_shutdown_is_not_sent() {
+    let mut reducer = Reducer::new();
+    let request = dispatched(&reducer.input(ask(1), now(0)))[0].0;
+    reducer.input(ask(2), now(1));
+    reducer.input(Input::Close, now(2));
+    let effects = reducer.input(
+        Input::Answered {
+            request,
+            answer: Box::new(result(1)),
+        },
+        now(3),
+    );
+    assert_eq!(answers(&effects), []);
+    let effects = reducer.input(finished(request), now(4));
+    assert_eq!(answers(&effects), []);
+    assert_eq!(dispatched(&effects), []);
 }
 
 /// A request that arrives as the outpost shuts down is not run.
