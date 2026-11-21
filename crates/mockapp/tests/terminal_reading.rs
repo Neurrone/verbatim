@@ -438,10 +438,10 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
         CallCounts {
             uia: 1,
             msaa: 0,
-            window_messages: 0,
+            window_messages: 1,
             connections: 0,
         },
-        "one program, one call"
+        "the window's probe, which a probe-first request always makes, and one program's one call"
     );
     terminal.outpost.settled();
     terminal.quit();

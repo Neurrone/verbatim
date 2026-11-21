@@ -32,7 +32,9 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 
 use verbatim_faults::Fault;
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
-use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
+use verbatim_model::request::{
+    Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request, WindowVerdict,
+};
 use verbatim_model::{CallCounts, NodeId, TextOp, TextPoint, TextRead, TextReply, TextUnit};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Node, Shape, Uia};
@@ -154,8 +156,11 @@ fn shut_down_during(name: &str, read: &Read) {
         "the outpost's handlers of the base group follow the focused document"
     );
 
+    // Core's cache holds the window's verdict from the focus read, so the
+    // request carries it and the first call held is the read's own, not a
+    // probe.
     app.hold();
-    let request = outpost.request(hwnd, read_line(notes));
+    let request = outpost.request_with(hwnd, WindowVerdict::Uia, read_line(notes));
     assert_eq!(
         app.held(),
         read.first_call,
@@ -277,8 +282,11 @@ fn a_ping_is_answered_while_the_worker_is_held_in_a_call() {
     );
     let notes = focus_notes(&mut app, &outpost, hwnd);
 
+    // Core's cache holds the window's verdict from the focus read, so the
+    // request carries it and the first call held is the read's own, not a
+    // probe.
     app.hold();
-    let request = outpost.request(hwnd, read_line(notes));
+    let request = outpost.request_with(hwnd, WindowVerdict::Uia, read_line(notes));
     assert_eq!(
         app.held(),
         "TextGetSelection",
