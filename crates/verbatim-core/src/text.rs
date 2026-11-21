@@ -107,15 +107,12 @@ pub(crate) fn position_in(text: &str, offset: usize, grid: bool) -> usize {
 }
 
 /// `offset` as a character boundary of `text`: at most its length, and
-/// moved back to the start of a character it falls inside. An outpost
-/// promises boundaries; this keeps a broken promise from panicking Core.
+/// moved back to the start of a character it falls inside, for a position
+/// Core holds from an earlier read ([`verbatim_text::floor_boundary`]).
+/// A chunk's own offsets need no such move: they decode only as
+/// boundaries of its text.
 pub(crate) fn boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while !text.is_char_boundary(offset) {
-        // Never below 0, which is always a boundary.
-        offset = offset.saturating_sub(1);
-    }
-    offset
+    verbatim_text::floor_boundary(text, offset)
 }
 
 /// Whether `text` has nothing to read: empty, or only white space, the
@@ -142,7 +139,7 @@ pub(crate) fn previous_grapheme(content: &str, offset: usize) -> Option<Range<us
 /// The column of `offset` in `content`: terminal cells before it in a
 /// terminal (`grid`), grapheme clusters before it elsewhere.
 pub(crate) fn column_of(content: &str, offset: usize, grid: bool) -> usize {
-    let before = crate::proven::text_in(content, ..boundary(content, offset));
+    let before = verbatim_text::proven::text_in(content, ..boundary(content, offset));
     if grid {
         verbatim_text::cell_width(before)
     } else {
@@ -565,11 +562,10 @@ pub(crate) fn formatted_segments(
             }
             *reported = attributes.clone();
         }
-        // A run's ends are the outpost's, which promises character
-        // boundaries; [`boundary`] keeps a broken promise readable.
-        let end = boundary(&chunk.text, range.end.min(spoken.end));
-        let start = boundary(&chunk.text, range.start.max(spoken.start)).min(end);
-        joined.push_str(crate::proven::text_in(&chunk.text, start..end));
+        // A run's ends decoded as character boundaries of the chunk's text.
+        let end = range.end.min(spoken.end);
+        let start = range.start.max(spoken.start).min(end);
+        joined.push_str(verbatim_text::proven::text_in(&chunk.text, start..end));
     }
     flush(&mut joined, &mut segments);
     Some(segments)

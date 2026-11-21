@@ -370,7 +370,7 @@ impl BufferedPiece {
         // A piece is cut from its chunk's text at character boundaries
         // (`say_all`'s pieces), so the range is always found.
         let range = crate::text::byte_offset(self.start)..crate::text::byte_offset(self.end);
-        crate::proven::text_in(&self.chunk.text, range)
+        verbatim_text::proven::text_in(&self.chunk.text, range)
     }
 }
 
@@ -404,8 +404,6 @@ pub(crate) struct SayAll {
     /// How many units in a row were read with no sentence end, blank ones
     /// included: at `say_all::MAX_HELD`, what is held back is spoken.
     pub(crate) held_units: usize,
-    /// The trace of the latest read, which pieces handed out later carry.
-    pub(crate) trace: Option<TraceId>,
     /// The document's end has been read.
     pub(crate) finished: bool,
     /// Whether the display was asked to stay on.

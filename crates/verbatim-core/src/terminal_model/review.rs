@@ -236,7 +236,7 @@ fn finish(
         Plan::Read(moved, chunked) => {
             let review = Anchor {
                 row: chunked.row,
-                column: crate::proven::text_in(&chunked.line.text, ..chunked.offset)
+                column: verbatim_text::proven::text_in(&chunked.line.text, ..chunked.offset)
                     .chars()
                     .count(),
                 line_hash: chunked.line.hash,
@@ -393,7 +393,7 @@ impl Rows<'_> {
         let Some(line) = self.row(row)? else {
             return Ok(None);
         };
-        let offset = floor_boundary(&line.text, offset);
+        let offset = verbatim_text::floor_boundary(&line.text, offset);
         Ok(Some(Chunked {
             row,
             first: self.is_first(row),
@@ -416,16 +416,6 @@ fn byte_at(text: &str, column: usize) -> usize {
     text.char_indices()
         .nth(column)
         .map_or(text.len(), |(at, _)| at)
-}
-
-/// The largest character boundary of `text` at or before `offset`.
-fn floor_boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while !text.is_char_boundary(offset) {
-        // Never below 0, which is always a boundary.
-        offset = offset.saturating_sub(1);
-    }
-    offset
 }
 
 /// Where `point` is, or the reply that ends the request: a place gone
@@ -615,7 +605,7 @@ fn read_range(
     if through.is_some()
         && let Some(line) = rows.row(to.row)?
     {
-        let at = floor_boundary(&line.text, to.offset);
+        let at = verbatim_text::floor_boundary(&line.text, to.offset);
         to.offset = verbatim_text::grapheme_at(&line.text, at).map_or(at, |range| range.end);
     }
     let mut text = String::new();
@@ -625,21 +615,21 @@ fn read_range(
             break;
         };
         let begin = if row == from.row {
-            floor_boundary(&line.text, from.offset)
+            verbatim_text::floor_boundary(&line.text, from.offset)
         } else {
             0
         };
         let end = if row == to.row {
-            floor_boundary(&line.text, to.offset).max(begin)
+            verbatim_text::floor_boundary(&line.text, to.offset).max(begin)
         } else {
             line.text.len()
         };
-        text.push_str(crate::proven::text_in(&line.text, begin..end));
+        text.push_str(verbatim_text::proven::text_in(&line.text, begin..end));
         if row < to.row && !line.wraps {
             text.push_str("\r\n");
         }
         if text.len() > MAX_RANGE_BYTES {
-            let cut = floor_boundary(&text, MAX_RANGE_BYTES);
+            let cut = verbatim_text::floor_boundary(&text, MAX_RANGE_BYTES);
             text.truncate(cut);
             truncated = true;
             break;

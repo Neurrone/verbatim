@@ -47,6 +47,12 @@ time Chinese text is segmented and kept for the life of the process.
   alone, the vertical tab, the form feed, the next-line control, and
   Unicode's line and paragraph separators are each one. An offset in a
   break belongs to the line the break ends.
+- `floor_boundary`: the character boundary at or before an offset, where
+  a position held from an earlier read falls in text read since; Core's
+  review and terminal review and the outpost's anchors use it.
+- `proven`: a part of a text or a table at a range the caller proves is
+  in it, empty after a failed debug assertion when it is not; Core reads
+  its text through it.
 - `cell_width`: how many terminal cells text takes, two for wide East
   Asian characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever

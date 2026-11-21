@@ -498,8 +498,18 @@ fn backspace_says_what_it_deleted_from_its_starting_read() {
 fn backspace_at_a_lines_start_says_the_providers_unit() {
     for (motion, text, before, said) in [
         (CaretMotion::Backspace, "def\r", "\r", vec![character("\r")]),
-        (CaretMotion::BackspaceWord, "def\r", "\r", vec![character("\r")]),
-        (CaretMotion::Backspace, "def\r\n", "\r\n", vec![character("\n")]),
+        (
+            CaretMotion::BackspaceWord,
+            "def\r",
+            "\r",
+            vec![character("\r")],
+        ),
+        (
+            CaretMotion::Backspace,
+            "def\r\n",
+            "\r\n",
+            vec![character("\n")],
+        ),
         (CaretMotion::Backspace, "beta", "\r", vec![character("\r")]),
         (CaretMotion::Backspace, "abc", "", Vec::new()),
     ] {

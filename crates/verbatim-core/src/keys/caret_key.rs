@@ -626,7 +626,7 @@ async fn after_pass(
 /// and Control+Backspace still say what they deleted.
 fn silent(cx: &mut Cx<Entries>, press: &CaretPress, (binding, started): (&CaretBinding, &Started)) {
     if press.key.motion.deletes_back() {
-        let words = deleted(&cx.facts(), binding, press.key, started);
+        let words = deleted(binding, press.key, started);
         say(cx, press, words);
     }
 }
@@ -1035,20 +1035,11 @@ fn moves_by_sentence(press: &CaretPress, binding: &CaretBinding) -> bool {
 /// What Backspace or Control+Backspace deleted, from the starting read:
 /// the text before the caret, or before the selection's start, "blank"
 /// at the text's start.
-fn deleted(
-    state: &SrState,
-    binding: &CaretBinding,
-    key: CaretKey,
-    started: &Started,
-) -> Vec<UtteranceSegment> {
-    let before = editing::before_of_caret(
-        state,
-        binding.node,
-        key.motion,
-        (&started.caret, &started.unit),
-    );
+fn deleted(binding: &CaretBinding, key: CaretKey, started: &Started) -> Vec<UtteranceSegment> {
+    let grid = editing::is_grid(binding.role);
+    let before = editing::before_of_caret(grid, key.motion, (&started.caret, &started.unit));
     editing::focus_first_words(
-        state,
+        grid,
         key,
         (&before.unit, &before.line, before.removed.as_deref()),
     )
@@ -1068,7 +1059,7 @@ fn effect_words(
         return Vec::new();
     }
     if key.motion.deletes_back() {
-        return deleted(state, binding, key, started);
+        return deleted(binding, key, started);
     }
     if key.motion == CaretMotion::NewLine {
         let mut reported = binding.formatting.clone();
@@ -1091,8 +1082,7 @@ fn unit_remembered(
 ) -> Vec<UtteranceSegment> {
     let mut reported = binding.formatting.clone();
     let words = editing::unit_with(
-        state,
-        binding.node,
+        editing::is_grid(binding.role),
         (key.motion, &read.caret.line, &read.unit),
         &mut reported,
     );

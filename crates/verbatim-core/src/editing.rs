@@ -31,9 +31,9 @@ use verbatim_model::{
     TypingEcho, Utterance, UtteranceSegment,
 };
 
-use crate::proven;
 use crate::state::{CaretContext, NavigatorRead, ReviewText, SrState};
 use crate::text;
+use verbatim_text::proven;
 
 /// The most bytes of a word typed so far that word echo keeps; a longer
 /// run of letters is not a word anyone needs echoed whole.
@@ -151,20 +151,15 @@ pub(crate) struct BeforeRead {
     pub(crate) removed: Option<String>,
 }
 
-/// [`before_of_read`] from a read's `caret` and the key's `unit` read with
-/// it, the line where it fetched none: a caret key's starting read.
+/// What a caret key's starting read found before the key: its `caret`
+/// and the key's `unit` read with it, in text that is a terminal's `grid`
+/// or not.
 pub(crate) fn before_of_caret(
-    state: &SrState,
-    node: NodeId,
+    grid: bool,
     motion: CaretMotion,
     (caret, unit): (&verbatim_model::CaretReport, &TextChunk),
 ) -> BeforeRead {
     let line = &caret.line;
-    let grid = state
-        .versions
-        .focus()
-        .map(|focus| &focus.context)
-        .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
     let removed = motion.deletes_back().then_some(()).and_then(|()| {
         let start = selection_start(line, caret.selection.as_ref());
         let (start_line, offset) = match start {
@@ -209,7 +204,7 @@ fn selection_start<'a>(
 
 /// The words of a key whose focus moved first, from its before read.
 pub(crate) fn focus_first_words(
-    state: &SrState,
+    grid: bool,
     key: CaretKey,
     (unit, line, removed): (&TextChunk, &TextChunk, Option<&str>),
 ) -> Vec<UtteranceSegment> {
@@ -223,11 +218,6 @@ pub(crate) fn focus_first_words(
             None => Vec::new(),
         };
     }
-    let grid = state
-        .versions
-        .focus()
-        .map(|focus| &focus.context)
-        .is_some_and(|focus| is_grid(focus.snapshot.role));
     let mut reported = TextAttributes::default();
     unit_segments(line, Some(unit), (key.motion.unit(), grid), &mut reported)
 }
@@ -235,16 +225,10 @@ pub(crate) fn focus_first_words(
 /// [`unit_of`], its formatting compared with and written to `reported`,
 /// the memory of the focus record a key is bound to.
 pub(crate) fn unit_with(
-    state: &SrState,
-    node: NodeId,
+    grid: bool,
     (motion, line, unit): (CaretMotion, &TextChunk, &TextChunk),
     reported: &mut TextAttributes,
 ) -> Vec<UtteranceSegment> {
-    let grid = state
-        .versions
-        .focus()
-        .map(|focus| &focus.context)
-        .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
     unit_segments(line, Some(unit), (motion.unit(), grid), reported)
 }
 
@@ -296,9 +280,10 @@ pub(crate) fn new_line_segments(
     reported: &mut TextAttributes,
 ) -> Vec<UtteranceSegment> {
     let content = text::line_content(&line.text, false);
-    let offset = text::boundary(content, text::byte_offset(line.offset));
-    // A boundary, so never past a character's start.
-    let before = content.get(..offset).unwrap_or_default();
+    // The chunk's offset decoded as a boundary of its text, so of its
+    // content up to the content's end.
+    let offset = text::byte_offset(line.offset).min(content.len());
+    let before = verbatim_text::proven::text_in(content, ..offset);
     if text::is_blank(before) {
         let at = if before.is_empty() { offset } else { 0 };
         return text::opening_format(line, at, reported);
@@ -339,32 +324,6 @@ fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment>
         text::character_segments(Some(deleted), None)
     } else {
         text::text_segments(deleted.trim(), None)
-    }
-}
-
-/// The formatting last reported in `node`'s text, NVDA's per-object cache,
-/// kept on the focus object: nothing yet for a node other than the focus.
-fn reported_format(state: &SrState, node: NodeId) -> TextAttributes {
-    state
-        .versions
-        .focus()
-        .map(|focus| &focus.context)
-        .filter(|focus| focus.snapshot.id == node)
-        .map(|focus| focus.reported_format.clone())
-        .unwrap_or_default()
-}
-
-/// Keeps `reported` as the formatting last reported in `node`'s text, on
-/// the focus object when `node` is the focus; a node no longer the focus
-/// keeps nothing, as its object is gone.
-fn keep_reported_format(state: &mut SrState, node: NodeId, reported: TextAttributes) {
-    if let Some(focus) = state
-        .versions
-        .focus_mut()
-        .map(|focus| &mut focus.context)
-        .filter(|focus| focus.snapshot.id == node)
-    {
-        focus.reported_format = reported;
     }
 }
 
@@ -524,15 +483,22 @@ pub(crate) fn selection_segments(
 /// A selection change's text as it is spoken: a single character by its
 /// name, 512 characters or more as a count.
 fn selection_text(change: &SelectionChange) -> SelectionText {
-    if change.characters >= SELECTION_SPOKEN_AS_COUNT {
-        SelectionText::Characters(change.characters)
-    } else if change.characters == 1 {
+    if change.characters == 1 {
         SelectionText::Character(change.text.clone())
     } else {
-        SelectionText::Text(change.text.clone())
+        text_or_count(change.characters, change.text.clone())
     }
 }
 
+/// Selected `text` of `characters` characters as it is spoken: the text,
+/// or its number of characters when there are 512 or more.
+fn text_or_count(characters: u32, text: String) -> SelectionText {
+    if characters >= SELECTION_SPOKEN_AS_COUNT {
+        SelectionText::Characters(characters)
+    } else {
+        SelectionText::Text(text)
+    }
+}
 
 /// Takes `caret`, read of the focus `node`, as Core's caret, and moves the
 /// review cursor to it when the review cursor follows the caret and the
@@ -654,13 +620,8 @@ fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
     if characters == 0 {
         return None;
     }
-    let selected = if characters >= SELECTION_SPOKEN_AS_COUNT {
-        SelectionText::Characters(characters)
-    } else {
-        SelectionText::Text(text)
-    };
     Some(vec![UtteranceSegment::new(SegmentContent::Phrase(
-        Phrase::Preselected(selected),
+        Phrase::Preselected(text_or_count(characters, text)),
     ))])
 }
 
@@ -700,9 +661,9 @@ fn caret_line(state: &mut SrState, node: NodeId) -> Option<Vec<UtteranceSegment>
         .focus()
         .map(|focus| &focus.context)
         .is_some_and(|focus| is_grid(focus.snapshot.role));
-    let mut reported = reported_format(state, node);
+    let (_, record, mut reported) = focus_record(state)?;
     let segments = line_segments(&caret.line, grid, &mut reported);
-    keep_reported_format(state, node, reported);
+    formatting_back(state, (node, record), reported);
     Some(segments)
 }
 

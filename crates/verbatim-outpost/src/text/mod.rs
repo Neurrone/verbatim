@@ -233,8 +233,6 @@ impl SelectionStart {
     }
 }
 
-impl<P> CaretRead<P> {}
-
 /// A point as a source is asked to find it: the protocol's [`TextPoint`],
 /// with a position Core named turned into what the outpost keeps, with no
 /// call.
@@ -902,7 +900,7 @@ impl<P: Clone> NodeText<'_, P> {
         if position.offset == 0 {
             return Some(PointFrom::At(anchor.pos.at.clone()));
         }
-        let offset = floor_boundary(&anchor.text, position.offset as usize);
+        let offset = verbatim_text::floor_boundary(&anchor.text, position.offset as usize);
         let prefix: Vec<u16> = anchor.text[..offset].encode_utf16().collect();
         Some(PointFrom::After(anchor.pos.at.clone(), prefix))
     }
@@ -926,21 +924,12 @@ impl<P: Clone> NodeText<'_, P> {
         }
         let text = Arc::clone(&anchor.text);
         let from = anchor.pos.at.clone();
-        let offset = floor_boundary(&text, position.offset as usize);
+        let offset = verbatim_text::floor_boundary(&text, position.offset as usize);
         let prefix: Vec<u16> = text[..offset].encode_utf16().collect();
         let pos = source.advance(&from, &prefix)?;
         self.anchors.reported.insert(key, Slot::new(pos.clone()));
         Ok(Some(pos))
     }
-}
-
-/// The largest character boundary of `text` at or before `offset`.
-fn floor_boundary(text: &str, offset: usize) -> usize {
-    let mut offset = offset.min(text.len());
-    while !text.is_char_boundary(offset) {
-        offset -= 1;
-    }
-    offset
 }
 
 /// UTF-16 text as UTF-8, cut at a character boundary within `max_bytes`,
@@ -1335,7 +1324,7 @@ fn report_for<S: TextSource>(
 /// The characters (grapheme clusters) just before and at byte `offset` of a
 /// line, either empty at the line's ends.
 fn beside(line: &str, offset: usize) -> (String, String) {
-    let offset = floor_boundary(line, offset);
+    let offset = verbatim_text::floor_boundary(line, offset);
     let before = verbatim_text::graphemes(&line[..offset])
         .pop()
         .map(|range| line[range].to_owned())

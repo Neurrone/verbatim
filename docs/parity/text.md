@@ -308,8 +308,8 @@ edit control's one word ("****", "4 star" once symbols are processed);
 spoken as a character when it is one, "blank" at the text's start, once
 the key's effect shows, and nothing at the bound, as NVDA's scripts do.
 The starting read reads the unit in the caret's own remote program
-through UI Automation (one call; 15 classically, 20 window messages in
-an edit control, `starting_reads_cost_exactly`)
+through UI Automation (its calls pinned by
+`starting_reads_cost_exactly`)
 ([holding caret
 keys](../../books/dev/src/explanation/design/key-holding.md); Core's
 `backspace_says_what_it_deleted_from_its_starting_read`). Delete and

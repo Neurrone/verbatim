@@ -145,8 +145,12 @@ pub struct LanguageRun {
 }
 
 /// One unit of text an outpost read: its text, where it starts, the point
-/// of interest inside it, and what is known about the document's ends.
+/// of interest inside it, and what is known about the document's ends. A
+/// chunk whose offset, language spans or formatting stretches are not
+/// character boundaries of its text, or lie past it, does not decode,
+/// so Core takes each as a boundary with no clamp.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ChunkFields")]
 pub struct TextChunk {
     /// The unit the chunk is.
     pub unit: TextUnit,
@@ -303,6 +307,66 @@ pub struct FormatRun {
     pub end: u32,
     /// Its formatting.
     pub attributes: TextAttributes,
+}
+
+/// A [`TextChunk`] as it decodes, before its offsets are checked against
+/// its text.
+#[derive(Deserialize)]
+struct ChunkFields {
+    unit: TextUnit,
+    text: String,
+    start: TextAnchor,
+    offset: u32,
+    #[serde(default)]
+    languages: Vec<LanguageRun>,
+    #[serde(default)]
+    first: bool,
+    #[serde(default)]
+    last: bool,
+    #[serde(default)]
+    truncated: bool,
+    #[serde(default)]
+    formats: Vec<FormatRun>,
+}
+
+impl TryFrom<ChunkFields> for TextChunk {
+    type Error = String;
+
+    fn try_from(fields: ChunkFields) -> Result<Self, String> {
+        let text = &fields.text;
+        let at = |offset: u32| usize::try_from(offset).is_ok_and(|at| text.is_char_boundary(at));
+        let spans = fields
+            .languages
+            .iter()
+            .map(|run| (run.start, run.end))
+            .chain(fields.formats.iter().map(|run| (run.start, run.end)));
+        if !at(fields.offset) {
+            return Err(format!(
+                "offset {} is not a character boundary of a text of {} bytes",
+                fields.offset,
+                text.len()
+            ));
+        }
+        for (start, end) in spans {
+            if start > end || !at(start) || !at(end) {
+                return Err(format!(
+                    "span {start}..{end} is not on character boundaries of a text of {} bytes",
+                    text.len()
+                ));
+            }
+        }
+        Ok(Self {
+            unit: fields.unit,
+            text: fields.text,
+            start: fields.start,
+            offset: fields.offset,
+            languages: fields.languages,
+            first: fields.first,
+            last: fields.last,
+            truncated: fields.truncated,
+            formats: fields.formats,
+        })
+    }
 }
 
 impl TextChunk {
@@ -1421,5 +1485,36 @@ mod tests {
         let json = serde_json::to_string(&reply).expect("serializes");
         let back: TextReply = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(back, reply);
+    }
+
+    /// A chunk's offsets are parsed once, as it decodes: one inside a
+    /// character or past the text does not decode.
+    #[test]
+    fn a_chunk_off_its_character_boundaries_does_not_decode() {
+        let chunk = |offset: u32, format: (u32, u32)| {
+            serde_json::json!({
+                "unit": "Line",
+                "text": "a\u{4E2D}b",
+                "start": 7,
+                "offset": offset,
+                "formats": [{
+                    "start": format.0,
+                    "end": format.1,
+                    "attributes": {},
+                }],
+            })
+        };
+        let decoded = |value| serde_json::from_value::<TextChunk>(value).map(|chunk| chunk.offset);
+        assert_eq!(decoded(chunk(4, (1, 5))).ok(), Some(4));
+        assert_eq!(
+            decoded(chunk(2, (0, 1))).map_err(|error| error.to_string()),
+            Err("offset 2 is not a character boundary of a text of 5 bytes".to_owned())
+        );
+        assert!(decoded(chunk(6, (0, 1))).is_err());
+        assert_eq!(
+            decoded(chunk(0, (1, 3))).map_err(|error| error.to_string()),
+            Err("span 1..3 is not on character boundaries of a text of 5 bytes".to_owned())
+        );
+        assert!(decoded(chunk(0, (4, 1))).is_err());
     }
 }

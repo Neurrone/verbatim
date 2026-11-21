@@ -32,13 +32,13 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
 use crate::keys::entry::Fence;
 use crate::keys::entry::ReviewPress;
 use crate::navigator::Found;
-use crate::proven;
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
     StartMarker, TextFollowUp,
 };
 use crate::text;
 use crate::text_request::TextRequest;
+use verbatim_text::proven;
 
 /// Whether `command` is one this module runs: every review-cursor command
 /// over text, the start marker, select then copy, and say-all from the
@@ -373,10 +373,7 @@ fn execute(
     position: &ReviewPosition,
 ) -> Next {
     let (command, repeat) = (press.command, press.repeat);
-    let grid = state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| is_grid(navigator.object.role));
+    let grid = navigator_grid(state);
     let line = &position.line;
     let content = text::line_content(&line.text, grid);
     let language = line.language_at(position.offset);
@@ -1089,7 +1086,7 @@ fn land(
         }
         LandingPlace::Point => position_at(&line, text::byte_offset(line.offset), grid),
         LandingPlace::BeforePoint => {
-            let offset = text::boundary(content, text::byte_offset(line.offset));
+            let offset = text::byte_offset(line.offset).min(content.len());
             let before =
                 text::previous_grapheme(content, offset).map_or(offset, |range| range.start);
             position_at(&line, before, grid)

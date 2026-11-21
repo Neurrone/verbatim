@@ -86,7 +86,7 @@ use icu_segmenter::options::{
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
-mod proven;
+pub mod proven;
 pub mod terminal_reading;
 pub mod terminal_rows;
 
@@ -197,6 +197,19 @@ pub fn is_bidi_control(c: char) -> bool {
         c,
         '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
     )
+}
+
+/// The largest character boundary of `text` at or before `offset`: where a
+/// position held from an earlier read of a text that may have changed
+/// since falls in the text read now.
+#[must_use]
+pub fn floor_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        // Never below 0, which is always a boundary.
+        offset = offset.saturating_sub(1);
+    }
+    offset
 }
 
 /// Removes every bidirectional formatting character ([`is_bidi_control`])

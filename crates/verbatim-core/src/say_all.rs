@@ -113,15 +113,23 @@ struct CaretMove {
     line: TextChunk,
 }
 
-/// Starts reading `node` from `at`, moving the caret as it goes when
-/// `moves_caret`, the review cursor otherwise, its reads made as the event
-/// queue's `run`. Stops a say-all already running.
-pub(crate) fn start(
+/// Say-all from the focus's caret or the review cursor, pressed as
+/// `press` and started at its turn in the event queue: reads `node` from
+/// `at`, moving the caret as it goes when `moves_caret`, the review cursor
+/// otherwise, its reads entries of their own ([`read_entry`]). Stops a
+/// say-all already running.
+pub(crate) fn start_in_queue(
     state: &mut SrState,
-    node: NodeId,
+    (node, window): (NodeId, RequestWindow),
     (moves_caret, at): (bool, TextPoint),
-    run: QueueRun,
+    (trace, fence): (TraceId, Fence),
 ) -> Vec<Effect> {
+    let run = QueueRun {
+        trace,
+        key: fence.key(),
+        window,
+        read: QueueRead::Idle,
+    };
     let mut effects = stop(state);
     let grid = state
         .navigator
@@ -159,36 +167,12 @@ pub(crate) fn start(
         buffer: std::collections::VecDeque::new(),
         held: Vec::new(),
         held_units: 0,
-        trace: None,
         finished: false,
         display_held,
         run,
     });
-    effects.extend(read_next(state));
+    read_next(state);
     effects
-}
-
-/// Say-all from the focus's caret or the review cursor, pressed as
-/// `press` and started at its turn in the event queue: the starting point
-/// as the command finds it, its reads entries of their own
-/// ([`read_entry`]).
-pub(crate) fn start_in_queue(
-    state: &mut SrState,
-    (node, window): (NodeId, RequestWindow),
-    (moves_caret, at): (bool, TextPoint),
-    (trace, fence): (TraceId, Fence),
-) -> Vec<Effect> {
-    start(
-        state,
-        node,
-        (moves_caret, at),
-        QueueRun {
-            trace,
-            key: fence.key(),
-            window,
-            read: QueueRead::Idle,
-        },
-    )
 }
 
 /// Say-all from the caret, pressed under `trace_id` with the speech fence
@@ -275,8 +259,8 @@ pub(crate) async fn read_entry(mut cx: Cx<Entries>, run: TraceId) {
         };
         own.read = QueueRead::Idle;
         match outcome {
-            Outcome::Result(answer) => reply(&mut facts, run, answer),
-            Outcome::NotThere => reply(&mut facts, run, TextReply::Gone),
+            Outcome::Result(answer) => reply(&mut facts, answer),
+            Outcome::NotThere => reply(&mut facts, TextReply::Gone),
             _ => stop(&mut facts),
         }
     };
@@ -314,20 +298,18 @@ fn next_op(say_all: &SayAll) -> TextOp {
 
 /// Asks for the next batch: in the event queue, its entry is wanted and
 /// joins the back at the end of the step ([`joining`]).
-fn read_next(state: &mut SrState) -> Vec<Effect> {
-    let Some(say_all) = state.say_all.as_mut() else {
-        return Vec::new();
-    };
-    if say_all.run.read == QueueRead::Idle {
+fn read_next(state: &mut SrState) {
+    if let Some(say_all) = state.say_all.as_mut()
+        && say_all.run.read == QueueRead::Idle
+    {
         say_all.run.read = QueueRead::Wanted;
     }
-    Vec::new()
 }
 
 /// Handles the answer to say-all's read: buffers the chunks' pieces, hands
 /// speech what it can take, and reads on when little is left to speak;
 /// ends at the document's end, and on any failure.
-pub(crate) fn reply(state: &mut SrState, trace_id: TraceId, reply: TextReply) -> Vec<Effect> {
+pub(crate) fn reply(state: &mut SrState, reply: TextReply) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
@@ -336,11 +318,11 @@ pub(crate) fn reply(state: &mut SrState, trace_id: TraceId, reply: TextReply) ->
         TextReply::Read { moved, chunk } => (moved, vec![chunk]),
         TextReply::UnsupportedUnit(_) if say_all.unit != TextUnit::Line => {
             say_all.unit = TextUnit::Line;
-            return read_next(state);
+            read_next(state);
+            return Vec::new();
         }
         _ => return stop(state),
     };
-    say_all.trace = Some(trace_id);
     if (say_all.last_chunk.is_some() && moved == 0) || chunks.is_empty() {
         say_all.finished = true;
     } else {
@@ -447,9 +429,7 @@ fn hand_out(state: &mut SrState) -> Vec<Effect> {
         let Some(say_all) = state.say_all.as_ref() else {
             return effects;
         };
-        let Some(trace_id) = say_all.trace else {
-            return effects;
-        };
+        let trace_id = say_all.run.trace;
         if unstarted(say_all) >= HANDED {
             return effects;
         }
@@ -516,7 +496,7 @@ fn read_on_or_end(state: &mut SrState) -> Vec<Effect> {
         return end_if_done(state);
     }
     if !reading && unstarted(say_all).saturating_add(say_all.buffer.len()) < LOW_WATER {
-        return read_next(state);
+        read_next(state);
     }
     Vec::new()
 }
@@ -531,7 +511,8 @@ fn pieces(
     grid: bool,
 ) -> Vec<std::ops::Range<usize>> {
     let content = text::line_content(&chunk.text, grid);
-    let from = text::boundary(content, from);
+    // The chunk's offset decoded as a boundary of its text.
+    let from = from.min(content.len());
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     if by_sentence {
         ranges.extend(
@@ -566,13 +547,8 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
         .map(|say_all| say_all.run.window);
     let (effects, moved) = {
         let mut facts = cx.facts_mut();
-        let (mut effects, moved) = match window {
-            Some(window) => {
-                let (said, moved) = passed(&mut facts, mark, true);
-                (said, moved.map(|moved| (moved, window)))
-            }
-            None => (passed(&mut facts, mark, true).0, None),
-        };
+        let (mut effects, moved) = passed(&mut facts, mark, true);
+        let moved = moved.zip(window);
         effects.extend(crate::terminal::mark_reached(&mut facts, mark));
         (effects, moved)
     };
@@ -591,7 +567,8 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
     let due_us = cx.due_in(OTHER_DUE_US);
     // The move mints the next selection baseline, and says nothing of it
     // (Table 17, column F).
-    if let Outcome::Result(TextReply::CaretPlaced { baseline, .. }) = cx.ask(request, due_us).await {
+    if let Outcome::Result(TextReply::CaretPlaced { baseline, .. }) = cx.ask(request, due_us).await
+    {
         let mut facts = cx.facts_mut();
         crate::editing::caret_placed(&mut facts, moved.node, moved.line);
         crate::text_facts::minted(&mut facts, moved.node, baseline);

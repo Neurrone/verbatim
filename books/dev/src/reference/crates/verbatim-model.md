@@ -521,7 +521,10 @@ implements. What each answer says is in `docs/parity/text.md`,
   (the point the request was about), `languages` (`LanguageRun`s, byte
   ranges with a BCP 47 tag), `first` and `last` (known to be the
   document's first or last unit of its kind; false when not or when not
-  cheap to tell), `truncated`, and `formats`.
+  cheap to tell), `truncated`, and `formats`. A chunk decodes only when
+  its offset and every language and formatting range are character
+  boundaries of its text, so Core takes them with no clamp (Claude,
+  2026-11-21).
 - `formats` are `FormatRun`s, byte ranges with their `TextAttributes`:
   spelling and grammar errors, font name, size, color, and background
   color as spoken, bold, italic, underline, the kind of underline and of

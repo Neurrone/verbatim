@@ -16,7 +16,7 @@ use std::slice::SliceIndex;
     clippy::needless_pass_by_value,
     reason = "the range is taken by value, as `get` takes it, so a call reads as an index does"
 )]
-pub(crate) fn text_in<R>(text: &str, range: R) -> &str
+pub fn text_in<R>(text: &str, range: R) -> &str
 where
     R: SliceIndex<str, Output = str> + Debug + Clone,
 {
@@ -38,7 +38,7 @@ where
     clippy::needless_pass_by_value,
     reason = "the range is taken by value, as `get` takes it, so a call reads as an index does"
 )]
-pub(crate) fn items_in<T, R>(items: &[T], range: R) -> &[T]
+pub fn items_in<T, R>(items: &[T], range: R) -> &[T]
 where
     R: SliceIndex<[T], Output = [T]> + Debug + Clone,
 {

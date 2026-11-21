@@ -73,7 +73,6 @@ mod input_desktop;
 mod keys;
 mod navigator;
 mod progress;
-mod proven;
 mod recorder;
 mod reduce;
 mod report_focus;

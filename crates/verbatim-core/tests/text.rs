@@ -1113,7 +1113,6 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     );
 }
 
-
 #[test]
 fn delete_compares_the_character_and_speaks_the_new_one() {
     let mut text = editing("abc\n", 1);
