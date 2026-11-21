@@ -181,6 +181,17 @@ pub(crate) fn hit_title_bar_info() {
     HITS[Method::GetTitleBarInfoEx.index()].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Counts one call that a Windows Terminal stand-in answered with
+/// `RPC_E_SERVERFAULT` ([`Method::ServerFault`]), beside the call's own
+/// hit: in Windows Terminal that failure ends a remote operation.
+#[allow(
+    dead_code,
+    reason = "mockapp counts with it; the tests compile this file too"
+)]
+pub(crate) fn hit_server_fault() {
+    HITS[Method::ServerFault.index()].fetch_add(1, Ordering::Relaxed);
+}
+
 /// The count for the kind at `index` in [`GetObjectKind::ALL`], or 0 for
 /// an index past the end.
 #[allow(
@@ -352,6 +363,10 @@ pub(crate) enum Method {
     /// `WM_GETTITLEBARINFOEX`, which the host window's default procedure
     /// answers, counted by [`hit_title_bar_info`].
     GetTitleBarInfoEx,
+    /// A call answered with `RPC_E_SERVERFAULT` by a range that stands in
+    /// for Windows Terminal's not-found range, counted by
+    /// [`hit_server_fault`].
+    ServerFault,
 }
 
 /// How many methods are counted.
@@ -363,7 +378,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 77] = [
+    pub(crate) const ALL: [Method; 78] = [
         Method::GetObject,
         Method::ProviderOptions,
         Method::GetPatternProvider,
@@ -441,6 +456,7 @@ impl Method {
         Method::RangeMoveEndpointByRange,
         Method::RangeSelect,
         Method::GetTitleBarInfoEx,
+        Method::ServerFault,
     ];
 
     /// The method's name, as its interface names it.
@@ -527,6 +543,7 @@ impl Method {
             Method::RangeMoveEndpointByRange => "MoveEndpointByRange",
             Method::RangeSelect => "ITextRangeProvider::Select",
             Method::GetTitleBarInfoEx => "WM_GETTITLEBARINFOEX",
+            Method::ServerFault => "RPC_E_SERVERFAULT",
         }
     }
 

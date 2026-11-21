@@ -569,6 +569,57 @@ fn a_failing_search_goes_on_in_the_other_direction_classic() {
     a_failing_search_goes_on_in_the_other_direction(false);
 }
 
+/// A provider whose `FindText` answers a search that finds nothing with a
+/// range rather than null, as Windows Terminal's does
+/// (`terminal_find_misses_answer_a_range.json`): the search takes every
+/// match outward from its row, each direction ending where the text is
+/// only elsewhere, and finds nothing for text that is nowhere. The remote
+/// program makes no call that Windows Terminal answers with
+/// `RPC_E_SERVERFAULT`, which would end it there; the classic
+/// implementation's failed calls only end a direction.
+fn a_search_whose_misses_answer_a_range(remote: bool) -> u32 {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find-misses");
+    let mut app = common::spawn("terminal_find_misses_answer_a_range.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 3");
+    show(
+        &mut app,
+        hwnd,
+        &["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"],
+    );
+    let source = source(&uia, hwnd, remote);
+    let mut terminal = Terminal::new();
+    let _ = read_terminal(&uia, &source, &mut terminal, remote);
+    common::reset_hits(hwnd);
+    assert_eq!(
+        find_on_path(&uia, &source, &terminal, ("y", 2), remote),
+        [
+            found_row(2, "y 3"),
+            found_row(3, "y 2"),
+            found_row(1, "y 4"),
+            found_row(4, "y 1"),
+            found_row(0, "y 5"),
+        ]
+    );
+    assert_eq!(find_on_path(&uia, &source, &terminal, ("q", 2), remote), []);
+    let faults = common::read_hits(hwnd)
+        .into_iter()
+        .find_map(|(name, count)| (name == "RPC_E_SERVERFAULT").then_some(count))
+        .unwrap_or(0);
+    app.quit();
+    faults
+}
+
+fn a_search_whose_misses_answer_a_range_finds_its_matches_remote() {
+    assert_eq!(a_search_whose_misses_answer_a_range(true), 0);
+}
+
+fn a_search_whose_misses_answer_a_range_finds_its_matches_classic() {
+    let _ = a_search_whose_misses_answer_a_range(false);
+}
+
 /// The outpost's search for `needle` over every row of `rows`, outward
 /// from the row `from` rows above where the next read starts, on a screen
 /// of three rows.
@@ -742,6 +793,14 @@ fn main() {
         (
             "a_failing_search_finds_nothing_classic",
             a_failing_search_finds_nothing_classic,
+        ),
+        (
+            "a_search_whose_misses_answer_a_range_finds_its_matches_remote",
+            a_search_whose_misses_answer_a_range_finds_its_matches_remote,
+        ),
+        (
+            "a_search_whose_misses_answer_a_range_finds_its_matches_classic",
+            a_search_whose_misses_answer_a_range_finds_its_matches_classic,
         ),
         (
             "a_failing_search_goes_on_in_the_other_direction_remote",

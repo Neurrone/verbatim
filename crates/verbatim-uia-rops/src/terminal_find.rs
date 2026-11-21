@@ -18,20 +18,28 @@
 //! in that direction, never an error: the search goes on in the other
 //! direction only. A remote program does it in one round trip and a
 //! classic implementation call by call; [`terminal_find`] is the one
-//! function callers use, and [`finds_remotely`] says where the program
-//! cannot run.
+//! function callers use.
 //!
 //! Windows Terminal's `FindText` answers a search that finds nothing in
-//! its range with a range rather than null, and calls on that range fail,
-//! some with `RPC_E_SERVERFAULT`, the provider's exception: `Clone` when
-//! the text is elsewhere in the document, `GetText`, `CompareEndpoints`
-//! and `MoveEndpointByRange` when it is nowhere. Inside a remote operation
-//! that failure ends the whole run with `ExecutionFailure` whatever try
-//! block holds the call, so the program, each of whose directions ends in
-//! such a search, fails every time there; the classic implementation
-//! takes the failed call as not found (seen in Windows Terminal
-//! 1.25.3131 on Windows 11 26300, 2026-11-21, and on GitHub's runner in
-//! run 44906034038).
+//! its range with a range rather than null, of two kinds (seen in Windows
+//! Terminal 1.24.12741 and 1.25.3131 on Windows 11 26300, 2026-11-21).
+//! When the text is elsewhere in the document, every call on the range
+//! fails with `RPC_E_SERVERFAULT`, the provider's exception, while a call
+//! on a real range given it fails with `E_INVALIDARG`. When the text is
+//! nowhere, the range clones, and `Compare` finds it equal to every other
+//! such range, but every other call on it or given it fails with
+//! `RPC_E_SERVERFAULT`. Inside a remote operation `RPC_E_SERVERFAULT` ends
+//! the whole run with `ExecutionFailure` whatever try block holds the call,
+//! so the program never makes such a call. It first searches the whole
+//! document and compares the hit with the answer for text no terminal
+//! holds, [`ABSENT`]: equal is the nowhere range, and the search ends with
+//! nothing found. Otherwise the text is somewhere, so each later miss is
+//! the elsewhere kind, and before any call on a hit the program compares
+//! the span it searched with it, a call on a real range, which fails, and
+//! so closes that direction, when the hit is that range. In a provider
+//! that answers null both checks pass by: a null first hit is nothing
+//! found, and a null answer for [`ABSENT`] leaves no nowhere range to
+//! compare. The classic implementation takes any failed call as not found.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Line,
@@ -62,15 +70,10 @@ pub const FIND_CALLS: usize = 5 * FIND_MATCHES;
 /// More rows than any terminal holds, for counting rows to the end.
 const FAR: i32 = 1_000_000;
 
-/// Whether a terminal's search can run as the remote program in an element
-/// of UIA class `class_name`: not in Windows Terminal's control
-/// (`TermControl`), whose not-found range ends a remote operation (the
-/// module's documentation), so there the search is the classic
-/// implementation's alone.
-#[must_use]
-pub fn finds_remotely(class_name: Option<&str>) -> bool {
-    class_name != Some("TermControl")
-}
+/// Text no terminal's buffer holds: control characters, which a terminal
+/// acts on rather than writes, so its search answers Windows Terminal's
+/// nowhere range (the module's documentation).
+const ABSENT: &str = "\u{1}\u{2}\u{3}";
 
 /// What [`terminal_find`] is asked.
 #[derive(Clone, Copy)]
@@ -211,6 +214,10 @@ fn find_once(b: &mut Builder, s: Search, way: Direction) {
                     b.not_assign(s.going_down);
                 },
                 |b| {
+                    // A call on the span given the hit, before any call on
+                    // the hit: it fails, into the catch below, when the hit
+                    // is Windows Terminal's range for text elsewhere.
+                    let _ = b.text_range_compare_endpoints(way.span, s.start_end, hit, s.start_end);
                     let row = b.text_range_clone(hit);
                     b.text_range_expand_to_enclosing_unit(row, s.line);
                     let order = b.text_range_compare_endpoints(row, s.start_end, hit, s.start_end);
@@ -243,6 +250,39 @@ fn find_once(b: &mut Builder, s: Search, way: Direction) {
             b.not_assign(s.going_down);
         },
     );
+}
+
+/// Whether the text sought is anywhere in `document`: false when its search
+/// fails, answers null, or answers Windows Terminal's nowhere range, which
+/// is what its search for [`ABSENT`] answers (the module's documentation).
+fn somewhere(b: &mut Builder, document: Reg<kind::TextRange>, s: Search) -> Reg<kind::Bool> {
+    let present = b.new_bool(false);
+    let forward = b.bool(false);
+    let found = b.bool(true);
+    b.try_catch(
+        |b| {
+            let hit = b.text_range_find_text(document, s.needle, forward, s.ignore_case);
+            let missing = b.is_null(hit);
+            let hit_found = b.not(missing);
+            b.if_(hit_found, |b| {
+                let absent = b.string(ABSENT);
+                let nowhere = b.text_range_find_text(document, absent, forward, s.ignore_case);
+                let unanswered = b.is_null(nowhere);
+                b.if_else(
+                    unanswered,
+                    |b| b.set(present, found),
+                    |b| {
+                        let same = b.text_range_compare(hit, nowhere);
+                        let other = b.not(same);
+                        b.set(present, other);
+                    },
+                );
+            });
+        },
+        // Not searchable: nothing found.
+        |_, _| {},
+    );
+    present
 }
 
 /// The search program: two arrays, each match's rows above the start and
@@ -287,6 +327,7 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
         going_down: b.new_bool(true),
     };
     let (aboves, texts, taken, going_down, one) = (s.aboves, s.texts, s.taken, s.going_down, s.one);
+    let present = somewhere(b, document, s);
     let calls = b.new_int(0);
     let most_calls = b.int(i32::try_from(FIND_CALLS).unwrap_or(i32::MAX));
     let most = b.int(i32::try_from(FIND_MATCHES).unwrap_or(i32::MAX));
@@ -302,6 +343,8 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
         backward: b.bool(true),
         open: b.new_bool(true),
     };
+    b.set(down.open, present);
+    b.set(up.open, present);
     b.while_(
         |b| {
             let more = b.compare(taken, most, Comparison::LessThan);
@@ -400,18 +443,4 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
         }
     }
     Ok(found)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::finds_remotely;
-
-    /// Windows Terminal's control searches the classic way, and an
-    /// element of another class or none remotely.
-    #[test]
-    fn only_windows_terminals_control_searches_the_classic_way() {
-        assert!(!finds_remotely(Some("TermControl")));
-        assert!(finds_remotely(Some("WPFTermControl")));
-        assert!(finds_remotely(None));
-    }
 }

@@ -1246,8 +1246,7 @@ provider gives no handle for the window, which the classic walk finds.
   `TextOp::TerminalFind` (`terminal::find`,
   `verbatim_uia_rops::terminal_find`) finds a command mark's line from the
   named start, answered `TextReply::TerminalFound`, and Core picks the
-  match; in Windows Terminal's control it searches the classic way
-  (`verbatim_uia_rops::finds_remotely`). A start anchor released while a request names it is held until
+  match. A start anchor released while a request names it is held until
   the answer; one that no longer exists ends the request as the anchor lost.
 - Each snapshot and read logs its cost at debug (`terminal snapshot
   timing`, `terminal read timing`).

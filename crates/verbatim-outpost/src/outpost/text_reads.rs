@@ -907,13 +907,7 @@ pub(super) fn terminal_find(
         Err(reply) => return reply,
     };
     let window = super::asked::known_nearest_of(context, node_id);
-    let class = context
-        .store
-        .element_of(node_id)
-        .and_then(|agile| agile.resolve().ok())
-        .and_then(|element| element.read().class_name);
-    let remote =
-        context.tries_remote(window) && verbatim_uia_rops::finds_remotely(class.as_deref());
+    let remote = context.tries_remote(window);
     match crate::terminal::find(
         uia,
         (source.element(), source.pattern()),

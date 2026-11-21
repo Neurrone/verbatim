@@ -1845,9 +1845,10 @@ line's first row, unpadded (`verbatim_uia_rops::terminal_find`; Dickson,
 2026-10-26), outward from the mark's place, alternately below and above,
 in one remote operation of at most 20 matches, each checked by its line's
 hash in Core, because the console host's `FindText` also matches a longer
-row with the same start. A failing call ends that direction, including
-the range Windows Terminal 1.24.12741 returns for nothing found, whose
-reads fail. A hit within a row is passed over uncounted, so the search is
+row with the same start. A failing call ends that direction, and the
+program makes none of the calls on the range Windows Terminal returns for
+nothing found that would end it (`terminal_find.rs`'s module
+documentation). A hit within a row is passed over uncounted, so the search is
 bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`),
 because a one-letter needle would otherwise walk the whole history.
 
@@ -2132,7 +2133,8 @@ first, the share of the limit in brackets:
   4,099 and 4,097. A program reads rows while a worst-case row (887 at 120
   cells) fits its budget of 4,600, so a row wider than about 300 cells is
   read alone, and one wider than about 1,300 is answered classically.
-- A terminal's upward search: 3,065 at its bound, measured, not pinned.
+- A terminal's upward search: 2,952 at its bound (`mockapp`'s
+  `the_search_ends_after_its_calls_remote`), measured, not pinned.
 
 ## Memory use
 

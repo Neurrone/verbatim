@@ -421,11 +421,15 @@ starts a row gives a `FindMatch`: its rows above that start, and the text
 of `rows` rows from it, for the caller to check by its line's hash. A
 failing call means nothing more is found in that direction. The program
 is built for each search, about 30 instructions a `FindText` call.
-`finds_remotely(class_name)` is false for Windows Terminal's control
-(`TermControl`), whose range for a search that finds nothing fails some
-calls with `RPC_E_SERVERFAULT`, which ends a remote operation whatever
-try block holds the call; there the outpost searches the classic way
-(`terminal_find.rs`'s module documentation).
+Windows Terminal answers a search that finds nothing with a range on
+which some calls fail with `RPC_E_SERVERFAULT`, which ends a remote
+operation whatever try block holds the call, so the program makes none
+of those calls: it first searches the whole document and compares the hit
+with the range a search for text no terminal holds answers, ending with
+nothing found when they are equal, and compares each later hit with the
+span searched before calling it, which fails, closing that direction,
+when the hit is the not-found range (`terminal_find.rs`'s module
+documentation).
 
 ## Layer 3: the caret read
 

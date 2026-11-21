@@ -38,7 +38,15 @@
 //! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
 //! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
 //! Terminal's has, or fail only when it searches backward
-//! (`find_backward_fails`), its expansion to a line below the last line with text
+//! (`find_backward_fails`), its `FindText` answer a search that finds
+//! nothing with a range rather than null (`find_misses_answer_a_range`),
+//! as Windows Terminal's does: when the text is elsewhere in the document,
+//! a range every call on which fails with `RPC_E_SERVERFAULT` and every
+//! call given which fails with `E_INVALIDARG`, `Compare` answering false;
+//! when it is nowhere, one range that clones and that `Compare` finds equal
+//! to every other such range, every other call on or given it failing with
+//! `RPC_E_SERVERFAULT` (seen in Windows Terminal 1.24.12741, 2026-11-21),
+//! its expansion to a line below the last line with text
 //! give that line (`lines_clamp`), as the console host's does, and its
 //! backward moves answer with a positive count
 //! (`backward_moves_positive`), as some providers do.
@@ -55,7 +63,7 @@
 use std::cell::Cell;
 use std::mem::ManuallyDrop;
 
-use windows::Win32::Foundation::{E_FAIL, HWND};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, RPC_E_SERVERFAULT};
 use windows::Win32::System::Com::SAFEARRAY;
 use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_ARRAY, VT_I4, VT_R8, VT_UNKNOWN,
@@ -98,6 +106,7 @@ impl TextProvider {
             index: self.index,
             start: Cell::new(start),
             end: Cell::new(end),
+            miss: None,
         }
         .into()
     }
@@ -187,6 +196,30 @@ struct TextRange {
     index: usize,
     start: Cell<usize>,
     end: Cell<usize>,
+    /// Set on the range a `FindText` that finds nothing answers, for a
+    /// fixture whose misses answer a range (`find_misses_answer_a_range`).
+    miss: Option<Miss>,
+}
+
+/// Which of Windows Terminal's not-found ranges a range stands in for
+/// (`find_misses_answer_a_range`; the module's documentation).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Miss {
+    /// The text is elsewhere in the document: every call on the range
+    /// fails with `RPC_E_SERVERFAULT`, and a call on another range given
+    /// it fails with `E_INVALIDARG`, but `Compare` answers false.
+    Elsewhere,
+    /// The text is nowhere in the document: the range clones, and
+    /// `Compare` finds it equal to every other such range, but every
+    /// other call on it, or given it, fails with `RPC_E_SERVERFAULT`.
+    Nowhere,
+}
+
+/// Windows Terminal's failure for a call on, or given, its not-found
+/// range, counted ([`hits::hit_server_fault`]).
+fn server_fault() -> Error {
+    hits::hit_server_fault();
+    Error::from(RPC_E_SERVERFAULT)
 }
 
 /// The node's text now.
@@ -436,6 +469,14 @@ fn containing(spans: &[(usize, usize)], at: usize) -> usize {
 }
 
 impl TextRange {
+    /// Fails as Windows Terminal's not-found range does, when this is one.
+    fn usable(&self) -> WinResult<()> {
+        match self.miss {
+            None => Ok(()),
+            Some(_) => Err(server_fault()),
+        }
+    }
+
     fn endpoint(&self, endpoint: TextPatternRangeEndpoint) -> usize {
         if endpoint == TextPatternRangeEndpoint_Start {
             self.start.get()
@@ -564,6 +605,7 @@ fn styled(
                             index,
                             start: Cell::new(from),
                             end: Cell::new(to),
+                            miss: None,
                         }
                         .into();
                         Ok(sentinel_variant(target.into()))
@@ -588,23 +630,37 @@ fn signed(tree: &SharedTree, index: usize, moved: i32) -> i32 {
     }
 }
 
-/// The offsets of the range behind `range`, one of this module's.
-fn offsets_of(range: &ITextRangeProvider) -> (usize, usize) {
+/// The range behind `range`, one of this module's.
+fn impl_of(range: &ITextRangeProvider) -> &TextRange {
     // SAFETY: every range a client hands back to this provider is one this
     // module created, so its implementation is a `TextRange`.
-    let other: &TextRange = unsafe { range.as_impl() };
-    (other.start.get(), other.end.get())
+    unsafe { range.as_impl() }
+}
+
+/// The offsets of the range behind `range`, failing as Windows Terminal
+/// does when it is a not-found range.
+fn offsets_of(range: &ITextRangeProvider) -> WinResult<(usize, usize)> {
+    let other = impl_of(range);
+    match other.miss {
+        None => Ok((other.start.get(), other.end.get())),
+        Some(Miss::Elsewhere) => Err(Error::from(E_INVALIDARG)),
+        Some(Miss::Nowhere) => Err(server_fault()),
+    }
 }
 
 impl ITextRangeProvider_Impl for TextRange_Impl {
     fn Clone(&self) -> WinResult<ITextRangeProvider> {
         hits::hit(Method::RangeClone);
+        if self.miss == Some(Miss::Elsewhere) {
+            return Err(server_fault());
+        }
         Ok(TextRange {
             tree: self.tree.clone(),
             hwnd: self.hwnd,
             index: self.index,
             start: Cell::new(self.start.get()),
             end: Cell::new(self.end.get()),
+            miss: self.miss,
         }
         .into())
     }
@@ -613,8 +669,18 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         range: windows_core::Ref<ITextRangeProvider>,
     ) -> WinResult<windows_core::BOOL> {
         hits::hit(Method::RangeCompare);
-        let other = range.as_ref().ok_or_else(Error::empty)?;
-        Ok((offsets_of(other) == (self.start.get(), self.end.get())).into())
+        if self.miss == Some(Miss::Elsewhere) {
+            return Err(server_fault());
+        }
+        let other = impl_of(range.as_ref().ok_or_else(Error::empty)?);
+        let same = match (self.miss, other.miss) {
+            (None, None) => {
+                (other.start.get(), other.end.get()) == (self.start.get(), self.end.get())
+            }
+            (Some(Miss::Nowhere), Some(Miss::Nowhere)) => true,
+            _ => false,
+        };
+        Ok(same.into())
     }
     fn CompareEndpoints(
         &self,
@@ -623,7 +689,8 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         targetendpoint: TextPatternRangeEndpoint,
     ) -> WinResult<i32> {
         hits::hit(Method::RangeCompareEndpoints);
-        let other = offsets_of(targetrange.as_ref().ok_or_else(Error::empty)?);
+        self.usable()?;
+        let other = offsets_of(targetrange.as_ref().ok_or_else(Error::empty)?)?;
         let target = if targetendpoint == TextPatternRangeEndpoint_Start {
             other.0
         } else {
@@ -637,6 +704,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn ExpandToEnclosingUnit(&self, unit: TextUnit) -> WinResult<()> {
         hits::hit(Method::RangeExpandToEnclosingUnit);
+        self.usable()?;
         let spans = spans_of(&self.tree, self.index, unit);
         let mut at = containing(&spans, self.start.get());
         if unit == TextUnit_Line && formats_of(&self.tree, self.index).lines_clamp {
@@ -672,6 +740,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         ignorecase: windows_core::BOOL,
     ) -> WinResult<ITextRangeProvider> {
         hits::hit(Method::RangeFindText);
+        self.usable()?;
         let formats = formats_of(&self.tree, self.index);
         if formats.find_text_fails || (formats.find_backward_fails && backward.as_bool()) {
             return Err(Error::from(E_FAIL));
@@ -689,10 +758,35 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             }
         };
         let needle: Vec<u16> = text.iter().copied().map(fold).collect();
-        let haystack: Vec<u16> = all[start..end].iter().copied().map(fold).collect();
+        let whole: Vec<u16> = all.iter().copied().map(fold).collect();
+        let haystack = &whole[start..end];
+        let contains = |haystack: &[u16]| {
+            !needle.is_empty() && haystack.windows(needle.len()).any(|at| at == &needle[..])
+        };
+        // No match: a null range, as UIA's own providers return, or, for a
+        // fixture whose misses answer a range, Windows Terminal's
+        // not-found range.
+        let missed = || {
+            if !formats.find_misses_answer_a_range {
+                return Err(Error::empty());
+            }
+            let miss = if contains(&whole) {
+                Miss::Elsewhere
+            } else {
+                Miss::Nowhere
+            };
+            Ok(TextRange {
+                tree: self.tree.clone(),
+                hwnd: self.hwnd,
+                index: self.index,
+                start: Cell::new(0),
+                end: Cell::new(0),
+                miss: Some(miss),
+            }
+            .into())
+        };
         if needle.is_empty() || needle.len() > haystack.len() {
-            // No match: a null range, as UIA's own providers return.
-            return Err(Error::empty());
+            return missed();
         }
         let matches = |at: &usize| haystack[*at..*at + needle.len()] == needle[..];
         let mut candidates = 0..=haystack.len() - needle.len();
@@ -708,13 +802,15 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                 index: self.index,
                 start: Cell::new(start + at),
                 end: Cell::new(start + at + needle.len()),
+                miss: None,
             }
             .into()),
-            None => Err(Error::empty()),
+            None => missed(),
         }
     }
     fn GetAttributeValue(&self, attributeid: UIA_TEXTATTRIBUTE_ID) -> WinResult<VARIANT> {
         hits::hit(Method::RangeGetAttributeValue);
+        self.usable()?;
         let (start, end) = (self.start.get(), self.end.get());
         let formats = formats_of(&self.tree, self.index);
         let not_supported = || {
@@ -794,6 +890,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn GetBoundingRectangles(&self) -> WinResult<*mut SAFEARRAY> {
         hits::hit(Method::RangeGetBoundingRectangles);
+        self.usable()?;
         // One rectangle at the range's start, in a fixed grid: each
         // character 8 pixels wide, each line 16 high, from (100, 200).
         let text = text_of(&self.tree, self.index);
@@ -829,6 +926,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn GetText(&self, maxlength: i32) -> WinResult<BSTR> {
         hits::hit(Method::RangeGetText);
+        self.usable()?;
         let text = text_of(&self.tree, self.index);
         let end = self.end.get().min(text.len());
         let start = self.start.get().min(end);
@@ -840,6 +938,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn Move(&self, unit: TextUnit, count: i32) -> WinResult<i32> {
         hits::hit(Method::RangeMove);
+        self.usable()?;
         let spans = spans_of(&self.tree, self.index, unit);
         if spans.is_empty() || count == 0 {
             return Ok(0);
@@ -875,6 +974,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         count: i32,
     ) -> WinResult<i32> {
         hits::hit(Method::RangeMoveEndpointByUnit);
+        self.usable()?;
         let text = text_of(&self.tree, self.index);
         let mut boundaries: Vec<usize> = spans_of(&self.tree, self.index, unit)
             .iter()
@@ -908,7 +1008,8 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         targetendpoint: TextPatternRangeEndpoint,
     ) -> WinResult<()> {
         hits::hit(Method::RangeMoveEndpointByRange);
-        let other = offsets_of(targetrange.as_ref().ok_or_else(Error::empty)?);
+        self.usable()?;
+        let other = offsets_of(targetrange.as_ref().ok_or_else(Error::empty)?)?;
         let target = if targetendpoint == TextPatternRangeEndpoint_Start {
             other.0
         } else {
@@ -919,6 +1020,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     }
     fn Select(&self) -> WinResult<()> {
         hits::hit(Method::RangeSelect);
+        self.usable()?;
         let mut guard = self
             .tree
             .lock()
