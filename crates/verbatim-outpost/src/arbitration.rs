@@ -156,7 +156,35 @@ pub(crate) fn uses_uia(
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
 ) -> bool {
-    decide(arbitrator, (verdicts, now_us), hwnd, console) == Verdict::Uia
+    decide(arbitrator, (verdicts, now_us), hwnd, console, Lists::First) == Verdict::Uia
+}
+
+/// [`uses_uia`] for a window Core asks to be probed first: the class lists
+/// do not decide it, and it is probed unless this request already probed
+/// it, as design section 7 says Core's "probe first" is answered by a probe
+/// of the request's window, always, which `verdicts` then holds.
+pub(crate) fn probed_uses_uia(
+    arbitrator: &Lock<Arbitrator>,
+    (verdicts, now_us): (&RequestVerdicts, u64),
+    hwnd: isize,
+    console: impl FnOnce() -> Option<bool>,
+) -> bool {
+    decide(
+        arbitrator,
+        (verdicts, now_us),
+        hwnd,
+        console,
+        Lists::Skipped,
+    ) == Verdict::Uia
+}
+
+/// Whether [`decide`] consults the class lists before the probe.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lists {
+    /// The lists decide a window they name.
+    First,
+    /// The window is probed whatever the lists say.
+    Skipped,
 }
 
 /// Decides window `hwnd`'s backend with `arbitrator`, as NVDA's
@@ -174,19 +202,22 @@ fn decide(
     (verdicts, now_us): (&RequestVerdicts, u64),
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
+    lists: Lists,
 ) -> Verdict {
-    let classes = verbatim_win32::window::window_classes(hwnd);
-    let probe = {
-        let arbitrator = lock(arbitrator);
-        match arbitrator.class_verdict(&classes) {
-            Some(true) => return Verdict::Uia,
-            Some(false) => return Verdict::NotUia,
-            None => Arc::clone(&arbitrator.probe),
-        }
-    };
+    // A window this request probed keeps that verdict for the rest of
+    // it, the lists included, so that its reads agree with its probe.
     if let Some(probed) = verdicts.probed(hwnd) {
         return probed.verdict;
     }
+    let classes = verbatim_win32::window::window_classes(hwnd);
+    let probe = {
+        let arbitrator = lock(arbitrator);
+        match (lists, arbitrator.class_verdict(&classes)) {
+            (Lists::First, Some(true)) => return Verdict::Uia,
+            (Lists::First, Some(false)) => return Verdict::NotUia,
+            (Lists::First, None) | (Lists::Skipped, _) => Arc::clone(&arbitrator.probe),
+        }
+    };
     let started = Instant::now();
     let probed = probe(hwnd);
     tracing::debug!(
@@ -294,6 +325,38 @@ mod tests {
             next.probed(WINDOW).map(|probed| probed.began_us),
             Some(600_000)
         );
+    }
+
+    /// A window Core asks to be probed first is probed though the class
+    /// lists name it, and the rest of the request reads it by that probe:
+    /// the desktop window, its class made a good one, answers the probe
+    /// with no provider.
+    #[test]
+    fn a_probe_first_window_is_probed_whatever_the_class_lists_say() {
+        let desktop = verbatim_win32::window::desktop_window();
+        let class = verbatim_win32::window::window_classes(desktop).raw;
+        let mut arb = Arbitrator::new(&[class.as_str()]);
+        let count = Arc::new(Lock::new(0));
+        arb.set_probe(verbatim_uia::RawProbe::Answered(0), Arc::clone(&count));
+        let arb = Lock::new(arb);
+        let lists = RequestVerdicts::default();
+        assert!(uses_uia(&arb, (&lists, 1_000), desktop, || None));
+        assert_eq!(*count.lock(), 0, "the lists decide a walk's window");
+        let request = RequestVerdicts::default();
+        assert!(!probed_uses_uia(&arb, (&request, 1_000), desktop, || None));
+        assert_eq!(*count.lock(), 1);
+        assert_eq!(
+            request.probed(desktop),
+            Some(Probed {
+                verdict: Verdict::NotUia,
+                began_us: 1_000
+            })
+        );
+        assert!(
+            !uses_uia(&arb, (&request, 2_000), desktop, || None),
+            "the request's later reads agree with its probe"
+        );
+        assert_eq!(*count.lock(), 1);
     }
 
     #[test]

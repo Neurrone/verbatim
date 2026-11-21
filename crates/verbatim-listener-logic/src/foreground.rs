@@ -210,10 +210,13 @@ pub enum Seen<T> {
         item: Option<T>,
     },
     /// The shell's foreground event (Program Manager or the taskbar), for
-    /// `front`: reported for the keyboard hook's view as a foreground
-    /// event's window is, and replacing the window awaited, but holding
-    /// nothing, as NVDA defers its pump for no shell window
-    /// (`IAccessibleHandler/internalWinEventHandler.py` 164 to 172).
+    /// `front`: reported at once when its window is in front, whatever a
+    /// hold in force keeps, else awaited in place of the window awaited;
+    /// it starts no hold and a hold in force goes on holding, as NVDA
+    /// defers its pump for no shell window and leaves a deferral as it is
+    /// (`IAccessibleHandler/internalWinEventHandler.py` 164 to 177). A
+    /// shell window not in front while a hold is in force is not awaited,
+    /// since the hold's window is (Claude, 2026-11-21).
     Shell {
         /// The window, its thread and its observation.
         front: Front,
@@ -289,13 +292,13 @@ impl<T> Pending<T> {
             Seen::Foreground { front, item } => self.foreground(front, item, in_front, now),
             Seen::Shell { front, item } => {
                 let mut placed = self.other(item, in_front, front.observed_at_us, now);
-                if !matches!(self, Self::Holding { .. }) {
-                    *self = if front.window == in_front {
-                        placed.report = Some(front);
-                        Self::Clear
-                    } else {
-                        Self::Awaiting { front }
-                    };
+                if front.window == in_front {
+                    placed.report = Some(front);
+                    if !matches!(self, Self::Holding { .. }) {
+                        *self = Self::Clear;
+                    }
+                } else if !matches!(self, Self::Holding { .. }) {
+                    *self = Self::Awaiting { front };
                 }
                 placed
             }
@@ -799,8 +802,9 @@ mod tests {
     }
 
     /// The shell's foreground holds nothing: it is reported in front, and
-    /// awaited when it is not, replacing the window awaited, while a hold
-    /// in force keeps holding.
+    /// awaited when it is not, replacing the window awaited; while a hold
+    /// is in force it is reported at once when in front, and the hold
+    /// keeps holding.
     #[test]
     fn the_shells_foreground_holds_nothing() {
         let shell = |item| Seen::Shell {
@@ -822,9 +826,19 @@ mod tests {
         let mut pending = Pending::default();
         pending.step(foreground(EXPLORER, "foreground"), 10, 0, true);
         assert_eq!(
-            pending.step(shell("shell"), 10, 1_000, true).send,
-            Vec::<&str>::new()
+            pending.step(shell("shell"), 10, 1_000, true),
+            Placed {
+                report: Some(EDITOR),
+                send: Vec::new(),
+                timer: TimerChange::Keep,
+            }
         );
-        assert!(matches!(pending, Pending::Holding { .. }));
+        assert!(matches!(pending, Pending::Holding { front, .. } if front == EXPLORER));
+        assert_eq!(
+            pending.step(shell("shell"), 99, 2_000, true),
+            Placed::sent(Vec::new()),
+            "a shell window not in front during a hold is not awaited"
+        );
+        assert!(matches!(pending, Pending::Holding { front, .. } if front == EXPLORER));
     }
 }

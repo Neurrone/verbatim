@@ -284,10 +284,20 @@ fn verdict(
             if !read::serves(context, hwnd) {
                 return None;
             }
-            let uia = read::window_uses_uia(context, hwnd);
-            // Only a probe this request made is reported: Core's cache is
-            // the one that keeps a verdict past its request.
-            if let Some(probed) = context.verdicts.probed(hwnd) {
+            // Core asks for a probe: the window is probed whatever the
+            // class lists say, and the probe is reported, Core's cache
+            // being the one that keeps a verdict past its request.
+            let uia = crate::arbitration::probed_uses_uia(
+                &context.arbitrator,
+                (&context.verdicts, context.observed_now()),
+                hwnd,
+                || verbatim_uia::console_reports_formatting(hwnd),
+            );
+            if let Some(probed) = context.verdicts.probed(hwnd)
+                && !probes
+                    .iter()
+                    .any(|probe| probe.window == window_handle(hwnd))
+            {
                 probes.push(Probe {
                     window: window_handle(hwnd),
                     thread: verbatim_win32::window::window_owner(hwnd).0,
