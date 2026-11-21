@@ -230,14 +230,13 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // Backspace at the line's start deletes the line break before it.
     press(scenario, "backspace", &["carriage return"]);
 
-    // A selection whose old range no longer holds the text it held when it
-    // was reported is said in general terms, the selection removed, as in
-    // the text box: "x" typed over the selected word is echoed, then the
-    // selection is removed; so is the line cut with Control+X. NVDA, which
-    // reads the old range as it now is, says "x unselected" and then
-    // nothing (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
-    // and `part3b-notepad-2.txt`); the difference is Dickson's decision of
-    // 2026-10-22 (`docs/parity/text.md`, "TextInfo-equivalent layer").
+    // A selection over text that changed is said as its old range now
+    // reads, as NVDA says it through UI Automation (`docs/parity/text.md`,
+    // "Selection over changed text through UIA", matched by Dickson's
+    // ruling of 2026-11-16): "x" typed over the selected word is echoed,
+    // then "x unselected"; the line's rest cut with Control+X says nothing
+    // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
+    // and `part3b-notepad-2.txt`).
     //
     // Notepad's spell checker marks a misspelt word a moment after the
     // caret leaves it, raising no event, and never while the caret is in
@@ -251,9 +250,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // (`target/e2e-evidence/m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`).
     press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    scenario.send_keys(&["x"]).expect("sends x");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario.speech().expect(&["x", "selection removed"]);
+    press(scenario, "x", &["x", "x unselected"]);
     press(
         scenario,
         "control+home",
@@ -265,8 +262,6 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         &["xbeta gammaelta epsilon  selected"],
     );
     scenario.send_keys(&["control+x"]).expect("sends control+x");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    scenario.speech().expect(&["selection removed"]);
     scenario.expect_nothing_more();
     press(scenario, "x", &["x"]);
     scenario
