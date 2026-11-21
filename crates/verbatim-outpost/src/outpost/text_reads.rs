@@ -603,6 +603,40 @@ pub(super) fn answer_asked(
     replied.unwrap_or_else(|reply| reply)
 }
 
+/// A batch's `Caret` of `node_id` ([`text::ops::caret`]), adopting the
+/// element of the caret tell `adopt` names as [`answer_asked`]'s selection
+/// read does: `Err` with the reply a node with no text, or gone, answers.
+pub(super) fn caret_step(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    adopt: Option<verbatim_model::tell::ElementToken>,
+) -> Result<text::TextResult<verbatim_model::batch::CaretAt>, TextReply> {
+    adopt_told(context, node_id, adopt);
+    let read_at_us = context.observed_now();
+    on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
+        text::ops::caret(source, text, read_at_us)
+    })
+}
+
+/// A batch's `CompareSelection` of `node_id` between the held reads
+/// `before` and `after` ([`text::ops::compare_selection`]).
+pub(super) fn compare_step(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (before, after): (verbatim_model::TextAnchor, verbatim_model::TextAnchor),
+) -> Result<
+    text::TextResult<Result<verbatim_model::batch::SelectionCompared, verbatim_model::TextAnchor>>,
+    TextReply,
+> {
+    on_text!(
+        context,
+        node_id,
+        TextDetails::NONE,
+        &[before.0, after.0],
+        |source, text| text::ops::compare_selection(source, text, (before, after))
+    )
+}
+
 /// Runs a watch's check or final read
 /// (`docs/design/readers-tell-core-asks-build1.md`, "The watch", Table 15):
 /// the watch's answer when the program ends it, `None` for a check that

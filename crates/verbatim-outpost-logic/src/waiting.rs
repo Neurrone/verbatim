@@ -27,19 +27,24 @@
 use std::collections::VecDeque;
 
 use verbatim_model::WindowHandle;
+use verbatim_model::batch::{Op, Subject};
 use verbatim_model::request::{
     Answer, Ask, Cancel, ObjectRef, Outcome, Question, Request, RequestNumber,
 };
 
 /// The window of the MSAA ids `request`'s subject is named by, for the
 /// kinds that name one: a read of an object by its ids and a run's
-/// candidate. Every kind is classed, so a new one is classed where it is
-/// added.
+/// candidate, and a batch with a step on an MSAA object. Every kind is
+/// classed, so a new one is classed where it is added.
 fn ids_window(request: &Question) -> Option<WindowHandle> {
-    // A batch is refused unread until the outpost runs batches, which
-    // names the window of its MSAA subjects here.
-    let Question::Legacy(request) = request else {
-        return None;
+    let request = match request {
+        Question::Legacy(request) => request,
+        Question::Batch(batch) => {
+            return batch.steps.iter().find_map(|step| match step.op.subject() {
+                Some(Subject::Msaa { ids, .. }) => Some(ids.window),
+                _ => None,
+            });
+        }
     };
     match request {
         Request::ReadObject(read) => match read.object {
@@ -59,6 +64,18 @@ fn ids_window(request: &Question) -> Option<WindowHandle> {
         | Request::DumpTree { .. }
         | Request::ShellItems { .. }
         | Request::ShellItemPosition { .. } => None,
+    }
+}
+
+/// Whether `request` only moves the outpost's registration: a `Follow`,
+/// or a batch of `Follow` steps alone, which names the whole registration.
+fn is_follow(request: &Question) -> bool {
+    match request {
+        Question::Legacy(request) => matches!(request, Request::Follow(_)),
+        Question::Batch(batch) => batch
+            .steps
+            .iter()
+            .all(|step| matches!(step.op, Op::Follow(_))),
     }
 }
 
@@ -88,9 +105,9 @@ impl Asks {
     /// answers are returned.
     pub fn push(&mut self, ask: Box<Ask>) -> Vec<Answer> {
         let mut replaced = Vec::new();
-        if matches!(ask.request, Question::Legacy(Request::Follow(_))) {
+        if is_follow(&ask.request) {
             self.queued.retain(|queued| {
-                let follow = matches!(queued.request, Question::Legacy(Request::Follow(_)));
+                let follow = is_follow(&queued.request);
                 if follow {
                     replaced.push(ended(queued.number, "replaced by a newer Follow"));
                 }
@@ -261,6 +278,52 @@ mod tests {
             asks.cancel(cancel(9, CancelReason::Withdrawn), None),
             Cancelled::Nothing
         );
+    }
+
+    /// A batch of `Follow` steps alone replaces a `Follow` still queued,
+    /// answered ended; a batch on an MSAA object is answered not there
+    /// when that object's window is destroyed, and any other batch stays.
+    #[test]
+    fn a_follow_batch_replaces_a_queued_follow_and_an_msaa_batch_goes_with_its_window() {
+        use verbatim_model::batch::{Batch, Op, Placement, Step, Subject};
+        let batch = |number, op| {
+            Box::new(Ask {
+                number: RequestNumber(number),
+                window: WindowHandle(1),
+                verdict: WindowVerdict::Msaa,
+                request: Batch {
+                    steps: vec![Step { op, when: None }],
+                    placement: Placement::Queue,
+                    spare: None,
+                }
+                .into(),
+            })
+        };
+        let read = |subject| Op::Read {
+            subject,
+            set: Vec::new(),
+        };
+        let mut asks = Asks::default();
+        let _ = asks.push(follow(1, 1));
+        let replaced = asks.push(batch(2, Op::Follow(None)));
+        assert_eq!(replaced, [ended(RequestNumber(1), "replaced by a newer Follow")]);
+        let msaa = Subject::Msaa {
+            ids: verbatim_model::request::MsaaIds {
+                window: WindowHandle(7),
+                object: 0,
+                child: 0,
+            },
+            redirect: true,
+        };
+        let _ = asks.push(batch(3, read(msaa)));
+        let _ = asks.push(batch(4, read(Subject::Node(verbatim_model::NodeId::new(5)))));
+        let gone: Vec<u64> = asks
+            .destroyed(WindowHandle(7))
+            .iter()
+            .map(|answer| answer.number.0)
+            .collect();
+        assert_eq!(gone, [3]);
+        assert_eq!(numbers(&asks), [2, 4]);
     }
 
     /// At shutdown the queued requests are dropped unanswered.

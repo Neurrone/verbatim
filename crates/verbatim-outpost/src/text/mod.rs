@@ -33,6 +33,7 @@ pub mod check;
 mod color;
 pub mod edit;
 pub mod held;
+pub mod ops;
 pub mod sentence;
 pub mod uia;
 

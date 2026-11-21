@@ -212,26 +212,40 @@ fn window_snapshot(
         )?;
         return Some((Backend::Msaa, node));
     }
+    let backend = if window_uses_uia(context, hwnd) {
+        Backend::Uia
+    } else {
+        Backend::Msaa
+    };
+    window_node(context, client, hwnd, backend).map(|node| (backend, node))
+}
+
+/// Window `hwnd`'s own snapshot through `backend`, the one Core names: its
+/// element, or its client area as NVDA reads a foreground window.
+pub(super) fn window_node(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    hwnd: isize,
+    backend: Backend,
+) -> Option<NodeSnapshot> {
     // The window's element is the connection to it.
-    if window_uses_uia(context, hwnd) {
+    if backend == Backend::Uia {
         let (uia, nodes) = client
             .uia_with(context, RequestContext::node_request)
             .ok()?;
         let element = uia.window_element(hwnd, &nodes).ok()?;
-        let node = element.snapshot(context.nodes());
-        Some((Backend::Uia, node))
+        Some(element.snapshot(context.nodes()))
     } else {
         // The client area, as NVDA reads a foreground window: a focus event
         // on the client area that follows is then the same node and is not
         // announced again.
-        let node = verbatim_ia2::acquire::snapshot_from_event(
+        verbatim_ia2::acquire::snapshot_from_event(
             hwnd,
             OBJID_CLIENT.0,
             CHILDID_SELF,
             context.nodes(),
             verbatim_ia2::acquire::Purpose::Announce,
-        )?;
-        Some((Backend::Msaa, node))
+        )
     }
 }
 

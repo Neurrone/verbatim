@@ -78,12 +78,11 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     // records the verdict rather than count the probe timed out.
     let request = match &ask.request {
         Question::Legacy(request) => request,
-        // The outpost runs batches from the readers' step of the request
-        // list's build; until then it refuses each unread.
-        Question::Batch(_) => {
+        Question::Batch(batch) => {
+            let outcome = super::batch::answer(context, client, ask, batch, &mut probes);
             return Answer {
                 number: ask.number,
-                outcome: Outcome::Refused(Refusal::Unsupported),
+                outcome,
                 probes,
                 detail: String::new(),
             };
@@ -197,9 +196,9 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
 /// dump, which records them all; none for a request that reads no node's
 /// properties.
 pub(super) fn node_details(request: &Question) -> NodeDetailSet {
-    let Question::Legacy(request) = request else {
-        // A batch is refused unread until the outpost runs batches.
-        return NodeDetailSet::NONE;
+    let request = match request {
+        Question::Legacy(request) => request,
+        Question::Batch(batch) => return super::batch::node_details(batch),
     };
     match request {
         Request::ReadObject(ReadObject { set, .. })
@@ -289,7 +288,7 @@ fn failed(error: &ReadError) -> Outcome {
 /// clock but in a test that sets its own: `None` for a window the
 /// outpost's application does not serve, which is neither probed nor
 /// read.
-fn verdict(
+pub(super) fn verdict(
     context: &RequestContext<'_>,
     hwnd: isize,
     verdict: WindowVerdict,
@@ -434,7 +433,7 @@ pub(super) fn values(
 
 /// Whether property `id` is read apart from a node's snapshot, by
 /// [`read_apart`].
-fn is_read_apart(id: PropertyId) -> bool {
+pub(super) fn is_read_apart(id: PropertyId) -> bool {
     matches!(
         id,
         PropertyId::Suggestions
@@ -449,7 +448,7 @@ fn is_read_apart(id: PropertyId) -> bool {
 /// The properties of `set` of node `node_id`: its snapshot, read only when
 /// the set names a property the snapshot holds, and each property read
 /// apart from it ([`read_apart`]).
-fn properties(
+pub(super) fn properties(
     context: &RequestContext<'_>,
     client: &mut Client,
     node_id: NodeId,
@@ -618,7 +617,7 @@ fn has_value(
 }
 
 /// `node`'s children, in order, at most [`MAX_NODES`].
-fn children(
+pub(super) fn children(
     context: &RequestContext<'_>,
     client: &mut Client,
     node: NodeId,
@@ -984,7 +983,7 @@ pub(super) fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Op
 }
 
 /// `node`'s place among `nodes`, by its id.
-fn one_of(node: NodeId, nodes: &[NodeId]) -> RelationFound {
+pub(super) fn one_of(node: NodeId, nodes: &[NodeId]) -> RelationFound {
     nodes
         .iter()
         .position(|&each| each == node)
@@ -1178,7 +1177,7 @@ fn caret_of(context: &RequestContext<'_>, node: &NodeSnapshot, details: TextDeta
 }
 
 /// The MSAA ids `node` was read by, by the key it is kept under.
-fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<HeldIds> {
+pub(super) fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<HeldIds> {
     let (window, object, child) = context.store.key_of(node.id)?;
     Some(HeldIds {
         event: MsaaIds {
@@ -1348,14 +1347,43 @@ fn try_candidate(
     if !full {
         return Reply::Candidate(CandidateAnswer { facts, read: None });
     }
-    let held_child = candidate.resolved_child();
-    let candidates = candidates_of(&run.known);
-    let node = candidate.read(context.nodes(), Some(&candidates));
-    let Ok(chain) = read::msaa_enrichment(context, client, (&node, &run.known, Some(&candidates)))
-    else {
+    let Some(read) = candidate_read(
+        context,
+        client,
+        candidate,
+        (&run.known, &run.set, run.details),
+    ) else {
         return not_there;
     };
-    let (mut ancestors, met) = cut_at_known(context, chain, &run.known);
+    Reply::Candidate(CandidateAnswer {
+        facts,
+        read: Some(Box::new(read)),
+    })
+}
+
+/// The full read of an MSAA focus candidate, as NVDA's pump reads the
+/// focus it accepts: the object, its ancestors up to the first of `known`,
+/// the text of the dialogs it enters, and, when it met none of `known`,
+/// the foreground object; by `set`, its caret fetching `details`. `None`
+/// when its ancestors cannot be read, which answers it not there.
+pub(super) fn candidate_read(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    candidate: verbatim_ia2::acquire::FocusCandidate,
+    (known, set, details): (&[KnownAncestor], &[PropertyId], TextDetails),
+) -> Option<FocusRead> {
+    // The ids the object was reached at, after the redirect.
+    let (window, object, child) = candidate.key();
+    let event = MsaaIds {
+        window: window_handle(window),
+        object,
+        child,
+    };
+    let held_child = candidate.resolved_child();
+    let candidates = candidates_of(known);
+    let node = candidate.read(context.nodes(), Some(&candidates));
+    let chain = read::msaa_enrichment(context, client, (&node, known, Some(&candidates))).ok()?;
+    let (mut ancestors, met) = cut_at_known(context, chain, known);
     let mut node = node;
     read::describe_dialogs(
         context,
@@ -1370,25 +1398,21 @@ fn try_candidate(
         .is_none()
         .then(|| read::foreground_object(context, client))
         .flatten();
-    let read = focus_read(
+    Some(focus_read(
         context,
         &Focus {
             node: &node,
             ancestors: &ancestors,
             met,
-            nearest: Some(hwnd),
+            nearest: Some(window),
             msaa: Some(msaa),
             foreground: foreground.as_ref(),
             value_from_selection: false,
             runtime_id_reused: false,
-            details: run.details,
+            details,
         },
-        &run.set,
-    );
-    Reply::Candidate(CandidateAnswer {
-        facts,
-        read: Some(Box::new(read)),
-    })
+        set,
+    ))
 }
 
 /// The application's current focus, as a focus-now read finds it, with its
@@ -1423,6 +1447,46 @@ fn current_focus(
     {
         return answer;
     }
+    match focus_now(context, client, window, set, (known, details, depth)) {
+        FocusNow::Read(focused, read) => Outcome::Result(Reply::Candidate(CandidateAnswer {
+            facts: CandidateFacts::Found {
+                focused,
+                role: None,
+            },
+            read: Some(read),
+        })),
+        FocusNow::Unfocused => Outcome::Result(Reply::Candidate(CandidateAnswer {
+            facts: CandidateFacts::Found {
+                focused: Some(false),
+                role: None,
+            },
+            read: None,
+        })),
+        FocusNow::NotThere => Outcome::NotThere,
+    }
+}
+
+/// What a focus-now read found ([`focus_now`]).
+pub(super) enum FocusNow {
+    /// The focus read, with its MSAA focused state when the depth read it.
+    Read(Option<bool>, Box<FocusRead>),
+    /// An MSAA focus without the focused state, at a depth that reads the
+    /// whole only when focused.
+    Unfocused,
+    /// No focus could be read.
+    NotThere,
+}
+
+/// The application's focus in `window`, taken already, read as
+/// [`current_focus`] reads it, by `set`, with its ancestors up to the first
+/// of `known` and its caret fetching `details`, to `depth`.
+pub(super) fn focus_now(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    window: Result<isize, read::FocusReadMiss>,
+    set: &[PropertyId],
+    (known, details, depth): (&[KnownAncestor], TextDetails, FocusDepth),
+) -> FocusNow {
     let read = window.and_then(|hwnd| {
         read::focused_control_in(
             context,
@@ -1433,17 +1497,9 @@ fn current_focus(
     });
     let (control_window, mut control, focused) = match read {
         Ok(read::Focused::Read(window, control, focused)) => (window, *control, focused),
-        Ok(read::Focused::Unfocused) => {
-            return Outcome::Result(Reply::Candidate(CandidateAnswer {
-                facts: CandidateFacts::Found {
-                    focused: Some(false),
-                    role: None,
-                },
-                read: None,
-            }));
-        }
+        Ok(read::Focused::Unfocused) => return FocusNow::Unfocused,
         Err(read::FocusReadMiss::Refused | read::FocusReadMiss::Failed(_)) => {
-            return Outcome::NotThere;
+            return FocusNow::NotThere;
         }
     };
     let (mut ancestors, met) = cut_at_known(context, control.ancestors, known);
@@ -1487,13 +1543,7 @@ fn current_focus(
         },
         set,
     );
-    Outcome::Result(Reply::Candidate(CandidateAnswer {
-        facts: CandidateFacts::Found {
-            focused,
-            role: None,
-        },
-        read: Some(Box::new(read)),
-    }))
+    FocusNow::Read(focused, Box::new(read))
 }
 
 /// The route's end as the outpost's continuation above it takes it.

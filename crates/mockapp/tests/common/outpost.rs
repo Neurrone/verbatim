@@ -666,6 +666,27 @@ impl OutpostUnderTest {
         number
     }
 
+    /// Sends Core's batch `batch` about window `window`, with Core's
+    /// verdict for it `verdict`, through the outpost's request driver, and
+    /// returns its answer, the next message the outpost writes, with the
+    /// calls it made into the application.
+    pub fn batch(
+        &self,
+        window: HWND,
+        verdict: WindowVerdict,
+        batch: verbatim_model::batch::Batch,
+    ) -> (Answer, CallCounts) {
+        let number = RequestNumber(self.last_asked.get().0 + 1);
+        self.last_asked.set(number);
+        verbatim_outpost::driver::Driver::new(&self.outpost).send(verbatim_model::request::Ask {
+            number,
+            window: WindowHandle(window.0 as u64),
+            verdict,
+            request: batch.into(),
+        });
+        self.answer_with_calls(number)
+    }
+
     /// Cancels request `number` for `reason`, as Core does.
     pub fn cancel_request(
         &self,

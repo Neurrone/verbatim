@@ -1,0 +1,1133 @@
+//! Core's batches, run on the worker (the request list's design,
+//! `target/captures-2026-11-20/build8-design/design.md`, sections 3, 5 and
+//! 7): parsed once as they arrive and refused whole when they do not
+//! parse; each subject resolved once, at its first use, and every later
+//! use taking the same object; each step run in order, under its
+//! condition, by the outpost's code for its operation.
+//!
+//! Each operation runs on the code the outpost's kinds of request run on:
+//! a node's properties with those read apart, a navigation step, the
+//! ancestor walk, the children walk for a walk down the tree, the MSAA
+//! candidate's acquisition, focused-state walk and full read, the focus-now
+//! read, an activation, a `Follow`, and the text reads through each
+//! backend's adapter. The controller-for relation and the first selected
+//! item run through the program builder ([`verbatim_uia_rops::batch`]).
+
+#![forbid(unsafe_code)]
+
+use verbatim_model::batch::{
+    AncestorsEnd, Ancestry, Batch, Before, CaretAt, Chunks, Descendant, Descended, Done, Gate,
+    KindMismatch, Located, Missing, Op, Point, PointOf, RangeText, ReaderKind, Relation, Selected,
+    StepOutcome, StepRefusal, Subject, Tested, TextOffset, Walk, WindowOf, parse,
+};
+use verbatim_model::property::{
+    NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues,
+};
+use verbatim_model::request::{
+    Ask, FocusDepth, Follow, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe,
+    Refusal, Reply,
+};
+use verbatim_model::{
+    Backend, NodeId, NodeSnapshot, QueryKind, SentenceMove, TextAnchor, TextOp, TextPoint,
+    TextPosition, TextProvider, TextRead, TextReadAhead, TextReply, TextThrough,
+};
+
+use super::RequestContext;
+use super::asked::{self, FocusNow};
+use super::read::{self, Client, ReadError};
+use super::text_reads;
+use super::window::{hwnd_of, window_handle};
+use crate::text::TextError;
+
+/// The node details a batch's reads fetch: those its steps' property sets
+/// name.
+pub(super) fn node_details(batch: &Batch) -> NodeDetailSet {
+    let mut set = Vec::new();
+    for step in &batch.steps {
+        match &step.op {
+            Op::Read { set: own, .. }
+            | Op::Related { set: own, .. }
+            | Op::Ancestors { set: own, .. }
+            | Op::FocusRead { set: own, .. } => set.extend_from_slice(own),
+            Op::Descendants { walk, .. } => set.extend_from_slice(&walk.set),
+            Op::Test { matcher, .. } => set.extend(matcher.properties()),
+            _ => {}
+        }
+    }
+    NodeDetailSet::named_by(&set)
+}
+
+/// The answer to `batch`, `ask`'s, read on the worker; `probes` records
+/// the probe of a window with no verdict in force.
+pub(super) fn answer(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    ask: &Ask,
+    batch: &Batch,
+    probes: &mut Vec<Probe>,
+) -> Outcome {
+    let parsed = match parse(batch.clone(), ReaderKind::Outpost) {
+        Ok(parsed) => parsed,
+        Err(malformed) => return Outcome::Refused(Refusal::Malformed(malformed)),
+    };
+    // The window with the keyboard focus is taken before any call that can
+    // block, the probe among them, as the focus-now read takes it.
+    let focus = parsed
+        .batch()
+        .reads_focus_first()
+        .then(|| read::checked_focus_window(context).map_err(|_| ()));
+    let _ = asked::verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    let mut run = Run {
+        context,
+        client,
+        ask,
+        probes,
+        focus,
+        held: Vec::new(),
+        outcomes: Vec::new(),
+    };
+    for step in parsed.steps() {
+        let outcome = match step.gate(&run.outcomes) {
+            Ok(Gate::Skip) => StepOutcome::Skipped,
+            Ok(Gate::Run) => match run.step(&step.op) {
+                Ok(outcome) => outcome,
+                Err(whole) => return whole,
+            },
+            Err(KindMismatch) => {
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
+                StepOutcome::Failed
+            }
+        };
+        run.outcomes.push(outcome);
+    }
+    Outcome::Result(Reply::Steps(run.outcomes))
+}
+
+/// An object a subject names, resolved once per batch.
+enum Held {
+    /// A node the outpost holds.
+    Node(NodeId),
+    /// An MSAA object at its event's ids, acquired; given up to its full
+    /// read, once.
+    Msaa(Option<Box<verbatim_ia2::acquire::FocusCandidate>>),
+    /// A window's own object, through the backend Core names.
+    Window(isize, Backend),
+    /// The application's focus, in the focused window taken first.
+    Focus(isize),
+}
+
+/// A batch under way.
+struct Run<'r, 'c> {
+    context: &'r RequestContext<'c>,
+    client: &'r mut Client,
+    ask: &'r Ask,
+    probes: &'r mut Vec<Probe>,
+    /// The focused window, taken before anything else when the first step
+    /// reads the focus.
+    focus: Option<Result<isize, ()>>,
+    /// Each subject resolved, with what it resolved to.
+    held: Vec<(Subject, Result<Held, Missing>)>,
+    outcomes: Vec<StepOutcome>,
+}
+
+/// A step's outcome, or the whole batch's.
+type Stepped = Result<StepOutcome, Outcome>;
+
+impl Run<'_, '_> {
+    /// The place in `held` of what `subject` names, resolved at its first
+    /// use: `Err` with the whole batch's outcome when the subject's window
+    /// is read through the other backend.
+    fn resolve(&mut self, subject: &Subject) -> Result<usize, Outcome> {
+        if let Some(place) = self.held.iter().position(|(held, _)| held == subject) {
+            return Ok(place);
+        }
+        let resolved = match subject {
+            Subject::Node(node) => Ok(Held::Node(*node)),
+            Subject::Result(_) | Subject::Item { .. } => subject
+                .earlier_nodes(&self.outcomes)
+                .and_then(|nodes| nodes.first().and_then(|read| read.node))
+                .map(Held::Node)
+                .ok_or(Missing::Object),
+            Subject::Msaa { ids, redirect } => self.msaa(*ids, *redirect)?,
+            Subject::Window {
+                which,
+                backend,
+                visible,
+            } => self
+                .window(which, *visible)
+                .map(|hwnd| Held::Window(hwnd, *backend)),
+            Subject::Focus => match self.focus {
+                Some(Ok(hwnd)) => Ok(Held::Focus(hwnd)),
+                _ => Err(Missing::Object),
+            },
+            // The completion of a listener's route needs what the listener
+            // read of each of its steps, which the subject does not carry:
+            // a question for the build's report (Claude, 2026-11-21).
+            Subject::Route(_) | Subject::Kept { .. } => {
+                return Err(Outcome::Refused(Refusal::Unsupported));
+            }
+        };
+        self.held.push((subject.clone(), resolved));
+        Ok(self.held.len() - 1)
+    }
+
+    /// An MSAA object at `ids`, its window's verdict consulted first: NVDA's
+    /// focus redirect applied with `redirect`, none for a menu start
+    /// (ADR 0004, "MSAA candidates").
+    fn msaa(&mut self, ids: MsaaIds, redirect: bool) -> Result<Result<Held, Missing>, Outcome> {
+        let hwnd = hwnd_of(ids.window);
+        let given = if ids.window == self.ask.window {
+            self.ask.verdict
+        } else {
+            verbatim_model::request::WindowVerdict::ProbeFirst
+        };
+        match asked::verdict(self.context, hwnd, given, self.probes) {
+            Some(true) => return Err(Outcome::Refused(Refusal::ReadThroughUia)),
+            None => return Ok(Err(Missing::Object)),
+            Some(false) => {}
+        }
+        let acquired = if redirect {
+            verbatim_ia2::acquire::focus_candidate(hwnd, ids.object, ids.child)
+        } else {
+            verbatim_ia2::acquire::menu_start_candidate(hwnd, ids.object, ids.child)
+        };
+        Ok(acquired
+            .map(|candidate| Held::Msaa(Some(Box::new(candidate))))
+            .ok_or(Missing::Object))
+    }
+
+    /// The window `which` names, of the outpost's application, shown when
+    /// `visible`.
+    fn window(&self, which: &WindowOf, visible: bool) -> Result<isize, Missing> {
+        let hwnd = match which {
+            WindowOf::Handle(window) => Some(hwnd_of(*window)),
+            WindowOf::TopLevelOf(window) => {
+                Some(verbatim_win32::window::top_level_of(hwnd_of(*window)))
+            }
+            WindowOf::ClassPath(classes) => super::shell_items::class_path_window(classes),
+            WindowOf::Focused => read::checked_focus_window(self.context).ok(),
+            WindowOf::Foreground => Some(verbatim_win32::window::foreground_window_handle()),
+        };
+        hwnd.filter(|&hwnd| hwnd != 0 && read::serves(self.context, hwnd))
+            .filter(|&hwnd| !visible || verbatim_win32::window::window_is_visible(hwnd))
+            .ok_or(Missing::Object)
+    }
+
+    /// What `subject` resolved to, or the step's outcome when it is not
+    /// there.
+    fn held(&mut self, subject: &Subject) -> Result<Result<usize, StepOutcome>, Outcome> {
+        let place = self.resolve(subject)?;
+        Ok(match &self.held[place].1 {
+            Ok(_) => Ok(place),
+            Err(missing) => Err(StepOutcome::NotThere(match (missing, subject) {
+                (Missing::Object, Subject::Node(node)) => Missing::Node(*node),
+                (missing, _) => *missing,
+            })),
+        })
+    }
+
+    /// The node `subject` names, for an operation that runs on a node.
+    fn node(&mut self, subject: &Subject) -> Result<Result<NodeId, StepOutcome>, Outcome> {
+        Ok(match self.held(subject)? {
+            Err(outcome) => Err(outcome),
+            Ok(place) => match &self.held[place].1 {
+                Ok(Held::Node(node)) => Ok(*node),
+                _ => Err(StepOutcome::Refused(StepRefusal::Unsupported)),
+            },
+        })
+    }
+
+    fn step(&mut self, op: &Op) -> Stepped {
+        match op {
+            Op::Read { subject, set } => self.read(subject, set),
+            Op::Test { subject, matcher } => self.test(subject, matcher),
+            Op::Related {
+                subject,
+                relation,
+                set,
+            } => self.related(subject, *relation, set),
+            Op::Ancestors {
+                subject,
+                until,
+                depth,
+                set,
+            } => self.ancestors(subject, until, *depth, set),
+            Op::Descendants { subject, walk } => self.descendants(subject, walk),
+            Op::IsOneOf {
+                subject,
+                equal,
+                at_address,
+            } => self.is_one_of(subject, *equal, at_address),
+            Op::Activate { subject } => Ok(match self.node(subject)? {
+                Err(outcome) => outcome,
+                Ok(node) => match read::activate(self.context, self.client, node) {
+                    Ok(action) => StepOutcome::Done(Done::Activate(action)),
+                    Err(error) => failed(&error, node),
+                },
+            }),
+            Op::Follow(target) => self.follow(target.as_ref()),
+            Op::FocusRead {
+                subject,
+                known,
+                set,
+                details,
+            } => self.focus_read(subject, (known, set, *details)),
+            _ => self.text(op),
+        }
+    }
+
+    /// `Read`: a node's properties with those read apart; an MSAA object's
+    /// each read alone; a window's own object's through its backend.
+    fn read(&mut self, subject: &Subject, set: &[PropertyId]) -> Stepped {
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        Ok(match &mut self.held[place].1 {
+            Ok(Held::Node(node)) => {
+                let node = *node;
+                match asked::properties(context, self.client, node, set) {
+                    Ok(mut values) => {
+                        reported(context, node, &mut values);
+                        let window = asked::known_nearest_of(context, node).unwrap_or(0);
+                        StepOutcome::Done(Done::Read(NodeRead {
+                            node: Some(node),
+                            window: asked::node_window(window),
+                            values,
+                        }))
+                    }
+                    Err(error) => failed(&error, node),
+                }
+            }
+            Ok(Held::Msaa(Some(candidate))) => {
+                let hwnd = candidate.key().0;
+                let client = &mut *self.client;
+                let mut read = |id| candidate_property((context, client), candidate, id);
+                StepOutcome::Done(Done::Read(NodeRead {
+                    node: None,
+                    window: asked::node_window(hwnd),
+                    values: PropertyValues(
+                        set.iter()
+                            .map(|&id| PropertyAnswer {
+                                id,
+                                value: read(id),
+                            })
+                            .collect(),
+                    ),
+                }))
+            }
+            Ok(Held::Window(hwnd, backend)) => {
+                let (hwnd, backend) = (*hwnd, *backend);
+                match read::window_node(context, self.client, hwnd, backend) {
+                    Some(node) => StepOutcome::Done(Done::Read(asked::node_read(
+                        context,
+                        &node,
+                        Some(hwnd),
+                        set,
+                    ))),
+                    None => StepOutcome::NotThere(Missing::Object),
+                }
+            }
+            Ok(Held::Msaa(None) | Held::Focus(_)) | Err(_) => {
+                StepOutcome::Refused(StepRefusal::Unsupported)
+            }
+        })
+    }
+
+    /// `Test`: the matcher evaluated lazily, each property read at most
+    /// once when the matcher first needs it, in its order.
+    fn test(&mut self, subject: &Subject, matcher: &verbatim_model::matcher::Matcher) -> Stepped {
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let mut read = Vec::new();
+        let (node, window, holds) = match &mut self.held[place].1 {
+            Ok(Held::Msaa(Some(candidate))) => {
+                let hwnd = candidate.key().0;
+                let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
+                    Ok(candidate_property(
+                        (context, &mut *self.client),
+                        candidate,
+                        id,
+                    ))
+                });
+                (None, hwnd, holds)
+            }
+            Ok(Held::Window(hwnd, backend)) => {
+                let (hwnd, backend) = (*hwnd, *backend);
+                let mut snapshot: Option<Option<NodeSnapshot>> = None;
+                let client = &mut *self.client;
+                let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
+                    Ok(match id {
+                        PropertyId::WindowShown => Some(PropertyValue::Flag(
+                            verbatim_win32::window::window_is_visible(hwnd),
+                        )),
+                        // Its role through MSAA, as the hidden-dialog check
+                        // reads it, whatever the window's verdict.
+                        PropertyId::Role if backend == Backend::Msaa => {
+                            verbatim_ia2::acquire::client_role(hwnd).map(PropertyValue::Role)
+                        }
+                        _ => snapshot
+                            .get_or_insert_with(|| {
+                                read::window_node(context, client, hwnd, backend)
+                            })
+                            .as_ref()
+                            .and_then(|node| value_of(context, node, id)),
+                    })
+                });
+                (None, hwnd, holds)
+            }
+            Ok(Held::Node(node)) => {
+                let node = *node;
+                let mut snapshot: Option<NodeSnapshot> = None;
+                let client = &mut *self.client;
+                let read_node = evaluate(matcher, &mut read, |id| {
+                    let mut values = PropertyValues(vec![PropertyAnswer { id, value: None }]);
+                    if !is_reported(id) {
+                        if snapshot.is_none() {
+                            snapshot = Some(read::read_node(context, client, node)?);
+                        }
+                        if let Some(snapshot) = &snapshot {
+                            values = asked::values(context, snapshot, &[id]);
+                        }
+                    }
+                    reported(context, node, &mut values);
+                    Ok(values.0.pop().and_then(|answer| answer.value))
+                });
+                let holds = match read_node {
+                    Ok(holds) => holds,
+                    Err(error) => return Ok(failed(&error, node)),
+                };
+                let window = asked::known_nearest_of(context, node).unwrap_or(0);
+                (Some(node), window, holds)
+            }
+            Ok(Held::Msaa(None) | Held::Focus(_)) | Err(_) => {
+                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
+            }
+        };
+        Ok(StepOutcome::Done(Done::Test(Tested {
+            matched: holds,
+            node: NodeRead {
+                node,
+                window: asked::node_window(window),
+                values: PropertyValues(read),
+            },
+        })))
+    }
+
+    /// `Related`: a step through the tree by the navigation the outpost
+    /// makes for object navigation; the controller-for relation and the
+    /// first selected item through the program builder.
+    fn related(&mut self, subject: &Subject, relation: Relation, set: &[PropertyId]) -> Stepped {
+        let node = match self.node(subject)? {
+            Ok(node) => node,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let kind = match relation {
+            Relation::Parent => QueryKind::Parent,
+            Relation::FirstChild => QueryKind::FirstChild,
+            Relation::NextSibling => QueryKind::NextSibling,
+            Relation::PreviousSibling => QueryKind::PreviousSibling,
+            Relation::LastChild => {
+                return Ok(match asked::children(context, self.client, node) {
+                    Ok(children) => StepOutcome::Done(Done::Related(
+                        children
+                            .last()
+                            .map(|last| asked::node_read(context, last, None, set))
+                            .into_iter()
+                            .collect(),
+                    )),
+                    Err(error) => failed(&error, node),
+                });
+            }
+            Relation::ControllerFor | Relation::FirstSelectedItem => {
+                return self.related_by_program(node, relation, set);
+            }
+        };
+        Ok(match read::navigate(context, self.client, node, kind) {
+            Ok(reached) => StepOutcome::Done(Done::Related(
+                reached
+                    .map(|reached| asked::node_read(context, &reached, None, set))
+                    .into_iter()
+                    .collect(),
+            )),
+            Err(error) => failed(&error, node),
+        })
+    }
+
+    /// A relation only UI Automation has, through the program builder: an
+    /// MSAA object controls nothing and has no selected item of its own.
+    fn related_by_program(
+        &mut self,
+        node: NodeId,
+        relation: Relation,
+        set: &[PropertyId],
+    ) -> Stepped {
+        use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment};
+        let context = self.context;
+        if context.store.runtime_id_of(node).is_none() {
+            return Ok(StepOutcome::Done(Done::Related(Vec::new())));
+        }
+        let Some(element) = context
+            .store
+            .element_of(node)
+            .and_then(|agile| agile.resolve().ok())
+        else {
+            return Ok(StepOutcome::NotThere(Missing::Node(node)));
+        };
+        let Ok((uia, nodes)) = self.client.uia_with(context, RequestContext::node_request) else {
+            return Ok(StepOutcome::Failed);
+        };
+        let fill = verbatim_uia::Fill::new(&nodes);
+        let window = asked::known_nearest_of(context, node);
+        let segment = Segment {
+            uia,
+            steps: vec![Fused {
+                place: verbatim_model::batch::Place(0),
+                when: None,
+                input: Input::Related {
+                    subject: Object::Held {
+                        element: element.live().element(),
+                        window: read::kept_own_window(context, node).unwrap_or(0),
+                    },
+                    relation,
+                    fill: &fill,
+                },
+                calls_only: false,
+            }],
+            remote: context.tries_remote(window),
+            window,
+        };
+        let answer = verbatim_uia_rops::batch::run_batch(&segment);
+        if answer.read_classically
+            && let Some(window) = window
+        {
+            context.read_classically(verbatim_win32::window::top_level_of(window));
+        }
+        Ok(match answer.steps.into_iter().next() {
+            Some(Ran::Done(Found::Related(related))) => StepOutcome::Done(Done::Related(
+                related
+                    .nodes
+                    .iter()
+                    .map(|reached| {
+                        asked::node_read(
+                            context,
+                            &reached.snapshot(context.nodes()),
+                            related.window,
+                            set,
+                        )
+                    })
+                    .collect(),
+            )),
+            Some(Ran::Gone) => StepOutcome::NotThere(Missing::Node(node)),
+            Some(Ran::TimedOut) => return Err(Outcome::NotResponding),
+            _ => StepOutcome::Failed,
+        })
+    }
+
+    /// `Ancestors`: the walk object navigation makes, cut at the first
+    /// ancestor Core knows and at `depth`.
+    fn ancestors(
+        &mut self,
+        subject: &Subject,
+        until: &[KnownAncestor],
+        depth: u32,
+        set: &[PropertyId],
+    ) -> Stepped {
+        let node = match self.node(subject)? {
+            Ok(node) => node,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let chain = match read::ancestors(context, self.client, node) {
+            Ok(chain) => chain,
+            Err(error) => return Ok(failed(&error, node)),
+        };
+        let (mut ancestors, met) = asked::cut_at_known(context, chain, until);
+        let end = match met {
+            Some(place) => AncestorsEnd::Met(place),
+            None if ancestors.len() > usize::try_from(depth).unwrap_or(usize::MAX) => {
+                ancestors.truncate(usize::try_from(depth).unwrap_or(usize::MAX));
+                AncestorsEnd::DepthLimit
+            }
+            None => AncestorsEnd::Top,
+        };
+        let nearest = asked::known_nearest_of(context, node);
+        Ok(StepOutcome::Done(Done::Ancestors(Ancestry {
+            ancestors: asked::ancestor_reads(context, &ancestors, nearest, set),
+            end,
+        })))
+    }
+
+    /// `Descendants`: each start's subtree in tree order by the children
+    /// walk, each node judged by the matcher and the pruning, the walk
+    /// stopped at its limit and its node cap.
+    fn descendants(&mut self, subject: &Subject, walk: &Walk) -> Stepped {
+        let starts: Vec<NodeId> = match subject.earlier_nodes(&self.outcomes) {
+            Some(nodes) => nodes.iter().filter_map(|read| read.node).collect(),
+            None => match self.node(subject)? {
+                Ok(node) => vec![node],
+                Err(outcome) => return Ok(outcome),
+            },
+        };
+        let context = self.context;
+        let limit = usize::try_from(walk.limit).unwrap_or(usize::MAX);
+        let cap = usize::try_from(walk.nodes).unwrap_or(usize::MAX);
+        let judge = |node: &NodeSnapshot| {
+            let holds = |matcher: &verbatim_model::matcher::Matcher| {
+                let Ok(holds) = matcher.evaluate::<std::convert::Infallible>(&mut |id| {
+                    Ok(value_of(context, node, id))
+                });
+                holds
+            };
+            (
+                walk.matcher.as_ref().is_none_or(holds),
+                walk.prune.as_ref().is_some_and(holds),
+            )
+        };
+        let mut found: Vec<Descendant> = Vec::new();
+        let mut visited = 0usize;
+        let mut complete = true;
+        'starts: for (root, start) in starts.into_iter().enumerate() {
+            let root = u32::try_from(root).unwrap_or(u32::MAX);
+            let mut parent = None;
+            if walk.include_subject {
+                let snapshot = match read::read_node(context, self.client, start) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return Ok(failed(&error, start)),
+                };
+                let (matched, pruned) = judge(&snapshot);
+                if pruned {
+                    continue;
+                }
+                if matched {
+                    parent = Some(u32::try_from(found.len()).unwrap_or(u32::MAX));
+                    found.push(Descendant {
+                        node: asked::node_read(context, &snapshot, None, &walk.set),
+                        parent: None,
+                        root,
+                    });
+                }
+            }
+            // Each level's children with the depth below the start and the
+            // place of the nearest answered ancestor.
+            let mut stack = vec![(start, 0u32, parent)];
+            while let Some((node, depth, parent)) = stack.pop() {
+                if depth >= walk.depth {
+                    continue;
+                }
+                let children = match asked::children(context, self.client, node) {
+                    Ok(children) => children,
+                    Err(ReadError::Gone) => continue,
+                    Err(_) => {
+                        complete = false;
+                        continue;
+                    }
+                };
+                let mut below = Vec::new();
+                for child in children {
+                    visited += 1;
+                    if visited > cap {
+                        complete = false;
+                        break 'starts;
+                    }
+                    let (matched, pruned) = judge(&child);
+                    if pruned {
+                        continue;
+                    }
+                    let mut own = parent;
+                    if matched {
+                        own = Some(u32::try_from(found.len()).unwrap_or(u32::MAX));
+                        found.push(Descendant {
+                            node: asked::node_read(context, &child, None, &walk.set),
+                            parent,
+                            root,
+                        });
+                        if found.len() >= limit {
+                            break 'starts;
+                        }
+                    }
+                    below.push((child.id, depth + 1, own));
+                }
+                // Depth first in tree order: the first child's subtree next.
+                stack.extend(below.into_iter().rev());
+            }
+        }
+        Ok(StepOutcome::Done(Done::Descendants(Descended {
+            nodes: found,
+            complete,
+        })))
+    }
+
+    /// `IsOneOf`: the equal node met by NVDA's equality, the nodes at an
+    /// address only at it; a node of the outpost by its id.
+    fn is_one_of(
+        &mut self,
+        subject: &Subject,
+        equal: Option<NodeId>,
+        at_address: &[NodeId],
+    ) -> Stepped {
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let nodes: Vec<NodeId> = equal
+            .into_iter()
+            .chain(at_address.iter().copied())
+            .collect();
+        let found = match &mut self.held[place].1 {
+            Ok(Held::Node(node)) => nodes.iter().position(|each| each == node),
+            Ok(Held::Msaa(Some(candidate))) => {
+                let mut object = candidate.object();
+                nodes.iter().enumerate().position(|(place, &node)| {
+                    if place == 0 && equal.is_some() {
+                        object.is_equal_to(node, context.nodes())
+                    } else {
+                        object.which_of(&[node], context.nodes()) == Some(node)
+                    }
+                })
+            }
+            Ok(Held::Msaa(None) | Held::Window(..) | Held::Focus(_)) | Err(_) => {
+                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
+            }
+        };
+        Ok(StepOutcome::Done(Done::IsOneOf(
+            found.and_then(|place| u32::try_from(place).ok()),
+        )))
+    }
+
+    /// `Follow`: the registration moved to the node named, or removed.
+    fn follow(&mut self, target: Option<&verbatim_model::batch::FollowTarget>) -> Stepped {
+        let node = match target {
+            None => None,
+            Some(target) => match self.node(&target.subject)? {
+                Ok(node) => Some(Followed {
+                    node,
+                    group: target.group,
+                    extra: target.extra,
+                }),
+                Err(outcome) => return Ok(outcome),
+            },
+        };
+        let named = node.as_ref().map(|followed| followed.node);
+        Ok(
+            match super::followed::follow(self.context, self.client, &Follow { node }) {
+                Outcome::Result(_) => StepOutcome::Done(Done::Follow),
+                Outcome::NotThere => {
+                    StepOutcome::NotThere(named.map_or(Missing::Object, Missing::Node))
+                }
+                _ => StepOutcome::Failed,
+            },
+        )
+    }
+
+    /// `FocusRead`: an MSAA candidate's full read, or the focus-now read.
+    fn focus_read(
+        &mut self,
+        subject: &Subject,
+        (known, set, details): (&[KnownAncestor], &[PropertyId], verbatim_model::TextDetails),
+    ) -> Stepped {
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let read = match &mut self.held[place].1 {
+            Ok(Held::Msaa(candidate)) => candidate.take().and_then(|candidate| {
+                asked::candidate_read(context, self.client, *candidate, (known, set, details))
+            }),
+            Ok(Held::Focus(hwnd)) => {
+                let hwnd = *hwnd;
+                match asked::focus_now(
+                    context,
+                    self.client,
+                    Ok(hwnd),
+                    set,
+                    (known, details, FocusDepth::Full),
+                ) {
+                    FocusNow::Read(_, read) => Some(*read),
+                    FocusNow::Unfocused | FocusNow::NotThere => None,
+                }
+            }
+            Ok(Held::Node(_) | Held::Window(..)) | Err(_) => {
+                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
+            }
+        };
+        Ok(read.map_or(StepOutcome::NotThere(Missing::Object), |read| {
+            StepOutcome::Done(Done::FocusRead(Box::new(read)))
+        }))
+    }
+
+    /// A text operation, through its node's text, read by its backend.
+    fn text(&mut self, op: &Op) -> Stepped {
+        let Some(subject) = op.subject() else {
+            return Ok(StepOutcome::Failed);
+        };
+        let node = match self.node(subject)? {
+            Ok(node) => node,
+            Err(outcome) => return Ok(outcome),
+        };
+        let context = self.context;
+        let legacy = match op {
+            Op::Caret { adopt, .. } => {
+                return Ok(text_result(
+                    text_reads::caret_step(context, node, *adopt),
+                    node,
+                    |caret| Ok(Done::Caret(caret)),
+                ));
+            }
+            Op::CompareSelection { before, after, .. } => {
+                let before = match before {
+                    Before::Baseline(anchor) => Some(*anchor),
+                    Before::SelectionOf(place) => self.caret_of(*place).map(|caret| caret.held),
+                };
+                let after = self.caret_of(*after).map(|caret| caret.held);
+                let (Some(before), Some(after)) = (before, after) else {
+                    return Ok(StepOutcome::Failed);
+                };
+                return Ok(text_result(
+                    text_reads::compare_step(context, node, (before, after)),
+                    node,
+                    |compared| {
+                        compared
+                            .map(Done::CompareSelection)
+                            .map_err(Missing::Anchor)
+                    },
+                ));
+            }
+            Op::WaitForCaret { .. } => {
+                // The wait runs from the outpost's table of waiting
+                // requests, which the caret keys' step converts.
+                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
+            }
+            op => match self.legacy(op, node) {
+                Some(legacy) => legacy,
+                None => return Ok(StepOutcome::Failed),
+            },
+        };
+        let began_us = context.observed_now();
+        let reply = text_reads::answer_asked(context, node, &legacy);
+        let named = text_named(&legacy);
+        Ok(StepOutcome::Done(match reply {
+            TextReply::Read { moved, chunk } => Done::ReadText(Chunks {
+                moved,
+                chunks: vec![chunk],
+            }),
+            TextReply::Chunks { moved, chunks } => Done::ReadText(Chunks { moved, chunks }),
+            TextReply::Range { text, truncated } => Done::ReadRange(RangeText { text, truncated }),
+            TextReply::CaretPlaced { .. } | TextReply::SelectionPlaced { .. } => {
+                Done::Select(Selected { began_us })
+            }
+            TextReply::Location { x, y } => Done::Locate(Located {
+                screen: Some((x, y)),
+                offset: None,
+            }),
+            TextReply::OffsetLocation {
+                offset,
+                length,
+                point,
+            } => Done::Locate(Located {
+                screen: point,
+                offset: Some(TextOffset { offset, length }),
+            }),
+            // A provider that cannot tell where a point is answers none.
+            TextReply::Unsupported if matches!(legacy, TextOp::Location(_)) => {
+                Done::Locate(Located {
+                    screen: None,
+                    offset: None,
+                })
+            }
+            TextReply::Sentence(moved) => Done::MoveBySentence(*moved),
+            other => return Ok(text_refused(&other, node, named)),
+        }))
+    }
+
+    /// The text request of node `node` that a read or move by points runs
+    /// as, its points resolved: `None` when a point names a result not of
+    /// its kind, which the parse rules out.
+    fn legacy(&self, op: &Op, node: NodeId) -> Option<TextOp> {
+        let point = |point: &Point| self.point(*point);
+        Some(match op {
+            Op::ReadText {
+                at,
+                movement,
+                unit,
+                count,
+                ..
+            } => {
+                let at = point(at)?;
+                if *count > 1 {
+                    TextOp::ReadAhead(TextReadAhead {
+                        at,
+                        movement: *movement,
+                        unit: *unit,
+                        count: *count,
+                    })
+                } else {
+                    TextOp::Read(TextRead {
+                        at,
+                        movement: *movement,
+                        unit: *unit,
+                    })
+                }
+            }
+            Op::ReadRange {
+                start,
+                end,
+                through,
+                ..
+            }
+            | Op::Select {
+                start,
+                end,
+                through,
+                ..
+            } => {
+                let through = match through {
+                    Some(through) => Some(TextThrough {
+                        start: point(&through.start)?,
+                        end: point(&through.end)?,
+                    }),
+                    None => None,
+                };
+                let (start, end) = (point(start)?, point(end)?);
+                match op {
+                    Op::Select { .. } if start == end && through.is_none() => {
+                        TextOp::MoveCaret(start)
+                    }
+                    Op::Select { .. } => TextOp::Select {
+                        start,
+                        end,
+                        through,
+                    },
+                    _ => TextOp::ReadRange {
+                        start,
+                        end,
+                        through,
+                    },
+                }
+            }
+            Op::Locate { at, .. } => TextOp::Location(point(at)?),
+            Op::MoveBySentence {
+                from,
+                forward,
+                details,
+                ..
+            } => TextOp::MoveBySentence(SentenceMove {
+                provider: if self.context.store.runtime_id_of(node).is_some() {
+                    TextProvider::Uia
+                } else {
+                    TextProvider::EditMessages
+                },
+                point: *from,
+                forward: *forward,
+                details: *details,
+            }),
+            _ => return None,
+        })
+    }
+
+    /// The text point `point` names: one Core names, or a point of an
+    /// earlier `Caret` or `ReadText`, as the anchor it holds there.
+    fn point(&self, point: Point) -> Option<TextPoint> {
+        let at = |anchor| TextPoint::At(TextPosition::at(anchor));
+        match point {
+            Point::At(point) => Some(point),
+            Point::Of(place, PointOf::ChunkStart) => match self.outcomes.get(place.index()) {
+                Some(StepOutcome::Done(Done::ReadText(read))) => {
+                    read.chunks.first().map(|chunk| at(chunk.start))
+                }
+                _ => None,
+            },
+            Point::Of(place, which) => {
+                let caret = self.caret_of(place)?;
+                let selection = caret.selection;
+                Some(at(match (which, selection) {
+                    (PointOf::SelectionStart, Some(selection)) => selection.start.anchor,
+                    (PointOf::SelectionEnd, Some(selection)) => selection.end.anchor,
+                    _ => caret.caret.anchor,
+                }))
+            }
+        }
+    }
+
+    /// The result of the earlier `Caret` at `place`.
+    fn caret_of(&self, place: verbatim_model::batch::Place) -> Option<CaretAt> {
+        match self.outcomes.get(place.index()) {
+            Some(StepOutcome::Done(Done::Caret(caret))) => Some(*caret),
+            _ => None,
+        }
+    }
+}
+
+/// Evaluates `matcher` with `read`, each property read kept in `read_back`
+/// in the order read.
+fn evaluate<E>(
+    matcher: &verbatim_model::matcher::Matcher,
+    read_back: &mut Vec<PropertyAnswer>,
+    mut read: impl FnMut(PropertyId) -> Result<Option<PropertyValue>, E>,
+) -> Result<bool, E> {
+    matcher.evaluate(&mut |id| {
+        let value = read(id)?;
+        read_back.push(PropertyAnswer {
+            id,
+            value: value.clone(),
+        });
+        Ok(value)
+    })
+}
+
+/// An MSAA candidate's property `id`: the four the outpost reports, or one
+/// read alone by the identity check's reads.
+fn candidate_property(
+    (context, client): (&RequestContext<'_>, &mut Client),
+    candidate: &mut verbatim_ia2::acquire::FocusCandidate,
+    id: PropertyId,
+) -> Option<PropertyValue> {
+    match id {
+        PropertyId::FocusedWithin => {
+            let plain = |window| read::reads_as_plain(context, window);
+            let mut parent =
+                |window| read::parent_window_for_focused_state(context, client, window);
+            Some(PropertyValue::Flag(candidate.has_focused_state(
+                read::MAX_ANCESTOR_HOPS,
+                &plain,
+                &mut parent,
+            )))
+        }
+        PropertyId::MsaaAddress => {
+            let (window, object, child) = candidate.key();
+            Some(PropertyValue::MsaaAddress(HeldIds {
+                event: MsaaIds {
+                    window: window_handle(window),
+                    object,
+                    child,
+                },
+                held_child: candidate.resolved_child(),
+            }))
+        }
+        PropertyId::WindowShown => Some(PropertyValue::Flag(
+            verbatim_win32::window::window_is_visible(candidate.key().0),
+        )),
+        id => candidate.property(id, context.nodes()),
+    }
+}
+
+/// Whether property `id` is one the outpost reports itself, with no read of
+/// the node's own properties.
+fn is_reported(id: PropertyId) -> bool {
+    matches!(
+        id,
+        PropertyId::FocusedWithin
+            | PropertyId::MsaaAddress
+            | PropertyId::WindowShown
+            | PropertyId::IsContent
+    )
+}
+
+/// Fills in `values` the properties of node `node` the outpost reports
+/// itself: the MSAA ids it is held by, and whether its window is shown.
+/// The focused state over its ancestors is an MSAA candidate's, and
+/// whether it is content is the listener's and the focus read's, so a
+/// node held already answers neither (Claude, 2026-11-21).
+fn reported(context: &RequestContext<'_>, node: NodeId, values: &mut PropertyValues) {
+    for answer in &mut values.0 {
+        match answer.id {
+            PropertyId::MsaaAddress => {
+                answer.value = context.store.key_of(node).map(|(window, object, child)| {
+                    PropertyValue::MsaaAddress(HeldIds {
+                        event: MsaaIds {
+                            window: window_handle(window),
+                            object,
+                            child,
+                        },
+                        held_child: child,
+                    })
+                });
+            }
+            PropertyId::WindowShown => {
+                answer.value = read::kept_own_window(context, node)
+                    .or_else(|| asked::known_nearest_of(context, node))
+                    .map(|hwnd| {
+                        PropertyValue::Flag(verbatim_win32::window::window_is_visible(hwnd))
+                    });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Property `id` of a snapshot read already.
+fn value_of(
+    context: &RequestContext<'_>,
+    node: &NodeSnapshot,
+    id: PropertyId,
+) -> Option<PropertyValue> {
+    asked::values(context, node, &[id])
+        .0
+        .pop()
+        .and_then(|answer| answer.value)
+}
+
+/// The outcome of a read of node `node` that failed: not there for a node
+/// gone, else failed, its reason logged.
+fn failed(error: &ReadError, node: NodeId) -> StepOutcome {
+    match error {
+        ReadError::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        ReadError::Failed(reason) => {
+            tracing::debug!(reason, "a batch step's read failed");
+            StepOutcome::Failed
+        }
+    }
+}
+
+/// The outcome of a text step on `node` whose read `ran`, its result made
+/// by `done`.
+fn text_result<T>(
+    ran: Result<crate::text::TextResult<T>, TextReply>,
+    node: NodeId,
+    done: impl FnOnce(T) -> Result<Done, Missing>,
+) -> StepOutcome {
+    match ran {
+        Err(reply) => text_refused(&reply, node, None),
+        Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+        Ok(Err(TextError::Failed(reason))) => {
+            tracing::debug!(reason, "a batch's text step failed");
+            StepOutcome::Failed
+        }
+        Ok(Ok(found)) => done(found).map_or_else(StepOutcome::NotThere, StepOutcome::Done),
+    }
+}
+
+/// The first anchor a text request names, which a reply that lost one
+/// names.
+fn text_named(op: &TextOp) -> Option<TextAnchor> {
+    crate::text::named_anchors(op)
+        .first()
+        .copied()
+        .map(TextAnchor)
+}
+
+/// The outcome a text reply that is no result gives (the design's section
+/// 6, the reply rows).
+fn text_refused(reply: &TextReply, node: NodeId, named: Option<TextAnchor>) -> StepOutcome {
+    match reply {
+        TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
+        TextReply::UnsupportedUnit(_) => StepOutcome::Refused(StepRefusal::NoSuchUnit),
+        TextReply::Unsupported => StepOutcome::Refused(StepRefusal::Unsupported),
+        TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        TextReply::AnchorLost => {
+            StepOutcome::NotThere(named.map_or(Missing::Node(node), Missing::Anchor))
+        }
+        TextReply::Unanswered => StepOutcome::Failed,
+        other => {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
+            StepOutcome::Failed
+        }
+    }
+}

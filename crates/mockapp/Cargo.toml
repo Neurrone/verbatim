@@ -62,6 +62,10 @@ harness = false
 # Arms the generated programs' fault points, so only `cargo xtask faults`
 # builds it.
 [[test]]
+name = "batch_readers"
+harness = false
+
+[[test]]
 name = "batch_faults"
 harness = false
 required-features = ["faults"]

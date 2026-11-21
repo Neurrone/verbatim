@@ -348,6 +348,29 @@ impl EventObject {
         self.acc.location()
     }
 
+    /// The object's property `id` read alone, as a full read of an object
+    /// of `role` gives it: its name, value, description, role, states or
+    /// place; `None` for any other, which a read of one MSAA property does
+    /// not reach.
+    #[must_use]
+    pub fn property(
+        &self,
+        id: verbatim_model::property::PropertyId,
+        role: Role,
+        registry: &dyn Interning,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        use verbatim_model::property::{PropertyId, PropertyValue};
+        match id {
+            PropertyId::Name => self.name(role, registry).map(PropertyValue::Text),
+            PropertyId::Value => self.value(role).map(PropertyValue::Text),
+            PropertyId::Description => self.description(role, registry).map(PropertyValue::Text),
+            PropertyId::Role => Some(PropertyValue::Role(role)),
+            PropertyId::States => Some(PropertyValue::States(self.states(role))),
+            PropertyId::Rect => self.location().map(PropertyValue::Rect),
+            _ => None,
+        }
+    }
+
     /// Reads the object for `purpose`, as [`snapshot_from_event`] does.
     #[must_use]
     pub fn read(self, registry: &dyn Interning, purpose: Purpose) -> NodeSnapshot {
@@ -593,6 +616,76 @@ impl FocusCandidate {
             }
         }
         false
+    }
+
+    /// The object's property `id` as a full read ([`FocusCandidate::read`])
+    /// gives it, read alone by the same functions as [`Self::reads_as`]
+    /// reads it, its role and state words read once and kept: a batch's
+    /// `Test`, which reads lazily in its matcher's order, compares as the
+    /// identity check does (`docs/parity/focus-events.md`, "Duplicate
+    /// focus suppression"). A list view item's position is its own, one
+    /// `LVM_GETITEMCOUNT`; any other object's, which needs a walk, is none.
+    /// `None` too for a property an MSAA object does not have.
+    pub fn property(
+        &mut self,
+        id: verbatim_model::property::PropertyId,
+        registry: &dyn Interning,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        use verbatim_model::property::{PropertyId, PropertyValue};
+        let raw_role = self.role.or_read(|| self.acc.role());
+        self.role = Prefetched::Read(raw_role);
+        let role = role_from_msaa(raw_role);
+        let state_word = |candidate: &mut Self| {
+            let state = candidate.state.or_read(|| candidate.acc.state());
+            candidate.state = Prefetched::Read(state);
+            state
+        };
+        let text = |text: Option<String>| text.map(PropertyValue::Text);
+        match id {
+            PropertyId::Role | PropertyId::States => {
+                let state = state_word(self);
+                let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
+                Some(if id == PropertyId::Role {
+                    PropertyValue::Role(role)
+                } else {
+                    PropertyValue::States(states)
+                })
+            }
+            PropertyId::PositionInSet | PropertyId::SetSize => {
+                if !is_list_view_item(&self.acc, self.key, role) {
+                    return None;
+                }
+                let (position, size) = position_of(self.key.0, self.acc.child(), role, None);
+                if id == PropertyId::PositionInSet {
+                    position
+                } else {
+                    size
+                }
+                .map(PropertyValue::Count)
+            }
+            PropertyId::Name => text(live_name(&self.acc, self.key, role, registry)),
+            PropertyId::Value => {
+                let acc = &self.acc;
+                let mut value = value_for(acc, self.key, role, || visible_text(acc.value()));
+                if let Some(text) = &mut value {
+                    verbatim_text::strip_bidi_controls(text);
+                }
+                text(value)
+            }
+            _ => self.object().property(id, role, registry),
+        }
+    }
+
+    /// The object as the object an event names, for the reads of one
+    /// property alone and NVDA's equality: the same object and address,
+    /// its role word kept.
+    #[must_use]
+    pub fn object(&self) -> EventObject {
+        EventObject {
+            acc: self.acc.clone(),
+            key: self.key,
+            role: self.role,
+        }
     }
 
     /// Whether the object reads as `named`, each value read as a full read

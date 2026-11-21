@@ -42,6 +42,7 @@
 //! running, is kept.
 
 mod asked;
+mod batch;
 mod commit;
 mod completion;
 mod focus_path;
