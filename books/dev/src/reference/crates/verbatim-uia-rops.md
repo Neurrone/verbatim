@@ -722,29 +722,26 @@ unread (`None`), for the caller to read classically. The classic
 implementation refreshes the focus and reads each dialog's children, one
 call each.
 
-## Layer 3: the tree dump
+## The walk down the tree
 
-`tree_dump(uia, query, remote)` (`TreeDumpFn`) answers the control
-plane's tree dump: the raw-view subtree under `TreeQuery::root`, every
-other element filled by `TreeQuery::fill` (without the place unless
-locations are asked for), each node's id minted by `TreeQuery::registry`,
-capped at `max_depth` levels and `max_nodes` nodes, with whether it is
-incomplete. Each element's children are read in one call, as NVDA reads
-an object's children (a cache request scoped to the children, then
-`GetCachedChildren`), breadth first.
-
-The classic implementation makes one call per element above the deepest
-level (`verbatim_uia::Uia::children`), and one uncached step at the
-deepest level to learn whether the dump is incomplete. An element gone
-during its read is left childless and marks the dump incomplete; any
-other failure fails the dump. The program reads up to
-`CHILDREN_PER_RUN` (60) children a run, from up to sixteen waiting
-elements, each read in a try block, and at the run's end reads each
-element it found live for its name, giving back one gone since as none,
-because a gone element among a run's results fails the whole run. An
-element with more children than the run has room for is read
-classically. A run that fails as a whole puts back what it took, and the
-rest of the dump is read classically (`Path::Fallback`).
+A `Descendants` step (`batch::Input::Descendants`, `batch/walk.rs`)
+walks breadth first from its starts, capped at its depth and node count,
+answering its nodes in tree order with whether the walk was complete;
+the tree dump is one, of the raw view. By calls, each element's
+children are read in one call for the raw view, as NVDA reads an
+object's children (a cache request scoped to the children, then
+`GetCachedChildren`), or a walker step a child for the control view; an
+element whose read answers gone is left childless and leaves the walk
+incomplete. A program's run reads up to `CHILDREN_PER_RUN` (60) children
+from up to 64 waiting elements, each element's children read in a try
+block, and at the run's end reads every element it answers live for its
+name, because a gone element among a run's results fails the whole run:
+an element whose read failed, or found gone at the end, is given back as
+none, left out with its subtree, and leaves the walk incomplete, its
+later siblings kept. A read that failed other than by its element being
+gone falls back to calls, logged as any remote failure is. An element with more children than a run has room
+for is read by calls, and a later run that fails as a whole leaves the
+rest of the walk to calls.
 
 ## Layer 3: a selection the focus controls
 

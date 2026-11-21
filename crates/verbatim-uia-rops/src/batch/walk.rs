@@ -4,10 +4,16 @@
 //! children, its matchers judged in Rust between runs ([`Descend::judge`]),
 //! and answered in tree order. A program's run reads on into the children
 //! it found unless the walk prunes, whose judgement it waits for.
+//!
+//! An element gone during a run is left out with its subtree and leaves
+//! the walk incomplete, its later siblings kept: a run catches a failed
+//! read of an element's children, and reads every element it answers
+//! alive at its end, giving a gone one back as none, since a gone element
+//! in a run's answer fails the whole run.
 
 use std::collections::VecDeque;
 
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::Win32::UI::Accessibility::{IUIAutomationElement, UIA_NamePropertyId};
 
 use verbatim_uia::{Cached, Node, Uia};
 
@@ -30,9 +36,10 @@ pub(super) const ELEMENTS_PER_RUN: usize = 64;
 pub(super) fn run_cost(walk: &Descend<'_>, starts: u32, room: u32) -> u32 {
     let (setup, each) = RemoteCache::costs(walk.fill);
     let start = 12 + if walk.include_subject { each + 1 } else { 0 };
-    // Each element of the queue costs its check and its last step, each
-    // child its read: the queue holds the starts and every child.
-    40 + setup + starts * start + (starts + room) * 24 + room * (20 + each)
+    // Each element of the queue costs its check, its caught read of its
+    // children and its last step, and its read alive at the run's end,
+    // each child its read: the queue holds the starts and every child.
+    50 + setup + starts * start + (starts + room) * 50 + room * (20 + each)
 }
 
 /// How many children a run from `starts` elements reads within `budget`
@@ -292,12 +299,14 @@ impl<'w, 'a> Walk<'w, 'a> {
     /// Takes a run's answer, the run having started from the listed
     /// elements `taken`: judges the starts it filled, lists the children
     /// it read in full, and leaves waiting each element whose children it
-    /// did not reach. True when its first element's children filled the
-    /// run alone, for calls to read.
+    /// did not reach. An element the run gave back as gone is left out
+    /// with its subtree and leaves the walk incomplete. True when its first
+    /// element's children filled the run alone, for calls to read.
     ///
     /// # Errors
     ///
-    /// A result missing from the run's answer.
+    /// A result missing from the run's answer, or a read of an element's
+    /// children that failed other than because the element was gone.
     pub(super) fn take_run(
         &mut self,
         outcome: &Outcome,
@@ -310,6 +319,17 @@ impl<'w, 'a> Walk<'w, 'a> {
         let parents = outcome.get(registers.parents)?;
         let done = outcome.get(registers.done)? as usize;
         let overflowed = outcome.get(registers.overflowed)?;
+        for status in outcome.get(registers.statuses)? {
+            let Value::Int(code) = status else {
+                return Err(missing(registers.statuses.id()));
+            };
+            let error = Error::Uia(windows::core::Error::from(windows::core::HRESULT(code)));
+            if !is_gone(&error) {
+                return Err(error);
+            }
+        }
+        // A place the run gave back as none held an element gone.
+        let gone = |index: usize| matches!(queue.get(index), Some(Value::Null));
         let element = |index: usize| match queue.get(index) {
             Some(Value::Element(element)) => Ok(element.clone()),
             _ => Err(missing(registers.queue.id())),
@@ -319,22 +339,35 @@ impl<'w, 'a> Walk<'w, 'a> {
             _ => absent_record(0),
         };
         self.waiting.retain(|waiting| !taken.contains(waiting));
-        if registers.filled_starts {
-            for (index, &at) in taken.iter().enumerate() {
+        // Each queue entry's listed place, `None` for one left out: the
+        // starts, then each child.
+        let mut placed: Vec<Option<usize>> = Vec::with_capacity(queue.len());
+        for (index, &at) in taken.iter().enumerate() {
+            if gone(index) {
+                self.listed[at].judged.matched = false;
+                self.complete = false;
+                placed.push(None);
+                continue;
+            }
+            if registers.filled_starts {
                 let node = self.descend.fill.claim(element(index)?, absent(index));
                 self.judge_start(at, node);
             }
+            placed.push(Some(at));
         }
-        // Each queue entry's listed place: the starts, then each child.
-        let mut placed: Vec<Option<usize>> = taken.iter().copied().map(Some).collect();
         for index in taken.len()..queue.len() {
             let parent = match parents.get(index - taken.len()) {
                 Some(Value::Uint(parent)) => *parent as usize,
                 _ => return Err(missing(registers.parents.id())),
             };
             // The children of an element the run stopped inside are read
-            // again with it, and a pruned element's are left out.
+            // again with it, and a pruned element's are left out, as are
+            // those of a gone one.
             let at = match placed.get(parent).copied().flatten() {
+                Some(_) if gone(index) => {
+                    self.complete = false;
+                    None
+                }
                 Some(at) if !(self.listed[at].judged.pruned || overflowed && parent == done) => {
                     let child = self.descend.fill.claim(element(index)?, absent(index));
                     self.list(at, child, index >= done)
@@ -345,8 +378,8 @@ impl<'w, 'a> Walk<'w, 'a> {
         }
         // The starts whose children the run did not reach wait again,
         // first.
-        for &at in taken[done.min(taken.len())..].iter().rev() {
-            if !self.listed[at].judged.pruned {
+        for (index, &at) in taken.iter().enumerate().skip(done).rev() {
+            if placed[index].is_some() && !self.listed[at].judged.pruned {
                 self.waiting.push_front(at);
             }
         }
@@ -402,6 +435,8 @@ pub(super) struct RunRegisters {
     done: Reg<kind::Uint>,
     /// The run stopped inside an element's children.
     overflowed: Reg<kind::Bool>,
+    /// The failure of each caught read of an element's children.
+    statuses: Reg<kind::Array>,
     /// Whether the run filled and answered its starts.
     filled_starts: bool,
 }
@@ -419,7 +454,10 @@ impl RunRegisters {
 /// queue in turn above the walk's depth, each filled inside the provider
 /// and appended to it, read on into when the walk does not prune, until
 /// `room` children are read; an element whose children do not all fit
-/// stops the run.
+/// stops the run. A failed read of an element's children is caught, its
+/// failure answered and the element given back as none; at the run's end
+/// every element of the queue is read alive, by its name, and one gone is
+/// given back as none.
 #[expect(clippy::too_many_lines, reason = "one run, top to bottom as it runs")]
 pub(super) fn emit_run(
     b: &mut Builder,
@@ -439,6 +477,8 @@ pub(super) fn emit_run(
     let done = b.add_to_results(done);
     let overflowed = b.new_bool(false);
     let overflowed = b.add_to_results(overflowed);
+    let statuses = b.new_array();
+    let statuses = b.add_to_results(statuses);
     let one = b.uint(1);
     let starts = b.array_size(queue);
     for &depth in depths_given.unwrap_or_default() {
@@ -495,37 +535,72 @@ pub(super) fn emit_run(
                 |b| {
                     let element = b.array_get_at(queue, done).assume::<kind::Element>();
                     let below = b.add(depth, one);
-                    let child = b.navigate(element, NavigationDirection::FirstChild);
-                    b.while_(
+                    b.try_catch(
                         |b| {
+                            let child = b.navigate(element, NavigationDirection::FirstChild);
+                            b.while_(
+                                |b| {
+                                    let null = b.is_null(child);
+                                    let some = b.not(null);
+                                    let fits = b.compare(read, room, Comparison::LessThan);
+                                    b.and(some, fits)
+                                },
+                                |b| {
+                                    let absent = cache.populate(b, child);
+                                    b.array_append(queue, child);
+                                    b.array_append(absents, absent);
+                                    b.array_append(parents, done);
+                                    b.array_append(depths, below);
+                                    b.add_assign(read, one);
+                                    let next = b.navigate(child, NavigationDirection::NextSibling);
+                                    b.set(child, next);
+                                },
+                            );
                             let null = b.is_null(child);
-                            let some = b.not(null);
-                            let fits = b.compare(read, room, Comparison::LessThan);
-                            b.and(some, fits)
+                            b.if_else(
+                                null,
+                                |b| b.add_assign(done, one),
+                                |b| {
+                                    let yes = b.bool(true);
+                                    b.set(overflowed, yes);
+                                    b.set(stop, yes);
+                                },
+                            );
                         },
-                        |b| {
-                            let absent = cache.populate(b, child);
-                            b.array_append(queue, child);
-                            b.array_append(absents, absent);
-                            b.array_append(parents, done);
-                            b.array_append(depths, below);
-                            b.add_assign(read, one);
-                            let next = b.navigate(child, NavigationDirection::NextSibling);
-                            b.set(child, next);
-                        },
-                    );
-                    let null = b.is_null(child);
-                    b.if_else(
-                        null,
-                        |b| b.add_assign(done, one),
-                        |b| {
-                            let yes = b.bool(true);
-                            b.set(overflowed, yes);
-                            b.set(stop, yes);
+                        // The element is given back as none, which leaves
+                        // the children read before the failure out.
+                        |b, status| {
+                            b.array_append(statuses, status);
+                            let none = b.new_null_element();
+                            b.array_set_at(queue, done, none);
+                            b.add_assign(done, one);
                         },
                     );
                 },
             );
+        },
+    );
+    // Every element of the queue read alive at the run's end.
+    let index = b.new_uint(0);
+    let size = b.array_size(queue);
+    b.while_(
+        |b| b.compare(index, size, Comparison::LessThan),
+        |b| {
+            let element = b.array_get_at(queue, index).assume::<kind::Element>();
+            let null = b.is_null(element);
+            let some = b.not(null);
+            b.if_(some, |b| {
+                b.try_catch(
+                    |b| {
+                        let _ = b.property(element, UIA_NamePropertyId.0);
+                    },
+                    |b, _| {
+                        let none = b.new_null_element();
+                        b.array_set_at(queue, index, none);
+                    },
+                );
+            });
+            b.add_assign(index, one);
         },
     );
     RunRegisters {
@@ -534,6 +609,7 @@ pub(super) fn emit_run(
         parents,
         done,
         overflowed,
+        statuses,
         filled_starts: fill_starts,
     }
 }

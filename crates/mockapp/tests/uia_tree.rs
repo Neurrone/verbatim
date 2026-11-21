@@ -595,6 +595,22 @@ fn dump_with_an_element_gone_during_it(remote: bool) -> (Named, bool) {
     (dumped, !complete)
 }
 
+/// [`dump_with_an_element_gone_during_it`] by remote programs: the read of
+/// the gone item's children fails inside the run, which marks the dump
+/// incomplete and leaves the item out, and the sibling is kept.
+fn a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it() {
+    assert_eq!(
+        dump_with_an_element_gone_during_it(true),
+        (
+            Named {
+                name: Some("Options".to_owned()),
+                children: vec![item("Second")],
+            },
+            true,
+        )
+    );
+}
+
 /// [`dump_with_an_element_gone_during_it`] classically: UIA answers the
 /// read of the gone item's children as none, so the item is listed as it
 /// was read with the list, with no children, and the sibling is kept.
@@ -891,6 +907,10 @@ fn main() {
         (
             "a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read",
             a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read,
+        ),
+        (
+            "a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it",
+            a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it,
         ),
         (
             "a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it",
