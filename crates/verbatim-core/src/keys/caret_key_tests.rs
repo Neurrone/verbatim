@@ -1770,6 +1770,42 @@ fn enter_dropped_at_a_desktop_switch_applies_nothing() {
     );
 }
 
+/// Backspace whose starting read is out when the desktop switches away:
+/// its stroke is dropped, never reaching the application, so its U+0008
+/// drops no character of the word, and the key's end forgets its dropped
+/// mark, leaving the stroke line empty.
+#[test]
+fn backspace_dropped_during_its_starting_read_keeps_the_word_and_forgets_its_mark() {
+    let mut held = editing();
+    word_typed(&mut held, "hel");
+    let binding = bound(&held);
+    let asked = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::Backspace, 1_000, &binding),
+    );
+    assert_eq!(
+        asked.text,
+        [(
+            3,
+            2,
+            starting_read(CaretMotion::Backspace, TextProvider::Uia)
+        )]
+    );
+    let _ = crate::entries::route(
+        &mut held.state,
+        &mut held.runtime,
+        (TraceId::from_raw(1), 3_000),
+        &switched_away(),
+    );
+    assert_eq!(held.state.oldest_key_entry(), None);
+    assert_eq!(
+        held.state.strokes,
+        crate::keys::strokes::StrokeLine::default()
+    );
+    assert_eq!(held.state.typed_word, "hel");
+}
+
 /// Backspace with no effect seen by its bound says nothing, and its
 /// U+0008 drops the word's last character ("cat", Backspace, "s" says
 /// "cas"); with its effect it says what it deleted, which forgets the word.

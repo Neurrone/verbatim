@@ -911,8 +911,9 @@ key passes, at its turn, by its 150 ms release from its press
 waiting entry (`Logic::ended_at_foreground`), with what is deferred behind
 it up to the next unsent held stroke, as one `QueueEffect::SendStrokes`.
 A reset of the hook's line (`QueueInput::StrokesReset`) drops what is
-unsent, leaving a dropped mark for each held key's turn, and withdraws
-the front's starting read; at `QueueInput::Exit` Core names the keys
+unsent, leaving a dropped mark for each held key, and withdraws the
+front's starting read; the key's pass (`pass`), at its turn or once that
+read ends, reads the mark and forgets it, and the key ends as dropped; at `QueueInput::Exit` Core names the keys
 whose last transition in line is a release (`QueueEffect::ReleaseAtExit`).
 Beside the line, `SrState::alt_down` is whether Alt is down, set by the
 hook's `QueueInput::Alt` at once in the inbox; a UI Automation focus tell

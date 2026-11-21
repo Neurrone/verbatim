@@ -521,30 +521,26 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
         StrokeStatus::Unsent => {}
     }
     let Some(binding) = press.bound.clone().filter(|binding| held_node(cx, binding)) else {
-        pass(cx, press);
-        return Reached::Sent;
+        return pass(cx, press);
     };
     if editing::is_grid(binding.role) {
-        if press.key.motion == CaretMotion::NewLine {
-            // Enter held for a terminal, by a hook view behind the focus:
-            // the carriage return it types there, with no read, as where
-            // the view is current.
-            terminal_pass(cx, press);
-            new_line_typed(cx, press);
-        } else {
-            terminal_key(cx, press, &binding).await;
+        if press.key.motion != CaretMotion::NewLine {
+            return terminal_key(cx, press, &binding).await;
         }
-        return Reached::Sent;
+        // Enter held for a terminal, by a hook view behind the focus: the
+        // carriage return it types there, with no read, as where the view
+        // is current.
+        let reached = terminal_pass(cx, press);
+        new_line_typed(cx, press);
+        return reached;
     }
     if marked(cx, press) {
-        pass(cx, press);
-        return Reached::Sent;
+        return pass(cx, press);
     }
     // Before the starting read, only a focus that counts stops the key;
     // an unconfirmed one waits behind it, judged at the pass.
     if !press.key.motion.deletes_back() && counts_behind(cx) {
-        pass(cx, press);
-        return Reached::Sent;
+        return pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
     let starting = StartingRead {
@@ -553,12 +549,14 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
         unit: StartingUnit::for_motion(press.key.motion),
     };
     let request = StartingReadRequest(OnNode::of(&binding, TextOp::StartingRead(starting)));
+    // A stroke dropped while the read is out withdraws it (`unneeded`).
     let Some(started) = starting_read(cx, request, due_us).await else {
-        pass(cx, press);
-        return Reached::Sent;
+        return pass(cx, press);
     };
     let passed_at_us = cx.now_us();
-    pass(cx, press);
+    if pass(cx, press) == Reached::Dropped {
+        return Reached::Dropped;
+    }
     if marked(cx, press) {
         marked_end(cx, press, (&binding, &started), due_us).await;
         return Reached::Sent;
@@ -667,10 +665,9 @@ async fn marked_end(
 /// The key says nothing itself: the reading rules speak each read, the
 /// terminal's speech waiting in the queue ahead of the first focus first
 /// (build 3, "Answers and speech").
-async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) {
+async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) -> Reached {
     if marked(cx, press) || counts_behind(cx) {
-        terminal_pass(cx, press);
-        return;
+        return terminal_pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
     let Some(started) = terminal_read(
@@ -682,18 +679,19 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     )
     .await
     else {
-        terminal_pass(cx, press);
-        return;
+        return terminal_pass(cx, press);
     };
     let passed_at_us = cx.now_us();
-    terminal_pass(cx, press);
+    if terminal_pass(cx, press) == Reached::Dropped {
+        return Reached::Dropped;
+    }
     if marked(cx, press) {
-        return;
+        return Reached::Sent;
     }
     // The starting point is the read's; a read that minted none, a
     // reader's fault, leaves the key's effect to the change it tells.
     let Some(point) = started else {
-        return;
+        return Reached::Sent;
     };
     let console = crate::terminal::reading::focused(&cx.facts())
         .is_some_and(|terminal| terminal.node == binding.node && terminal.console);
@@ -713,12 +711,12 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     // confirmed, and with neither the watch runs for the rest of the bound.
     loop {
         let withdrawn = match pending_behind_front(cx, Within::key(bound_at_us)) {
-            Pending::Counts => return,
+            Pending::Counts => return Reached::Sent,
             Pending::Unconfirmed(trace) => {
                 match confirm(cx, trace, Some((binding.node, point)), due_us).await {
                     Confirmed::Judged => false,
                     Confirmed::Withdrawn => true,
-                    Confirmed::Stopped => return,
+                    Confirmed::Stopped => return Reached::Sent,
                 }
             }
             Pending::No => {
@@ -732,15 +730,16 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
                     | Outcome::NotThere
                     | Outcome::NotResponding
                     | Outcome::ReaderEnded
-                    | Outcome::NoLongerAwaited(_) => return,
+                    | Outcome::NoLongerAwaited(_) => return Reached::Sent,
                 }
             }
         };
         if withdrawn && marked(cx, press) {
-            return;
+            return Reached::Sent;
         }
     }
     let _ = terminal_read(cx, press, binding.node, None, due_us).await;
+    Reached::Sent
 }
 
 /// A terminal key's full read of `node`, its starting read when `starting`
@@ -786,10 +785,10 @@ async fn terminal_read(
 }
 
 /// A terminal's held key passes: its stroke is sent, and the focused
-/// terminal's model takes it at its pass.
-fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) {
+/// terminal's model takes it at its pass; a dropped stroke is neither.
+fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     let unsent = press.held && cx.facts().strokes.status(press.key_seq) == StrokeStatus::Unsent;
-    pass(cx, press);
+    let reached = pass(cx, press);
     if unsent {
         let now_us = cx.now_us();
         crate::keys::terminal::passed(
@@ -799,6 +798,7 @@ fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) {
             press.trace_id,
         );
     }
+    reached
 }
 
 /// How a watch ended.
@@ -967,16 +967,27 @@ fn say(cx: &mut Cx<Entries>, press: &CaretPress, words: Vec<UtteranceSegment>) {
 }
 
 /// Sends the key's stroke if it is still unsent (the pass), and stops
-/// say-all.
-fn pass(cx: &mut Cx<Entries>, press: &CaretPress) {
+/// say-all; says whether the stroke reached the application. One dropped
+/// at a switch away from the user's desktop, before the key's turn or
+/// while its starting read was out, never does: its dropped mark is read
+/// here, once, and forgotten.
+fn pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     stop_say_all(cx);
     if !press.held {
-        return;
+        return Reached::Sent;
     }
-    let sent = cx.facts_mut().strokes.pass(press.key_seq);
+    let sent = {
+        let mut facts = cx.facts_mut();
+        if facts.strokes.status(press.key_seq) == StrokeStatus::Dropped {
+            facts.strokes.forget_dropped(press.key_seq);
+            return Reached::Dropped;
+        }
+        facts.strokes.pass(press.key_seq)
+    };
     if let Some(sent) = sent {
         cx.emit(verbatim_model::Effect::Queue(sent));
     }
+    Reached::Sent
 }
 
 /// Stops say-all, as any key does.
