@@ -288,4 +288,4 @@ script is run by its author before it is handed over:
 - A shell whose working directory is inside an output folder locks it
   against deletion.
 - A full disk shows as a Windows "Low disk space" window, which the
-  harness refuses to start beside; keep the C: drive above 20 GB free.
+  harness refuses to start beside; keep the C: drive above 15 GB free.
