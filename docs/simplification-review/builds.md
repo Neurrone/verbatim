@@ -45,6 +45,14 @@ Asked while he was present so the builds can run without him; each build acts on
 - Build 10: from M6.2 only supervisor F1's owner copy, F10, F12, F13 and F14; from M6.3 speech F4 with the `drop_expired` fix and the queue's pure reducer, plus F11, F17 and F18; from M6 speech F9, F10 and F16; from M6.1 the queue work that grows with the waiting line; from M4.9 its two findings; from M5 the gesture tables merged and the command vocabulary written once; from M4.3 the settings pages built from one table of rows. New function waits for its phase.
 - Build 11: an area ruled above the goal counts as within it at its ruled size; an area with no NVDA counterpart is reported with its lines. When the test of done is met, the session reports and waits for him; it starts nothing more.
 - The fourteen defaults in his areas listed at the end of this page and under "The session's defaults" are confirmed.
+### Dickson's rulings of 2026-11-21
+
+- Terminals: padding past a row's text is never reviewed, and review next character at a row's last character says "Right" and that character, as now; it never moves to the next line.
+- Text: previous word stops on a line break and says it, as NVDA does, in UI Automation text too (the 2026-11-03 difference in `docs/parity/review.md` is retired once built).
+- Compare mode is exploration only; it stops a run when NVDA exits or is replaced mid-run.
+- Build 7's document points take their defaults: crate guides drop their Public API sections and point at rustdoc (CLAUDE.md's wording follows); each decision keeps its latest date when its "Amended" lines go; the deferred simulation entry is judged again at the second pass; the later-milestone notes move to the extension, security and roadmap documents; the terminal design file goes with the terminal rebuild; the 2026-10-30 ruling is recorded as retired by build 3's code; the testing rule moves to `testing.md`.
+- The three refusals Core no longer logs stay unlogged until the request list closes. The 5-second figure's program stays in git history only.
+
 ### The session's defaults (REPORT.md section 9, "unless you object")
 
 Each build names the defaults it rests on. In short:
