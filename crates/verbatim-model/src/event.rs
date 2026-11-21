@@ -34,6 +34,20 @@ impl std::fmt::Display for Pid {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WindowHandle(pub u64);
 
+/// A window as Windows names it, its handle's bits kept whole.
+impl From<isize> for WindowHandle {
+    fn from(window: isize) -> Self {
+        Self(u64::from_ne_bytes(window.to_ne_bytes()))
+    }
+}
+
+/// The window a handle names, as Windows names it.
+impl From<WindowHandle> for isize {
+    fn from(window: WindowHandle) -> Self {
+        isize::from_ne_bytes(window.0.to_ne_bytes())
+    }
+}
+
 /// No window, the default of a window handle a message left out.
 fn no_window() -> WindowHandle {
     WindowHandle(0)

@@ -149,7 +149,7 @@ impl UiaReading {
             (Some(uia), Ok(sender)) => read_element(
                 (uia, &self.readability),
                 &sender,
-                (pid, hwnd_of(window)),
+                (pid, isize::from(window)),
                 read,
                 &CallLog::default(),
             ),
@@ -249,16 +249,6 @@ impl Reading for UiaReading {
     }
 }
 
-/// `window` as the listener names a window.
-pub(super) fn hwnd_of(window: WindowHandle) -> isize {
-    isize::try_from(window.0.cast_signed()).unwrap_or(0)
-}
-
-/// `window` as the model names a window.
-pub(super) fn handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
-}
-
 /// What reads an MSAA object's properties at an event's address, the
 /// window, object and child ids, for the set asked; `None` when the object
 /// cannot be acquired.
@@ -313,7 +303,7 @@ fn read_msaa(
     {
         return Outcome::Refused(Refusal::Unsupported);
     }
-    let hwnd = hwnd_of(window);
+    let hwnd = isize::from(window);
     let Some(values) = reads(hwnd, object, child, &read.set) else {
         return Outcome::NotThere;
     };
@@ -545,12 +535,12 @@ pub(crate) fn read_element(
     };
     let ancestor_windows = nearest_windows((hwnd, nearest), &walked.ancestors);
     let route = read.walk.as_ref().map(|_| Route {
-        window: handle(nearest),
+        window: WindowHandle::from(nearest),
         steps: std::iter::once(&element)
             .chain(walked.ancestors.iter())
             .map(|read| RouteStep {
                 runtime_id: RuntimeId(read.parts.runtime_id.clone()),
-                window: (read.hwnd != 0).then(|| handle(read.hwnd)),
+                window: (read.hwnd != 0).then(|| WindowHandle::from(read.hwnd)),
                 content: read.content,
             })
             .collect(),
@@ -609,11 +599,11 @@ fn route_end(
     Ok(match ended {
         Ok(Some(FocusAncestry::Focused(ancestry))) => {
             if let Some(plain) = ancestry.plain_window {
-                RouteEnd::ContinueFrom(handle(plain))
+                RouteEnd::ContinueFrom(WindowHandle::from(plain))
             } else if ancestry.failed_hop.is_some() {
-                RouteEnd::ContinueFrom(handle(continue_from()))
+                RouteEnd::ContinueFrom(WindowHandle::from(continue_from()))
             } else if ancestry.depth_limited {
-                RouteEnd::PlainFrom(handle(verbatim_uia::plain_windows_start(
+                RouteEnd::PlainFrom(WindowHandle::from(verbatim_uia::plain_windows_start(
                     nearest,
                     windows(),
                 )))
@@ -640,7 +630,7 @@ fn route_end(
         Ok(None) => RouteEnd::Root,
         Err(error) => {
             tracing::debug!(%error, "a kept element's read failed; answered with what was read");
-            RouteEnd::ContinueFrom(handle(continue_from()))
+            RouteEnd::ContinueFrom(WindowHandle::from(continue_from()))
         }
     })
 }

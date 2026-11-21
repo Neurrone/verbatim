@@ -95,7 +95,7 @@ use asked::{UiaJob, UiaReading};
 pub use checking::{CheckEvent, KeptElements, Told, cached_of, check_event};
 use checking::{Checks, Kept};
 
-pub use tells::{Applications, EventReads, Pending, PendingWindow, TellKey, msaa_tell};
+pub use tells::{EventReads, Pending, PendingWindow, TellKey, msaa_tell};
 use tells::{Held, SystemReads, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger, ThreadTimer};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Seen, Step, TimerChange};
@@ -539,6 +539,7 @@ impl Listener {
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
             let checks = Arc::clone(&idle_checks);
+            let names = Arc::clone(&idle_checks);
             // The window in front, for the keyboard hook's view of it, and
             // the foreground hold's timer, kept on this thread by the
             // handlers.
@@ -546,14 +547,11 @@ impl Listener {
             let start_thread = Rc::clone(&thread);
             let timer_thread = Rc::clone(&thread);
             let timer_outgoing = Arc::clone(&msaa_outgoing);
-            // The executable name of each application that raised an
-            // event, for its tells, on this thread alone.
-            let applications = RefCell::new(tells::Applications::default());
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent, class: Option<&str>| {
                     on_win_event(
                         &outgoing,
-                        &mut applications.borrow_mut(),
+                        &|pid| names.application_name(pid),
                         &thread,
                         (event, class),
                         &SystemReads,
@@ -564,14 +562,22 @@ impl Listener {
                 // reading threads are waited for next. Or, once, the start
                 // of the foreground's watch, once the hooks are in.
                 nudge: Some(Box::new(move |round, kind| {
-                    if kind == NUDGE_FOREGROUND_START {
-                        let step = start_thread
-                            .watch
-                            .borrow_mut()
-                            .start(front_now(idle_outgoing.now()));
-                        foreground_step(&idle_outgoing, step);
-                    } else {
-                        answer_when_reads_are_done(&readers, &checks, &idle_outgoing, round as u64);
+                    match Nudge::of((round, kind)) {
+                        Nudge::ForegroundStart => {
+                            let step = start_thread
+                                .watch
+                                .borrow_mut()
+                                .start(front_now(idle_outgoing.now()));
+                            foreground_step(&idle_outgoing, step);
+                        }
+                        Nudge::IdleRound(round) => {
+                            answer_when_reads_are_done(
+                                &readers,
+                                &checks,
+                                &idle_outgoing,
+                                round as u64,
+                            );
+                        }
                     }
                 })),
                 // The foreground hold's timer, or a stale `WM_TIMER`.
@@ -594,7 +600,7 @@ impl Listener {
         // The window in front now, reported from the event thread behind the
         // hooks' install, so a foreground event raised since is reported
         // after it.
-        nudger.nudge((0, NUDGE_FOREGROUND_START));
+        nudger.nudge(Nudge::ForegroundStart.words());
         let registering = install_on_its_thread(&outgoing, &readers, &checks, install)?;
         Ok(Self {
             outgoing,
@@ -706,7 +712,8 @@ impl Listener {
     /// them, and answered behind every tell placed before. A `WinEvent`
     /// thread that has ended has nothing in progress.
     fn idle_query(&self, round: u64) {
-        let posted = usize::try_from(round).is_ok_and(|word| self.nudger.nudge((word, 0)));
+        let posted = usize::try_from(round)
+            .is_ok_and(|round| self.nudger.nudge(Nudge::IdleRound(round).words()));
         if !posted {
             answer_when_reads_are_done(&self.readers, &self.checks, &self.outgoing, round);
         }
@@ -717,7 +724,7 @@ impl Listener {
 /// `acknowledged` the position of the last message carrying tokens Core
 /// handled: dropped when it names another generation, its tokens naming
 /// nothing here; else every kept element it rules out is released on its
-/// application's check thread ([`Kept::view`]).
+/// application's reading thread ([`Kept::view`]).
 fn elements_held(
     (kept, checks, outgoing): (&Kept, &Arc<Checks>, &Outgoing),
     generation: u64,
@@ -761,7 +768,7 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             kept.is_own(*listener).then(|| kept.owner(*token)).flatten()
         }
         ObjectRef::Msaa { window, .. } => {
-            Some(Pid(window_pid(asked::hwnd_of(*window)))).filter(|pid| pid.0 != 0)
+            Some(Pid(window_pid(isize::from(*window)))).filter(|pid| pid.0 != 0)
         }
         ObjectRef::Node(_) => {
             answer(Outcome::Refused(Refusal::Unsupported));
@@ -799,14 +806,14 @@ struct EventThreadState {
 /// it.
 fn on_win_event(
     outgoing: &Arc<Outgoing>,
-    applications: &mut tells::Applications,
+    name: &dyn Fn(Pid) -> String,
     thread: &EventThreadState,
     (event, class): (WinEvent, Option<&str>),
     reads: &impl EventReads,
 ) {
     let arrived_us = outgoing.now();
     let front = outgoing.tells.front();
-    let seen = tell_win_event(applications, event, (arrived_us, class), reads);
+    let seen = tell_win_event(name, event, (arrived_us, class), reads);
     let started = thread.watch.borrow().started();
     let stepped = outgoing.tells.step(seen, (front, started), reads);
     stepped_on(outgoing, thread, stepped);
@@ -1264,10 +1271,39 @@ fn progress_of(
     Some((percent, place))
 }
 
-/// The listener's nudge that starts the watch of the window in front
-/// ([`ForegroundWatch::start`]), in the nudge's second word; the idle
-/// barrier's carry 0.
-const NUDGE_FOREGROUND_START: isize = 1;
+/// What a nudge of the `WinEvent` thread asks, in its two words: the idle
+/// barrier's query for a round, the round in the first word and 0 in the
+/// second, or the start of the watch of the window in front
+/// ([`ForegroundWatch::start`]), 1 in the second.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Nudge {
+    /// The idle barrier's query for this round.
+    IdleRound(usize),
+    /// The start of the foreground's watch, once the hooks are in.
+    ForegroundStart,
+}
+
+impl Nudge {
+    /// The second word of the foreground's start.
+    const FOREGROUND_START: isize = 1;
+
+    /// The nudge two words carry.
+    fn of((round, kind): (usize, isize)) -> Self {
+        if kind == Self::FOREGROUND_START {
+            Self::ForegroundStart
+        } else {
+            Self::IdleRound(round)
+        }
+    }
+
+    /// Its two words.
+    fn words(self) -> (usize, isize) {
+        match self {
+            Self::ForegroundStart => (0, Self::FOREGROUND_START),
+            Self::IdleRound(round) => (round, 0),
+        }
+    }
+}
 
 /// The system's foreground window now, read locally; 0 for none.
 fn front_window() -> isize {
@@ -2473,7 +2509,7 @@ mod tests {
         let _ = thread.watch.borrow_mut().start(None);
         on_win_event(
             &outgoing,
-            &mut tells::Applications::default(),
+            &tells::name_of,
             &thread,
             (
                 client_event(
@@ -2503,10 +2539,9 @@ mod tests {
             listener_reading_front(|| FRONT.load(Ordering::SeqCst));
         let thread = EventThreadState::default();
         let _ = thread.watch.borrow_mut().start(None);
-        let mut applications = tells::Applications::default();
         on_win_event(
             &outgoing,
-            &mut applications,
+            &tells::name_of,
             &thread,
             (
                 client_event(
@@ -2521,7 +2556,7 @@ mod tests {
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
             &outgoing,
-            &mut applications,
+            &tells::name_of,
             &thread,
             (
                 client_event(
@@ -2556,10 +2591,9 @@ mod tests {
             listener_reading_front(|| FRONT.load(Ordering::SeqCst));
         let thread = EventThreadState::default();
         let _ = thread.watch.borrow_mut().start(None);
-        let mut applications = tells::Applications::default();
         on_win_event(
             &outgoing,
-            &mut applications,
+            &tells::name_of,
             &thread,
             (
                 client_event(
@@ -2574,7 +2608,7 @@ mod tests {
         FRONT.store(window.0, Ordering::SeqCst);
         on_win_event(
             &outgoing,
-            &mut applications,
+            &tells::name_of,
             &thread,
             (
                 client_event(
@@ -2726,7 +2760,7 @@ mod tests {
         let desk = FloodDesk::owned_in_front();
         on_win_event(
             &outgoing,
-            &mut tells::Applications::default(),
+            &tells::name_of,
             &thread,
             (
                 WinEvent {
@@ -2875,7 +2909,6 @@ mod tests {
         let (outgoing, readers, sent) = flood_listening(readability);
         let thread = EventThreadState::default();
         let _ = thread.watch.borrow_mut().start(None);
-        let mut applications = tells::Applications::default();
         let mut counts = Vec::new();
         for (name, event, class) in flood_events() {
             let desk = FloodDesk::default();
@@ -2883,7 +2916,7 @@ mod tests {
             readability_reads.store(0, Ordering::SeqCst);
             on_win_event(
                 &outgoing,
-                &mut applications,
+                &tells::name_of,
                 &thread,
                 (event, Some(class)),
                 &desk,

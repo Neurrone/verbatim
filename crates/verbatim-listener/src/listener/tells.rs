@@ -276,7 +276,8 @@ fn foreground() -> isize {
     verbatim_win32::window::foreground_window_handle()
 }
 
-/// The listener's record of the applications that raised events: each
+/// The listener's one record of the applications that raised events, under
+/// the check threads' lock (`checking`'s `Checks`): each
 /// process's executable name, read once per process generation with
 /// `QueryFullProcessImageNameW`, a call to Windows and not into the
 /// application. The process is held open while it is known, so its id
@@ -322,11 +323,6 @@ impl Applications {
     }
 }
 
-/// `window` as the model names a window.
-fn handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
-}
-
 /// What `event`, received at `at_us`, gives the pending foreground: its
 /// tell, unless a local drop takes it, as a foreground event's, the
 /// shell's or any other's ([`Seen`]); a foreground event's window is
@@ -346,7 +342,7 @@ fn handle(window: isize) -> WindowHandle {
 /// event's window when the hook's filter read it; every other fact is
 /// read through `reads`.
 pub(super) fn tell_win_event(
-    applications: &mut Applications,
+    name: &dyn Fn(Pid) -> String,
     event: WinEvent,
     (at_us, class): (u64, Option<&str>),
     reads: &impl EventReads,
@@ -358,27 +354,23 @@ pub(super) fn tell_win_event(
         };
     };
     let address = (event.hwnd, event.id_object, event.id_child);
-    tell_msaa(
-        applications,
-        (kind, address, event.thread),
-        (at_us, class),
-        reads,
-    )
+    tell_msaa(name, (kind, address, event.thread), (at_us, class), reads)
 }
 
 /// The tell the listener sends of an MSAA event of `kind` on `address`
 /// (window, object and child), raised by `thread` and received at
 /// `at_us`, its foreground facts read through `reads` as it is placed;
 /// `None` when a local drop takes it, and for a window's destruction,
-/// which is no tell. Public so that mockapp's tests tell Core of
-/// mockapp's own `WinEvent`s with the listener's code.
+/// which is no tell; `name` names each process's executable. Public so
+/// that mockapp's tests tell Core of mockapp's own `WinEvent`s with the
+/// listener's code.
 pub fn msaa_tell(
-    applications: &mut Applications,
+    name: &dyn Fn(Pid) -> String,
     (kind, address, thread): (EventKind, (isize, i32, i32), u32),
     at_us: u64,
     reads: &impl EventReads,
 ) -> Option<(TellKey, Event)> {
-    let item = match tell_msaa(applications, (kind, address, thread), (at_us, None), reads) {
+    let item = match tell_msaa(name, (kind, address, thread), (at_us, None), reads) {
         Seen::Foreground { item, .. } | Seen::Shell { item, .. } | Seen::Other { item, .. } => item,
         Seen::Timer => None,
     };
@@ -390,7 +382,7 @@ pub fn msaa_tell(
 
 /// [`tell_win_event`] for an event already named by its kind.
 fn tell_msaa(
-    applications: &mut Applications,
+    name: &dyn Fn(Pid) -> String,
     (kind, (hwnd, id_object, id_child), thread): (EventKind, (isize, i32, i32), u32),
     (at_us, class): (u64, Option<&str>),
     reads: &impl EventReads,
@@ -413,7 +405,7 @@ fn tell_msaa(
     };
     if kind == EventKind::Destroy {
         return other(Some(Held::Destroyed {
-            window: handle(window),
+            window: WindowHandle::from(window),
             process: reads.process_of_thread(thread).map(Pid),
             at_us,
         }));
@@ -473,12 +465,12 @@ fn tell_msaa(
     let tell = Pending {
         trace_id: TraceId::mint(),
         kind,
-        application: applications.name(process),
+        application: name(process),
         process,
         thread,
         at_us,
         object: EventObject::Msaa {
-            window: handle(window),
+            window: WindowHandle::from(window),
             object: id_object,
             child: id_child,
         },
@@ -492,6 +484,12 @@ fn tell_msaa(
         checked: None,
     };
     seen(Some(Held::Tell(Box::new(tell))))
+}
+
+/// The executable name of `process`, read afresh, for a test.
+#[cfg(test)]
+pub(super) fn name_of(process: Pid) -> String {
+    Applications::default().name(process)
 }
 
 #[cfg(test)]
@@ -589,8 +587,8 @@ mod tests {
     /// [`tell_win_event`] with the system's reads, the hook having read
     /// no class, stepped with the window in front `at.1`, before the
     /// foreground's watch starts, so that no window is reported.
-    fn tell(tells: &Tells, applications: &mut Applications, event: WinEvent, at: (u64, isize)) {
-        let seen = tell_win_event(applications, event, (at.0, None), &SystemReads);
+    fn tell(tells: &Tells, name: &dyn Fn(Pid) -> String, event: WinEvent, at: (u64, isize)) {
+        let seen = tell_win_event(name, event, (at.0, None), &SystemReads);
         let _ = tells.step(seen, (at.1, false), &SystemReads);
     }
 
@@ -635,12 +633,7 @@ mod tests {
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(
-            &tells,
-            &mut Applications::default(),
-            name_change,
-            (5_000, foreground()),
-        );
+        tell(&tells, &name_of, name_change, (5_000, foreground()));
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
         assert_eq!(tell.kind, EventKind::NameChange);
@@ -651,7 +644,7 @@ mod tests {
         assert_eq!(
             tell.object,
             EventObject::Msaa {
-                window: handle(window.0),
+                window: WindowHandle::from(window.0),
                 object: OBJID_CLIENT.0,
                 child: 0,
             }
@@ -661,7 +654,7 @@ mod tests {
         let TellWindow::Found(facts) = &tell.window else {
             panic!("its window's facts: {:?}", tell.window);
         };
-        assert_eq!(facts.window.handle, handle(window.0));
+        assert_eq!(facts.window.handle, WindowHandle::from(window.0));
         assert_eq!(facts.window.class, "Static");
         assert_eq!(facts.window.process, Pid(std::process::id()));
         assert_eq!(facts.window.thread, this_thread());
@@ -674,7 +667,6 @@ mod tests {
         let window = OwnWindow::new();
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
-        let mut applications = Applications::default();
         for told in [
             event(
                 WinEventKind::NameChange,
@@ -689,7 +681,7 @@ mod tests {
                 OBJID_CLIENT.0,
             ),
         ] {
-            tell(&tells, &mut applications, told, (1, foreground()));
+            tell(&tells, &name_of, told, (1, foreground()));
         }
         assert_eq!(sent_all(&sender, &mut reader), Vec::<ListenerToCore>::new());
     }
@@ -699,16 +691,11 @@ mod tests {
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell(
-            &tells,
-            &mut Applications::default(),
-            destroy,
-            (1, foreground()),
-        );
+        tell(&tells, &name_of, destroy, (1, foreground()));
         assert_eq!(
             sent_all(&sender, &mut reader),
             [ListenerToCore::Destroyed {
-                window: handle(gone),
+                window: WindowHandle::from(gone),
                 process: Some(Pid(std::process::id())),
                 at_us: 1,
             }]
@@ -727,16 +714,11 @@ mod tests {
             thread: 0,
             ..event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0)
         };
-        tell(
-            &tells,
-            &mut Applications::default(),
-            destroy,
-            (2, foreground()),
-        );
+        tell(&tells, &name_of, destroy, (2, foreground()));
         assert_eq!(
             sent_all(&sender, &mut reader),
             [ListenerToCore::Destroyed {
-                window: handle(gone),
+                window: WindowHandle::from(gone),
                 process: None,
                 at_us: 2,
             }]
@@ -751,35 +733,29 @@ mod tests {
         let other = OwnWindow::new();
         let gone = OwnWindow::new().0;
         let (tells, sender, mut reader) = tells();
-        let mut applications = Applications::default();
         let foreground_event = event(
             WinEventKind::Foreground,
             EVENT_SYSTEM_FOREGROUND,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(
-            &tells,
-            &mut applications,
-            foreground_event,
-            (1, foreground()),
-        );
+        tell(&tells, &name_of, foreground_event, (1, foreground()));
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &mut applications, name_change, (2, foreground()));
+        tell(&tells, &name_of, name_change, (2, foreground()));
         let destroy = event(WinEventKind::Destroy, EVENT_OBJECT_DESTROY, gone, 0);
-        tell(&tells, &mut applications, destroy, (3, foreground()));
+        tell(&tells, &name_of, destroy, (3, foreground()));
         let other_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             other.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &mut applications, other_change, (4, foreground()));
+        tell(&tells, &name_of, other_change, (4, foreground()));
         foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
@@ -807,26 +783,20 @@ mod tests {
     fn tells_and_the_idle_answer_wait_behind_a_foreground_not_yet_in_front() {
         let window = OwnWindow::new();
         let (tells, sender, mut reader) = tells();
-        let mut applications = Applications::default();
         let foreground_event = event(
             WinEventKind::Foreground,
             EVENT_SYSTEM_FOREGROUND,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(
-            &tells,
-            &mut applications,
-            foreground_event,
-            (1, foreground()),
-        );
+        tell(&tells, &name_of, foreground_event, (1, foreground()));
         let name_change = event(
             WinEventKind::NameChange,
             EVENT_OBJECT_NAMECHANGE,
             window.0,
             OBJID_CLIENT.0,
         );
-        tell(&tells, &mut applications, name_change, (2, foreground()));
+        tell(&tells, &name_of, name_change, (2, foreground()));
         tells.place_behind(Held::IdleAnswer(7));
         foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
@@ -851,7 +821,6 @@ mod tests {
         let desktop =
             unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize;
         let (tells, sender, mut reader) = tells();
-        let mut applications = Applications::default();
         for (told, at_us) in [
             (
                 event(
@@ -872,7 +841,7 @@ mod tests {
                 2,
             ),
         ] {
-            tell(&tells, &mut applications, told, (at_us, foreground()));
+            tell(&tells, &name_of, told, (at_us, foreground()));
         }
         let sent = sent_all(&sender, &mut reader);
         let tell = only_tell(&sent);
@@ -881,7 +850,7 @@ mod tests {
         assert_eq!(
             tell.object,
             EventObject::Msaa {
-                window: handle(desktop),
+                window: WindowHandle::from(desktop),
                 object: OBJID_CLIENT.0,
                 child: 0,
             }

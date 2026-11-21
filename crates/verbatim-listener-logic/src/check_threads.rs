@@ -136,22 +136,6 @@ impl<E, W> CheckThreads<E, W> {
         Pushed::Start { generation }
     }
 
-    /// Queues `item` of `pid`'s on its thread only while its record lives
-    /// and the listener is not stopping, as a release of elements it kept
-    /// is made on the thread that checked them, which has its UI
-    /// Automation client: what the push did, or the item handed back when
-    /// the application has no running thread, which starts none.
-    ///
-    /// # Errors
-    ///
-    /// The item, handed back, when no thread of `pid`'s runs.
-    pub fn push_to_running(&mut self, pid: Pid, item: E) -> Result<Pushed<E>, E> {
-        if self.stopping || !self.records.contains_key(&pid) {
-            return Err(item);
-        }
-        Ok(self.push(pid, item))
-    }
-
     /// `pid`'s thread `generation` takes its next event at `now_us`, after
     /// it started, after a check ([`Self::checked`]) or when its wait ends
     /// (columns B and C).
@@ -286,32 +270,6 @@ mod tests {
 
     const APP: Pid = Pid(10);
     const OTHER: Pid = Pid(11);
-
-    /// A release goes to an application's running thread, queued behind
-    /// its check or waking it when idle, and is handed back when the
-    /// application has no thread or the listener is stopping: no thread is
-    /// started for it.
-    #[test]
-    fn a_release_goes_only_to_a_running_thread() {
-        let mut threads = Threads::default();
-        assert_eq!(threads.push_to_running(APP, "release"), Err("release"));
-        assert_eq!(threads.push(APP, "a"), Pushed::Start { generation: 0 });
-        assert_eq!(threads.take(APP, 0, 0), Take::Check("a"));
-        assert_eq!(threads.push_to_running(APP, "release"), Ok(Pushed::Queued));
-        let _ = threads.checked(APP, 0);
-        assert_eq!(threads.take(APP, 0, 1), Take::Check("release"));
-        let _ = threads.checked(APP, 0);
-        assert_eq!(
-            threads.take(APP, 0, 2),
-            Take::Wait {
-                until_us: 2 + IDLE_US
-            }
-        );
-        assert_eq!(threads.push_to_running(APP, "later"), Ok(Pushed::Wake));
-        assert_eq!(threads.push_to_running(OTHER, "other"), Err("other"));
-        let _ = threads.stop();
-        assert_eq!(threads.push_to_running(APP, "stopped"), Err("stopped"));
-    }
 
     /// The first event of an application starts its thread; the thread
     /// takes it, and one pushed during its check waits behind it, in

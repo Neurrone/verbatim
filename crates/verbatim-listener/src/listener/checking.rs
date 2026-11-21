@@ -15,9 +15,8 @@
 //! element of each told event but a progress bar's is kept behind the
 //! token the tell names
 //! ([`verbatim_listener_logic::kept`]) until Core's held view leaves it
-//! out, and every element a view lets go is released on its application's
-//! check thread while one runs, which has a UI Automation client, else as
-//! a job on its reading thread.
+//! out, and every element a view lets go is released as a job on its
+//! application's reading thread.
 //!
 //! The lock order is the reading threads' lock, then this one, then the
 //! tells': the idle barrier passes from the reading threads to here, and a
@@ -62,26 +61,6 @@ const NET_UI_MENU_ITEM_CLASS: &str = "NetUITWMenuItem";
 
 /// The name of each check thread.
 const CHECK_THREAD: &str = "verbatim-listener-check";
-
-/// What an application's check thread takes, in order: an event to check
-/// and tell, or kept elements Core's view let go, released on the thread
-/// that checked them, which has its UI Automation client.
-pub(super) enum CheckJob {
-    /// An event to check.
-    Check(CheckEvent),
-    /// Elements to release.
-    Release(Vec<Agile<ListenerEvent>>),
-}
-
-impl CheckJob {
-    /// The elements this job holds, to release when it is dropped untold.
-    fn into_elements(self) -> Vec<Agile<ListenerEvent>> {
-        match self {
-            Self::Check(event) => vec![event.element],
-            Self::Release(elements) => elements,
-        }
-    }
-}
 
 /// One UI Automation event, as its callback hands it to its application's
 /// check thread: the element, kept with no call, and what came with it.
@@ -358,8 +337,11 @@ impl Kept {
 /// The records under the lock: the threads' decisions, and the wake of
 /// each application's thread.
 struct State {
-    threads: CheckThreads<CheckJob, IdleWaiter>,
+    threads: CheckThreads<CheckEvent, IdleWaiter>,
     wakes: HashMap<Pid, Arc<Condvar>>,
+    /// Each application's executable name, for its tells, the `WinEvent`
+    /// thread's included.
+    applications: Applications,
 }
 
 /// Every application's check thread, the elements kept for their tells,
@@ -369,8 +351,6 @@ pub(crate) struct Checks {
     kept: Arc<Kept>,
     /// The last token minted.
     tokens: AtomicU64,
-    /// Each application's executable name, for its tells.
-    applications: Mutex<Applications>,
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaReading>>,
 }
@@ -385,10 +365,10 @@ impl Checks {
             state: Mutex::new(State {
                 threads: CheckThreads::default(),
                 wakes: HashMap::new(),
+                applications: Applications::default(),
             }),
             kept: Arc::clone(kept),
             tokens: AtomicU64::new(0),
-            applications: Mutex::new(Applications::default()),
             outgoing: Arc::clone(outgoing),
             readers: Arc::clone(readers),
         }
@@ -396,6 +376,12 @@ impl Checks {
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The executable name of `pid`, from the listener's one record of
+    /// the applications, for the `WinEvent` thread's tells.
+    pub(super) fn application_name(&self, pid: Pid) -> String {
+        self.lock().applications.name(pid)
     }
 
     fn tells(&self) -> &Tells {
@@ -406,7 +392,7 @@ impl Checks {
     /// starting one when it has none. Never waits on a call.
     pub(super) fn hand(self: &Arc<Self>, pid: Pid, event: CheckEvent) {
         let mut state = self.lock();
-        let pushed = state.threads.push(pid, CheckJob::Check(event));
+        let pushed = state.threads.push(pid, event);
         self.pushed(state, pid, pushed);
     }
 
@@ -416,7 +402,7 @@ impl Checks {
         self: &Arc<Self>,
         mut state: MutexGuard<'_, State>,
         pid: Pid,
-        pushed: Pushed<CheckJob>,
+        pushed: Pushed<CheckEvent>,
     ) {
         match pushed {
             Pushed::Start { generation } => {
@@ -434,12 +420,9 @@ impl Checks {
                         waiter();
                     }
                     drop(state);
-                    self.release_on_reading_thread(
+                    self.release(
                         pid,
-                        dropped
-                            .into_iter()
-                            .flat_map(CheckJob::into_elements)
-                            .collect(),
+                        dropped.into_iter().map(|event| event.element).collect(),
                     );
                 }
             }
@@ -483,10 +466,10 @@ impl Checks {
         let kept = self.kept.ended(&self.outgoing, pid);
         let released = dropped
             .into_iter()
-            .flat_map(CheckJob::into_elements)
+            .map(|event| event.element)
             .chain(kept)
             .collect();
-        self.release_on_reading_thread(pid, released);
+        self.release(pid, released);
     }
 
     /// The listener shuts down: every queued event is dropped untold,
@@ -503,44 +486,14 @@ impl Checks {
         drop(self.kept.clear());
     }
 
-    /// Releases `elements` of `pid`'s on its check thread, which checked
-    /// them moments before and has a UI Automation client, while its
-    /// record lives; else as a job on its reading thread, so no thread or
-    /// client is started for a release while a check thread runs.
-    pub(super) fn release(self: &Arc<Self>, pid: Pid, elements: Vec<Agile<ListenerEvent>>) {
-        if elements.is_empty() {
-            return;
-        }
-        let mut state = self.lock();
-        match state
-            .threads
-            .push_to_running(pid, CheckJob::Release(elements))
-        {
-            Ok(pushed) => self.pushed(state, pid, pushed),
-            Err(job) => {
-                drop(state);
-                self.release_on_reading_thread(pid, job.into_elements());
-            }
-        }
-    }
-
-    /// Releases `elements` of `pid`'s as a job on its reading thread.
-    fn release_on_reading_thread(&self, pid: Pid, elements: Vec<Agile<ListenerEvent>>) {
+    /// Releases `elements` of `pid`'s as a job on its reading thread, a
+    /// thread that may block, which has a UI Automation client.
+    pub(super) fn release(&self, pid: Pid, elements: Vec<Agile<ListenerEvent>>) {
         if elements.is_empty() {
             return;
         }
         self.readers
             .push(pid, JobKind::Release, UiaJob::Release(elements));
-    }
-
-    /// `pid`'s thread `generation` released elements: its record's job
-    /// ends, and the idle barrier's waiters it lets run, run.
-    fn released(&self, (pid, generation): (Pid, u64)) {
-        let mut state = self.lock();
-        let (_, waiters) = state.threads.checked(pid, generation);
-        for waiter in waiters {
-            waiter();
-        }
     }
 
     /// The kept elements of `pid`'s with `runtime_id`, with their tokens,
@@ -565,11 +518,7 @@ impl Checks {
         let (own, waiters) = state.threads.checked(pid, generation);
         let mut unplaced = None;
         if own {
-            let application = self
-                .applications
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .name(event.process);
+            let application = state.applications.name(event.process);
             let kind = event.kind;
             let tell = event.into_tell(
                 told,
@@ -629,35 +578,27 @@ fn run(checks: &Arc<Checks>, pid: Pid, generation: u64, wake: &Arc<Condvar>) {
         .as_ref()
         .and_then(|uia| uia.request_fixed::<ListenerEvent>().ok());
     let mut record = ProbeRecord::default();
-    while let Some(job) = next(checks, pid, generation, wake) {
-        match job {
-            CheckJob::Check(event) => {
-                let sender = event.element.resolve().ok();
-                // The kept elements' references, taken under their lock and
-                // resolved once it is let go; one that cannot be resolved
-                // answers its read as failed.
-                let kept: Vec<(ElementToken, Option<Cached<ListenerEvent>>)> = checks
-                    .kept_with(pid, &event.runtime_id)
-                    .into_iter()
-                    .map(|(token, element)| (token, element.resolve().ok()))
-                    .collect();
-                let told = check_event(
-                    &event,
-                    (sender.as_ref(), &kept),
-                    (walker.as_ref(), parent_request.as_ref()),
-                    (&mut record, &now_us),
-                    &SystemReads,
-                    &mut |_| {},
-                );
-                drop(kept);
-                drop(sender);
-                checks.checked((pid, generation), event, told);
-            }
-            CheckJob::Release(elements) => {
-                drop(elements);
-                checks.released((pid, generation));
-            }
-        }
+    while let Some(event) = next(checks, pid, generation, wake) {
+        let sender = event.element.resolve().ok();
+        // The kept elements' references, taken under their lock and
+        // resolved once it is let go; one that cannot be resolved answers
+        // its read as failed.
+        let kept: Vec<(ElementToken, Option<Cached<ListenerEvent>>)> = checks
+            .kept_with(pid, &event.runtime_id)
+            .into_iter()
+            .map(|(token, element)| (token, element.resolve().ok()))
+            .collect();
+        let told = check_event(
+            &event,
+            (sender.as_ref(), &kept),
+            (walker.as_ref(), parent_request.as_ref()),
+            (&mut record, &now_us),
+            &SystemReads,
+            &mut |_| {},
+        );
+        drop(kept);
+        drop(sender);
+        checks.checked((pid, generation), event, told);
     }
     drop(parent_request);
     drop(walker);
@@ -671,7 +612,7 @@ fn run(checks: &Arc<Checks>, pid: Pid, generation: u64, wake: &Arc<Condvar>) {
 
 /// The next event for `pid`'s thread `generation` to check, waiting for
 /// one up to the idle time; `None` when the thread is to end.
-fn next(checks: &Checks, pid: Pid, generation: u64, wake: &Arc<Condvar>) -> Option<CheckJob> {
+fn next(checks: &Checks, pid: Pid, generation: u64, wake: &Arc<Condvar>) -> Option<CheckEvent> {
     let mut state = checks.lock();
     loop {
         let now = now_us();
@@ -739,7 +680,7 @@ impl<R: WindowReads> CheckCalls for SenderCalls<'_, R> {
         let began_us = (self.now)();
         let (thread, _) = verbatim_win32::window::window_owner(window);
         Probe {
-            window: handle(window),
+            window: WindowHandle::from(window),
             thread,
             provider: verbatim_uia::raw_probe(window).has_provider(),
             began_us,
@@ -851,9 +792,4 @@ fn keyboard_focus(element: &Cached<ListenerEvent>) -> Read<bool> {
         .element()
         .has_keyboard_focus()
         .map_or(Read::Failed, Read::Answered)
-}
-
-/// `window` as the model names a window.
-fn handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
 }

@@ -39,7 +39,7 @@ use verbatim_core::{ListenerView, ViewSend};
 use verbatim_core::{Runtime, SrState, reduce};
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_listener::listener::{
-    Applications, CheckEvent, EventReads, check_event, msaa_tell, written_together,
+    CheckEvent, EventReads, check_event, msaa_tell, written_together,
 };
 use verbatim_listener_logic::check::{Call, ProbeRecord};
 use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View};
@@ -143,8 +143,6 @@ pub struct CoreDriver {
     started: bool,
     /// The check thread's record of its probes, kept across events.
     probes: ProbeRecord,
-    /// The executable name of each application that raised an event.
-    applications: Applications,
     /// The outpost's requests not yet answered.
     open: Vec<RequestNumber>,
     /// How many tells the outpost has sent.
@@ -298,7 +296,6 @@ impl CoreDriver {
             next_key: 0,
             started: false,
             probes: ProbeRecord::default(),
-            applications: Applications::default(),
             open: Vec::new(),
             tells: 0,
             wake: None,
@@ -338,8 +335,8 @@ impl CoreDriver {
         let window = self.outpost.foreground();
         let (thread, process) = verbatim_win32::window::window_owner(window);
         self.feed(QueueInput::Foreground(ForegroundReport {
-            window: handle(window),
-            root_owner: handle(verbatim_win32::window::root_owner_of(window)),
+            window: WindowHandle::from(window),
+            root_owner: WindowHandle::from(verbatim_win32::window::root_owner_of(window)),
             process: Pid(process),
             thread,
             class: verbatim_win32::window::window_class_name(window),
@@ -369,7 +366,7 @@ impl CoreDriver {
     pub fn destroyed(&mut self, window: HWND) -> Step {
         self.feed(QueueInput::WindowDestroyed {
             from: LISTENER,
-            window: handle(window.0 as isize),
+            window: WindowHandle::from(window.0 as isize),
             process: Some(self.app),
         });
         self.take()
@@ -516,7 +513,7 @@ impl CoreDriver {
                 let kind = verbatim_ia2::tell_kind(event).expect("a WinEvent the listener tells");
                 let address = (event.hwnd, event.id_object, event.id_child);
                 msaa_tell(
-                    &mut self.applications,
+                    &|_| "mockapp".to_owned(),
                     (kind, address, event.thread),
                     self.clock.now(),
                     &reads,
@@ -551,7 +548,7 @@ impl CoreDriver {
             foreground: self.outpost.foreground(),
         };
         msaa_tell(
-            &mut self.applications,
+            &|_| "mockapp".to_owned(),
             (kind, (window, object, child), thread),
             self.clock.now(),
             &reads,
@@ -1243,9 +1240,4 @@ impl EventReads for TestReads {
     fn input_desktop_opens(&self) -> bool {
         SystemReads.input_desktop_opens()
     }
-}
-
-/// `window` as the model names a window.
-fn handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
 }

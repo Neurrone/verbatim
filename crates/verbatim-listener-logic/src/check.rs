@@ -57,7 +57,6 @@
 
 use std::collections::BTreeMap;
 
-use verbatim_model::WindowHandle;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::Probe;
@@ -366,15 +365,10 @@ pub fn check(
     found
 }
 
-/// `window` as the model names a window.
-#[must_use]
-pub fn window_handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use verbatim_model::WindowHandle;
 
     /// Answers each call from a closure, recording the calls in order.
     struct Answering<F> {
@@ -408,7 +402,7 @@ mod tests {
         fn probe(&mut self, window: isize) -> Probe {
             match self.answer(Call::Probe(window)) {
                 Answer::Provider(provider) => Probe {
-                    window: window_handle(window),
+                    window: WindowHandle::from(window),
                     thread: 7,
                     provider,
                     began_us: self.now_us,

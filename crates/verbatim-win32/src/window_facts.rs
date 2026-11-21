@@ -88,11 +88,6 @@ pub struct WindowPart {
     hidden_frame_owned: bool,
 }
 
-/// `window` as the model names a window.
-fn handle(window: isize) -> WindowHandle {
-    WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
-}
-
 /// `window` as acceptance reads it: a console window's process is its
 /// console host, `host` when the event's own thread named it, and its
 /// thread the event's; any other window's, its owner's.
@@ -108,7 +103,7 @@ fn facet(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> W
         (thread, owner)
     };
     WindowFacet {
-        handle: handle(window),
+        handle: WindowHandle::from(window),
         class,
         process: Pid(process),
         thread,
@@ -122,9 +117,9 @@ fn facet(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> W
 pub fn node_window(reads: &impl WindowReads, window: isize) -> NodeWindow {
     let (thread, process) = reads.owner(window);
     NodeWindow {
-        handle: handle(window),
-        top_level: handle(reads.root(window)),
-        root_owner: handle(reads.root_owner(window)),
+        handle: WindowHandle::from(window),
+        top_level: WindowHandle::from(reads.root(window)),
+        root_owner: WindowHandle::from(reads.root_owner(window)),
         process: Pid(process),
         thread,
         desktop: window == reads.desktop(),
@@ -188,9 +183,9 @@ impl WindowPart {
             root_owner_to_foreground: relation(foreground, root_owner),
             root_owner_is_foregrounds: foreground != 0 && root_owner == foreground_root_owner,
             window_to_active: relation(active, window),
-            foreground: handle(foreground),
-            foreground_root_owner: handle(foreground_root_owner),
-            active_window: handle(active),
+            foreground: WindowHandle::from(foreground),
+            foreground_root_owner: WindowHandle::from(foreground_root_owner),
+            active_window: WindowHandle::from(active),
             window: self.window,
             parent_class: self.parent_class,
             root: self.root,
