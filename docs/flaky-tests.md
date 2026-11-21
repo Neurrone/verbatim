@@ -81,3 +81,10 @@ These are `.local_only` in the registry, each with its reason; the `e2e` job lea
   - How: the window is spoken, then nothing; Core received a UI Automation focus on the window and none on the first cell.
   - Cause: a focus event raised before a UI Automation client has reached the window's provider goes nowhere, shown by the listener's log of `msaa_flood_then_focus`, where the window's was the only focus event received. mockapp now raises its first focus once a client has asked for its root provider (`crates/mockapp/src/window.rs`, `client_contacted`), which took that scenario and `foreground_progress_bar` to 10 of 10. The remaining failure is not explained.
   - Fix: none yet for the remainder.
+
+## A second Windows Terminal window's focus raised more often than the allowance
+
+- `windows_terminal_leave_flood` on GitHub's runner (run 44858971330, 2026-11-21; it passed in run 44850817950 on the same scenario code)
+  - How: "verbatim-e2e-leave-b-… terminal" was said 3 times more than once as the second window opened, where the scenario accepts at most 2.
+  - Cause: Windows Terminal raises a second window's terminal focus under more than one runtime id, and both readers announce each repeat (`docs/parity/terminals.md`, "Windows and tabs"); this run raised one repeat more than the allowance, which counts the repeats seen in earlier runs rather than a rule of the application's.
+  - Fix: build 9, the terminal rebuild, which reaches how a terminal's focus is announced; the allowance is not raised.
