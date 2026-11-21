@@ -65,11 +65,7 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
 
 /// The caret on `line`, with `selection`.
 fn caret_on(line: TextChunk, selection: Option<CaretSelection>) -> CaretReport {
-    CaretReport {
-        line,
-        selection,
-        read_at_us: 0,
-    }
+    CaretReport { line, selection }
 }
 
 fn caret_selection(selection: Selection) -> CaretSelection {
@@ -3474,9 +3470,7 @@ impl Text {
     /// effect.
     fn placed(&mut self) -> Vec<Heard> {
         self.baseline += 1;
-        let read_at_us = self.desk.at_us;
         self.reply(TextReply::CaretPlaced {
-            read_at_us,
             baseline: TextAnchor(self.baseline),
         })
     }

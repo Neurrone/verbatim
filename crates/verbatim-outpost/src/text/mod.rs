@@ -1314,11 +1314,7 @@ fn report_for<S: TextSource>(
         read_at_us,
         unit: None,
     });
-    Ok(CaretReport {
-        line,
-        selection,
-        read_at_us,
-    })
+    Ok(CaretReport { line, selection })
 }
 
 /// The characters (grapheme clusters) just before and at byte `offset` of a

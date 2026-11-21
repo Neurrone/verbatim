@@ -702,7 +702,6 @@ impl Seam {
         CaretReport {
             line: chunk(TextUnit::Line, &app.text, start, app.caret),
             selection: None,
-            read_at_us: self.now,
         }
     }
 

@@ -139,12 +139,10 @@ fn a_slow_edit_control_answers_its_selection() {
         object: OBJID_CLIENT.0,
         child: 0,
     });
-    // The caret as read, its anchors, which each read mints anew, and when
-    // it was read left out.
+    // The caret as read, its anchors, which each read mints anew, left out.
     let unanchored = |caret: &verbatim_model::CaretReport| {
         let mut caret = caret.clone();
         caret.line.start = TextAnchor(0);
-        caret.read_at_us = 0;
         if let Some(selection) = &mut caret.selection {
             selection.range.start.anchor = TextAnchor(0);
             selection.range.end.anchor = TextAnchor(0);

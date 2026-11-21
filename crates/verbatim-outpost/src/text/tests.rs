@@ -813,7 +813,7 @@ fn a_move_and_a_selection_for_an_entry_hold_the_next_baseline() {
             offset: 5,
         })),
     );
-    let TextReply::CaretPlaced { baseline, .. } = moved else {
+    let TextReply::CaretPlaced { baseline } = moved else {
         panic!("a caret placed, not {moved:?}");
     };
     assert_eq!(

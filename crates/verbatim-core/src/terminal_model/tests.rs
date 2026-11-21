@@ -185,7 +185,6 @@ fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
             formats: Vec::new(),
         },
         selection: None,
-        read_at_us: 1,
     };
     let read = FocusCaret::Read(Box::new(FocusCaretRead {
         caret,

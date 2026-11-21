@@ -220,7 +220,6 @@ fn caret_on(line: TextChunk) -> CaretReport {
     CaretReport {
         line,
         selection: None,
-        read_at_us: 0,
     }
 }
 

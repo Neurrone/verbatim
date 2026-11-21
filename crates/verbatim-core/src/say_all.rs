@@ -567,8 +567,7 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
     let due_us = cx.due_in(OTHER_DUE_US);
     // The move mints the next selection baseline, and says nothing of it
     // (Table 17, column F).
-    if let Outcome::Result(TextReply::CaretPlaced { baseline, .. }) = cx.ask(request, due_us).await
-    {
+    if let Outcome::Result(TextReply::CaretPlaced { baseline }) = cx.ask(request, due_us).await {
         let mut facts = cx.facts_mut();
         crate::editing::caret_placed(&mut facts, moved.node, moved.line);
         crate::text_facts::minted(&mut facts, moved.node, baseline);

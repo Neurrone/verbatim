@@ -57,7 +57,6 @@ fn caret() -> CaretReport {
             formats: Vec::new(),
         },
         selection: None,
-        read_at_us: 0,
     }
 }
 

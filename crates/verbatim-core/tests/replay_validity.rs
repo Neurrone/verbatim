@@ -477,11 +477,7 @@ fn empty_line() -> TextChunk {
 }
 
 fn caret_on(line: TextChunk, selection: Option<CaretSelection>) -> CaretReport {
-    CaretReport {
-        line,
-        selection,
-        read_at_us: 0,
-    }
+    CaretReport { line, selection }
 }
 
 /// Left Arrow, held, bound to the committed field, pressed at `at_us`.

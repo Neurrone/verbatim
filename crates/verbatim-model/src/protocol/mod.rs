@@ -556,8 +556,7 @@ impl Named {
                 self.caret(&read.caret);
                 self.anchors.push(read.baseline);
             }
-            TextReply::CaretPlaced { baseline, .. }
-            | TextReply::SelectionPlaced { baseline, .. } => {
+            TextReply::CaretPlaced { baseline } | TextReply::SelectionPlaced { baseline, .. } => {
                 self.anchors.push(*baseline);
             }
             TextReply::Chunks { chunks, .. } => {

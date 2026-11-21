@@ -452,12 +452,8 @@ pub fn perform_placed<S: TextSource>(
     let reply = perform(source, anchors, op);
     let placed = match reply {
         TextReply::Moved { read_at_us } => {
-            held_after_move(source, anchors, kept_before, read_at_us).map(|baseline| {
-                TextReply::CaretPlaced {
-                    read_at_us,
-                    baseline,
-                }
-            })
+            held_after_move(source, anchors, kept_before, read_at_us)
+                .map(|baseline| TextReply::CaretPlaced { baseline })
         }
         TextReply::Selected(changes) => {
             let read_at_us = verbatim_process::clock::now_us();

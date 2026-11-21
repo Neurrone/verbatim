@@ -441,10 +441,6 @@ pub struct CaretReport {
     /// The selection, when something is selected.
     #[serde(default)]
     pub selection: Option<CaretSelection>,
-    /// When the read this report came from began, in microseconds on the
-    /// clock every process of a run shares: Core takes every report as the
-    /// newest caret by this stamp.
-    pub read_at_us: u64,
 }
 
 /// What the outpost's caret read found for a focus that may have text,
@@ -1142,10 +1138,13 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::MoveCaret`] was done, the move begun at this time.
+    /// A [`TextOp::MoveCaret`] was done, the move begun at this time:
+    /// the outpost's own answer, which it turns into
+    /// [`TextReply::CaretPlaced`] before Core sees it, and whose stamp
+    /// tells it whether the move kept a read.
     Moved {
         /// When the move began, in microseconds on the clock every process
-        /// of a run shares: the stamp of the caret it leaves.
+        /// of a run shares.
         read_at_us: u64,
     },
     /// The answer to [`TextOp::Select`]: how the selection changed from
@@ -1153,14 +1152,11 @@ pub enum TextReply {
     /// caret when nothing was selected) to the one it read just after, by
     /// the rule [`SelectionChange`] describes.
     Selected(Vec<SelectionChange>),
-    /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done: the
-    /// move begun at `read_at_us`, as [`TextReply::Moved`], with the
-    /// selection baseline it minted (`books/dev/src/reference/crates/verbatim-core.md`, "Caret
-    /// tells and Core's text facts").
+    /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done,
+    /// with the selection baseline it minted
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
+    /// Core's text facts").
     CaretPlaced {
-        /// When the move began, in microseconds on the clock every process
-        /// of a run shares.
-        read_at_us: u64,
         /// The selection baseline the move minted.
         baseline: TextAnchor,
     },
