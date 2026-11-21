@@ -270,6 +270,20 @@ pub(crate) struct GuiCore {
     list_buttons: RefCell<Option<ListDialogButtons>>,
 }
 
+/// Logs a native message box titled `title` about to show, for a
+/// `returned_after_ms` of -1 (any value below 0), or returned after so
+/// many milliseconds: into Verbatim's log, whose clock the listener's log
+/// shares, so that a stall of the GUI thread can be timed against the
+/// box. The box's own modal loop runs inside Windows, out of wxWidgets'
+/// sight.
+fn log_native_modal(title: &str, returned_after_ms: i64) {
+    if let Ok(returned_after_ms) = u64::try_from(returned_after_ms) {
+        tracing::info!(title, returned_after_ms, "a native message box returned");
+    } else {
+        tracing::info!(title, "a native message box is about to show");
+    }
+}
+
 impl GuiCore {
     /// The frame, tray icon, and menu exist: marks the frame and hands the
     /// app its handle.
@@ -283,6 +297,17 @@ impl GuiCore {
         if let Some(on_ready) = on_ready {
             on_ready(self.handle.clone());
         }
+    }
+
+    /// A native message box titled `title` is about to show, for a
+    /// `returned_after_ms` of -1, or returned after so many milliseconds
+    /// ([`log_native_modal`]).
+    #[expect(
+        clippy::unused_self,
+        reason = "called through the bridge's GuiCore, as every callback is"
+    )]
+    fn native_modal(&self, title: &str, returned_after_ms: i64) {
+        log_native_modal(title, returned_after_ms);
     }
 
     /// Acts on every message waiting in the channel.
@@ -849,6 +874,62 @@ fn exit_chosen(exit: Exit, gui: &impl Act) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::fmt::Write as _;
+
+    /// Keeps each event logged while it is the thread's subscriber, as its
+    /// message and fields, `name=value`, in order.
+    #[derive(Default)]
+    struct Lines(std::sync::Mutex<Vec<String>>);
+
+    /// One event's message and fields.
+    struct Line(String);
+
+    impl tracing::field::Visit for Line {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0.insert_str(0, &format!("{value:?}"));
+            } else {
+                let _ = write!(self.0, " {}={value:?}", field.name());
+            }
+        }
+    }
+
+    impl tracing::Subscriber for Lines {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut line = Line(String::new());
+            event.record(&mut line);
+            self.0.lock().expect("the lines").push(line.0);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// The box about to show is logged with its title, and its return with
+    /// the time it took, into Verbatim's log.
+    #[test]
+    fn native_modal_logs_the_title_and_the_time() {
+        let lines = std::sync::Arc::new(Lines::default());
+        tracing::subscriber::with_default(std::sync::Arc::clone(&lines), || {
+            log_native_modal("Remove Theme", -1);
+            log_native_modal("Remove Theme", 5_168);
+        });
+        assert_eq!(
+            *lines.0.lock().expect("the lines"),
+            [
+                "a native message box is about to show title=\"Remove Theme\"",
+                "a native message box returned title=\"Remove Theme\" returned_after_ms=5168",
+            ]
+        );
+    }
 
     /// Records what the GUI did, in order.
     #[derive(Default)]

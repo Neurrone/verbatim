@@ -35,6 +35,7 @@
 #include <wx/msw/private.h>
 #include <wx/msw/wrapcctl.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -148,6 +149,33 @@ public:
         }
         return wxFrame::MSWWindowProc(message, wParam, lParam);
     }
+};
+
+// Logs, through Verbatim's log, that the native message box titled `title`
+// is about to show, and, as it goes out of scope, how long it took to
+// return, timed on the steady clock: its modal loop runs inside Windows, so
+// a stall of the GUI thread around it shows only here.
+class NativeModalTimer {
+public:
+    explicit NativeModalTimer(const wxString& title)
+        : title_(Utf8(title)), shown_(std::chrono::steady_clock::now()) {
+        if (g_shell != nullptr) {
+            g_shell->core.native_modal(title_, -1);
+        }
+    }
+    ~NativeModalTimer() {
+        if (g_shell != nullptr) {
+            const auto elapsed = std::chrono::steady_clock::now() - shown_;
+            g_shell->core.native_modal(
+                title_, std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+        }
+    }
+    NativeModalTimer(const NativeModalTimer&) = delete;
+    NativeModalTimer& operator=(const NativeModalTimer&) = delete;
+
+private:
+    std::string title_;
+    std::chrono::steady_clock::time_point shown_;
 };
 
 // Whether `window` is a system dialog: of class #32770 and not a window
@@ -707,7 +735,11 @@ private:
             const NativeQuestion question{owner != nullptr ? GetHwndOf(owner) : nullptr,
                                           confirm.GetCaption()};
             g_shell->question = &question;
-            const int answer = confirm.ShowModal();
+            int answer = wxID_NO;
+            {
+                const NativeModalTimer timer(confirm.GetCaption());
+                answer = confirm.ShowModal();
+            }
             g_shell->question = nullptr;
             if (g_shell->shutting_down) {
                 return;
@@ -751,7 +783,10 @@ private:
         if (!error.empty()) {
             wxMessageDialog message(dialog_, Text(error), Text(page_.prompts.error_title),
                                     wxOK | wxICON_ERROR);
-            message.ShowModal();
+            {
+                const NativeModalTimer timer(message.GetCaption());
+                message.ShowModal();
+            }
             if (g_shell->shutting_down) {
                 return;
             }
@@ -1563,6 +1598,7 @@ void synthesizer_switched(const SynthesizerSwitch& outcome) {
         parent = g_shell->settings != nullptr ? static_cast<wxWindow*>(g_shell->settings)
                                               : static_cast<wxWindow*>(g_shell->frame);
     }
+    const NativeModalTimer timer(Text(outcome.error_title));
     wxMessageBox(Text(outcome.error), Text(outcome.error_title), wxOK | wxICON_WARNING, parent);
 }
 
@@ -1576,9 +1612,12 @@ void show_message(rust::Str title, rust::Str text) {
     const std::size_t before = g_shell->message_boxes.size();
     g_message_box_hook =
         ::SetWindowsHookExW(WH_CBT, RecordMessageBox, nullptr, ::GetCurrentThreadId());
-    wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
-                 wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
-                 g_shell->frame);
+    {
+        const NativeModalTimer timer(wxString::FromUTF8(title.data(), title.size()));
+        wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
+                     wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
+                     g_shell->frame);
+    }
     if (g_message_box_hook != nullptr) {
         ::UnhookWindowsHookEx(g_message_box_hook);
         g_message_box_hook = nullptr;

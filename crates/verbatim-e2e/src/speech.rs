@@ -310,6 +310,10 @@ pub struct SpeechFailure {
     /// assertion failed on, or, when it failed on none (an utterance never
     /// queued), of the newest utterance heard in the step.
     pub point: FailurePoint,
+    /// Whether a wait for speech ran out: an utterance not queued, not
+    /// started or not ended in time, rather than speech that differed. The
+    /// run then dumps Verbatim ([`crate::registry`]).
+    pub waited_out: bool,
 }
 
 /// Where a scenario failed, for its report: a failed speech assertion's
@@ -768,28 +772,36 @@ impl SpeechCollector {
     /// Fails the assertion with `message`; the failing step's trace is
     /// that of the newest utterance heard in the step under way.
     fn fail(&self, message: &str) -> ! {
-        self.fail_traced(message, None)
+        self.fail_traced(message, None, false)
+    }
+
+    /// Fails the assertion with `message` because a wait for speech ran
+    /// out ([`SpeechFailure::waited_out`]).
+    fn fail_waited_out(&self, message: &str) -> ! {
+        self.fail_traced(message, None, true)
     }
 
     /// Fails the assertion with `message`; the failing step's trace is
     /// that of `utterance`, the one the assertion failed on.
     fn fail_at(&self, message: &str, utterance: UtteranceId) -> ! {
-        self.fail_traced(message, self.traces.get(&utterance).copied())
+        self.fail_traced(message, self.traces.get(&utterance).copied(), false)
     }
 
     /// Unwinds with a [`SpeechFailure`]: `message`, `trace` or else the
-    /// newest trace heard in the step under way, and that step.
+    /// newest trace heard in the step under way, that step, and whether a
+    /// wait ran out, `waited_out`.
     ///
     /// It unwinds without the panic hook (`resume_unwind`), which would
     /// print the message at once: [`crate::registry`] catches the failure
     /// and reports it in full once the run's logs are collected, which
     /// only then hold the step's trace.
-    fn fail_traced(&self, message: &str, trace: Option<TraceId>) -> ! {
+    fn fail_traced(&self, message: &str, trace: Option<TraceId>, waited_out: bool) -> ! {
         let mut point = FailurePoint::now(&self.timeline);
         point.trace = trace.or(point.trace);
         std::panic::resume_unwind(Box::new(SpeechFailure {
             message: message.to_owned(),
             point,
+            waited_out,
         }))
     }
 
@@ -991,7 +1003,7 @@ impl SpeechCollector {
                 &describe_mismatch(&said[..=*at], &actual[..=*at], expected),
                 actual[*at].utterance,
             ),
-            RuledOut::Ending { at, ending } => self.fail_at(
+            RuledOut::Ending { at, ending } => self.fail_traced(
                 &format!(
                     "the utterance {:?} was expected to end {:?}, but {}",
                     said[*at].text,
@@ -1001,11 +1013,12 @@ impl SpeechCollector {
                         |ending| format!("ended {ending:?}")
                     )
                 ),
-                actual[*at].utterance,
+                self.traces.get(&actual[*at].utterance).copied(),
+                ending.is_none(),
             ),
             RuledOut::Missing(at) => {
                 let at = *at;
-                self.fail(&format!(
+                self.fail_waited_out(&format!(
                     "{}\nutterance {at} ({:?}) was not queued within {timeout:?}",
                     describe_mismatch(&said[..=at], actual, expected),
                     said[at].text
@@ -1091,7 +1104,7 @@ impl SpeechCollector {
         let deadline = Instant::now() + self.step_timeout;
         let expected = [heard(text)];
         let Some(got) = self.next_utterance(deadline) else {
-            self.fail(&format!(
+            self.fail_waited_out(&format!(
                 "{}\nthe utterance {text:?} was not queued within {:?}",
                 describe_mismatch(&expected, &[], &expected),
                 self.step_timeout
@@ -1152,7 +1165,7 @@ impl SpeechCollector {
         for (index, want) in expected.iter().enumerate() {
             let deadline = Instant::now() + self.step_timeout;
             let Some(got) = self.next_utterance(deadline) else {
-                self.fail(&format!(
+                self.fail_waited_out(&format!(
                     "{}\nutterance {index} ({:?}) was not queued within {:?}",
                     describe_mismatch(&expected, &actual, &expected),
                     want.text,
@@ -1309,7 +1322,7 @@ impl SpeechCollector {
         loop {
             let deadline = Instant::now() + timeout;
             let Some(got) = self.next_utterance(deadline) else {
-                self.fail(&format!(
+                self.fail_waited_out(&format!(
                     "{until:?} was not queued; nothing was queued for {timeout:?} after {} utterances",
                     taken.len()
                 ));
@@ -1336,7 +1349,7 @@ impl SpeechCollector {
     pub fn take_next(&mut self, timeout: Duration) -> Heard {
         self.refuse_in_compare_mode("take_next");
         let Some(got) = self.next_utterance(Instant::now() + timeout) else {
-            self.fail(&format!("nothing was queued for {timeout:?}"));
+            self.fail_waited_out(&format!("nothing was queued for {timeout:?}"));
         };
         Heard {
             text: got.text,
@@ -1361,7 +1374,7 @@ impl SpeechCollector {
         let deadline = Instant::now() + self.step_timeout;
         while self.pending.is_empty() {
             if Instant::now() >= deadline {
-                self.fail(&format!("nothing was queued for {:?}", self.step_timeout));
+                self.fail_waited_out(&format!("nothing was queued for {:?}", self.step_timeout));
             }
             if let Err(error) = self.read_by(deadline) {
                 self.fail(&format!("the speech connection failed: {error}"));
@@ -2223,6 +2236,90 @@ mod tests {
 
     fn fails(run: impl FnOnce()) -> String {
         failure(run).message
+    }
+
+    /// Each wait for speech that runs out marks its failure waited out, so
+    /// the run dumps Verbatim; speech that differs, or an utterance that
+    /// ended otherwise than expected, does not.
+    #[test]
+    fn every_wait_that_runs_out_is_marked_waited_out() {
+        type Wait = Box<dyn FnOnce(&mut SpeechCollector)>;
+        let waits: Vec<(&str, Vec<Frame>, Wait)> = vec![
+            (
+                "expect, not queued",
+                vec![],
+                Box::new(|speech| speech.expect(&["a"])),
+            ),
+            (
+                "expect, not ended",
+                vec![queued(1, "a")],
+                Box::new(|speech| speech.expect(&["a"])),
+            ),
+            (
+                "expect_started",
+                vec![],
+                Box::new(|speech| {
+                    speech.expect_started("a");
+                }),
+            ),
+            (
+                "expect_queued",
+                vec![],
+                Box::new(|speech| {
+                    speech.expect_queued(&["a"]);
+                }),
+            ),
+            (
+                "take_until",
+                vec![],
+                Box::new(|speech| {
+                    speech.take_until("a", SHORT);
+                }),
+            ),
+            (
+                "take_next",
+                vec![],
+                Box::new(|speech| {
+                    speech.take_next(SHORT);
+                }),
+            ),
+            (
+                "await_next_queued",
+                vec![],
+                Box::new(SpeechCollector::await_next_queued),
+            ),
+            (
+                "a mismatch",
+                vec![queued(1, "b")],
+                Box::new(|speech| speech.expect(&["a"])),
+            ),
+            (
+                "an ending otherwise than expected",
+                vec![queued(1, "a"), ended(1, UtteranceEnding::Cancelled)],
+                Box::new(|speech| speech.expect(&["a"])),
+            ),
+        ];
+        let marked: Vec<(&str, bool)> = waits
+            .into_iter()
+            .map(|(name, frames, wait)| {
+                let mut speech = collector(frames);
+                (name, failure(move || wait(&mut speech)).waited_out)
+            })
+            .collect();
+        assert_eq!(
+            marked,
+            [
+                ("expect, not queued", true),
+                ("expect, not ended", true),
+                ("expect_started", true),
+                ("expect_queued", true),
+                ("take_until", true),
+                ("take_next", true),
+                ("await_next_queued", true),
+                ("a mismatch", false),
+                ("an ending otherwise than expected", false),
+            ]
+        );
     }
 
     #[test]

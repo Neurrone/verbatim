@@ -87,6 +87,10 @@ const NOT_RESPONDING_WAIT_CHAINS_FILE_NAME: &str = "not-responding-wait-chains.t
 /// and modules, and `launched-process-<pid>.dmp`, its minidump.
 const LAUNCHED_PROCESS_FILE_STEM: &str = "launched-process";
 
+/// The stem of the files Verbatim's dump is kept in when a wait for speech
+/// ran out ([`Scenario::record_verbatim_dump`]).
+const VERBATIM_DUMP_FILE_STEM: &str = "verbatim";
+
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
 /// its window can be told from the user's own windows of the same
@@ -327,6 +331,10 @@ pub struct Scenario {
     /// played the application-not-responding sound, one a line, for the
     /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
     not_responding_chains: Option<Vec<String>>,
+    /// Verbatim's process id and its dump, recorded when a wait for speech
+    /// ran out ([`Scenario::record_verbatim_dump`]), for the scenario's
+    /// artifacts.
+    verbatim_dump: Option<(u32, ProcessDump)>,
     /// Each Verbatim a second start replaced, by its process id, with the
     /// path of its stderr log, whose artifacts are collected with the
     /// run's.
@@ -632,6 +640,7 @@ impl Scenario {
                 held: Vec::new(),
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
+                verbatim_dump: None,
                 replaced: Vec::new(),
             });
         }
@@ -750,6 +759,7 @@ impl Scenario {
             held: Vec::new(),
             launch_evidence: Vec::new(),
             not_responding_chains: None,
+            verbatim_dump: None,
             replaced: Vec::new(),
         })
     }
@@ -1342,6 +1352,20 @@ impl Scenario {
     /// Returns an error if the request fails.
     pub fn list_agent_folders(&mut self, path: &str) -> io::Result<Vec<String>> {
         self.agent.list_folders(path)
+    }
+
+    /// Verbatim's stderr log as it stands, read from the agent's machine:
+    /// complete once Verbatim has quit, as it has by a scenario's
+    /// teardown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, or in compare mode, which
+    /// has no Verbatim.
+    pub fn verbatim_log(&mut self) -> io::Result<String> {
+        self.pid("read its log")?;
+        let bytes = self.agent.read_whole_file(&self.stderr_log_path)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Deletes the folder `path` on the agent's machine, with everything in
@@ -2691,6 +2715,33 @@ impl Scenario {
         Some(note)
     }
 
+    /// Dumps Verbatim, for a body that failed because a wait for speech ran
+    /// out ([`crate::speech::SpeechFailure::waited_out`]): its state,
+    /// processor time and modules, and its minidump, kept as
+    /// `verbatim-<pid>.txt` and `.dmp` in the scenario's artifacts. Returns
+    /// a note for the failure's message; `None` in compare mode, which has
+    /// no Verbatim.
+    pub fn record_verbatim_dump(&mut self) -> Option<String> {
+        let pid = self.verbatim_pid()?;
+        let dump = process_dump(
+            &mut self.agent,
+            &self.run_dir,
+            (VERBATIM_DUMP_FILE_STEM, "Verbatim process"),
+            pid,
+        );
+        let minidump = if dump.dump.is_some() {
+            format!(" and {VERBATIM_DUMP_FILE_STEM}-{pid}.dmp")
+        } else {
+            String::new()
+        };
+        let note = format!(
+            "a wait for speech ran out, so Verbatim was dumped: {}; see {VERBATIM_DUMP_FILE_STEM}-{pid}.txt{minidump}",
+            dump.summary
+        );
+        self.verbatim_dump = Some((pid, dump));
+        Some(note)
+    }
+
     /// Collects the run's artifacts into `dir`, once Verbatim has exited:
     /// the timeline, the latency report, Verbatim's stderr log and every
     /// outpost and listener log of this launch, Verbatim's audio, and the
@@ -2731,6 +2782,12 @@ impl Scenario {
             problems.push(format!(
                 "could not write the wait chains of the windows not responding: {error}"
             ));
+        }
+        if let Some((pid, dump)) = &self.verbatim_dump
+            && let Err(error) =
+                write_process_dump(dir, &format!("{VERBATIM_DUMP_FILE_STEM}-{pid}"), dump)
+        {
+            problems.push(format!("could not write Verbatim's dump: {error}"));
         }
         if self.is_comparing() {
             return problems;
@@ -4145,33 +4202,11 @@ impl LaunchEvidence {
         pid: u32,
     ) -> Self {
         let chains = window_wait_chains(agent, desktop, window, pid);
-        let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}launched-{pid}.dmp");
-        let (mut process, summary, written) = match agent.process_diagnostics(pid, &dump_path) {
-            Ok(read) => {
-                let (process, summary) = describe_process(pid, &read);
-                (process, summary, read.dump_error.is_none())
-            }
-            Err(error) => {
-                let why = format!("the launched process {pid} could not be read: {error}");
-                (vec![why.clone()], why, false)
-            }
-        };
-        let dump = if written {
-            match agent.read_whole_file(&dump_path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) => {
-                    process.push(format!("the minidump could not be read back: {error}"));
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        if let Err(error) = agent.delete_file(&dump_path) {
-            process.push(format!(
-                "the minidump {dump_path} could not be deleted on the agent's machine: {error}"
-            ));
-        }
+        let ProcessDump {
+            process,
+            summary,
+            dump,
+        } = process_dump(agent, run_dir, ("launched", "launched process"), pid);
         Self {
             pid,
             chains,
@@ -4179,6 +4214,62 @@ impl LaunchEvidence {
             summary,
             dump,
         }
+    }
+}
+
+/// A process's state, processor time and modules, one fact a line
+/// ([`describe_process`]), one line summing it up, and its minidump
+/// ([`process_dump`]).
+#[derive(Clone, Debug)]
+pub(crate) struct ProcessDump {
+    /// The facts, one a line, each part that could not be read saying why.
+    process: Vec<String>,
+    /// One line summing the process up.
+    summary: String,
+    /// The minidump's bytes, when it was written and read.
+    dump: Option<Vec<u8>>,
+}
+
+/// The facts and minidump of process `pid`, `what` in a message: the
+/// minidump is written by the agent into `run_dir`, its folder for the
+/// harness's files, as `<name>-<pid>.dmp`, read back, and deleted there.
+fn process_dump(
+    agent: &mut AgentClient,
+    run_dir: &str,
+    (name, what): (&str, &str),
+    pid: u32,
+) -> ProcessDump {
+    let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}{name}-{pid}.dmp");
+    let (mut process, summary, written) = match agent.process_diagnostics(pid, &dump_path) {
+        Ok(read) => {
+            let (process, summary) = describe_process(pid, &read);
+            (process, summary, read.dump_error.is_none())
+        }
+        Err(error) => {
+            let why = format!("the {what} {pid} could not be read: {error}");
+            (vec![why.clone()], why, false)
+        }
+    };
+    let dump = if written {
+        match agent.read_whole_file(&dump_path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                process.push(format!("the minidump could not be read back: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Err(error) = agent.delete_file(&dump_path) {
+        process.push(format!(
+            "the minidump {dump_path} could not be deleted on the agent's machine: {error}"
+        ));
+    }
+    ProcessDump {
+        process,
+        summary,
+        dump,
     }
 }
 
@@ -4327,6 +4418,19 @@ pub(crate) fn write_launch_evidence(dir: &Path, evidence: &[LaunchEvidence]) -> 
         if let Some(dump) = &launch.dump {
             fs::write(dir.join(format!("{stem}.dmp")), dump)?;
         }
+    }
+    Ok(())
+}
+
+/// Writes `dump` into `dir` as `<stem>.txt`, its facts one a line, and
+/// `<stem>.dmp`, its minidump, when it has one.
+fn write_process_dump(dir: &Path, stem: &str, dump: &ProcessDump) -> io::Result<()> {
+    fs::write(
+        dir.join(format!("{stem}.txt")),
+        dump.process.join("\n") + "\n",
+    )?;
+    if let Some(bytes) = &dump.dump {
+        fs::write(dir.join(format!("{stem}.dmp")), bytes)?;
     }
     Ok(())
 }

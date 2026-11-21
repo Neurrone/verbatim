@@ -637,6 +637,9 @@ pub(crate) mod ffi {
         fn menu_chosen(self: &GuiCore, choice: MenuChoice);
         /// A dialog closed and was destroyed.
         fn dialog_closed(self: &GuiCore, dialog: DialogKind);
+        /// A native message box titled `title` is about to show, for -1,
+        /// or returned after `returned_after_ms` milliseconds.
+        fn native_modal(self: &GuiCore, title: &str, returned_after_ms: i64);
 
         /// The Speech page, built afresh from the settings host.
         fn speech_page(self: &GuiCore) -> SpeechPage;

@@ -758,15 +758,24 @@ fn run(def: &ScenarioDef, mode: Mode) {
             |failure| (failure.message.clone(), failure.point.clone()),
         )
     });
+    let dumps_verbatim = body_outcome
+        .as_ref()
+        .err()
+        .and_then(|payload| payload.downcast_ref::<SpeechFailure>())
+        .is_some_and(wants_verbatim_dump);
     // An application that stopped responding is asked what it waits on
-    // at once, before anything else, while it may still hang.
-    let body_failure =
-        body_failure.map(
-            |(message, point)| match scenario.record_not_responding_wait_chains() {
-                Some(note) => (format!("{message}\n{note}"), point),
-                None => (message, point),
-            },
-        );
+    // at once, before anything else, while it may still hang; then
+    // Verbatim is dumped when a wait for its speech ran out.
+    let body_failure = body_failure.map(|(message, point)| {
+        let mut message = message;
+        if let Some(note) = scenario.record_not_responding_wait_chains() {
+            message = format!("{message}\n{note}");
+        }
+        if dumps_verbatim && let Some(note) = scenario.record_verbatim_dump() {
+            message = format!("{message}\n{note}");
+        }
+        (message, point)
+    });
     // A key the body held, as Control through a tab switcher, is released
     // first, whether the body passed or failed, so nothing after it runs
     // with a modifier down.
@@ -1003,6 +1012,13 @@ thread_local! {
     static CAUGHT_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+/// Whether a body that failed with `failure` dumps Verbatim: when a wait
+/// for its speech ran out, the one failure where Verbatim may be stuck,
+/// and not when its speech differed.
+fn wants_verbatim_dump(failure: &SpeechFailure) -> bool {
+    failure.waited_out
+}
+
 /// Runs a scenario's setup, body or teardown, catching a panic, whose
 /// message the scenario's report then carries; while it runs,
 /// [`panic_is_reported_later`] is true on this thread, so the suite's panic
@@ -1117,6 +1133,17 @@ fn write_foreground(dir: &std::path::Path, lines: &[String]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_waited_out_failure_dumps_verbatim_and_a_mismatch_does_not() {
+        let failure = |waited_out| SpeechFailure {
+            message: String::new(),
+            point: FailurePoint::now(&crate::timeline::Timeline::new()),
+            waited_out,
+        };
+        assert!(wants_verbatim_dump(&failure(true)));
+        assert!(!wants_verbatim_dump(&failure(false)));
+    }
 
     fn fixture() -> Vec<ScenarioDef> {
         #[allow(

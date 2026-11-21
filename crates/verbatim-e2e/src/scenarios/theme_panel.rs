@@ -275,4 +275,13 @@ pub(crate) fn teardown(scenario: &mut Scenario, state: ScenarioState) {
                 .expect("deletes the theme the scenario made");
         }
     }
+    // The Remove Theme confirmation is timed in Verbatim's log, once as it
+    // shows and once as it returns, which Verbatim's quit makes it do, so
+    // that a stall of the GUI thread around it can be measured.
+    let log = scenario.verbatim_log().expect("reads Verbatim's log");
+    assert_eq!(
+        crate::artifacts::native_modal_lines(&log, "Remove Theme"),
+        ["shown", "returned"],
+        "Verbatim's log times the Remove Theme confirmation"
+    );
 }

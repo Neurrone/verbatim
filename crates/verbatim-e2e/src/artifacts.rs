@@ -472,6 +472,29 @@ pub fn fallback_lines(file: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
+/// What Verbatim's log `text` says of the native message box titled
+/// `title`, in order: "shown" for each line saying it is about to show and
+/// "returned" for each saying it returned (`verbatim_gui`'s
+/// `log_native_modal`), read as [`defect_lines`] reads a log, with terminal
+/// colour codes removed.
+#[must_use]
+pub fn native_modal_lines(text: &str, title: &str) -> Vec<&'static str> {
+    let titled = format!("title=\"{title}\"");
+    text.lines()
+        .map(without_colours)
+        .filter(|line| line.contains(&titled))
+        .filter_map(|line| {
+            if line.contains("a native message box is about to show") {
+                Some("shown")
+            } else if line.contains("a native message box returned") {
+                Some("returned")
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// `line` without the escape sequences a terminal colours text with.
 fn without_colours(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -600,6 +623,20 @@ mod tests {
                 },
             )),
         }
+    }
+
+    /// The lines Verbatim's GUI logs around a native message box, coloured
+    /// as a terminal colours them, are read by title, in order.
+    #[test]
+    fn a_native_message_boxs_lines_are_read_by_its_title() {
+        let log = "2026-11-21T08:20:25.507447Z \u{1b}[32m INFO\u{1b}[0m verbatim_gui: a native message box is about to show title=\"Remove Theme\"\n\
+                   2026-11-21T08:20:26.000000Z  INFO verbatim_gui: a native message box is about to show title=\"Error\"\n\
+                   2026-11-21T08:20:30.675135Z  INFO verbatim_gui: a native message box returned title=\"Remove Theme\" returned_after_ms=5168\n";
+        assert_eq!(
+            native_modal_lines(log, "Remove Theme"),
+            ["shown", "returned"]
+        );
+        assert_eq!(native_modal_lines(log, "Error"), ["shown"]);
     }
 
     #[test]
