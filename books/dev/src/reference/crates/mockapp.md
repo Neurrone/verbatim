@@ -444,16 +444,13 @@ a walk of the window's whole tree would wait on its
   `UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
   process that has connected to providers (`books/dev/src/reference/uia-bugs.md`, "A process
   that used UIA can hang or crash as it exits").
-- The outpost the tests run (`tests/common/outpost.rs`) reads the time
-  from the test, which stands still unless the test moves it on
-  (`pass_time`), so a window's verdict of no UIA provider runs
-  out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
-  budget is spent only where the test says. The test hands the outpost
+- The test hands the outpost the tests run (`tests/common/outpost.rs`)
   focus facts as the listener would, and the outpost reads the focused
-  element from the test rather than the system. The test moves the time
-  on itself (`pass_time`). The outpost stamps its own events and times its verdicts' keeps by the
-  test's observation clock (`observed_now`), with which the facts handed
-  over are stamped. Each test chooses that clock once, as it makes the
+  element from the test rather than the system. The outpost stamps its
+  own events and the probes it reports by the test's observation clock
+  (`observed_now`), with which the facts handed over are stamped, and
+  which the test moves on itself (`pass_time`), so a window's verdict in
+  Core's cache runs out only where the test says. Each test chooses that clock once, as it makes the
   outpost, so none switches partway through (Fable, 2026-10-30):
   - `OutpostUnderTest::on_frozen_time` (or
     `on_frozen_time_with_options`) gives the frozen clock: the run's clock
