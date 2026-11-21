@@ -957,7 +957,7 @@ package reader get generated tests of their own.
   outpost after the listener's read, as NVDA runs `event_gainFocus` after
   its walk, so it makes no read NVDA would not; node and event rules
   applied in the outpost to every kind of focus report, its own recovery
-  reads included; kept verdicts dropped when rule tables are reloaded; and
+  reads included; Core's backend cache cleared when rule tables are reloaded; and
   File Explorer's search band refusal (the focus pipeline
   audit's difference 24) as a rule of the File Explorer built-in, needed
   on Windows 11 24H2 and not on 25H2, with no `StartButton` rule, since

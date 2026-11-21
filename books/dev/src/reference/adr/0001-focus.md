@@ -146,7 +146,7 @@ One focus-following group per outpost, built once, added to the new focus's elem
 
 ### Time limits (Dickson, 2026-10-10; amended 2026-11-06 and 2026-11-13)
 
-UI Automation's connection and transaction timeouts are process-wide, so each process sets them once at its start: 2 seconds and 10 seconds, the transaction timeout below Core's 11-second due time for a request ([ADR 0003](0003-readers-tell-core-asks.md), "A frozen window"), so that a slow call fails and the worker carries on. Every thread others wait on has a watchdog.
+UI Automation's connection and transaction timeouts are process-wide, so each process sets them once at its start: 2 seconds and 10 seconds, the transaction timeout below Core's 11-second due time for a request ([ADR 0003](0003-readers-tell-core-asks.md), "A frozen window"), so that a slow call fails and the worker carries on. A read that blocks is bounded by Core's due time for its request, and the listener keeps no watchdog thread of its own (2026-11-21).
 
 ### Spare outposts (Dickson, 2026-10-16)
 
