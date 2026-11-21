@@ -274,7 +274,7 @@ Verbatim: **matched (verified)**.
   Control+Shift+W returns to the tab before it, and Verbatim says its
   terminal and the prompt, where NVDA, captured live, said the terminal
   without its line; NVDA says the line in its other captures of the
-  focus returning to a tab, so Verbatim keeps it (`windows_terminal_tabs`).
+  focus returning to a tab, so Verbatim keeps it (`windows_terminal_tabs`). Switching back to a window does the same: Verbatim says the terminal and the caret's line, whatever it holds, where NVDA in Windows Terminal leaves the line out (Dickson, 2026-11-21; `windows_terminal_two_windows`, `windows_terminal_leave_flood`).
   Typing and its output after a switch are echoed and
   spoken as in any terminal. NVDA leaves the window's title out of a
   console's terminal, as Verbatim does.
