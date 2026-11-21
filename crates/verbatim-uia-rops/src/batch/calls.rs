@@ -21,6 +21,22 @@ use crate::text::{
     classic_units, collapsed_copy,
 };
 
+/// Whether a test armed the step at `index` to fail its calls
+/// (`verbatim_faults::Fault::StepCallsFail`).
+#[cfg(any(test, feature = "faults"))]
+fn injected_failure(state: &State<'_, '_>, index: usize) -> bool {
+    verbatim_faults::hit(
+        verbatim_faults::Fault::StepCallsFail,
+        &state.segment.steps[index].place.0,
+    )
+}
+
+/// No test arms a failure in a build without fault points.
+#[cfg(not(any(test, feature = "faults")))]
+fn injected_failure(_: &State<'_, '_>, _: usize) -> bool {
+    false
+}
+
 /// Runs every step of `segment` by calls, in order: the developer setting
 /// with remote operations off, and a window marked for classic reading.
 #[must_use]
@@ -33,6 +49,9 @@ pub fn run_calls(segment: &Segment<'_>) -> Answer {
 /// Runs `input`, the step at `index` of `state`'s segment, by calls, its
 /// gate already passed.
 pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran {
+    if injected_failure(state, index) {
+        return failed(&Error::Uia(windows::Win32::Foundation::E_FAIL.into()));
+    }
     let uia = state.segment.uia;
     let found = match input {
         Input::Answered(unrun) => return Ran::Unrun(*unrun),

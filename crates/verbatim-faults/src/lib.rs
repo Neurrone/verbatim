@@ -79,6 +79,11 @@ pub enum Fault {
     /// application that stops answering ends a run with no status read.
     /// Subject: the place of the program's first step, a `u8`.
     ProgramAnswerLost,
+    /// A batch step run by calls fails with `E_FAIL`, as a call failing
+    /// other than by its element being gone or the provider timing out
+    /// does (`verbatim-uia-rops`'s `batch`, its ordinary-calls executor).
+    /// Subject: the step's place, a `u8`.
+    StepCallsFail,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

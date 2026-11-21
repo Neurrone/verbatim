@@ -3,7 +3,8 @@
 //! generation with none, whose programs are answered as failed until a
 //! dispatch starts one; a group or focus handler whose removal failed is
 //! kept and removed again at the registration's close, or when the
-//! registering thread ends.
+//! registering thread ends; a batch step whose calls fail is answered
+//! failed.
 //!
 //! The tests arm fault points, so only `cargo xtask faults` builds this
 //! binary; each runs in a process of its own (`common/harness.rs`), so no
@@ -273,6 +274,103 @@ fn a_focus_handler_left_by_a_failed_setting_up_is_kept_until_the_registering_thr
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
+/// The controller-for relation's step of Core's batch, through a real
+/// outpost, on mockapp's search box: answered with the one element it
+/// controls, and `Failed` when its calls fail, by calls alone and after
+/// its program's step failed and was rerun. Core judges a failed step as
+/// the whole selection read not there and says nothing
+/// (`a_selected_item_whose_relation_cannot_be_read_says_nothing`), as
+/// NVDA's COM error from `focus.controllerFor` ends the whole
+/// `event_selection` (`docs/parity/changes-and-selection.md`, "Selection
+/// in a list the focus controls"; Dickson, 2026-11-21). UI Automation
+/// answers a provider's failed or mistyped `ControllerFor` as an empty
+/// one, so the failure is made at the fault points.
+fn a_failed_controller_for_read_is_a_failed_step() {
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Relation, Step, StepOutcome, Subject};
+    use verbatim_model::request::{Reply, WindowVerdict};
+    use verbatim_process::arguments::OutpostOptions;
+
+    common::init_com();
+    let title = common::unique_title("mockapp-controller-failed");
+    let mut app = common::spawn("controller.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    app.send("set-focus search");
+    let uia = Uia::new().expect("a UIA client");
+    let one = |op| Batch {
+        steps: vec![Step { op, when: None }],
+        placement: Placement::Queue,
+        spare: None,
+    };
+    let only = |outcome| match outcome {
+        Outcome::Result(Reply::Steps(steps)) if steps.len() == 1 => {
+            steps.into_iter().next().expect("one step")
+        }
+        other => panic!("one step's outcome, not {other:?}"),
+    };
+    for remote_operations in [true, false] {
+        let outpost = OutpostUnderTest::with_options(&app, OutpostOptions { remote_operations });
+        outpost.read_focus_as(
+            common::listener_focus(&uia, hwnd.0 as isize)
+                .live()
+                .element(),
+        );
+        let focus = match only(
+            outpost
+                .batch(
+                    hwnd,
+                    WindowVerdict::Uia,
+                    one(Op::FocusRead {
+                        subject: Subject::Focus,
+                        known: Vec::new(),
+                        set: common::outpost::focus_set(),
+                        details: verbatim_model::TextDetails::NONE,
+                    }),
+                )
+                .0
+                .outcome,
+        ) {
+            StepOutcome::Done(Done::FocusRead(read)) => read.focus.read.node.expect("a node"),
+            other => panic!("the focus read: {other:?}"),
+        };
+        let related = || {
+            only(
+                outpost
+                    .batch(
+                        hwnd,
+                        WindowVerdict::Uia,
+                        one(Op::Related {
+                            subject: Subject::Node(focus),
+                            relation: Relation::ControllerFor,
+                            set: vec![verbatim_model::property::PropertyId::Name],
+                        }),
+                    )
+                    .0
+                    .outcome,
+            )
+        };
+        match related() {
+            StepOutcome::Done(Done::Related(controlled)) => assert_eq!(
+                controlled.len(),
+                1,
+                "remote {remote_operations}: the search box controls one element"
+            ),
+            other => panic!("remote {remote_operations}: the relation read, not {other:?}"),
+        }
+        let program = remote_operations
+            .then(|| verbatim_faults::arm(Fault::ProgramStepFails, |place: &u8| *place == 0, 1));
+        let calls = verbatim_faults::arm(Fault::StepCallsFail, |place: &u8| *place == 0, 1);
+        assert_eq!(
+            related(),
+            StepOutcome::Failed,
+            "remote {remote_operations}: a failed relation read"
+        );
+        drop(calls);
+        drop(program);
+        drop(outpost);
+    }
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -290,6 +388,10 @@ fn main() {
         (
             "a_focus_handler_left_by_a_failed_setting_up_is_kept_until_the_registering_thread_ends",
             a_focus_handler_left_by_a_failed_setting_up_is_kept_until_the_registering_thread_ends,
+        ),
+        (
+            "a_failed_controller_for_read_is_a_failed_step",
+            a_failed_controller_for_read_is_a_failed_step,
         ),
     ]);
 }

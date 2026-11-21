@@ -26,7 +26,9 @@ Public API:
   the last of the program's first step), where `verbatim-uia-rops`'s
   generated program fails a step inside its try block, stops before a
   step, loops past the instruction limit before a step, or loses its
-  answer after it ran; and `WindowMessageSent` (`(window, message, timeout,
+  answer after it ran; `StepCallsFail` (a `u8`, the step's place), where
+  `verbatim-uia-rops`'s ordinary-calls executor fails a step with `E_FAIL`
+  before its calls; and `WindowMessageSent` (`(window, message, timeout,
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries
