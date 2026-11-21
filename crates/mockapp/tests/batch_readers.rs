@@ -244,6 +244,66 @@ fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refu
     app.quit();
 }
 
+/// An MSAA candidate in a window whose verdict is UI Automation is refused
+/// whole, `ReadThroughUia`, before any step runs: the window's hidden
+/// check, which would match this hidden window and skip the candidate's
+/// steps, does not run first.
+fn an_msaa_candidate_in_a_uia_window_is_refused_before_its_hidden_check() {
+    let title = common::unique_title("mockapp-batch-uia-candidate");
+    let app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let candidate = Subject::Msaa {
+        ids: MsaaIds {
+            window: WindowHandle(hwnd.0 as u64),
+            object: -4,
+            child: 0,
+        },
+        redirect: true,
+    };
+    let unless_hidden = Some(Condition {
+        on: Place(0),
+        check: Check::Matched,
+        negated: true,
+    });
+    let (answer, _) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        batch(vec![
+            Step {
+                op: Op::Test {
+                    subject: Subject::Window {
+                        which: WindowOf::TopLevelOf(WindowHandle(hwnd.0 as u64)),
+                        backend: verbatim_model::Backend::Msaa,
+                        visible: false,
+                    },
+                    matcher: Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(false)),
+                },
+                when: None,
+            },
+            Step {
+                op: Op::Test {
+                    subject: candidate.clone(),
+                    matcher: Matcher::Any(Vec::new()),
+                },
+                when: unless_hidden,
+            },
+            Step {
+                op: Op::FocusRead {
+                    subject: candidate,
+                    known: outpost.known(),
+                    set: focus_set(),
+                    details: verbatim_model::TextDetails::NONE,
+                },
+                when: unless_hidden,
+            },
+        ]),
+    );
+    assert_eq!(answer.outcome, Outcome::Refused(Refusal::ReadThroughUia));
+    drop(outpost);
+    app.quit();
+}
+
 /// The text operations on a UI Automation document the outpost holds, its
 /// text "alpha beta", a line break, "gamma" and a line break,
 /// each step through the node's text: the caret held as anchors, the line
@@ -408,6 +468,10 @@ fn main() {
         (
             "a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refused",
             a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refused,
+        ),
+        (
+            "an_msaa_candidate_in_a_uia_window_is_refused_before_its_hidden_check",
+            an_msaa_candidate_in_a_uia_window_is_refused_before_its_hidden_check,
         ),
         (
             "text_operations_read_and_select_through_the_nodes_text",

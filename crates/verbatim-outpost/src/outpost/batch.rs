@@ -97,10 +97,13 @@ pub(super) fn answer(
         probes,
         focus,
         focus_read,
-        verdict,
+        verdicts: vec![(ask.window, verdict)],
         held: Vec::new(),
         outcomes: Vec::new(),
     };
+    if let Some(refused) = run.backend_refusal(parsed.steps()) {
+        return refused;
+    }
     for step in parsed.steps() {
         let outcome = match step.gate(&run.outcomes) {
             Ok(Gate::Skip) => StepOutcome::Skipped,
@@ -143,9 +146,10 @@ struct Run<'r, 'c> {
     /// The focused window, taken before anything else when the first step
     /// reads the focus.
     focus: Option<Result<isize, ()>>,
-    /// The request's window's verdict, `None` for a window the outpost's
-    /// application does not serve.
-    verdict: Option<bool>,
+    /// Each window's verdict, taken once per batch, the request's window's
+    /// first; `None` for a window the outpost's application does not
+    /// serve.
+    verdicts: Vec<(verbatim_model::WindowHandle, Option<bool>)>,
     /// What the batch's read of the focus takes: the ancestors Core knows,
     /// the set and the caret's details.
     focus_read: Option<(
@@ -224,17 +228,44 @@ impl Run<'_, '_> {
             .ok_or(Missing::Object))
     }
 
-    /// The verdict of `window`: the request's window's, probed once for the
-    /// batch, or another's by `given`.
+    /// The verdict of `window`, taken once for the batch: the request's
+    /// window's, or another's by `given`.
     fn verdict_of(
         &mut self,
         window: verbatim_model::WindowHandle,
         given: verbatim_model::request::WindowVerdict,
     ) -> Option<bool> {
-        if window == self.ask.window {
-            return self.verdict;
+        if let Some((_, verdict)) = self.verdicts.iter().find(|(held, _)| *held == window) {
+            return *verdict;
         }
-        asked::verdict(self.context, hwnd_of(window), given, self.probes)
+        let verdict = asked::verdict(self.context, hwnd_of(window), given, self.probes);
+        self.verdicts.push((window, verdict));
+        verdict
+    }
+
+    /// The whole batch's refusal when a subject's window is read through
+    /// the other backend, decided before any step runs, as the backend
+    /// refusals are outcomes of the whole batch: an MSAA object in a
+    /// window read through UI Automation, or a listener's element in one
+    /// read through MSAA.
+    fn backend_refusal(&mut self, steps: &[verbatim_model::batch::Step]) -> Option<Outcome> {
+        for step in steps {
+            let refused = match step.op.subject() {
+                Some(Subject::Msaa { ids, .. }) => {
+                    let given = verbatim_model::request::WindowVerdict::ProbeFirst;
+                    (self.verdict_of(ids.window, given) == Some(true))
+                        .then_some(Refusal::ReadThroughUia)
+                }
+                Some(Subject::Route(route)) => (self.verdict_of(route.window, self.ask.verdict)
+                    == Some(false))
+                .then_some(Refusal::ReadThroughMsaa),
+                _ => None,
+            };
+            if let Some(refusal) = refused {
+                return Some(Outcome::Refused(refusal));
+            }
+        }
+        None
     }
 
     /// The window with the keyboard focus, taken once per batch.
