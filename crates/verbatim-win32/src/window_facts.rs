@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use verbatim_model::request::NodeWindow;
 use verbatim_model::tell::{AcceptanceFacts, Relation, WindowFacet};
 use verbatim_model::{Pid, WindowHandle};
+use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 
 use crate::window::window_class_name;
 
@@ -47,9 +48,6 @@ pub trait WindowReads {
     /// Whether the window is Verbatim's hidden frame.
     fn hidden_frame(&self, window: isize) -> bool;
 }
-
-/// The class of a console host's window.
-const CONSOLE_CLASS: &str = "ConsoleWindowClass";
 
 /// The class of a popup menu's window.
 const MENU_CLASS: &str = "#32768";
@@ -94,7 +92,7 @@ pub struct WindowPart {
 fn facet(reads: &impl WindowReads, window: isize, host: Option<(u32, u32)>) -> WindowFacet {
     let class = reads.class(window);
     let (thread, owner) = reads.owner(window);
-    let (thread, process) = if class == CONSOLE_CLASS {
+    let (thread, process) = if class == CONSOLE_WINDOW_CLASS {
         match host {
             Some((thread, process)) => (thread, process),
             None => (thread, reads.console_host(window).unwrap_or(0)),
@@ -599,7 +597,7 @@ mod tests {
     #[test]
     fn a_console_windows_process_is_its_host_named_by_the_events_thread() {
         let mut desk = Desk::default();
-        desk.add(9, CONSOLE_CLASS, DESKTOP, 0);
+        desk.add(9, CONSOLE_WINDOW_CLASS, DESKTOP, 0);
         let told = WindowPart::read(&desk, 9, Some((77, 400))).with_foreground(&desk);
         assert_eq!((told.window.thread, told.window.process), (77, Pid(400)));
         assert_eq!(told.root.process, Pid(400));

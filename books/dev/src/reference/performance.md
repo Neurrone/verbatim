@@ -2128,8 +2128,6 @@ first, the share of the limit in brackets:
 - The review copy's selection: 159.
 - A terminal's snapshot: 50 for a first read, 90 with a start and the caret
   and its line; no loop, so it does not grow with the history.
-- A terminal's rows by their place: 172 (2 percent) at its largest input,
-  16 runs, and 22 for one run; no loop.
 - A terminal's colours on a 120 by 30 screen: 1,349 for a plain screen; in
   the worst case six programs of 4,151 (42 percent), 4,099, 4,099, 4,099,
   4,099 and 4,097. A program reads rows while a worst-case row (887 at 120

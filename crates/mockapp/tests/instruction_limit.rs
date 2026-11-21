@@ -23,13 +23,12 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, CaretUnit, Comparison, ControlledQuery, Error,
-    FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
-    Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, StatesQuery, Status,
-    StepQuery, TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery,
-    caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
-    focus_ancestry_remote, focus_states_remote, navigation_step_remote, terminal_rows_remote,
-    terminal_snapshot_remote, text_range_remote, text_units_remote, tree_dump_remote,
-    watch_check_remote,
+    FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
+    RangeAction, RangeEnd, RangeQuery, SnapshotQuery, StatesQuery, Status, StepQuery,
+    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, WatchQuery, caret_read_remote,
+    controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
+    focus_states_remote, navigation_step_remote, terminal_snapshot_remote, text_range_remote,
+    text_units_remote, tree_dump_remote, watch_check_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -707,63 +706,6 @@ fn terminal_snapshots_execute_exactly() {
     assert!(started < LIMIT / 2);
 }
 
-/// A terminal's rows read by their place (`books/dev/src/explanation/design/terminal-model.md`,
-/// "Reading rules", rule 4): at its largest input, as many runs as
-/// one read takes, each reaching its rows, and for one run, as a single
-/// candidate rotation whose block left the read asks. The program has no
-/// loop, so each run costs the same instructions however far up it reads.
-fn terminal_rows_execute_exactly() {
-    common::init_com();
-    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal-rows");
-    let terminal = fixture.find("Terminal");
-    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
-    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
-    let lines = numbered(200);
-    common::apply(
-        &mut fixture.app,
-        fixture.hwnd,
-        &format!(r"set-text term {lines}ready>"),
-    );
-    let first_query = SnapshotQuery {
-        element: &terminal,
-        pattern: &pattern,
-        start: None,
-        screen_rows: 0,
-        whole: false,
-        above: 4,
-        caret: None,
-        colours: None,
-    };
-    let start = terminal_snapshot_remote(&fixture.uia, &first_query)
-        .expect("the program runs")
-        .next_start
-        .expect("where the next read starts");
-    let most: Vec<(u32, u32)> = (0..u32::try_from(MOST_RUNS).expect("a few runs"))
-        .map(|run| (10 + run * 10, 30))
-        .collect();
-    let count = |runs: &[(u32, u32)]| {
-        let query = RowsQuery {
-            element: &terminal,
-            pattern: &pattern,
-            start: &start,
-            runs,
-        };
-        counted(|| {
-            let answer = terminal_rows_remote(&fixture.uia, &query).expect("the program runs");
-            assert!(answer.runs.iter().all(|run| !run.is_empty()));
-        })
-    };
-    let largest = count(&most);
-    let one = count(&most[..1]);
-    fixture.app.quit();
-    assert_eq!(
-        [largest, one],
-        [172, 22],
-        "terminal rows largest and one run"
-    );
-    assert!(largest < LIMIT / 2);
-}
-
 /// A terminal's colours, read with its snapshot on a 120 by 30 screen: in
 /// the worst case, every cell's colours differing from its neighbours'
 /// (`terminal-checkered.json`), each program reads rows while a worst row
@@ -1148,10 +1090,6 @@ fn main() {
         (
             "terminal_snapshots_execute_exactly",
             terminal_snapshots_execute_exactly,
-        ),
-        (
-            "terminal_rows_execute_exactly",
-            terminal_rows_execute_exactly,
         ),
         (
             "terminal_colours_execute_exactly",

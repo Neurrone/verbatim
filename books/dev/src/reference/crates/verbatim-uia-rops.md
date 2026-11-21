@@ -373,20 +373,6 @@ conformance expectations record each provider's,
 Without colours the program has no loop: 50 instructions for a first read
 and 90 with a start and the caret.
 
-### Rows by their place
-
-`terminal_rows(uia, query, remote)` (`TerminalRowsFn`) reads runs of a
-terminal's history rows by their place. A `RowsQuery` gives the element,
-its text pattern, the start the snapshot was asked for, and the runs,
-each how many rows above that start it begins and how many it holds, at
-most `MOST_RUNS` (16). For each run the program moves a collapsed copy of
-the start up and its end down by the run's rows and reads its text; a run
-the document's start came before is read as nothing. It then reads the
-document's first row, so the caller can tell whether the buffer moved
-since the snapshot. `RowsAnswer` holds each run's text, UTF-16 as given,
-and the first row. The program has no loop, ten instructions a run and
-twelve besides, and is kept per thread for each list of runs.
-
 ### The colours
 
 A cell's colour attribute is its own colour; a stretch of cells answers

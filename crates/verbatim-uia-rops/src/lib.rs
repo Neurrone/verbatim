@@ -59,7 +59,6 @@ mod operation;
 mod path;
 mod terminal_colours;
 mod terminal_find;
-mod terminal_rows;
 mod terminal_snapshot;
 mod text;
 mod tree;
@@ -102,10 +101,6 @@ pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, sc
 pub use terminal_find::{
     FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
     terminal_find_remote,
-};
-pub use terminal_rows::{
-    MOST_RUNS, RowsAnswer, RowsQuery, TerminalRowsFn, terminal_rows, terminal_rows_classic,
-    terminal_rows_remote,
 };
 pub use terminal_snapshot::{
     Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
