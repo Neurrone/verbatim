@@ -909,7 +909,7 @@ fn a_word_document_is_followed_with_its_text_changes() {
 fn an_edit_controls_caret_tell_before_its_value_change_is_said_in_general_terms() {
     let (mut app, mut core, _) = on_edit("mockapp-caret-watch-edit-typed-over");
     assert_eq!(
-        core.raise_at_once(
+        core.raise_together(
             &mut app,
             &[
                 r"set-text doc x beta\ngamma\n",
@@ -954,7 +954,7 @@ fn an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        core.raise_at_once(
+        core.raise_together(
             &mut app,
             &[
                 r"set-text doc alpha beta\n",
@@ -1015,7 +1015,7 @@ fn an_edit_controls_value_change_judged_first_has_the_next_change_said_in_genera
 fn an_edit_controls_value_change_counted_by_a_caret_answer_leaves_the_next_change_specific() {
     let (mut app, mut core, _) = on_edit("mockapp-caret-watch-edit-counted");
     assert_eq!(
-        core.raise_at_once(
+        core.raise_together(
             &mut app,
             &[
                 r"set-text doc x beta\ngamma\n",
@@ -1062,7 +1062,7 @@ fn an_edit_controls_delete_over_a_selection_says_its_unit_then_the_selection_rem
         .spoken();
     said.extend(core.answered().spoken());
     said.extend(
-        core.raise_at_once(
+        core.raise_together(
             &mut app,
             &["system-caret", "text-changed doc"],
             &[WinEventKind::Caret, WinEventKind::ValueChange],

@@ -346,7 +346,7 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
 
     app.send("select sound");
     let (element, states) = next_selection(&events, "Sound settings");
-    let stale = core.uia_tell(
+    let stale = core.checked_tell(
         EventKind::UiaElementSelected,
         &element,
         Some(states),
@@ -408,7 +408,7 @@ fn a_selection_whose_event_carried_no_name_is_said_with_the_name_read() {
         .expect("an element selected event for the unnamed item");
     assert_eq!(cached_name, None, "the event's cache carries no name");
     let element: Cached<ListenerEvent> = agile.resolve().expect("the event's element").narrow();
-    let selection = core.uia_tell(
+    let selection = core.checked_tell(
         EventKind::UiaElementSelected,
         &element,
         Some(states),
@@ -503,8 +503,8 @@ fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
     app.send("select sound");
     let focus = common::listener_element(&uia, hwnd.0 as isize, "Search box");
     let (result, states) = selected(&uia, hwnd, "Sound settings");
-    let focus = core.uia_tell(EventKind::UiaFocus, &focus, None, Payload::None);
-    let selection = core.uia_tell(
+    let focus = core.checked_tell(EventKind::UiaFocus, &focus, None, Payload::None);
+    let selection = core.checked_tell(
         EventKind::UiaElementSelected,
         &result,
         Some(states),

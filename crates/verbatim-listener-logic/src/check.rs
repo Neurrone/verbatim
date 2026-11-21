@@ -1,9 +1,9 @@
-//! The calls a UI Automation event's check makes at delivery, as one pure
-//! step function (design `docs/design/readers-tell-core-asks-build1.md`,
-//! Table 11 and "Focus and foreground"): the listener's check thread asks
-//! [`Check::next`] for the one call to make, makes it, records its answer,
-//! and asks again until there is none, then sends the tell with what
-//! [`Check::finish`] gathered. The check judges nothing: Core judges every
+//! The calls a UI Automation event's check makes at delivery, as one
+//! straight-line function (design
+//! `docs/design/readers-tell-core-asks-build1.md`, Table 11 and "Focus and
+//! foreground"): [`check`] makes each call through [`CheckCalls`], which
+//! the listener's check thread answers on the event's element, and returns
+//! what the tell carries. The check judges nothing: Core judges every
 //! answer it carries.
 //!
 //! The calls are those NVDA's handler for the event's kind makes at
@@ -101,36 +101,36 @@ impl Handler {
     }
 }
 
-/// The one call [`Check::next`] asks for, whose answer the thread records
-/// in the [`Check`].
+/// One call a check makes, named for a test's observer, which sees each
+/// before it is made ([`CheckCalls::calling`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Call {
     /// The walk to the element's nearest window: a call into the
-    /// application ([`Check::walked`]).
+    /// application ([`CheckCalls::nearest_window`]).
     NearestWindow,
     /// The classes of the nearest window, which NVDA's lists and the
-    /// checks after its probe judge: local calls ([`Check::classed`]).
+    /// checks after its probe judge: local calls ([`CheckCalls::classes`]).
     Classes(isize),
     /// The probe of the nearest window: a window message to the
-    /// application ([`Check::probed`]).
+    /// application ([`CheckCalls::probe`]).
     Probe(isize),
     /// Whether a kept element with the event's runtime id still has the
     /// keyboard focus: a call into the application
-    /// ([`Check::kept_focus`]).
+    /// ([`CheckCalls::kept_focus`]).
     KeptFocus(ElementToken),
     /// The acceptance facts of the nearest window, the foreground's part
     /// included: calls to Windows, made where NVDA judges acceptance
     /// (`shouldAcceptEvent`, `UIAHandler/__init__.py` 925), before the
-    /// object's own calls ([`Check::accepted`]).
+    /// object's own calls ([`CheckCalls::acceptance`]).
     Acceptance(isize),
     /// Whether the element has a previous sibling: a call into the
-    /// application ([`Check::previous_sibling`]).
+    /// application ([`CheckCalls::previous_sibling`]).
     PreviousSibling,
     /// The automation id of the element's raw-view parent: a call into
-    /// the application ([`Check::parent_automation_id`]).
+    /// the application ([`CheckCalls::parent_automation_id`]).
     ParentAutomationId,
     /// Whether the element has the keyboard focus: a call into the
-    /// application ([`Check::keyboard_focus`]).
+    /// application ([`CheckCalls::keyboard_focus`]).
     KeyboardFocus,
 }
 
@@ -183,27 +183,10 @@ impl ProbeRecord {
     }
 }
 
-/// What the check knows of the nearest window's backend, decided once its
-/// class verdict is known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Probing {
-    /// Read through UI Automation, by NVDA's lists or the record, with no
-    /// probe made.
-    Uia,
-    /// Read through MSAA, by NVDA's lists or the record, with no probe
-    /// made.
-    Msaa,
-    /// The probe is to be made.
-    Due,
-    /// Made, with its answer: a provider reads the window through UI
-    /// Automation, none through MSAA.
-    Made(Probe),
-}
-
-/// One event's check: the calls its handler makes, and their answers as
-/// they come.
+/// What an event's check is made of, from its kind and its element's
+/// cache, with no call.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Check {
+pub struct CheckFacts {
     handler: Handler,
     /// Whether the element is a `NetUITWMenuItem` menu item with no name by
     /// its event's cache, whose previous sibling NVDA's object reads.
@@ -214,20 +197,9 @@ pub struct Check {
     /// The kept elements with the event's runtime id, whose keyboard
     /// focus is read.
     kept: Vec<ElementToken>,
-    walked: Option<Walked>,
-    /// The nearest window's classes, once read: the probe's answer is
-    /// judged with them.
-    classes: Option<WindowClasses>,
-    probing: Option<Probing>,
-    kept_answers: Vec<(ElementToken, Read<bool>)>,
-    /// Whether the acceptance facts were read.
-    accepted: bool,
-    previous_sibling: Option<Read<bool>>,
-    parent_automation_id: Option<Read<Option<String>>>,
-    keyboard_focus: Option<Read<bool>>,
 }
 
-impl Check {
+impl CheckFacts {
     /// The check of an event of `kind`. `placeholder_candidate` is whether
     /// its element's cache names a `NetUITWMenuItem` menu item with no
     /// name, and `kept` the elements the listener keeps with its runtime id.
@@ -237,20 +209,12 @@ impl Check {
         Self {
             handler,
             placeholder_candidate: placeholder_candidate && handler == Handler::Focus,
+            switcher_item: false,
             kept: if handler == Handler::Focus {
                 kept
             } else {
                 Vec::new()
             },
-            walked: (handler == Handler::None).then_some(Walked::NotWalked),
-            classes: None,
-            probing: None,
-            kept_answers: Vec::new(),
-            accepted: false,
-            previous_sibling: None,
-            switcher_item: false,
-            parent_automation_id: None,
-            keyboard_focus: None,
         }
     }
 
@@ -261,157 +225,145 @@ impl Check {
         self.switcher_item = switcher_item && self.handler == Handler::Focus;
         self
     }
+}
 
-    /// The next call to make, `None` when the check is done. `record` is
-    /// the thread's probe record, read at `now_us` when the probe is
-    /// decided.
-    pub fn next(&mut self, record: &ProbeRecord, now_us: u64) -> Option<Call> {
-        let window = match self.walked {
-            None => return Some(Call::NearestWindow),
-            Some(Walked::Found(window)) => window,
-            Some(Walked::NoWindow | Walked::Failed | Walked::NotWalked) => return None,
-        };
-        if self.handler == Handler::Notification {
-            return None;
-        }
-        if self.probing == Some(Probing::Due) {
-            match record.standing(window, now_us) {
-                Some(true) => self.probing = Some(Probing::Uia),
-                Some(false) => self.probing = Some(Probing::Msaa),
-                None => return Some(Call::Probe(window)),
-            }
-        }
-        if self.probing.is_none() {
-            return Some(Call::Classes(window));
-        }
-        // Only the focus handler reads more. Whatever the verdict found, it
-        // goes on: Core judges the native-element test. The automation-event
-        // handler judges acceptance last.
-        if self.handler != Handler::Focus {
-            return (!self.accepted).then_some(Call::Acceptance(window));
-        }
-        if let Some(&token) = self.kept.get(self.kept_answers.len()) {
-            return Some(Call::KeptFocus(token));
-        }
-        // NVDA judges acceptance after its duplicate test and before its
-        // object reads the previous sibling and the parent's automation id
-        // and the keyboard focus (902 to 953).
-        if !self.accepted {
-            return Some(Call::Acceptance(window));
-        }
-        if self.placeholder_candidate {
-            match self.previous_sibling {
-                None => return Some(Call::PreviousSibling),
-                // No previous sibling, or none could be read: NVDA's
-                // placeholder, which allows its focus with no read.
-                Some(Read::Answered(false) | Read::Failed) => return None,
-                Some(Read::Answered(true)) => {}
-            }
-        }
-        if self.switcher_item && self.parent_automation_id.is_none() {
-            return Some(Call::ParentAutomationId);
-        }
-        self.keyboard_focus.is_none().then_some(Call::KeyboardFocus)
-    }
-
-    /// Records the walk's answer: the nearest window, none, or a failure.
-    pub fn walked(&mut self, nearest: Read<Option<isize>>) {
-        self.walked = Some(match nearest {
-            Read::Answered(Some(window)) if window != 0 => Walked::Found(window),
-            Read::Answered(_) => Walked::NoWindow,
-            Read::Failed => Walked::Failed,
-        });
-    }
-
-    /// Records the nearest window's classes: by NVDA's lists' verdict,
-    /// only a window on neither list is probed.
-    pub fn classed(&mut self, classes: WindowClasses) {
-        self.probing = Some(match class_verdict(&classes) {
-            ClassVerdict::Unknown => Probing::Due,
-            ClassVerdict::Uia => Probing::Uia,
-            ClassVerdict::NonUia => Probing::Msaa,
-        });
-        self.classes = Some(classes);
-    }
-
-    /// Records the raw probe, `raw`, whose `provider` is whether the window
-    /// answered with a provider: the probe the tell carries, and the
-    /// thread's `record` keeps, is the checked answer
-    /// ([`listener_provider`]).
-    pub fn probed(&mut self, raw: Probe, record: &mut ProbeRecord) {
-        let provider = self
-            .classes
-            .as_ref()
-            .is_some_and(|classes| listener_provider(classes, raw.provider));
-        let probe = Probe { provider, ..raw };
-        if let Ok(window) = isize::try_from(probe.window.0.cast_signed()) {
-            record.record(window, probe.began_us, probe.provider);
-        }
-        self.probing = Some(Probing::Made(probe));
-    }
-
-    /// Records whether the kept element `token` still has the keyboard
-    /// focus.
-    pub fn kept_focus(&mut self, token: ElementToken, focused: Read<bool>) {
-        self.kept_answers.push((token, focused));
-    }
-
-    /// Records that the acceptance facts were read: the thread keeps them
+/// The calls a check makes, each answered by the listener's check thread
+/// on the event's element (or a test's recorded answers). A read that
+/// fails answers [`Read::Failed`].
+pub trait CheckCalls {
+    /// The check is about to make `call`, for a test's observer.
+    fn calling(&mut self, _call: Call) {}
+    /// The walk to the element's nearest window.
+    fn nearest_window(&mut self) -> Read<Option<isize>>;
+    /// The classes of `window`.
+    fn classes(&mut self, window: isize) -> WindowClasses;
+    /// The raw probe of `window`, made now: whether a provider answered,
+    /// with the window's thread and when the probe began.
+    fn probe(&mut self, window: isize) -> Probe;
+    /// The acceptance facts of `window`, read now and kept by the caller
     /// for the tell.
-    pub fn accepted(&mut self) {
-        self.accepted = true;
-    }
-
-    /// Records whether the element has a previous sibling.
-    pub fn previous_sibling(&mut self, has: Read<bool>) {
-        self.previous_sibling = Some(has);
-    }
-
-    /// Records the automation id of the element's parent, `None` for a
+    fn acceptance(&mut self, window: isize);
+    /// Whether the kept element `token` still has the keyboard focus.
+    fn kept_focus(&mut self, token: ElementToken) -> Read<bool>;
+    /// Whether the element has a previous sibling.
+    fn previous_sibling(&mut self) -> Read<bool>;
+    /// The automation id of the element's raw-view parent, `None` for a
     /// parent with none.
-    pub fn parent_automation_id(&mut self, id: Read<Option<String>>) {
-        self.parent_automation_id = Some(id);
-    }
+    fn parent_automation_id(&mut self) -> Read<Option<String>>;
+    /// Whether the element has the keyboard focus.
+    fn keyboard_focus(&mut self) -> Read<bool>;
+}
 
-    /// Records whether the element has the keyboard focus.
-    pub fn keyboard_focus(&mut self, focused: Read<bool>) {
-        self.keyboard_focus = Some(focused);
-    }
+/// What a check found: the walk's end, what the tell carries of the
+/// check, and the parent's automation id it read, which the tell carries
+/// among its cached properties (`None` when it read none, an absent value
+/// when the parent has none or the read failed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// What the walk to the nearest window found.
+    pub walked: Walked,
+    /// What the tell carries of the check.
+    pub checked: Checked,
+    /// The parent's automation id, when read.
+    pub parent: Option<PropertyAnswer>,
+}
 
-    /// What the walk found, what the tell carries of the check, and the
-    /// parent's automation id it read, which the tell carries among its
-    /// cached properties: `None` when it read none, an absent value when
-    /// the parent has none or the read failed.
-    #[must_use]
-    pub fn finish(self) -> (Walked, Checked, Option<PropertyAnswer>) {
-        let walked = match (self.handler, self.walked) {
-            // A notification whose walk failed tells no window, as NVDA's
-            // handler finds none.
-            (Handler::Notification, Some(Walked::Failed)) => Walked::NoWindow,
-            (_, walked) => walked.unwrap_or(Walked::NotWalked),
+/// The check of an event made of `facts`: every call NVDA's handler for
+/// its kind makes at delivery, in its order, through `calls`. `record` is
+/// the thread's probe record, read at `now_us`, which a probe made
+/// updates with its checked answer ([`listener_provider`]).
+pub fn check(
+    facts: &CheckFacts,
+    (record, now_us): (&mut ProbeRecord, u64),
+    calls: &mut impl CheckCalls,
+) -> Found {
+    let mut found = Found {
+        walked: Walked::NotWalked,
+        checked: Checked {
+            probe: None,
+            keyboard_focus: None,
+            kept: Vec::new(),
+            previous_sibling: None,
+        },
+        parent: None,
+    };
+    if facts.handler == Handler::None {
+        return found;
+    }
+    calls.calling(Call::NearestWindow);
+    let window = match calls.nearest_window() {
+        Read::Answered(Some(window)) if window != 0 => window,
+        Read::Answered(_) => {
+            found.walked = Walked::NoWindow;
+            return found;
+        }
+        // A notification whose walk failed tells no window, as NVDA's
+        // handler finds none.
+        Read::Failed => {
+            found.walked = if facts.handler == Handler::Notification {
+                Walked::NoWindow
+            } else {
+                Walked::Failed
+            };
+            return found;
+        }
+    };
+    found.walked = Walked::Found(window);
+    if facts.handler == Handler::Notification {
+        return found;
+    }
+    calls.calling(Call::Classes(window));
+    let classes = calls.classes(window);
+    if class_verdict(&classes) == ClassVerdict::Unknown && record.standing(window, now_us).is_none()
+    {
+        calls.calling(Call::Probe(window));
+        let raw = calls.probe(window);
+        let probe = Probe {
+            provider: listener_provider(&classes, raw.provider),
+            ..raw
         };
-        let probe = match self.probing {
-            Some(Probing::Made(probe)) => Some(probe),
-            Some(Probing::Uia | Probing::Msaa | Probing::Due) | None => None,
-        };
-        let parent = self.parent_automation_id.map(|read| PropertyAnswer {
+        record.record(window, probe.began_us, probe.provider);
+        found.checked.probe = Some(probe);
+    }
+    // Whatever the verdict found, the check goes on: Core judges the
+    // native-element test. The automation-event handler judges acceptance
+    // last; the focus handler after its duplicate test and before its
+    // object's own reads (902 to 953).
+    if facts.handler == Handler::Focus {
+        for &token in &facts.kept {
+            calls.calling(Call::KeptFocus(token));
+            let focused = calls.kept_focus(token);
+            found.checked.kept.push((token, focused));
+        }
+    }
+    calls.calling(Call::Acceptance(window));
+    calls.acceptance(window);
+    if facts.handler != Handler::Focus {
+        return found;
+    }
+    if facts.placeholder_candidate {
+        calls.calling(Call::PreviousSibling);
+        let has = calls.previous_sibling();
+        found.checked.previous_sibling = Some(has);
+        // No previous sibling, or none could be read: NVDA's placeholder,
+        // which allows its focus with no read.
+        if has != Read::Answered(true) {
+            return found;
+        }
+    }
+    if facts.switcher_item {
+        calls.calling(Call::ParentAutomationId);
+        found.parent = Some(PropertyAnswer {
             id: PropertyId::ParentAutomationId,
-            value: match read {
+            value: match calls.parent_automation_id() {
                 Read::Answered(Some(id)) if !id.is_empty() => Some(PropertyValue::Text(id)),
                 Read::Answered(_) | Read::Failed => None,
             },
         });
-        (
-            walked,
-            Checked {
-                probe,
-                keyboard_focus: self.keyboard_focus,
-                kept: self.kept_answers,
-                previous_sibling: self.previous_sibling,
-            },
-            parent,
-        )
     }
+    calls.calling(Call::KeyboardFocus);
+    found.checked.keyboard_focus = Some(calls.keyboard_focus());
+    found
 }
 
 /// `window` as the model names a window.
@@ -424,44 +376,88 @@ pub fn window_handle(window: isize) -> WindowHandle {
 mod tests {
     use super::*;
 
-    /// Runs `check` to its end, answering each call from `answer`, and
-    /// returns the calls made in order with what it finished with.
-    fn run(
-        mut check: Check,
-        record: &mut ProbeRecord,
+    /// Answers each call from a closure, recording the calls in order.
+    struct Answering<F> {
+        answer: F,
+        calls: Vec<Call>,
         now_us: u64,
-        mut answer: impl FnMut(Call) -> Answer,
-    ) -> (Vec<Call>, Walked, Checked, Option<PropertyAnswer>) {
-        let mut calls = Vec::new();
-        while let Some(call) = check.next(record, now_us) {
-            calls.push(call);
-            if let Call::Acceptance(_) = call {
-                check.accepted();
-                continue;
-            }
-            match (call, answer(call)) {
-                (Call::NearestWindow, Answer::Nearest(nearest)) => check.walked(nearest),
-                (Call::Classes(_), Answer::Class(verdict)) => check.classed(verdict),
-                (Call::Probe(window), Answer::Provider(provider)) => check.probed(
-                    Probe {
-                        window: window_handle(window),
-                        thread: 7,
-                        provider,
-                        began_us: now_us,
-                    },
-                    record,
-                ),
-                (Call::KeptFocus(token), Answer::Focus(focused)) => {
-                    check.kept_focus(token, focused);
-                }
-                (Call::PreviousSibling, Answer::Focus(has)) => check.previous_sibling(has),
-                (Call::KeyboardFocus, Answer::Focus(focused)) => check.keyboard_focus(focused),
-                (Call::ParentAutomationId, Answer::Parent(id)) => check.parent_automation_id(id),
-                (call, answer) => panic!("{call:?} answered {answer:?}"),
+    }
+
+    impl<F: FnMut(Call) -> Answer> Answering<F> {
+        fn answer(&mut self, call: Call) -> Answer {
+            (self.answer)(call)
+        }
+    }
+
+    impl<F: FnMut(Call) -> Answer> CheckCalls for Answering<F> {
+        fn calling(&mut self, call: Call) {
+            self.calls.push(call);
+        }
+        fn nearest_window(&mut self) -> Read<Option<isize>> {
+            match self.answer(Call::NearestWindow) {
+                Answer::Nearest(nearest) => nearest,
+                answer => panic!("the walk answered {answer:?}"),
             }
         }
-        let (walked, checked, parent) = check.finish();
-        (calls, walked, checked, parent)
+        fn classes(&mut self, window: isize) -> WindowClasses {
+            match self.answer(Call::Classes(window)) {
+                Answer::Class(classes) => classes,
+                answer => panic!("the classes answered {answer:?}"),
+            }
+        }
+        fn probe(&mut self, window: isize) -> Probe {
+            match self.answer(Call::Probe(window)) {
+                Answer::Provider(provider) => Probe {
+                    window: window_handle(window),
+                    thread: 7,
+                    provider,
+                    began_us: self.now_us,
+                },
+                answer => panic!("the probe answered {answer:?}"),
+            }
+        }
+        fn acceptance(&mut self, _window: isize) {}
+        fn kept_focus(&mut self, token: ElementToken) -> Read<bool> {
+            self.focus(Call::KeptFocus(token))
+        }
+        fn previous_sibling(&mut self) -> Read<bool> {
+            self.focus(Call::PreviousSibling)
+        }
+        fn parent_automation_id(&mut self) -> Read<Option<String>> {
+            match self.answer(Call::ParentAutomationId) {
+                Answer::Parent(id) => id,
+                answer => panic!("the parent answered {answer:?}"),
+            }
+        }
+        fn keyboard_focus(&mut self) -> Read<bool> {
+            self.focus(Call::KeyboardFocus)
+        }
+    }
+
+    impl<F: FnMut(Call) -> Answer> Answering<F> {
+        fn focus(&mut self, call: Call) -> Read<bool> {
+            match self.answer(call) {
+                Answer::Focus(focused) => focused,
+                answer => panic!("{call:?} answered {answer:?}"),
+            }
+        }
+    }
+
+    /// Runs the check of `facts` to its end, answering each call from
+    /// `answer`, and returns the calls made in order with what it found.
+    fn run(
+        facts: &CheckFacts,
+        record: &mut ProbeRecord,
+        now_us: u64,
+        answer: impl FnMut(Call) -> Answer,
+    ) -> (Vec<Call>, Walked, Checked, Option<PropertyAnswer>) {
+        let mut calls = Answering {
+            answer,
+            calls: Vec::new(),
+            now_us,
+        };
+        let found = check(facts, (record, now_us), &mut calls);
+        (calls.calls, found.walked, found.checked, found.parent)
     }
 
     /// A window on neither of NVDA's lists, which is probed.
@@ -496,14 +492,14 @@ mod tests {
     /// element's own, in NVDA's order.
     #[test]
     fn a_focus_walks_probes_and_reads_the_kept_elements_then_its_own_focus() {
-        let check = Check::new(
+        let check = CheckFacts::new(
             EventKind::UiaFocus,
             false,
             vec![ElementToken(3), ElementToken(4)],
         );
         let (calls, walked, checked, _) =
             run(
-                check,
+                &check,
                 &mut ProbeRecord::default(),
                 1_000,
                 |call| match call {
@@ -570,8 +566,8 @@ mod tests {
             Call::Acceptance(_) => panic!("the run reads the facts"),
         };
         let check =
-            Check::new(EventKind::UiaFocus, false, vec![ElementToken(3)]).reading_parent(true);
-        let (calls, _, _, parent) = run(check, &mut ProbeRecord::default(), 0, answer);
+            CheckFacts::new(EventKind::UiaFocus, false, vec![ElementToken(3)]).reading_parent(true);
+        let (calls, _, _, parent) = run(&check, &mut ProbeRecord::default(), 0, answer);
         assert_eq!(
             (calls, parent),
             (
@@ -589,8 +585,8 @@ mod tests {
                 })
             )
         );
-        let check = Check::new(EventKind::UiaFocus, false, Vec::new()).reading_parent(false);
-        let (calls, _, _, parent) = run(check, &mut ProbeRecord::default(), 0, answer);
+        let check = CheckFacts::new(EventKind::UiaFocus, false, Vec::new()).reading_parent(false);
+        let (calls, _, _, parent) = run(&check, &mut ProbeRecord::default(), 0, answer);
         assert_eq!(
             (calls, parent),
             (
@@ -604,8 +600,8 @@ mod tests {
             )
         );
         let check =
-            Check::new(EventKind::UiaElementSelected, false, Vec::new()).reading_parent(true);
-        let (calls, _, _, parent) = run(check, &mut ProbeRecord::default(), 0, answer);
+            CheckFacts::new(EventKind::UiaElementSelected, false, Vec::new()).reading_parent(true);
+        let (calls, _, _, parent) = run(&check, &mut ProbeRecord::default(), 0, answer);
         assert_eq!(
             (calls, parent),
             (
@@ -625,8 +621,8 @@ mod tests {
             (Read::Answered(Some(0)), Walked::NoWindow),
             (Read::Failed, Walked::Failed),
         ] {
-            let check = Check::new(EventKind::UiaMenuOpened, true, vec![ElementToken(1)]);
-            let (calls, walked, checked, _) = run(check, &mut ProbeRecord::default(), 0, |_| {
+            let check = CheckFacts::new(EventKind::UiaMenuOpened, true, vec![ElementToken(1)]);
+            let (calls, walked, checked, _) = run(&check, &mut ProbeRecord::default(), 0, |_| {
                 Answer::Nearest(nearest)
             });
             assert_eq!(calls, [Call::NearestWindow]);
@@ -650,9 +646,9 @@ mod tests {
     #[test]
     fn a_window_on_a_list_is_not_probed_and_the_checks_go_on() {
         for classes in [listed_uia(), listed_msaa()] {
-            let check = Check::new(EventKind::UiaFocus, true, vec![ElementToken(2)]);
+            let check = CheckFacts::new(EventKind::UiaFocus, true, vec![ElementToken(2)]);
             let (calls, _, checked, _) =
-                run(check, &mut ProbeRecord::default(), 0, |call| match call {
+                run(&check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                     Call::Classes(_) => Answer::Class(classes.clone()),
                     _ => Answer::Focus(Read::Answered(true)),
@@ -681,8 +677,8 @@ mod tests {
     fn a_window_the_probe_finds_read_through_msaa_still_has_its_keyboard_focus_read() {
         let mut record = ProbeRecord::default();
         let checked = |record: &mut ProbeRecord, now_us| {
-            let check = Check::new(EventKind::UiaFocus, false, vec![ElementToken(4)]);
-            run(check, record, now_us, |call| match call {
+            let check = CheckFacts::new(EventKind::UiaFocus, false, vec![ElementToken(4)]);
+            run(&check, record, now_us, |call| match call {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                 Call::Classes(_) => Answer::Class(unlisted()),
                 Call::Probe(_) => Answer::Provider(false),
@@ -743,8 +739,8 @@ mod tests {
     fn a_recorded_provider_goes_on_with_no_probe() {
         let mut record = ProbeRecord::default();
         record.record(5, 1_000, true);
-        let check = Check::new(EventKind::UiaFocus, false, Vec::new());
-        let (calls, _, told, _) = run(check, &mut record, 1_200, |call| match call {
+        let check = CheckFacts::new(EventKind::UiaFocus, false, Vec::new());
+        let (calls, _, told, _) = run(&check, &mut record, 1_200, |call| match call {
             Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
             Call::Classes(_) => Answer::Class(unlisted()),
             _ => Answer::Focus(Read::Answered(true)),
@@ -774,8 +770,8 @@ mod tests {
             ("ConsoleWindowClass", true),
         ] {
             let mut record = ProbeRecord::default();
-            let check = Check::new(EventKind::UiaFocus, false, Vec::new());
-            let (calls, _, checked, _) = run(check, &mut record, 1_000, |call| match call {
+            let check = CheckFacts::new(EventKind::UiaFocus, false, Vec::new());
+            let (calls, _, checked, _) = run(&check, &mut record, 1_000, |call| match call {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                 Call::Classes(_) => Answer::Class(WindowClasses::new(raw, "#32770")),
                 Call::Probe(_) => Answer::Provider(true),
@@ -812,8 +808,8 @@ mod tests {
     fn a_probe_within_half_a_second_stands_for_the_next_check() {
         let mut record = ProbeRecord::default();
         let probes = |record: &mut ProbeRecord, now_us| {
-            let check = Check::new(EventKind::UiaElementSelected, false, Vec::new());
-            let (calls, _, checked, _) = run(check, record, now_us, |call| match call {
+            let check = CheckFacts::new(EventKind::UiaElementSelected, false, Vec::new());
+            let (calls, _, checked, _) = run(&check, record, now_us, |call| match call {
                 Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                 Call::Classes(_) => Answer::Class(unlisted()),
                 _ => Answer::Provider(false),
@@ -837,9 +833,9 @@ mod tests {
             EventKind::UiaWindowOpened,
             EventKind::UiaPropertyChanged,
         ] {
-            let check = Check::new(kind, true, vec![ElementToken(2)]);
+            let check = CheckFacts::new(kind, true, vec![ElementToken(2)]);
             let (calls, walked, checked, _) =
-                run(check, &mut ProbeRecord::default(), 0, |call| match call {
+                run(&check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                     Call::Classes(_) => Answer::Class(unlisted()),
                     _ => Answer::Provider(true),
@@ -868,8 +864,8 @@ mod tests {
             (Read::Answered(None), Walked::NoWindow),
             (Read::Failed, Walked::NoWindow),
         ] {
-            let check = Check::new(EventKind::UiaNotification, false, Vec::new());
-            let (calls, walked, _, _) = run(check, &mut ProbeRecord::default(), 0, |_| {
+            let check = CheckFacts::new(EventKind::UiaNotification, false, Vec::new());
+            let (calls, walked, _, _) = run(&check, &mut ProbeRecord::default(), 0, |_| {
                 Answer::Nearest(nearest)
             });
             assert_eq!(calls, [Call::NearestWindow]);
@@ -887,9 +883,9 @@ mod tests {
             (Read::Failed, false),
             (Read::Answered(true), true),
         ] {
-            let check = Check::new(EventKind::UiaFocus, true, vec![ElementToken(8)]);
+            let check = CheckFacts::new(EventKind::UiaFocus, true, vec![ElementToken(8)]);
             let (calls, _, checked, _) =
-                run(check, &mut ProbeRecord::default(), 0, |call| match call {
+                run(&check, &mut ProbeRecord::default(), 0, |call| match call {
                     Call::NearestWindow => Answer::Nearest(Read::Answered(Some(5))),
                     Call::Classes(_) => Answer::Class(listed_uia()),
                     Call::PreviousSibling => Answer::Focus(sibling),
@@ -917,8 +913,8 @@ mod tests {
     /// A kind no UI Automation handler checks passes through with no call.
     #[test]
     fn a_kind_with_no_handler_makes_no_call() {
-        let check = Check::new(EventKind::UiaTextChanged, true, vec![ElementToken(1)]);
-        let (calls, walked, _, _) = run(check, &mut ProbeRecord::default(), 0, |call| {
+        let check = CheckFacts::new(EventKind::UiaTextChanged, true, vec![ElementToken(1)]);
+        let (calls, walked, _, _) = run(&check, &mut ProbeRecord::default(), 0, |call| {
             panic!("no call: {call:?}")
         });
         assert_eq!(calls, Vec::new());

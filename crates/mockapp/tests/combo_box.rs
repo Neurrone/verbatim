@@ -229,7 +229,7 @@ fn the_new_value_is_the_items_name_as_it_is_now() {
     let selections = Selections::new(hwnd);
     app.send("select ten");
     let (element, states) = selections.next("Ten");
-    let mut tell = core.uia_tell(
+    let mut tell = core.checked_tell(
         EventKind::UiaElementSelected,
         &element,
         Some(states),

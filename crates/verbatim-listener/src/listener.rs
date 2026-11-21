@@ -71,7 +71,7 @@ use windows::Win32::UI::Accessibility::{
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{Answer, Ask, ObjectRef, Outcome, Refusal, Request};
-use verbatim_model::tell::Payload;
+use verbatim_model::tell::{Event, Payload};
 use verbatim_model::{Percent, Pid, StateSet};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{Backlog, ChildIo, SendError, Sender, Served, Serving};
@@ -92,9 +92,11 @@ mod checking;
 mod tells;
 
 use asked::{UiaJob, UiaReading};
-use checking::{CheckEvent, Checks, Kept};
+pub use checking::{CheckEvent, KeptElements, Told, cached_of, check_event};
+use checking::{Checks, Kept};
 
-use tells::{EventReads, Held, SystemReads, TellKey, Tells, tell_win_event};
+pub use tells::{Applications, EventReads, Pending, PendingWindow, TellKey, msaa_tell};
+use tells::{Held, SystemReads, Tells, tell_win_event};
 use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger, ThreadTimer};
 use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Seen, Step, TimerChange};
 use verbatim_listener_logic::kept::{Reported, View};
@@ -269,6 +271,24 @@ impl Waiting {
         }
         self.queued.push_back((Some(key), message));
     }
+}
+
+/// What reaches Core of `tells`, placed in order while a write to Core is
+/// in flight: the writer's merge leaves one per object, kind and raising
+/// thread, the newest at the back ([`Waiting::merged`]). Public so that
+/// mockapp's tests tell Core of a burst as the listener's pipe brings it.
+#[must_use]
+pub fn written_together(tells: Vec<(TellKey, Event)>) -> Vec<Event> {
+    let mut waiting = Waiting::default();
+    for (key, tell) in tells {
+        let _ = waiting.push(Sent::Tell(key, ListenerToCore::Tell(Box::new(tell))));
+    }
+    std::iter::from_fn(|| waiting.pop())
+        .filter_map(|sent| match sent {
+            Sent::Message(ListenerToCore::Tell(tell)) => Some(*tell),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A send's outcome: once the listener is shutting down, or Core's pipe

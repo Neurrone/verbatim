@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
-use verbatim_ia2::{WinEvent, WinEventKind};
+use verbatim_ia2::WinEvent;
 use verbatim_listener_logic::foreground::{Front, Pending as Foreground, Seen, TimerChange};
 use verbatim_listener_logic::tell::{dropped_by_class, hang_tested, tell_window};
 use verbatim_model::event_kind::EventKind;
@@ -36,7 +36,7 @@ use verbatim_process::transport::Sender;
 /// path reads Windows' state only through it, so the event path's
 /// call-count test (`a_flood_events_window_facts_are_read_once`) sees each
 /// read.
-pub(super) trait EventReads: WindowReads {
+pub trait EventReads: WindowReads {
     /// Whether `window` is a window that exists (`IsWindow`).
     fn exists(&self, window: isize) -> bool;
     /// Whether `window`, a window found to exist, is ghosted or hung
@@ -70,7 +70,7 @@ impl EventReads for SystemReads {
 /// A tell's key in the listener's merge: its object, kind and raising
 /// thread, NVDA's limiter's key (`orderedWinEventLimiter.py` 63, 79).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TellKey {
+pub struct TellKey {
     kind: EventKind,
     object: EventObject,
     thread: u32,
@@ -80,7 +80,7 @@ pub(super) struct TellKey {
 /// foreground's part of its window facts, which is read as it is placed,
 /// unless its check thread read them where NVDA judges acceptance
 /// ([`PendingWindow::Whole`]).
-pub(super) struct Pending {
+pub struct Pending {
     pub(super) trace_id: TraceId,
     pub(super) kind: EventKind,
     pub(super) process: Pid,
@@ -97,7 +97,7 @@ pub(super) struct Pending {
 /// The window a tell is judged by, before it is placed: found, with the
 /// part of its facts that depends on it alone or with all of them, or why
 /// there is none.
-pub(super) enum PendingWindow {
+pub enum PendingWindow {
     /// Found, the foreground's part of its facts read as the tell is
     /// placed.
     Found(WindowPart),
@@ -112,8 +112,9 @@ pub(super) enum PendingWindow {
 
 impl Pending {
     /// The tell, its window facts completed with the foreground's part
-    /// read now, and its key.
-    fn finish(self, reads: &impl WindowReads) -> (TellKey, Event) {
+    /// read now through `reads`, and its key. Public so that mockapp's
+    /// tests place a tell as the listener places it.
+    pub fn finish(self, reads: &impl WindowReads) -> (TellKey, Event) {
         let key = TellKey {
             kind: self.kind,
             object: self.object.clone(),
@@ -283,7 +284,7 @@ fn foreground() -> isize {
 /// be opened, a protected process such as csrss, is known by its id alone,
 /// with no name.
 #[derive(Default)]
-pub(super) struct Applications {
+pub struct Applications {
     known: BTreeMap<Pid, (Option<Target>, String)>,
     /// How many were known at the last sweep of the exited.
     swept_at: usize,
@@ -292,7 +293,7 @@ pub(super) struct Applications {
 impl Applications {
     /// The executable name of `process`, lower-cased with no folder or
     /// extension, empty when it cannot be read.
-    pub(super) fn name(&mut self, process: Pid) -> String {
+    pub(crate) fn name(&mut self, process: Pid) -> String {
         if let Some((target, name)) = self.known.get(&process)
             && target.as_ref().is_none_or(|target| !target.has_exited())
         {
@@ -350,47 +351,88 @@ pub(super) fn tell_win_event(
     (at_us, class): (u64, Option<&str>),
     reads: &impl EventReads,
 ) -> Seen<Held> {
+    let Some(kind) = verbatim_ia2::tell_kind(&event) else {
+        return Seen::Other {
+            item: None,
+            observed_at_us: at_us,
+        };
+    };
+    let address = (event.hwnd, event.id_object, event.id_child);
+    tell_msaa(
+        applications,
+        (kind, address, event.thread),
+        (at_us, class),
+        reads,
+    )
+}
+
+/// The tell the listener sends of an MSAA event of `kind` on `address`
+/// (window, object and child), raised by `thread` and received at
+/// `at_us`, its foreground facts read through `reads` as it is placed;
+/// `None` when a local drop takes it, and for a window's destruction,
+/// which is no tell. Public so that mockapp's tests tell Core of
+/// mockapp's own `WinEvent`s with the listener's code.
+pub fn msaa_tell(
+    applications: &mut Applications,
+    (kind, address, thread): (EventKind, (isize, i32, i32), u32),
+    at_us: u64,
+    reads: &impl EventReads,
+) -> Option<(TellKey, Event)> {
+    let item = match tell_msaa(applications, (kind, address, thread), (at_us, None), reads) {
+        Seen::Foreground { item, .. } | Seen::Shell { item, .. } | Seen::Other { item, .. } => item,
+        Seen::Timer => None,
+    };
+    match item? {
+        Held::Tell(tell) => Some(tell.finish(reads)),
+        Held::Destroyed { .. } | Held::IdleAnswer(_) => None,
+    }
+}
+
+/// [`tell_win_event`] for an event already named by its kind.
+fn tell_msaa(
+    applications: &mut Applications,
+    (kind, (hwnd, id_object, id_child), thread): (EventKind, (isize, i32, i32), u32),
+    (at_us, class): (u64, Option<&str>),
+    reads: &impl EventReads,
+) -> Seen<Held> {
     let other = |item| Seen::Other {
         item,
         observed_at_us: at_us,
     };
-    let Some(kind) = verbatim_ia2::tell_kind(&event) else {
-        return other(None);
-    };
     let window = match tell_window(
         kind,
-        (event.hwnd, event.id_object, event.id_child),
+        (hwnd, id_object, id_child),
         |window| reads.exists(window),
         reads.desktop(),
     ) {
         Ok(window) => window,
         Err(reason) => {
-            tracing::trace!(?kind, hwnd = event.hwnd, reason, "a WinEvent is not told");
+            tracing::trace!(?kind, hwnd, reason, "a WinEvent is not told");
             return other(None);
         }
     };
     if kind == EventKind::Destroy {
         return other(Some(Held::Destroyed {
             window: handle(window),
-            process: reads.process_of_thread(event.thread).map(Pid),
+            process: reads.process_of_thread(thread).map(Pid),
             at_us,
         }));
     }
     let class = match class {
-        Some(class) if event.hwnd == window => class.to_owned(),
+        Some(class) if hwnd == window => class.to_owned(),
         _ => reads.class(window),
     };
     let console = class == CONSOLE_WINDOW_CLASS;
     let seen = |item| {
         let front = Front {
             window,
-            thread: event.thread,
+            thread,
             console,
             observed_at_us: at_us,
         };
-        match event.kind {
-            WinEventKind::Foreground => Seen::Foreground { front, item },
-            WinEventKind::ShellForeground => Seen::Shell {
+        match kind {
+            EventKind::Foreground => Seen::Foreground { front, item },
+            EventKind::ShellForeground => Seen::Shell {
                 front: Front {
                     console: false,
                     ..front
@@ -408,14 +450,14 @@ pub(super) fn tell_win_event(
     // A console window's events are served by the process of the thread
     // that raised them.
     let process = if console || owner == 0 {
-        reads.process_of_thread(event.thread)
+        reads.process_of_thread(thread)
     } else {
         Some(owner)
     };
     let Some(process) = process.map(Pid) else {
         return dropped("the process serving the window cannot be read");
     };
-    if let Some(reason) = dropped_by_class(kind, &class, event.id_object) {
+    if let Some(reason) = dropped_by_class(kind, &class, id_object) {
         return dropped(reason);
     }
     if hang_tested(kind) && reads.hang_state(window).is_hung() {
@@ -433,19 +475,19 @@ pub(super) fn tell_win_event(
         kind,
         application: applications.name(process),
         process,
-        thread: event.thread,
+        thread,
         at_us,
         object: EventObject::Msaa {
             window: handle(window),
-            object: event.id_object,
-            child: event.id_child,
+            object: id_object,
+            child: id_child,
         },
         cached: PropertyValues(Vec::new()),
         payload,
         window: PendingWindow::Found(WindowPart::read(
             reads,
             window,
-            console.then_some((event.thread, process.0)),
+            console.then_some((thread, process.0)),
         )),
         checked: None,
     };
@@ -468,6 +510,7 @@ mod tests {
     use verbatim_process::transport::{Backlog, EVENT_PIPE_BUFFER};
 
     use super::*;
+    use verbatim_ia2::WinEventKind;
 
     /// A message-only window of this thread's, of class `Static`, which no
     /// desktop shows and which is never in front: destroyed when dropped.

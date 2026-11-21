@@ -32,7 +32,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTreeWalker, UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId,
 };
 
-use verbatim_listener_logic::check::{Call, Check, ProbeRecord, SWITCHER_ITEM_CLASS, Walked};
+use verbatim_listener_logic::check::{
+    Call, CheckCalls, CheckFacts, ProbeRecord, SWITCHER_ITEM_CLASS, Walked,
+};
 use verbatim_listener_logic::check_threads::{CheckThreads, Pushed, Take};
 use verbatim_listener_logic::kept::{ListenerKept, Start, View};
 use verbatim_listener_logic::schedule::JobKind;
@@ -41,16 +43,17 @@ use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::Probe;
-use verbatim_model::tell::{ElementToken, EventObject, Payload, Read};
+use verbatim_model::tell::{AcceptanceFacts, ElementToken, EventObject, Payload, Read};
 use verbatim_model::{Pid, StateSet, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
+use verbatim_reader_rules::class::WindowClasses;
 use verbatim_uia::{Agile, Cached, Direction, ElementExt, ListenerEvent, Request, Uia};
 
 use super::Outgoing;
 use super::asked::{UiaJob, UiaReading};
 use super::tells::{Applications, Held, Pending, PendingWindow, SystemReads, Tells};
 use crate::reading::{IdleWaiter, Readers};
-use verbatim_win32::window_facts::WindowPart;
+use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
 /// The UI Automation class of the Office menu item NVDA's
 /// `PlaceholderNetUITWMenuItem` is made of (`NVDAObjects/UIA/__init__.py`
@@ -82,7 +85,9 @@ impl CheckJob {
 
 /// One UI Automation event, as its callback hands it to its application's
 /// check thread: the element, kept with no call, and what came with it.
-pub(super) struct CheckEvent {
+/// Public so that mockapp's tests check and tell mockapp's own events
+/// with the listener's code ([`check_event`], [`CheckEvent::into_tell`]).
+pub struct CheckEvent {
     trace_id: TraceId,
     kind: EventKind,
     process: Pid,
@@ -109,7 +114,8 @@ impl CheckEvent {
     /// kind caches them (an element selected), `payload` what its kind
     /// brings beyond its properties. Local calls: `None` when the element
     /// cannot be kept for its check.
-    pub(super) fn new(
+    #[must_use]
+    pub fn new(
         kind: EventKind,
         (sender, fields): (&Cached<ListenerEvent>, &ListenerEvent),
         process: Pid,
@@ -142,12 +148,49 @@ impl CheckEvent {
                 && fields.role.control_type == Some(UIA_ListItemControlTypeId.0),
         })
     }
+
+    /// The element's runtime id, from its event's cache.
+    #[must_use]
+    pub fn runtime_id(&self) -> &RuntimeId {
+        &self.runtime_id
+    }
+
+    /// The tell of this event, whose check found `told`: its object made
+    /// by `object` from the element and its runtime id (kept behind a
+    /// token, or named by its runtime id alone), its application's name
+    /// `application`, and the parent's automation id the check read in its
+    /// cached properties' place. Its window's foreground facts, when its
+    /// check did not read them, are read as it is placed
+    /// ([`Pending::finish`]).
+    pub fn into_tell(
+        self,
+        told: Told,
+        object: impl FnOnce(Agile<ListenerEvent>, RuntimeId) -> EventObject,
+        application: String,
+    ) -> Pending {
+        let event = self;
+        Pending {
+            trace_id: event.trace_id,
+            kind: event.kind,
+            process: event.process,
+            application,
+            thread: told.thread,
+            at_us: event.at_us,
+            object: object(event.element, event.runtime_id),
+            cached: with_answer(event.cached, told.parent),
+            payload: event.payload,
+            window: told.window,
+            checked: Some(told.checked),
+        }
+    }
 }
 
 /// The properties `kind` caches ([`verbatim_model::event_kind::EventKindEntry::cached`]),
 /// read from the event's cache, `fields`, of `process`, with `states` for a
-/// kind that caches them: no call.
-fn cached_of(
+/// kind that caches them: no call. Public so that mockapp's tests make a
+/// tell's cached properties as the listener makes them.
+#[must_use]
+pub fn cached_of(
     kind: EventKind,
     fields: &ListenerEvent,
     process: Pid,
@@ -522,42 +565,29 @@ impl Checks {
         let (own, waiters) = state.threads.checked(pid, generation);
         let mut unplaced = None;
         if own {
-            let object = if event.kind == EventKind::UiaProgress {
-                unplaced = Some(event.element);
-                EventObject::Followed {
-                    runtime_id: event.runtime_id,
-                }
-            } else {
-                let token =
-                    ElementToken(self.tokens.fetch_add(1, Ordering::Relaxed).wrapping_add(1));
-                self.kept.keep(
-                    (pid, token),
-                    (event.element, event.runtime_id.clone()),
-                    event.kind,
-                );
-                EventObject::Uia {
-                    token,
-                    runtime_id: event.runtime_id,
-                }
-            };
             let application = self
                 .applications
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .name(event.process);
-            let tell = Pending {
-                trace_id: event.trace_id,
-                kind: event.kind,
-                process: event.process,
+            let kind = event.kind;
+            let tell = event.into_tell(
+                told,
+                |element, runtime_id| {
+                    if kind == EventKind::UiaProgress {
+                        unplaced = Some(element);
+                        EventObject::Followed { runtime_id }
+                    } else {
+                        let token = ElementToken(
+                            self.tokens.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
+                        );
+                        self.kept
+                            .keep((pid, token), (element, runtime_id.clone()), kind);
+                        EventObject::Uia { token, runtime_id }
+                    }
+                },
                 application,
-                thread: told.thread,
-                at_us: event.at_us,
-                object,
-                cached: with_answer(event.cached, told.parent),
-                payload: event.payload,
-                window: told.window,
-                checked: Some(told.checked),
-            };
+            );
             self.tells().pass_hold(Held::Tell(Box::new(tell)));
         } else {
             unplaced = Some(event.element);
@@ -570,8 +600,8 @@ impl Checks {
     }
 }
 
-/// What a check found, for its tell.
-struct Told {
+/// What a check found, for its tell ([`CheckEvent::into_tell`]).
+pub struct Told {
     window: PendingWindow,
     /// The thread that owns the window found, 0 for none.
     thread: u32,
@@ -602,12 +632,25 @@ fn run(checks: &Arc<Checks>, pid: Pid, generation: u64, wake: &Arc<Condvar>) {
     while let Some(job) = next(checks, pid, generation, wake) {
         match job {
             CheckJob::Check(event) => {
-                let told = check(
-                    checks,
-                    (pid, &event),
+                let sender = event.element.resolve().ok();
+                // The kept elements' references, taken under their lock and
+                // resolved once it is let go; one that cannot be resolved
+                // answers its read as failed.
+                let kept: Vec<(ElementToken, Option<Cached<ListenerEvent>>)> = checks
+                    .kept_with(pid, &event.runtime_id)
+                    .into_iter()
+                    .map(|(token, element)| (token, element.resolve().ok()))
+                    .collect();
+                let told = check_event(
+                    &event,
+                    (sender.as_ref(), &kept),
                     (walker.as_ref(), parent_request.as_ref()),
-                    &mut record,
+                    (&mut record, &now_us),
+                    &SystemReads,
+                    &mut |_| {},
                 );
+                drop(kept);
+                drop(sender);
                 checks.checked((pid, generation), event, told);
             }
             CheckJob::Release(elements) => {
@@ -655,117 +698,148 @@ fn next(checks: &Checks, pid: Pid, generation: u64, wake: &Arc<Condvar>) -> Opti
     }
 }
 
+/// The kept elements with an event's runtime id, each resolved, `None`
+/// for one that could not be.
+pub type KeptElements = [(ElementToken, Option<Cached<ListenerEvent>>)];
+
+/// The calls of one event's check, made on its element, `sender` (`None`
+/// when it could not be resolved, which fails every read of it), and on
+/// the kept elements with its runtime id, `kept`, each with UI
+/// Automation's transaction timeout, the window facts read through
+/// `reads` and the clock read by `now`.
+struct SenderCalls<'a, R> {
+    sender: Option<&'a Cached<ListenerEvent>>,
+    kept: &'a KeptElements,
+    walker: Option<&'a IUIAutomationTreeWalker>,
+    parent_request: Option<&'a Request<ListenerEvent>>,
+    reads: &'a R,
+    now: &'a dyn Fn() -> u64,
+    observe: &'a mut dyn FnMut(Call),
+    /// The acceptance facts, read where NVDA judges acceptance.
+    accepted: Option<AcceptanceFacts>,
+}
+
+impl<R: WindowReads> CheckCalls for SenderCalls<'_, R> {
+    fn calling(&mut self, call: Call) {
+        (self.observe)(call);
+    }
+
+    fn nearest_window(&mut self) -> Read<Option<isize>> {
+        self.sender.map_or(Read::Failed, |sender| {
+            verbatim_uia::nearest_window_lookup(sender.live().element())
+                .map_or(Read::Failed, Read::Answered)
+        })
+    }
+
+    fn classes(&mut self, window: isize) -> WindowClasses {
+        verbatim_win32::window::window_classes(window)
+    }
+
+    fn probe(&mut self, window: isize) -> Probe {
+        let began_us = (self.now)();
+        let (thread, _) = verbatim_win32::window::window_owner(window);
+        Probe {
+            window: handle(window),
+            thread,
+            provider: verbatim_uia::raw_probe(window).has_provider(),
+            began_us,
+        }
+    }
+
+    fn acceptance(&mut self, window: isize) {
+        self.accepted =
+            Some(WindowPart::read(self.reads, window, None).with_foreground(self.reads));
+    }
+
+    fn kept_focus(&mut self, token: ElementToken) -> Read<bool> {
+        self.kept
+            .iter()
+            .find(|(kept, _)| *kept == token)
+            .and_then(|(_, element)| element.as_ref())
+            .map_or(Read::Failed, keyboard_focus)
+    }
+
+    fn previous_sibling(&mut self) -> Read<bool> {
+        let (Some(sender), Some(walker)) = (self.sender, self.walker) else {
+            return Read::Failed;
+        };
+        match sender.live().step(walker, Direction::PreviousSibling) {
+            Ok(_) => Read::Answered(true),
+            // The null element `windows` reports for none.
+            Err(error) if error.code().is_ok() => Read::Answered(false),
+            Err(_) => Read::Failed,
+        }
+    }
+
+    fn parent_automation_id(&mut self) -> Read<Option<String>> {
+        let (Some(sender), Some(walker), Some(request)) =
+            (self.sender, self.walker, self.parent_request)
+        else {
+            return Read::Failed;
+        };
+        match sender.live().walk(walker, Direction::Parent, request) {
+            Ok(parent) => Read::Answered(parent.read().automation_id),
+            // The null element `windows` reports for none.
+            Err(error) if error.code().is_ok() => Read::Answered(None),
+            Err(_) => Read::Failed,
+        }
+    }
+
+    fn keyboard_focus(&mut self) -> Read<bool> {
+        self.sender.map_or(Read::Failed, keyboard_focus)
+    }
+}
+
 /// Makes every call NVDA's handler for `event`'s kind makes at delivery
-/// ([`Check`]), with no lock held, each with UI Automation's transaction
-/// timeout, and gathers what its tell carries.
-fn check(
-    checks: &Checks,
-    (pid, event): (Pid, &CheckEvent),
+/// ([`verbatim_listener_logic::check::check`]) on its element, `sender`,
+/// and on the kept elements with its runtime id, `kept`, with no lock
+/// held, and gathers what its tell carries. `record` is the thread's probe
+/// record and `now` its clock; window facts are read through `reads`, and
+/// `observe` sees each call before it is made. Public so that mockapp's
+/// tests check mockapp's own events with the listener's code.
+pub fn check_event(
+    event: &CheckEvent,
+    (sender, kept): (Option<&Cached<ListenerEvent>>, &KeptElements),
     (walker, parent_request): (
         Option<&IUIAutomationTreeWalker>,
         Option<&Request<ListenerEvent>>,
     ),
-    record: &mut ProbeRecord,
+    (record, now): (&mut ProbeRecord, &dyn Fn() -> u64),
+    reads: &impl WindowReads,
+    observe: &mut dyn FnMut(Call),
 ) -> Told {
-    let sender = event.element.resolve().ok();
-    let kept = checks.kept_with(pid, &event.runtime_id);
-    let mut check = Check::new(
+    let facts = CheckFacts::new(
         event.kind,
         event.placeholder_candidate,
         kept.iter().map(|(token, _)| *token).collect(),
     )
     .reading_parent(event.switcher_item);
-    let failed = || Read::Failed;
-    // The acceptance facts, read where NVDA judges acceptance.
-    let mut accepted = None;
-    while let Some(call) = check.next(record, now_us()) {
-        match call {
-            Call::NearestWindow => check.walked(sender.as_ref().map_or(Read::Failed, |sender| {
-                verbatim_uia::nearest_window_lookup(sender.live().element())
-                    .map_or(Read::Failed, Read::Answered)
-            })),
-            Call::Classes(window) => {
-                check.classed(verbatim_win32::window::window_classes(window));
-            }
-            Call::Probe(window) => {
-                let began_us = now_us();
-                let (thread, _) = verbatim_win32::window::window_owner(window);
-                let provider = verbatim_uia::raw_probe(window).has_provider();
-                check.probed(
-                    Probe {
-                        window: handle(window),
-                        thread,
-                        provider,
-                        began_us,
-                    },
-                    record,
-                );
-            }
-            Call::Acceptance(window) => {
-                accepted = Some(
-                    WindowPart::read(&SystemReads, window, None).with_foreground(&SystemReads),
-                );
-                check.accepted();
-            }
-            Call::KeptFocus(token) => {
-                let focused = kept
-                    .iter()
-                    .find(|(kept, _)| *kept == token)
-                    .and_then(|(_, element)| element.resolve().ok())
-                    .map_or_else(failed, |element| keyboard_focus(&element));
-                check.kept_focus(token, focused);
-            }
-            Call::PreviousSibling => {
-                let has = match (sender.as_ref(), walker) {
-                    (Some(sender), Some(walker)) => {
-                        match sender.live().step(walker, Direction::PreviousSibling) {
-                            Ok(_) => Read::Answered(true),
-                            // The null element `windows` reports for none.
-                            Err(error) if error.code().is_ok() => Read::Answered(false),
-                            Err(_) => Read::Failed,
-                        }
-                    }
-                    _ => Read::Failed,
-                };
-                check.previous_sibling(has);
-            }
-            Call::ParentAutomationId => {
-                let id = match (sender.as_ref(), walker, parent_request) {
-                    (Some(sender), Some(walker), Some(request)) => {
-                        match sender.live().walk(walker, Direction::Parent, request) {
-                            Ok(parent) => Read::Answered(parent.read().automation_id),
-                            // The null element `windows` reports for none.
-                            Err(error) if error.code().is_ok() => Read::Answered(None),
-                            Err(_) => Read::Failed,
-                        }
-                    }
-                    _ => Read::Failed,
-                };
-                check.parent_automation_id(id);
-            }
-            Call::KeyboardFocus => {
-                check.keyboard_focus(sender.as_ref().map_or_else(failed, keyboard_focus));
-            }
-        }
-    }
-    let (found, checked, parent) = check.finish();
-    let window = match found {
+    let mut calls = SenderCalls {
+        sender,
+        kept,
+        walker,
+        parent_request,
+        reads,
+        now,
+        observe,
+        accepted: None,
+    };
+    let found = verbatim_listener_logic::check::check(&facts, (record, now()), &mut calls);
+    let window = match found.walked {
         Walked::Found(window) => Some(window),
         Walked::NotWalked => (event.own_window != 0).then_some(event.own_window),
         Walked::NoWindow | Walked::Failed => None,
     };
     Told {
-        window: match (window, found, accepted) {
+        window: match (window, found.walked, calls.accepted) {
             (Some(_), _, Some(facts)) => PendingWindow::Whole(Box::new(facts)),
-            (Some(window), _, None) => {
-                PendingWindow::Found(WindowPart::read(&SystemReads, window, None))
-            }
+            (Some(window), _, None) => PendingWindow::Found(WindowPart::read(reads, window, None)),
             (None, Walked::Failed, _) => PendingWindow::Failed,
             (None, _, _) => PendingWindow::NoWindow,
         },
         thread: window.map_or(0, |window| verbatim_win32::window::window_owner(window).0),
-        checked,
-        parent,
+        checked: found.checked,
+        parent: found.parent,
     }
 }
 
