@@ -21,16 +21,17 @@
 //! function callers use.
 //!
 //! Windows Terminal's `FindText` answers a search that finds nothing in
-//! its range with a range rather than null, of two kinds (seen in Windows
-//! Terminal 1.24.12741 and 1.25.3131 on Windows 11 26300, 2026-11-21).
-//! When the text is elsewhere in the document, every call on the range
-//! fails with `RPC_E_SERVERFAULT`, the provider's exception, while a call
-//! on a real range given it fails with `E_INVALIDARG`. When the text is
+//! its range with a range rather than null, of two kinds (probed in
+//! Windows Terminal 1.24.12741 on Windows 11 26300, 2026-11-21; 1.25.3131
+//! was seen raising the same faults). When the text is elsewhere in the
+//! document, every call on the range fails with `RPC_E_SERVERFAULT`, the
+//! provider's exception, while a call on a real range given it fails with
+//! `E_INVALIDARG`. When the text is
 //! nowhere, the range clones, and `Compare` finds it equal to every other
 //! such range, but every other call on it or given it fails with
 //! `RPC_E_SERVERFAULT`. Inside a remote operation `RPC_E_SERVERFAULT` ends
 //! the whole run with `ExecutionFailure` whatever try block holds the call,
-//! so the program never makes such a call. It first searches the whole
+//! so the program avoids such calls. It first searches the whole
 //! document and compares the hit with the answer for text no terminal
 //! holds, [`ABSENT`]: equal is the nowhere range, and the search ends with
 //! nothing found. Otherwise the text is somewhere, so each later miss is
@@ -40,6 +41,14 @@
 //! that answers null both checks pass by: a null first hit is nothing
 //! found, and a null answer for [`ABSENT`] leaves no nowhere range to
 //! compare. The classic implementation takes any failed call as not found.
+//! The first search's two `FindText` calls count within [`FIND_CALLS`].
+//!
+//! Limits: output that trims the text from the history after the first
+//! search makes a later miss the nowhere kind, whose call ends the run;
+//! the search then falls back to the classic implementation, which
+//! answers correctly. And a search for exactly [`ABSENT`] in a provider
+//! that answers null for a miss and whose text holds those characters
+//! finds nothing.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Line,
@@ -59,8 +68,10 @@ use crate::operation::Value;
 pub const FIND_MATCHES: usize = 20;
 
 /// How many `FindText` calls a search makes at most, counting the hits
-/// within a row it passes over: five for each match it takes, so a needle
-/// with up to four hits within rows for each row it starts still gets all
+/// within a row it passes over and, in the remote program, the two that
+/// first look for the text in the whole document: five for each match it
+/// takes, so a needle with up to four hits within rows for each row it
+/// starts still gets all
 /// [`FIND_MATCHES`], while one found mostly within rows, such as a short
 /// input, ends after about 300 milliseconds at the estimated 3 a call
 /// remotely rather than walking the whole history (`books/dev/src/reference/performance.md`,
@@ -69,6 +80,9 @@ pub const FIND_CALLS: usize = 5 * FIND_MATCHES;
 
 /// More rows than any terminal holds, for counting rows to the end.
 const FAR: i32 = 1_000_000;
+
+/// How many `FindText` calls [`somewhere`] makes at most.
+const SOMEWHERE_CALLS: i32 = 2;
 
 /// Text no terminal's buffer holds: control characters, which a terminal
 /// acts on rather than writes, so its search answers Windows Terminal's
@@ -328,7 +342,8 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
     };
     let (aboves, texts, taken, going_down, one) = (s.aboves, s.texts, s.taken, s.going_down, s.one);
     let present = somewhere(b, document, s);
-    let calls = b.new_int(0);
+    // The first search's calls count within the bound.
+    let calls = b.new_int(SOMEWHERE_CALLS);
     let most_calls = b.int(i32::try_from(FIND_CALLS).unwrap_or(i32::MAX));
     let most = b.int(i32::try_from(FIND_MATCHES).unwrap_or(i32::MAX));
     let down = Direction {

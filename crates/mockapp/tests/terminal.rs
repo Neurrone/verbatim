@@ -720,7 +720,31 @@ fn the_search_ends_after_its_calls(remote: bool) {
     // Six hits a row, a row more than the calls allow.
     rows.extend(vec![within; verbatim_uia_rops::FIND_CALLS / 6 + 1]);
     rows.push("ready>");
-    assert_eq!(search(&rows, ("y", -10), remote), []);
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find-calls");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 3");
+    show(&mut app, hwnd, &rows);
+    let source = source(&uia, hwnd, remote);
+    let mut terminal = Terminal::new();
+    let _ = read_terminal(&uia, &source, &mut terminal, remote);
+    common::reset_hits(hwnd);
+    assert_eq!(
+        find_on_path(&uia, &source, &terminal, ("y", -10), remote),
+        []
+    );
+    // Every `FindText` call the search made, the remote program's two over
+    // the whole document among them.
+    let calls = common::read_hits(hwnd)
+        .into_iter()
+        .find_map(|(name, count)| (name == "FindText").then_some(count));
+    app.quit();
+    assert_eq!(
+        calls,
+        Some(u32::try_from(verbatim_uia_rops::FIND_CALLS).expect("a small bound"))
+    );
 }
 
 fn the_search_ends_after_its_calls_remote() {

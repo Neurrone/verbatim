@@ -1849,7 +1849,8 @@ row with the same start. A failing call ends that direction, and the
 program makes none of the calls on the range Windows Terminal returns for
 nothing found that would end it (`terminal_find.rs`'s module
 documentation). A hit within a row is passed over uncounted, so the search is
-bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`),
+bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`), the
+remote program's two over the whole document among them,
 because a one-letter needle would otherwise walk the whole history.
 
 - Instructions: at the bound with 19 matches taken, its worst case, 3,065
