@@ -24,7 +24,7 @@ use verbatim_uia::{
     Shape, Uia,
 };
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, CaretUnit, Comparison, ControlledQuery, Error,
+    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
     RangeAction, RangeEnd, RangeQuery, SnapshotQuery, StatesQuery, Status, StepQuery,
     TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, caret_read_remote,
@@ -430,7 +430,6 @@ fn caret_query<'a>(
         since: old,
         previous_selection: old.map(|old| (old, old)),
         previous_collapsed: false,
-        unit: None,
         formats: Some(FormatSpan::Line),
         attributes: Attributes::ALL,
         learning: Attributes::ALL,
@@ -444,7 +443,7 @@ fn caret_query<'a>(
 
 /// The caret read: a line of 64 stretches, reached by walking one mixed
 /// stretch by words and a mixed word by characters (`italic.json`), every
-/// attribute read and learned, with a word, the evidence, a selection's
+/// attribute read and learned, with the evidence, a selection's
 /// change, the selection's text, and what the old selection's ends hold
 /// now, each up to the cap for compared text; and, typically, the report after a focus on a line of plain text
 /// with the default theme's two attributes, the annotation types and the
@@ -463,7 +462,6 @@ fn caret_reads_execute_exactly() {
     };
     let worst = counted(|| {
         let mut worst = caret_query(&notes, &pattern, Some(old));
-        worst.unit = Some(CaretUnit::At(TextUnit_Word));
         worst.read_selection_text = true;
         worst.read_previous_text = true;
         worst.recheck = true;
@@ -490,8 +488,9 @@ fn caret_reads_execute_exactly() {
     // the caret again at its end, as a key's check does (2026-11-09), and
     // 4485 and 97 before the caret became the selection's start, read with
     // no `TextPattern2` caret and no search for where the selection starts
-    // (2026-11-17).
-    assert_eq!([worst, typical], [4453, 91], "caret read worst and typical");
+    // (2026-11-17), and 4453 before the word read with it went with the
+    // caret keys' starting read (2026-11-22).
+    assert_eq!([worst, typical], [4446, 91], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one

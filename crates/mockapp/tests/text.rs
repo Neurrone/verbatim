@@ -36,7 +36,7 @@ use verbatim_outpost::text::{Anchors, NodeText, TextSource, held, perform};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, CaretUnit, FormatSpan, LocationQuery, Movement, Position,
+    Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
     RangeAction, RangeAnswer, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom,
     TextTarget, UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote,
     text_location_classic, text_location_remote, text_range_classic, text_range_remote,
@@ -373,7 +373,6 @@ struct CaretSummary {
     moved: bool,
     selection_moved: bool,
     line: (String, usize),
-    unit: Option<(String, usize)>,
     runs: Vec<(usize, RunAttributes)>,
     changes: Option<Vec<(bool, String)>>,
     texts: (Option<String>, Option<String>),
@@ -387,10 +386,6 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
         moved: answer.moved,
         selection_moved: answer.selection_moved,
         line: (text(&answer.line.text), answer.line.offset),
-        unit: answer
-            .unit
-            .as_ref()
-            .map(|unit| (text(&unit.text), unit.offset)),
         runs: answer
             .runs
             .iter()
@@ -440,13 +435,12 @@ fn remote_and_classic_caret_reads_agree() {
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
     let all = Attributes::ALL;
-    let query = |formats, unit| CaretQuery {
+    let query = |formats| CaretQuery {
         element: &element,
         pattern: &pattern,
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit,
         formats,
         attributes: all,
         learning: Attributes::NONE,
@@ -460,7 +454,7 @@ fn remote_and_classic_caret_reads_agree() {
     // The caret in "beta", a spelling error after bold "alpha": the line's
     // stretches are bold "alpha", a space, the error, and the line feed.
     common::apply(&mut app, hwnd, "caret doc 7");
-    let line = caret_both(&query(Some(FormatSpan::Line), None));
+    let line = caret_both(&query(Some(FormatSpan::Line)));
     assert_eq!(line.line, ("alpha beta\n".to_owned(), 7));
     assert_eq!(
         line.runs,
@@ -471,25 +465,18 @@ fn remote_and_classic_caret_reads_agree() {
             (1, mock_attributes(false, false)),
         ]
     );
-    // The word, with its formatting.
-    let word = caret_both(&query(
-        Some(FormatSpan::Unit),
-        Some(CaretUnit::At(TextUnit_Word)),
-    ));
-    assert_eq!(word.unit, Some(("beta".to_owned(), 1)));
-    assert_eq!(word.runs, [(4, mock_attributes(true, false))]);
     // The character alone.
-    let character = caret_both(&query(Some(FormatSpan::Character), None));
+    let character = caret_both(&query(Some(FormatSpan::Character)));
     assert_eq!(character.runs, [(0, mock_attributes(true, false))]);
     // Only what the theme asks for: no attributes, no formatting.
-    let mut nothing = query(Some(FormatSpan::Line), None);
+    let mut nothing = query(Some(FormatSpan::Line));
     nothing.attributes = Attributes::NONE;
     assert_eq!(caret_both(&nothing).runs, []);
 
     // The evidence: compared with where the caret was, and the selection.
-    let known = caret_read_classic(&query(None, None)).expect("the caret");
+    let known = caret_read_classic(&query(None)).expect("the caret");
     common::apply(&mut app, hwnd, "caret doc 8");
-    let mut moved = query(None, None);
+    let mut moved = query(None);
     moved.since = Some(RangeEnd {
         range: &known.caret,
         endpoint: Endpoint::Start,
@@ -514,7 +501,7 @@ fn remote_and_classic_caret_reads_agree() {
     // A selection made from the caret: its text, newly selected.
     let at_six = {
         common::apply(&mut app, hwnd, "caret doc 6");
-        caret_read_classic(&query(None, None)).expect("the caret")
+        caret_read_classic(&query(None)).expect("the caret")
     };
     common::apply(&mut app, hwnd, "caret doc 6 10");
     let six = RangeEnd {
@@ -524,7 +511,7 @@ fn remote_and_classic_caret_reads_agree() {
     let extended = caret_both(&CaretQuery {
         previous_selection: Some((six, six)),
         read_selection_text: true,
-        ..query(None, None)
+        ..query(None)
     });
     assert_eq!(
         extended.changes,
@@ -534,7 +521,7 @@ fn remote_and_classic_caret_reads_agree() {
     // Its ends moved, so its text is read to keep.
     assert_eq!(extended.texts, (Some("beta".to_owned()), None));
     common::apply(&mut app, hwnd, "caret doc 6 10");
-    let selected = caret_read_remote(&query(None, None)).expect("the caret");
+    let selected = caret_read_remote(&query(None)).expect("the caret");
     assert!(selected.selection.is_some());
     let again = caret_both(&CaretQuery {
         since: Some(RangeEnd {
@@ -551,7 +538,7 @@ fn remote_and_classic_caret_reads_agree() {
                 endpoint: Endpoint::End,
             },
         )),
-        ..query(None, None)
+        ..query(None)
     });
     assert!(!again.moved && !again.selection_moved);
     // With the texts asked for: what the previous selection's ends hold
@@ -571,12 +558,12 @@ fn remote_and_classic_caret_reads_agree() {
         )),
         read_selection_text: true,
         read_previous_text: true,
-        ..query(None, None)
+        ..query(None)
     });
     assert_eq!(texts.texts, (None, Some("beta".to_owned())));
     let alone = caret_both(&CaretQuery {
         read_selection_text: true,
-        ..query(None, None)
+        ..query(None)
     });
     assert_eq!(alone.texts, (Some("beta".to_owned()), None));
     // The caret is the selection's start, as NVDA's is, whichever end
@@ -585,10 +572,10 @@ fn remote_and_classic_caret_reads_agree() {
     // offset in its line.
     assert_eq!((alone.line.1, alone.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 10 end");
-    let at_end = caret_both(&query(None, None));
+    let at_end = caret_both(&query(None));
     assert_eq!((at_end.line.1, at_end.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 13 end");
-    let below = caret_both(&query(None, None));
+    let below = caret_both(&query(None));
     assert_eq!(
         (below.line, below.selection_start),
         (("alpha beta\n".to_owned(), 6), Some(6))
@@ -598,17 +585,17 @@ fn remote_and_classic_caret_reads_agree() {
     // provider's caret is on; one from the start of another line is not.
     assert!(!at_end.start_first);
     common::apply(&mut app, hwnd, "caret doc 0 5 end");
-    let first = caret_both(&query(None, None));
+    let first = caret_both(&query(None));
     assert_eq!((first.selection_start, first.start_first), (Some(0), true));
     common::apply(&mut app, hwnd, "caret doc 0 13 end");
-    let first_below = caret_both(&query(None, None));
+    let first_below = caret_both(&query(None));
     assert_eq!(
         (first_below.selection_start, first_below.start_first),
         (Some(0), true)
     );
 
     common::apply(&mut app, hwnd, "caret doc 11 13 end");
-    let second = caret_both(&query(None, None));
+    let second = caret_both(&query(None));
     assert_eq!(
         (second.selection_start, second.start_first),
         (Some(0), false)
@@ -621,7 +608,7 @@ fn remote_and_classic_caret_reads_agree() {
         &format!(r"set-text doc {}\n", "a".repeat(600)),
     );
     common::apply(&mut app, hwnd, "caret doc 0 600");
-    let long = caret_read_remote(&query(None, None)).expect("the caret");
+    let long = caret_read_remote(&query(None)).expect("the caret");
     let long_selection = long.selection.as_ref().expect("a selection");
     let capped = caret_both(&CaretQuery {
         previous_selection: Some((
@@ -635,12 +622,12 @@ fn remote_and_classic_caret_reads_agree() {
             },
         )),
         read_previous_text: true,
-        ..query(None, None)
+        ..query(None)
     });
     assert_eq!(capped.texts, (None, Some("a".repeat(513))));
     let capped = caret_both(&CaretQuery {
         read_selection_text: true,
-        ..query(None, None)
+        ..query(None)
     });
     assert_eq!(capped.texts, (Some("a".repeat(513)), None));
     app.quit();
@@ -664,7 +651,6 @@ fn a_failing_attribute_is_not_supported() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit: None,
         formats: Some(FormatSpan::Character),
         attributes: Attributes::ALL,
         learning: Attributes::NONE,
@@ -709,7 +695,6 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit: None,
         formats: Some(FormatSpan::Line),
         attributes: Attributes::ALL,
         learning: Attributes::NONE,
@@ -888,7 +873,6 @@ fn remote_and_classic_text_reads_agree() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit: None,
         formats: None,
         attributes: Attributes::NONE,
         learning: Attributes::NONE,
@@ -1398,7 +1382,6 @@ fn every_attribute_is_read_both_ways() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit: None,
         formats: Some(formats),
         attributes: Attributes::ALL,
         learning,
@@ -1528,7 +1511,6 @@ fn unsupported_attributes_are_found_both_ways() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        unit: None,
         formats: Some(FormatSpan::Line),
         attributes: Attributes::ALL,
         learning: Attributes::ALL,

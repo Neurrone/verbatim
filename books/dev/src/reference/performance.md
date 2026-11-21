@@ -2117,7 +2117,7 @@ first, the share of the limit in brackets:
   and 4 for each further controlled element. About 280 elements fit under
   the limit; the controlled list is the one bound the application sets
   (Settings' search suggestions were 25).
-- The caret read: 4,453 (45 percent) for a line of 64 stretches reached by
+- The caret read: 4,446 (44 percent) for a line of 64 stretches reached by
   walking a mixed stretch by words and characters, eleven attributes, and
   every selection text up to 513 units; 91 for the report after a focus on
   plain text with the default theme. Where every stretch is mixed

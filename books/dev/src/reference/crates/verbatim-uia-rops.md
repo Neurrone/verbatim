@@ -525,8 +525,8 @@ the formatting the theme asks for included. A `CaretQuery` gives:
   which of its ends; the selection's known ends; and `previous_collapsed`,
   whether that selection held nothing (a caret report sets it; a caret
   key's watch leaves it false, a moved caret being its evidence);
-- a unit to read besides the line, and whose formatting to read
-  (`FormatSpan`: the character at the caret, that unit, or the line);
+- whose formatting to read (`FormatSpan`: the character at the caret, or
+  the line);
 - `attributes`, an `Attributes` set of `TextAttribute`s: the annotation
   types for spelling and grammar errors, the font's name, size, and
   weight, italic, the underline and strikethrough styles, the foreground
@@ -549,11 +549,8 @@ The `CaretAnswer`:
   selection the provider's own caret is at.
 - `moved`: the caret is not where `since` says; `selection_moved`: the
   selection's ends are not the known ones.
-- `line` and `unit`: each a `UnitRead`, the range, its text, and how many
-  UTF-16 code units of it come before the caret. The query's `unit` is a
-  `CaretUnit`: `At` the caret, or `BeforeCaret`, the caret's copy moved
-  back one character and, when it moved, expanded to the unit, what a
-  Backspace deletes.
+- `line`: a `UnitRead`, the range, its text, and how many UTF-16 code
+  units of it come before the caret.
 - `runs`: the formatting, stretch by stretch, each a `Run`, a length in
   UTF-16 code units and its `RunAttributes`: spelling or grammar error
   (`ANNOTATION_SPELLING_ERROR`, 60001, `ANNOTATION_GRAMMAR_ERROR`,

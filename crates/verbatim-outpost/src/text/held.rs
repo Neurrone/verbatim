@@ -22,8 +22,8 @@ use verbatim_model::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, FormatSpan, NodeText, TextError, TextResult, TextSource,
-    change, change_of, perform, report_for, selection_changes,
+    CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
+    change_of, perform, report_for, selection_changes,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -41,7 +41,7 @@ fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
-    (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, Option<FormatSpan>),
+    (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, bool),
 ) -> TextResult<CaretFound<S::Pos>> {
     let request = CaretRequest {
         since: None,
@@ -216,7 +216,7 @@ pub fn read_selection<S: TextSource>(
         (
             true,
             kept.as_ref().map(|kept| (&kept.ends, kept.collapsed)),
-            None,
+            false,
         ),
     )?;
     // A selection whose text reads as empty holds nothing to say.
@@ -303,12 +303,7 @@ fn caret_and_selected<S: TextSource>(
         report,
         selection_text,
         ..
-    } = read_caret(
-        source,
-        anchors,
-        read_at_us,
-        (true, None, Some(FormatSpan::Line)),
-    )?;
+    } = read_caret(source, anchors, read_at_us, (true, None, true))?;
     // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
         (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),

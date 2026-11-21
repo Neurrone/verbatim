@@ -52,6 +52,9 @@
 mod announcements;
 mod applications;
 pub mod batch;
+#[cfg(test)]
+#[path = "../tests/support/caret_batches.rs"]
+pub(crate) mod caret_batches;
 mod caret_location;
 mod caret_tell;
 mod changes;
@@ -77,9 +80,6 @@ mod progress;
 #[cfg(test)]
 #[path = "../tests/support/readers.rs"]
 pub(crate) mod readers;
-#[cfg(test)]
-#[path = "../tests/support/caret_batches.rs"]
-pub(crate) mod caret_batches;
 mod recorder;
 mod reduce;
 mod report_focus;

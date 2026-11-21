@@ -64,17 +64,6 @@ pub(crate) const MAX_CHUNK_UNITS: usize = MAX_CHUNK_BYTES;
 /// offset into the unit's text, and the attributes there.
 pub type Formatting = (usize, usize, TextAttributes);
 
-/// Whose formatting a caret read reads ([`CaretRequest::formats`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FormatSpan {
-    /// The character at the caret, one stretch.
-    Character,
-    /// The unit read besides the line ([`CaretRequest::unit`]).
-    Unit,
-    /// The caret's line.
-    Line,
-}
-
 /// What a caret read covers, for [`TextSource::caret_read`]: everything a
 /// caret report or a caret key's answer needs, so a source that can read it
 /// in one go does.
@@ -93,8 +82,9 @@ pub struct CaretRequest<'a, P> {
     /// report's comparison; a key's read, for which a caret that moved is a
     /// selection that moved, leaves it false).
     pub previous_collapsed: bool,
-    /// Whose formatting to read, with the attributes the theme asks for.
-    pub formats: Option<FormatSpan>,
+    /// Whether to read the line's formatting, with the attributes the
+    /// theme asks for.
+    pub formats: bool,
     /// Whether to read the caret again once everything else is read, to
     /// say whether it moved meanwhile ([`CaretRead::moved_while_read`]).
     pub recheck: bool,

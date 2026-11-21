@@ -3550,7 +3550,10 @@ fn starting_batch_calls(
 /// program too); classically each step's calls: 14 for a check alone, 33
 /// with the caret and the line's formatting read after it (the watch's
 /// classic check made 13, and 8 more for the line's formatting).
-#[expect(clippy::too_many_lines, reason = "the wait's batch, then each poll's case")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the wait's batch, then each poll's case"
+)]
 fn watch_checks_cost_exactly() {
     use verbatim_model::batch::{Check, Condition, Op, Place, Point, PointOf, Step, Subject};
     common::init_com();

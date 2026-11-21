@@ -55,10 +55,9 @@ use verbatim_uia_rops::{
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, FormatSpan, Formatting, Located, MAX_CHUNK_UNITS,
-    MAX_RANGE_UNITS, PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart,
-    Sentences, TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead,
-    UnitsRequest,
+    CaretRead, CaretRequest, CaretState, Formatting, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
+    PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart, Sentences,
+    TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -688,8 +687,9 @@ impl TextSource for UiaText {
                 .as_ref()
                 .map(|(start, end)| (end_of(start), end_of(end))),
             previous_collapsed: request.previous_collapsed,
-            unit: None,
-            formats: request.formats.map(rops_span),
+            formats: request
+                .formats
+                .then_some(verbatim_uia_rops::FormatSpan::Line),
             attributes,
             learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
@@ -879,16 +879,6 @@ impl TextSource for UiaText {
             UiaPos::found(&answer.at)?,
             answer.location.map(|(x, y)| (round(x), round(y))),
         )))
-    }
-}
-
-/// A position as remote operations take it.
-/// The program's name for whose formatting a read reads.
-fn rops_span(span: FormatSpan) -> verbatim_uia_rops::FormatSpan {
-    match span {
-        FormatSpan::Character => verbatim_uia_rops::FormatSpan::Character,
-        FormatSpan::Unit => verbatim_uia_rops::FormatSpan::Unit,
-        FormatSpan::Line => verbatim_uia_rops::FormatSpan::Line,
     }
 }
 

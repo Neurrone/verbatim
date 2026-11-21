@@ -138,8 +138,8 @@ pub(crate) fn caret_report(
     caret: &verbatim_model::batch::CaretAt,
     mut line: verbatim_model::TextChunk,
 ) -> verbatim_model::CaretReport {
-    let cut_before =
-        line.truncated && usize::try_from(line.offset).is_ok_and(|offset| offset >= line.text.len());
+    let cut_before = line.truncated
+        && usize::try_from(line.offset).is_ok_and(|offset| offset >= line.text.len());
     let selection = caret.selection.map(|selection| {
         let start = if cut_before {
             verbatim_model::TextPosition::at(selection.start.anchor)
