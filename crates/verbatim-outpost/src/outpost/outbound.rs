@@ -8,8 +8,9 @@
 //!   waits, behind only the write in flight, so heartbeat delivery never
 //!   waits behind event traffic and a busy outpost is never mistaken for a
 //!   dead one.
-//! - Sending never waits: nothing that sends a message, the worker and the
-//!   watchdog above all, can be held up by a pipe Core is slow to read.
+//! - Sending never waits: nothing that sends a message, the workers and the
+//!   reducer's thread above all, can be held up by a pipe Core is slow to
+//!   read.
 //! - Ordinary messages, tells, answers to Core's requests, the idle
 //!   barrier's answer and faults, are never merged and keep their order:
 //!   each answer answers its own request, and each tell is an entry of

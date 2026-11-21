@@ -338,22 +338,17 @@ enum NodeRecord {
     Edit(Arc<NodeAnchors<u32>>),
 }
 
-/// Everything kept for one node: its text facts, once a read has made them.
-#[derive(Clone, Debug, Default)]
-struct NodeEntry {
-    record: Option<NodeRecord>,
-}
-
 /// Every node's text facts, through UIA and through edit controls'
-/// messages, so one place names every range the store must keep.
+/// messages, so one place names every range the store must keep: a node
+/// has an entry once a read has made its facts.
 #[derive(Clone, Debug, Default)]
 pub struct TextFacts {
-    nodes: BTreeMap<u64, NodeEntry>,
+    nodes: BTreeMap<u64, NodeRecord>,
 }
 
 /// The keys `record` names.
-fn keys(record: Option<&NodeEntry>) -> BTreeSet<RangeKey> {
-    match record.and_then(|entry| entry.record.as_ref()) {
+fn keys(record: Option<&NodeRecord>) -> BTreeSet<RangeKey> {
+    match record {
         Some(NodeRecord::Uia(anchors)) => anchors.positions().copied().collect(),
         Some(NodeRecord::Edit(_)) | None => BTreeSet::new(),
     }
@@ -363,7 +358,7 @@ impl TextFacts {
     /// UIA node `node`'s facts, when it has any.
     #[must_use]
     pub fn uia(&self, node: u64) -> Option<&NodeAnchors<RangeKey>> {
-        match self.nodes.get(&node)?.record.as_ref()? {
+        match self.nodes.get(&node)? {
             NodeRecord::Uia(anchors) => Some(&**anchors),
             NodeRecord::Edit(_) => None,
         }
@@ -372,7 +367,7 @@ impl TextFacts {
     /// Edit control `node`'s facts, when it has any.
     #[must_use]
     pub fn edit(&self, node: u64) -> Option<&NodeAnchors<u32>> {
-        match self.nodes.get(&node)?.record.as_ref()? {
+        match self.nodes.get(&node)? {
             NodeRecord::Edit(anchors) => Some(&**anchors),
             NodeRecord::Uia(_) => None,
         }
@@ -394,10 +389,10 @@ impl TextFacts {
         match change {
             TextChange::Uia { part, copied, .. } => {
                 named.extend(part.positions().copied());
-                let entry = self.nodes.entry(node).or_default();
-                let record = entry
-                    .record
-                    .get_or_insert_with(|| NodeRecord::Uia(Arc::default()));
+                let record = self
+                    .nodes
+                    .entry(node)
+                    .or_insert_with(|| NodeRecord::Uia(Arc::default()));
                 if let NodeRecord::Uia(anchors) = record {
                     Arc::make_mut(anchors).put(part, copied);
                 } else {
@@ -407,10 +402,10 @@ impl TextFacts {
                 }
             }
             TextChange::Edit { part, copied, .. } => {
-                let entry = self.nodes.entry(node).or_default();
-                let record = entry
-                    .record
-                    .get_or_insert_with(|| NodeRecord::Edit(Arc::default()));
+                let record = self
+                    .nodes
+                    .entry(node)
+                    .or_insert_with(|| NodeRecord::Edit(Arc::default()));
                 if let NodeRecord::Edit(anchors) = record {
                     Arc::make_mut(anchors).put(part, copied);
                 } else {
@@ -440,10 +435,7 @@ impl TextFacts {
             return Vec::new();
         }
         let mut dropped = Vec::new();
-        for (&node, entry) in &mut self.nodes {
-            let Some(record) = entry.record.as_mut() else {
-                continue;
-            };
+        for (&node, record) in &mut self.nodes {
             match record {
                 NodeRecord::Uia(kept) => {
                     if !kept.holds_any(anchors) {

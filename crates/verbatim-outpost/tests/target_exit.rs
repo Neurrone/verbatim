@@ -3,8 +3,7 @@
 //! its pipe and exits with code 0, as every clean shutdown does. Started as
 //! a spare (`--spare`), it says `SpareReady`, takes its application from
 //! `Assign` and says `Ready`; an application it cannot watch, a second
-//! `Assign`'s, it reports as a fault and exits with code 1, as it does when
-//! its hook cannot be installed.
+//! `Assign`'s, it reports as a fault and exits with code 1.
 //!
 //! The application is this test binary run again as a stand-in, a process
 //! with no windows that runs until its standard input closes, so the test

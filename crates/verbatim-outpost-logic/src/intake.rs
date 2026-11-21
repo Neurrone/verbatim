@@ -201,13 +201,7 @@ mod tests {
 
     /// A console event of `kind` in window `hwnd`.
     fn console(kind: WinKind, hwnd: isize) -> Item {
-        Item::Msaa {
-            kind,
-            hwnd,
-            id_object: 3,
-            id_child: 65,
-            raiser: 80,
-        }
+        Item::Msaa { kind, hwnd }
     }
 
     #[test]

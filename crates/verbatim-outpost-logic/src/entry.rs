@@ -79,19 +79,14 @@ pub enum Asker {
     reason = "an entry moves by value from the mailbox to its program, as it always has"
 )]
 pub enum Item {
-    /// An MSAA `WinEvent` from this outpost's own hooks, with the thread
-    /// that raised it, which the batch limits count it by.
+    /// A console's `WinEvent` from this outpost's own hook: the console's
+    /// whole text or caret is read, so its kind and window are all it
+    /// carries.
     Msaa {
         /// The event's kind.
         kind: WinKind,
         /// The event's window.
         hwnd: isize,
-        /// The event's object id.
-        id_object: i32,
-        /// The event's child id.
-        id_child: i32,
-        /// The thread that raised it.
-        raiser: u32,
     },
     /// A UIA event from this outpost's own subscriptions.
     Uia(UiaEvent),

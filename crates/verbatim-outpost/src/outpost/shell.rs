@@ -602,9 +602,6 @@ mod tests {
             Item::Msaa {
                 kind: super::super::reducer::WinKind::ConsoleUpdate,
                 hwnd: 5,
-                id_object: 3,
-                id_child: 65,
-                raiser: 3,
             },
             TraceId::mint(),
             1,

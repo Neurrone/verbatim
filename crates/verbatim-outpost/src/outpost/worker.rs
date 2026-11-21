@@ -216,7 +216,7 @@ fn forget(context: &RequestContext<'_>, windows: &[verbatim_model::WindowHandle]
 fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<Charge>) {
     let Job { program, garbage } = job;
     // Objects the shell let go of: releasing one can call into the
-    // application, so it is done here, under the program's deadline.
+    // application, so it is done here, on the worker.
     drop(garbage);
     if let Work::Ask(ask) = &program.work {
         tracing::debug!(request = %ask.number, "request received by the worker");
@@ -322,15 +322,7 @@ fn describe(work: &Work) -> String {
 /// A short description of an entry's item.
 fn describe_item(item: &Item) -> String {
     match item {
-        Item::Msaa {
-            kind,
-            hwnd,
-            id_object,
-            id_child,
-            raiser,
-        } => {
-            format!("MSAA {kind:?} hwnd={hwnd} object={id_object} child={id_child} thread={raiser}")
-        }
+        Item::Msaa { kind, hwnd } => format!("MSAA {kind:?} hwnd={hwnd}"),
         Item::Uia(event) => format!("UIA {:?}", event.kind),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::Barrier { asker, .. } => format!("barrier of {asker:?}"),

@@ -26,9 +26,9 @@
 //! the rule (`Uia::window_element`), and a lookup refused, as one of a
 //! shell busy past the connection timeout is, reads none of its items.
 //!
-//! The walk has no time limit of its own: its program's deadline bounds
-//! it, so a slow taskbar's whole list is shown once it answers, and one
-//! that does not finish by the deadline gives none. A list is complete or
+//! The walk has no time limit of its own, so a slow taskbar's whole list
+//! is shown once it answers; Core stops waiting at its request's due
+//! time. A list is complete or
 //! nothing: a window's lookup or a step that fails, as one UIA ends with
 //! its timeout does, or the node cap, fails the list query whole, rather
 //! than answering the buttons read by then as the list.

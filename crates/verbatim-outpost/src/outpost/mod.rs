@@ -5,19 +5,20 @@
 //! (`books/dev/src/reference/adr/0001-focus.md`, "Spare outposts"), and never changes after.
 //! Its parts:
 //!
-//! 1. The mailbox ([`shell`]): the MSAA hook callbacks, the UIA
-//!    subscription callbacks, and Core's commands only append an entry to
+//! 1. The mailbox ([`shell`]): a console host's `WinEvent` hook callback,
+//!    the UIA subscription callbacks, and Core's commands only append an entry to
 //!    it and return. They never call into the
 //!    application and never wait on anything but the mailbox's lock.
 //! 2. The reducer ([`reducer`]), on a thread of its own run by its shell
 //!    ([`shell`]): the pure state machine that holds every remembered fact
-//!    of the application, the intake's order with NVDA's limiter rules
+//!    its rules read, the intake's order with NVDA's limiter rules
 //!    among them, Core's requests waiting, and the timers of a caret key's
 //!    watch.
 //! 3. The workers ([`worker`]): the threads that call into the application,
 //!    one generation in charge at a time, each running one program at a
-//!    time on copies, posting its commits to the mailbox. A worker whose
-//!    call hangs is abandoned and replaced by the reducer.
+//!    time on copies, posting its commits to the mailbox. A worker is
+//!    abandoned and replaced only when Core cancels the request it runs
+//!    because the foreground moved away.
 //! 4. The I/O thread ([`Outpost::handle_command`], driven by [`run_pipe`]
 //!    on the transport's child side): reads Core's commands, answers pings
 //!    itself, so a busy or hung worker never makes the outpost look dead,
@@ -612,14 +613,7 @@ impl Context {
     /// Takes in a console's update or caret event the outpost's own hook
     /// delivered, as it is.
     fn take_in_win_event(&self, event: WinEvent, timing: EventTiming) {
-        let WinEvent {
-            kind,
-            hwnd,
-            id_object,
-            id_child,
-            thread,
-            ..
-        } = event;
+        let WinEvent { kind, hwnd, .. } = event;
         let Some(reducer_kind) = worker::win_kind(kind) else {
             tracing::debug!(?kind, "a WinEvent the outpost does not hook; dropped");
             return;
@@ -628,9 +622,6 @@ impl Context {
             Item::Msaa {
                 kind: reducer_kind,
                 hwnd,
-                id_object,
-                id_child,
-                raiser: thread,
             },
             Heard::Msaa(kind),
             timing,
@@ -1052,9 +1043,8 @@ impl Outpost {
     /// Reads the window with the keyboard focus with `reader` from now on,
     /// in place of the system's, when answering Core's request for the
     /// current focus, whose
-    /// focused element is read only in a window the application serves,
-    /// and when judging whether the user has moved on from a program's
-    /// window: a test whose application runs on a desktop where no window
+    /// focused element is read only in a window the application serves:
+    /// a test whose application runs on a desktop where no window
     /// can take the keyboard focus says which window has it.
     pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
         *self.context.focus_window.lock() = reader;

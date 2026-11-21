@@ -1,7 +1,7 @@
 //! The outpost (decision D9): one process per application, watching it for
 //! its whole life, used by the `verbatim-outpost` binary.
 //!
-//! [`outpost`] is its runtime: the intake, one worker and its watchdog, the
+//! [`outpost`] is its runtime: the mailbox, the worker generations, the
 //! reader, and the writer around its reducer, which is
 //! `verbatim-outpost-logic`'s. [`arbitration`] holds the per-window backend
 //! arbitration the outpost uses. [`dialog_text`] gathers a dialog's own

@@ -25,8 +25,9 @@ pub(super) use super::reducer::{FocusPath, Route};
 /// The element `route` leads to, filled by `nodes`: the route's
 /// window's element, read with one connection call, then the walk down the
 /// route's runtime ids, one remote operation where `remote` allows it, else
-/// the classic walk, with no time budget of its own: the program's deadline
-/// bounds it, as NVDA's watchdog bounds its walk. `Ok(None)` when the walk
+/// the classic walk, with no time budget of its own: it runs until it ends,
+/// as NVDA's walk does, Core bounding its request by the request's due
+/// time. `Ok(None)` when the walk
 /// finished and the path does not lead to the element, or a call said the
 /// window or an element on the way is gone; an error when the walk failed,
 /// a lookup of the window that timed out or was refused, or any other

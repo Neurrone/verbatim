@@ -1,7 +1,9 @@
 //! The worker's reads from the application: windows, the focus, a node's
 //! ancestors, navigation, activation, and tree dumps, through whichever
 //! backend owns the window. Every function here may call into the
-//! application and so runs only on the worker, under its deadline.
+//! application and so runs only on the worker. None has a time limit of its
+//! own: a program runs until it ends, as NVDA's reads do, and Core bounds
+//! its request by the request's due time.
 
 #![forbid(unsafe_code)]
 
@@ -256,7 +258,7 @@ fn local_window_snapshot(context: &RequestContext<'_>, hwnd: isize) -> NodeSnaps
 /// from the element already in hand, `nearest` its nearest window. The
 /// walk stops at an ancestor of `previous`, those Core knows, and is
 /// completed above as
-/// [`complete`] says, with no time limit but its program's deadline.
+/// [`complete`] says.
 /// A walk that fails goes on from the parent window of the element's
 /// nearest window ([`onward_after_failure`]), and a failed selected item
 /// read is none. The automation id of the element's raw-view parent, when
@@ -603,8 +605,7 @@ pub(super) fn plain_windows_from(context: &RequestContext<'_>, hwnd: isize) -> V
 /// the outpost judges it UIA and `uia` is given, else its MSAA client, each
 /// walked up by its backend; a window whose MSAA client cannot be acquired
 /// is a plain window too, and the chain goes on from its parent window, as
-/// NVDA's object for it is then its `Window`. It has no time limit but its
-/// program's deadline. The desktop ends it.
+/// NVDA's object for it is then its `Window`. The desktop ends it.
 ///
 /// # Errors
 ///
@@ -772,8 +773,7 @@ pub(super) enum AncestorsEnd {
 /// nearest window, or by plain windows from the window it named after a
 /// walk cut at its depth limit. Each node is minted from its runtime id,
 /// with no element: the outpost finds its own copy of an element only when
-/// it needs one (`super::focus_path`). The continuation has no time limit
-/// but its program's deadline.
+/// it needs one (`super::focus_path`).
 ///
 /// # Errors
 ///
@@ -884,8 +884,7 @@ pub(super) struct NotFocused;
 /// nearest window ([`complete`]). The automation id of the element's
 /// raw-view parent, the first ancestor read, is put in
 /// `parent_automation_id` when the walk read it, and the table of an
-/// element that is a cell in `table`. Neither has a time limit
-/// but its program's deadline. A focus lost on the chain's way
+/// element that is a cell in `table`. A focus lost on the chain's way
 /// ([`FocusLost`]) is answered as an `Err` inside the `Ok`.
 #[expect(
     clippy::too_many_lines,
@@ -1113,8 +1112,7 @@ fn window_read_without_its_handle(hwnd: isize, runtime_id: &[i32]) -> Option<isi
 /// that window or the parent window ([`window_onward`]); and a walk cut by
 /// the hop limit, by plain windows. A node that can no longer be reached
 /// goes on from the parent window of its window ([`onward_after_failure`]).
-/// Without `uia` the walk stays in MSAA. It has no time limit but its
-/// program's deadline.
+/// Without `uia` the walk stays in MSAA.
 ///
 /// # Errors
 ///
@@ -1164,9 +1162,9 @@ fn msaa_ancestors(
 }
 
 /// An MSAA node's ancestors, stopping at an ancestor of `previous`, those
-/// Core knows, and completed above as [`msaa_ancestors`] says, with
-/// no time limit but the program's deadline: an MSAA call has no bound of
-/// its own, and a UIA call in the walk ends after UIA's call timeout.
+/// Core knows, and completed above as [`msaa_ancestors`] says: an MSAA
+/// call has no bound of its own, and a UIA call in the walk ends after
+/// UIA's call timeout.
 ///
 /// # Errors
 ///
@@ -1759,7 +1757,7 @@ pub(super) fn ancestors(
             ReadError::Failed(format!("could not build a cache request: {error}"))
         })?;
         // The full chain: object navigation reuses nothing and waits for
-        // the application as long as the query's own deadline allows.
+        // the application as long as it takes.
         let own_window = element.read().role.hwnd;
         return uia_ancestors(
             context,

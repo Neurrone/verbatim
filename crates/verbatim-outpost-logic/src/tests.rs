@@ -70,9 +70,6 @@ fn console_update(window: isize) -> Item {
     Item::Msaa {
         kind: WinKind::ConsoleUpdate,
         hwnd: window,
-        id_object: 3,
-        id_child: 65,
-        raiser: 3,
     }
 }
 
