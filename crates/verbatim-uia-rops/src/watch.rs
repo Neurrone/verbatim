@@ -213,7 +213,7 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: None,
+        formats: false,
         attributes: crate::caret::Attributes::NONE,
         learning: crate::caret::Attributes::NONE,
         max_text: query.max_text,

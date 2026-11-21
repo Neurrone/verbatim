@@ -2724,16 +2724,28 @@ fn uia_active_text_position_costs_exactly() {
     app.quit();
 }
 
-/// The caret's report, read as a caret tell's read reads it, at
-/// `read_at_us`.
-fn caret_report<S: TextSource>(
+/// Where the caret is, on the line holding it, as a batch's `ReadText` of
+/// the caret's line answers it, call by call.
+fn caret_position<S: TextSource>(
     source: &mut S,
     anchors: &mut verbatim_outpost::text::NodeText<'_, S::Pos>,
-    read_at_us: u64,
-) -> verbatim_model::CaretReport {
-    verbatim_outpost::text::held::read_selection(source, anchors, read_at_us, None)
-        .expect("the caret")
-        .report
+) -> TextPosition {
+    let step = verbatim_outpost::text::CallStep::Read {
+        at: TextPoint::Caret,
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+    };
+    match verbatim_outpost::text::by_calls(source, anchors, step).expect("the text answers") {
+        Ok(verbatim_model::batch::Done::ReadText(read)) => {
+            let line = read.chunks.first().expect("the caret's line");
+            TextPosition {
+                anchor: line.start,
+                offset: line.offset,
+            }
+        }
+        other => panic!("the caret's line, not {other:?}"),
+    }
 }
 
 /// A batch's text steps on node 1, `ops`, run as the outpost's worker runs
@@ -2821,11 +2833,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let report = caret_report(&mut source, &mut anchors, 0);
-    let caret = TextPosition {
-        anchor: report.line.start,
-        offset: report.line.offset,
-    };
+    let caret = caret_position(&mut source, &mut anchors);
     let mut text = |ops| measure_text(&uia, (&mut source, &mut anchors), ops);
 
     let next_line = TextMovement {
@@ -2847,7 +2855,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     ratchet.check(&format!("UIA review next line, {way}"), &cost, expected, 0);
 
     let inside = TextPosition {
-        anchor: report.line.start,
+        anchor: caret.anchor,
         offset: 6,
     };
     let (read, cost) = text(vec![read_text_op(
@@ -2969,7 +2977,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     common::apply(&mut app, hwnd, "caret doc 0");
     let line_at = |offset| {
         Point::At(TextPoint::At(TextPosition {
-            anchor: report.line.start,
+            anchor: caret.anchor,
             offset,
         }))
     };
@@ -3712,10 +3720,10 @@ fn edit_control_select_and_location_cost_exactly() {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
-    let report = caret_report(&mut source, &mut anchors, 0);
+    let caret = caret_position(&mut source, &mut anchors);
     let at = |offset| {
         TextPoint::At(TextPosition {
-            anchor: report.line.start,
+            anchor: caret.anchor,
             offset,
         })
     };

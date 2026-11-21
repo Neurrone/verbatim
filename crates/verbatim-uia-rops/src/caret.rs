@@ -65,15 +65,6 @@ pub struct RangeEnd<'a> {
     pub endpoint: Endpoint,
 }
 
-/// Which text's formatting to read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FormatSpan {
-    /// The character at the caret.
-    Character,
-    /// The caret's line.
-    Line,
-}
-
 /// A text attribute the caret read can read, each read only when an
 /// indication of the theme asks for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -226,8 +217,8 @@ pub struct CaretQuery<'a> {
     /// [`CaretAnswer::selection_moved`] is false. A caret key's watch, for
     /// which a caret that moved is a selection that moved, leaves it false.
     pub previous_collapsed: bool,
-    /// Whose formatting to read, if any.
-    pub formats: Option<FormatSpan>,
+    /// Whether to read the caret line's formatting.
+    pub formats: bool,
     /// The attributes to read.
     pub attributes: Attributes,
     /// Those of [`attributes`](Self::attributes) whose support is not yet
@@ -538,7 +529,7 @@ fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Er
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: None,
+        formats: false,
         attributes: Attributes::NONE,
         learning: Attributes::NONE,
         max_text: query.max_text,
@@ -1155,28 +1146,8 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         b.set(start_first, first);
     });
     let ids: Vec<TextAttribute> = query.attributes.iter().collect();
-    let runs = match query.formats {
-        Some(span) if !ids.is_empty() => {
-            let (range, text, character) = match span {
-                FormatSpan::Line => (line.range, line.text, false),
-                FormatSpan::Character => {
-                    let character = b.text_range_clone(point);
-                    let unit = b.int(TextUnit_Character.0);
-                    b.text_range_expand_to_enclosing_unit(character, unit);
-                    (character, line.text, true)
-                }
-            };
-            Some(emit_runs(
-                b,
-                &c,
-                (range, text),
-                character,
-                &ids,
-                query.learning,
-            ))
-        }
-        _ => None,
-    };
+    let runs = (query.formats && !ids.is_empty())
+        .then(|| emit_runs(b, &c, (line.range, line.text), false, &ids, query.learning));
 
     // The caret read again, once everything else is read.
     let moved_while_read = query.recheck.then(|| {
@@ -1213,7 +1184,7 @@ struct ProgramKey {
     since: Option<i32>,
     previous_selection: Option<(i32, i32)>,
     previous_collapsed: bool,
-    formats: Option<FormatSpan>,
+    formats: bool,
     attributes: Attributes,
     learning: Attributes,
     max_text: i32,
@@ -1376,13 +1347,10 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
 }
 
 /// Whether the formatting read was of a line with text, the only reads
-/// support is learned from: a character's one read, or an empty line's,
-/// says too little about the provider.
-fn spoken_text(formats: Option<FormatSpan>, line: &UnitRead) -> bool {
-    match formats {
-        Some(FormatSpan::Line) => !line.text.is_empty(),
-        Some(FormatSpan::Character) | None => false,
-    }
+/// support is learned from: an empty line's says too little about the
+/// provider.
+fn spoken_text(formats: bool, line: &UnitRead) -> bool {
+    formats && !line.text.is_empty()
 }
 
 /// A position in a program: a range register and the endpoint's number.
@@ -1871,7 +1839,7 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         None => (None, false),
         Some(_) => (Some(line.offset), classic_first(query, &line)?),
     };
-    let (runs, unsupported) = classic_formats(query, &point, &line)?;
+    let (runs, unsupported) = classic_formats(query, &line)?;
     let moved_while_read = if query.recheck {
         let (again, _, _) = classic_caret(query)?;
         again.compare_endpoints(Endpoint::Start, &point, Endpoint::Start)? != 0
@@ -1930,41 +1898,30 @@ pub(crate) fn classic_caret(
     })
 }
 
-/// The formatting the query asks for the classic way, of the span it
-/// names at `point`, given the caret's `line`, and what was learned of the
-/// attributes' support, as [`caret_read_remote`] reads them.
+/// The formatting of the caret's `line` the query asks for, the classic
+/// way, and what was learned of the attributes' support, as
+/// [`caret_read_remote`] reads them.
 fn classic_formats(
     query: &CaretQuery<'_>,
-    point: &IUIAutomationTextRange,
     line: &UnitRead,
 ) -> Result<(Vec<Run>, Option<Attributes>), Error> {
     let ids: Vec<TextAttribute> = query.attributes.iter().collect();
-    let Some(span) = query.formats.filter(|_| !ids.is_empty()) else {
+    if !query.formats || ids.is_empty() {
         return Ok((Vec::new(), None));
-    };
-    let learns = spoken_text(Some(span), line);
+    }
+    let learns = spoken_text(true, line);
     let learning = if learns {
         query.learning
     } else {
         Attributes::NONE
     };
-    let (runs, unsupported) = match span {
-        FormatSpan::Line => {
-            let read = line;
-            classic_runs(
-                (&read.range, read.text.len()),
-                false,
-                &ids,
-                learning,
-                query.max_text,
-            )?
-        }
-        FormatSpan::Character => {
-            let character = point.clone_range()?;
-            character.expand(TextUnit_Character)?;
-            classic_runs((&character, 0), true, &ids, learning, query.max_text)?
-        }
-    };
+    let (runs, unsupported) = classic_runs(
+        (&line.range, line.text.len()),
+        false,
+        &ids,
+        learning,
+        query.max_text,
+    )?;
     Ok((runs, learns.then_some(unsupported)))
 }
 

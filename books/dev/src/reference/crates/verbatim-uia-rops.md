@@ -525,8 +525,7 @@ the formatting the theme asks for included. A `CaretQuery` gives:
   which of its ends; the selection's known ends; and `previous_collapsed`,
   whether that selection held nothing (a caret report sets it; a caret
   key's watch leaves it false, a moved caret being its evidence);
-- whose formatting to read (`FormatSpan`: the character at the caret, or
-  the line);
+- `formats`, whether to read the caret line's formatting;
 - `attributes`, an `Attributes` set of `TextAttribute`s: the annotation
   types for spelling and grammar errors, the font's name, size, and
   weight, italic, the underline and strikethrough styles, the foreground

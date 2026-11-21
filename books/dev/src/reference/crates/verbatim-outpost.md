@@ -533,9 +533,10 @@ and the inherited pipe handles.
   text's length, so a location there is answered `OffsetLocation`, and a
   rich edit's is answered `Location`, as NVDA reads a rich edit through
   its text object model).
-  `caret_report_from` reads the caret and its line; `held` reads what a
-  caret key and a caret tell ask (`held::starting_read`,
-  `held::read_selection`, `held::perform_placed`), and `check` a watch's
+  `caret_report_from` reads the caret and its line; `held` reads a caret
+  key's starting point (`held::starting_from`), a focus's caret read
+  (`held::read_focus`) and report focus's text summary (`held::summary`);
+  `ops` a batch's `Caret` and `CompareSelection`; and `check` a watch's
   checks. `Anchors` keeps a backend's anchors by node for a reader that
   holds them for the whole read, a test or mockapp, until
   `forget_anchors`; `NodeText` is one node's,

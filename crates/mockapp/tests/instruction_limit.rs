@@ -24,9 +24,9 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
-    FormatSpan, Movement, PathQuery, Position, RangeEnd, SnapshotQuery, StatesQuery, Status,
-    TextAttribute, TextFrom, caret_read_remote, counting, element_by_path_remote,
-    focus_ancestry_remote, focus_states_remote, terminal_snapshot_remote,
+    Movement, PathQuery, Position, RangeEnd, SnapshotQuery, StatesQuery, Status, TextAttribute,
+    TextFrom, caret_read_remote, counting, element_by_path_remote, focus_ancestry_remote,
+    focus_states_remote, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -351,7 +351,7 @@ fn caret_query<'a>(
         since: old,
         previous_selection: old.map(|old| (old, old)),
         previous_collapsed: false,
-        formats: Some(FormatSpan::Line),
+        formats: true,
         attributes: Attributes::ALL,
         learning: Attributes::ALL,
         max_text: 1024,

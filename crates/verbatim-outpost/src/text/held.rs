@@ -1,10 +1,9 @@
 //! The text reads of Core's requests that hold a read behind an id
 //! (`docs/design/readers-tell-core-asks-build1.md`, "A caret key at its
 //! turn", "Selection and the caret's text facts" and Table 16): a caret
-//! key's starting read, which holds its starting point; a caret tell's
-//! read and a focus's caret read, which compare the selection with the
-//! baseline Core names and hold the next; and Verbatim's own caret moves
-//! and selections, whose answers hold the next baseline.
+//! key's starting read, which holds its starting point; a focus's caret
+//! read, which holds the next selection baseline; and Verbatim's own caret
+//! moves and selections, whose answers hold the next baseline.
 //!
 //! A held read is the node's read as it was made: the caret, the
 //! selection's ends and the line. Through UI Automation its ends are
@@ -17,11 +16,11 @@
 
 use std::sync::Arc;
 
-use verbatim_model::{CaretReport, SelectionChange, SelectionDifference, TextAnchor};
+use verbatim_model::{CaretReport, SelectionChange, TextAnchor};
 
 use super::{
     CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
-    change_of, report_for, selection_changes,
+    change_of, report_for,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -31,23 +30,20 @@ use super::{
 /// caret's line or the line before, so Core knows what comes before the
 /// start, as a Backspace over the selection says it; else by its parts,
 /// where a selection's start lies on the caret's line only when it is the
-/// caret. With `selection`, a read in one go also reads the selection's
-/// text, with `previous`, the old selection's ends and whether it was
-/// collapsed, its changes from it, and with `formats`, the line's
-/// formatting.
+/// caret. A read in one go also reads the selection's text and the
+/// line's formatting.
 fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
-    (selection, previous, formats): (bool, Option<OldSelection<'_, S::Pos>>, bool),
 ) -> TextResult<CaretFound<S::Pos>> {
     let request = CaretRequest {
         since: None,
-        previous: previous.map(|(ends, _)| ends),
-        previous_collapsed: previous.is_some_and(|(_, collapsed)| collapsed),
-        formats,
+        previous: None,
+        previous_collapsed: false,
+        formats: true,
         recheck: false,
-        read_selection_text: selection,
+        read_selection_text: true,
         read_previous_text: false,
     };
     if let Some(read) = source.caret_read(&request)? {
@@ -65,7 +61,6 @@ fn read_caret<S: TextSource>(
         return Ok(CaretFound {
             state: read.state,
             report,
-            changes: read.changes,
             selection_text: read.selection_text,
         });
     }
@@ -74,14 +69,9 @@ fn read_caret<S: TextSource>(
     Ok(CaretFound {
         state,
         report,
-        changes: None,
         selection_text: None,
     })
 }
-
-/// An old selection a read compares with: its ends, and whether it was
-/// collapsed.
-type OldSelection<'a, P> = (&'a (P, P), bool);
 
 /// What [`read_caret`] found: the caret and the selection, the report, and
 /// what a read in one go gave of the selection, which a read by parts
@@ -89,8 +79,6 @@ type OldSelection<'a, P> = (&'a (P, P), bool);
 struct CaretFound<P> {
     state: CaretState<P>,
     report: CaretReport,
-    /// The changes from the old selection, as [`super::CaretRead::changes`].
-    changes: Option<Vec<(bool, Vec<u16>)>>,
     /// The selection's text, as [`super::CaretRead::selection_text`].
     selection_text: Option<Vec<u16>>,
 }
@@ -103,21 +91,6 @@ const SELECTION_TEXT_CAP: usize = 513;
 /// A selection a batch's caret read holds: its two ends, how they were
 /// reported, and its text when read.
 pub(crate) type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection, Option<Vec<u16>>);
-
-/// What a selection read found ([`read_selection`]).
-pub struct SelectionFound<P> {
-    /// The caret as it is now.
-    pub report: CaretReport,
-    /// The caret and the selection as the source read them.
-    pub state: CaretState<P>,
-    /// The whole selection's text, `None` when nothing is selected.
-    pub selected: Option<SelectionChange>,
-    /// The next selection baseline, held from this read.
-    pub baseline: TextAnchor,
-    /// The difference from the named baseline; `None` when none was named,
-    /// or the outpost no longer holds it ("no baseline").
-    pub difference: Option<SelectionDifference>,
-}
 
 impl<P: Clone> NodeText<'_, P> {
     /// Holds the node's last read, just made, under a new id, recorded as
@@ -180,77 +153,6 @@ impl<P: Clone> NodeText<'_, P> {
     }
 }
 
-/// Reads the caret and the selection, compares the selection with the
-/// read held under `baseline` when it is held, and holds this read as the
-/// next baseline. The difference is given in both terms Core may speak it
-/// in: what became selected and unselected, each part's text what its
-/// range now holds, nothing when the old range and the new selection are
-/// both empty; and the whole new selection.
-///
-/// # Errors
-///
-/// When the application does not answer or the node is gone.
-pub fn read_selection<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
-    baseline: Option<TextAnchor>,
-) -> TextResult<SelectionFound<S::Pos>> {
-    let old = baseline.and_then(|baseline| anchors.held_read(baseline));
-    let kept = old.as_ref().map(super::LastRead::kept_selection);
-    // The selection's text and its changes from the baseline are read with
-    // the caret where the source reads in one go, as the caret report
-    // reads them.
-    let CaretFound {
-        state,
-        report,
-        changes: read_changes,
-        selection_text,
-        ..
-    } = read_caret(
-        source,
-        anchors,
-        read_at_us,
-        (
-            true,
-            kept.as_ref().map(|kept| (&kept.ends, kept.collapsed)),
-            false,
-        ),
-    )?;
-    // A selection whose text reads as empty holds nothing to say.
-    let selected = match (&state.selection, selection_text) {
-        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),
-        (Some((start, end)), _) => Some(change(source, true, start, end)?),
-        (None, _) => None,
-    }
-    .filter(|selected| !selected.text.is_empty());
-    let difference = match kept {
-        None => None,
-        Some(kept) => {
-            let changes = match read_changes {
-                _ if kept.collapsed && state.selection.is_none() => Vec::new(),
-                Some(read) => read
-                    .into_iter()
-                    .map(|(selected, text)| change_of(selected, &text))
-                    .collect(),
-                None => selection_changes(source, (&kept.ends, kept.collapsed), &state)?,
-            };
-            Some(SelectionDifference {
-                changes,
-                new_selection: selected.clone(),
-            })
-        }
-    };
-    let baseline = anchors.hold_last()?;
-    Ok(SelectionFound {
-        report,
-        state,
-        selected,
-        baseline,
-        difference,
-    })
-}
-
 /// A focus's caret read: the caret, its line with its formatting, which
 /// NVDA speaks with the focus (`speech/speech.py` 904 to 922), and the
 /// selection with its text, held as the next selection baseline, compared
@@ -301,7 +203,7 @@ fn caret_and_selected<S: TextSource>(
         report,
         selection_text,
         ..
-    } = read_caret(source, anchors, read_at_us, (true, None, true))?;
+    } = read_caret(source, anchors, read_at_us)?;
     // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
         (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),

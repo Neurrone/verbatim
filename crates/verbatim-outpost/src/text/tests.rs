@@ -251,12 +251,35 @@ fn store() -> Anchors<usize> {
     Anchors::new(Arc::new(AtomicU64::new(0)))
 }
 
-/// The caret's report, read as a caret tell's read reads it, holding a
+/// The caret's report, read as a focus's caret read reads it, holding a
 /// baseline.
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    held::read_selection(source, &mut anchors.node(1), REPORTED_AT, None)
+    held::read_focus(source, &mut anchors.node(1), REPORTED_AT)
         .expect("the fake answers")
-        .report
+        .0
+}
+
+/// A batch's `Caret` of the fake's caret and selection: the read held as
+/// the next baseline.
+fn caret_held(source: &mut Fake, anchors: &mut Anchors<usize>) -> TextAnchor {
+    ops::caret(source, &mut anchors.node(1), REPORTED_AT)
+        .expect("the fake answers")
+        .held
+}
+
+/// How the selection a `Caret` reads now differs from the one held under
+/// `baseline`, as a batch's `CompareSelection` compares them, with the
+/// `Caret`'s read held; `Err` naming a read no longer held.
+fn compared(
+    source: &mut Fake,
+    anchors: &mut Anchors<usize>,
+    baseline: TextAnchor,
+) -> (Result<SelectionDifference, TextAnchor>, TextAnchor) {
+    let after = caret_held(source, anchors);
+    let compared = ops::compare_selection(source, &anchors.node(1), (baseline, after))
+        .expect("the fake answers")
+        .map(|compared| compared.difference);
+    (compared, after)
 }
 
 #[test]
@@ -320,23 +343,22 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     assert!(read(&mut anchors, &mut source, kept).is_ok());
 }
 
-/// A selection read's changes from the baseline held with `baseline`,
-/// what each became selected or unselected, its text and characters.
+/// A selection's changes from the baseline held with `baseline`, what
+/// each became selected or unselected, its text and characters, and the
+/// next baseline.
 fn changes_from(
     source: &mut Fake,
     anchors: &mut Anchors<usize>,
     baseline: TextAnchor,
 ) -> (Vec<(bool, String, u32)>, TextAnchor) {
-    let found = held::read_selection(source, &mut anchors.node(1), REPORTED_AT, Some(baseline))
-        .expect("the fake answers");
-    let changes = found
-        .difference
+    let (difference, after) = compared(source, anchors, baseline);
+    let changes = difference
         .expect("the baseline is held")
         .changes
         .into_iter()
         .map(|change| (change.selected, change.text, change.characters))
         .collect();
-    (changes, found.baseline)
+    (changes, after)
 }
 
 /// A selection read's changes, from a selection of `old` (equal ends for
@@ -346,9 +368,7 @@ fn selection_after(old: (usize, usize), new: Option<(usize, usize)>) -> Vec<(boo
     let mut source = Fake::new("hello world", old.0);
     source.selection = (old.0 != old.1).then_some(old);
     let mut anchors = store();
-    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers")
-        .baseline;
+    let baseline = caret_held(&mut source, &mut anchors);
     source.selection = new;
     source.caret = new.map_or(old.0, |(start, _)| start);
     changes_from(&mut source, &mut anchors, baseline).0
@@ -396,9 +416,7 @@ fn selecting_and_unselecting_report_what_changed_on_each_side() {
 fn a_selection_around_the_caret_is_one_change_each_way() {
     let mut source = Fake::new("hello world", 5);
     let mut anchors = store();
-    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers")
-        .baseline;
+    let baseline = caret_held(&mut source, &mut anchors);
     source.selection = Some((3, 8));
     source.caret = 8;
     let (changes, baseline) = changes_from(&mut source, &mut anchors, baseline);
@@ -422,9 +440,7 @@ fn a_selection_whose_text_was_deleted_is_unselected_with_no_text() {
     source.selection = Some((6, 11));
     source.caret = 11;
     let mut anchors = store();
-    let baseline = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers")
-        .baseline;
+    let baseline = caret_held(&mut source, &mut anchors);
     source.text = "hello ".encode_utf16().collect();
     source.selection = None;
     source.caret = 6;
@@ -639,20 +655,22 @@ fn text_cut_short_ends_at_a_whole_character() {
     assert_eq!((text.as_str(), cut), ("ae\u{301}", true));
 }
 
-/// A caret tell's read with no baseline named holds the next and compares
-/// nothing (Table 17, column E).
+/// A focus's caret read holds the next baseline and compares nothing
+/// (Table 17, column E).
 #[test]
-fn a_selection_read_naming_no_baseline_holds_one_and_compares_nothing() {
-    let mut source = Fake::new("line one\n", 2);
+fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
+    let mut source = Fake::new("line one
+", 2);
     let mut anchors = store();
-    let found = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers");
-    assert_eq!(found.difference, None);
-    assert_eq!(found.selected, None);
-    assert_eq!(found.report.line.text, "line one\n");
-    assert_eq!(found.report.line.offset, 2);
+    let (report, selected, baseline) =
+        held::read_focus(&mut source, &mut anchors.node(1), REPORTED_AT)
+            .expect("the fake answers");
+    assert_eq!(selected, None);
+    assert_eq!(report.line.text, "line one
+");
+    assert_eq!(report.line.offset, 2);
     assert!(
-        anchors.node(1).anchors.held.contains_key(&found.baseline.0),
+        anchors.node(1).anchors.held.contains_key(&baseline.0),
         "the baseline is held"
     );
 }
@@ -661,43 +679,32 @@ fn a_selection_read_naming_no_baseline_holds_one_and_compares_nothing() {
 /// rule, in specific terms with each part's text, and the whole new
 /// selection given beside it (Table 17, column D).
 #[test]
-fn a_selection_read_says_what_changed_from_the_named_baseline() {
-    let mut source = Fake::new("line one\n", 0);
+fn a_selection_says_what_changed_from_the_named_baseline() {
+    let mut source = Fake::new("line one
+", 0);
     let mut anchors = store();
-    let first = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers");
+    let first = caret_held(&mut source, &mut anchors);
     source.selection = Some((0, 4));
-    let second = held::read_selection(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT + 1,
-        Some(first.baseline),
-    )
-    .expect("the fake answers");
+    let (difference, second) = compared(&mut source, &mut anchors, first);
     let selected = SelectionChange {
         selected: true,
         text: "line".to_owned(),
         characters: 4,
     };
     assert_eq!(
-        second.difference,
-        Some(SelectionDifference {
+        difference,
+        Ok(SelectionDifference {
             changes: vec![selected.clone()],
             new_selection: Some(selected),
         })
     );
-    assert_ne!(second.baseline, first.baseline);
+    assert_ne!(second, first);
     source.selection = Some((0, 2));
-    let third = held::read_selection(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT + 2,
-        Some(second.baseline),
-    )
-    .expect("the fake answers");
     assert_eq!(
-        third.difference.map(|difference| difference.changes),
-        Some(vec![SelectionChange {
+        compared(&mut source, &mut anchors, second)
+            .0
+            .map(|difference| difference.changes),
+        Ok(vec![SelectionChange {
             selected: false,
             text: "ne".to_owned(),
             characters: 2,
@@ -707,36 +714,25 @@ fn a_selection_read_says_what_changed_from_the_named_baseline() {
 
 /// When the baseline and the new selection are both empty, the caret
 /// having moved, nothing changed; a baseline the outpost no longer holds
-/// is no baseline.
+/// is named as lost.
 #[test]
-fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_by_none() {
-    let mut source = Fake::new("line one\n", 0);
+fn an_empty_baseline_and_selection_differ_by_nothing_and_a_lost_one_is_named() {
+    let mut source = Fake::new("line one
+", 0);
     let mut anchors = store();
-    let first = held::read_selection(&mut source, &mut anchors.node(1), REPORTED_AT, None)
-        .expect("the fake answers");
+    let first = caret_held(&mut source, &mut anchors);
     source.caret = 3;
-    let moved = held::read_selection(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT + 1,
-        Some(first.baseline),
-    )
-    .expect("the fake answers");
     assert_eq!(
-        moved.difference,
-        Some(SelectionDifference {
+        compared(&mut source, &mut anchors, first).0,
+        Ok(SelectionDifference {
             changes: Vec::new(),
             new_selection: None,
         })
     );
-    let lost = held::read_selection(
-        &mut source,
-        &mut anchors.node(1),
-        REPORTED_AT + 2,
-        Some(TextAnchor(9_999)),
-    )
-    .expect("the fake answers");
-    assert_eq!(lost.difference, None);
+    assert_eq!(
+        compared(&mut source, &mut anchors, TextAnchor(9_999)).0,
+        Err(TextAnchor(9_999))
+    );
 }
 
 /// A batch's `Caret` holds the caret's read under its held anchor, the

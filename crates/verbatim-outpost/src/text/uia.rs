@@ -646,9 +646,7 @@ impl TextSource for UiaText {
                 .as_ref()
                 .map(|(start, end)| (end_of(start), end_of(end))),
             previous_collapsed: request.previous_collapsed,
-            formats: request
-                .formats
-                .then_some(verbatim_uia_rops::FormatSpan::Line),
+            formats: request.formats,
             attributes,
             learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),

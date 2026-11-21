@@ -35,14 +35,14 @@ use verbatim_model::{
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held};
+use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held, ops};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{
     Answer, Ends, Found, Input, Point, Ran, Segment, UnitsRead, run_batch, run_calls,
 };
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FormatSpan, Movement, Position, RangeEnd, RunAttributes,
+    Attributes, CaretAnswer, CaretQuery, Movement, Position, RangeEnd, RunAttributes,
     TextAttribute, TextFrom, TextTarget, caret_read_classic, caret_read_remote,
 };
 use windows::Win32::Foundation::{HWND, WPARAM};
@@ -50,15 +50,16 @@ use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, Tex
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
-/// The caret's report, read as a caret tell's read reads it, at `read_at_us`.
+/// The caret's report, read as a focus's caret read reads it, at
+/// `read_at_us`.
 fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
 ) -> CaretReport {
-    held::read_selection(source, anchors, read_at_us, None)
+    held::read_focus(source, anchors, read_at_us)
         .expect("the caret")
-        .report
+        .0
 }
 
 /// mockapp's "Notes" document's element, found by its name
@@ -301,19 +302,18 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
     assert_eq!(word.text, second_word);
 
     common::apply(app, hwnd, "caret doc 0");
-    let baseline = held::read_selection(source, anchors, 1, None)
-        .expect("the caret")
-        .baseline;
+    let baseline = ops::caret(source, anchors, 1).expect("the caret").held;
     common::apply(app, hwnd, "caret doc 0 5");
-    let found =
-        held::read_selection(source, anchors, 2, Some(baseline)).expect("the selection read");
-    let changes: Vec<(bool, String, u32)> = found
-        .difference
-        .expect("the baseline is held")
-        .changes
-        .into_iter()
-        .map(|change| (change.selected, change.text, change.characters))
-        .collect();
+    let after = ops::caret(source, anchors, 2).expect("the caret").held;
+    let changes: Vec<(bool, String, u32)> =
+        ops::compare_selection(source, anchors, (baseline, after))
+            .expect("the selection read")
+            .expect("the baseline is held")
+            .difference
+            .changes
+            .into_iter()
+            .map(|change| (change.selected, change.text, change.characters))
+            .collect();
     assert_eq!(changes, [(true, "alpha".to_owned(), 5)]);
 }
 
@@ -468,7 +468,7 @@ fn remote_and_classic_caret_reads_agree() {
     // The caret in "beta", a spelling error after bold "alpha": the line's
     // stretches are bold "alpha", a space, the error, and the line feed.
     common::apply(&mut app, hwnd, "caret doc 7");
-    let line = caret_both(&query(Some(FormatSpan::Line)));
+    let line = caret_both(&query(true));
     assert_eq!(line.line, ("alpha beta\n".to_owned(), 7));
     assert_eq!(
         line.runs,
@@ -479,18 +479,15 @@ fn remote_and_classic_caret_reads_agree() {
             (1, mock_attributes(false, false)),
         ]
     );
-    // The character alone.
-    let character = caret_both(&query(Some(FormatSpan::Character)));
-    assert_eq!(character.runs, [(0, mock_attributes(true, false))]);
     // Only what the theme asks for: no attributes, no formatting.
-    let mut nothing = query(Some(FormatSpan::Line));
+    let mut nothing = query(true);
     nothing.attributes = Attributes::NONE;
     assert_eq!(caret_both(&nothing).runs, []);
 
     // The evidence: compared with where the caret was, and the selection.
-    let known = caret_read_classic(&query(None)).expect("the caret");
+    let known = caret_read_classic(&query(false)).expect("the caret");
     common::apply(&mut app, hwnd, "caret doc 8");
-    let mut moved = query(None);
+    let mut moved = query(false);
     moved.since = Some(RangeEnd {
         range: &known.caret,
         endpoint: Endpoint::Start,
@@ -515,7 +512,7 @@ fn remote_and_classic_caret_reads_agree() {
     // A selection made from the caret: its text, newly selected.
     let at_six = {
         common::apply(&mut app, hwnd, "caret doc 6");
-        caret_read_classic(&query(None)).expect("the caret")
+        caret_read_classic(&query(false)).expect("the caret")
     };
     common::apply(&mut app, hwnd, "caret doc 6 10");
     let six = RangeEnd {
@@ -525,7 +522,7 @@ fn remote_and_classic_caret_reads_agree() {
     let extended = caret_both(&CaretQuery {
         previous_selection: Some((six, six)),
         read_selection_text: true,
-        ..query(None)
+        ..query(false)
     });
     assert_eq!(
         extended.changes,
@@ -535,7 +532,7 @@ fn remote_and_classic_caret_reads_agree() {
     // Its ends moved, so its text is read to keep.
     assert_eq!(extended.texts, (Some("beta".to_owned()), None));
     common::apply(&mut app, hwnd, "caret doc 6 10");
-    let selected = caret_read_remote(&query(None)).expect("the caret");
+    let selected = caret_read_remote(&query(false)).expect("the caret");
     assert!(selected.selection.is_some());
     let again = caret_both(&CaretQuery {
         since: Some(RangeEnd {
@@ -552,7 +549,7 @@ fn remote_and_classic_caret_reads_agree() {
                 endpoint: Endpoint::End,
             },
         )),
-        ..query(None)
+        ..query(false)
     });
     assert!(!again.moved && !again.selection_moved);
     // With the texts asked for: what the previous selection's ends hold
@@ -572,12 +569,12 @@ fn remote_and_classic_caret_reads_agree() {
         )),
         read_selection_text: true,
         read_previous_text: true,
-        ..query(None)
+        ..query(false)
     });
     assert_eq!(texts.texts, (None, Some("beta".to_owned())));
     let alone = caret_both(&CaretQuery {
         read_selection_text: true,
-        ..query(None)
+        ..query(false)
     });
     assert_eq!(alone.texts, (Some("beta".to_owned()), None));
     // The caret is the selection's start, as NVDA's is, whichever end
@@ -586,10 +583,10 @@ fn remote_and_classic_caret_reads_agree() {
     // offset in its line.
     assert_eq!((alone.line.1, alone.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 10 end");
-    let at_end = caret_both(&query(None));
+    let at_end = caret_both(&query(false));
     assert_eq!((at_end.line.1, at_end.selection_start), (6, Some(6)));
     common::apply(&mut app, hwnd, "caret doc 6 13 end");
-    let below = caret_both(&query(None));
+    let below = caret_both(&query(false));
     assert_eq!(
         (below.line, below.selection_start),
         (("alpha beta\n".to_owned(), 6), Some(6))
@@ -599,17 +596,17 @@ fn remote_and_classic_caret_reads_agree() {
     // provider's caret is on; one from the start of another line is not.
     assert!(!at_end.start_first);
     common::apply(&mut app, hwnd, "caret doc 0 5 end");
-    let first = caret_both(&query(None));
+    let first = caret_both(&query(false));
     assert_eq!((first.selection_start, first.start_first), (Some(0), true));
     common::apply(&mut app, hwnd, "caret doc 0 13 end");
-    let first_below = caret_both(&query(None));
+    let first_below = caret_both(&query(false));
     assert_eq!(
         (first_below.selection_start, first_below.start_first),
         (Some(0), true)
     );
 
     common::apply(&mut app, hwnd, "caret doc 11 13 end");
-    let second = caret_both(&query(None));
+    let second = caret_both(&query(false));
     assert_eq!(
         (second.selection_start, second.start_first),
         (Some(0), false)
@@ -622,7 +619,7 @@ fn remote_and_classic_caret_reads_agree() {
         &format!(r"set-text doc {}\n", "a".repeat(600)),
     );
     common::apply(&mut app, hwnd, "caret doc 0 600");
-    let long = caret_read_remote(&query(None)).expect("the caret");
+    let long = caret_read_remote(&query(false)).expect("the caret");
     let long_selection = long.selection.as_ref().expect("a selection");
     let capped = caret_both(&CaretQuery {
         previous_selection: Some((
@@ -636,19 +633,20 @@ fn remote_and_classic_caret_reads_agree() {
             },
         )),
         read_previous_text: true,
-        ..query(None)
+        ..query(false)
     });
     assert_eq!(capped.texts, (None, Some("a".repeat(513))));
     let capped = caret_both(&CaretQuery {
         read_selection_text: true,
-        ..query(None)
+        ..query(false)
     });
     assert_eq!(capped.texts, (Some("a".repeat(513)), None));
     app.quit();
 }
 
-/// A provider whose `IsItalic` read fails: the failed attribute is not
-/// supported and the others are read, as NVDA treats a failed attribute
+/// A provider whose `IsItalic` read fails: the caret line's one stretch
+/// has the failed attribute not supported and the others read, as NVDA
+/// treats a failed attribute
 /// read, both classically, where UIA answers `GetAttributeValues` for all
 /// seven in one call with the failed one not supported, and in the remote
 /// program.
@@ -665,7 +663,7 @@ fn a_failing_attribute_is_not_supported() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: Some(FormatSpan::Character),
+        formats: true,
         attributes: Attributes::ALL,
         learning: Attributes::NONE,
         max_text: 1024,
@@ -679,7 +677,7 @@ fn a_failing_attribute_is_not_supported() {
     assert_eq!(
         summary(&classic).runs,
         [(
-            0,
+            11,
             RunAttributes {
                 italic: None,
                 ..mock_attributes(false, false)
@@ -709,7 +707,7 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: Some(FormatSpan::Line),
+        formats: true,
         attributes: Attributes::ALL,
         learning: Attributes::NONE,
         max_text: 1024,
@@ -925,7 +923,7 @@ fn remote_and_classic_text_reads_agree() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: None,
+        formats: false,
         attributes: Attributes::NONE,
         learning: Attributes::NONE,
         max_text: 1024,
@@ -1436,7 +1434,7 @@ fn every_attribute_is_read_both_ways() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: Some(formats),
+        formats,
         attributes: Attributes::ALL,
         learning,
         max_text: 1024,
@@ -1458,7 +1456,7 @@ fn every_attribute_is_read_both_ways() {
 
     common::apply(&mut app, hwnd, "caret doc 0");
     assert_eq!(
-        read(FormatSpan::Line),
+        read(true),
         (
             vec![
                 (
@@ -1476,7 +1474,7 @@ fn every_attribute_is_read_both_ways() {
     );
     common::apply(&mut app, hwnd, "caret doc 6");
     assert_eq!(
-        read(FormatSpan::Line),
+        read(true),
         (
             vec![
                 (
@@ -1517,7 +1515,7 @@ fn every_attribute_is_read_both_ways() {
     );
     common::apply(&mut app, hwnd, "caret doc 31");
     assert_eq!(
-        read(FormatSpan::Line),
+        read(true),
         (
             vec![(
                 5,
@@ -1528,20 +1526,6 @@ fn every_attribute_is_read_both_ways() {
             )],
             Some(Attributes::NONE)
         )
-    );
-    assert_eq!(
-        read(FormatSpan::Character),
-        (
-            vec![(
-                0,
-                RunAttributes {
-                    bullet_style: Some(2),
-                    ..plain()
-                }
-            )],
-            None
-        ),
-        "nothing learned from a character"
     );
     app.quit();
 }
@@ -1565,7 +1549,7 @@ fn unsupported_attributes_are_found_both_ways() {
         since: None,
         previous_selection: None,
         previous_collapsed: false,
-        formats: Some(FormatSpan::Line),
+        formats: true,
         attributes: Attributes::ALL,
         learning: Attributes::ALL,
         max_text: 1024,
