@@ -3,9 +3,39 @@
 
 use std::sync::atomic::AtomicU64;
 
+use verbatim_model::batch::{Chunks, Done, RangeText, Selected};
 use verbatim_model::{CaretMotion, SelectionDifference, SentenceMoved};
 
 use super::*;
+
+/// One unit read call by call at `at`, after `movement`: how far it moved
+/// and its chunk, or the reply that refuses it.
+fn read_one(
+    source: &mut Fake,
+    anchors: &mut NodeText<'_, usize>,
+    (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
+) -> Result<(i32, TextChunk), TextReply> {
+    let step = CallStep::Read {
+        at,
+        movement,
+        unit,
+        count: 1,
+    };
+    match by_calls(source, anchors, step).expect("the fake answers") {
+        Ok(Done::ReadText(Chunks { moved, mut chunks })) => Ok((moved, chunks.remove(0))),
+        Ok(other) => panic!("a read, not {other:?}"),
+        Err(reply) => Err(reply),
+    }
+}
+
+/// `step` run call by call: its result, or the reply that refuses it.
+fn call(
+    source: &mut Fake,
+    anchors: &mut NodeText<'_, usize>,
+    step: CallStep,
+) -> Result<Done, TextReply> {
+    by_calls(source, anchors, step).expect("the fake answers")
+}
 
 /// An in-memory text whose positions are UTF-16 offsets. Paragraphs end
 /// after each line feed, and a line is a paragraph, or, with `wrap`, each
@@ -253,19 +283,16 @@ fn a_position_inside_a_chunk_resolves_through_its_text() {
     let line = report(&mut source, &mut anchors).line;
     // The review cursor, at the "x", which Core found by slicing the text.
     let x = u32::try_from(line.text.find('x').unwrap()).unwrap();
-    let reply = perform(
+    let at = TextPoint::At(TextPosition {
+        anchor: line.start,
+        offset: x,
+    });
+    let reply = read_one(
         &mut source,
         &mut anchors.node(1),
-        &TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition {
-                anchor: line.start,
-                offset: x,
-            }),
-            movement: None,
-            unit: TextUnit::Word,
-        }),
+        (at, None, TextUnit::Word),
     );
-    let TextReply::Read { moved: 0, chunk } = reply else {
+    let Ok((0, chunk)) = reply else {
         panic!("a read, not {reply:?}");
     };
     assert_eq!(chunk.text, "x");
@@ -283,24 +310,14 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     }
     drop(anchors.forget_anchors(&std::collections::HashSet::from([first.0])));
     let read = |anchors: &mut Anchors<usize>, source: &mut Fake, anchor| {
-        perform(
-            source,
-            &mut anchors.node(1),
-            &TextOp::Read(TextRead {
-                at: TextPoint::At(TextPosition { anchor, offset: 1 }),
-                movement: None,
-                unit: TextUnit::Line,
-            }),
-        )
+        let at = TextPoint::At(TextPosition { anchor, offset: 1 });
+        read_one(source, &mut anchors.node(1), (at, None, TextUnit::Line))
     };
     assert_eq!(
         read(&mut anchors, &mut source, first),
-        TextReply::AnchorLost
+        Err(TextReply::AnchorLost)
     );
-    assert!(matches!(
-        read(&mut anchors, &mut source, kept),
-        TextReply::Read { .. }
-    ));
+    assert!(read(&mut anchors, &mut source, kept).is_ok());
 }
 
 /// A selection read's changes from the baseline held with `baseline`,
@@ -417,27 +434,31 @@ fn a_selection_whose_text_was_deleted_is_unselected_with_no_text() {
     );
 }
 
-fn read(source: &mut Fake, anchors: &mut Anchors<usize>, read: TextRead) -> TextReply {
-    perform(source, &mut anchors.node(1), &TextOp::Read(read))
+/// A read of one unit, its point, movement and unit `read`.
+fn read(
+    source: &mut Fake,
+    anchors: &mut Anchors<usize>,
+    read: (TextPoint, Option<TextMovement>, TextUnit),
+) -> Result<(i32, TextChunk), TextReply> {
+    read_one(source, &mut anchors.node(1), read)
 }
 
 #[test]
 fn movement_stops_at_the_ends_and_reports_how_far_it_went() {
     let mut source = Fake::new("one\ntwo\nthree", 5);
     let mut anchors = store();
-    let line = |count| TextRead {
-        at: TextPoint::Caret,
-        movement: Some(TextMovement {
+    let line = |count| {
+        let movement = TextMovement {
             unit: TextUnit::Line,
             count,
-        }),
-        unit: TextUnit::Line,
+        };
+        (TextPoint::Caret, Some(movement), TextUnit::Line)
     };
-    let TextReply::Read { moved, chunk } = read(&mut source, &mut anchors, line(1)) else {
+    let Ok((moved, chunk)) = read(&mut source, &mut anchors, line(1)) else {
         panic!("a read");
     };
     assert_eq!((moved, chunk.text.as_str(), chunk.last), (1, "three", true));
-    let TextReply::Read { moved, chunk } = read(&mut source, &mut anchors, line(5)) else {
+    let Ok((moved, chunk)) = read(&mut source, &mut anchors, line(5)) else {
         panic!("a read");
     };
     assert_eq!(
@@ -445,7 +466,7 @@ fn movement_stops_at_the_ends_and_reports_how_far_it_went() {
         (1, "three"),
         "never past the end"
     );
-    let TextReply::Read { moved, chunk } = read(&mut source, &mut anchors, line(-3)) else {
+    let Ok((moved, chunk)) = read(&mut source, &mut anchors, line(-3)) else {
         panic!("a read");
     };
     assert_eq!(
@@ -458,40 +479,29 @@ fn movement_stops_at_the_ends_and_reports_how_far_it_went() {
 fn the_ends_of_the_document_are_reached_by_document_movement() {
     let mut source = Fake::new("one\ntwo", 1);
     let mut anchors = store();
-    let to_end = TextRead {
-        at: TextPoint::Caret,
-        movement: Some(TextMovement {
-            unit: TextUnit::Document,
-            count: 1,
-        }),
-        unit: TextUnit::Line,
+    let movement = TextMovement {
+        unit: TextUnit::Document,
+        count: 1,
     };
-    let TextReply::Read { moved, chunk } = read(&mut source, &mut anchors, to_end) else {
+    let to_end = (TextPoint::Caret, Some(movement), TextUnit::Line);
+    let Ok((moved, chunk)) = read(&mut source, &mut anchors, to_end) else {
         panic!("a read");
     };
     assert_eq!((moved, chunk.text.as_str()), (1, "two"));
     assert_eq!(chunk.offset, 3, "the point reached is the end");
-    let whole = TextRead {
-        at: TextPoint::Start,
-        movement: None,
-        unit: TextUnit::Document,
-    };
+    let whole = (TextPoint::Start, None, TextUnit::Document);
     assert_eq!(
         read(&mut source, &mut anchors, whole),
-        TextReply::UnsupportedUnit(TextUnit::Document)
+        Err(TextReply::UnsupportedUnit(TextUnit::Document))
     );
 }
 
 #[test]
 fn sentences_are_unsupported_or_read_as_the_paragraph() {
-    let sentence = TextRead {
-        at: TextPoint::Caret,
-        movement: None,
-        unit: TextUnit::Sentence,
-    };
+    let sentence = (TextPoint::Caret, None, TextUnit::Sentence);
     let mut source = Fake::new("One. Two.\nNext", 0);
     let mut anchors = store();
-    let TextReply::Read { chunk, .. } = read(&mut source, &mut anchors, sentence) else {
+    let Ok((_, chunk)) = read(&mut source, &mut anchors, sentence) else {
         panic!("a read");
     };
     assert_eq!(chunk.unit, TextUnit::Paragraph);
@@ -499,15 +509,12 @@ fn sentences_are_unsupported_or_read_as_the_paragraph() {
     source.sentences = Sentences::Unsupported;
     assert_eq!(
         read(&mut source, &mut anchors, sentence),
-        TextReply::UnsupportedUnit(TextUnit::Sentence)
+        Err(TextReply::UnsupportedUnit(TextUnit::Sentence))
     );
-    let page = TextRead {
-        unit: TextUnit::Page,
-        ..sentence
-    };
+    let page = (TextPoint::Caret, None, TextUnit::Page);
     assert_eq!(
         read(&mut source, &mut anchors, page),
-        TextReply::UnsupportedUnit(TextUnit::Page)
+        Err(TextReply::UnsupportedUnit(TextUnit::Page))
     );
 }
 
@@ -533,38 +540,25 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
             offset,
         })
     };
-    let range = perform(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::ReadRange {
-            start: at(11),
-            end: at(6),
-            through: None,
-        },
-    );
+    let range = CallStep::Range {
+        ends: (at(11), at(6)),
+        through: None,
+    };
     assert_eq!(
-        range,
-        TextReply::Range {
+        call(&mut source, &mut anchors.node(1), range),
+        Ok(Done::ReadRange(RangeText {
             text: "world".to_owned(),
             truncated: false
-        }
+        }))
     );
-    let selected = perform(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::Select {
-            start: at(5),
-            end: at(0),
-            through: None,
-        },
-    );
+    let select = CallStep::Select {
+        ends: (at(5), at(0)),
+        through: None,
+        began_us: 7,
+    };
     assert_eq!(
-        selected,
-        TextReply::Selected(vec![SelectionChange {
-            selected: true,
-            text: "hello".to_owned(),
-            characters: 5,
-        }])
+        call(&mut source, &mut anchors.node(1), select),
+        Ok(Done::Select(Selected { began_us: 7 }))
     );
     assert_eq!(source.selection, Some((0, 5)));
 }
@@ -583,48 +577,27 @@ fn a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first() {
             offset,
         })
     };
-    let through = |start, end| {
-        Some(TextThrough {
-            start: at(start),
-            end: at(end),
-        })
-    };
+    let through = |start, end| Some((at(start), at(end)));
     for (start, end, past) in [(6, 0, through(7, 1)), (0, 6, through(1, 7))] {
-        let range = perform(
-            &mut source,
-            &mut anchors.node(1),
-            &TextOp::ReadRange {
-                start: at(start),
-                end: at(end),
-                through: past,
-            },
-        );
+        let range = CallStep::Range {
+            ends: (at(start), at(end)),
+            through: past,
+        };
         assert_eq!(
-            range,
-            TextReply::Range {
+            call(&mut source, &mut anchors.node(1), range),
+            Ok(Done::ReadRange(RangeText {
                 text: "hello w".to_owned(),
                 truncated: false
-            },
+            })),
             "from {start} to {end}"
         );
     }
-    let selected = perform(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::Select {
-            start: at(6),
-            end: at(0),
-            through: through(7, 1),
-        },
-    );
-    assert_eq!(
-        selected,
-        TextReply::Selected(vec![SelectionChange {
-            selected: true,
-            text: "hello w".to_owned(),
-            characters: 7,
-        }])
-    );
+    let select = CallStep::Select {
+        ends: (at(6), at(0)),
+        through: through(7, 1),
+        began_us: 7,
+    };
+    assert!(call(&mut source, &mut anchors.node(1), select).is_ok());
     assert_eq!(source.selection, Some((0, 7)));
 }
 
@@ -791,69 +764,60 @@ fn a_caret_holds_the_read_a_wait_starts_from() {
 /// The line read at the caret `at` held, as a batch's `ReadText` of it
 /// reads it.
 fn line_at(source: &mut Fake, anchors: &mut NodeText<'_, usize>, at: TextAnchor) -> TextChunk {
-    match perform(
-        source,
-        anchors,
-        &TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition::at(at)),
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    ) {
-        TextReply::Read { chunk, .. } => chunk,
-        other => panic!("a line, not {other:?}"),
+    let at = TextPoint::At(TextPosition::at(at));
+    match read_one(source, anchors, (at, None, TextUnit::Line)) {
+        Ok((_, chunk)) => chunk,
+        Err(other) => panic!("a line, not {other:?}"),
     }
 }
 
-/// Verbatim's own caret move and selection answer with the next baseline,
-/// held where the caret or the selection is after them.
+/// Verbatim's own caret move and selection, a `Select` then a `Caret`:
+/// the `Caret` holds the next baseline where the caret or the selection
+/// is after them.
 #[test]
-fn a_move_and_a_selection_for_an_entry_hold_the_next_baseline() {
+fn a_move_and_a_selection_then_the_caret_hold_the_next_baseline() {
     let mut source = Fake::new("line one\n", 0);
     let mut anchors = store();
     let at = report(&mut source, &mut anchors);
-    let moved = held::perform_placed(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::MoveCaret(TextPoint::At(TextPosition {
-            anchor: at.line.start,
-            offset: 5,
-        })),
-    );
-    let TextReply::CaretPlaced { baseline } = moved else {
-        panic!("a caret placed, not {moved:?}");
+    let to = TextPoint::At(TextPosition {
+        anchor: at.line.start,
+        offset: 5,
+    });
+    let moving = CallStep::Select {
+        ends: (to, to),
+        through: None,
+        began_us: 1,
     };
+    assert!(call(&mut source, &mut anchors.node(1), moving).is_ok());
+    let moved =
+        ops::caret(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
     assert_eq!(
         anchors
             .node(1)
             .anchors
             .held
-            .get(&baseline.0)
+            .get(&moved.held.0)
             .map(|read| read.caret.at),
         Some(5)
     );
-    let selected = held::perform_placed(
-        &mut source,
-        &mut anchors.node(1),
-        &TextOp::Select {
-            start: TextPoint::Start,
-            end: TextPoint::At(TextPosition {
-                anchor: at.line.start,
-                offset: 4,
-            }),
-            through: None,
-        },
-    );
-    let TextReply::SelectionPlaced { changes, baseline } = selected else {
-        panic!("a selection placed, not {selected:?}");
+    let end = TextPoint::At(TextPosition {
+        anchor: at.line.start,
+        offset: 4,
+    });
+    let selecting = CallStep::Select {
+        ends: (TextPoint::Start, end),
+        through: None,
+        began_us: 2,
     };
-    assert_eq!(changes.len(), 1);
+    assert!(call(&mut source, &mut anchors.node(1), selecting).is_ok());
+    let selected =
+        ops::caret(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
     assert_eq!(
         anchors
             .node(1)
             .anchors
             .held
-            .get(&baseline.0)
+            .get(&selected.held.0)
             .and_then(|read| read
                 .selection
                 .as_ref()

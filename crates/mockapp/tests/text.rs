@@ -15,6 +15,8 @@
 //! Core's say-all over UIA text, which has no sentence unit, speaking it
 //! by sentence.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
@@ -25,22 +27,23 @@ use std::sync::Arc;
 
 use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
-use verbatim_model::request::Request;
+use verbatim_model::batch::{Chunks, Done, Located, Op, TextOffset};
+use verbatim_model::request::Question;
 use verbatim_model::{
-    CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextPoint,
+    TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, NodeText, TextSource, held, perform};
+use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
+use verbatim_uia_rops::batch::{
+    Answer, Ends, Found, Input, Point, Ran, Segment, UnitsRead, run_batch, run_calls,
+};
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
-    RangeAction, RangeAnswer, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom,
-    TextTarget, UnitsAnswer, UnitsQuery, caret_read_classic, caret_read_remote,
-    text_location_classic, text_location_remote, text_range_classic, text_range_remote,
-    text_units_classic, text_units_remote,
+    Attributes, CaretAnswer, CaretQuery, FormatSpan, Movement, Position, RangeEnd, RunAttributes,
+    TextAttribute, TextFrom, TextTarget, caret_read_classic, caret_read_remote,
 };
 use windows::Win32::Foundation::{HWND, WPARAM};
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
@@ -89,6 +92,28 @@ fn point_of(chunk: &TextChunk) -> TextPosition {
     }
 }
 
+/// Reads `count` units call by call, as the outpost reads a batch's
+/// `ReadText` of an edit control: how far it moved and the chunks, or the
+/// reply that refuses it.
+fn read_units<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    (at, movement, unit): (TextPoint, Option<(TextUnit, i32)>, TextUnit),
+    count: u8,
+) -> Result<(i32, Vec<TextChunk>), TextReply> {
+    let step = CallStep::Read {
+        at,
+        movement: movement.map(|(unit, count)| TextMovement { unit, count }),
+        unit,
+        count,
+    };
+    match by_calls(source, anchors, step).expect("the text answers") {
+        Ok(Done::ReadText(Chunks { moved, chunks })) => Ok((moved, chunks)),
+        Ok(other) => panic!("a read, not {other:?}"),
+        Err(reply) => Err(reply),
+    }
+}
+
 /// Reads one unit.
 fn read<S: TextSource>(
     source: &mut S,
@@ -96,23 +121,25 @@ fn read<S: TextSource>(
     at: TextPoint,
     movement: Option<(TextUnit, i32)>,
     unit: TextUnit,
-) -> TextReply {
-    perform(
-        source,
-        anchors,
-        &TextOp::Read(TextRead {
-            at,
-            movement: movement.map(|(unit, count)| TextMovement { unit, count }),
-            unit,
-        }),
-    )
+) -> Result<(i32, TextChunk), TextReply> {
+    read_units(source, anchors, (at, movement, unit), 1)
+        .map(|(moved, mut chunks)| (moved, chunks.remove(0)))
 }
 
 /// A read's chunk and how far it moved.
-fn chunk(reply: TextReply) -> (i32, TextChunk) {
-    match reply {
-        TextReply::Read { moved, chunk } => (moved, chunk),
-        other => panic!("a read, not {other:?}"),
+fn chunk(reply: Result<(i32, TextChunk), TextReply>) -> (i32, TextChunk) {
+    reply.unwrap_or_else(|other| panic!("a read, not {other:?}"))
+}
+
+/// Where `at` is, call by call.
+fn locate<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    at: TextPoint,
+) -> Located {
+    match by_calls(source, anchors, CallStep::Locate(at)).expect("the text answers") {
+        Ok(Done::Locate(located)) => located,
+        other => panic!("a location, not {other:?}"),
     }
 }
 
@@ -159,17 +186,13 @@ fn lines_stop_at_the_end<S: TextSource>(
 
     // Say-all's read ahead: every line in one request, the last marked as
     // the text's last.
-    let reply = perform(
+    let reply = read_units(
         source,
         anchors,
-        &TextOp::ReadAhead(TextReadAhead {
-            at: TextPoint::Start,
-            movement: None,
-            unit: TextUnit::Line,
-            count: 16,
-        }),
+        (TextPoint::Start, None, TextUnit::Line),
+        16,
     );
-    let TextReply::Chunks { moved, chunks } = reply else {
+    let Ok((moved, chunks)) = reply else {
         panic!("chunks, not {reply:?}");
     };
     let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
@@ -191,17 +214,8 @@ fn lines_stop_at_the_end<S: TextSource>(
         "only the empty last line is last"
     );
     // Two lines asked for: two read.
-    let reply = perform(
-        source,
-        anchors,
-        &TextOp::ReadAhead(TextReadAhead {
-            at: TextPoint::Start,
-            movement: None,
-            unit: TextUnit::Line,
-            count: 2,
-        }),
-    );
-    let TextReply::Chunks { moved, chunks } = reply else {
+    let reply = read_units(source, anchors, (TextPoint::Start, None, TextUnit::Line), 2);
+    let Ok((moved, chunks)) = reply else {
         panic!("chunks, not {reply:?}");
     };
     let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
@@ -323,7 +337,7 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
             None,
             TextUnit::Sentence
         ),
-        TextReply::UnsupportedUnit(TextUnit::Sentence)
+        Err(TextReply::UnsupportedUnit(TextUnit::Sentence))
     );
     // A read carries UIA's language for its text.
     let (_, line) = chunk(read(
@@ -730,11 +744,13 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
 /// whether the text ended.
 type UnitsSummary = (i32, Vec<(String, usize, Option<String>)>, bool);
 
-fn units_summary(answer: &UnitsAnswer) -> UnitsSummary {
+fn units_summary(answer: &Answer) -> UnitsSummary {
+    let Some(Ran::Done(Found::ReadText(read))) = answer.steps.first() else {
+        panic!("units read, not {answer:?}");
+    };
     (
-        answer.moved,
-        answer
-            .units
+        read.moved,
+        read.units
             .iter()
             .map(|unit| {
                 (
@@ -744,8 +760,58 @@ fn units_summary(answer: &UnitsAnswer) -> UnitsSummary {
                 )
             })
             .collect(),
-        answer.ended,
+        read.ended,
     )
+}
+
+/// `input` run as a batch's one step by both executors, a program and its
+/// calls (the request list's design, section 5): the two answers, each
+/// described, agree; the program's answer.
+fn both<'a>(input: &dyn Fn() -> Input<'a>) -> Answer {
+    let uia = Uia::new().expect("a UIA client");
+    let segment = || Segment {
+        uia: &uia,
+        steps: vec![batch::step(0, input())],
+        remote: true,
+        window: None,
+    };
+    let remote = run_batch(&segment());
+    let classic = run_calls(&segment());
+    assert_eq!(
+        batch::describe(None, &remote),
+        batch::describe(None, &classic),
+        "the two executors differ"
+    );
+    remote
+}
+
+/// `count` units of `unit` from `from`, after `movement`, read by both
+/// executors, which agree, with the language when `culture`.
+fn units_both(
+    target: TextTarget<'_>,
+    from: TextFrom<'_>,
+    (movement, unit, count): (
+        Option<Movement>,
+        windows::Win32::UI::Accessibility::TextUnit,
+        u32,
+    ),
+    culture: bool,
+) -> UnitsSummary {
+    let answer = both(&|| Input::ReadText {
+        text: target,
+        at: Point::From(from),
+        read: UnitsRead {
+            movement,
+            unit,
+            count,
+            max_text: 1024,
+            max_total: 1024,
+            culture,
+            formats: Attributes::NONE,
+            learning: Attributes::NONE,
+        },
+    });
+    units_summary(&answer)
 }
 
 /// The text protocol's other reads agree remotely and classically: units
@@ -767,23 +833,8 @@ fn remote_and_classic_text_reads_agree() {
         element: &element,
         pattern: &pattern,
     };
-    let units = |from, movement, count| {
-        let query = UnitsQuery {
-            target,
-            from,
-            movement,
-            unit: TextUnit_Line,
-            count,
-            max_text: 1024,
-            max_total: 1024,
-            culture: true,
-        };
-        let remote = text_units_remote(&query).expect("the remote program runs");
-        let classic = text_units_classic(&query).expect("the classic reads run");
-        let remote = units_summary(&remote);
-        assert_eq!(remote, units_summary(&classic));
-        remote
-    };
+    let units =
+        |from, movement, count| units_both(target, from, (movement, TextUnit_Line, count), true);
     let en = || Some("en-US".to_owned());
     common::apply(&mut app, hwnd, "caret doc 7");
     assert_eq!(
@@ -843,30 +894,31 @@ fn remote_and_classic_text_reads_agree() {
     );
 
     // The text between two points, given in either order, and selected.
-    let range = |start, end, action| {
-        let query = RangeQuery {
-            target,
-            start,
-            end,
-            through: None,
-            action,
-        };
-        let remote = text_range_remote(&query).expect("the remote program runs");
-        let classic = text_range_classic(&query).expect("the classic reads run");
-        assert_eq!(
-            (&remote.text, remote.selected),
-            (&classic.text, classic.selected)
-        );
-        (String::from_utf16_lossy(&remote.text), remote.selected)
+    let ends = |start, end| Ends {
+        start: Point::From(start),
+        end: Point::From(end),
+        through: None,
     };
-    assert_eq!(
-        range(after, Some(TextFrom::Start), RangeAction::Text(1024)),
-        ("alpha ".to_owned(), false)
-    );
-    assert_eq!(
-        range(TextFrom::Start, Some(after), RangeAction::Select),
-        (String::new(), true)
-    );
+    let range = |start, end| {
+        let answer = both(&|| Input::ReadRange {
+            text: target,
+            ends: ends(start, end),
+            max_text: 1024,
+        });
+        let Some(Ran::Done(Found::ReadRange(text))) = answer.steps.first() else {
+            panic!("a range read, not {answer:?}");
+        };
+        String::from_utf16_lossy(text)
+    };
+    assert_eq!(range(after, TextFrom::Start), "alpha ");
+    let selected = both(&|| Input::Select {
+        text: target,
+        ends: ends(TextFrom::Start, after),
+    });
+    assert!(matches!(
+        selected.steps.first(),
+        Some(Ran::Done(Found::Select))
+    ));
     let selected = caret_read_remote(&CaretQuery {
         element: &element,
         pattern: &pattern,
@@ -889,56 +941,44 @@ fn remote_and_classic_text_reads_agree() {
         prefix
     );
     assert_eq!(
-        range(
-            TextFrom::SelectionStart,
-            Some(TextFrom::SelectionEnd),
-            RangeAction::Text(1024)
-        ),
-        ("alpha ".to_owned(), false)
+        range(TextFrom::SelectionStart, TextFrom::SelectionEnd),
+        "alpha "
     );
 
-    // Selecting with the change reported, from a caret at the start, each
-    // way from the same selection: the change is the text selected.
-    let report = |select: fn(&RangeQuery<'_>) -> Result<RangeAnswer, verbatim_uia_rops::Error>| {
-        let collapse = RangeQuery {
-            target,
-            start: TextFrom::Start,
-            end: None,
-            through: None,
-            action: RangeAction::Select,
+    // Review select from a caret at the start, the caret, the selection,
+    // the caret again and the two compared, by each executor: the change
+    // is the text selected.
+    let text = batch::Text::of(element.clone());
+    let uia = Uia::new().expect("a UIA client");
+    for run in [run_batch, run_calls] {
+        common::apply(&mut app, hwnd, "caret doc 0");
+        let answer = run(&Segment {
+            uia: &uia,
+            steps: batch::review_select(&text, ends(TextFrom::Start, after)),
+            remote: true,
+            window: None,
+        });
+        let Some(Ran::Done(Found::CompareSelection(compared))) = answer.steps.get(3) else {
+            panic!("the selections compared, not {answer:?}");
         };
-        assert!(
-            text_range_remote(&collapse)
-                .expect("the caret moves")
-                .selected
-        );
-        let answer = select(&RangeQuery {
-            target,
-            start: TextFrom::Start,
-            end: Some(after),
-            through: None,
-            action: RangeAction::SelectReporting(1024),
-        })
-        .expect("the selection is made");
-        assert!(answer.selected);
-        answer
+        let changes: Vec<(bool, String)> = compared
             .changes
-            .expect("the changes")
-            .into_iter()
+            .iter()
             .map(|change| (change.selected, String::from_utf16_lossy(&change.text)))
-            .collect::<Vec<_>>()
-    };
-    let expected = vec![(true, "alpha ".to_owned())];
-    assert_eq!(report(text_range_remote), expected);
-    assert_eq!(report(text_range_classic), expected);
+            .collect();
+        assert_eq!(changes, [(true, "alpha ".to_owned())]);
+    }
 
     // A point's place: mockapp draws each character 8 pixels wide.
     for (at, expected) in [(TextFrom::Start, (100.0, 200.0)), (after, (148.0, 200.0))] {
-        let query = LocationQuery { target, at };
-        let remote = text_location_remote(&query).expect("the remote program runs");
-        let classic = text_location_classic(&query).expect("the classic reads run");
-        assert_eq!(remote.location, classic.location);
-        assert_eq!(remote.location, Some(expected));
+        let answer = both(&|| Input::Locate {
+            text: target,
+            at: Point::From(at),
+        });
+        let Some(Ran::Done(Found::Locate(location))) = answer.steps.first() else {
+            panic!("a location, not {answer:?}");
+        };
+        assert_eq!(*location, Some(expected));
     }
     app.quit();
 }
@@ -959,21 +999,12 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
         pattern: &pattern,
     };
     let units = |movement, count| {
-        let query = UnitsQuery {
+        units_both(
             target,
-            from: TextFrom::Start,
-            movement,
-            unit: TextUnit_Line,
-            count,
-            max_text: 1024,
-            max_total: 1024,
-            culture: true,
-        };
-        let remote = text_units_remote(&query).expect("the remote program runs");
-        let classic = text_units_classic(&query).expect("the classic reads run");
-        let remote = units_summary(&remote);
-        assert_eq!(remote, units_summary(&classic));
-        remote
+            TextFrom::Start,
+            (movement, TextUnit_Line, count),
+            true,
+        )
     };
     let tag = |tag: &str| Some(tag.to_owned());
     assert_eq!(
@@ -1095,13 +1126,12 @@ fn uia_say_all_speaks_by_sentence_without_a_sentence_unit() {
     let moves = Rc::new(Cell::new(0));
     let counted = Rc::clone(&moves);
     core.observe_sends(Some(Box::new(move |ask, _| {
-        if matches!(
-            ask.request.legacy(),
-            Some(Request::Text {
-                op: TextOp::MoveCaret(_),
-                ..
-            })
-        ) {
+        if let Question::Batch(sent) = &ask.request
+            && matches!(
+                sent.steps.first().map(|step| &step.op),
+                Some(Op::Select { .. })
+            )
+        {
             counted.set(counted.get() + 1);
         }
     })));
@@ -1239,7 +1269,7 @@ fn edit_control_text(fixture: &str, past_last_line: isize) {
             None,
             TextUnit::Page
         ),
-        TextReply::UnsupportedUnit(TextUnit::Page)
+        Err(TextReply::UnsupportedUnit(TextUnit::Page))
     );
     a_caret_key_is_answered_with_what_it_did(
         (&mut app, hwnd),
@@ -1557,21 +1587,12 @@ fn a_backward_move_is_counted_backward_both_ways() {
         pattern: &pattern,
     };
     let units = |unit, count| {
-        let query = UnitsQuery {
+        units_both(
             target,
-            from: TextFrom::Caret,
-            movement: Some(Movement::By(unit, count)),
-            unit,
-            count: 1,
-            max_text: 1024,
-            max_total: 1024,
-            culture: false,
-        };
-        let remote = text_units_remote(&query).expect("the remote program runs");
-        let classic = text_units_classic(&query).expect("the classic reads run");
-        let remote = units_summary(&remote);
-        assert_eq!(remote, units_summary(&classic));
-        remote
+            TextFrom::Caret,
+            (Some(Movement::By(unit, count)), unit, 1),
+            false,
+        )
     };
     common::apply(&mut app, hwnd, "caret doc 6");
     assert_eq!(
@@ -1603,23 +1624,12 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let query = UnitsQuery {
-        target: TextTarget {
-            element: &element,
-            pattern: &pattern,
-        },
-        from: TextFrom::Caret,
-        movement: None,
-        unit: TextUnit_Line,
-        count: 6,
-        max_text: 1024,
-        max_total: 1024,
-        culture: false,
+    let target = TextTarget {
+        element: &element,
+        pattern: &pattern,
     };
     common::apply(&mut app, hwnd, "caret doc 0");
-    let remote = units_summary(&text_units_remote(&query).expect("the remote program runs"));
-    let classic = units_summary(&text_units_classic(&query).expect("the classic reads run"));
-    assert_eq!(remote, classic);
+    let remote = units_both(target, TextFrom::Caret, (None, TextUnit_Line, 6), false);
     assert_eq!(
         remote,
         (
@@ -1704,7 +1714,7 @@ fn page_movement_answers_from_the_providers_pages() {
             Some((TextUnit::Page, 1)),
             TextUnit::Line,
         ),
-        TextReply::UnsupportedUnit(TextUnit::Page)
+        Err(TextReply::UnsupportedUnit(TextUnit::Page))
     );
     app.quit();
 }
@@ -1745,12 +1755,11 @@ fn a_location_is_answered_from_where_the_provider_places_the_text() {
         ..point_of(&first)
     };
     assert_eq!(
-        perform(
-            &mut source,
-            &mut anchors,
-            &TextOp::Location(TextPoint::At(beta))
-        ),
-        TextReply::Location { x: 148, y: 200 }
+        locate(&mut source, &mut anchors, TextPoint::At(beta)),
+        Located {
+            screen: Some((148, 200)),
+            offset: None,
+        }
     );
     app.quit();
 
@@ -1784,15 +1793,13 @@ fn a_location_is_answered_from_where_the_provider_places_the_text() {
     ));
     assert_eq!(second.text, "gamma\r\n");
     assert_eq!(
-        perform(
-            &mut source,
-            &mut anchors,
-            &TextOp::Location(TextPoint::At(point_of(&second)))
-        ),
-        TextReply::OffsetLocation {
-            offset: 12,
-            length: 19,
-            point: Some((expected.x, expected.y)),
+        locate(&mut source, &mut anchors, TextPoint::At(point_of(&second))),
+        Located {
+            screen: Some((expected.x, expected.y)),
+            offset: Some(TextOffset {
+                offset: 12,
+                length: 19,
+            }),
         }
     );
     app.quit();

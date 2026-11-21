@@ -837,7 +837,6 @@ fn resolve(
                     Planned::After(HeldAt::new(pos).map_err(failed)?, prefix, counts)
                 }
                 Some(PointFrom::At(pos)) => Planned::At(HeldAt::new(pos).map_err(failed)?),
-                Some(_) => return Err(defect("a held position resolves to no position")),
             }
         }
     })

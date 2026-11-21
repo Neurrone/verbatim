@@ -11,9 +11,7 @@ mod harness;
 
 use verbatim_model::property::PropertyId;
 use verbatim_model::request::{Outcome, Reply, Request};
-use verbatim_model::{
-    CallCounts, NodeId, QueryKind, Role, TextOp, TextPoint, TextRead, TextReply, TextUnit,
-};
+use verbatim_model::{CallCounts, NodeId, QueryKind, Role, TextPoint, TextUnit};
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
 
@@ -238,18 +236,21 @@ fn a_text_read_of_a_dead_object_says_gone() {
     let doc = outpost.uia_focus_answer(&focused).node();
 
     app.send("disconnect doc");
-    let (outcome, _) = outpost.asked(
-        hwnd,
-        Request::Text {
-            node: doc,
-            op: TextOp::Read(TextRead {
-                at: TextPoint::Start,
-                movement: None,
-                unit: TextUnit::Line,
-            }),
-        },
+    let read = common::one_step(verbatim_model::batch::Op::ReadText {
+        subject: verbatim_model::batch::Subject::Node(doc),
+        at: verbatim_model::batch::Point::At(TextPoint::Start),
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+        details: verbatim_model::TextDetails::NONE,
+    });
+    let number = outpost.request_with(hwnd, verbatim_model::request::WindowVerdict::Uia, read);
+    assert_eq!(
+        outpost.answer(number).outcome,
+        Outcome::Result(Reply::Steps(vec![
+            verbatim_model::batch::StepOutcome::NotThere(verbatim_model::batch::Missing::Node(doc))
+        ]))
     );
-    assert_eq!(outcome, Outcome::Result(Reply::Text(TextReply::Gone)));
     outpost.settled();
 
     drop(outpost);

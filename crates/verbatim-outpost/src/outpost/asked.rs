@@ -115,12 +115,7 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
             )),
             Err(error) => failed(&error),
         },
-        Request::Text { node, op } => match op {
-            TextOp::ReadTerminal(_)
-            | TextOp::TerminalHistory { .. }
-            | TextOp::TerminalFind { .. } => terminal(context, client, *node, op),
-            _ => Outcome::Result(Reply::Text(text_reads::answer_asked(context, *node, op))),
-        },
+        Request::Text { node, op } => terminal(context, client, *node, op),
         Request::Activate { node } => match read::activate(context, client, *node) {
             Ok(action) => Outcome::Result(Reply::Activated(action)),
             Err(error) => failed(&error),

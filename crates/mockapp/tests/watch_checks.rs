@@ -63,16 +63,14 @@ fn line_at(
     anchors: &mut NodeText<'_, UiaPos>,
     at: verbatim_model::TextAnchor,
 ) -> verbatim_model::TextChunk {
-    match verbatim_outpost::text::perform(
-        source,
-        anchors,
-        &verbatim_model::TextOp::Read(verbatim_model::TextRead {
-            at: verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at)),
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    ) {
-        verbatim_model::TextReply::Read { chunk, .. } => chunk,
+    let read = verbatim_outpost::text::CallStep::Read {
+        at: verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at)),
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+    };
+    match verbatim_outpost::text::by_calls(source, anchors, read) {
+        Ok(Ok(verbatim_model::batch::Done::ReadText(mut read))) => read.chunks.remove(0),
         other => panic!("a line, not {other:?}"),
     }
 }

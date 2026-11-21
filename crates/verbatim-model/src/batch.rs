@@ -194,7 +194,7 @@ pub enum Point {
 
 /// The points just past the characters at a range's two ends, so that it
 /// runs through the character at its later end
-/// ([`crate::TextThrough`]).
+/// (`docs/parity/review.md`, "Select then copy from the review cursor").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Through {
     /// Just past the character at the start.

@@ -26,11 +26,10 @@ use verbatim_uia::{
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
-    RangeAction, RangeEnd, RangeQuery, SnapshotQuery, StatesQuery, Status, StepQuery,
-    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, caret_read_remote,
-    controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
-    focus_states_remote, navigation_step_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote, tree_dump_remote,
+    RangeEnd, SnapshotQuery, StatesQuery, Status, StepQuery, TextAttribute, TextFrom, TreeQuery,
+    caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
+    focus_ancestry_remote, focus_states_remote, navigation_step_remote, terminal_snapshot_remote,
+    tree_dump_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -532,12 +531,13 @@ fn densely_mixed_formatting_executes_exactly() {
 
 /// Say-all's batch of twenty lines a line on from a held position, its
 /// lines in more than one language, so each line's is read; and the first
-/// batch, from the caret, in one language.
+/// batch, from the caret, in one language: each one `ReadText` of twenty
+/// lines, one generated program.
 fn say_all_batches_execute_exactly() {
+    use verbatim_uia_rops::batch::{Point, Segment, run_batch};
     common::init_com();
     let mut fixture = Fixture::start("languages.json", "mockapp-instructions-say-all");
-    let notes = fixture.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let text = batch::Text::of(fixture.find("Notes"));
     let more = numbered(30);
     common::apply(
         &mut fixture.app,
@@ -545,31 +545,33 @@ fn say_all_batches_execute_exactly() {
         &format!(r"set-text doc hello\nbonjour\nhallo\n{more}"),
     );
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let target = TextTarget {
-        element: &notes,
-        pattern: &pattern,
-    };
-    let document = pattern.document_range().expect("the document range");
-    let units = |from, movement| UnitsQuery {
-        target,
-        from,
-        movement,
-        unit: TextUnit_Line,
-        count: 20,
-        max_text: 1024,
-        max_total: 32_768,
-        culture: true,
-    };
-    let held = TextFrom::At(Position {
+    let document = text.pattern.document_range().expect("the document range");
+    let held = Point::From(TextFrom::At(Position {
         range: &document,
         endpoint: Endpoint::Start,
         collapsed: false,
-    });
+    }));
+    let lines = |at, movement| {
+        let answer = run_batch(&Segment {
+            uia: &fixture.uia,
+            steps: vec![batch::step(
+                0,
+                batch::read_text(&text, at, batch::units(movement, TextUnit_Line, 20)),
+            )],
+            remote: true,
+            window: None,
+        });
+        match answer.steps.into_iter().next() {
+            Some(verbatim_uia_rops::batch::Ran::Done(
+                verbatim_uia_rops::batch::Found::ReadText(read),
+            )) => read.units,
+            other => panic!("twenty lines, not {other:?}"),
+        }
+    };
     let languages = counted(|| {
-        let answer = text_units_remote(&units(held, Some(Movement::By(TextUnit_Line, 1))))
-            .expect("the program runs");
-        assert_eq!(answer.units.len(), 20);
-        assert_eq!(answer.units[1].language.as_deref(), Some("de-DE"));
+        let units = lines(held, Some(Movement::By(TextUnit_Line, 1)));
+        assert_eq!(units.len(), 20);
+        assert_eq!(units[1].language.as_deref(), Some("de-DE"));
     });
     common::apply(
         &mut fixture.app,
@@ -577,13 +579,12 @@ fn say_all_batches_execute_exactly() {
         &format!("set-text doc {more}"),
     );
     let first = counted(|| {
-        let answer = text_units_remote(&units(TextFrom::Caret, None)).expect("the program runs");
-        assert_eq!(answer.units.len(), 20);
+        assert_eq!(lines(Point::From(TextFrom::Caret), None).len(), 20);
     });
     fixture.app.quit();
     assert_eq!(
         [languages, first],
-        [683, 704],
+        [692, 715],
         "a later batch in three languages, a first batch in one"
     );
     assert!(languages < LIMIT / 2 && first < LIMIT / 2);
@@ -592,15 +593,16 @@ fn say_all_batches_execute_exactly() {
 /// The review copy's first press: "alpha" selected back from the review
 /// cursor, on its first "a", through the marker, on its last, every point
 /// but the document's start found by the text before it as Verbatim finds
-/// a held position's, from no selection, and the selection read again and
-/// compared.
+/// a held position's, from no selection: review select's batch, the caret,
+/// the select, the caret again and the two compared, the reads before the
+/// act and the act one program, the reads after it another.
 fn range_selections_execute_exactly() {
+    use verbatim_uia_rops::batch::{Ends, Found, Point, Ran, Segment, run_batch};
     common::init_com();
     let mut fixture = Fixture::start("text.json", "mockapp-instructions-range");
-    let notes = fixture.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let text = batch::Text::of(fixture.find("Notes"));
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let document = pattern.document_range().expect("the document range");
+    let document = text.pattern.document_range().expect("the document range");
     let start = Position {
         range: &document,
         endpoint: Endpoint::Start,
@@ -611,41 +613,43 @@ fn range_selections_execute_exactly() {
         .map(|text| text.encode_utf16().collect())
         .collect();
     let counts: Vec<[i32; 1]> = [4, 5, 1].map(|count| [count]).to_vec();
-    let after = |index: usize| TextFrom::After {
-        from: start,
-        prefix: &texts[index],
-        counts: &counts[index],
+    let after = |index: usize| {
+        Point::From(TextFrom::After {
+            from: start,
+            prefix: &texts[index],
+            counts: &counts[index],
+        })
     };
-    let query = RangeQuery {
-        target: TextTarget {
-            element: &notes,
-            pattern: &pattern,
-        },
+    let ends = Ends {
         start: after(0),
-        end: Some(TextFrom::At(start)),
+        end: Point::From(TextFrom::At(start)),
         through: Some((after(1), after(2))),
-        action: RangeAction::SelectReporting(1024),
     };
-    let press = counted(|| {
-        let answer = text_range_remote(&query).expect("the program runs");
-        assert!(answer.selected);
-        let changes: Vec<(bool, String)> = answer
-            .changes
-            .expect("the changes, read")
-            .into_iter()
-            .map(|change| (change.selected, String::from_utf16_lossy(&change.text)))
-            .collect();
-        assert_eq!(changes, [(true, "alpha".to_owned())]);
+    let mut press = Vec::new();
+    verbatim_uia_rops::counting::start();
+    let answer = run_batch(&Segment {
+        uia: &fixture.uia,
+        steps: batch::review_select(&text, ends),
+        remote: true,
+        window: None,
     });
+    press.extend(
+        verbatim_uia_rops::counting::stop()
+            .into_iter()
+            .map(|count| count.expect("a counted program")),
+    );
+    let Some(Ran::Done(Found::CompareSelection(compared))) = answer.steps.get(3) else {
+        panic!("the selections compared, not {answer:?}");
+    };
+    let changes: Vec<(bool, String)> = compared
+        .changes
+        .iter()
+        .map(|change| (change.selected, String::from_utf16_lossy(&change.text)))
+        .collect();
+    assert_eq!(changes, [(true, "alpha".to_owned())]);
     fixture.app.quit();
-    // 160 before the selection's text was read after the select, to keep
-    // for the next comparison (2026-10-22), and 165 before a selection
-    // made from a collapsed caret was one whole change, placed by no
-    // comparison (2026-10-23), and 163 before the caret after the select
-    // became the selection's start and the old selection was judged by its
-    // ends as they now are (2026-11-17).
-    assert_eq!(press, 159, "the review copy's first press");
-    assert!(press < LIMIT / 2);
+    assert_eq!(press, [130, 119], "the review copy's first press");
+    assert!(press.iter().all(|&count| count < LIMIT / 2));
 }
 
 /// A terminal's snapshot: a first read, and a read from where it said to

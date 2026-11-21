@@ -516,55 +516,6 @@ pub struct TextMovement {
     pub count: i32,
 }
 
-/// Read one unit: start at `at`, move by `movement` when there is one,
-/// expand to the `unit` containing the point reached, and reply with it.
-/// The reply's chunk has its `offset` at the point reached. Moving by a
-/// unit lands on that unit's start, as NVDA's text ranges move
-/// (`docs/nvda/text-infos.md`, "The contract").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextRead {
-    /// Where to start.
-    pub at: TextPoint,
-    /// How to move first, if at all.
-    pub movement: Option<TextMovement>,
-    /// The unit to read where the movement ends.
-    pub unit: TextUnit,
-}
-
-/// Read several units ahead, for say-all: the first as [`TextRead`] reads
-/// it (from `at`, after `movement`), then each next unit of the same kind,
-/// up to `count` units (at most [`MAX_READ_AHEAD`]), stopping early once
-/// the text read reaches [`MAX_READ_AHEAD_TEXT`]. One round trip where the
-/// provider runs remote operations, however many units it reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextReadAhead {
-    /// Where to start.
-    pub at: TextPoint,
-    /// How to move first, if at all.
-    pub movement: Option<TextMovement>,
-    /// The unit to read.
-    pub unit: TextUnit,
-    /// How many units to read.
-    pub count: u8,
-}
-
-/// The points just past the characters at the two ends of a
-/// [`TextOp::ReadRange`] or [`TextOp::Select`], each where the text after
-/// the character there starts (the end itself where there is no
-/// character), so that the text runs from whichever end comes first to the
-/// point just past the character at the other: it holds the characters at
-/// both ends whichever way round they are. Core finds them in the text it
-/// was sent, where only the outpost can tell which end comes first; the
-/// review copy's selection runs this way (`docs/parity/review.md`,
-/// "Select then copy from the review cursor").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextThrough {
-    /// Just past the character at `start`.
-    pub start: TextPoint,
-    /// Just past the character at `end`.
-    pub end: TextPoint,
-}
-
 /// How the outpost reads a node's text, which Core names in each caret
 /// key's request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -768,44 +719,6 @@ pub struct EditSelection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextOp {
-    /// Read one unit: answered [`TextReply::Read`].
-    Read(TextRead),
-    /// Read the text between two points, in document order whichever comes
-    /// first, for a copy: answered [`TextReply::Range`].
-    ReadRange {
-        /// One end.
-        start: TextPoint,
-        /// The other end.
-        end: TextPoint,
-        /// When set, the text runs through the character at the later end
-        /// ([`TextThrough`]).
-        #[serde(default)]
-        through: Option<TextThrough>,
-    },
-    /// Select the text between two points, and move the caret there where
-    /// the application allows: answered [`TextReply::Selected`], or
-    /// [`TextReply::Unsupported`] when the text cannot be selected.
-    Select {
-        /// One end.
-        start: TextPoint,
-        /// The other end.
-        end: TextPoint,
-        /// When set, the text runs through the character at the later end
-        /// ([`TextThrough`]).
-        #[serde(default)]
-        through: Option<TextThrough>,
-    },
-    /// Move the caret to a point (say-all moving the caret as it reads):
-    /// answered [`TextReply::Moved`] or [`TextReply::Unsupported`].
-    MoveCaret(TextPoint),
-    /// The screen position of a point: answered [`TextReply::Location`], or
-    /// [`TextReply::Unsupported`] when the provider cannot tell; in text
-    /// measured by character offsets, answered
-    /// [`TextReply::OffsetLocation`].
-    Location(TextPoint),
-    /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
-    /// or as [`TextOp::Read`] is when the first unit cannot be read.
-    ReadAhead(TextReadAhead),
     /// Read the history above the start the next read takes: from `above`
     /// rows above it to the document's end, or the whole document when
     /// `whole`. Answered [`TextReply::TerminalHistory`], which names the
@@ -900,65 +813,6 @@ pub struct TerminalReadReply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextReply {
-    /// The answer to [`TextOp::Read`]: `moved` is how many units the
-    /// movement really went, which is less than asked (and zero for a
-    /// movement that could not start) at the document's ends; movement
-    /// never wraps.
-    Read {
-        /// Units moved, signed like the request.
-        moved: i32,
-        /// The unit read where the movement ended.
-        chunk: TextChunk,
-    },
-    /// The answer to [`TextOp::ReadAhead`]: `moved` as for
-    /// [`TextReply::Read`], and the units read, in order, at least one. The
-    /// last is marked [`TextChunk::last`] when the outpost found no unit
-    /// after it; fewer than asked otherwise means the batch reached
-    /// [`MAX_READ_AHEAD_TEXT`].
-    Chunks {
-        /// Units moved, signed like the request.
-        moved: i32,
-        /// The units read.
-        chunks: Vec<TextChunk>,
-    },
-    /// The answer to [`TextOp::ReadRange`].
-    Range {
-        /// The text, cut to [`MAX_RANGE_BYTES`].
-        text: String,
-        /// The text was cut.
-        truncated: bool,
-    },
-    /// A [`TextOp::MoveCaret`] was done, the move begun at this time:
-    /// the outpost's own answer, which it turns into
-    /// [`TextReply::CaretPlaced`] before Core sees it, and whose stamp
-    /// tells it whether the move kept a read.
-    Moved {
-        /// When the move began, in microseconds on the clock every process
-        /// of a run shares.
-        read_at_us: u64,
-    },
-    /// The answer to [`TextOp::Select`]: how the selection changed from
-    /// the one the outpost read just before selecting (collapsed at the
-    /// caret when nothing was selected) to the one it read just after, by
-    /// the rule [`SelectionChange`] describes.
-    Selected(Vec<SelectionChange>),
-    /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done,
-    /// with the selection baseline it minted
-    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
-    /// Core's text facts").
-    CaretPlaced {
-        /// The selection baseline the move minted.
-        baseline: TextAnchor,
-    },
-    /// The answer to a [`TextOp::Select`] asked by an event-queue entry:
-    /// how the selection changed, as [`TextReply::Selected`], with the
-    /// selection baseline the selection made minted.
-    SelectionPlaced {
-        /// How the selection changed.
-        changes: Vec<SelectionChange>,
-        /// The selection baseline the selection minted.
-        baseline: TextAnchor,
-    },
     /// The answer to [`TextOp::ReadTerminal`].
     TerminalRead(Box<TerminalReadReply>),
     /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
@@ -975,26 +829,6 @@ pub enum TextReply {
         /// The matches, alternately below and above the row sought from,
         /// nearest first in each direction.
         matches: Vec<crate::TerminalMatch>,
-    },
-    /// The answer to [`TextOp::Location`]: screen coordinates of the point,
-    /// in pixels.
-    Location {
-        /// Screen x.
-        x: i32,
-        /// Screen y.
-        y: i32,
-    },
-    /// The answer to [`TextOp::Location`] in text measured by character
-    /// offsets (a plain Win32 edit control): the point's offset and the text's
-    /// length, in the text's own units, and its screen coordinates when
-    /// the provider can tell them.
-    OffsetLocation {
-        /// The point's offset from the text's start.
-        offset: u32,
-        /// The text's length.
-        length: u32,
-        /// Screen x and y, in pixels.
-        point: Option<(i32, i32)>,
     },
     /// The provider has no such unit (UIA has no sentence; a plain edit
     /// control has no page). Core falls back to a unit it has.
@@ -1048,18 +882,9 @@ impl TextReply {
             TextReply::AnchorLost => Ok(TextFailure::AnchorLost),
             TextReply::Gone => Ok(TextFailure::Gone),
             TextReply::Unanswered => Ok(TextFailure::Unanswered),
-            own @ (TextReply::Read { .. }
-            | TextReply::Chunks { .. }
-            | TextReply::Range { .. }
-            | TextReply::Moved { .. }
-            | TextReply::Selected(_)
-            | TextReply::CaretPlaced { .. }
-            | TextReply::SelectionPlaced { .. }
-            | TextReply::TerminalRead(_)
+            own @ (TextReply::TerminalRead(_)
             | TextReply::TerminalHistory { .. }
-            | TextReply::TerminalFound { .. }
-            | TextReply::Location { .. }
-            | TextReply::OffsetLocation { .. }) => Err(own),
+            | TextReply::TerminalFound { .. }) => Err(own),
         }
     }
 }
@@ -1262,23 +1087,24 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_round_trips_through_json() {
-        let reply = TextReply::Read {
-            moved: -1,
-            chunk: TextChunk {
-                unit: TextUnit::Line,
-                text: "line\r\n".to_owned(),
-                start: TextAnchor(7),
-                offset: 0,
-                languages: Vec::new(),
-                first: false,
-                last: true,
-                truncated: false,
-                formats: Vec::new(),
-            },
-        };
+    fn a_read_of_text_round_trips_through_json() {
+        let reply =
+            crate::batch::StepOutcome::Done(crate::batch::Done::ReadText(crate::batch::Chunks {
+                moved: -1,
+                chunks: vec![TextChunk {
+                    unit: TextUnit::Line,
+                    text: "line\r\n".to_owned(),
+                    start: TextAnchor(7),
+                    offset: 0,
+                    languages: Vec::new(),
+                    first: false,
+                    last: true,
+                    truncated: false,
+                    formats: Vec::new(),
+                }],
+            }));
         let json = serde_json::to_string(&reply).expect("serializes");
-        let back: TextReply = serde_json::from_str(&json).expect("deserializes");
+        let back: crate::batch::StepOutcome = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(back, reply);
     }
 

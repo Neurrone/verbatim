@@ -542,11 +542,12 @@ fn the_plain_reader_answers_each_kind_as_a_plain_window() {
     assert_eq!(
         answer(Wire::Text {
             node,
-            op: verbatim_model::TextOp::Read(verbatim_model::TextRead {
-                at: verbatim_model::TextPoint::Caret,
-                movement: None,
-                unit: verbatim_model::TextUnit::Line,
-            }),
+            op: verbatim_model::TextOp::TerminalHistory {
+                above: 0,
+                whole: true,
+                start: verbatim_model::TextAnchor(1),
+                height: 1,
+            },
         }),
         Some(WireOutcome::Result(Reply::Text(
             verbatim_model::TextReply::NoText

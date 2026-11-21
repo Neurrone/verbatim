@@ -12,8 +12,8 @@ mod common;
 mod harness;
 
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
-use verbatim_model::request::{FocusCaret, Outcome, Reply, Request, RequestNumber};
-use verbatim_model::{NodeId, TextOp, TextPoint, TextReply};
+use verbatim_model::request::{FocusCaret, Outcome, Reply, RequestNumber};
+use verbatim_model::{NodeId, TextPoint};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
@@ -41,9 +41,14 @@ fn start(name: &str) -> (common::MockApp, HWND) {
 /// of the document's whole long text.
 fn whole_text(outpost: &OutpostUnderTest, request: RequestNumber) {
     match outpost.answer(request).outcome {
-        Outcome::Result(Reply::Text(TextReply::Range { text, truncated })) => {
-            assert_eq!((text.len(), truncated), (LONG_TEXT, false));
-        }
+        Outcome::Result(Reply::Steps(outcomes)) => match outcomes.as_slice() {
+            [
+                verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::ReadRange(
+                    range,
+                )),
+            ] => assert_eq!((range.text.len(), range.truncated), (LONG_TEXT, false)),
+            other => panic!("read {request} answered {other:?}, not the whole text"),
+        },
         other => panic!("read {request} answered {other:?}, not the whole text"),
     }
 }
@@ -58,29 +63,18 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     app.send(&format!("set-text doc {}", "x".repeat(LONG_TEXT)));
     let outpost = OutpostUnderTest::with_pipe_buffer(&app, OutpostOptions::default(), SMALL_PIPE);
     let notes = notes_focus(&mut app, &outpost, hwnd);
-    let read = TextOp::ReadRange {
-        start: TextPoint::Start,
-        end: TextPoint::End,
+    let read = common::one_step(verbatim_model::batch::Op::ReadRange {
+        subject: verbatim_model::batch::Subject::Node(notes),
+        start: verbatim_model::batch::Point::At(TextPoint::Start),
+        end: verbatim_model::batch::Point::At(TextPoint::End),
         through: None,
-    };
+    });
     // The worker is held inside the first read's call while the second
     // read and the idle query are handed over.
     app.hold();
-    let first = outpost.request(
-        hwnd,
-        Request::Text {
-            node: notes,
-            op: read.clone(),
-        },
-    );
+    let first = outpost.request(hwnd, read.clone());
     let _ = app.held();
-    let second = outpost.request(
-        hwnd,
-        Request::Text {
-            node: notes,
-            op: read,
-        },
-    );
+    let second = outpost.request(hwnd, read);
     outpost
         .outpost
         .handle_command(&CoreToOutpost::IdleQuery { round: 7 });

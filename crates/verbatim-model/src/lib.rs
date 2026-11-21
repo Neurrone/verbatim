@@ -97,8 +97,8 @@ pub use text::{
     MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
     MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange, SelectionDifference, SentenceMoved,
     TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails,
-    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextRead,
-    TextReadAhead, TextReply, TextThrough, TextUnit, had_effect,
+    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextReply, TextUnit,
+    had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,

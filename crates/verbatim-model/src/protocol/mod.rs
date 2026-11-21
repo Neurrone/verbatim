@@ -541,15 +541,6 @@ impl Named {
 
     fn text_reply(&mut self, reply: &TextReply) {
         match reply {
-            TextReply::Read { chunk, .. } => self.chunk(chunk),
-            TextReply::CaretPlaced { baseline } | TextReply::SelectionPlaced { baseline, .. } => {
-                self.anchors.push(*baseline);
-            }
-            TextReply::Chunks { chunks, .. } => {
-                for chunk in chunks {
-                    self.chunk(chunk);
-                }
-            }
             TextReply::TerminalRead(read) => {
                 self.anchors.push(read.start);
                 self.anchors.extend(read.point);
@@ -557,13 +548,8 @@ impl Named {
                     self.caret(caret);
                 }
             }
-            TextReply::Range { .. }
-            | TextReply::Moved { .. }
-            | TextReply::Selected(_)
-            | TextReply::TerminalHistory { .. }
+            TextReply::TerminalHistory { .. }
             | TextReply::TerminalFound { .. }
-            | TextReply::Location { .. }
-            | TextReply::OffsetLocation { .. }
             | TextReply::UnsupportedUnit(_)
             | TextReply::Unsupported
             | TextReply::NoText

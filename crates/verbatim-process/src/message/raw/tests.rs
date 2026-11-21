@@ -264,7 +264,7 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
             parked_count: 0,
             written_at_us: 2,
         },
-        answer(TextReply::Location { x: 1, y: 2 }),
+        answer(TextReply::Unsupported),
         OutpostToCore::Answer(Answer {
             number: RequestNumber(4),
             outcome: Outcome::NotThere,

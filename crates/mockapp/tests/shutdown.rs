@@ -35,7 +35,7 @@ use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 use verbatim_model::request::{
     Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request, WindowVerdict,
 };
-use verbatim_model::{CallCounts, NodeId, TextOp, TextPoint, TextRead, TextReply, TextUnit};
+use verbatim_model::{CallCounts, NodeId, TextPoint, TextUnit};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Node, Shape, Uia};
 use windows::Win32::Foundation::HWND;
@@ -98,22 +98,29 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
 }
 
 /// Core's read of the line at the caret of `node`.
-fn read_line(node: NodeId) -> Request {
-    Request::Text {
-        node,
-        op: TextOp::Read(TextRead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
-    }
+fn read_line(node: NodeId) -> verbatim_model::batch::Batch {
+    common::one_step(verbatim_model::batch::Op::ReadText {
+        subject: verbatim_model::batch::Subject::Node(node),
+        at: verbatim_model::batch::Point::At(TextPoint::Caret),
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+        details: verbatim_model::TextDetails::NONE,
+    })
 }
 
 /// The line `answer` read, which must be a read of the line at the caret
 /// that did not move.
 fn line_of(answer: Answer) -> (i32, String) {
     match answer.outcome {
-        Outcome::Result(Reply::Text(TextReply::Read { moved, chunk })) => (moved, chunk.text),
+        Outcome::Result(Reply::Steps(outcomes)) => match outcomes.as_slice() {
+            [
+                verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::ReadText(
+                    read,
+                )),
+            ] => (read.moved, read.chunks[0].text.clone()),
+            other => panic!("the outpost answered {other:?}, not the read's line"),
+        },
         other => panic!("the outpost answered {other:?}, not the read's line"),
     }
 }

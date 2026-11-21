@@ -769,3 +769,12 @@ pub fn ancestor_gates() -> verbatim_uia::AncestorGates {
         ..verbatim_uia::Ancestor::all_on()
     }
 }
+
+/// A batch of the one text operation `op`, in the event queue.
+pub fn one_step(op: verbatim_model::batch::Op) -> verbatim_model::batch::Batch {
+    verbatim_model::batch::Batch {
+        steps: vec![verbatim_model::batch::Step { op, when: None }],
+        placement: verbatim_model::batch::Placement::Queue,
+        spare: None,
+    }
+}

@@ -28,10 +28,8 @@
 //!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
 //!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
 //!   and another unit at it, the formatting of the text to be spoken, and
-//!   how the selection changed; for the text protocol's other requests,
-//!   [`text_units`] (a unit read after a movement, or several ahead for
-//!   say-all), [`text_range`] (the text between two points, or selecting
-//!   it), and [`text_location`]; for object navigation,
+//!   how the selection changed; for a batch's text steps, [`batch`]'s
+//!   program builder and ordinary-calls executor; for object navigation,
 //!   [`navigation_step`]: the neighbor and the nearest window; for a
 //!   selection inside an element the focus controls,
 //!   [`controlled_selection`]; and, for the outpost finding its own copy
@@ -110,13 +108,7 @@ pub use terminal_snapshot::{
     Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
     terminal_snapshot_remote,
 };
-pub use text::{
-    ChangesUnread, FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction,
-    RangeAnswer, RangeQuery, SelectionAfter, TextFrom, TextLocationFn, TextRangeFn, TextTarget,
-    TextUnitsFn, UnitText, UnitsAnswer, UnitsQuery, text_location, text_location_classic,
-    text_location_remote, text_range, text_range_classic, text_range_remote, text_units,
-    text_units_classic, text_units_remote,
-};
+pub use text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 pub use tree::{
     CHILDREN_PER_RUN, TreeDumpFn, TreeQuery, tree_dump, tree_dump_classic, tree_dump_remote,
 };

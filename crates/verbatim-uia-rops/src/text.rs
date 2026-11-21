@@ -1,16 +1,10 @@
-//! Reads of a text's units and ranges for the text protocol's requests
-//! (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol"): a unit read
-//! after a movement, or several units ahead for say-all ([`text_units`]);
-//! the text between two points, or selecting it ([`text_range`]); and a
-//! point's place on the screen ([`text_location`]). Each starts from a
-//! point given as the protocol gives it ([`TextFrom`]): the caret, a
-//! selection's end, an end of the text, a position the outpost holds, or a
-//! position some characters after one, found by matching the text passed.
-//!
-//! Each has a remote program, one cross-process round trip, and a classic
-//! implementation behind the same signature that makes the same reads one
-//! call at a time, as the outpost made them before remote operations; the
-//! entry point picks between them as [`crate::caret_read`] does.
+//! The pieces of a text's unit, range and location reads that the batch's
+//! two executors share (the request list's design, section 5): the points
+//! a read starts from as the protocol names them ([`TextFrom`]), the
+//! emitters the program builder puts into a program ([`emit_units`],
+//! [`emit_between`], [`emit_after`]), and the classic reads the
+//! ordinary-calls executor makes one call at a time ([`classic_point`],
+//! [`classic_units`], [`classic_range`], [`classic_location`]).
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
@@ -20,13 +14,8 @@ use windows::Win32::UI::Accessibility::{
 use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
-use crate::caret::{
-    CaretRegisters, Constants, MAX_COMPARED_TEXT, ProgramEnd, RangeEnd, SelectionTextChange,
-    classic_changes, emit_caret, emit_caret_with, emit_changes, endpoint_number, gone_or_timed_out,
-    read_changes, string_of,
-};
+use crate::caret::Constants;
 use crate::error::Error;
-use crate::focus::Path;
 use crate::instruction::TypeTest;
 use crate::opcode::Comparison;
 use crate::operation::{Outcome, Value};
@@ -119,30 +108,6 @@ pub enum Movement {
     Document(i32),
 }
 
-/// What [`text_units`] is asked.
-#[derive(Clone, Copy)]
-pub struct UnitsQuery<'a> {
-    /// The text.
-    pub target: TextTarget<'a>,
-    /// Where to start.
-    pub from: TextFrom<'a>,
-    /// How to move before reading, if at all.
-    pub movement: Option<Movement>,
-    /// The unit to read.
-    pub unit: TextUnit,
-    /// How many units to read: one for a read, more for say-all's reading
-    /// ahead, each later one the unit after the one before.
-    pub count: u32,
-    /// The most UTF-16 code units of text read for one unit.
-    pub max_text: i32,
-    /// Units after the first are read only while the text read so far is
-    /// shorter than this, in UTF-16 code units, so a batch of long units
-    /// stays bounded.
-    pub max_total: u32,
-    /// Whether to read each unit's language (UIA's `Culture` attribute).
-    pub culture: bool,
-}
-
 /// One unit read.
 #[derive(Debug)]
 pub struct UnitText {
@@ -158,363 +123,19 @@ pub struct UnitText {
     pub language: Option<String>,
 }
 
-/// The answer to a [`UnitsQuery`].
+/// Units read the classic way ([`classic_units`]).
 #[derive(Debug)]
-pub struct UnitsAnswer {
-    /// The starting point, found.
-    pub from: FoundPoint,
-    /// The point reached by the movement, which the first unit contains.
-    pub point: FoundPoint,
+pub(crate) struct UnitsAnswer {
     /// How far the movement went: less than asked at the text's ends.
-    pub moved: i32,
+    pub(crate) moved: i32,
     /// The units read, in order, at least one.
-    pub units: Vec<UnitText>,
+    pub(crate) units: Vec<UnitText>,
     /// Reading ahead found no unit after the last one read: the text ends
     /// there. Never set for a single unit's read.
-    pub ended: bool,
-}
-
-/// The signature both unit read implementations share.
-pub type TextUnitsFn = fn(&UnitsQuery<'_>) -> Result<UnitsAnswer, Error>;
-
-/// What [`text_range`] does with the text between its two points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RangeAction {
-    /// Reads it, at most this many UTF-16 code units.
-    Text(i32),
-    /// Selects it, which also puts the caret there.
-    Select,
-    /// Selects it, as [`Select`](Self::Select) does, and answers how the
-    /// selection changed ([`RangeAnswer::changes`]): the selection read
-    /// before selecting compared with the one read after, by the caret
-    /// read's rule ([`crate::CaretAnswer::changes`]), each change's text
-    /// read up to this many UTF-16 code units.
-    SelectReporting(i32),
-}
-
-/// What [`text_range`] is asked.
-#[derive(Clone, Copy)]
-pub struct RangeQuery<'a> {
-    /// The text.
-    pub target: TextTarget<'a>,
-    /// One end.
-    pub start: TextFrom<'a>,
-    /// The other end; `None` for the same point as `start` (moving the
-    /// caret there).
-    pub end: Option<TextFrom<'a>>,
-    /// With `end`, the points just past the characters at `start` and at
-    /// `end`, in that order: the text then runs from whichever of `start`
-    /// and `end` comes first through the character at the other, so it
-    /// holds the characters at both ends whichever way round they are
-    /// (`verbatim_model::TextThrough`). `None` for the text between them.
-    pub through: Option<(TextFrom<'a>, TextFrom<'a>)>,
-    /// What to do with the text between them, whichever comes first.
-    pub action: RangeAction,
-}
-
-/// The answer to a [`RangeQuery`].
-#[derive(Debug)]
-pub struct RangeAnswer {
-    /// The query's `start`, found.
-    pub start: FoundPoint,
-    /// The query's `end`, found (`start` again when it had none).
-    pub end: FoundPoint,
-    /// The text read, for [`RangeAction::Text`].
-    pub text: Vec<u16>,
-    /// Whether the selection was made, for [`RangeAction::Select`] and
-    /// [`RangeAction::SelectReporting`].
-    pub selected: bool,
-    /// For [`RangeAction::SelectReporting`] when the selection was made,
-    /// how it changed: text newly selected or no longer selected, empty
-    /// stretches left out. `None` otherwise.
-    pub changes: Option<Vec<SelectionTextChange>>,
-    /// From [`text_range_remote`], for [`RangeAction::SelectReporting`]
-    /// when the selection was made but the program failed after it, before
-    /// it had read how the selection changed: the selection before it, so
-    /// that the changes can still be read ([`text_range`] reads them).
-    /// `changes` is then `None`.
-    pub unread: Option<ChangesUnread>,
-    /// For [`RangeAction::SelectReporting`] when the selection was made
-    /// and its changes read, the selection read after it.
-    pub selection_after: Option<SelectionAfter>,
-}
-
-/// The selection read after a select ([`RangeAnswer::selection_after`]),
-/// which the caller keeps to compare the next selection with.
-#[derive(Debug)]
-pub struct SelectionAfter {
-    /// The selection's range when something is selected, else a range
-    /// whose start is the caret.
-    pub range: IUIAutomationTextRange,
-    /// Whether something is selected.
-    pub selected: bool,
-    /// The selection's text, up to [`MAX_COMPARED_TEXT`], when something is
-    /// selected.
-    pub text: Option<Vec<u16>>,
-}
-
-/// A selection a remote program made whose changes it could not read
-/// ([`RangeAnswer::unread`]).
-#[derive(Debug)]
-pub struct ChangesUnread {
-    /// The selection just before the program selected, or the caret when
-    /// nothing was selected, as the program read it before selecting.
-    pub before: IUIAutomationTextRange,
-    /// Where in `before` the selection before ended: its end, or its start
-    /// for a caret.
-    pub before_end: Endpoint,
-    /// The status of the instruction that failed after the selection, as
-    /// the program's catch read it.
-    pub status: i32,
-}
-
-/// The signature both range implementations share.
-pub type TextRangeFn = fn(&RangeQuery<'_>) -> Result<RangeAnswer, Error>;
-
-/// What [`text_location`] is asked.
-#[derive(Clone, Copy)]
-pub struct LocationQuery<'a> {
-    /// The text.
-    pub target: TextTarget<'a>,
-    /// The point.
-    pub at: TextFrom<'a>,
-}
-
-/// The answer to a [`LocationQuery`].
-#[derive(Debug)]
-pub struct LocationAnswer {
-    /// The point, found.
-    pub at: FoundPoint,
-    /// The left and top of the character there, in screen pixels; `None`
-    /// when the provider gives no rectangle.
-    pub location: Option<(f64, f64)>,
-}
-
-/// The signature both location implementations share.
-pub type TextLocationFn = fn(&LocationQuery<'_>) -> Result<LocationAnswer, Error>;
-
-/// Runs `remote` when asked to, falling back to `classic` for this call
-/// when it fails, except for a provider that has gone or did not answer in
-/// time, which the classic reads would meet too; `classic` alone when not.
-fn choose<Q, A>(
-    query: &Q,
-    remote: bool,
-    remote_fn: fn(&Q) -> Result<A, Error>,
-    classic_fn: fn(&Q) -> Result<A, Error>,
-) -> Result<(A, Path), Error> {
-    if !remote {
-        return classic_fn(query).map(|answer| (answer, Path::Classic));
-    }
-    match remote_fn(query) {
-        Ok(answer) => Ok((answer, Path::Remote)),
-        Err(error) if gone_or_timed_out(&error) => Err(error),
-        Err(error) => classic_fn(query).map(|answer| (answer, Path::Fallback(error))),
-    }
-}
-
-/// Units read, the one function call sites use: the remote program when
-/// `remote` is true, falling back to the classic reads for this call when
-/// it fails, and the classic reads alone when `remote` is false.
-///
-/// # Errors
-///
-/// The classic implementation's [`Error`] when it ran and failed, or the
-/// program's when the provider has gone or did not answer in time.
-pub fn text_units(query: &UnitsQuery<'_>, remote: bool) -> Result<(UnitsAnswer, Path), Error> {
-    choose(query, remote, text_units_remote, text_units_classic)
-}
-
-/// The text between two points read, or selected, the one function call
-/// sites use, choosing as [`text_units`] does.
-///
-/// # Errors
-///
-/// As [`text_units`].
-///
-/// A remote program that selects and then fails before reading how the
-/// selection changed ([`RangeAnswer::unread`]) is not followed by the
-/// classic implementation, which would select again and compare the new
-/// selection with itself, so a first press of the review copy would say
-/// nothing. The selection is made; only the read after it is done again,
-/// the classic way, compared with the selection the program read before
-/// selecting.
-pub fn text_range(query: &RangeQuery<'_>, remote: bool) -> Result<(RangeAnswer, Path), Error> {
-    if !remote {
-        return text_range_classic(query).map(|answer| (answer, Path::Classic));
-    }
-    match text_range_remote(query) {
-        Ok(mut answer) => match answer.unread.take() {
-            None => Ok((answer, Path::Remote)),
-            Some(unread) => {
-                let max = match query.action {
-                    RangeAction::SelectReporting(max) => max,
-                    RangeAction::Text(_) | RangeAction::Select => 0,
-                };
-                let (changes, after) =
-                    classic_changes_since(query.target, (&unread.before, unread.before_end), max)?;
-                answer.changes = Some(changes);
-                answer.selection_after = Some(after);
-                let failed = windows::core::Error::from(windows::core::HRESULT(unread.status));
-                Ok((answer, Path::Fallback(Error::Uia(failed))))
-            }
-        },
-        Err(error) if gone_or_timed_out(&error) => Err(error),
-        Err(error) => text_range_classic(query).map(|answer| (answer, Path::Fallback(error))),
-    }
-}
-
-/// A point's place on the screen, the one function call sites use,
-/// choosing as [`text_units`] does.
-///
-/// # Errors
-///
-/// As [`text_units`].
-pub fn text_location(
-    query: &LocationQuery<'_>,
-    remote: bool,
-) -> Result<(LocationAnswer, Path), Error> {
-    choose(query, remote, text_location_remote, text_location_classic)
+    pub(crate) ended: bool,
 }
 
 // The remote programs.
-
-/// The program's constants, its element, and the caret and document range
-/// once emitted, so a program reads each at most once.
-struct Program<'t> {
-    target: TextTarget<'t>,
-    c: Constants,
-    element: Option<Reg<kind::Element>>,
-    /// The text pattern the caret was read through, once it was.
-    pattern: Option<Reg<kind::TextPattern>>,
-    caret: Option<CaretRegisters>,
-}
-
-impl<'t> Program<'t> {
-    fn new(b: &mut Builder, target: TextTarget<'t>, max_text: i32) -> Self {
-        Self {
-            target,
-            c: Constants {
-                start: b.int(endpoint_number(Endpoint::Start)),
-                end: b.int(endpoint_number(Endpoint::End)),
-                zero: b.int(0),
-                one: b.int(1),
-                max_text: b.int(max_text),
-            },
-            element: None,
-            pattern: None,
-            caret: None,
-        }
-    }
-
-    fn element(&mut self, b: &mut Builder) -> Reg<kind::Element> {
-        if let Some(element) = self.element {
-            return element;
-        }
-        let element = b.import_element(self.target.element);
-        self.element = Some(element);
-        element
-    }
-
-    /// The caret and the selection, read the first time they are needed.
-    /// Emitted at the program's top level, never inside a branch.
-    fn caret(&mut self, b: &mut Builder) -> CaretRegisters {
-        if let Some(caret) = self.caret {
-            return caret;
-        }
-        let element = self.element(b);
-        let pattern = b.get_text_pattern(element, false);
-        let caret = emit_caret(b, &self.c, pattern);
-        self.pattern = Some(pattern);
-        self.caret = Some(caret);
-        caret
-    }
-
-    /// The whole text's range.
-    fn document(&mut self, b: &mut Builder) -> Reg<kind::TextRange> {
-        let element = self.element(b);
-        let pattern = b.get_text_pattern(element, false);
-        b.text_pattern_get_document_range(pattern)
-    }
-
-    /// A copy of `range` collapsed to its end.
-    fn collapsed_to_end(
-        &self,
-        b: &mut Builder,
-        range: Reg<kind::TextRange>,
-    ) -> Reg<kind::TextRange> {
-        let copy = b.text_range_clone(range);
-        b.text_range_move_endpoint_by_range(copy, self.c.start, copy, self.c.end);
-        copy
-    }
-
-    /// A collapsed copy of a position the caller holds.
-    fn at(&self, b: &mut Builder, position: Position<'_>) -> Reg<kind::TextRange> {
-        let range = b.import_text_range(position.range);
-        match position.endpoint {
-            Endpoint::Start => self.c.collapsed(b, range),
-            Endpoint::End => self.collapsed_to_end(b, range),
-        }
-    }
-
-    /// Emits the point `from` names, as a collapsed range of its own.
-    fn point(&mut self, b: &mut Builder, from: TextFrom<'_>) -> Reg<kind::TextRange> {
-        match from {
-            TextFrom::Caret => {
-                let caret = self.caret(b);
-                self.c.collapsed(b, caret.caret)
-            }
-            TextFrom::SelectionStart | TextFrom::SelectionEnd => {
-                let caret = self.caret(b);
-                let point = b.new_null().assume::<kind::TextRange>();
-                let end = matches!(from, TextFrom::SelectionEnd);
-                b.if_else(
-                    caret.has_selection,
-                    |b| {
-                        let copy = if end {
-                            self.collapsed_to_end(b, caret.selection)
-                        } else {
-                            self.c.collapsed(b, caret.selection)
-                        };
-                        b.set(point, copy);
-                    },
-                    |b| {
-                        let copy = self.c.collapsed(b, caret.caret);
-                        b.set(point, copy);
-                    },
-                );
-                point
-            }
-            TextFrom::Start => {
-                let document = self.document(b);
-                self.c.collapsed(b, document)
-            }
-            TextFrom::End => {
-                let document = self.document(b);
-                self.collapsed_to_end(b, document)
-            }
-            TextFrom::At(position) => self.at(b, position),
-            TextFrom::After {
-                from,
-                prefix,
-                counts,
-            } => self.after(b, from, prefix, counts),
-        }
-    }
-
-    /// Emits the advance of [`TextFrom::After`]: each count tried from the
-    /// position until the text passed equals `prefix`, compared inside the
-    /// provider.
-    fn after(
-        &self,
-        b: &mut Builder,
-        from: Position<'_>,
-        prefix: &[u16],
-        counts: &[i32],
-    ) -> Reg<kind::TextRange> {
-        let base = self.at(b, from);
-        emit_after(b, &self.c, base, (prefix, counts))
-    }
-}
 
 /// Emits the whole text's range of `element`.
 pub(crate) fn document_of(b: &mut Builder, element: Reg<kind::Element>) -> Reg<kind::TextRange> {
@@ -613,14 +234,6 @@ fn plain_locale(b: &mut Builder, value: Reg<kind::Any>) {
     });
 }
 
-/// A point the program returned, as a [`FoundPoint`].
-fn found(outcome: &Outcome, reg: Reg<kind::TextRange>) -> Result<FoundPoint, Error> {
-    outcome
-        .get(reg)?
-        .map(FoundPoint::collapsed)
-        .ok_or(Error::MissingResult(reg.id()))
-}
-
 /// The language of a locale id the program returned.
 pub(crate) fn language(value: Option<&Value>) -> Option<String> {
     match value? {
@@ -643,40 +256,9 @@ pub(crate) fn emit_backward_count(b: &mut Builder, moved: Reg<kind::Int>) {
     });
 }
 
-/// Units read in one cross-process round trip.
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
-pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
-    let mut b = Builder::new();
-    let mut p = Program::new(&mut b, query.target, query.max_text);
-    let from = p.point(&mut b, query.from);
-    let from = b.add_to_results(from);
-    let element = p.element(&mut b);
-    let units = emit_units(
-        &mut b,
-        &p.c,
-        (from, element),
-        (query.movement, query.unit, query.count),
-        (query.max_total, query.culture),
-    );
-    let outcome = b.finish().execute()?;
-    let (moved, read, ended) = units.read(&outcome)?;
-    Ok(UnitsAnswer {
-        from: found(&outcome, from)?,
-        point: found(&outcome, units.point)?,
-        moved,
-        units: read,
-        ended,
-    })
-}
-
 /// The registers of a unit read ([`emit_units`]).
 #[derive(Clone, Copy)]
 pub(crate) struct UnitsRegisters {
-    /// The point the movement reached.
-    pub(crate) point: Reg<kind::TextRange>,
     moved: Reg<kind::Int>,
     /// Each unit's range, in order.
     pub(crate) ranges: Reg<kind::Array>,
@@ -814,7 +396,6 @@ pub(crate) fn emit_units(
         (b.add_to_results(language), b.add_to_results(languages))
     });
     UnitsRegisters {
-        point,
         moved,
         ranges,
         texts,
@@ -870,91 +451,6 @@ impl UnitsRegisters {
     }
 }
 
-/// The text between two points read or selected in one round trip.
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
-pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
-    let (max_text, reporting) = match query.action {
-        RangeAction::Text(max) => (max, None),
-        RangeAction::Select => (0, None),
-        RangeAction::SelectReporting(max) => (0, Some(max)),
-    };
-    let mut b = Builder::new();
-    let mut p = Program::new(&mut b, query.target, max_text);
-    // The selection before, read first, so that points naming the caret or
-    // the selection share the read, and kept in its registers, among the
-    // results, for a failure after the select.
-    let before = reporting.map(|_| p.caret(&mut b));
-    let start = p.point(&mut b, query.start);
-    let start = b.add_to_results(start);
-    let end = match query.end {
-        Some(end) => {
-            let end = p.point(&mut b, end);
-            b.add_to_results(end)
-        }
-        None => start,
-    };
-    // Through the character at the later end, when asked: past `start`'s
-    // character when `end` comes first, past `end`'s otherwise.
-    let (past_start, past_end) = match query.through {
-        Some((past_start, past_end)) => (p.point(&mut b, past_start), p.point(&mut b, past_end)),
-        None => (start, end),
-    };
-    let c = &p.c;
-    let range = emit_between(&mut b, c, (start, end), (past_start, past_end));
-    let text = b.new_string("");
-    let text = b.add_to_results(text);
-    let selected = b.new_bool(false);
-    let selected = b.add_to_results(selected);
-    match query.action {
-        RangeAction::Text(_) => {
-            let read = b.text_range_get_text(range, c.max_text);
-            b.set(text, read);
-        }
-        RangeAction::Select | RangeAction::SelectReporting(_) => b.try_catch(
-            |b| {
-                b.text_range_select(range);
-                let yes = b.bool(true);
-                b.set(selected, yes);
-            },
-            |_, _| {},
-        ),
-    }
-    // What follows the select reads the selection again and compares it,
-    // inside a try block: a failure there leaves the selection made, and
-    // the program still returns the selection before, with `read` false
-    // and the failure's status, for the caller to read the changes.
-    let changes = match (reporting, before, p.pattern) {
-        (Some(max), Some(before), Some(pattern)) => {
-            Some(emit_report(&mut b, c, before, pattern, (selected, max)))
-        }
-        _ => None,
-    };
-    let outcome = b.finish().execute()?;
-    let start = found(&outcome, start)?;
-    let end = if query.end.is_some() {
-        found(&outcome, end)?
-    } else {
-        start.clone()
-    };
-    let selected = outcome.get(selected)?;
-    let (changes, unread, selection_after) = match changes {
-        Some(report) if selected => report.read(&outcome)?,
-        _ => (None, None, None),
-    };
-    Ok(RangeAnswer {
-        start,
-        end,
-        text: string_of(&outcome, text)?.encode_utf16().collect(),
-        selected,
-        changes,
-        unread,
-        selection_after,
-    })
-}
-
 /// Emits the range from the earlier of `start` and `end` to the point just
 /// past the character at the later, `past_start` or `past_end`, which are
 /// the points themselves for no character.
@@ -982,191 +478,6 @@ pub(crate) fn emit_between(
     let range = b.text_range_clone(first);
     b.text_range_move_endpoint_by_range(range, c.end, second, c.start);
     range
-}
-
-/// Emits [`RangeAction::SelectReporting`]'s report after the select: the
-/// selection read again and compared with `before` ([`emit_selection_change`]),
-/// inside a try block, so that a failure there still leaves the program
-/// returning `before`, with the failure's status.
-fn emit_report(
-    b: &mut Builder,
-    c: &Constants,
-    before: CaretRegisters,
-    pattern: Reg<kind::TextPattern>,
-    (selected, max): (Reg<kind::Bool>, i32),
-) -> ReportRegisters {
-    let read = b.new_bool(false);
-    let read = b.add_to_results(read);
-    let status = b.new_int(0);
-    let status = b.add_to_results(status);
-    let mut arrays = None;
-    b.try_catch(
-        |b| {
-            arrays = Some(emit_selection_change(
-                b,
-                c,
-                before,
-                pattern,
-                (selected, max),
-            ));
-            let yes = b.bool(true);
-            b.set(read, yes);
-        },
-        |b, failed| b.set(status, failed),
-    );
-    let (arrays, after, after_text) = arrays.expect("the try block's body is emitted");
-    ReportRegisters {
-        arrays,
-        read,
-        status,
-        before,
-        after,
-        after_text,
-    }
-}
-
-/// The registers of [`RangeAction::SelectReporting`]'s report: the
-/// changes' two arrays, whether they were read, the status of a failure
-/// after the select, and the selection before it.
-struct ReportRegisters {
-    arrays: (Reg<kind::Array>, Reg<kind::Array>),
-    read: Reg<kind::Bool>,
-    status: Reg<kind::Int>,
-    before: CaretRegisters,
-    after: CaretRegisters,
-    after_text: Reg<kind::Str>,
-}
-
-impl ReportRegisters {
-    /// The changes, when the program read them, or else the selection
-    /// before, for the caller to read them ([`ChangesUnread`]).
-    fn read(&self, outcome: &Outcome) -> Result<ReportRead, Error> {
-        if outcome.get(self.read)? {
-            let (flags, texts) = self.arrays;
-            let selected = outcome.get(self.after.has_selection)?;
-            let range = if selected {
-                self.after.selection
-            } else {
-                self.after.caret
-            };
-            let after = SelectionAfter {
-                range: outcome
-                    .get(range)?
-                    .ok_or(Error::MissingResult(range.id()))?,
-                selected,
-                text: selected
-                    .then(|| string_of(outcome, self.after_text))
-                    .transpose()?
-                    .map(|text| text.encode_utf16().collect()),
-            };
-            return Ok((
-                Some(read_changes(outcome, flags, texts)?),
-                None,
-                Some(after),
-            ));
-        }
-        let (range, before_end) = if outcome.get(self.before.has_selection)? {
-            (self.before.selection, Endpoint::End)
-        } else {
-            (self.before.caret, Endpoint::Start)
-        };
-        let before = outcome
-            .get(range)?
-            .ok_or(Error::MissingResult(range.id()))?;
-        Ok((
-            None,
-            Some(ChangesUnread {
-                before,
-                before_end,
-                status: outcome.get(self.status)?,
-            }),
-            None,
-        ))
-    }
-}
-
-/// What [`ReportRegisters::read`] reads: the changes and the selection
-/// after, or the selection before for the caller to read them.
-type ReportRead = (
-    Option<Vec<SelectionTextChange>>,
-    Option<ChangesUnread>,
-    Option<SelectionAfter>,
-);
-
-/// Emits how the selection changed from `before`, when `selected`: the
-/// selection read again and compared with it, each change's text read up
-/// to `max` UTF-16 code units ([`emit_changes`]).
-fn emit_selection_change(
-    b: &mut Builder,
-    c: &Constants,
-    before: CaretRegisters,
-    pattern: Reg<kind::TextPattern>,
-    (selected, max): (Reg<kind::Bool>, i32),
-) -> (
-    (Reg<kind::Array>, Reg<kind::Array>),
-    CaretRegisters,
-    Reg<kind::Str>,
-) {
-    // The ends before: the selection's, else the caret twice.
-    let old = b.new_null().assume::<kind::TextRange>();
-    let old_end = b.new_int(0);
-    b.if_else(
-        before.has_selection,
-        |b| {
-            b.set(old, before.selection);
-            b.set(old_end, c.end);
-        },
-        |b| {
-            b.set(old, before.caret);
-            b.set(old_end, c.start);
-        },
-    );
-    let old: (ProgramEnd, ProgramEnd) = ((old, c.start), (old, old_end));
-    let after = emit_caret_with(b, c, pattern, true);
-    let old_collapsed = b.not(before.has_selection);
-    let arrays = emit_changes(
-        b,
-        c,
-        (after.has_selection, after.selection, after.caret),
-        (old, old_collapsed),
-        (selected, max),
-    );
-    // The selection's text, kept with it to compare.
-    let text = b.new_string("");
-    let text = b.add_to_results(text);
-    b.if_(after.has_selection, |b| {
-        let compared = b.int(MAX_COMPARED_TEXT);
-        let read = b.text_range_get_text(after.selection, compared);
-        b.set(text, read);
-    });
-    (arrays, after, text)
-}
-
-/// A point's place on the screen in one round trip.
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
-pub fn text_location_remote(query: &LocationQuery<'_>) -> Result<LocationAnswer, Error> {
-    let mut b = Builder::new();
-    let mut p = Program::new(&mut b, query.target, 0);
-    let at = p.point(&mut b, query.at);
-    let at = b.add_to_results(at);
-    let range = b.text_range_clone(at);
-    let character = b.int(TextUnit_Character.0);
-    b.text_range_expand_to_enclosing_unit(range, character);
-    let rectangles = b.text_range_get_bounding_rectangles(range);
-    let rectangles = b.add_to_results(rectangles);
-    let outcome = b.finish().execute()?;
-    let location = match outcome.get(rectangles)?.as_slice() {
-        [Value::Double(left), Value::Double(top), ..] => Some((*left, *top)),
-        [Value::Rect { x, y, .. }, ..] => Some((f64::from(*x), f64::from(*y))),
-        _ => None,
-    };
-    Ok(LocationAnswer {
-        at: found(&outcome, at)?,
-        location,
-    })
 }
 
 // The classic implementations: the same reads, one call each, counted on
@@ -1310,23 +621,8 @@ pub(crate) fn classic_point(
     })
 }
 
-/// Units read the classic way, the fallback and the reference.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when a call fails.
-pub fn text_units_classic(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
-    let from = classic_point(query.target, query.from, &mut None)?;
-    classic_units(
-        query.target,
-        from,
-        (query.movement, query.unit, query.count),
-        (query.max_text, query.max_total, query.culture),
-    )
-}
-
 /// Units read the classic way from `from`, found: after `movement`,
-/// `count` units of `unit`, as [`text_units_classic`] reads them.
+/// `count` units of `unit`, one call at a time.
 pub(crate) fn classic_units(
     target: TextTarget<'_>,
     from: FoundPoint,
@@ -1334,7 +630,7 @@ pub(crate) fn classic_units(
     (max_text, max_total, culture): (i32, u32, bool),
 ) -> Result<UnitsAnswer, Error> {
     let (point, moved, on_start) = match movement {
-        None => (from.clone(), 0, false),
+        None => (from, 0, false),
         Some(Movement::Document(count)) => {
             let point = FoundPoint {
                 range: target.pattern.document_range()?,
@@ -1421,8 +717,6 @@ pub(crate) fn classic_units(
         classic_languages(&mut units, count > 1)?;
     }
     Ok(UnitsAnswer {
-        from,
-        point,
         moved,
         units,
         ended,
@@ -1462,67 +756,9 @@ fn classic_languages(units: &mut [UnitText], whole: bool) -> Result<(), Error> {
     Ok(())
 }
 
-/// The text between two points read or selected the classic way.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when a call fails.
-pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
-    let mut caret = None;
-    let reporting = match query.action {
-        RangeAction::SelectReporting(max) => {
-            caret = Some(classic_caret(query.target)?);
-            Some(max)
-        }
-        RangeAction::Text(_) | RangeAction::Select => None,
-    };
-    let before = caret.as_ref().map(ends_of);
-    let start = classic_point(query.target, query.start, &mut caret)?;
-    let end = match query.end {
-        Some(end) => classic_point(query.target, end, &mut caret)?,
-        None => start.clone(),
-    };
-    let through = match query.through {
-        Some((past_start, past_end)) => Some((
-            classic_point(query.target, past_start, &mut caret)?,
-            classic_point(query.target, past_end, &mut caret)?,
-        )),
-        None => None,
-    };
-    let range = classic_range(
-        &start,
-        &end,
-        through
-            .as_ref()
-            .map(|(past_start, past_end)| (past_start, past_end)),
-    )?;
-    let (text, selected) = match query.action {
-        RangeAction::Text(max) => (range.text(max)?, false),
-        RangeAction::Select | RangeAction::SelectReporting(_) => {
-            (Vec::new(), range.select().is_ok())
-        }
-    };
-    let (changes, selection_after) = match (reporting, before) {
-        (Some(max), Some((old, old_end))) if selected => {
-            let (changes, after) = classic_changes_since(query.target, (&old, old_end), max)?;
-            (Some(changes), Some(after))
-        }
-        _ => (None, None),
-    };
-    Ok(RangeAnswer {
-        start,
-        end,
-        text,
-        selected,
-        changes,
-        unread: None,
-        selection_after,
-    })
-}
-
 /// The range between `start` and `end`, whichever comes first, and with
 /// `through`, through the character at the later one, as
-/// [`text_range_classic`] makes it.
+/// the ordinary-calls executor reads or selects it.
 pub(crate) fn classic_range(
     start: &FoundPoint,
     end: &FoundPoint,
@@ -1542,67 +778,6 @@ pub(crate) fn classic_range(
     let range = starting_at(first)?;
     range.move_endpoint_to(Endpoint::End, &second.range, second.endpoint)?;
     Ok(range)
-}
-
-/// How the selection changed from `old`, a range and where in it the
-/// selection then ended (its start being the range's start): the
-/// selection read now, the classic way, and compared with it, each
-/// change's text read up to `max` UTF-16 code units.
-fn classic_changes_since(
-    target: TextTarget<'_>,
-    (old, old_end): (&IUIAutomationTextRange, Endpoint),
-    max: i32,
-) -> Result<(Vec<SelectionTextChange>, SelectionAfter), Error> {
-    let state = classic_caret(target)?;
-    let (new, new_end) = ends_of(&state);
-    let ends = |range, end| {
-        (
-            RangeEnd {
-                range,
-                endpoint: Endpoint::Start,
-            },
-            RangeEnd {
-                range,
-                endpoint: end,
-            },
-        )
-    };
-    let changes = classic_changes(
-        (ends(old, old_end), ends(&new, new_end)),
-        (old_end == Endpoint::Start, new_end == Endpoint::Start),
-        max,
-    )?;
-    let after = SelectionAfter {
-        text: state
-            .selection
-            .as_ref()
-            .map(|selection| selection.text(MAX_COMPARED_TEXT))
-            .transpose()?,
-        selected: state.selection.is_some(),
-        range: new,
-    };
-    Ok((changes, after))
-}
-
-/// The selection a caret read found, as a range and the end of it where
-/// the selection ends, its start being the range's start: the selection,
-/// or the caret twice when nothing is selected.
-fn ends_of(state: &CaretState) -> (IUIAutomationTextRange, Endpoint) {
-    match &state.selection {
-        Some(selection) => (selection.clone(), Endpoint::End),
-        None => (state.caret.range.clone(), Endpoint::Start),
-    }
-}
-
-/// A point's place on the screen the classic way.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when a call fails.
-pub fn text_location_classic(query: &LocationQuery<'_>) -> Result<LocationAnswer, Error> {
-    let at = classic_point(query.target, query.at, &mut None)?;
-    let location = classic_location(&at)?;
-    Ok(LocationAnswer { at, location })
 }
 
 /// The left and top of the character at `at`, in screen pixels, when the

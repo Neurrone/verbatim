@@ -33,7 +33,7 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::request::{FocusCaret, FocusCaretRead};
-use verbatim_model::{NodeId, Role, TextDetails, TextOp, TextReply};
+use verbatim_model::{NodeId, Role, TextDetails, TextReply};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
 use verbatim_uia_rops::Path;
@@ -530,27 +530,27 @@ fn failed_reply(error: TextError) -> TextReply {
     }
 }
 
-/// Answers one of Core's text requests from the event queue or outside it
-/// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"): a
-/// caret key's starting read, a caret tell's read, and
-/// the shared list's reads and moves, a move answered with the next
-/// selection baseline.
-pub(super) fn answer_asked(
+/// A batch's text step of `node_id` run call by call through its text's
+/// own calls ([`text::by_calls`]: an edit control's messages), its copy of
+/// the node's facts holding the anchors `named`: `Err` with the reply a
+/// node with no text, or gone, answers.
+pub(super) fn by_calls(
     context: &RequestContext<'_>,
     node_id: NodeId,
-    op: &TextOp,
-) -> TextReply {
-    let named = text::named_anchors(op);
-    let details = TextDetails::NONE;
-    let replied = on_text!(context, node_id, details, &named, |source, text| {
-        text::held::perform_placed(source, text, op)
-    });
-    replied.unwrap_or_else(|reply| reply)
+    step: text::CallStep,
+    named: &[u64],
+) -> Result<text::OrReply<verbatim_model::batch::Done>, TextReply> {
+    on_text!(
+        context,
+        node_id,
+        TextDetails::NONE,
+        named,
+        |source, text| text::by_calls(source, text, step)
+    )
 }
 
 /// A batch's `Caret` of `node_id` ([`text::ops::caret`]), adopting the
-/// element of the caret tell `adopt` names as [`answer_asked`]'s selection
-/// read does: `Err` with the reply a node with no text, or gone, answers.
+/// element of the caret tell `adopt` names, as a caret tell's read does: `Err` with the reply a node with no text, or gone, answers.
 pub(super) fn caret_step(
     context: &RequestContext<'_>,
     node_id: NodeId,

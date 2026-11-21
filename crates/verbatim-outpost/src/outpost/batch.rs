@@ -20,9 +20,9 @@
 #![forbid(unsafe_code)]
 
 use verbatim_model::batch::{
-    AncestorsEnd, Ancestry, Batch, Before, CaretAt, Chunks, Descendant, Descended, Done, Gate,
-    KindMismatch, Located, Missing, Op, Point, PointOf, RangeText, ReaderKind, Relation, Selected,
-    StepOutcome, StepRefusal, Subject, Tested, TextOffset, Walk, WindowOf, parse,
+    AncestorsEnd, Ancestry, Batch, Before, CaretAt, Descendant, Descended, Done, Gate,
+    KindMismatch, Missing, Op, Point, PointOf, ReaderKind, Relation, StepOutcome, StepRefusal,
+    Subject, Tested, Walk, WindowOf, parse,
 };
 use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues,
@@ -32,8 +32,7 @@ use verbatim_model::request::{
     Reply, Route,
 };
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, QueryKind, TextAnchor, TextOp, TextPoint, TextPosition,
-    TextRead, TextReadAhead, TextReply, TextThrough,
+    Backend, NodeId, NodeSnapshot, QueryKind, TextAnchor, TextPoint, TextPosition, TextReply,
 };
 
 use super::RequestContext;
@@ -1034,7 +1033,7 @@ impl Run<'_, '_> {
             Err(outcome) => return Ok(outcome),
         };
         let context = self.context;
-        let legacy = match op {
+        let step = match op {
             Op::Caret { adopt, .. } => {
                 return Ok(text_result(
                     text_reads::caret_step(context, node, *adopt),
@@ -1086,52 +1085,36 @@ impl Run<'_, '_> {
                 tracing::error!(target: verbatim_model::DEFECT_TARGET, "a caret wait reached the worker's batch");
                 return Ok(StepOutcome::Failed);
             }
-            op => match self.legacy(op) {
-                Some(legacy) => legacy,
+            op => match self.call_step(op, context.observed_now()) {
+                Some(step) => step,
                 None => return Ok(StepOutcome::Failed),
             },
         };
-        let began_us = context.observed_now();
-        let reply = text_reads::answer_asked(context, node, &legacy);
-        let named = text_named(&legacy);
-        Ok(StepOutcome::Done(match reply {
-            TextReply::Read { moved, chunk } => Done::ReadText(Chunks {
-                moved,
-                chunks: vec![chunk],
-            }),
-            TextReply::Chunks { moved, chunks } => Done::ReadText(Chunks { moved, chunks }),
-            TextReply::Range { text, truncated } => Done::ReadRange(RangeText { text, truncated }),
-            TextReply::CaretPlaced { .. } | TextReply::SelectionPlaced { .. } => {
-                Done::Select(Selected { began_us })
+        let named: Vec<u64> = step.named().into_iter().map(|anchor| anchor.0).collect();
+        let ran = text_reads::by_calls(context, node, step, &named);
+        Ok(match ran {
+            Ok(Ok(Err(reply))) => {
+                text_refused(&reply, node, named.first().copied().map(TextAnchor))
             }
-            TextReply::Location { x, y } => Done::Locate(Located {
-                screen: Some((x, y)),
-                offset: None,
-            }),
-            TextReply::OffsetLocation {
-                offset,
-                length,
-                point,
-            } => Done::Locate(Located {
-                screen: point,
-                offset: Some(TextOffset { offset, length }),
-            }),
-            // A provider that cannot tell where a point is answers none.
-            TextReply::Unsupported if matches!(legacy, TextOp::Location(_)) => {
-                Done::Locate(Located {
-                    screen: None,
-                    offset: None,
-                })
+            Ok(Ok(Ok(done))) => StepOutcome::Done(done),
+            Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+            Ok(Err(TextError::Failed(reason))) => {
+                tracing::debug!(reason, "a batch's text step failed");
+                StepOutcome::Failed
             }
-            other => return Ok(text_refused(&other, node, named)),
-        }))
+            Err(reply) => text_refused(&reply, node, None),
+        })
     }
 
-    /// The text request of node `node` that a read or move by points runs
-    /// as, its points resolved: `None` when a point names a result not of
-    /// its kind, which the parse rules out.
-    fn legacy(&self, op: &Op) -> Option<TextOp> {
+    /// The step a read or move by points runs as call by call, its points
+    /// resolved, begun at `began_us`: `None` when a point names a result
+    /// not of its kind, which the parse rules out.
+    fn call_step(&self, op: &Op, began_us: u64) -> Option<crate::text::CallStep> {
         let point = |point: &Point| self.point(*point);
+        let through = |through: &Option<verbatim_model::batch::Through>| match through {
+            Some(through) => Some(Some((point(&through.start)?, point(&through.end)?))),
+            None => Some(None),
+        };
         Some(match op {
             Op::ReadText {
                 at,
@@ -1139,60 +1122,32 @@ impl Run<'_, '_> {
                 unit,
                 count,
                 ..
-            } => {
-                let at = point(at)?;
-                if *count > 1 {
-                    TextOp::ReadAhead(TextReadAhead {
-                        at,
-                        movement: *movement,
-                        unit: *unit,
-                        count: *count,
-                    })
-                } else {
-                    TextOp::Read(TextRead {
-                        at,
-                        movement: *movement,
-                        unit: *unit,
-                    })
-                }
-            }
+            } => crate::text::CallStep::Read {
+                at: point(at)?,
+                movement: *movement,
+                unit: *unit,
+                count: *count,
+            },
             Op::ReadRange {
                 start,
                 end,
-                through,
+                through: past,
                 ..
-            }
-            | Op::Select {
+            } => crate::text::CallStep::Range {
+                ends: (point(start)?, point(end)?),
+                through: through(past)?,
+            },
+            Op::Select {
                 start,
                 end,
-                through,
+                through: past,
                 ..
-            } => {
-                let through = match through {
-                    Some(through) => Some(TextThrough {
-                        start: point(&through.start)?,
-                        end: point(&through.end)?,
-                    }),
-                    None => None,
-                };
-                let (start, end) = (point(start)?, point(end)?);
-                match op {
-                    Op::Select { .. } if start == end && through.is_none() => {
-                        TextOp::MoveCaret(start)
-                    }
-                    Op::Select { .. } => TextOp::Select {
-                        start,
-                        end,
-                        through,
-                    },
-                    _ => TextOp::ReadRange {
-                        start,
-                        end,
-                        through,
-                    },
-                }
-            }
-            Op::Locate { at, .. } => TextOp::Location(point(at)?),
+            } => crate::text::CallStep::Select {
+                ends: (point(start)?, point(end)?),
+                through: through(past)?,
+                began_us,
+            },
+            Op::Locate { at, .. } => crate::text::CallStep::Locate(point(at)?),
             _ => return None,
         })
     }
@@ -1393,15 +1348,6 @@ fn text_result<T>(
         }
         Ok(Ok(found)) => done(found).map_or_else(StepOutcome::NotThere, StepOutcome::Done),
     }
-}
-
-/// The first anchor a text request names, which a reply that lost one
-/// names.
-fn text_named(op: &TextOp) -> Option<TextAnchor> {
-    crate::text::named_anchors(op)
-        .first()
-        .copied()
-        .map(TextAnchor)
 }
 
 /// The outcome a text reply that is no result gives (the design's section

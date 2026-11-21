@@ -65,14 +65,11 @@ use verbatim_model::property::{NodeDetail, NodeDetailSet};
 use verbatim_model::{
     CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
-use verbatim_model::{
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough,
-    TextUnit, Theme,
-};
+use verbatim_model::{TextMovement, TextPoint, TextPosition, TextUnit, Theme};
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
-use verbatim_outpost::text::{Anchors, TextSource, perform};
+use verbatim_outpost::text::{Anchors, TextSource};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{
     Ancestor, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
@@ -2746,18 +2743,32 @@ fn caret_report<S: TextSource>(
         .report
 }
 
-/// One text request answered as the outpost's worker answers it
-/// (`text_reads::answer`), with its calls and failed reads.
+/// A batch's text steps on node 1, `ops`, run as the outpost's worker runs
+/// a run of text steps on a UI Automation node
+/// (`verbatim_outpost::text::fused::run`), with their calls and failed
+/// reads.
 fn measure_text(
-    source: &mut UiaText,
-    anchors: &mut verbatim_outpost::text::NodeText<'_, verbatim_outpost::text::uia::UiaPos>,
-    op: &TextOp,
-) -> (TextReply, Cost) {
+    uia: &Uia,
+    (source, anchors): (
+        &mut UiaText,
+        &mut verbatim_outpost::text::NodeText<'_, verbatim_outpost::text::uia::UiaPos>,
+    ),
+    ops: Vec<verbatim_model::batch::Op>,
+) -> (Vec<verbatim_model::batch::StepOutcome>, Cost) {
+    let steps: Vec<verbatim_model::batch::Step> = ops
+        .into_iter()
+        .map(|op| verbatim_model::batch::Step { op, when: None })
+        .collect();
     let _ = verbatim_win32::calls::take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let reply = perform(source, anchors, op);
+    let answer = verbatim_outpost::text::fused::run(
+        uia,
+        (verbatim_model::NodeId::new(1), source, anchors),
+        (&steps, 0, &[]),
+        (None, 1),
+    );
     (
-        reply,
+        answer.outcomes,
         Cost {
             calls: verbatim_win32::calls::take(),
             failed_reads: verbatim_uia::calls::take_failed_reads(),
@@ -2765,20 +2776,54 @@ fn measure_text(
     )
 }
 
-/// The text protocol's other requests through UIA, remotely or
-/// classically: the review cursor's next line, a word from a position
-/// inside the line (found by the text before it), say-all's read ahead of
-/// every line, the selected text read for a copy, the caret moved as
-/// say-all moves it, and the caret's location.
+/// Node 1's text, the subject of [`measure_text`]'s steps.
+const NOTES: verbatim_model::batch::Subject =
+    verbatim_model::batch::Subject::Node(verbatim_model::NodeId::new(1));
+
+/// A `ReadText` of node 1 at `at`, after `movement`, `count` units of
+/// `unit`.
+fn read_text_op(
+    at: TextPoint,
+    movement: Option<TextMovement>,
+    unit: TextUnit,
+    count: u8,
+) -> verbatim_model::batch::Op {
+    verbatim_model::batch::Op::ReadText {
+        subject: NOTES,
+        at: verbatim_model::batch::Point::At(at),
+        movement,
+        unit,
+        count,
+        details: verbatim_model::TextDetails::NONE,
+    }
+}
+
+/// The chunks of the `ReadText` that answered first among `outcomes`.
+fn chunks_of(outcomes: &[verbatim_model::batch::StepOutcome]) -> &[verbatim_model::TextChunk] {
+    match outcomes.first() {
+        Some(verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::ReadText(
+            read,
+        ))) => &read.chunks,
+        other => panic!("a text read, not {other:?}"),
+    }
+}
+
+/// The text commands' batches through UIA, remotely or classically: the
+/// review cursor's next line, a word from a position inside the line
+/// (found by the text before it), say-all's read ahead of every line, the
+/// caret moved as say-all moves it, the caret's location, the selected
+/// text read for a copy, and the review copy's selection.
 #[expect(
     clippy::too_many_lines,
-    reason = "each request measured in turn, as one session makes them"
+    reason = "each batch measured in turn, as one session makes them"
 )]
 fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
+    use verbatim_model::batch::{Before, Done, Located, Op, Place, Point, StepOutcome, Through};
     let way = if remote { "remotely" } else { "classically" };
     let title = common::unique_title("mockapp-counts-uia-text");
     let mut app = common::spawn_visible("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
     let mut source = uia_notes(hwnd).remote(remote);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
@@ -2788,23 +2833,19 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         anchor: report.line.start,
         offset: report.line.offset,
     };
+    let mut text = |ops| measure_text(&uia, (&mut source, &mut anchors), ops);
 
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::Read(TextRead {
-            at: TextPoint::At(caret),
-            movement: Some(TextMovement {
-                unit: TextUnit::Line,
-                count: 1,
-            }),
-            unit: TextUnit::Line,
-        }),
-    );
-    let TextReply::Read { chunk: line, .. } = reply else {
-        panic!("a read, not {reply:?}");
+    let next_line = TextMovement {
+        unit: TextUnit::Line,
+        count: 1,
     };
-    assert_eq!(line.text, "gamma\n");
+    let (read, cost) = text(vec![read_text_op(
+        TextPoint::At(caret),
+        Some(next_line),
+        TextUnit::Line,
+        1,
+    )]);
+    assert_eq!(chunks_of(&read)[0].text, "gamma\n");
     let expected = if remote {
         calls(1, 0, 0)
     } else {
@@ -2812,22 +2853,17 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     };
     ratchet.check(&format!("UIA review next line, {way}"), &cost, expected, 0);
 
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::Read(TextRead {
-            at: TextPoint::At(TextPosition {
-                anchor: report.line.start,
-                offset: 6,
-            }),
-            movement: None,
-            unit: TextUnit::Word,
-        }),
-    );
-    let TextReply::Read { chunk: word, .. } = reply else {
-        panic!("a read, not {reply:?}");
+    let inside = TextPosition {
+        anchor: report.line.start,
+        offset: 6,
     };
-    assert_eq!(word.text, "beta");
+    let (read, cost) = text(vec![read_text_op(
+        TextPoint::At(inside),
+        None,
+        TextUnit::Word,
+        1,
+    )]);
+    assert_eq!(chunks_of(&read)[0].text, "beta");
     let expected = if remote {
         calls(1, 0, 0)
     } else {
@@ -2840,19 +2876,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         0,
     );
 
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::ReadAhead(TextReadAhead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-            count: 16,
-        }),
-    );
-    let TextReply::Chunks { chunks, .. } = reply else {
-        panic!("chunks, not {reply:?}");
-    };
+    let (read, cost) = text(vec![read_text_op(
+        TextPoint::Caret,
+        None,
+        TextUnit::Line,
+        16,
+    )]);
+    let chunks = chunks_of(&read).to_vec();
     let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
     assert_eq!(texts, ["alpha beta\n", "gamma\n", ""]);
     let expected = if remote {
@@ -2867,16 +2897,31 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         0,
     );
 
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::MoveCaret(TextPoint::At(TextPosition::at(chunks[1].start))),
+    // Say-all's caret move: the move, then the caret read for the next
+    // selection baseline; a program ends after its act, so two remotely.
+    let to = Point::At(TextPoint::At(TextPosition::at(chunks[1].start)));
+    let (moved, cost) = text(vec![
+        Op::Select {
+            subject: NOTES,
+            start: to,
+            end: to,
+            through: None,
+        },
+        Op::Caret {
+            subject: NOTES,
+            adopt: None,
+        },
+    ]);
+    assert!(
+        moved
+            .iter()
+            .all(|outcome| matches!(outcome, StepOutcome::Done(_))),
+        "{moved:?}"
     );
-    assert!(matches!(reply, TextReply::Moved { .. }), "{reply:?}");
     let expected = if remote {
-        calls(1, 0, 0)
+        calls(2, 0, 0)
     } else {
-        calls(4, 0, 0)
+        calls(9, 0, 0)
     };
     ratchet.check(
         &format!("UIA say-all caret move, {way}"),
@@ -2885,12 +2930,17 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         0,
     );
 
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::Location(TextPoint::Caret),
+    let (located, cost) = text(vec![Op::Locate {
+        subject: NOTES,
+        at: Point::At(TextPoint::Caret),
+    }]);
+    assert_eq!(
+        located.first(),
+        Some(&StepOutcome::Done(Done::Locate(Located {
+            screen: Some((100, 216)),
+            offset: None,
+        })))
     );
-    assert_eq!(reply, TextReply::Location { x: 100, y: 216 });
     let expected = if remote {
         calls(1, 0, 0)
     } else {
@@ -2899,79 +2949,75 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     ratchet.check(&format!("UIA caret location, {way}"), &cost, expected, 0);
 
     common::apply(&mut app, hwnd, "caret doc 0 5");
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::ReadRange {
-            start: TextPoint::SelectionStart,
-            end: TextPoint::SelectionEnd,
-            through: None,
-        },
-    );
-    assert_eq!(
-        reply,
-        TextReply::Range {
-            text: "alpha".to_owned(),
-            truncated: false
-        }
-    );
+    let (range, cost) = text(vec![Op::ReadRange {
+        subject: NOTES,
+        start: Point::At(TextPoint::SelectionStart),
+        end: Point::At(TextPoint::SelectionEnd),
+        through: None,
+    }]);
+    let Some(StepOutcome::Done(Done::ReadRange(range))) = range.first() else {
+        panic!("a range, not {range:?}");
+    };
+    assert_eq!((range.text.as_str(), range.truncated), ("alpha", false));
     let expected = if remote {
         calls(1, 0, 0)
     } else {
-        calls(6, 0, 0)
+        calls(8, 0, 0)
     };
     ratchet.check(&format!("UIA selected text, {way}"), &cost, expected, 0);
 
-    common::apply(&mut app, hwnd, "caret doc 0");
-    let collapsed = caret_report(&mut source, &mut anchors, 1);
-    let at = TextPosition {
-        anchor: collapsed.line.start,
-        offset: collapsed.line.offset,
-    };
     // The review copy's first press: "alpha" selected from a collapsed
-    // caret, the selection read before and after and compared. As Core
-    // sends it: the marker on the first "a" and the review cursor on the
-    // last, each with the point just past its character.
+    // caret, as Core sends it, the marker on the first "a" and the review
+    // cursor on the last, each with the point just past its character:
+    // the caret, the select, the caret again and the two compared, the
+    // reads before the act and the act one program, the reads after it
+    // another. The three points past the start are each found by the text
+    // before it.
     common::apply(&mut app, hwnd, "caret doc 0");
     let line_at = |offset| {
-        TextPoint::At(TextPosition {
-            anchor: collapsed.line.start,
+        Point::At(TextPoint::At(TextPosition {
+            anchor: report.line.start,
             offset,
-        })
+        }))
     };
-    let (reply, cost) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::Select {
-            start: TextPoint::At(at),
+    let (selected, cost) = text(vec![
+        Op::Caret {
+            subject: NOTES,
+            adopt: None,
+        },
+        Op::Select {
+            subject: NOTES,
+            start: line_at(0),
             end: line_at(4),
-            through: Some(TextThrough {
-                start: line_at(at.offset + 1),
+            through: Some(Through {
+                start: line_at(1),
                 end: line_at(5),
             }),
         },
-    );
-    assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
-    // The three points past the start each found by the text before it
-    // (a `MoveEndpointByUnit` and a `GetText` each), the start and the end
-    // compared, the selection read before and after, its caret the
-    // selection's start, as NVDA's is, the select, the old selection's
-    // ends compared remotely, as NVDA judges its old range as it now is,
-    // and the change's ends compared and its text read, and the selection's
-    // text read after, up to 513 units, kept for the next comparison (one
-    // `GetText` more since 2026-10-22). The selection before holding
-    // nothing, the change is the whole new selection, with no comparison
-    // to place it (two fewer remotely, four classically, since
-    // 2026-10-23). Before 2026-10-15 the
-    // read before was classic and the read after a caret read of its own:
-    // 4 calls remotely, 30 classically; and the range was the marker to
-    // the point past the review cursor's character, two points, before
-    // the points past both ends' characters were sent for a range read
-    // either way round: 22 calls classically.
+        Op::Caret {
+            subject: NOTES,
+            adopt: None,
+        },
+        Op::CompareSelection {
+            subject: NOTES,
+            before: Before::SelectionOf(Place(0)),
+            after: Place(2),
+        },
+    ]);
+    let Some(StepOutcome::Done(Done::CompareSelection(compared))) = selected.get(3) else {
+        panic!("the selections compared, not {selected:?}");
+    };
+    let changes: Vec<(bool, &str, u32)> = compared
+        .difference
+        .changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str(), change.characters))
+        .collect();
+    assert_eq!(changes, [(true, "alpha", 5)]);
     let expected = if remote {
-        calls(1, 0, 0)
+        calls(2, 0, 0)
     } else {
-        calls(28, 0, 0)
+        calls(40, 0, 0)
     };
     ratchet.check(
         &format!("UIA review copy select, {way}"),
@@ -2980,18 +3026,6 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         0,
     );
     app.quit();
-}
-
-/// The changes a [`TextReply::Selected`] holds, as (selected, text,
-/// characters).
-fn selected_texts(reply: &TextReply) -> Vec<(bool, &str, u32)> {
-    let TextReply::Selected(changes) = reply else {
-        panic!("a selection's changes, not {reply:?}");
-    };
-    changes
-        .iter()
-        .map(|change| (change.selected, change.text.as_str(), change.characters))
-        .collect()
 }
 
 fn uia_text_requests_cost_exactly() {
@@ -3019,40 +3053,32 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
         &format!("set-text doc {}", lines.concat().replace('\n', "\\n")),
     );
     common::apply(&mut app, hwnd, "caret doc 0");
+    let uia = Uia::new().expect("a UIA client");
     let mut source = uia_notes(hwnd).remote(remote);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
-    let batch = |at: TextPoint, movement: Option<TextMovement>| {
-        TextOp::ReadAhead(TextReadAhead {
-            at,
-            movement,
-            unit: TextUnit::Line,
-            count: 20,
-        })
+    let mut batch = |at: TextPoint, movement: Option<TextMovement>| {
+        measure_text(
+            &uia,
+            (&mut source, &mut anchors),
+            vec![read_text_op(at, movement, TextUnit::Line, 20)],
+        )
     };
 
-    let (reply, first) = measure_text(&mut source, &mut anchors, &batch(TextPoint::Caret, None));
-    let TextReply::Chunks { chunks, .. } = reply else {
-        panic!("chunks, not {reply:?}");
-    };
+    let (read, first) = batch(TextPoint::Caret, None);
+    let chunks = chunks_of(&read).to_vec();
     let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
     assert_eq!(texts, lines[..20]);
     assert!(chunks.iter().all(|chunk| !chunk.last));
 
-    let (reply, second) = measure_text(
-        &mut source,
-        &mut anchors,
-        &batch(
-            TextPoint::At(TextPosition::at(chunks[19].start)),
-            Some(TextMovement {
-                unit: TextUnit::Line,
-                count: 1,
-            }),
-        ),
+    let (read, second) = batch(
+        TextPoint::At(TextPosition::at(chunks[19].start)),
+        Some(TextMovement {
+            unit: TextUnit::Line,
+            count: 1,
+        }),
     );
-    let TextReply::Chunks { chunks, .. } = reply else {
-        panic!("chunks, not {reply:?}");
-    };
+    let chunks = chunks_of(&read);
     let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
     assert_eq!(texts, lines[20..40]);
     assert!(chunks.iter().all(|chunk| !chunk.last));
@@ -3063,11 +3089,9 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
     // the move that finds a next line after the twentieth (3), and one
     // `Culture` read over the whole batch (3). The later batch starts from
     // a held position moved by a line (4) and needs no offset (3 for its
-    // first line). The comparison, since 2026-10-23, ends a batch at a line
-    // that starts before the one read before it, as the console host's
-    // expansion below its last line with text gives (109 and 108 before).
-    // 165 and 166 before 2026-10-07: two collapses and two copies per line,
-    // and a `Culture` read per line.
+    // first line). The comparison ends a batch at a line that starts
+    // before the one read before it, as the console host's expansion below
+    // its last line with text gives.
     let expected = if remote {
         [calls(1, 0, 0), calls(1, 0, 0)]
     } else {
@@ -3097,23 +3121,16 @@ fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
     let mut app = common::spawn_visible("languages.json", "uia", &title);
     let hwnd = common::find_window(&title);
     common::apply(&mut app, hwnd, "caret doc 0");
+    let uia = Uia::new().expect("a UIA client");
     let mut source = uia_notes(hwnd).remote(remote);
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
-    let (reply, mixed) = measure_text(
-        &mut source,
-        &mut anchors,
-        &TextOp::ReadAhead(TextReadAhead {
-            at: TextPoint::Caret,
-            movement: None,
-            unit: TextUnit::Line,
-            count: 20,
-        }),
+    let (read, mixed) = measure_text(
+        &uia,
+        (&mut source, &mut anchors),
+        vec![read_text_op(TextPoint::Caret, None, TextUnit::Line, 20)],
     );
-    let TextReply::Chunks { chunks, .. } = reply else {
-        panic!("chunks, not {reply:?}");
-    };
-    let languages: Vec<Vec<&str>> = chunks
+    let languages: Vec<Vec<&str>> = chunks_of(&read)
         .iter()
         .map(|chunk| {
             chunk
@@ -3618,16 +3635,14 @@ fn watch_checks_cost_exactly() {
             verbatim_outpost::text::ops::caret(&mut source, &mut anchors, 1).expect("the caret");
         let caret =
             verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at.caret.anchor));
-        let line = match perform(
-            &mut source,
-            &mut anchors,
-            &verbatim_model::TextOp::Read(verbatim_model::TextRead {
-                at: caret,
-                movement: None,
-                unit: TextUnit::Line,
-            }),
-        ) {
-            verbatim_model::TextReply::Read { chunk, .. } => chunk,
+        let read = verbatim_outpost::text::CallStep::Read {
+            at: caret,
+            movement: None,
+            unit: TextUnit::Line,
+            count: 1,
+        };
+        let line = match verbatim_outpost::text::by_calls(&mut source, &mut anchors, read) {
+            Ok(Ok(verbatim_model::batch::Done::ReadText(mut read))) => read.chunks.remove(0),
             other => panic!("the caret's line, not {other:?}"),
         };
         let wait = verbatim_model::batch::CaretWait {
@@ -3698,7 +3713,9 @@ fn edit_control_select_and_location_cost_exactly() {
     let mut source = EditText::new(edit.0 as isize, 0);
 
     // The review copy's first press: "alpha" selected from a collapsed
-    // caret, the selection read before and after and compared.
+    // caret, its batch's steps by the edit control's messages, as the
+    // outpost runs them: the caret, the select, the caret again and the two
+    // compared.
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(&mut app, hwnd, "caret doc 0");
@@ -3710,43 +3727,57 @@ fn edit_control_select_and_location_cost_exactly() {
         })
     };
     let _ = verbatim_win32::calls::take();
-    let reply = perform(
+    let before =
+        verbatim_outpost::text::ops::caret(&mut source, &mut anchors, 1).expect("the caret");
+    let select = verbatim_outpost::text::CallStep::Select {
+        ends: (at(0), at(4)),
+        through: Some((at(1), at(5))),
+        began_us: 2,
+    };
+    let selected = verbatim_outpost::text::by_calls(&mut source, &mut anchors, select);
+    assert!(matches!(selected, Ok(Ok(_))), "{selected:?}");
+    let after =
+        verbatim_outpost::text::ops::caret(&mut source, &mut anchors, 3).expect("the caret");
+    let compared = verbatim_outpost::text::ops::compare_selection(
         &mut source,
-        &mut anchors,
-        &TextOp::Select {
-            start: at(0),
-            end: at(4),
-            through: Some(TextThrough {
-                start: at(1),
-                end: at(5),
-            }),
-        },
-    );
+        &anchors,
+        (before.held, after.held),
+    )
+    .expect("the comparison")
+    .expect("both reads held");
     let measured = verbatim_win32::calls::take();
-    assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
-    // `EM_GETSEL`, `EM_SETSEL` and `EM_SCROLLCARET`, `EM_GETSEL` again,
-    // and the change's text (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
-    ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 6));
+    let changes: Vec<(bool, &str, u32)> = compared
+        .difference
+        .changes
+        .iter()
+        .map(|change| (change.selected, change.text.as_str(), change.characters))
+        .collect();
+    assert_eq!(changes, [(true, "alpha", 5)]);
+    // Each `Caret` an `EM_GETSEL` and the text's length, the select
+    // `EM_SETSEL` and `EM_SCROLLCARET`, and the comparison the change's
+    // and the new selection's text.
+    ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 9));
 
     // The caret's location, from a request of its own: `EM_GETSEL`, the
     // text's length (`WM_GETTEXTLENGTH`) for the percentage, and
     // `EM_POSFROMCHAR`; `tests/text.rs` pins the place itself.
     let mut source = EditText::new(edit.0 as isize, 0);
     let _ = verbatim_win32::calls::take();
-    let reply = perform(
-        &mut source,
-        &mut anchors,
-        &TextOp::Location(TextPoint::Caret),
-    );
+    let locate = verbatim_outpost::text::CallStep::Locate(TextPoint::Caret);
+    let reply = verbatim_outpost::text::by_calls(&mut source, &mut anchors, locate);
     let measured = verbatim_win32::calls::take();
     assert!(
         matches!(
             reply,
-            TextReply::OffsetLocation {
-                offset: 0,
-                length: 19,
-                point: Some(_),
-            }
+            Ok(Ok(verbatim_model::batch::Done::Locate(
+                verbatim_model::batch::Located {
+                    screen: Some(_),
+                    offset: Some(verbatim_model::batch::TextOffset {
+                        offset: 0,
+                        length: 19,
+                    }),
+                }
+            )))
         ),
         "{reply:?}"
     );

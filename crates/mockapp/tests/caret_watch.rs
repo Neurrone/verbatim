@@ -25,11 +25,10 @@ mod common;
 mod harness;
 
 use verbatim_ia2::WinEventKind;
-use verbatim_model::request::{Outcome, Reply, Request};
+use verbatim_model::request::{Outcome, Reply};
 use verbatim_model::{
     CaretKey, CaretMotion, Message, NodeId, Phrase, Role, SegmentContent, SelectionChange,
-    SelectionDifference, SelectionText, TextAnchor, TextFormat, TextOp, TextPoint, TextPosition,
-    TextReply,
+    SelectionDifference, SelectionText, TextAnchor, TextFormat, TextPoint, TextPosition,
 };
 use verbatim_outpost::Heard;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -639,12 +638,43 @@ fn notes_outpost(name: &str) -> (common::MockApp, HWND, OutpostUnderTest, NodeId
     (app, hwnd, outpost, focused.node(), baseline)
 }
 
-/// The answer to `op` on `node`, asked as Core asks it.
-fn text_answer(outpost: &OutpostUnderTest, hwnd: HWND, node: NodeId, op: TextOp) -> TextReply {
-    let number = outpost.request(hwnd, Request::Text { node, op });
+/// Verbatim's own selection of `node`'s text from `start` to `end`, the
+/// caret moved when they are equal, asked as Core asks it: the select,
+/// then the caret, whose read is the next baseline.
+fn placed(
+    outpost: &OutpostUnderTest,
+    hwnd: HWND,
+    node: NodeId,
+    (start, end): (TextPoint, TextPoint),
+) -> TextAnchor {
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Point, Step, StepOutcome, Subject};
+    let step = |op| Step { op, when: None };
+    let batch = Batch {
+        steps: vec![
+            step(Op::Select {
+                subject: Subject::Node(node),
+                start: Point::At(start),
+                end: Point::At(end),
+                through: None,
+            }),
+            step(Op::Caret {
+                subject: Subject::Node(node),
+                adopt: None,
+            }),
+        ],
+        placement: Placement::Queue,
+        spare: None,
+    };
+    let number = outpost.request(hwnd, batch);
     match outpost.answer(number).outcome {
-        Outcome::Result(Reply::Text(reply)) => reply,
-        other => panic!("the outpost answered {other:?}, not a text reply"),
+        Outcome::Result(Reply::Steps(outcomes)) => match outcomes.as_slice() {
+            [
+                StepOutcome::Done(Done::Select(_)),
+                StepOutcome::Done(Done::Caret(caret)),
+            ] => caret.held,
+            other => panic!("the outpost answered {other:?}, not the selection made"),
+        },
+        other => panic!("the outpost answered {other:?}, not the batch's steps"),
     }
 }
 
@@ -814,25 +844,21 @@ fn a_selection_verbatim_made_is_the_next_baseline() {
         .caret
         .line
         .start;
-    let made = match text_answer(
+    let made = placed(
         &outpost,
         hwnd,
         node,
-        TextOp::Select {
-            start: TextPoint::At(TextPosition {
+        (
+            TextPoint::At(TextPosition {
                 anchor: line,
                 offset: 0,
             }),
-            end: TextPoint::At(TextPosition {
+            TextPoint::At(TextPosition {
                 anchor: line,
                 offset: 5,
             }),
-            through: None,
-        },
-    ) {
-        TextReply::SelectionPlaced { baseline, .. } => baseline,
-        other => panic!("the outpost answered {other:?}, not the selection made"),
-    };
+        ),
+    );
     let read = read_selection(&outpost, hwnd, node, made);
     assert_eq!(
         read.difference,
@@ -864,19 +890,7 @@ fn a_selection_after_verbatims_compares_with_it() {
             offset,
         })
     };
-    let made = match text_answer(
-        &outpost,
-        hwnd,
-        node,
-        TextOp::Select {
-            start: at(0),
-            end: at(5),
-            through: None,
-        },
-    ) {
-        TextReply::SelectionPlaced { baseline, .. } => baseline,
-        other => panic!("the outpost answered {other:?}, not the selection made"),
-    };
+    let made = placed(&outpost, hwnd, node, (at(0), at(5)));
     app.send("caret doc 0 6");
     assert_eq!(
         read_selection(&outpost, hwnd, node, made).difference,
@@ -893,10 +907,7 @@ fn a_selection_after_verbatims_compares_with_it() {
             }),
         })
     );
-    let moved = match text_answer(&outpost, hwnd, node, TextOp::MoveCaret(at(6))) {
-        TextReply::CaretPlaced { baseline, .. } => baseline,
-        other => panic!("the outpost answered {other:?}, not the caret moved"),
-    };
+    let moved = placed(&outpost, hwnd, node, (at(6), at(6)));
     app.send("caret doc 6 10");
     assert_eq!(
         read_selection(&outpost, hwnd, node, moved).difference,

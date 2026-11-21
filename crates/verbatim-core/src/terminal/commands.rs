@@ -334,7 +334,7 @@ mod tests {
 
     /// Every failure a history read or a search can be answered decodes as
     /// its answer, a terminal whose text was not read included; only a
-    /// reply of another op's or request's kind is malformed.
+    /// reply of another request's kind is malformed.
     #[test]
     fn a_follow_ups_failures_decode_and_another_reply_does_not() {
         let follow_up = FollowUp {
@@ -371,13 +371,6 @@ mod tests {
                 "{failure:?}"
             );
         }
-        assert_eq!(
-            follow_up.decode(Reply::Text(TextReply::Range {
-                text: String::new(),
-                truncated: false,
-            })),
-            None
-        );
         assert_eq!(follow_up.decode(Reply::Followed), None);
     }
 }

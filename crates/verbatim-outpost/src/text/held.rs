@@ -17,13 +17,11 @@
 
 use std::sync::Arc;
 
-use verbatim_model::{
-    CaretReport, SelectionChange, SelectionDifference, TextAnchor, TextOp, TextReply,
-};
+use verbatim_model::{CaretReport, SelectionChange, SelectionDifference, TextAnchor};
 
 use super::{
     CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
-    change_of, perform, report_for, selection_changes,
+    change_of, report_for, selection_changes,
 };
 
 /// Reads the caret, the selection and the caret's line, and reports them,
@@ -343,39 +341,6 @@ pub fn starting_from<S: TextSource>(
     )?;
     let point = anchors.hold_last()?;
     Ok((report, point))
-}
-
-/// Carries out `op` for an event-queue entry: as [`perform`] does, but a
-/// caret moved or a selection made by Verbatim is answered with the next
-/// selection baseline held from it, so Core does not speak its own move as
-/// a selection change. The baseline is the read the move kept; when it
-/// kept none, the caret is read again.
-pub fn perform_placed<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    op: &TextOp,
-) -> TextReply {
-    let kept_before = anchors.anchors.last.as_ref().map(|last| last.read_at_us);
-    let reply = perform(source, anchors, op);
-    let placed = match reply {
-        TextReply::Moved { read_at_us } => {
-            held_after_move(source, anchors, kept_before, read_at_us)
-                .map(|baseline| TextReply::CaretPlaced { baseline })
-        }
-        TextReply::Selected(changes) => {
-            let read_at_us = verbatim_process::clock::now_us();
-            held_after_move(source, anchors, kept_before, read_at_us)
-                .map(|baseline| TextReply::SelectionPlaced { changes, baseline })
-        }
-        other => Ok(other),
-    };
-    placed.unwrap_or_else(|error| match error {
-        TextError::Gone => TextReply::Gone,
-        TextError::Failed(reason) => {
-            tracing::debug!(reason, "a move's baseline was not read");
-            TextReply::Unanswered
-        }
-    })
 }
 
 /// The baseline held after a move: the read the move kept, when it kept

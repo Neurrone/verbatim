@@ -6,9 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{FocusCaret, Question, Request as Wire};
-use verbatim_model::{
-    EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextPoint, TextProvider, TextThrough,
-};
+use verbatim_model::{EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextProvider};
 
 use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::state::SrState;
@@ -187,39 +185,7 @@ fn legacy_named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
     let Wire::Text { node, op } = request else {
         return None;
     };
-    let point = |point: &TextPoint| match point {
-        TextPoint::At(position) => Some(position.anchor),
-        TextPoint::Caret
-        | TextPoint::SelectionStart
-        | TextPoint::SelectionEnd
-        | TextPoint::Start
-        | TextPoint::End => None,
-    };
-    let through = |through: &Option<TextThrough>| {
-        through
-            .iter()
-            .flat_map(|through| [point(&through.start), point(&through.end)])
-            .flatten()
-            .collect::<Vec<_>>()
-    };
     let anchors = match op {
-        TextOp::Read(read) => point(&read.at).into_iter().collect(),
-        TextOp::ReadAhead(read) => point(&read.at).into_iter().collect(),
-        TextOp::ReadRange {
-            start,
-            end,
-            through: past,
-        }
-        | TextOp::Select {
-            start,
-            end,
-            through: past,
-        } => [point(start), point(end)]
-            .into_iter()
-            .flatten()
-            .chain(through(past))
-            .collect(),
-        TextOp::MoveCaret(at) | TextOp::Location(at) => point(at).into_iter().collect(),
         TextOp::ReadTerminal(read) => read.start.into_iter().collect(),
         TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
             vec![*start]

@@ -1137,7 +1137,9 @@ impl Outpost {
             )),
             CoreToOutpost::Request(ask) => {
                 tracing::debug!(request = %ask.number, "request received and posted");
-                context.mailbox.post(Posted::Ask(unstamped_ask(ask)));
+                context
+                    .mailbox
+                    .post(Posted::Ask(Box::new(unstamped_ask(ask))));
             }
             CoreToOutpost::Cancel(cancel) => context.mailbox.post(Posted::CancelAsk(*cancel)),
             // The reducer answers the queued reads its MSAA ids name "not
@@ -1179,8 +1181,8 @@ impl Outpost {
 use verbatim_uia_rops::batch::remote_fell_back;
 
 /// `ask` with the node ids it names as this outpost knows them.
-fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::request::Ask> {
-    let mut ask = Box::new(ask.clone());
+fn unstamped_ask(ask: &verbatim_model::request::Ask) -> verbatim_model::request::Ask {
+    let mut ask = ask.clone();
     ask.unstamp();
     ask
 }

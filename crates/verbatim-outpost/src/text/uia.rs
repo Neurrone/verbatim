@@ -44,20 +44,17 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::AgileReference;
 
 use verbatim_model::{
-    BulletStyle, FormatAttribute, LineStyle, MAX_READ_AHEAD_TEXT, TextAttributes, TextDetails,
-    TextMovement, TextReply, TextUnit,
+    BulletStyle, FormatAttribute, LineStyle, TextAttributes, TextDetails, TextUnit,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, uia_text_unit};
 
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FoundPoint, LocationQuery, Movement, Path, Position,
-    RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom, TextTarget, UnitsQuery,
+    Attributes, CaretAnswer, CaretQuery, Path, RangeEnd, RunAttributes, TextAttribute, TextTarget,
 };
 
 use super::{
-    CaretRead, CaretRequest, CaretState, Formatting, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart, Sentences,
-    TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
+    CaretRead, CaretRequest, CaretState, Formatting, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
+    SelectionStart, Sentences, TextError, TextResult, TextSource, Unit, UnitRead,
 };
 
 /// A position in UIA text: an end of a range.
@@ -118,44 +115,6 @@ impl UiaPos {
     pub fn collapsed(&self) -> bool {
         self.collapsed
     }
-
-    /// A point a remote operation found.
-    fn found(found: &FoundPoint) -> TextResult<Self> {
-        Self::new(&found.range, found.endpoint, found.collapsed)
-    }
-}
-
-/// A point as remote operations take it, its range resolved: `f` is called
-/// with it.
-fn with_from<R>(from: &PointFrom<UiaPos>, f: impl FnOnce(TextFrom<'_>) -> R) -> TextResult<R> {
-    Ok(match from {
-        PointFrom::Caret => f(TextFrom::Caret),
-        PointFrom::SelectionStart => f(TextFrom::SelectionStart),
-        PointFrom::SelectionEnd => f(TextFrom::SelectionEnd),
-        PointFrom::Start => f(TextFrom::Start),
-        PointFrom::End => f(TextFrom::End),
-        PointFrom::At(pos) => {
-            let range = pos.range()?;
-            f(TextFrom::At(Position {
-                range: &range,
-                endpoint: pos.endpoint,
-                collapsed: pos.collapsed,
-            }))
-        }
-        PointFrom::After(pos, prefix) => {
-            let range = pos.range()?;
-            let counts = character_counts(prefix);
-            f(TextFrom::After {
-                from: Position {
-                    range: &range,
-                    endpoint: pos.endpoint,
-                    collapsed: pos.collapsed,
-                },
-                prefix,
-                counts: &counts,
-            })
-        }
-    })
 }
 
 /// The character counts `prefix` may be to a provider, distinct, in the
@@ -735,150 +694,6 @@ impl TextSource for UiaText {
                 first: answer.start_first,
             },
         }))
-    }
-
-    fn read_units(
-        &mut self,
-        request: &UnitsRequest<'_, UiaPos>,
-    ) -> TextResult<UnitsAnswer<UiaPos>> {
-        let movement = match request.movement {
-            None => None,
-            Some(TextMovement {
-                unit: TextUnit::Document,
-                count,
-            }) => Some(Movement::Document(count)),
-            Some(TextMovement { unit, count }) => match self.unit(unit) {
-                Some(by) => Some(Movement::By(by, count)),
-                None => return Ok(Some(Err(TextReply::UnsupportedUnit(unit)))),
-            },
-        };
-        let Some(unit) = self.unit(request.unit) else {
-            return Ok(Some(Err(TextReply::UnsupportedUnit(request.unit))));
-        };
-        let target = self.target();
-        let remote = self.remote;
-        let (answer, path) = with_from(request.from, |from| {
-            verbatim_uia_rops::text_units(
-                &UnitsQuery {
-                    target,
-                    from,
-                    movement,
-                    unit,
-                    count: request.count,
-                    max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
-                    max_total: u32::try_from(MAX_READ_AHEAD_TEXT).unwrap_or(u32::MAX),
-                    culture: true,
-                },
-                remote,
-            )
-        })?
-        .map_err(rops_failed)?;
-        self.note(path);
-        let units = answer
-            .units
-            .into_iter()
-            .map(unit_text)
-            .collect::<TextResult<Vec<_>>>()?;
-        Ok(Some(Ok(UnitsRead {
-            from: UiaPos::found(&answer.from)?,
-            point: UiaPos::found(&answer.point)?,
-            moved: answer.moved,
-            units,
-            ended: answer.ended,
-        })))
-    }
-
-    fn range(
-        &mut self,
-        start: &PointFrom<UiaPos>,
-        end: Option<&PointFrom<UiaPos>>,
-        through: Option<PastEnds<'_, UiaPos>>,
-        action: RangeAction,
-    ) -> TextResult<Option<RangeRead<UiaPos>>> {
-        let target = self.target();
-        let remote = self.remote;
-        let action = match action {
-            RangeAction::Text(max) => {
-                verbatim_uia_rops::RangeAction::Text(i32::try_from(max).unwrap_or(i32::MAX))
-            }
-            RangeAction::Select => verbatim_uia_rops::RangeAction::Select,
-            RangeAction::SelectReporting => verbatim_uia_rops::RangeAction::SelectReporting(
-                i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
-            ),
-        };
-        let run = |start: TextFrom<'_>,
-                   end: Option<TextFrom<'_>>,
-                   through: Option<(TextFrom<'_>, TextFrom<'_>)>| {
-            verbatim_uia_rops::text_range(
-                &RangeQuery {
-                    target,
-                    start,
-                    end,
-                    through,
-                    action,
-                },
-                remote,
-            )
-        };
-        let answer = with_from(start, |start| {
-            let Some(end) = end else {
-                return Ok(run(start, None, None));
-            };
-            with_from(end, |end| {
-                let Some((past_start, past_end)) = through else {
-                    return Ok(run(start, Some(end), None));
-                };
-                with_from(past_start, |past_start| {
-                    with_from(past_end, |past_end| {
-                        run(start, Some(end), Some((past_start, past_end)))
-                    })
-                })?
-            })?
-        })??;
-        let (answer, path) = answer.map_err(rops_failed)?;
-        self.note(path);
-        Ok(Some(RangeRead {
-            start: UiaPos::found(&answer.start)?,
-            end: UiaPos::found(&answer.end)?,
-            text: answer.text,
-            selected: answer.selected,
-            changes: answer.changes.map(|changes| {
-                changes
-                    .into_iter()
-                    .map(|change| (change.selected, change.text))
-                    .collect()
-            }),
-            selection_after: answer
-                .selection_after
-                .map(|after| -> TextResult<SelectionAfter<UiaPos>> {
-                    let start = UiaPos::new(&after.range, Endpoint::Start, false)?;
-                    let end = if after.selected {
-                        UiaPos::new(&after.range, Endpoint::End, false)?
-                    } else {
-                        start.clone()
-                    };
-                    Ok(SelectionAfter {
-                        ends: (start, end),
-                        selected: after.selected,
-                        text: after.text,
-                    })
-                })
-                .transpose()?,
-        }))
-    }
-
-    fn point_location(&mut self, at: &PointFrom<UiaPos>) -> TextResult<Located<UiaPos>> {
-        let target = self.target();
-        let remote = self.remote;
-        let (answer, path) = with_from(at, |at| {
-            verbatim_uia_rops::text_location(&LocationQuery { target, at }, remote)
-        })?
-        .map_err(rops_failed)?;
-        self.note(path);
-        Ok(Some((
-            UiaPos::found(&answer.at)?,
-            answer.location.map(|(x, y)| (round(x), round(y))),
-        )))
     }
 }
 
