@@ -497,46 +497,11 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let selected_absent = b.add_to_results(selected_absent);
     if let Some(cache) = &element_cache {
         let read_selected = |b: &mut Builder| {
-            // `SelectionPattern2`'s first selected item, ignoring its default,
-            // so a provider without the pattern answers "not supported".
-            let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
-            let ignore_default = b.bool(true);
-            let first = b.get_property_value(element, property, ignore_default);
-            let unsupported = b.is(TypeTest::NotSupported, first);
-            b.if_else(
-                unsupported,
-                |b| {
-                    // The Selection pattern has no method instructions; its
-                    // `Selection` property is the same array of elements.
-                    let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
-                    let is_array = b.is(TypeTest::Array, selection);
-                    b.if_(is_array, |b| {
-                        let selection = selection.assume::<kind::Array>();
-                        let size = b.array_size(selection);
-                        let zero = b.uint(0);
-                        let any = b.compare(size, zero, Comparison::GreaterThan);
-                        b.if_(any, |b| {
-                            let first = b.array_get_at(selection, zero).assume::<kind::Element>();
-                            let absent = cache.populate(b, first);
-                            b.set(selected_absent, absent);
-                            b.set(selected, first);
-                        });
-                    });
-                },
-                |b| {
-                    let is_element = b.is(TypeTest::Element, first);
-                    b.if_(is_element, |b| {
-                        let first = first.assume::<kind::Element>();
-                        let null = b.is_null(first);
-                        let some = b.not(null);
-                        b.if_(some, |b| {
-                            let absent = cache.populate(b, first);
-                            b.set(selected_absent, absent);
-                            b.set(selected, first);
-                        });
-                    });
-                },
-            );
+            emit_first_selected(b, element, &|b, first| {
+                let absent = cache.populate(b, first);
+                b.set(selected_absent, absent);
+                b.set(selected, first);
+            });
         };
         // The selected item is optional: a read of it that fails, as on an
         // item gone, leaves it out, and the focus and its ancestors are
@@ -711,6 +676,49 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }))
 }
 
+/// Emits the read of `element`'s first selected item, `take` emitted with
+/// it when there is one: `SelectionPattern2`'s, ignoring its default, so a
+/// provider without the pattern answers "not supported", else the
+/// `Selection` pattern's first.
+pub(crate) fn emit_first_selected(
+    b: &mut Builder,
+    element: Reg<kind::Element>,
+    take: &dyn Fn(&mut Builder, Reg<kind::Element>),
+) {
+    let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
+    let ignore_default = b.bool(true);
+    let first = b.get_property_value(element, property, ignore_default);
+    let unsupported = b.is(TypeTest::NotSupported, first);
+    b.if_else(
+        unsupported,
+        |b| {
+            // The Selection pattern has no method instructions; its
+            // `Selection` property is the same array of elements.
+            let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
+            let is_array = b.is(TypeTest::Array, selection);
+            b.if_(is_array, |b| {
+                let selection = selection.assume::<kind::Array>();
+                let size = b.array_size(selection);
+                let zero = b.uint(0);
+                let any = b.compare(size, zero, Comparison::GreaterThan);
+                b.if_(any, |b| {
+                    let first = b.array_get_at(selection, zero).assume::<kind::Element>();
+                    take(b, first);
+                });
+            });
+        },
+        |b| {
+            let is_element = b.is(TypeTest::Element, first);
+            b.if_(is_element, |b| {
+                let first = first.assume::<kind::Element>();
+                let null = b.is_null(first);
+                let some = b.not(null);
+                b.if_(some, |b| take(b, first));
+            });
+        },
+    );
+}
+
 /// Whether a fill reads a cell's row and column, so that its table is read
 /// too: only while the theme reports cell coordinates.
 pub(crate) fn reads_cell<S: Shape>(fill: &Fill<S>) -> bool {
@@ -795,6 +803,22 @@ pub(crate) struct RemoteCache {
 impl RemoteCache {
     pub(crate) fn new<S: Shape>(b: &mut Builder, fill: &Fill<S>) -> Self {
         Self::with(b, fill.properties(), fill.patterns())
+    }
+
+    /// The most instructions a program executes for `fill`: building its
+    /// requests once, and filling one element's cache
+    /// ([`populate`](Self::populate)).
+    pub(crate) fn costs<S: Shape>(fill: &Fill<S>) -> (u32, u32) {
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let checked = count(
+            LEFT_OUT_WHEN_UNSUPPORTED
+                .iter()
+                .filter(|property| fill.properties().contains(property))
+                .count(),
+        );
+        let requests = 1u32 << checked;
+        let each = 1 + count(fill.properties().len()) + count(fill.patterns().len());
+        (requests * each, 3 + 6 * checked + 2 * requests)
     }
 
     /// The requests for exactly `properties` and `patterns`.

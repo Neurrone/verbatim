@@ -41,11 +41,15 @@
 //!   once its event registration is in, with the children of the dialogs
 //!   it enters; and, for the control plane's tree dump, [`tree_dump`]: an element's
 //!   subtree, each element's children read in one call.
+//! - The request list's executors ([`batch`]): a run of a batch's
+//!   fusable steps as programs one builder generates from the operations,
+//!   with the fallback rule's reruns, or call by call.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
 //! `books/dev/src/reference/crates/verbatim-uia-rops.md` is the reviewer's guide.
 
+pub mod batch;
 mod builder;
 mod caret;
 mod controlled;

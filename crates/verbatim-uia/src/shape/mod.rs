@@ -574,6 +574,8 @@ pub enum Direction {
     PreviousSibling,
     /// The first child.
     FirstChild,
+    /// The last child.
+    LastChild,
 }
 
 /// An element for calls into the application: patterns, text, live reads,
@@ -652,6 +654,7 @@ impl Live {
             Direction::NextSibling => walker.next_sibling(&self.element, cache),
             Direction::PreviousSibling => walker.previous_sibling(&self.element, cache),
             Direction::FirstChild => walker.first_child(&self.element, cache),
+            Direction::LastChild => walker.last_child(&self.element, cache),
         }?;
         Ok(Cached::filled(found, request.gates))
     }
@@ -685,6 +688,8 @@ impl Live {
             Direction::PreviousSibling => unsafe { walker.GetPreviousSiblingElement(element) },
             // SAFETY: as above.
             Direction::FirstChild => unsafe { walker.GetFirstChildElement(element) },
+            // SAFETY: as above.
+            Direction::LastChild => unsafe { walker.GetLastChildElement(element) },
         }?;
         Ok(Self::new(found))
     }

@@ -337,6 +337,17 @@ pub trait WalkerExt {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement>;
 
+    /// `element`'s last child.
+    ///
+    /// # Errors
+    ///
+    /// The COM error, or the null-element error for no child.
+    fn last_child(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<IUIAutomationElement>;
+
     /// `element` itself if the walker's condition matches it, else its
     /// nearest ancestor that matches (`NormalizeElementBuildCache`).
     ///
@@ -390,6 +401,16 @@ impl WalkerExt for IUIAutomationTreeWalker {
         count(CallKind::Uia)?;
         // SAFETY: as in `parent`.
         unsafe { self.GetFirstChildElementBuildCache(element, cache) }
+    }
+
+    fn last_child(
+        &self,
+        element: &IUIAutomationElement,
+        cache: &IUIAutomationCacheRequest,
+    ) -> windows::core::Result<IUIAutomationElement> {
+        count(CallKind::Uia)?;
+        // SAFETY: as in `parent`.
+        unsafe { self.GetLastChildElementBuildCache(element, cache) }
     }
 
     fn normalize(

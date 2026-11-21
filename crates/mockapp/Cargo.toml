@@ -18,11 +18,13 @@ verbatim-model.workspace = true
 verbatim-outpost = { workspace = true, optional = true }
 verbatim-process.workspace = true
 verbatim-uia = { workspace = true, optional = true }
+verbatim-uia-rops = { workspace = true, optional = true }
 windows.workspace = true
 windows-core.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+tracing.workspace = true
 verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-listener.workspace = true
@@ -43,6 +45,7 @@ faults = [
     "verbatim-ia2/faults",
     "verbatim-outpost/faults",
     "verbatim-uia/faults",
+    "verbatim-uia-rops/faults",
 ]
 
 # The test binaries that use UIA as a client run through their own runner,
@@ -51,6 +54,17 @@ faults = [
 [[test]]
 name = "arbitration"
 harness = false
+
+[[test]]
+name = "batch"
+harness = false
+
+# Arms the generated programs' fault points, so only `cargo xtask faults`
+# builds it.
+[[test]]
+name = "batch_faults"
+harness = false
+required-features = ["faults"]
 
 [[test]]
 name = "call_counts"

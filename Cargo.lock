@@ -1052,6 +1052,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "tracing",
  "verbatim-core",
  "verbatim-faults",
  "verbatim-ia2",
@@ -2385,6 +2386,8 @@ dependencies = [
 name = "verbatim-uia-rops"
 version = "0.1.0"
 dependencies = [
+ "tracing",
+ "verbatim-faults",
  "verbatim-model",
  "verbatim-uia",
  "verbatim-win32",

@@ -64,6 +64,21 @@ pub enum Fault {
     /// in milliseconds, `None` for none, and the address in the target's
     /// memory of the buffer it carries, `None` for none.
     WindowMessageSent,
+    /// A generated remote program fails a step inside its try block
+    /// (`verbatim-uia-rops`'s `batch`). Subject: the step's place in its
+    /// batch, a `u8`.
+    ProgramStepFails,
+    /// A generated remote program stops before a step, outside any try
+    /// block, as an instruction that fails unhandled stops it. Subject: the
+    /// step's place, a `u8`.
+    ProgramStops,
+    /// A generated remote program loops before a step until the platform's
+    /// limit on one run stops it. Subject: the step's place, a `u8`.
+    ProgramOverruns,
+    /// A generated remote program's answer is lost after it ran, as an
+    /// application that stops answering ends a run with no status read.
+    /// Subject: the place of the program's first step, a `u8`.
+    ProgramAnswerLost,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

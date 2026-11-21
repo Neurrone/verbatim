@@ -499,6 +499,7 @@ fn cargo(cargo_args: &[String]) -> Result<(), String> {
 const FAULT_CRATES: &[&str] = &[
     "verbatim-audio",
     "verbatim-uia",
+    "verbatim-uia-rops",
     "verbatim-ia2",
     "verbatim-outpost",
     "verbatim-supervisor",
@@ -513,6 +514,7 @@ const FAULT_CRATES: &[&str] = &[
 const FAULT_TESTS: &[(&str, &str)] = &[
     ("verbatim-audio", "mixer"),
     ("verbatim-supervisor", "fault_paths"),
+    ("mockapp", "batch_faults"),
     ("mockapp", "failure_paths"),
     ("mockapp", "shutdown"),
     ("mockapp", "time_limits"),

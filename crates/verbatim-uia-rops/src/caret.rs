@@ -1012,7 +1012,7 @@ impl RunRegisters {
 
     /// The attributes being learned that the span answered "not supported"
     /// for.
-    fn unsupported(&self, outcome: &Outcome) -> Result<Attributes, Error> {
+    pub(crate) fn unsupported(&self, outcome: &Outcome) -> Result<Attributes, Error> {
         let mut unsupported = Attributes::NONE;
         for &(attribute, flag) in &self.unsupported {
             if outcome.get(flag)? {

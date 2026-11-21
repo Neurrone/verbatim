@@ -1174,23 +1174,8 @@ impl Outpost {
     }
 }
 
-/// Logs that `program`, a remote operation tried for an element of
-/// `window` (`None` when the element's window is not known), failed with
-/// `error` and was read by the classic calls instead: the one place a
-/// fallback is logged, to [`verbatim_model::REMOTE_FALLBACK_TARGET`].
-pub(super) fn remote_fell_back(
-    program: &'static str,
-    window: Option<isize>,
-    error: &verbatim_uia_rops::Error,
-) {
-    tracing::warn!(
-        target: verbatim_model::REMOTE_FALLBACK_TARGET,
-        program,
-        ?window,
-        %error,
-        "a remote operation failed; read the classic way"
-    );
-}
+/// The one place a remote operation's fallback is logged.
+use verbatim_uia_rops::batch::remote_fell_back;
 
 /// `ask` with the node ids it names as this outpost knows them.
 fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::request::Ask> {

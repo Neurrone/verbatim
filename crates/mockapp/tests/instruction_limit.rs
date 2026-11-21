@@ -12,6 +12,8 @@
 //! case but the caret read's must stay under half the limit, the margin the
 //! design asks for, and the caret read's is pinned where it comes closer.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
@@ -1047,6 +1049,196 @@ fn focus_states_execute_exactly() {
     assert!(typical.0 < LIMIT / 2 && worst.0 < LIMIT / 2);
 }
 
+/// Runs `run` with counting on and returns how many instructions each
+/// program it ran executed, in order.
+fn each_counted(run: impl FnOnce()) -> Vec<u32> {
+    counting::start();
+    run();
+    counting::stop()
+        .into_iter()
+        .map(|count| count.expect("a counted program"))
+        .collect()
+}
+
+/// The request list's generated text programs (`verbatim_uia_rops::batch`)
+/// at their caps: a caret tell whose line has 64 format stretches, every
+/// attribute read and learned, the caret read's worst; a caret key's
+/// starting read for Delete, the largest; review's next word from a point
+/// found by its text; review select's two programs, through a character;
+/// a copy; and say-all's 32 lines.
+fn batch_text_shapes_execute_exactly() {
+    use verbatim_uia_rops::batch::{Ends, Input, Point, Segment, run_batch};
+    common::init_com();
+    let mut fixture = Fixture::start("italic.json", "mockapp-instructions-batch-text");
+    let text = batch::Text::of(fixture.find("Notes"));
+    let run = |steps| {
+        each_counted(|| {
+            let _ = run_batch(&Segment {
+                uia: &fixture.uia,
+                steps,
+                remote: true,
+                window: None,
+            });
+        })
+    };
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 18");
+    let before = text.pattern.document_range().expect("the document");
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 20 30");
+    let baseline = Position {
+        range: &before,
+        endpoint: Endpoint::Start,
+        collapsed: true,
+    };
+    let tell = run(batch::caret_tell(&text, baseline));
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 8");
+    let delete = run(batch::starting_read(&text, TextUnit_Word, false, true));
+    let prefix: Vec<u16> = "plain ".encode_utf16().collect();
+    let counts = [6, 5, 4];
+    let at = batch::after(&before, &prefix, &counts);
+    let next_word = run(batch::next_word(&text, at));
+    let end = Point::From(TextFrom::End);
+    let select = run(batch::review_select(
+        &text,
+        Ends {
+            start: at,
+            end,
+            through: Some((at, end)),
+        },
+    ));
+    let selection = Ends {
+        start: Point::From(TextFrom::SelectionStart),
+        end: Point::From(TextFrom::SelectionEnd),
+        through: None,
+    };
+    let copy = run(vec![batch::step(
+        0,
+        Input::ReadRange {
+            text: text.target(),
+            ends: selection,
+            max_text: 1 << 20,
+        },
+    )]);
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!("set-text doc {}", numbered(40)),
+    );
+    let read = batch::units(None, TextUnit_Line, 32);
+    let say_all = run(vec![batch::step(
+        0,
+        batch::read_text(&text, Point::From(TextFrom::Start), read),
+    )]);
+    fixture.app.quit();
+    let counts = [tell, delete, next_word, select, copy, say_all];
+    assert_eq!(
+        counts,
+        [
+            vec![4493],
+            vec![162],
+            vec![147],
+            vec![126, 119],
+            vec![53],
+            vec![749],
+        ],
+        "the caret tell, Delete's starting read, next word, review select, a copy, \
+         say-all's lines"
+    );
+    assert!(counts.iter().flatten().all(|&count| count < LIMIT / 2));
+}
+
+/// The request list's generated object programs at their caps: object
+/// navigation from the deepest item of `deep.json`, whose window is
+/// sixty-two levels up; a node read; and the walks down the tree of
+/// `wide.json`: the controlled selection whose list holds a hundred items,
+/// and the tree dump, each run at its sixty children or sixty-four waiting
+/// elements.
+fn batch_object_shapes_execute_exactly() {
+    use verbatim_model::batch::{Relation, View};
+    use verbatim_uia_rops::batch::{Input, Judged, Object, Segment, run_batch};
+    common::init_com();
+    let held = |element| Object::Held { element, window: 0 };
+    let run = |uia: &Uia, steps| {
+        each_counted(|| {
+            let _ = run_batch(&Segment {
+                uia,
+                steps,
+                remote: true,
+                window: None,
+            });
+        })
+    };
+    let fixture = Fixture::start("deep.json", "mockapp-instructions-batch-deep");
+    let fill = batch::node_fill(&fixture.uia);
+    let apple = fixture.find("Apple");
+    let navigation = run(
+        &fixture.uia,
+        vec![batch::step(
+            0,
+            Input::Related {
+                subject: held(&apple),
+                relation: Relation::Parent,
+                fill: &fill,
+            },
+        )],
+    );
+    let read = run(
+        &fixture.uia,
+        vec![batch::step(
+            0,
+            Input::Read {
+                subject: held(&apple),
+                fill: &fill,
+            },
+        )],
+    );
+    fixture.app.quit();
+
+    let mut fixture = Fixture::start("wide.json", "mockapp-instructions-batch-wide");
+    let fill = batch::node_fill(&fixture.uia);
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        "set-controller-for item0 many",
+    );
+    let item = fixture.find("Item 000");
+    let root = fixture.root.clone();
+    let judged = |matched| {
+        move |_: &Cached<Node>| Judged {
+            matched,
+            pruned: false,
+        }
+    };
+    let (none, every) = (judged(false), judged(true));
+    let controlled = run(
+        &fixture.uia,
+        batch::controlled_selection(&item, &fill, &none),
+    );
+    let walk = (View::Raw, false, false, 4_096);
+    let dump = run(
+        &fixture.uia,
+        vec![batch::step(
+            0,
+            batch::descendants(held(&root), &fill, &every, walk),
+        )],
+    );
+    fixture.app.quit();
+
+    let counts = [navigation, read, controlled, dump];
+    assert_eq!(
+        counts,
+        [
+            vec![978],
+            vec![205],
+            // The list's hundred items fill no run alone, and are read by
+            // a call between the first program and the second.
+            vec![2457, 2121, 1281],
+            vec![2266, 2240, 2178, 1402],
+        ],
+        "navigation, a read, the controlled selection, the tree dump"
+    );
+    assert!(counts.iter().flatten().all(|&count| count < LIMIT / 2));
+}
+
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
 /// them, each line feed escaped.
 fn numbered(count: u32) -> String {
@@ -1102,5 +1294,13 @@ fn main() {
             watch_check_formatting_executes_exactly,
         ),
         ("focus_states_execute_exactly", focus_states_execute_exactly),
+        (
+            "batch_text_shapes_execute_exactly",
+            batch_text_shapes_execute_exactly,
+        ),
+        (
+            "batch_object_shapes_execute_exactly",
+            batch_object_shapes_execute_exactly,
+        ),
     ]);
 }

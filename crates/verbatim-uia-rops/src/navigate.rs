@@ -27,7 +27,7 @@ use windows::Win32::UI::Accessibility::UIA_NativeWindowHandlePropertyId;
 use verbatim_model::TableId;
 use verbatim_uia::{Cached, Direction, Fill, Kept, Node, Uia};
 
-use crate::builder::{Builder, kind};
+use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
 use crate::focus::{Path, RemoteCache, absent_record, read_table, reads_cell, table_answered};
@@ -108,28 +108,7 @@ pub fn navigation_step(
 pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
     let mut b = Builder::new();
     let element = b.import_element(query.element.live().element());
-    let own = query.element.read().hwnd;
-    let window = b.new_int(i32::try_from(own).unwrap_or(0));
-    let window = b.add_to_results(window);
-    if own == 0 {
-        let none = b.int(0);
-        let current = b.navigate(element, NavigationDirection::Parent);
-        b.while_(
-            |b| {
-                let unset = b.equal(window, none);
-                let null = b.is_null(current);
-                let more = b.not(null);
-                b.and(unset, more)
-            },
-            |b| {
-                let handle = b.property(current, UIA_NativeWindowHandlePropertyId.0);
-                let is_int = b.is(TypeTest::Int, handle);
-                b.if_(is_int, |b| b.set(window, handle.assume::<kind::Int>()));
-                let parent = b.navigate(current, NavigationDirection::Parent);
-                b.set(current, parent);
-            },
-        );
-    }
+    let window = emit_nearest_window(&mut b, element, query.element.read().hwnd);
     let cache = RemoteCache::new(&mut b, query.fill);
     let neighbor = b.navigate(element, query.direction);
     let neighbor = b.add_to_results(neighbor);
@@ -152,6 +131,38 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
         neighbor_table: table_answered(&outcome, table)?,
         window: (window != 0).then_some(window as isize),
     })
+}
+
+/// Emits the nearest window of `element`, whose own window is `own`, 0
+/// for none: `own`, else each raw-view ancestor's `NativeWindowHandle`
+/// until one has one; the register among the results, 0 for none found.
+pub(crate) fn emit_nearest_window(
+    b: &mut Builder,
+    element: Reg<kind::Element>,
+    own: isize,
+) -> Reg<kind::Int> {
+    let window = b.new_int(i32::try_from(own).unwrap_or(0));
+    let window = b.add_to_results(window);
+    if own == 0 {
+        let none = b.int(0);
+        let current = b.navigate(element, NavigationDirection::Parent);
+        b.while_(
+            |b| {
+                let unset = b.equal(window, none);
+                let null = b.is_null(current);
+                let more = b.not(null);
+                b.and(unset, more)
+            },
+            |b| {
+                let handle = b.property(current, UIA_NativeWindowHandlePropertyId.0);
+                let is_int = b.is(TypeTest::Int, handle);
+                b.if_(is_int, |b| b.set(window, handle.assume::<kind::Int>()));
+                let parent = b.navigate(current, NavigationDirection::Parent);
+                b.set(current, parent);
+            },
+        );
+    }
+    window
 }
 
 /// The step the classic way, the fallback and the reference: the nearest
