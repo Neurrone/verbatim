@@ -23,37 +23,41 @@
 //! held in a thread-local. Because one process hosts one hook set on one
 //! thread, a thread-local is exactly the right scope.
 //!
-//! A hook set may also hear its own process's sync markers
-//! ([`WinEventHook::install_with_sync_marker`]): `WinEvent`s that any
+//! With the `sync-marker` feature, which only tests turn on, a hook set
+//! may also hear its own process's sync markers
+//! (`WinEventHook::install_with_sync_marker`): `WinEvent`s that any
 //! thread of the process raises so that the hook thread knows, when one
 //! arrives, that every event raised before it has arrived too.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 
 use crate::com::CHILDID_SELF;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
+#[cfg(feature = "sync-marker")]
 use windows::Win32::System::Threading::GetCurrentProcessId;
-use windows::Win32::UI::Accessibility::{
-    HWINEVENTHOOK, NotifyWinEvent, SetWinEventHook, UnhookWinEvent,
+#[cfg(feature = "sync-marker")]
+use windows::Win32::UI::Accessibility::NotifyWinEvent;
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+#[cfg(feature = "sync-marker")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, EVENT_AIA_START, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, EVENT_AIA_START, EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT,
-    EVENT_CONSOLE_UPDATE_REGION, EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE,
-    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE,
-    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
-    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
-    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
-    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_DESKTOPSWITCH,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_SWITCHEND, GetDesktopWindow,
-    GetForegroundWindow, GetWindowThreadProcessId, HWND_MESSAGE, OBJID_ALERT, OBJID_CARET,
-    OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION,
+    EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_DESCRIPTIONCHANGE,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE,
+    EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD,
+    EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW,
+    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE,
+    EVENT_SYSTEM_ALERT, EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
+    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUSTART,
+    EVENT_SYSTEM_SWITCHEND, GetDesktopWindow, GetForegroundWindow, GetWindowThreadProcessId,
+    OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW,
     WINEVENT_OUTOFCONTEXT,
 };
+#[cfg(feature = "sync-marker")]
 use windows::core::w;
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
@@ -74,10 +78,19 @@ pub enum WinEventKind {
     NameChange,
     /// `EVENT_OBJECT_DESCRIPTIONCHANGE`.
     DescriptionChange,
-    /// `EVENT_OBJECT_SELECTION`: an item became the selection. The other
-    /// three selection events are reported as [`WinEventKind::StateChange`],
-    /// as NVDA handles them.
+    /// `EVENT_OBJECT_SELECTION`: an item became the selection. Only a
+    /// plain selection announces a newly selected item; NVDA handles an
+    /// item added to or removed from a selection, or a selection within a
+    /// container, as a change of state, which Core does by the kind told.
     Selection,
+    /// `EVENT_OBJECT_SELECTIONADD`: an item was added to a selection.
+    SelectionAdd,
+    /// `EVENT_OBJECT_SELECTIONREMOVE`: an item was removed from a
+    /// selection.
+    SelectionRemove,
+    /// `EVENT_OBJECT_SELECTIONWITHIN`: the selection within a container
+    /// changed.
+    SelectionWithin,
     /// `EVENT_SYSTEM_MENUPOPUPSTART` — a popup menu just opened. NVDA
     /// announces menus from this event; announcing from anything slower (a
     /// foreground-change retry loop, measured live) leaves a noticeable
@@ -93,13 +106,15 @@ pub enum WinEventKind {
     /// (`IAccessibleHandler/internalWinEventHandler.py` 47); Core's
     /// acceptance refuses it, as NVDA's does.
     Hide,
-    /// `EVENT_SYSTEM_MENUPOPUPEND` or `EVENT_SYSTEM_MENUEND` — a popup menu
-    /// closed, or menu mode ended. The focus listener forwards it to Core,
-    /// which reads the real focus of the foreground application if no focus
-    /// change follows, as NVDA reads the system's focus 50 ms after one
-    /// when no valid focus event came with it and its focus has not
-    /// changed.
+    /// `EVENT_SYSTEM_MENUEND` — menu mode ended. The focus listener
+    /// forwards it to Core, which reads the real focus of the foreground
+    /// application if no focus change follows, as NVDA reads the system's
+    /// focus 50 ms after one when no valid focus event came with it and its
+    /// focus has not changed.
     MenuEnd,
+    /// `EVENT_SYSTEM_MENUPOPUPEND` — a popup menu closed, handled as
+    /// [`WinEventKind::MenuEnd`] is.
+    MenuPopupEnd,
     /// `EVENT_SYSTEM_SWITCHEND` — the Alt+Tab switcher closed. Handled like
     /// [`WinEventKind::MenuEnd`], as NVDA handles it.
     SwitchEnd,
@@ -168,10 +183,9 @@ pub enum WinEventKind {
 /// Every raw `WinEvent` id Verbatim subscribes to, paired with its normalized
 /// kind. An install subscribes to the subset whose kind the caller asked for;
 /// [`kind_among`] maps a delivered event id back to its kind among the
-/// kinds the install asked for. `StateChange` maps four raw ids
-/// to the one kind, so a caller that wants state changes also gets the
-/// selection add, remove, and within hooks. Each raw id appears once,
-/// checked as the crate compiles.
+/// kinds the install asked for. Each raw id appears once, checked as the
+/// crate compiles, and each kind but [`WinEventKind::ConsoleUpdate`]'s has
+/// one raw id, so a tell's kind is the hook's kind.
 const SUBSCRIPTIONS: [(u32, WinEventKind); 27] = [
     (EVENT_OBJECT_FOCUS, WinEventKind::Focus),
     (EVENT_SYSTEM_FOREGROUND, WinEventKind::Foreground),
@@ -183,15 +197,12 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 27] = [
         WinEventKind::DescriptionChange,
     ),
     (EVENT_OBJECT_SELECTION, WinEventKind::Selection),
-    // Only a plain selection announces a newly selected item; NVDA handles
-    // an item added to or removed from a selection, or a selection within a
-    // container, as a change of state.
-    (EVENT_OBJECT_SELECTIONADD, WinEventKind::StateChange),
-    (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::StateChange),
-    (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::StateChange),
+    (EVENT_OBJECT_SELECTIONADD, WinEventKind::SelectionAdd),
+    (EVENT_OBJECT_SELECTIONREMOVE, WinEventKind::SelectionRemove),
+    (EVENT_OBJECT_SELECTIONWITHIN, WinEventKind::SelectionWithin),
     (EVENT_SYSTEM_MENUPOPUPSTART, WinEventKind::MenuPopupStart),
     (EVENT_SYSTEM_MENUSTART, WinEventKind::MenuStart),
-    (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuEnd),
+    (EVENT_SYSTEM_MENUPOPUPEND, WinEventKind::MenuPopupEnd),
     (EVENT_SYSTEM_MENUEND, WinEventKind::MenuEnd),
     (EVENT_SYSTEM_SWITCHEND, WinEventKind::SwitchEnd),
     (EVENT_OBJECT_DESTROY, WinEventKind::Destroy),
@@ -209,34 +220,6 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 27] = [
     (EVENT_CONSOLE_LAYOUT, WinEventKind::ConsoleUpdate),
     (EVENT_CONSOLE_CARET, WinEventKind::ConsoleCaret),
     (EVENT_SYSTEM_DESKTOPSWITCH, WinEventKind::DesktopSwitch),
-];
-
-/// The per-application outpost's subscription set (decision D13): the
-/// process-scoped focus, foreground, menu opening, alert, and tooltip
-/// events, so every MSAA event of the application reaches its outpost by
-/// one route in the order Windows raised it (`books/dev/src/reference/adr/0001-focus.md`, "One
-/// route per application, and the marker"); the name, description, value, state, and selection
-/// events; the caret and text selection (milestone M4); object destruction
-/// (for windows going away). The end
-/// of a menu and of the Alt+Tab switcher are not here: the focus listener
-/// takes them for Core, since focus returns to whichever application is
-/// then in front.
-pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
-    WinEventKind::Focus,
-    WinEventKind::Foreground,
-    WinEventKind::MenuPopupStart,
-    WinEventKind::Alert,
-    WinEventKind::Show,
-    WinEventKind::ValueChange,
-    WinEventKind::StateChange,
-    WinEventKind::NameChange,
-    WinEventKind::DescriptionChange,
-    WinEventKind::Selection,
-    WinEventKind::Destroy,
-    WinEventKind::Caret,
-    WinEventKind::TextSelectionChange,
-    WinEventKind::ConsoleUpdate,
-    WinEventKind::ConsoleCaret,
 ];
 
 /// The console host's outpost's subscription set, installed with the
@@ -269,8 +252,12 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::NameChange,
     WinEventKind::DescriptionChange,
     WinEventKind::Selection,
+    WinEventKind::SelectionAdd,
+    WinEventKind::SelectionRemove,
+    WinEventKind::SelectionWithin,
     WinEventKind::MenuStart,
     WinEventKind::MenuPopupStart,
+    WinEventKind::MenuPopupEnd,
     WinEventKind::MenuEnd,
     WinEventKind::SwitchEnd,
     WinEventKind::Destroy,
@@ -336,11 +323,13 @@ pub type WinEventCallback = Box<dyn Fn(WinEvent, Option<&str>)>;
 /// set's markers in this process are never taken for its own; another
 /// process's global hook that asks for this id sees the markers, as it
 /// would any process's events in that range.
+#[cfg(feature = "sync-marker")]
 const SYNC_MARKER_EVENT: u32 = EVENT_AIA_START + 0x05B1;
 
 /// Called on the installing thread with the ticket of each sync marker
 /// raised to its hook set ([`SyncMarker::raise`]), in the order the
 /// markers arrive.
+#[cfg(feature = "sync-marker")]
 pub type SyncMarkerCallback = Box<dyn Fn(u64)>;
 
 /// Raises sync markers, from any thread of the process, to the hook set
@@ -357,6 +346,7 @@ pub type SyncMarkerCallback = Box<dyn Fn(u64)>;
 /// posted message overtook the event in up to half), so a marker's
 /// arrival is the evidence that every event raised before it has been
 /// delivered.
+#[cfg(feature = "sync-marker")]
 #[derive(Clone, Copy, Debug)]
 pub struct SyncMarker {
     /// The message-only window the markers are raised on, which the hook
@@ -364,6 +354,7 @@ pub struct SyncMarker {
     hwnd: isize,
 }
 
+#[cfg(feature = "sync-marker")]
 impl SyncMarker {
     /// Raises a marker carrying `ticket`. It returns at once; the hook
     /// set's thread hands the ticket to its marker callback once every
@@ -397,12 +388,16 @@ pub fn event_clock() -> u32 {
     unsafe { GetTickCount() }
 }
 
+#[cfg(feature = "sync-marker")]
 thread_local! {
-    static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
     /// The window this thread's sync markers are raised on, and the
     /// callback they are handed to, while its hook set hears them.
     static MARKER_CALLBACK: RefCell<Option<(isize, SyncMarkerCallback)>> =
         const { RefCell::new(None) };
+}
+
+thread_local! {
+    static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
     /// This thread's hook of the desktop window's name change, scoped to
@@ -421,6 +416,7 @@ struct HookSet {
     /// The hook for this process's sync markers and the window they are
     /// raised on, when the set hears them; never narrowed by
     /// [`suspend_kinds`].
+    #[cfg(feature = "sync-marker")]
     marker: Option<(HWINEVENTHOOK, HWND)>,
     /// The hook of the desktop window's name change, scoped to csrss's
     /// process, when the set asked for [`WinEventKind::DesktopName`]; never
@@ -443,6 +439,7 @@ fn desktop_window_process() -> Option<u32> {
 /// Hooks this process's sync markers on the calling thread, and makes the
 /// message-only window they are raised on: a marker raised with no window
 /// is never delivered.
+#[cfg(feature = "sync-marker")]
 fn hook_sync_markers() -> Result<(HWINEVENTHOOK, HWND), String> {
     // SAFETY: a message-only window of a system class, with no parameter
     // that points anywhere; it belongs to the calling thread.
@@ -476,6 +473,7 @@ fn hook_sync_markers() -> Result<(HWINEVENTHOOK, HWND), String> {
 
 /// Destroys the sync markers' window, which [`hook_sync_markers`] made on
 /// the calling thread.
+#[cfg(feature = "sync-marker")]
 fn destroy_marker_window(window: HWND) {
     // SAFETY: the window was made on this thread and is destroyed once.
     unsafe {
@@ -515,53 +513,6 @@ fn unhook_event(hook: HWINEVENTHOOK) {
     }
 }
 
-/// What the outpost's arbitration keeps about each window it takes events
-/// from, by the window's handle, until the window is destroyed. Each entry
-/// also keeps the thread that owned the window when it was learned, so a
-/// handle that another thread's window has reused, the first window's
-/// destruction having gone unheard, is learned afresh.
-#[derive(Debug)]
-pub struct WindowCache<T> {
-    entries: HashMap<isize, (u32, T)>,
-}
-
-impl<T> Default for WindowCache<T> {
-    fn default() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-}
-
-impl<T> WindowCache<T> {
-    /// What is kept about window `hwnd`, owned now by thread `owner`:
-    /// learned with `learn` when nothing is kept for it, or when what is
-    /// kept was learned while another thread owned the handle.
-    pub fn get_or_learn(&mut self, hwnd: isize, owner: u32, learn: impl FnOnce() -> T) -> &mut T {
-        match self.entries.entry(hwnd) {
-            Entry::Occupied(entry) => {
-                let entry = entry.into_mut();
-                if entry.0 != owner {
-                    *entry = (owner, learn());
-                }
-                &mut entry.1
-            }
-            Entry::Vacant(entry) => &mut entry.insert((owner, learn())).1,
-        }
-    }
-
-    /// Forgets window `hwnd`: it was destroyed, and its handle may be
-    /// reused by an unrelated window.
-    pub fn forget(&mut self, hwnd: isize) {
-        self.entries.remove(&hwnd);
-    }
-
-    /// Forgets every window.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-}
-
 /// A set of live out-of-context `WinEvent` hooks on the thread that
 /// installed it. Dropping it unhooks them and clears the thread-local
 /// callback.
@@ -575,8 +526,9 @@ impl WinEventHook {
     /// Installs hooks for every event whose kind appears in `kinds`, scoped to
     /// `target_pid` (zero for a desktop-global hook), on the current thread,
     /// delivering to `callback`. Call this on the thread that runs the message
-    /// loop. The per-application outpost passes [`APP_SUBSCRIPTIONS`]; the
-    /// focus listener passes [`LISTENER_SUBSCRIPTIONS`] with `target_pid` zero.
+    /// loop. The console host's outpost passes [`CONSOLE_SUBSCRIPTIONS`]
+    /// with the console host's process id; the focus listener passes
+    /// [`LISTENER_SUBSCRIPTIONS`] with `target_pid` zero.
     /// One set of hooks at a time per thread: the thread's callback is
     /// shared by every hook on it. While the set lives, [`suspend_kinds`]
     /// unhooks some of its kinds and hooks them again.
@@ -591,7 +543,18 @@ impl WinEventHook {
         kinds: &[WinEventKind],
         callback: WinEventCallback,
     ) -> Result<Self, String> {
-        Self::install_set(target_pid, kinds, callback, None).map(|(set, _)| set)
+        let installed = CALLBACK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_some() {
+                return false;
+            }
+            *slot = Some(callback);
+            true
+        });
+        if !installed {
+            return Err("this thread already has a set of WinEvent hooks".to_owned());
+        }
+        Self::install_set(target_pid, kinds)
     }
 
     /// Installs the hooks as [`WinEventHook::install`] does, and with them
@@ -604,37 +567,30 @@ impl WinEventHook {
     /// # Errors
     ///
     /// As [`WinEventHook::install`], and if the marker hook or the window
-    /// the markers are raised on cannot be made.
+    /// the markers are raised on cannot be made, when the set installed is
+    /// removed again.
+    #[cfg(feature = "sync-marker")]
     pub fn install_with_sync_marker(
         target_pid: u32,
         kinds: &[WinEventKind],
         callback: WinEventCallback,
         on_marker: SyncMarkerCallback,
     ) -> Result<(Self, SyncMarker), String> {
-        let (set, marker) = Self::install_set(target_pid, kinds, callback, Some(on_marker))?;
-        let marker = marker.ok_or("the sync marker hook was not installed")?;
-        Ok((set, marker))
+        let set = Self::install(target_pid, kinds, callback)?;
+        // A failure drops `set`, which removes every hook it made.
+        let (hook, window) = hook_sync_markers()?;
+        let hwnd = window.0 as isize;
+        MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = Some((hwnd, on_marker)));
+        HOOKS.with(|slot| {
+            if let Some(hooks) = slot.borrow_mut().as_mut() {
+                hooks.marker = Some((hook, window));
+            }
+        });
+        Ok((set, SyncMarker { hwnd }))
     }
 
-    /// Installs the set, with the sync marker hook when `on_marker` is
-    /// given.
-    fn install_set(
-        target_pid: u32,
-        kinds: &[WinEventKind],
-        callback: WinEventCallback,
-        on_marker: Option<SyncMarkerCallback>,
-    ) -> Result<(Self, Option<SyncMarker>), String> {
-        let installed = CALLBACK.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.is_some() {
-                return false;
-            }
-            *slot = Some(callback);
-            true
-        });
-        if !installed {
-            return Err("this thread already has a set of WinEvent hooks".to_owned());
-        }
+    /// The hooks of [`WinEventHook::install`], once its callback is in.
+    fn install_set(target_pid: u32, kinds: &[WinEventKind]) -> Result<Self, String> {
         KINDS.with(|slot| *slot.borrow_mut() = kinds.to_vec());
         let undo = |hooked: Vec<(u32, HWINEVENTHOOK)>| {
             for (_, hook) in hooked {
@@ -676,40 +632,18 @@ impl WinEventHook {
         } else {
             None
         };
-        let marker = match on_marker {
-            Some(on_marker) => match hook_sync_markers() {
-                Ok(marker) => {
-                    let window = marker.1.0 as isize;
-                    MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = Some((window, on_marker)));
-                    Some(marker)
-                }
-                Err(error) => {
-                    if let Some(hook) = desktop_name {
-                        unhook_event(hook);
-                    }
-                    undo(hooked);
-                    return Err(error);
-                }
-            },
-            None => None,
-        };
-        let raiser = marker.map(|(_, window)| SyncMarker {
-            hwnd: window.0 as isize,
-        });
         HOOKS.with(|slot| {
             *slot.borrow_mut() = Some(HookSet {
                 target_pid,
                 hooked,
-                marker,
+                #[cfg(feature = "sync-marker")]
+                marker: None,
                 desktop_name,
             });
         });
-        Ok((
-            Self {
-                _thread_bound: std::marker::PhantomData,
-            },
-            raiser,
-        ))
+        Ok(Self {
+            _thread_bound: std::marker::PhantomData,
+        })
     }
 }
 
@@ -719,6 +653,7 @@ impl Drop for WinEventHook {
             for (_, hook) in set.hooked {
                 unhook_event(hook);
             }
+            #[cfg(feature = "sync-marker")]
             if let Some((hook, window)) = set.marker {
                 unhook_event(hook);
                 destroy_marker_window(window);
@@ -729,6 +664,7 @@ impl Drop for WinEventHook {
         }
         DESKTOP_NAME_HOOK.with(|slot| slot.set(0));
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        #[cfg(feature = "sync-marker")]
         MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
     }
@@ -795,7 +731,7 @@ pub const OTHER_SHOW_CLASSES: [&str; 5] = [
 ];
 
 /// The kind a tell of `event` names to Core (ADR 0003, "Properties, event
-/// kinds and requests"), from its normalized kind and its raw id: `None`
+/// kinds and requests"), from its kind: `None`
 /// for the kinds the listener tells nothing of, the console host's five,
 /// which its outpost keeps, a text selection change, and the desktop
 /// window's name change hooked for today's news of the desktop, which the
@@ -808,18 +744,16 @@ pub fn tell_kind(event: &WinEvent) -> Option<verbatim_model::event_kind::EventKi
         WinEventKind::Foreground => EventKind::Foreground,
         WinEventKind::ShellForeground => EventKind::ShellForeground,
         WinEventKind::ValueChange => EventKind::ValueChange,
-        WinEventKind::StateChange => match event.event {
-            EVENT_OBJECT_SELECTIONADD => EventKind::SelectionAdd,
-            EVENT_OBJECT_SELECTIONREMOVE => EventKind::SelectionRemove,
-            EVENT_OBJECT_SELECTIONWITHIN => EventKind::SelectionWithin,
-            _ => EventKind::StateChange,
-        },
+        WinEventKind::StateChange => EventKind::StateChange,
+        WinEventKind::SelectionAdd => EventKind::SelectionAdd,
+        WinEventKind::SelectionRemove => EventKind::SelectionRemove,
+        WinEventKind::SelectionWithin => EventKind::SelectionWithin,
         WinEventKind::NameChange => EventKind::NameChange,
         WinEventKind::DescriptionChange => EventKind::DescriptionChange,
         WinEventKind::Selection => EventKind::Selection,
         WinEventKind::MenuStart => EventKind::MenuStart,
         WinEventKind::MenuPopupStart => EventKind::PopupStart,
-        WinEventKind::MenuEnd if event.event == EVENT_SYSTEM_MENUPOPUPEND => EventKind::PopupEnd,
+        WinEventKind::MenuPopupEnd => EventKind::PopupEnd,
         WinEventKind::MenuEnd => EventKind::MenuEnd,
         WinEventKind::SwitchEnd => EventKind::SwitchEnd,
         WinEventKind::Destroy => EventKind::Destroy,
@@ -990,9 +924,10 @@ fn is_wanted(
     }
     match kind {
         WinEventKind::Foreground => !is_shell_foreground_class(&class()),
-        WinEventKind::MenuStart | WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
-            &*class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
-        }
+        WinEventKind::MenuStart
+        | WinEventKind::MenuPopupStart
+        | WinEventKind::MenuPopupEnd
+        | WinEventKind::MenuEnd => &*class() != "Microsoft.IME.UIManager.CandidateWindow.Host",
         // NVDA accepts a show event only from a few window classes, of
         // which the tooltip is the standard control's, and only for a
         // client or custom object; a window object stands for the client.
@@ -1013,6 +948,7 @@ unsafe extern "system" fn win_event_proc(
     thread: u32,
     time: u32,
 ) {
+    #[cfg(feature = "sync-marker")]
     if event == SYNC_MARKER_EVENT {
         let ticket =
             (u64::from(id_object.cast_unsigned()) << 32) | u64::from(id_child.cast_unsigned());
@@ -1098,17 +1034,22 @@ mod tests {
         is_wanted(kind, id_object, id_child, &mut class)
     }
 
-    /// The kind, if any, an outpost's hook keeps of the raw event `event`
-    /// on object `id_object` of window 42, of class `Edit`, each class read
-    /// counted in `reads`.
-    fn outpost_kinds(event: u32, id_object: i32, reads: &Cell<u32>) -> Vec<WinEventKind> {
+    /// The kind, if any, an install of `kinds` keeps of the raw event
+    /// `event` on object `id_object` of window 42, of class `Edit`, each
+    /// class read counted in `reads`.
+    fn kinds_kept(
+        kinds: &[WinEventKind],
+        event: u32,
+        id_object: i32,
+        reads: &Cell<u32>,
+    ) -> Vec<WinEventKind> {
         let class_of = |_| {
             reads.set(reads.get() + 1);
             "Edit".to_owned()
         };
         wanted_kind(
             (event, 42, id_object, CHILDID_SELF),
-            APP_SUBSCRIPTIONS,
+            kinds,
             class_of,
             &mut None,
         )
@@ -1183,28 +1124,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_plain_selection_announces_a_newly_selected_item() {
-        assert_eq!(
-            kind_among(EVENT_OBJECT_SELECTION, APP_SUBSCRIPTIONS),
-            Some(WinEventKind::Selection)
-        );
-        for removed_or_added in [
-            EVENT_OBJECT_SELECTIONADD,
-            EVENT_OBJECT_SELECTIONREMOVE,
-            EVENT_OBJECT_SELECTIONWITHIN,
-        ] {
-            assert_eq!(
-                kind_among(removed_or_added, APP_SUBSCRIPTIONS),
-                Some(WinEventKind::StateChange)
-            );
-        }
-    }
-
-    #[test]
     fn only_the_carets_location_changes_are_wanted() {
         let any = HWND::default();
         assert_eq!(
-            kind_among(EVENT_OBJECT_LOCATIONCHANGE, APP_SUBSCRIPTIONS),
+            kind_among(EVENT_OBJECT_LOCATIONCHANGE, LISTENER_SUBSCRIPTIONS),
             Some(WinEventKind::Caret)
         );
         assert!(wanted(
@@ -1221,24 +1144,21 @@ mod tests {
         ));
     }
 
+    /// The listener tells the caret's show for Core's caret rule, as a
+    /// caret event, with no class read.
     #[test]
-    fn the_carets_show_is_a_caret_event_for_an_outpost_and_the_listener() {
+    fn the_carets_show_is_a_caret_event() {
         let reads = Cell::new(0);
         assert_eq!(
-            outpost_kinds(EVENT_OBJECT_SHOW, OBJID_CARET.0, &reads),
+            kinds_kept(
+                LISTENER_SUBSCRIPTIONS,
+                EVENT_OBJECT_SHOW,
+                OBJID_CARET.0,
+                &reads
+            ),
             [WinEventKind::Caret]
         );
         assert_eq!(reads.get(), 0, "no class is read for the caret");
-        // The listener tells the caret's show for Core's caret rule.
-        assert_eq!(
-            wanted_kind(
-                (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
-                LISTENER_SUBSCRIPTIONS,
-                |_| "Edit".to_owned(),
-                &mut None,
-            ),
-            Some(WinEventKind::Caret)
-        );
     }
 
     /// A window object's show is kept, delivered on its client object, only
@@ -1259,10 +1179,10 @@ mod tests {
     }
 
     /// The listener hears the shows of all six of NVDA's show classes, an
-    /// outpost the tooltip's alone; a show of any other class reaches
-    /// neither.
+    /// install that asks only for [`WinEventKind::Show`] the tooltip's
+    /// alone; a show of any other class reaches neither.
     #[test]
-    fn the_listener_hears_every_show_class_and_an_outpost_the_tooltips() {
+    fn the_listener_hears_every_show_class_and_a_show_install_the_tooltips() {
         let kind = |kinds: &[WinEventKind], class: &'static str, object: i32| {
             wanted_kind(
                 (EVENT_OBJECT_SHOW, 42, object, CHILDID_SELF),
@@ -1277,7 +1197,7 @@ mod tests {
             Some(WinEventKind::Show)
         );
         assert_eq!(
-            kind(APP_SUBSCRIPTIONS, TOOLTIP_CLASS, client),
+            kind(&[WinEventKind::Show], TOOLTIP_CLASS, client),
             Some(WinEventKind::Show)
         );
         for class in OTHER_SHOW_CLASSES {
@@ -1293,7 +1213,7 @@ mod tests {
             );
             // The title bar, neither a client nor a custom object.
             assert_eq!(kind(LISTENER_SUBSCRIPTIONS, class, -2), None, "{class}");
-            assert_eq!(kind(APP_SUBSCRIPTIONS, class, client), None, "{class}");
+            assert_eq!(kind(&[WinEventKind::Show], class, client), None, "{class}");
         }
         assert_eq!(kind(LISTENER_SUBSCRIPTIONS, "Button", client), None);
     }
@@ -1340,7 +1260,7 @@ mod tests {
                 EventKind::MenuEnd,
             ),
             (
-                WinEventKind::MenuEnd,
+                WinEventKind::MenuPopupEnd,
                 EVENT_SYSTEM_MENUPOPUPEND,
                 EventKind::PopupEnd,
             ),
@@ -1366,17 +1286,17 @@ mod tests {
                 EventKind::StateChange,
             ),
             (
-                WinEventKind::StateChange,
+                WinEventKind::SelectionAdd,
                 EVENT_OBJECT_SELECTIONADD,
                 EventKind::SelectionAdd,
             ),
             (
-                WinEventKind::StateChange,
+                WinEventKind::SelectionRemove,
                 EVENT_OBJECT_SELECTIONREMOVE,
                 EventKind::SelectionRemove,
             ),
             (
-                WinEventKind::StateChange,
+                WinEventKind::SelectionWithin,
                 EVENT_OBJECT_SELECTIONWITHIN,
                 EventKind::SelectionWithin,
             ),
@@ -1486,7 +1406,7 @@ mod tests {
         assert_eq!(
             wanted_kind(
                 (EVENT_SYSTEM_MENUSTART, 42, OBJID_CLIENT.0, CHILDID_SELF),
-                APP_SUBSCRIPTIONS,
+                &[WinEventKind::MenuPopupStart],
                 |_| "Notepad".to_owned(),
                 &mut None,
             ),
@@ -1496,7 +1416,7 @@ mod tests {
 
     /// Program Manager's or the taskbar's foreground event is never a
     /// foreground change; the listener, which asks for it, gets it as its
-    /// own kind, and an outpost, which does not, gets nothing. Any other
+    /// own kind, and an install that does not gets nothing. Any other
     /// window's is a foreground change for both.
     #[test]
     fn the_shells_foreground_event_reaches_only_the_listener_as_its_own_kind() {
@@ -1514,14 +1434,14 @@ mod tests {
                 Some(WinEventKind::ShellForeground),
                 "{class}"
             );
-            assert_eq!(kind(APP_SUBSCRIPTIONS, class), None, "{class}");
+            assert_eq!(kind(&[WinEventKind::Foreground], class), None, "{class}");
         }
         assert_eq!(
             kind(LISTENER_SUBSCRIPTIONS, "Notepad"),
             Some(WinEventKind::Foreground)
         );
         assert_eq!(
-            kind(APP_SUBSCRIPTIONS, "Notepad"),
+            kind(&[WinEventKind::Foreground], "Notepad"),
             Some(WinEventKind::Foreground)
         );
     }
@@ -1544,7 +1464,12 @@ mod tests {
         // the object id: ten columns to the left is -10, `OBJID_ALERT`.
         let reads = Cell::new(0);
         assert_eq!(
-            outpost_kinds(EVENT_CONSOLE_UPDATE_SCROLL, OBJID_ALERT.0, &reads),
+            kinds_kept(
+                CONSOLE_SUBSCRIPTIONS,
+                EVENT_CONSOLE_UPDATE_SCROLL,
+                OBJID_ALERT.0,
+                &reads
+            ),
             [WinEventKind::ConsoleUpdate]
         );
     }

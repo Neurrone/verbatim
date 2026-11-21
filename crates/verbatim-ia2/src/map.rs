@@ -7,20 +7,21 @@ use verbatim_model::{Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     ROLE_SYSTEM_ALERT, ROLE_SYSTEM_ANIMATION, ROLE_SYSTEM_APPLICATION, ROLE_SYSTEM_BORDER,
     ROLE_SYSTEM_BUTTONDROPDOWN, ROLE_SYSTEM_BUTTONDROPDOWNGRID, ROLE_SYSTEM_BUTTONMENU,
-    ROLE_SYSTEM_CELL, ROLE_SYSTEM_CHARACTER, ROLE_SYSTEM_CHART, ROLE_SYSTEM_CHECKBUTTON,
-    ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_CLOCK, ROLE_SYSTEM_COLUMN, ROLE_SYSTEM_COLUMNHEADER,
-    ROLE_SYSTEM_COMBOBOX, ROLE_SYSTEM_DIAGRAM, ROLE_SYSTEM_DIAL, ROLE_SYSTEM_DIALOG,
-    ROLE_SYSTEM_DOCUMENT, ROLE_SYSTEM_DROPLIST, ROLE_SYSTEM_EQUATION, ROLE_SYSTEM_GRAPHIC,
-    ROLE_SYSTEM_GRIP, ROLE_SYSTEM_GROUPING, ROLE_SYSTEM_HELPBALLOON, ROLE_SYSTEM_HOTKEYFIELD,
-    ROLE_SYSTEM_INDICATOR, ROLE_SYSTEM_IPADDRESS, ROLE_SYSTEM_LINK, ROLE_SYSTEM_LIST,
-    ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_MENUBAR, ROLE_SYSTEM_MENUITEM, ROLE_SYSTEM_MENUPOPUP,
-    ROLE_SYSTEM_OUTLINE, ROLE_SYSTEM_OUTLINEBUTTON, ROLE_SYSTEM_OUTLINEITEM, ROLE_SYSTEM_PAGETAB,
-    ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PANE, ROLE_SYSTEM_PROGRESSBAR, ROLE_SYSTEM_PROPERTYPAGE,
-    ROLE_SYSTEM_PUSHBUTTON, ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_ROW, ROLE_SYSTEM_ROWHEADER,
-    ROLE_SYSTEM_SCROLLBAR, ROLE_SYSTEM_SEPARATOR, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SOUND,
-    ROLE_SYSTEM_SPINBUTTON, ROLE_SYSTEM_SPLITBUTTON, ROLE_SYSTEM_STATICTEXT, ROLE_SYSTEM_STATUSBAR,
-    ROLE_SYSTEM_TABLE, ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TITLEBAR, ROLE_SYSTEM_TOOLBAR,
-    ROLE_SYSTEM_TOOLTIP, ROLE_SYSTEM_WHITESPACE, ROLE_SYSTEM_WINDOW,
+    ROLE_SYSTEM_CARET, ROLE_SYSTEM_CELL, ROLE_SYSTEM_CHARACTER, ROLE_SYSTEM_CHART,
+    ROLE_SYSTEM_CHECKBUTTON, ROLE_SYSTEM_CLIENT, ROLE_SYSTEM_CLOCK, ROLE_SYSTEM_COLUMN,
+    ROLE_SYSTEM_COLUMNHEADER, ROLE_SYSTEM_COMBOBOX, ROLE_SYSTEM_CURSOR, ROLE_SYSTEM_DIAGRAM,
+    ROLE_SYSTEM_DIAL, ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_DOCUMENT, ROLE_SYSTEM_DROPLIST,
+    ROLE_SYSTEM_EQUATION, ROLE_SYSTEM_GRAPHIC, ROLE_SYSTEM_GRIP, ROLE_SYSTEM_GROUPING,
+    ROLE_SYSTEM_HELPBALLOON, ROLE_SYSTEM_HOTKEYFIELD, ROLE_SYSTEM_INDICATOR, ROLE_SYSTEM_IPADDRESS,
+    ROLE_SYSTEM_LINK, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_MENUBAR,
+    ROLE_SYSTEM_MENUITEM, ROLE_SYSTEM_MENUPOPUP, ROLE_SYSTEM_OUTLINE, ROLE_SYSTEM_OUTLINEBUTTON,
+    ROLE_SYSTEM_OUTLINEITEM, ROLE_SYSTEM_PAGETAB, ROLE_SYSTEM_PAGETABLIST, ROLE_SYSTEM_PANE,
+    ROLE_SYSTEM_PROGRESSBAR, ROLE_SYSTEM_PROPERTYPAGE, ROLE_SYSTEM_PUSHBUTTON,
+    ROLE_SYSTEM_RADIOBUTTON, ROLE_SYSTEM_ROW, ROLE_SYSTEM_ROWHEADER, ROLE_SYSTEM_SCROLLBAR,
+    ROLE_SYSTEM_SEPARATOR, ROLE_SYSTEM_SLIDER, ROLE_SYSTEM_SOUND, ROLE_SYSTEM_SPINBUTTON,
+    ROLE_SYSTEM_SPLITBUTTON, ROLE_SYSTEM_STATICTEXT, ROLE_SYSTEM_STATUSBAR, ROLE_SYSTEM_TABLE,
+    ROLE_SYSTEM_TEXT, ROLE_SYSTEM_TITLEBAR, ROLE_SYSTEM_TOOLBAR, ROLE_SYSTEM_TOOLTIP,
+    ROLE_SYSTEM_WHITESPACE, ROLE_SYSTEM_WINDOW,
 };
 // MSAA `STATE_SYSTEM_*` bit values (winuser.h). These are frozen ABI constants;
 // the `windows` crate splits them across three feature-gated modules and types
@@ -43,13 +44,18 @@ const STATE_SYSTEM_PROTECTED: u32 = 0x2000_0000;
 const STATE_SYSTEM_HASPOPUP: u32 = 0x4000_0000;
 const STATE_SYSTEM_LINKED: u32 = 0x0040_0000;
 const STATE_SYSTEM_TRAVERSED: u32 = 0x0080_0000;
-/// Invisible, which the model has no state for; the dialog text reads it.
-pub(crate) const STATE_SYSTEM_INVISIBLE: u32 = 0x0000_8000;
+const STATE_SYSTEM_INVISIBLE: u32 = 0x0000_8000;
 
-/// Maps an MSAA `ROLE_SYSTEM_*` value to a normalized [`Role`], as NVDA's
-/// MSAA role table does. Unmapped roles become [`Role::Unknown`].
+/// Maps an MSAA `ROLE_SYSTEM_*` value, as `accRole` answers it, to a
+/// normalized [`Role`], as NVDA's MSAA role table does. A role not read,
+/// and an unmapped one, become [`Role::Unknown`].
 #[must_use]
-pub fn role_from_msaa(role: u32) -> Role {
+pub fn role_from_msaa(role: Option<i32>) -> Role {
+    role.map_or(Role::Unknown, |role| role_of(role.cast_unsigned()))
+}
+
+/// [`role_from_msaa`] of a role that was read.
+fn role_of(role: u32) -> Role {
     match role {
         ROLE_SYSTEM_PUSHBUTTON => Role::Button,
         ROLE_SYSTEM_CHECKBUTTON => Role::CheckBox,
@@ -114,6 +120,8 @@ pub fn role_from_msaa(role: u32) -> Role {
         ROLE_SYSTEM_OUTLINEBUTTON => Role::TreeViewButton,
         ROLE_SYSTEM_BUTTONDROPDOWNGRID => Role::DropDownButtonGrid,
         ROLE_SYSTEM_HELPBALLOON => Role::HelpBalloon,
+        ROLE_SYSTEM_CARET => Role::Caret,
+        ROLE_SYSTEM_CURSOR => Role::Cursor,
         _ => Role::Unknown,
     }
 }
@@ -168,29 +176,36 @@ mod tests {
 
     #[test]
     fn known_roles_map_as_specified() {
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_PUSHBUTTON), Role::Button);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_CHECKBUTTON), Role::CheckBox);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_MENUPOPUP), Role::Menu);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_TEXT), Role::EditableText);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_PAGETABLIST), Role::TabControl);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_PAGETAB), Role::Tab);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINE), Role::Tree);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_OUTLINEITEM), Role::TreeItem);
+        assert_eq!(role_of(ROLE_SYSTEM_PUSHBUTTON), Role::Button);
+        assert_eq!(role_of(ROLE_SYSTEM_CHECKBUTTON), Role::CheckBox);
+        assert_eq!(role_of(ROLE_SYSTEM_MENUPOPUP), Role::Menu);
+        assert_eq!(role_of(ROLE_SYSTEM_TEXT), Role::EditableText);
+        assert_eq!(role_of(ROLE_SYSTEM_PAGETABLIST), Role::TabControl);
+        assert_eq!(role_of(ROLE_SYSTEM_PAGETAB), Role::Tab);
+        assert_eq!(role_of(ROLE_SYSTEM_OUTLINE), Role::Tree);
+        assert_eq!(role_of(ROLE_SYSTEM_OUTLINEITEM), Role::TreeItem);
     }
 
     #[test]
     fn roles_nvda_maps_are_not_unknown() {
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_SPLITBUTTON), Role::SplitButton);
-        assert_eq!(
-            role_from_msaa(ROLE_SYSTEM_BUTTONDROPDOWN),
-            Role::DropDownButton
-        );
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_GRAPHIC), Role::Graphic);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_PROGRESSBAR), Role::ProgressBar);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_MENUBAR), Role::MenuBar);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_PANE), Role::Pane);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_DOCUMENT), Role::Document);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_CELL), Role::Cell);
+        assert_eq!(role_of(ROLE_SYSTEM_SPLITBUTTON), Role::SplitButton);
+        assert_eq!(role_of(ROLE_SYSTEM_BUTTONDROPDOWN), Role::DropDownButton);
+        assert_eq!(role_of(ROLE_SYSTEM_GRAPHIC), Role::Graphic);
+        assert_eq!(role_of(ROLE_SYSTEM_PROGRESSBAR), Role::ProgressBar);
+        assert_eq!(role_of(ROLE_SYSTEM_MENUBAR), Role::MenuBar);
+        assert_eq!(role_of(ROLE_SYSTEM_PANE), Role::Pane);
+        assert_eq!(role_of(ROLE_SYSTEM_DOCUMENT), Role::Document);
+        assert_eq!(role_of(ROLE_SYSTEM_CELL), Role::Cell);
+    }
+
+    /// NVDA maps MSAA's caret and cursor roles to roles of their own
+    /// (`IAccessibleHandler/__init__.py` 122 and 125), where they once
+    /// read as unknown (Dickson, 2026-11-21).
+    #[test]
+    fn caret_and_cursor_objects_take_nvdas_roles() {
+        assert_eq!(role_from_msaa(Some(7)), Role::Caret);
+        assert_eq!(role_from_msaa(Some(6)), Role::Cursor);
+        assert_eq!(role_from_msaa(None), Role::Unknown);
     }
 
     #[test]
@@ -201,16 +216,13 @@ mod tests {
 
     #[test]
     fn roles_nvda_maps_with_no_other_counterpart_have_their_own() {
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_IPADDRESS), Role::IpAddress);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_CLOCK), Role::Clock);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_GRIP), Role::Grip);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_EQUATION), Role::Math);
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_COLUMN), Role::Column);
-        assert_eq!(
-            role_from_msaa(ROLE_SYSTEM_OUTLINEBUTTON),
-            Role::TreeViewButton
-        );
-        assert_eq!(role_from_msaa(ROLE_SYSTEM_HELPBALLOON), Role::HelpBalloon);
+        assert_eq!(role_of(ROLE_SYSTEM_IPADDRESS), Role::IpAddress);
+        assert_eq!(role_of(ROLE_SYSTEM_CLOCK), Role::Clock);
+        assert_eq!(role_of(ROLE_SYSTEM_GRIP), Role::Grip);
+        assert_eq!(role_of(ROLE_SYSTEM_EQUATION), Role::Math);
+        assert_eq!(role_of(ROLE_SYSTEM_COLUMN), Role::Column);
+        assert_eq!(role_of(ROLE_SYSTEM_OUTLINEBUTTON), Role::TreeViewButton);
+        assert_eq!(role_of(ROLE_SYSTEM_HELPBALLOON), Role::HelpBalloon);
     }
 
     #[test]
@@ -236,8 +248,8 @@ mod tests {
 
     #[test]
     fn unmapped_role_is_unknown() {
-        assert_eq!(role_from_msaa(0), Role::Unknown);
-        assert_eq!(role_from_msaa(9999), Role::Unknown);
+        assert_eq!(role_of(0), Role::Unknown);
+        assert_eq!(role_of(9999), Role::Unknown);
     }
 
     #[test]

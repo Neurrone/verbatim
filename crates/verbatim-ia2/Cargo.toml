@@ -25,6 +25,10 @@ verbatim-faults.workspace = true
 # The observation point of the window messages sent, for mockapp's
 # `window_messages` tests; only `cargo xtask faults` turns it on.
 faults = ["dep:verbatim-faults"]
+# The sync markers, by which a test waits for the event thread to have
+# every `WinEvent` raised before it (`Nudger::sync`); mockapp's tests turn
+# it on, and no product build has it.
+sync-marker = []
 
 [lints]
 workspace = true

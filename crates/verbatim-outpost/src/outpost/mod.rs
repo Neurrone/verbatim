@@ -896,7 +896,10 @@ impl Outpost {
     /// measures what the outpost's handling cost the application, or that
     /// asserts the outpost said nothing more, waits on this for its
     /// evidence. Unlike Core's idle round, it waits for no caret key's
-    /// watch, and it divides batches as the round does. Returns once the outpost shuts down.
+    /// watch, and it divides batches as the round does. With the
+    /// `sync-marker` feature, which only tests turn on, it then waits until
+    /// the event thread has handled every hook change asked before it and
+    /// every `WinEvent` raised before it. Returns once the outpost shuts down.
     pub fn settle(&self) {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.context.mailbox.post(Posted::Settle(done_tx));
@@ -911,6 +914,7 @@ impl Outpost {
             self.context.outbound.flush();
         }
         // The hook changes the programs asked for are made too.
+        #[cfg(feature = "sync-marker")]
         if let Some(nudger) = self.context.event_thread.get() {
             nudger.sync();
         }

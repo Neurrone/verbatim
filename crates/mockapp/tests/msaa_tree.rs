@@ -218,7 +218,7 @@ fn walk(acc: &IAccessible) -> Node {
         })
         .collect();
     Node {
-        role: role_from_msaa(role.cast_unsigned()),
+        role: role_from_msaa(Some(role)),
         // SAFETY: as above.
         value: text(unsafe { acc.get_accValue(&self_var) }, "a value"),
         states: states_from_msaa(states.cast_unsigned()),

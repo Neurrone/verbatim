@@ -27,7 +27,7 @@ Regular expressions run in time proportional to the text, with a limit on their 
 
 | Property | Of | Values |
 |---|---|---|
-| `role` | a control | a role name, such as `"button"` or `"edit"` |
+| `role` | a control | a role name, such as `"button"` or `"edit"`; `"caret"` and `"cursor"` name an MSAA caret or mouse pointer object, as NVDA names them (Dickson, 2026-11-21) |
 | `states` | a control | state names, such as `"selected"`, `"focused"` or `"unavailable"` |
 | `name`, `value`, `description` | a control | text |
 | `window-class` | a control | its window's class, after any `normalize-class` rule |

@@ -819,6 +819,8 @@ pub fn role_name(role: verbatim_model::Role) -> String {
         Role::TreeViewButton => i18n_embed_fl::fl!(loader, "role-tree-view-button"),
         Role::DropDownButtonGrid => i18n_embed_fl::fl!(loader, "role-drop-down-button-grid"),
         Role::HelpBalloon => i18n_embed_fl::fl!(loader, "role-help-balloon"),
+        Role::Caret => i18n_embed_fl::fl!(loader, "role-caret"),
+        Role::Cursor => i18n_embed_fl::fl!(loader, "role-cursor"),
         Role::BusyIndicator => i18n_embed_fl::fl!(loader, "role-busy-indicator"),
         Role::Unknown => i18n_embed_fl::fl!(loader, "role-unknown"),
     }
@@ -1351,6 +1353,14 @@ mod tests {
             "Copied to clipboard: 1500 characters"
         );
         assert_eq!(crate::t!("clipboard-copy-failed"), "Unable to copy");
+    }
+
+    /// The caret and cursor roles are named as NVDA names them
+    /// (`controlTypes/role.py` 408 and 414; Dickson, 2026-11-21).
+    #[test]
+    fn caret_and_cursor_are_named_as_nvda_names_them() {
+        assert_eq!(role_name(verbatim_model::Role::Caret), "caret");
+        assert_eq!(role_name(verbatim_model::Role::Cursor), "cursor");
     }
 
     #[test]

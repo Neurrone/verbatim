@@ -11,29 +11,22 @@ Public API:
   process id (or global for pid zero). A thread holds one set at a time,
   since its hooks share one callback; a second install on the same thread
   fails. Two constant sets name the two
-  callers (decision D13): `APP_SUBSCRIPTIONS`, what a per-application outpost
-  installs — since stage A step 5 of phase 6, the application's focus,
-  foreground, menu-popup opens, alerts, and tooltip windows shown, the
-  same kinds as the listener's below but scoped to the one process, so
-  every MSAA event of the application reaches its outpost by one route
-  ([ADR 0001: Focus](../adr/0001-focus.md), "One teller for each kind
-  of event"); value, state, name,
-  description, and selection changes
-  (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
-  remove, and within events are reported as `WinEventKind::StateChange`, as
-  NVDA handles them), and since milestone M4 the caret
-  (`WinEventKind::Caret`: `EVENT_OBJECT_LOCATIONCHANGE` or
-  `EVENT_OBJECT_SHOW` on `OBJID_CARET`, the system caret, which NVDA
-  handles as a caret event on its focus; every other object's location
-  change, which windows raise constantly, is dropped at the hook, and a
-  caret's show is never `WinEventKind::Show`)
-  and text selection changes (`WinEventKind::TextSelectionChange`,
-  `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
-  `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
+  callers: `CONSOLE_SUBSCRIPTIONS`, what the console host's outpost
+  installs scoped to its process, the console's update and caret events,
+  and `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
   globally: every kind it tells Core of (ADR 0003), each event mapped to
-  the kind its tell names by `tell_kind`, which tells apart by the raw id
-  (`WinEvent::event`) the events one kind stands for, a menu's end and a
-  popup menu's, a selection added, removed or within. Its console events
+  the kind its tell names by `tell_kind`. Each kind is one raw event,
+  but for the console's updates, so a menu's end
+  (`WinEventKind::MenuEnd`) and a popup menu's
+  (`WinEventKind::MenuPopupEnd`), and a selection added, removed or
+  within (`WinEventKind::SelectionAdd`, `SelectionRemove` and
+  `SelectionWithin`, which NVDA handles as changes of state), are kinds
+  of their own, beside a plain selection (`WinEventKind::Selection`). The
+  system caret's events are `WinEventKind::Caret`
+  (`EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on `OBJID_CARET`,
+  which NVDA handles as a caret event on its focus; every other object's
+  location change, which windows raise constantly, is dropped at the hook,
+  and a caret's show is never `WinEventKind::Show`). Its console events
   are hooked from the install until the listener's start, and afterwards
   only while a console window in front has not named its thread, and are
   told as nothing, since the console host's outpost keeps them; a text
@@ -52,18 +45,13 @@ Public API:
   destruction, alerts, the system caret's events, and a tooltip window
   shown (`WinEventKind::Show`:
   `EVENT_OBJECT_SHOW` from a `tooltips_class32` window on its client or a
-  custom object, an outpost's only show), the input desktop's switch
+  custom object), the input desktop's switch
   (`WinEventKind::DesktopSwitch`, `EVENT_SYSTEM_DESKTOPSWITCH`), and the
   desktop window's name change (`WinEventKind::DesktopName`,
   `EVENT_OBJECT_NAMECHANGE` on `GetDesktopWindow()`), which the set
   hooks scoped to the desktop window's own process, csrss's, apart from
   its other raw events, and tells apart by its hook, every other window's
-  name change it delivers dropped. A popup menu opening announces the menu
-  itself the moment it opens, NVDA's menu-start behavior — the app outpost
-  emits it as focus on the menu's client object with no ancestry, the
-  identical node its foreground-announce fallback produces for a menu-class
-  window, so the reducer's duplicate-focus suppression drops whichever path
-  announces second. Callbacks are delivered on the installing thread's
+  name change it delivers dropped. Callbacks are delivered on the installing thread's
   message loop and must never make blocking calls into the target. The
   callback receives a `WinEvent`: the event's kind, its MSAA address, the
   thread that raised it, which is a console window's real thread in the
@@ -72,8 +60,7 @@ Public API:
   and beside it the class of its window when the hook's filter read it
   for the event, so the handling reads it no more.
   Every hook that receives one event is given the same kind, address,
-  thread, and time, which is how an outpost tells the listener's copy of
-  an event from its own hook's. `event_clock()` reads the clock that time
+  thread, and time. `event_clock()` reads the clock that time
   is on (`GetTickCount`). `WinEventKind` names the event; drop unhooks.
   NVDA's early filters run at the hook, some asking the window's class
   (Excel's `EXCEL7` child objects, a foreground change of the shell, a
@@ -84,7 +71,9 @@ Public API:
   `OBJID_ALERT` for ten or more columns to the left; NVDA hooks them
   apart (`winConsoleHandler.py`), where its filters do not run.
 - `WinEventHook::install_with_sync_marker(target_pid, kinds, callback,
-  on_marker)` — installs the same hooks and, as one more hook of the same
+  on_marker)`, only with the `sync-marker` feature, which mockapp's tests
+  turn on through `verbatim-outpost`'s feature of the same name and no
+  product build has — installs the same hooks and, as one more hook of the same
   set, a hook for this process's sync markers, and returns the set with a
   `SyncMarker`. `SyncMarker::raise(ticket)`, from any thread of the
   process, raises `EVENT_AIA_START + 0x5B1` on a message-only window the
@@ -111,17 +100,7 @@ Public API:
   set on the thread, and it may be called from the thread's own callback,
   as the focus listener hooks and unhooks the console's events. The
   set's hooks are kept in a thread-local beside its callback, so dropping
-  the `WinEventHook` removes whichever are hooked then. An outpost
-  unhooks the change events of windows read through MSAA this way while
-  its application's focus and foreground windows are read through UIA
-  (`books/dev/src/reference/crates/verbatim-outpost.md`, "Event flow").
-- `WindowCache<T>` — what the outpost's arbitration keeps about each
-  window by its handle
-  until the window is destroyed (`forget`): `get_or_learn(hwnd, owner,
-  learn)` learns an entry anew when none is kept or the handle is now
-  owned by another thread than the one it was learned under, a reused
-  handle whose destruction went unheard. The outpost's event thread uses
-  it.
+  the `WinEventHook` removes whichever are hooked then.
 - `dialog` — `DialogObject`, the objects a dialog's own text is gathered
   from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
   is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,
@@ -132,11 +111,16 @@ Public API:
   the first time it is read, and knowing a hidden or disabled window from
   `IsWindowVisible` and `IsWindowEnabled`, so it is passed over without
   being acquired unless its role or name is asked for as the next sibling
-  of a label; `role`, `states` (with multi-line from
-  an edit control's window style), `invisible`, `name`, `value`, and
+  of a label; `role`, `states` (mapped as every MSAA read maps them, by
+  the one function that also gives an edit control's client area
+  multi-line from its window style), `invisible` (the invisible state,
+  which a hidden window passed over carries too), `name`, `value`, and
   `description` each read their property the first time they are asked,
   and the first three keep it, since the gathering looks at a child's
-  neighbors too.
+  neighbors too. Its text keeps any bidirectional marks, which NVDA strips
+  only from the clock, File Explorer and list views. The name, value and
+  description rules of an object read alone, as an event's object or an
+  equality check reads it, are those of a full read: one copy of each.
 - `edit` (milestone M4) — the standard Win32 edit and rich edit controls'
   text through their window messages, ported from NVDA's `EditTextInfo`
   (this crate is GPL like NVDA). `edit_api_version(normalized_class)`
@@ -469,9 +453,10 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   `GetForegroundWindow`), and delivered on its client object, as every
   window object's event but a destruction is (`object_of`). A
   `Nudger` hands the thread two words between events (`nudge`), which is
-  how an outpost unhooks some kinds and hooks them again, and waits for it
-  to catch up (`sync`): every nudge sent and, once the hooks are in, every
-  `WinEvent` raised before it, through `SyncMarker`.
+  how the listener unhooks some kinds and hooks them again, and, with the
+  `sync-marker` feature, waits for it to catch up (`sync`): every nudge
+  sent and, once the hooks are in, every `WinEvent` raised before it,
+  through `SyncMarker`.
 - The window functions the client calls by handle (`window_exists`,
   `window_class_name`, `parent`, `style` and the rest) are
   `verbatim_win32::window`'s
@@ -479,7 +464,10 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   re-exports beside the list view and tree view messages it sends.
 - `map` — `role_from_msaa` and `states_from_msaa`, the tables from
   MSAA constants to the normalized vocabulary, following NVDA's MSAA
-  role and state tables (so `STATE_SYSTEM_DEFAULT` is dropped and
+  role and state tables (`role_from_msaa` takes the role as `accRole`
+  answered it, a role not read being unknown; MSAA's caret and cursor
+  are `Role::Caret` and `Role::Cursor`, as NVDA maps them, Dickson,
+  2026-11-21; `STATE_SYSTEM_DEFAULT` is dropped and
   `STATE_SYSTEM_PROTECTED` kept, traversed is visited, and linked is
   linked), and `adjust_role_and_states`, NVDA's adjustment once mapped
   (a half-checked progress bar is a busy indicator), pinned by unit tests against raw state
@@ -588,9 +576,11 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   address, an `MsaaKey` (window handle, object id, and child id, the
   child id `CHILDID_SELF`, zero, for the object itself; `id_for(key)`
   mints or finds a node, `key_of(node)` gives its address back, and a
-  `FocusCandidate`'s `key()` is the address its focus is at), the role read when it
-  was issued, and the accessible object it was read from, kept as an agile
-  reference; it shares the outpost-wide counter with the UIA registry. It
+  `FocusCandidate`'s `key()` is the address its focus is at), and what
+  it was issued from: local window data, with no object, role or facts,
+  or an accessible object read, with the role read then, what NVDA's
+  equality compares of it, and the object, kept as an agile reference;
+  a node of local window data is never compared. It shares the outpost-wide counter with the UIA registry. It
   only stores and looks up, and never makes a COM call under its lock;
   `acquire` makes the comparisons. `retain` releases the nodes the outpost
   no longer needs, returning their objects as `Released` (dropped after the lock is released, since

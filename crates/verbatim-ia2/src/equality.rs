@@ -186,11 +186,7 @@ pub(crate) fn equal_candidate(
             if theirs.name != mine.name {
                 let live_name = reads.name.get_or_insert_with(|| {
                     object.resolve().ok().and_then(|object| {
-                        name(
-                            &Accessible::new(object, *kept_child),
-                            kept.key,
-                            kept.role.unwrap_or(Role::Unknown),
-                        )
+                        name(&Accessible::new(object, *kept_child), kept.key, kept.role)
                     })
                 });
                 if *live_name != mine.name {

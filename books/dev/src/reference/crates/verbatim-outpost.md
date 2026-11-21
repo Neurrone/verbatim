@@ -301,7 +301,9 @@ the same tables and code, which the arbitrator's own lists are built from.
   in flight, everything queued before it handled and a noted caret read,
   then, on the caller's thread, until the subscription has made every move
   asked (`Registration::settle`), every published message is written
-  (`Outbound::flush`), and the event thread has taken every nudge. The
+  (`Outbound::flush`), and, with the `sync-marker` feature, which only
+  mockapp's tests turn on, the event thread has taken every nudge and
+  every `WinEvent` raised before it. The
   reducer answers it as it is reached (`Effect::Settled`), waiting for no
   open caret watch or held copies of the hook's, as
   Core's round does; it divides batches as the round does, and waits for

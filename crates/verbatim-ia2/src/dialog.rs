@@ -25,17 +25,9 @@ use verbatim_model::{NodeId, Role, State, StateSet};
 
 use crate::accessible::{Accessible, Related};
 use crate::com::{CHILDID_SELF, non_empty, visible_text};
-use crate::map::{STATE_SYSTEM_INVISIBLE, role_from_msaa, states_from_msaa};
+use crate::map::role_from_msaa;
 use crate::registry::Interning;
 use crate::window;
-
-/// The states of an object: the model's, and whether it is invisible, which
-/// the model has no state for.
-#[derive(Clone, Copy)]
-struct Seen {
-    states: StateSet,
-    invisible: bool,
-}
 
 /// One object a dialog's text may be gathered from: the dialog itself or a
 /// descendant, with what has been read of it so far.
@@ -52,7 +44,7 @@ pub struct DialogObject {
     /// whether an edit control is multi-line.
     client: bool,
     role: OnceCell<Role>,
-    seen: OnceCell<Seen>,
+    states: OnceCell<StateSet>,
     name: OnceCell<Option<String>>,
 }
 
@@ -66,7 +58,7 @@ impl DialogObject {
             hwnd,
             client: true,
             role: OnceCell::new(),
-            seen: OnceCell::new(),
+            states: OnceCell::new(),
             name: OnceCell::new(),
         }
     }
@@ -157,60 +149,42 @@ impl DialogObject {
                 if disabled {
                     states.insert(State::Disabled);
                 }
-                let _ = child.seen.set(Seen {
-                    states,
-                    invisible: hidden,
-                });
+                if hidden {
+                    states.insert(State::Invisible);
+                }
+                let _ = child.states.set(states);
             }
             return child;
         }
         let child = Self::new(acc, self.hwnd, false);
-        let _ = child
-            .role
-            .set(raw_role.map_or(Role::Unknown, |role| role_from_msaa(role.cast_unsigned())));
+        let _ = child.role.set(role_from_msaa(raw_role));
         child
     }
 
     /// The object's role (`accRole`), unknown when it cannot be read.
     #[must_use]
     pub fn role(&self) -> Role {
-        *self.role.get_or_init(|| {
-            self.acc()
-                .role()
-                .map_or(Role::Unknown, |role| role_from_msaa(role.cast_unsigned()))
-        })
+        *self.role.get_or_init(|| role_from_msaa(self.acc().role()))
     }
 
-    /// The object's states and visibility, read once (`accState`).
-    fn seen(&self) -> Seen {
-        *self.seen.get_or_init(|| {
-            let raw = self.acc().state().map_or(0, i32::cast_unsigned);
-            let mut states = states_from_msaa(raw);
-            // An edit control says whether it is multi-line by its window
-            // style, as NVDA's edit control class reads it.
-            if self.client
-                && self.role() == Role::EditableText
-                && window::is_multiline_edit(self.hwnd)
-            {
-                states.insert(State::Multiline);
-            }
-            Seen {
-                states,
-                invisible: raw & STATE_SYSTEM_INVISIBLE != 0,
-            }
-        })
-    }
-
-    /// The object's states (`accState`).
+    /// The object's states (`accState`), read once and mapped as every
+    /// MSAA read maps them ([`crate::acquire::role_and_states`]): an edit
+    /// control's client area says whether it is multi-line by its window
+    /// style, as NVDA's edit control class reads it.
     #[must_use]
     pub fn states(&self) -> StateSet {
-        self.seen().states
+        *self.states.get_or_init(|| {
+            let acc = self.acc();
+            let object = if self.client { OBJID_CLIENT.0 } else { 0 };
+            let key = (self.hwnd, object, acc.child());
+            crate::acquire::role_and_states(acc, key, self.role(), acc.state()).1
+        })
     }
 
     /// Whether the object is invisible (`accState`).
     #[must_use]
     pub fn invisible(&self) -> bool {
-        self.seen().invisible
+        self.states().contains(State::Invisible)
     }
 
     /// The object's name (`accName`), `None` when it is empty or blank.

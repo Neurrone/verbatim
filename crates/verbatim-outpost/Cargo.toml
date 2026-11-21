@@ -35,6 +35,9 @@ verbatim-test-console.workspace = true
 # caret watch's end, for mockapp's `failure_paths`, `shutdown` and
 # `terminal_reading` tests; only `cargo xtask faults` turns it on.
 faults = ["dep:verbatim-faults"]
+# The event thread's sync markers, which `Outpost::settle` waits on, for
+# mockapp's tests; no product build has it.
+sync-marker = ["verbatim-ia2/sync-marker"]
 
 [lints]
 workspace = true

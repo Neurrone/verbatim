@@ -215,6 +215,8 @@ role-sound = sound
 role-tree-view-button = tree view button
 role-drop-down-button-grid = drop down button grid
 role-help-balloon = help balloon
+role-caret = caret
+role-cursor = cursor
 role-busy-indicator = busy indicator
 role-unknown = unknown
 

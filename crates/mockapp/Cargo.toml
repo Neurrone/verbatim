@@ -27,7 +27,7 @@ verbatim-core.workspace = true
 verbatim-ia2.workspace = true
 verbatim-listener.workspace = true
 verbatim-listener-logic.workspace = true
-verbatim-outpost.workspace = true
+verbatim-outpost = { workspace = true, features = ["sync-marker"] }
 verbatim-reader-rules.workspace = true
 verbatim-uia.workspace = true
 verbatim-uia-rops.workspace = true

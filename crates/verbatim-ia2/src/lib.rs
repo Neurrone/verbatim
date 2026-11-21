@@ -1,7 +1,8 @@
 //! MSAA/IA2 client stack (architecture section 4).
 //!
-//! `WinEvent`s arrive via out-of-context hooks scoped to the outpost's target
-//! process; from the `IAccessible` an event names, the outpost's worker reads
+//! `WinEvent`s arrive via out-of-context hooks, the focus listener's
+//! desktop-wide and the console host's outpost's scoped to its process;
+//! from the `IAccessible` an event names, the outpost's worker reads
 //! name/role/value/state and maps into the normalized model. Every property is
 //! a cross-process COM round trip, so all acquisition runs on the outpost's
 //! deadline-guarded worker (risk R1). The `IAccessible2` interfaces (text,
@@ -12,8 +13,8 @@
 //!
 //! - [`WinEventHook`] — the out-of-context hooks, installed on an event thread
 //!   and delivered through its message loop, for a caller-chosen set of event
-//!   kinds ([`APP_SUBSCRIPTIONS`] for a per-app outpost, or
-//!   [`LISTENER_SUBSCRIPTIONS`] globally for the focus listener, decision D13).
+//!   kinds ([`LISTENER_SUBSCRIPTIONS`] globally for the focus listener, or
+//!   [`CONSOLE_SUBSCRIPTIONS`] for the console host's outpost).
 //! - [`acquire`] — acquisition and mapping on the worker, including the
 //!   focus-now read.
 //! - [`NodeIdRegistry`] — [`NodeId`](verbatim_model::NodeId)s for MSAA
@@ -66,10 +67,11 @@ mod window;
 
 pub use com::CHILDID_SELF;
 pub use hook::{
-    APP_SUBSCRIPTIONS, CONSOLE_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker,
-    SyncMarkerCallback, WinEvent, WinEventCallback, WinEventHook, WinEventKind, WindowCache,
-    event_clock, is_shell_foreground_class, suspend_kinds, tell_kind,
+    CONSOLE_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventHook,
+    WinEventKind, event_clock, is_shell_foreground_class, suspend_kinds, tell_kind,
 };
+#[cfg(feature = "sync-marker")]
+pub use hook::{SyncMarker, SyncMarkerCallback};
 pub use registry::{
     Facts, Found, Held, Interning, Kept, KeptObject, MsaaKey, NodeIdRegistry, Released,
 };

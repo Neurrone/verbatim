@@ -172,6 +172,11 @@ pub enum Role {
     /// A help balloon, a tooltip that explains something (MSAA
     /// `ROLE_SYSTEM_HELPBALLOON`).
     HelpBalloon,
+    /// The system caret, the text insertion point, as an object (MSAA
+    /// `ROLE_SYSTEM_CARET`).
+    Caret,
+    /// The mouse pointer, as an object (MSAA `ROLE_SYSTEM_CURSOR`).
+    Cursor,
     /// A progress bar that shows activity but not how far it has got, as
     /// NVDA calls a half-checked progress bar.
     BusyIndicator,
@@ -183,7 +188,7 @@ impl Role {
     /// Every role, in declaration order: the roles of the indication
     /// catalogue (`crate::Indication`). A role added to the enum is added
     /// here too.
-    pub const ALL: [Role; 71] = [
+    pub const ALL: [Role; 73] = [
         Role::Window,
         Role::Dialog,
         Role::Pane,
@@ -253,6 +258,8 @@ impl Role {
         Role::TreeViewButton,
         Role::DropDownButtonGrid,
         Role::HelpBalloon,
+        Role::Caret,
+        Role::Cursor,
         Role::BusyIndicator,
         Role::Unknown,
     ];

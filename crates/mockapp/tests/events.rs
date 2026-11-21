@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Instant;
 
-use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
+use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
     Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, ListenerSelection, Part,
@@ -633,14 +633,36 @@ fn uia_one_group_delivers_each_of_its_subscriptions() {
 /// A `WinEvent` as the hook reports it: kind, window, object, and child.
 type SeenWinEvent = (WinEventKind, isize, i32, i32);
 
-/// A hook on mockapp's process for the events an outpost hooks, sending
-/// each event it hears. The events come through this thread's message
-/// queue, which [`pump_until`] pumps.
+/// The kinds the tests' hook hears: an application's own focus, foreground,
+/// menu, alert, tooltip, property, selection, destruction, caret and text
+/// selection events.
+const HEARD: &[WinEventKind] = &[
+    WinEventKind::Focus,
+    WinEventKind::Foreground,
+    WinEventKind::MenuPopupStart,
+    WinEventKind::Alert,
+    WinEventKind::Show,
+    WinEventKind::ValueChange,
+    WinEventKind::StateChange,
+    WinEventKind::SelectionAdd,
+    WinEventKind::SelectionRemove,
+    WinEventKind::SelectionWithin,
+    WinEventKind::NameChange,
+    WinEventKind::DescriptionChange,
+    WinEventKind::Selection,
+    WinEventKind::Destroy,
+    WinEventKind::Caret,
+    WinEventKind::TextSelectionChange,
+];
+
+/// A hook on mockapp's process for the [`HEARD`] events, sending each
+/// event it hears. The events come through this thread's message queue,
+/// which [`pump_until`] pumps.
 fn hook(pid: u32) -> (WinEventHook, Receiver<SeenWinEvent>) {
     let (sender, events) = mpsc::channel();
     let hook = WinEventHook::install(
         pid,
-        APP_SUBSCRIPTIONS,
+        HEARD,
         Box::new(move |event: WinEvent, _class: Option<&str>| {
             let _ = sender.send((event.kind, event.hwnd, event.id_object, event.id_child));
         }),

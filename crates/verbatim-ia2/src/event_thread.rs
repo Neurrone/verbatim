@@ -1,21 +1,24 @@
 //! The thread that installs MSAA `WinEvent` hooks and pumps messages so their
-//! out-of-context callbacks are delivered. Both a per-application outpost and
-//! the focus listener (decision D13) use it, differing only in their pid and
+//! out-of-context callbacks are delivered. Both the console host's outpost
+//! and the focus listener use it, differing only in their pid and
 //! subscription set. The thread starts with no hook, and installs its one
 //! set when its owner asks ([`EventThread::hook`]): a spare outpost starts
 //! it before it has an application (`books/dev/src/reference/adr/0001-focus.md`, "Spare
 //! outposts"). Its owner can also nudge it ([`Nudger`]): a message the
 //! thread hands to the owner's nudge handler between events, on the thread
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
-//! and hooks them again while it runs. And it can wait for the thread to
-//! catch up ([`Nudger::sync`]): for every nudge sent and, once the hooks
-//! are in, every `WinEvent` raised before it. Its owner's handlers may set
+//! and hooks them again while it runs. And, with the `sync-marker` feature,
+//! which only tests turn on, it can wait for the thread to catch up
+//! (`Nudger::sync`): for every nudge sent and, once the hooks are in, every
+//! `WinEvent` raised before it. Its owner's handlers may set
 //! one timer of the thread's own ([`ThreadTimer`]), whose `WM_TIMER` the
 //! thread hands to the owner's timer handler, as the focus listener's
 //! foreground hold ends.
 
 use std::cell::Cell;
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(feature = "sync-marker")]
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -27,7 +30,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetTimer, TranslateMessage, WM_APP, WM_QUIT, WM_TIMER,
 };
 
-use crate::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
+#[cfg(feature = "sync-marker")]
+use crate::SyncMarker;
+use crate::{WinEventCallback, WinEventHook, WinEventKind};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The thread message that carries a nudge's two words to the nudge
@@ -36,6 +41,7 @@ const WM_NUDGE: u32 = WM_APP;
 /// The thread message that marks every message posted before it handled
 /// ([`Nudger::sync`]), its ticket in its first word. It shows nothing
 /// about `WinEvent`s, which a posted message can overtake.
+#[cfg(feature = "sync-marker")]
 const WM_SYNC: u32 = WM_APP + 1;
 /// The thread message that installs the hooks ([`EventThread::hook`]), the
 /// process id they are scoped to in its first word.
@@ -107,8 +113,8 @@ pub const EVENT_THREAD_PRIORITY: ThreadPriority = ThreadPriority::Highest;
 /// The event thread: pumps messages so the out-of-context callbacks of its
 /// MSAA hooks are delivered, and installs the requested hooks once, when
 /// asked ([`EventThread::hook`]), scoped to the given pid, or global for pid
-/// zero. Both a per-application outpost and the focus listener (decision
-/// D13) use it, differing only in their pid and subscription set.
+/// zero. Both the console host's outpost and the focus listener use it,
+/// differing only in their pid and subscription set.
 pub struct EventThread {
     nudger: Nudger,
     join: Option<JoinHandle<()>>,
@@ -124,9 +130,12 @@ impl EventThread {
     pub fn spawn(kinds: &'static [WinEventKind], make_handlers: MakeHandlers) -> Self {
         let (id_tx, id_rx) = unbounded::<u32>();
         let (hooked_tx, hooked) = unbounded();
-        let synced = Arc::new(Synced::default());
-        let tickets = Arc::new(Mutex::new(Tickets::default()));
-        let thread_syncs = (Arc::clone(&synced), Arc::clone(&tickets));
+        #[cfg(feature = "sync-marker")]
+        let thread_syncs = Syncs::default();
+        #[cfg(not(feature = "sync-marker"))]
+        let thread_syncs = Syncs;
+        #[cfg(feature = "sync-marker")]
+        let syncs = thread_syncs.clone();
         let join = thread::Builder::new()
             .name("verbatim-event".to_owned())
             .spawn(move || {
@@ -137,8 +146,8 @@ impl EventThread {
         Self {
             nudger: Nudger {
                 thread_id,
-                synced,
-                tickets,
+                #[cfg(feature = "sync-marker")]
+                syncs,
                 hooked,
             },
             join: Some(join),
@@ -166,13 +175,30 @@ impl EventThread {
 #[derive(Clone)]
 pub struct Nudger {
     thread_id: u32,
-    synced: Arc<Synced>,
-    tickets: Arc<Mutex<Tickets>>,
+    /// What the syncs share with the thread.
+    #[cfg(feature = "sync-marker")]
+    syncs: Syncs,
     /// The outcome of installing the hooks, sent by the thread.
     hooked: Receiver<Result<(), String>>,
 }
 
+/// What [`Nudger::sync`] shares with the event thread.
+#[cfg(feature = "sync-marker")]
+#[derive(Clone, Default)]
+struct Syncs {
+    /// How far the thread has come through the syncs.
+    synced: Arc<Synced>,
+    /// The tickets handed out.
+    tickets: Arc<Mutex<Tickets>>,
+}
+
+/// Nothing: without the `sync-marker` feature there are no syncs.
+#[cfg(not(feature = "sync-marker"))]
+#[derive(Clone, Default)]
+struct Syncs;
+
 /// The syncs handed out ([`Nudger::sync`]).
+#[cfg(feature = "sync-marker")]
 #[derive(Default)]
 struct Tickets {
     /// The last ticket handed out.
@@ -187,6 +213,7 @@ struct Tickets {
 /// How far the event thread has come through the syncs: the last ticket
 /// whose message it has handled, and the last whose marker has reached
 /// it, both `u64::MAX` once it has ended.
+#[cfg(feature = "sync-marker")]
 #[derive(Default)]
 struct Synced {
     reached: Mutex<Reached>,
@@ -194,12 +221,14 @@ struct Synced {
 }
 
 /// The tickets [`Synced`] keeps.
+#[cfg(feature = "sync-marker")]
 #[derive(Default)]
 struct Reached {
     posted: u64,
     marked: u64,
 }
 
+#[cfg(feature = "sync-marker")]
 impl Reached {
     /// Whether the sync with `ticket` may return: the thread has handled
     /// its message and, when the sync raised a marker (`marked`), the
@@ -211,6 +240,7 @@ impl Reached {
     }
 }
 
+#[cfg(feature = "sync-marker")]
 impl Synced {
     /// The thread has handled the message of the sync with `ticket`.
     fn reach(&self, ticket: u64) {
@@ -254,7 +284,8 @@ impl Nudger {
     /// returns once they are in, so a caller that reports itself ready
     /// after it really sees the events from then on. A thread has one set
     /// of hooks for its whole life (decision D9), which includes the hook
-    /// for this process's sync markers ([`Nudger::sync`]).
+    /// for this process's sync markers with the `sync-marker` feature
+    /// (`Nudger::sync`).
     ///
     /// # Errors
     ///
@@ -297,9 +328,11 @@ impl Nudger {
     /// hook set hears (`crate::SyncMarker`), and waits for it too:
     /// a `WinEvent` arrives behind every one raised before it. This costs
     /// one `NotifyWinEvent` and up to one more wake of the thread.
+    #[cfg(feature = "sync-marker")]
     pub fn sync(&self) {
+        let Syncs { synced, tickets } = &self.syncs;
         let (ticket, marker) = {
-            let mut tickets = self.tickets.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut tickets = tickets.lock().unwrap_or_else(PoisonError::into_inner);
             tickets.last += 1;
             (tickets.last, tickets.marker)
         };
@@ -314,7 +347,7 @@ impl Nudger {
         if let Some(marker) = marker {
             marker.raise(ticket);
         }
-        self.synced.wait(ticket, marker.is_some());
+        synced.wait(ticket, marker.is_some());
     }
 }
 
@@ -343,7 +376,7 @@ fn event_thread_main(
     kinds: &'static [WinEventKind],
     (id_tx, hooked_tx): (&Sender<u32>, &Sender<Result<(), String>>),
     make_handlers: &MakeHandlers,
-    (synced, tickets): &(Arc<Synced>, Arc<Mutex<Tickets>>),
+    syncs: &Syncs,
 ) {
     prioritize_role("WinEvent", EVENT_THREAD_PRIORITY);
     // SAFETY: GetCurrentThreadId is always sound.
@@ -378,8 +411,9 @@ fn event_thread_main(
                     }
                     continue;
                 }
+                #[cfg(feature = "sync-marker")]
                 WM_SYNC => {
-                    synced.reach(message.wParam.0 as u64);
+                    syncs.synced.reach(message.wParam.0 as u64);
                     continue;
                 }
                 WM_TIMER => {
@@ -402,24 +436,9 @@ fn event_thread_main(
                     // focus listener hooks and unhooks the console's
                     // events.
                     let target_pid = u32::try_from(message.wParam.0).unwrap_or(0);
-                    // The sync markers' hook is one more hook of the set.
                     let outcome = match win_event.take() {
-                        Some(callback) => {
-                            let marked = Arc::clone(synced);
-                            WinEventHook::install_with_sync_marker(
-                                target_pid,
-                                kinds,
-                                callback,
-                                Box::new(move |ticket| marked.mark(ticket)),
-                            )
-                            .map(|(installed, marker)| {
-                                hook = Some(installed);
-                                tickets
-                                    .lock()
-                                    .unwrap_or_else(PoisonError::into_inner)
-                                    .marker = Some(marker);
-                            })
-                        }
+                        Some(callback) => install(target_pid, kinds, callback, syncs)
+                            .map(|installed| hook = Some(installed)),
                         None => Err("this thread already has its WinEvent hooks".to_owned()),
                     };
                     let _ = hooked_tx.send(outcome);
@@ -433,25 +452,73 @@ fn event_thread_main(
         // SAFETY: dispatching a fully owned message.
         unsafe { DispatchMessageW(&raw const message) };
     }
-    // No sync raises a marker once the hooks are going.
+    ending(hook, syncs);
+}
+
+/// Installs the thread's hooks, scoped to `target_pid`, with the hook for
+/// this process's sync markers as one more of the set.
+#[cfg(feature = "sync-marker")]
+fn install(
+    target_pid: u32,
+    kinds: &[WinEventKind],
+    callback: WinEventCallback,
+    Syncs { synced, tickets }: &Syncs,
+) -> Result<WinEventHook, String> {
+    let reached = Arc::clone(synced);
+    let (installed, marker) = WinEventHook::install_with_sync_marker(
+        target_pid,
+        kinds,
+        callback,
+        Box::new(move |ticket| reached.mark(ticket)),
+    )?;
+    tickets
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .marker = Some(marker);
+    Ok(installed)
+}
+
+/// Installs the thread's hooks, scoped to `target_pid`.
+#[cfg(not(feature = "sync-marker"))]
+fn install(
+    target_pid: u32,
+    kinds: &[WinEventKind],
+    callback: WinEventCallback,
+    Syncs: &Syncs,
+) -> Result<WinEventHook, String> {
+    WinEventHook::install(target_pid, kinds, callback)
+}
+
+/// Removes the thread's hooks as it ends: no sync raises a marker once
+/// they are going, and none waits on the thread.
+#[cfg(feature = "sync-marker")]
+fn ending(hook: Option<WinEventHook>, Syncs { synced, tickets }: &Syncs) {
     tickets
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .marker = None;
     drop(hook);
-    // No sync waits on a thread that has ended.
     synced.end();
+}
+
+/// Removes the thread's hooks as it ends.
+#[cfg(not(feature = "sync-marker"))]
+fn ending(hook: Option<WinEventHook>, Syncs: &Syncs) {
+    drop(hook);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+    #[cfg(feature = "sync-marker")]
     use windows::Win32::UI::Accessibility::NotifyWinEvent;
+    #[cfg(feature = "sync-marker")]
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_VALUECHANGE,
         OBJID_CLIENT, WINDOW_EX_STYLE, WS_OVERLAPPED,
     };
+    #[cfg(feature = "sync-marker")]
     use windows::core::w;
 
     /// The kinds the test's event thread hooks.
@@ -466,6 +533,7 @@ mod tests {
     /// again: a change of its hooks while it runs, as an outpost makes
     /// them. Each event the calling thread raised is sent on `events` as
     /// it is delivered, and the outcome of each change on `changes`.
+    #[cfg(feature = "sync-marker")]
     fn event_thread(
         events: Sender<WinEventKind>,
         changes: Sender<Result<(), String>>,
@@ -503,6 +571,7 @@ mod tests {
 
     /// A hidden static control of this thread's, with no parent, to raise
     /// events from; the caller destroys it on the same thread.
+    #[cfg(feature = "sync-marker")]
     fn window() -> windows::Win32::Foundation::HWND {
         // SAFETY: a window with no parent, made on this thread.
         unsafe {
@@ -529,6 +598,7 @@ mod tests {
     /// event reaches the thread: the sync waits for its marker too, which
     /// arrives behind the event. A check behind a sync relies on this to
     /// see every event the application raised before it.
+    #[cfg(feature = "sync-marker")]
     #[test]
     fn an_event_raised_before_a_sync_is_delivered_before_it_returns() {
         let (events_tx, events) = unbounded();
@@ -568,9 +638,11 @@ mod tests {
     }
 
     /// The last ticket whose marker has reached `thread`.
+    #[cfg(feature = "sync-marker")]
     fn marked(thread: &EventThread) -> u64 {
         thread
             .nudger
+            .syncs
             .synced
             .reached
             .lock()
@@ -581,6 +653,7 @@ mod tests {
     /// Once the hooks are in, a sync returns only when its own marker has
     /// reached the thread: each sync leaves the thread's marked ticket at
     /// its own.
+    #[cfg(feature = "sync-marker")]
     #[test]
     fn a_sync_returns_once_its_marker_has_reached_the_thread() {
         let (events_tx, _events) = unbounded();
@@ -597,6 +670,7 @@ mod tests {
     /// its marker hook hears the whole process: another event thread's
     /// sync leaves this thread's marked ticket alone. The value change is
     /// raised after the other thread's marker, so it arrives behind it.
+    #[cfg(feature = "sync-marker")]
     #[test]
     fn a_sync_of_another_event_thread_marks_nothing_here() {
         let (events_tx, events) = unbounded();
@@ -620,6 +694,7 @@ mod tests {
     /// A sync that raised a marker may not return once its thread message
     /// is handled, until its marker has reached the thread too; one that
     /// raised none returns on its message.
+    #[cfg(feature = "sync-marker")]
     #[test]
     fn a_sync_that_raised_a_marker_waits_for_the_marker_as_well() {
         let synced = Synced::default();
@@ -631,6 +706,7 @@ mod tests {
         assert!(passed(true));
     }
 
+    #[cfg(feature = "sync-marker")]
     #[test]
     fn kinds_are_unhooked_and_hooked_again_while_the_thread_runs() {
         let (events_tx, events) = unbounded();

@@ -53,17 +53,43 @@ pub struct Held {
 
 struct Node {
     key: MsaaKey,
-    held: Option<Held>,
-    /// The role read when the node was issued; `None` for a node issued from
-    /// local window data.
-    role: Option<Role>,
     /// Whether the object was acquired at `key`, so the address identifies
     /// it (module doc).
     at_address: bool,
-    /// What NVDA's equality compares of the node as it was read
-    /// ([`Facts`]); `None` for a node issued from local window data, which
-    /// is never compared.
-    facts: Option<Facts>,
+    /// What the node was issued from.
+    issued: Issued,
+}
+
+/// What a node was issued from, with what is known of it there.
+enum Issued {
+    /// Local window data: no object, role or facts, so the node is never
+    /// compared.
+    Window,
+    /// An accessible object read.
+    Object {
+        /// The object, when it is kept.
+        held: Option<Held>,
+        /// The role read when the node was issued.
+        role: Role,
+        /// What NVDA's equality compares of the node as it was read
+        /// ([`Facts`]).
+        facts: Facts,
+    },
+}
+
+impl Node {
+    /// The kept object, if there is one.
+    fn held(&self) -> Option<&Held> {
+        match &self.issued {
+            Issued::Window => None,
+            Issued::Object { held, .. } => held.as_ref(),
+        }
+    }
+
+    /// The kept object as a caller holds it, if there is one.
+    fn kept_object(&self) -> Option<KeptObject> {
+        self.held().map(|held| (held.object.clone(), held.child))
+    }
 }
 
 /// What NVDA's `IAccessible._isEqual` compares of an MSAA object, as the
@@ -94,7 +120,7 @@ pub struct Facts {
 pub struct Kept {
     pub(crate) key: MsaaKey,
     pub(crate) object: Option<KeptObject>,
-    pub(crate) role: Option<Role>,
+    pub(crate) role: Role,
     pub(crate) facts: Facts,
 }
 
@@ -235,7 +261,7 @@ impl NodeIdRegistry {
         if let Some(&id) = inner.by_key.get(&key) {
             return id;
         }
-        self.insert_locked(&mut inner, key, None, (None, None), true)
+        self.insert_locked(&mut inner, key, Issued::Window, true)
     }
 
     /// Looks up a new sighting of `key`: first a kept node that was the same
@@ -256,11 +282,7 @@ impl NodeIdRegistry {
             && let Some(node) = inner.nodes.get(&id)
             && node.key.0 == key.0
         {
-            let held = node
-                .held
-                .as_ref()
-                .map(|held| (held.object.clone(), held.child));
-            return Found::Object(id, held);
+            return Found::Object(id, node.kept_object());
         }
         if !at_address {
             return Found::Nothing;
@@ -269,11 +291,11 @@ impl NodeIdRegistry {
             return Found::Nothing;
         };
         let node = &inner.nodes[&id];
-        let held = node
-            .held
-            .as_ref()
-            .map(|held| (held.object.clone(), held.child));
-        Found::Key(id, held, node.role)
+        let role = match &node.issued {
+            Issued::Window => None,
+            Issued::Object { role, .. } => Some(*role),
+        };
+        Found::Key(id, node.kept_object(), role)
     }
 
     /// Whether `node` is kept.
@@ -294,7 +316,12 @@ impl NodeIdRegistry {
         at_address: bool,
     ) -> NodeId {
         let mut inner = self.lock();
-        self.insert_locked(&mut inner, key, held, (Some(role), Some(facts)), at_address)
+        self.insert_locked(
+            &mut inner,
+            key,
+            Issued::Object { held, role, facts },
+            at_address,
+        )
     }
 
     /// The kept node `id` as a new sighting is compared with it: its
@@ -304,14 +331,14 @@ impl NodeIdRegistry {
     pub fn facts_of(&self, id: NodeId) -> Option<Kept> {
         let inner = self.lock();
         let node = inner.nodes.get(&id)?;
+        let Issued::Object { role, facts, .. } = &node.issued else {
+            return None;
+        };
         Some(Kept {
             key: node.key,
-            object: node
-                .held
-                .as_ref()
-                .map(|held| (held.object.clone(), held.child)),
-            role: node.role,
-            facts: node.facts.clone()?,
+            object: node.kept_object(),
+            role: *role,
+            facts: facts.clone(),
         })
     }
 
@@ -319,11 +346,10 @@ impl NodeIdRegistry {
     /// object, address and event parameters, as NVDA keeps its old objects
     /// through the meeting point, and takes the sighting's name.
     pub fn reissue(&self, id: NodeId, name: Option<String>) {
-        if let Some(facts) = self
-            .lock()
-            .nodes
-            .get_mut(&id)
-            .and_then(|node| node.facts.as_mut())
+        if let Some(Node {
+            issued: Issued::Object { facts, .. },
+            ..
+        }) = self.lock().nodes.get_mut(&id)
         {
             facts.name = name;
         }
@@ -333,27 +359,22 @@ impl NodeIdRegistry {
         &self,
         inner: &mut Inner,
         key: MsaaKey,
-        held: Option<Held>,
-        (role, facts): (Option<Role>, Option<Facts>),
+        issued: Issued,
         at_address: bool,
     ) -> NodeId {
         let id = NodeId::new(self.counter.fetch_add(1, Ordering::Relaxed));
-        if let Some(held) = &held {
+        let node = Node {
+            key,
+            at_address,
+            issued,
+        };
+        if let Some(held) = node.held() {
             inner.by_object.insert((held.identity, held.child), id);
         }
         if at_address {
             inner.by_key.insert(key, id);
         }
-        inner.nodes.insert(
-            id,
-            Node {
-                key,
-                held,
-                role,
-                at_address,
-                facts,
-            },
-        );
+        inner.nodes.insert(id, node);
         id
     }
 
@@ -369,13 +390,7 @@ impl NodeIdRegistry {
     pub fn locate(&self, node: NodeId) -> Option<(MsaaKey, Option<KeptObject>, bool)> {
         let inner = self.lock();
         let node = inner.nodes.get(&node)?;
-        Some((
-            node.key,
-            node.held
-                .as_ref()
-                .map(|held| (held.object.clone(), held.child)),
-            node.at_address,
-        ))
+        Some((node.key, node.kept_object(), node.at_address))
     }
 
     /// Every kept node.
@@ -425,7 +440,7 @@ fn remove(inner: &mut Inner, gone: &[NodeId]) -> Vec<Node> {
             if inner.by_key.get(&node.key) == Some(id) {
                 inner.by_key.remove(&node.key);
             }
-            if let Some(held) = &node.held
+            if let Some(held) = node.held()
                 && inner.by_object.get(&(held.identity, held.child)) == Some(id)
             {
                 inner.by_object.remove(&(held.identity, held.child));

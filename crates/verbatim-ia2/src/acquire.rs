@@ -293,7 +293,7 @@ impl EventObject {
     pub fn role(&mut self) -> Role {
         let role = self.role.or_read(|| self.acc.role());
         self.role = Prefetched::Read(role);
-        role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
+        role_from_msaa(role)
     }
 
     /// The object's name, read alone, as a full read of an object of
@@ -304,27 +304,7 @@ impl EventObject {
     /// chose for its object when it made it does.
     #[must_use]
     pub fn name(&self, role: Role, registry: &dyn Interning) -> Option<String> {
-        let details = registry.details();
-        let columns = is_list_view_item(&self.acc, self.key, role)
-            .then(|| {
-                crate::list_view::column_name(self.key.0, self.acc.child(), || {
-                    details
-                        .contains(NodeDetail::Description)
-                        .then(|| non_empty(self.acc.description()))
-                        .flatten()
-                })
-                .ok()
-                .flatten()
-            })
-            .flatten();
-        let mut name = columns.or_else(|| {
-            visible_text(self.acc.name())
-                .filter(|_| role != Role::EditableText || !in_labelled_combo_box(&self.acc))
-        });
-        if let Some(name) = &mut name {
-            verbatim_text::strip_bidi_controls(name);
-        }
-        name
+        live_name(&self.acc, self.key, role, registry)
     }
 
     /// The object's description, read alone, as a full read of an object of
@@ -333,12 +313,9 @@ impl EventObject {
     /// formatting characters stripped.
     #[must_use]
     pub fn description(&self, role: Role, registry: &dyn Interning) -> Option<String> {
-        if !registry.details().contains(NodeDetail::Description)
-            || is_list_view_item(&self.acc, self.key, role)
-        {
-            return None;
-        }
-        let mut description = non_empty(self.acc.description());
+        let mut description = (!is_list_view_item(&self.acc, self.key, role))
+            .then(|| description_read(&self.acc, registry))
+            .flatten();
         if let Some(description) = &mut description {
             verbatim_text::strip_bidi_controls(description);
         }
@@ -357,14 +334,7 @@ impl EventObject {
     /// reported, a `SysTreeView32` item or a list view item.
     #[must_use]
     pub fn value(&self, role: Role) -> Option<String> {
-        let reported = match role {
-            Role::TreeItem => !is_systreeview32(self.key.0),
-            Role::ListItem => !is_list_view_item(&self.acc, self.key, role),
-            _ => true,
-        };
-        let mut value = reported
-            .then(|| value_for(&self.acc, self.key, role, visible_text(self.acc.value())))
-            .flatten();
+        let mut value = value_for(&self.acc, self.key, role, || visible_text(self.acc.value()));
         if let Some(value) = &mut value {
             verbatim_text::strip_bidi_controls(value);
         }
@@ -510,7 +480,7 @@ impl FocusCandidate {
     pub fn role(&mut self) -> Option<verbatim_model::Role> {
         let role = self.role.or_read(|| self.acc.role());
         self.role = Prefetched::Read(role);
-        role.map(|role| role_from_msaa(role.cast_unsigned()))
+        role.map(|role| role_from_msaa(Some(role)))
     }
 
     /// The child id of the object acquired, as `AccessibleObjectFromEvent`
@@ -649,7 +619,7 @@ impl FocusCandidate {
         self.role = Prefetched::Read(raw_role);
         let state = self.state.or_read(|| self.acc.state());
         self.state = Prefetched::Read(state);
-        let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
+        let role = role_from_msaa(raw_role);
         let (role, states, _) = role_and_states(&self.acc, self.key, role, state);
         if states != named.states || role != named.role {
             return false;
@@ -662,30 +632,10 @@ impl FocusCandidate {
             return false;
         }
         let acc = &self.acc;
-        let own_name = || labelled_name(acc, role, visible_text(acc.name()));
-        let mut name = if list_view_item {
-            columned_name(acc, self.key, own_name, || {
-                registry
-                    .details()
-                    .contains(NodeDetail::Description)
-                    .then(|| non_empty(acc.description()))
-                    .flatten()
-            })
-        } else {
-            own_name()
-        };
-        if let Some(text) = &mut name {
-            verbatim_text::strip_bidi_controls(text);
-        }
-        if name != named.name {
+        if live_name(acc, self.key, role, registry) != named.name {
             return false;
         }
-        let mut value =
-            if list_view_item || (role == Role::TreeItem && is_systreeview32(self.key.0)) {
-                None
-            } else {
-                value_for(acc, self.key, role, visible_text(acc.value()))
-            };
+        let mut value = value_for(acc, self.key, role, || visible_text(acc.value()));
         if let Some(text) = &mut value {
             verbatim_text::strip_bidi_controls(text);
         }
@@ -847,9 +797,7 @@ fn redirect_focus_to_child(
 /// a list on its own object (child id 0, MSAA role `ROLE_SYSTEM_LIST`, from
 /// `role`), or the client of a `SysListView32` window.
 fn focus_event_names_list((hwnd, id_object, id_child): MsaaKey, role: Option<i32>) -> bool {
-    if id_child == CHILDID_SELF
-        && role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned())) == Role::List
-    {
+    if id_child == CHILDID_SELF && role_from_msaa(role) == Role::List {
         return true;
     }
     id_object == OBJID_CLIENT.0 && window::window_class_name(hwnd).contains("SysListView32")
@@ -1716,7 +1664,7 @@ pub fn read_at_event(
 #[must_use]
 pub fn client_role(hwnd: isize) -> Option<Role> {
     let role = Accessible::client_of_window(hwnd)?.role()?;
-    Some(role_from_msaa(role.cast_unsigned()))
+    Some(role_from_msaa(Some(role)))
 }
 
 /// The focused object [`focused_object`] acquired, not yet read.
@@ -2137,16 +2085,13 @@ fn read_snapshot_with(
     let raw_value = visible_text(acc.value());
     let raw_role = reading.role.or_read(|| acc.role());
     let top_level_client = at_address && is_top_level_client(key, raw_role);
-    let role = raw_role.map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()));
+    let role = role_from_msaa(raw_role);
     let (role, states, tree_item) =
         role_and_states(acc, key, role, reading.state.or_read(|| acc.state()));
     // A detail the walk's request does not name is not read at all,
     // saving its cross-process call (`Interning::details`).
     let details = registry.details();
-    let description = details
-        .contains(NodeDetail::Description)
-        .then(|| non_empty(acc.description()))
-        .flatten();
+    let description = description_read(acc, registry);
     let keyboard_shortcut = details
         .contains(NodeDetail::KeyboardShortcut)
         .then(|| non_empty(acc.keyboard_shortcut()))
@@ -2176,7 +2121,7 @@ fn read_snapshot_with(
                 .filter(|_| details.contains(NodeDetail::Level));
             (None, level)
         }
-        _ => (value_for(acc, key, role, raw_value), None),
+        _ => (value_for(acc, key, role, || raw_value), None),
     };
     // A list view item has no description either, as NVDA's has none, and
     // one that shows columns is named by them ("content; Header:
@@ -2292,7 +2237,7 @@ fn is_top_level_client(key: MsaaKey, raw_role: Option<i32>) -> bool {
 /// style; and a `SysTreeView32` item has its check state added from its
 /// state image. With the item's own handle, for its position, when it is
 /// such an item.
-fn role_and_states(
+pub(crate) fn role_and_states(
     acc: &Accessible,
     key: MsaaKey,
     role: Role,
@@ -2338,14 +2283,25 @@ fn value_for(
     acc: &Accessible,
     key: MsaaKey,
     role: Role,
-    raw_value: Option<String>,
+    raw_value: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     match role {
         Role::TreeItem if is_systreeview32(key.0) => None,
-        Role::TreeItem => raw_value.filter(|value| value.trim().parse::<i64>().is_err()),
+        Role::TreeItem => raw_value().filter(|value| value.trim().parse::<i64>().is_err()),
         Role::ListItem if is_list_view_item(acc, key, role) => None,
-        _ => raw_value,
+        _ => raw_value(),
     }
+}
+
+/// The description of `acc`, `accDescription` when it is not empty, read
+/// only when the walk's request names descriptions
+/// ([`Interning::details`]), saving the call otherwise.
+fn description_read(acc: &Accessible, registry: &dyn Interning) -> Option<String> {
+    registry
+        .details()
+        .contains(NodeDetail::Description)
+        .then(|| non_empty(acc.description()))
+        .flatten()
 }
 
 /// Whether the edit field `acc` sits in a combo box that has a name of its
@@ -2355,10 +2311,7 @@ fn in_labelled_combo_box(acc: &Accessible) -> bool {
     // A failed call is "no parent".
     let parent_of = |acc: &Accessible| acc.parent().ok().flatten();
     // A failed read is an unknown role.
-    let role_of = |acc: &Accessible| {
-        acc.role()
-            .map_or(Role::Unknown, |role| role_from_msaa(role.cast_unsigned()))
-    };
+    let role_of = |acc: &Accessible| role_from_msaa(acc.role());
     // A child id's parent is the object that holds it.
     let parent = if acc.child() == CHILDID_SELF {
         parent_of(acc)
@@ -2526,10 +2479,7 @@ fn node_for(
                     let object = Accessible::new(object, held_child);
                     // A failed role read is an unknown role on either side,
                     // as NVDA's is.
-                    object
-                        .role()
-                        .map_or(Role::Unknown, |r| role_from_msaa(r.cast_unsigned()))
-                        == role
+                    role_from_msaa(object.role()) == role
                         && object.identity_string() == acc.identity_string()
                 }),
                 None => held_role.is_none_or(|held_role| held_role == role),
@@ -2598,22 +2548,11 @@ fn live_name(
     role: Role,
     registry: &dyn Interning,
 ) -> Option<String> {
-    let name = labelled_name(acc, role, visible_text(acc.name()));
+    let own = || labelled_name(acc, role, visible_text(acc.name()));
     let mut name = if is_list_view_item(acc, key, role) {
-        columned_name(
-            acc,
-            key,
-            || name,
-            || {
-                registry
-                    .details()
-                    .contains(NodeDetail::Description)
-                    .then(|| non_empty(acc.description()))
-                    .flatten()
-            },
-        )
+        columned_name(acc, key, own, || description_read(acc, registry))
     } else {
-        name
+        own()
     };
     if let Some(text) = &mut name {
         verbatim_text::strip_bidi_controls(text);
