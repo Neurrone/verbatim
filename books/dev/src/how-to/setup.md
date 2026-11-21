@@ -191,12 +191,10 @@ finding:
   - The audio rule: the audio thread's pass
     (`crates/verbatim-audio/src/mixer/run.rs`) may name nothing that takes
     a lock, waits, allocates, formats or logs.
-  - The rule of reads: the four functions of the listener's event path
-    after `on_win_event` (`watch_win_event`, `route_win_event` and
-    `value_change_event` in `crates/verbatim-listener/src/listener.rs`,
-    `tell_win_event` in its `listener/tells.rs`) may read Windows' state
-    only through the event's `EventWindows`, so its call-count test counts
-    every read.
+  - The rule of reads: the listener's event path (`on_win_event` in
+    `crates/verbatim-listener/src/listener.rs`, `tell_win_event` in its
+    `listener/tells.rs`) may read Windows' state only through the event's
+    reads (`EventReads`), so its call-count test counts every read.
   - The determinism rule: every crate on a reducer's path keeps a
     `clippy.toml` identical to `verbatim-core`'s, so Clippy rejects hash
     collections, clocks, files, processes, the network, threads, the

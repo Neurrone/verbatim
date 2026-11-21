@@ -885,6 +885,7 @@ impl Outpost {
                     );
                 }),
                 nudge: None,
+                timer: None,
             }
         });
         let event_thread = EventThread::spawn(CONSOLE_SUBSCRIPTIONS, make_handlers);

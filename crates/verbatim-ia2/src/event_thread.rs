@@ -9,17 +9,22 @@
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
 //! and hooks them again while it runs. And it can wait for the thread to
 //! catch up ([`Nudger::sync`]): for every nudge sent and, once the hooks
-//! are in, every `WinEvent` raised before it.
+//! are in, every `WinEvent` raised before it. Its owner's handlers may set
+//! one timer of the thread's own ([`ThreadTimer`]), whose `WM_TIMER` the
+//! thread hands to the owner's timer handler, as the focus listener's
+//! foreground hold ends.
 
+use std::cell::Cell;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
-    TranslateMessage, WM_APP, WM_QUIT,
+    DispatchMessageW, GetMessageW, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
+    SetTimer, TranslateMessage, WM_APP, WM_QUIT, WM_TIMER,
 };
 
 use crate::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
@@ -37,15 +42,58 @@ const WM_SYNC: u32 = WM_APP + 1;
 const WM_HOOK: u32 = WM_APP + 2;
 
 /// What the event thread calls: the `WinEvent` callback its hooks deliver
-/// to, and, for an owner that nudges it, the handler of each nudge's two
-/// words. Both are made on the event thread, so they may share state that
-/// only it touches.
+/// to, for an owner that nudges it, the handler of each nudge's two
+/// words, and for an owner that sets the thread's timer, the handler of
+/// its `WM_TIMER`. All are made on the event thread, so they may share
+/// state that only it touches.
 pub struct EventHandlers {
     /// Called with each `WinEvent` the hooks deliver.
     pub win_event: WinEventCallback,
     /// Called with each nudge's two words ([`Nudger::nudge`]), for an
     /// owner that nudges the thread.
     pub nudge: Option<Box<dyn Fn(usize, isize)>>,
+    /// Called for each `WM_TIMER` of the thread's own timer
+    /// ([`ThreadTimer`]), a stale one that `KillTimer` left posted
+    /// included, for an owner that sets it.
+    pub timer: Option<Box<dyn Fn()>>,
+}
+
+/// The event thread's one timer, a thread timer (`SetTimer` with no
+/// window), set and stopped only on the event thread, where its
+/// `WM_TIMER` is handed to the owner's timer handler
+/// ([`EventHandlers::timer`]). A thread timer goes off again and again
+/// until it is stopped, so its owner stops it when no wait needs it;
+/// stopping it leaves a `WM_TIMER` already posted, which the handler
+/// meets as a stale one. Made on the event thread and never sent from it.
+#[derive(Debug, Default)]
+pub struct ThreadTimer {
+    /// The timer's id while it is set, 0 when it is not.
+    id: Cell<usize>,
+}
+
+impl ThreadTimer {
+    /// Sets the timer to go off `after` from now, in place of any time it
+    /// was set for. Windows takes at least 10 ms, and goes off at the
+    /// system timer's resolution.
+    pub fn arm(&self, after: Duration) {
+        let ms = u32::try_from(after.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: a thread timer with no callback, its WM_TIMER posted to
+        // this thread's queue; an id this thread set before is replaced.
+        let id = unsafe { SetTimer(None, self.id.get(), ms, None) };
+        if id == 0 {
+            tracing::warn!("the event thread's timer could not be set");
+        }
+        self.id.set(id);
+    }
+
+    /// Stops the timer, when it is set.
+    pub fn disarm(&self) {
+        let id = self.id.replace(0);
+        if id != 0 {
+            // SAFETY: a thread timer this thread set.
+            let _ = unsafe { KillTimer(None, id) };
+        }
+    }
 }
 
 /// Makes an [`EventHandlers`], on the event thread.
@@ -306,7 +354,11 @@ fn event_thread_main(
     // SAFETY: `message` is owned here; the call only peeks, removing
     // nothing.
     let _ = unsafe { PeekMessageW(&raw mut message, None, 0, 0, PM_NOREMOVE) };
-    let EventHandlers { win_event, nudge } = make_handlers();
+    let EventHandlers {
+        win_event,
+        nudge,
+        timer,
+    } = make_handlers();
     // The callback, until the hooks are installed with it.
     let mut win_event = Some(win_event);
     let mut hook = None;
@@ -328,6 +380,12 @@ fn event_thread_main(
                 }
                 WM_SYNC => {
                     synced.reach(message.wParam.0 as u64);
+                    continue;
+                }
+                WM_TIMER => {
+                    if let Some(timer) = &timer {
+                        timer();
+                    }
                     continue;
                 }
                 WM_HOOK => {
@@ -433,6 +491,7 @@ mod tests {
                     };
                     let _ = changes.send(crate::suspend_kinds(suspended));
                 })),
+                timer: None,
             }
         });
         let thread = EventThread::spawn(KINDS, make);
@@ -483,6 +542,29 @@ mod tests {
         drop(thread);
         // SAFETY: the window made above, on this thread.
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
+    }
+
+    /// The thread's timer, set by a nudge's handler, goes off on the event
+    /// thread and is handed to the timer handler, which stops it.
+    #[test]
+    fn the_threads_timer_goes_off_to_the_timer_handler() {
+        let (fired_tx, fired) = unbounded();
+        let make: MakeHandlers = Arc::new(move || {
+            let timer = std::rc::Rc::new(ThreadTimer::default());
+            let armed = std::rc::Rc::clone(&timer);
+            let fired_tx = fired_tx.clone();
+            EventHandlers {
+                win_event: Box::new(|_, _| {}),
+                nudge: Some(Box::new(move |_, _| armed.arm(Duration::from_millis(10)))),
+                timer: Some(Box::new(move || {
+                    timer.disarm();
+                    let _ = fired_tx.send(());
+                })),
+            }
+        });
+        let thread = EventThread::spawn(KINDS, make);
+        assert!(thread.nudger().nudge((0, 0)));
+        assert_eq!(fired.recv_timeout(WAIT), Ok(()));
     }
 
     /// The last ticket whose marker has reached `thread`.

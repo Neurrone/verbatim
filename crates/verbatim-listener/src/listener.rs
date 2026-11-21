@@ -62,11 +62,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::FILETIME;
-use windows::Win32::System::Threading::{
-    CloseThreadpoolTimer, CreateThreadpoolTimer, PTP_CALLBACK_INSTANCE, PTP_TIMER,
-    SetThreadpoolTimer, WaitForThreadpoolTimerCallbacks,
-};
 use windows::Win32::UI::Accessibility::{
     NotificationKind, NotificationProcessing, UIA_MenuOpenedEventId, UIA_ProgressBarControlTypeId,
     UIA_RangeValueValuePropertyId, UIA_SelectionItem_ElementSelectedEventId,
@@ -94,16 +89,14 @@ use crate::reading::Readers;
 
 pub(crate) mod asked;
 mod checking;
-mod event_windows;
 mod tells;
 
 use asked::{UiaJob, UiaReading};
 use checking::{CheckEvent, Checks, Kept};
 
-use event_windows::{EventReads, EventWindows};
-use tells::{Held, SystemReads, TellKey, Tells, tell_win_event};
-use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
-use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Step};
+use tells::{EventReads, Held, SystemReads, TellKey, Tells, tell_win_event};
+use verbatim_ia2::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger, ThreadTimer};
+use verbatim_listener_logic::foreground::{ForegroundWatch, Front, Seen, Step, TimerChange};
 use verbatim_listener_logic::kept::{Reported, View};
 use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::protocol::{CoreToListener, ListenerToCore, UiaSnapshotFact, hop_us};
@@ -113,7 +106,6 @@ use verbatim_process::held::IgnoredProcesses;
 use verbatim_process::message::{decode_message, put_message};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::window::{WindowReadabilityReader, window_class_name};
-use verbatim_win32::window_facts::WindowReads;
 
 /// The priority of the listener's main thread, its I/O thread, which reads
 /// Core's pipe, handles each command, and finishes the writes to Core that
@@ -139,12 +131,8 @@ struct Outgoing {
     readiness: Mutex<Readiness>,
     /// The clock the stamps are read from.
     clock: Clock,
-    /// The listener's order of tells and its foreground hold.
+    /// The listener's order of tells and its pending foreground.
     tells: Arc<Tells>,
-    /// The threadpool timer that ends the foreground hold, kept until the
-    /// listener is dropped, which closes it; none in a test, whose hold
-    /// ends only by the foreground or a later tell.
-    _hold_timer: Option<PoolTimer<Tells>>,
 }
 
 /// Whether the listener has said `Ready`: an idle barrier's answer made
@@ -283,41 +271,6 @@ impl Waiting {
     }
 }
 
-/// A threadpool timer's handle, shared with its own callback.
-struct TimerHandle(PTP_TIMER);
-
-impl TimerHandle {
-    /// Sets the timer to go off once, `after` from now ([`set_timer`]).
-    fn set(&self, after: Duration) {
-        set_timer(self.0, after);
-    }
-
-    /// Stops the timer: it goes off no more until it is set again.
-    fn stop(&self) {
-        // SAFETY: the timer is open until its `PoolTimer` is dropped.
-        unsafe { SetThreadpoolTimer(self.0, None, 0, None) };
-    }
-}
-
-// SAFETY: a threadpool timer may be set from any thread, its own callback
-// included; the handle stays open until `PoolTimer::drop`, which stops
-// the callback setting it first (`Timed::closing`).
-unsafe impl Send for TimerHandle {}
-// SAFETY: as above.
-unsafe impl Sync for TimerHandle {}
-
-/// What a [`PoolTimer`] goes off for: it is given the timer's handle once,
-/// before the timer can go off, and is told when it goes off and when the
-/// timer is being closed, after which it sets the timer no more.
-trait Timed: Send + Sync {
-    /// The timer's handle, given once, before any callback.
-    fn take_timer(&self, timer: TimerHandle);
-    /// The timer went off, on a threadpool thread.
-    fn fired(&self);
-    /// The timer is being closed: it is set no more.
-    fn closing(&self);
-}
-
 /// A send's outcome: once the listener is shutting down, or Core's pipe
 /// has gone, what is sent is dropped.
 fn sent(sent: &Result<(), SendError<Infallible>>) {
@@ -326,122 +279,41 @@ fn sent(sent: &Result<(), SendError<Infallible>>) {
     }
 }
 
-/// A threadpool timer (`docs/design/communication.md`, section 4.7): no
-/// thread of the listener's waits for it, and its callback acts itself, on
-/// what it was made for: the foreground hold ([`Tells`]).
-struct PoolTimer<T: Timed> {
-    timer: PTP_TIMER,
-    /// What the callback is given, kept alive until the timer is closed.
-    owner: *const T,
-}
-
-// SAFETY: a threadpool timer may be set and closed from any thread, and
-// what it points to is shared, `Sync` data kept alive by the timer.
-unsafe impl<T: Timed> Send for PoolTimer<T> {}
-// SAFETY: as above.
-unsafe impl<T: Timed> Sync for PoolTimer<T> {}
-
-impl<T: Timed> PoolTimer<T> {
-    fn new(owner: &Arc<T>) -> io::Result<Self> {
-        let owner = Arc::into_raw(Arc::clone(owner));
-        // SAFETY: the callback is given `owner`, which stays alive until
-        // the timer is closed in `drop`, after its callbacks have finished.
-        let timer =
-            unsafe { CreateThreadpoolTimer(Some(fired::<T>), Some(owner.cast_mut().cast()), None) };
-        match timer {
-            Ok(timer) => {
-                // Given before the timer is first set, so before any
-                // callback.
-                owner_of(owner).take_timer(TimerHandle(timer));
-                Ok(Self { timer, owner })
-            }
-            Err(error) => {
-                // SAFETY: from `Arc::into_raw` above, never given out.
-                drop(unsafe { Arc::from_raw(owner) });
-                Err(io::Error::other(error))
-            }
-        }
-    }
-}
-
-/// What a [`PoolTimer`] was made with.
-fn owner_of<'a, T>(owner: *const T) -> &'a T {
-    // SAFETY: from `Arc::into_raw` in `PoolTimer::new`, released only in
-    // `PoolTimer::drop`, after the last use.
-    unsafe { &*owner }
-}
-
-/// Sets `timer`, open until its [`PoolTimer`] is dropped, to fire once
-/// `after` from now, in place of any time it was set for.
-fn set_timer(timer: PTP_TIMER, after: Duration) {
-    // Relative, in 100-nanosecond units.
-    let due = -i64::try_from(after.as_nanos() / 100).unwrap_or(i64::MAX);
-    let due = due.cast_unsigned();
-    let due = FILETIME {
-        dwLowDateTime: (due & 0xFFFF_FFFF) as u32,
-        dwHighDateTime: (due >> 32) as u32,
+/// The report to Core of the window that came to the foreground, `front`,
+/// with its root owner, the process holding attention and that process's
+/// integrity level, read here with local calls (`GetAncestor`,
+/// `GetWindowThreadProcessId`, `GetProcessIdOfThread` for a console
+/// window whose thread its event named, and the token's integrity). Sent
+/// for every process, ignored ones included, since Core takes from it the
+/// keyboard hook's view, attention and its foreground record; none
+/// replaces another.
+fn foreground_report(front: Front) -> ListenerToCore {
+    let owner = window_pid(front.window);
+    let process = if front.console && front.thread != 0 {
+        process_of_thread(front.thread).unwrap_or(owner)
+    } else {
+        owner
     };
-    // SAFETY: the timer is open; the due time is read during the call.
-    unsafe { SetThreadpoolTimer(timer, Some(&raw const due), 0, Some(0)) };
-}
-
-impl<T: Timed> Drop for PoolTimer<T> {
-    fn drop(&mut self) {
-        // The callback sets the timer no more; then the timer is stopped,
-        // its callbacks waited for or cancelled, and only then closed and
-        // what it points to released.
-        owner_of(self.owner).closing();
-        // SAFETY: the timer is open.
-        unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
-        // SAFETY: as above.
-        unsafe { WaitForThreadpoolTimerCallbacks(self.timer, true) };
-        // SAFETY: as above; no callback runs or will run.
-        unsafe { CloseThreadpoolTimer(self.timer) };
-        // SAFETY: from `Arc::into_raw` in `new`, released once, here, with
-        // no callback left to use it.
-        drop(unsafe { Arc::from_raw(self.owner) });
+    ListenerToCore::Foreground {
+        window: front.window,
+        root_owner: verbatim_win32::window::root_owner_of(front.window),
+        process,
+        observed_at_us: front.observed_at_us,
+        thread: front.thread,
+        console: front.console,
+        integrity: verbatim_win32::integrity::process_integrity(owner),
     }
-}
-
-/// A pool timer's callback, on a threadpool thread.
-unsafe extern "system" fn fired<T: Timed>(
-    _instance: PTP_CALLBACK_INSTANCE,
-    owner: *mut core::ffi::c_void,
-    _timer: PTP_TIMER,
-) {
-    // SAFETY: the timer was created with its owner, which outlives every
-    // callback (`PoolTimer::drop`).
-    let owner = unsafe { &*owner.cast_const().cast::<T>() };
-    owner.fired();
 }
 
 impl Outgoing {
     /// Sends through `sender`, dropping the UI Automation events of the
     /// processes `ignored` names.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of creating the foreground hold's timer.
-    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> io::Result<Self> {
+    fn new(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> Self {
         let tells = Arc::new(Tells::new(sender.clone()));
-        let hold = PoolTimer::new(&tells)?;
-        Ok(Self::with_tells(sender, ignored, tells, Some(hold)))
+        Self::with_tells(sender, ignored, tells)
     }
 
-    /// [`new`](Self::new) with no timer, for a test, whose hold ends only
-    /// by the foreground or a later tell.
-    #[cfg(test)]
-    fn untimed(sender: Sender<Waiting>, ignored: IgnoredProcesses) -> Self {
-        let tells = Arc::new(Tells::new(sender.clone()));
-        Self::with_tells(sender, ignored, tells, None)
-    }
-
-    fn with_tells(
-        sender: Sender<Waiting>,
-        ignored: IgnoredProcesses,
-        tells: Arc<Tells>,
-        hold_timer: Option<PoolTimer<Tells>>,
-    ) -> Self {
+    fn with_tells(sender: Sender<Waiting>, ignored: IgnoredProcesses, tells: Arc<Tells>) -> Self {
         Self {
             sender,
             _ignored: ignored,
@@ -449,7 +321,6 @@ impl Outgoing {
             readiness: Mutex::new(Readiness::Starting(Vec::new())),
             clock: Clock::default(),
             tells,
-            _hold_timer: hold_timer,
         }
     }
 
@@ -474,31 +345,11 @@ impl Outgoing {
         );
     }
 
-    /// Sends Core the window that came to the foreground, `front`, with its
-    /// root owner, the process holding attention and that process's
-    /// integrity level, read here with local calls (`GetAncestor`,
-    /// `GetWindowThreadProcessId`, `GetProcessIdOfThread` for a console
-    /// window whose thread its event named, and the token's integrity).
-    /// Sent for every process, ignored ones included, since Core takes from
-    /// it the keyboard hook's view, attention and its foreground record;
-    /// none replaces another.
+    /// Sends Core the window that came to the foreground, `front`, as the
+    /// watch's start or a console's own event found it
+    /// ([`foreground_report`]).
     fn foreground(&self, front: Front) {
-        let owner = window_pid(front.window);
-        let process = if front.console && front.thread != 0 {
-            process_of_thread(front.thread).unwrap_or(owner)
-        } else {
-            owner
-        };
-        let message = ListenerToCore::Foreground {
-            window: front.window,
-            root_owner: verbatim_win32::window::root_owner_of(front.window),
-            process,
-            observed_at_us: front.observed_at_us,
-            thread: front.thread,
-            console: front.console,
-            integrity: verbatim_win32::integrity::process_integrity(owner),
-        };
-        sent(&self.sender.send(Sent::Report(message)));
+        sent(&self.sender.send(Sent::Report(foreground_report(front))));
     }
 
     /// Marks the desktop-wide UIA subscriptions as installed, or as failed:
@@ -525,7 +376,7 @@ impl Outgoing {
             .unwrap_or_else(PoisonError::into_inner);
         match &mut *readiness {
             Readiness::Starting(held) => held.push(round),
-            Readiness::Ready => self.tells.place(Held::IdleAnswer(round)),
+            Readiness::Ready => self.tells.place_behind(Held::IdleAnswer(round)),
         }
     }
 
@@ -543,7 +394,7 @@ impl Outgoing {
         });
         if let Readiness::Starting(held) = std::mem::replace(&mut *readiness, Readiness::Ready) {
             for round in held {
-                self.tells.place(Held::IdleAnswer(round));
+                self.tells.place_behind(Held::IdleAnswer(round));
             }
         }
     }
@@ -635,14 +486,14 @@ impl Listener {
     ///
     /// # Errors
     ///
-    /// Returns the error of creating the foreground hold's timer, or of
-    /// starting the thread that installs the UIA subscriptions.
+    /// Returns the error of starting the thread that installs the UIA
+    /// subscriptions.
     fn start(
         sender: Sender<Waiting>,
         (generation, ignored): (u64, IgnoredProcesses),
         install: InstallSubscriptions,
     ) -> io::Result<Self> {
-        let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
+        let outgoing = Arc::new(Outgoing::new(sender, ignored));
         Self::with_outgoing(outgoing, generation, install)
     }
 
@@ -668,10 +519,13 @@ impl Listener {
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
             let checks = Arc::clone(&idle_checks);
-            // The window in front, for the keyboard hook's view of it,
-            // kept on this thread by both handlers.
-            let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
-            let start_watch = Rc::clone(&watch);
+            // The window in front, for the keyboard hook's view of it, and
+            // the foreground hold's timer, kept on this thread by the
+            // handlers.
+            let thread = Rc::new(EventThreadState::default());
+            let start_thread = Rc::clone(&thread);
+            let timer_thread = Rc::clone(&thread);
+            let timer_outgoing = Arc::clone(&msaa_outgoing);
             // The executable name of each application that raised an
             // event, for its tells, on this thread alone.
             let applications = RefCell::new(tells::Applications::default());
@@ -680,7 +534,7 @@ impl Listener {
                     on_win_event(
                         &outgoing,
                         &mut applications.borrow_mut(),
-                        &watch,
+                        &thread,
                         (event, class),
                         &SystemReads,
                     );
@@ -691,13 +545,24 @@ impl Listener {
                 // of the foreground's watch, once the hooks are in.
                 nudge: Some(Box::new(move |round, kind| {
                     if kind == NUDGE_FOREGROUND_START {
-                        let step = start_watch
+                        let step = start_thread
+                            .watch
                             .borrow_mut()
                             .start(front_now(idle_outgoing.now()));
                         foreground_step(&idle_outgoing, step);
                     } else {
                         answer_when_reads_are_done(&readers, &checks, &idle_outgoing, round as u64);
                     }
+                })),
+                // The foreground hold's timer, or a stale `WM_TIMER`.
+                timer: Some(Box::new(move || {
+                    let started = timer_thread.watch.borrow().started();
+                    let front = timer_outgoing.tells.front();
+                    let stepped =
+                        timer_outgoing
+                            .tells
+                            .step(Seen::Timer, (front, started), &SystemReads);
+                    stepped_on(&timer_outgoing, &timer_thread, stepped);
                 })),
             }
         });
@@ -891,91 +756,76 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
     readers.push(pid, JobKind::Request(number), UiaJob::Request(ask));
 }
 
-/// What the listener does with one `WinEvent`, in this order: the
-/// foreground's watch first, so that a window it reports in front reaches
-/// Core before any tell its report decides, the foreground event's own and
-/// those the foreground hold releases with it, since Core judges a
-/// foreground tell against its foreground record
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Focus and foreground");
-/// then the event's tell, its arrival the time the callback received it.
-/// The window in front is
-/// read once ([`Tells::front`](tells::Tells::front)), and the watch and
-/// the foreground hold both judge the event on that read, so that the hold
-/// releases a foreground tell on an event only when the watch has reported
-/// its window. Each fact of the event's windows is read once for the event
-/// ([`EventWindows`]), through `reads`, and the class of its window not at
-/// all when the hook's filter read it, `class`.
+/// What the `WinEvent` thread keeps of the foreground: the watch of the
+/// window in front, and the foreground hold's timer.
+#[derive(Default)]
+struct EventThreadState {
+    watch: RefCell<ForegroundWatch>,
+    timer: ThreadTimer,
+}
+
+/// What the listener does with one `WinEvent`: its tell, unless a local
+/// drop takes it ([`tell_win_event`]), steps the pending foreground under
+/// the tells' lock, which reports a window it finds in front before any
+/// tell that step releases, since Core judges a foreground tell against
+/// its foreground record (`docs/design/readers-tell-core-asks-build1.md`,
+/// "Focus and foreground"); then the watch hears of the window reported,
+/// and of a console's own event, and the hold's timer is set as the step
+/// says. The window in front is read once
+/// ([`Tells::front`](tells::Tells::front)), and the step judges the event
+/// on that read; every other read of Windows' state goes through `reads`,
+/// and the class of the event's window not at all when the hook's filter
+/// read it, `class`. The event's arrival is the time the callback received
+/// it.
 fn on_win_event(
     outgoing: &Arc<Outgoing>,
     applications: &mut tells::Applications,
-    watch: &RefCell<ForegroundWatch>,
+    thread: &EventThreadState,
     (event, class): (WinEvent, Option<&str>),
     reads: &impl EventReads,
 ) {
     let arrived_us = outgoing.now();
     let front = outgoing.tells.front();
-    let windows = EventWindows::new(reads, class.map(|class| (event.hwnd, class)));
-    watch_win_event(outgoing, watch, event, (arrived_us, front), &windows);
-    tell_win_event(
-        &outgoing.tells,
-        applications,
-        event,
-        (arrived_us, front),
-        &windows,
-    );
+    let seen = tell_win_event(applications, event, (arrived_us, class), reads);
+    let started = thread.watch.borrow().started();
+    let stepped = outgoing.tells.step(seen, (front, started), reads);
+    stepped_on(outgoing, thread, stepped);
+    if matches!(
+        event.kind,
+        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+    ) {
+        let step = thread
+            .watch
+            .borrow_mut()
+            .console_event(event.hwnd, event.thread, arrived_us);
+        foreground_step(outgoing, step);
+    }
 }
 
-/// What the foreground's watch takes from a `WinEvent` observed at
-/// `observed_at_us`, while `front` is the window in front: the shell's
-/// foreground and a foreground event feed it; any other event finds a
-/// pending foreground's window in front, as any tell the foreground hold
-/// places does; and a console's event names its thread.
-fn watch_win_event(
+/// What follows a step of the pending foreground on the `WinEvent` thread,
+/// `reported` the window it reported and `timer` its timer's change: the
+/// watch hears of the window, which ends any wait for a console's thread
+/// and unhooks the consoles' events, and the timer is set or stopped.
+fn stepped_on(
     outgoing: &Outgoing,
-    watch: &RefCell<ForegroundWatch>,
-    event: WinEvent,
-    (observed_at_us, front): (u64, isize),
-    windows: &EventWindows<'_, impl EventReads>,
+    thread: &EventThreadState,
+    (reported, timer): (Option<Front>, TimerChange),
 ) {
-    let in_front = |window: isize| front == window;
-    let step = match event.kind {
-        // Program Manager or the taskbar in front: a window that came to
-        // the foreground for Core.
-        WinEventKind::ShellForeground => {
-            let front = Front {
-                window: event.hwnd,
-                thread: event.thread,
-                console: false,
-                observed_at_us,
-            };
-            watch.borrow_mut().foreground(front, in_front(front.window))
-        }
-        WinEventKind::Foreground => {
-            let front = Front {
-                window: event.hwnd,
-                thread: event.thread,
-                console: event.hwnd != 0
-                    && windows.facts().class(event.hwnd) == CONSOLE_WINDOW_CLASS,
-                observed_at_us,
-            };
-            watch.borrow_mut().foreground(front, in_front(event.hwnd))
-        }
-        kind => {
-            // A window not in front at its foreground event is sent once
-            // an event finds it there, before the tells it releases.
-            if watch.borrow().has_pending() {
-                let step = watch.borrow_mut().event_seen(front, observed_at_us);
-                foreground_step(outgoing, step);
-            }
-            match kind {
-                WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => watch
-                    .borrow_mut()
-                    .console_event(event.hwnd, event.thread, observed_at_us),
-                _ => return,
-            }
-        }
-    };
-    foreground_step(outgoing, step);
+    if reported.is_some() {
+        let console_events = thread.watch.borrow_mut().sent();
+        foreground_step(
+            outgoing,
+            Step {
+                report: None,
+                console_events,
+            },
+        );
+    }
+    match timer {
+        TimerChange::Keep => {}
+        TimerChange::Arm(after) => thread.timer.arm(Duration::from_micros(after)),
+        TimerChange::Disarm => thread.timer.disarm(),
+    }
 }
 
 /// Starts the thread that makes the listener's desktop-wide UIA
@@ -1546,6 +1396,7 @@ mod tests {
     use verbatim_model::tell::{ElementToken, EventObject, TellWindow};
     use verbatim_process::message::read_message;
     use verbatim_win32::window::Readability;
+    use verbatim_win32::window_facts::WindowReads;
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the
@@ -1556,7 +1407,7 @@ mod tests {
         let (sender, _finishing) =
             Sender::start(ours, Waiting::default(), "listener-test", || {}).expect("a sender");
         (
-            Outgoing::untimed(sender, ignored),
+            Outgoing::new(sender, ignored),
             BufReader::new(File::from(theirs)),
         )
     }
@@ -2581,7 +2432,6 @@ mod tests {
             sender,
             IgnoredProcesses::default(),
             tells,
-            None,
         ));
         let kept = Arc::new(Kept::new(1));
         let readers = Arc::new(Readers::new(UiaReading::new(&outgoing, &kept)));
@@ -2599,12 +2449,12 @@ mod tests {
         FRONT.store(window.0, Ordering::SeqCst);
         let (outgoing, readers, mut reader) =
             listener_reading_front(|| FRONT.load(Ordering::SeqCst));
-        let watch = RefCell::new(ForegroundWatch::default());
-        let _ = watch.borrow_mut().start(None);
+        let thread = EventThreadState::default();
+        let _ = thread.watch.borrow_mut().start(None);
         on_win_event(
             &outgoing,
             &mut tells::Applications::default(),
-            &watch,
+            &thread,
             (
                 client_event(
                     WinEventKind::Foreground,
@@ -2631,13 +2481,13 @@ mod tests {
         let window = StaticWindow::new();
         let (outgoing, readers, mut reader) =
             listener_reading_front(|| FRONT.load(Ordering::SeqCst));
-        let watch = RefCell::new(ForegroundWatch::default());
-        let _ = watch.borrow_mut().start(None);
+        let thread = EventThreadState::default();
+        let _ = thread.watch.borrow_mut().start(None);
         let mut applications = tells::Applications::default();
         on_win_event(
             &outgoing,
             &mut applications,
-            &watch,
+            &thread,
             (
                 client_event(
                     WinEventKind::Foreground,
@@ -2652,7 +2502,7 @@ mod tests {
         on_win_event(
             &outgoing,
             &mut applications,
-            &watch,
+            &thread,
             (
                 client_event(
                     WinEventKind::Focus,
@@ -2684,13 +2534,13 @@ mod tests {
         let window = StaticWindow::new();
         let (outgoing, readers, mut reader) =
             listener_reading_front(|| FRONT.load(Ordering::SeqCst));
-        let watch = RefCell::new(ForegroundWatch::default());
-        let _ = watch.borrow_mut().start(None);
+        let thread = EventThreadState::default();
+        let _ = thread.watch.borrow_mut().start(None);
         let mut applications = tells::Applications::default();
         on_win_event(
             &outgoing,
             &mut applications,
-            &watch,
+            &thread,
             (
                 client_event(
                     WinEventKind::Foreground,
@@ -2705,7 +2555,7 @@ mod tests {
         on_win_event(
             &outgoing,
             &mut applications,
-            &watch,
+            &thread,
             (
                 client_event(
                     WinEventKind::NameChange,
@@ -2851,13 +2701,13 @@ mod tests {
         use windows::Win32::UI::WindowsAndMessaging::{EVENT_OBJECT_NAMECHANGE, OBJID_CLIENT};
         let (outgoing, readers, sent) =
             flood_listening_front(Arc::new(|_| Readability::Readable), || FLOOD_FRONT);
-        let watch = RefCell::new(ForegroundWatch::default());
-        let _ = watch.borrow_mut().start(None);
+        let thread = EventThreadState::default();
+        let _ = thread.watch.borrow_mut().start(None);
         let desk = FloodDesk::owned_in_front();
         on_win_event(
             &outgoing,
             &mut tells::Applications::default(),
-            &watch,
+            &thread,
             (
                 WinEvent {
                     kind: WinEventKind::NameChange,
@@ -2936,7 +2786,6 @@ mod tests {
             sender,
             IgnoredProcesses::default(),
             tells,
-            None,
         ));
         let sent = drain(BufReader::new(File::from(theirs)));
         let kept = Arc::new(Kept::new(1));
@@ -3004,8 +2853,8 @@ mod tests {
             Readability::Readable
         });
         let (outgoing, readers, sent) = flood_listening(readability);
-        let watch = RefCell::new(ForegroundWatch::default());
-        let _ = watch.borrow_mut().start(None);
+        let thread = EventThreadState::default();
+        let _ = thread.watch.borrow_mut().start(None);
         let mut applications = tells::Applications::default();
         let mut counts = Vec::new();
         for (name, event, class) in flood_events() {
@@ -3015,7 +2864,7 @@ mod tests {
             on_win_event(
                 &outgoing,
                 &mut applications,
-                &watch,
+                &thread,
                 (event, Some(class)),
                 &desk,
             );
@@ -3044,20 +2893,20 @@ mod tests {
     fn shown_reads() -> ReadCounts {
         std::collections::BTreeMap::from([
             ("active_window", 1),
-            ("class", 1),
-            ("desktop", 1),
+            ("class", 5),
+            ("desktop", 2),
             ("exists", 1),
             ("foreground", 1),
             ("front for the hold", 1),
             ("hang_state", 1),
-            ("hidden_frame", 1),
+            ("hidden_frame", 2),
             ("is_child", 3),
-            ("owner", 1),
+            ("owner", 4),
             ("parent", 1),
             ("readability", 0),
             ("root", 1),
             ("root_owner", 2),
-            ("topmost", 1),
+            ("topmost", 2),
         ])
     }
 
@@ -3066,11 +2915,13 @@ mod tests {
     /// hook's filter, which it hands on (`verbatim_ia2`'s
     /// `the_class_the_filter_read_is_handed_on_with_the_event`): a value
     /// change of a window in the background, and a tooltip's show, each
-    /// read alike. Each window fact is read once for the event; the window
-    /// in front is read for the hold and again under the tells' lock, with
-    /// the active window and the windows' relations to them, as the tell
-    /// is placed. A value change is told and read by no thread of the
-    /// listener's: Core asks for it.
+    /// read alike, 27 local calls. Each fact is read where it is needed,
+    /// with no record kept for the event, so the window's class and owner
+    /// are read again by the reads of its facts; the window in front is
+    /// read for the hold and again under the tells' lock, with the active
+    /// window and the windows' relations to them, as the tell is placed. A
+    /// value change is told and read by no thread of the listener's: Core
+    /// asks for it.
     #[test]
     fn a_flood_events_window_facts_are_read_once() {
         let (tells, counts, idle) = flood_reads();

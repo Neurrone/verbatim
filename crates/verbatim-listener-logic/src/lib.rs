@@ -12,10 +12,11 @@
 //! - [`schedule`]: the reading threads' schedule, which thread runs which
 //!   of Core's requests, and Cancel.
 //! - [`foreground`]: what the listener learns of the window in the
-//!   foreground for the keyboard hook.
+//!   foreground for the keyboard hook, and the pending foreground that
+//!   holds the MSAA tells behind it.
 //! - [`tell`]: what the listener decides of a `WinEvent` before it tells
 //!   Core of it: NVDA's local drops, the window a tell names and its
-//!   facts, and the foreground hold.
+//!   facts.
 
 // Non-test code never panics, overflows or truncates silently: arithmetic
 // is checked or saturating, indexing goes through `get`, and casts through

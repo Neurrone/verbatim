@@ -24,9 +24,9 @@
 //!   crate's own device, record and store types. A method that allocates
 //!   inside an allowed type is a review rule, held by the mixer's
 //!   allocation test.
-//! - The rule of reads: the four functions of the listener's event path
-//!   after `on_win_event` may read Windows' state only through the event's
-//!   `EventWindows`, so its call-count test counts every read.
+//! - The rule of reads: the listener's event path, `on_win_event` and
+//!   `tell_win_event`, may read Windows' state only through the event's
+//!   reads (`EventReads`), so its call-count test counts every read.
 //!
 //! - The determinism rule (`books/dev/src/reference/testing.md`, "The crates on a reducer's path"), over every crate on a reducer's path, which the tier
 //!   check derives from the dependency graph ([`determinism`]): each keeps
@@ -131,7 +131,7 @@ const CHECKED: [Checked; 9] = [
         allowed: &[],
         forbidden: &[&EVENT_PATH_FORBIDDEN],
         skip_tests: true,
-        within: Some("watch_win_event"),
+        within: Some("on_win_event"),
     },
     Checked {
         path: "crates/verbatim-listener/src/listener/tells.rs",
@@ -311,9 +311,9 @@ const HOOK_FORBIDDEN: [&str; 23] = [
 /// each once, before the loop takes a key.
 const HOOK_LOOP_FORBIDDEN: [&str; 3] = ["mpsc", "std::io", "tracing"];
 
-/// What the listener's event path may not name, after `on_win_event` makes
-/// the event's windows: every read of Windows' state goes through the
-/// event's `EventWindows`, so that its call-count test,
+/// What the listener's event path may not name: every read of Windows'
+/// state goes through the event's reads (`EventReads`), so that its
+/// call-count test,
 /// `a_flood_events_window_facts_are_read_once`, counts every read.
 const EVENT_PATH_FORBIDDEN: [&str; 11] = [
     "verbatim_win32::",

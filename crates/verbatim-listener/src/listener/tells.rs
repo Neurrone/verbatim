@@ -10,13 +10,11 @@
 //! makes the reads and sends.
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock, PoisonError};
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
 
 use verbatim_ia2::{WinEvent, WinEventKind};
-use verbatim_listener_logic::tell::{
-    ForegroundHold, Placed, TimerChange, dropped_by_class, hang_tested, tell_window,
-};
+use verbatim_listener_logic::foreground::{Front, Pending as Foreground, Seen, TimerChange};
+use verbatim_listener_logic::tell::{dropped_by_class, hang_tested, tell_window};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::protocol::ListenerToCore;
@@ -25,12 +23,49 @@ use verbatim_model::{Pid, TraceId, WindowHandle};
 use verbatim_process::clock::now_us;
 use verbatim_process::held::Target;
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_win32::window::Readability;
 pub(super) use verbatim_win32::window_facts::SystemReads;
 use verbatim_win32::window_facts::{WindowPart, WindowReads};
 
-use super::event_windows::{EventReads, EventWindows};
-use super::{Sent, Timed, TimerHandle, Waiting, sent};
+use super::{Sent, Waiting, foreground_report, sent};
 use verbatim_process::transport::Sender;
+
+/// What the listener reads of Windows' own state as it handles a
+/// `WinEvent`, beside a window's facts: whether a window exists, whether
+/// an existing window is hung, and the process of a thread. The event
+/// path reads Windows' state only through it, so the event path's
+/// call-count test (`a_flood_events_window_facts_are_read_once`) sees each
+/// read.
+pub(super) trait EventReads: WindowReads {
+    /// Whether `window` is a window that exists (`IsWindow`).
+    fn exists(&self, window: isize) -> bool;
+    /// Whether `window`, a window found to exist, is ghosted or hung
+    /// ([`verbatim_win32::window::hang_state`]).
+    fn hang_state(&self, window: isize) -> Readability;
+    /// The process `thread` belongs to, `None` when it cannot be read.
+    fn process_of_thread(&self, thread: u32) -> Option<u32>;
+    /// Whether this process can open the input desktop now
+    /// ([`verbatim_win32::window::input_desktop_opens`]).
+    fn input_desktop_opens(&self) -> bool;
+}
+
+impl EventReads for SystemReads {
+    fn exists(&self, window: isize) -> bool {
+        verbatim_win32::window::window_exists(window)
+    }
+
+    fn hang_state(&self, window: isize) -> Readability {
+        verbatim_win32::window::hang_state(window)
+    }
+
+    fn process_of_thread(&self, thread: u32) -> Option<u32> {
+        super::process_of_thread(thread)
+    }
+
+    fn input_desktop_opens(&self) -> bool {
+        verbatim_win32::window::input_desktop_opens()
+    }
+}
 
 /// A tell's key in the listener's merge: its object, kind and raising
 /// thread, NVDA's limiter's key (`orderedWinEventLimiter.py` 63, 79).
@@ -129,32 +164,24 @@ pub(super) enum Held {
     IdleAnswer(u64),
 }
 
-/// What sets the hold's timer, or stops it (`None`).
-type SetHoldTimer = Box<dyn Fn(Option<Duration>) + Send + Sync>;
-
-/// The listener's order of tells and its foreground hold
-/// (`verbatim_listener_logic::tell::ForegroundHold`), under the one lock
+/// The listener's order of tells and its pending foreground
+/// (`verbatim_listener_logic::foreground::Pending`), under the one lock
 /// every tell is placed under: the foreground facts of a tell whose check
 /// did not read them are read, and the tell sent, in one step under it,
-/// so no such tell is placed after a foreground its facts predate. A UI
-/// Automation focus, menu opening, element selected or window opened has
-/// its facts read by its check where NVDA judges acceptance, before the
-/// object's own calls, and may be placed after a foreground they predate,
-/// as NVDA's event is (Dickson, 2026-11-19). One timer, armed only while the hold
-/// keeps tells. Its read of the window in front, `GetForegroundWindow`
-/// in the listener, is the one the foreground's watch reads too
-/// ([`front`](Self::front)).
+/// so no such tell is placed after a foreground its facts predate, and the
+/// window a step finds in front is reported before the tells it releases.
+/// A UI Automation focus, menu opening, element selected or window opened
+/// has its facts read by its check where NVDA judges acceptance, before
+/// the object's own calls, and may be placed after a foreground they
+/// predate, as NVDA's event is (Dickson, 2026-11-19). Only the `WinEvent`
+/// thread steps the pending foreground ([`step`](Self::step)), which owns
+/// the hold's timer; the other threads place behind it. Its read of the
+/// window in front, `GetForegroundWindow` in the listener, is the one
+/// every step judges by ([`front`](Self::front)).
 pub(super) struct Tells {
-    state: Mutex<HoldState>,
+    pending: Mutex<Foreground<Held>>,
     sender: Sender<Waiting>,
-    timer: OnceLock<SetHoldTimer>,
     front: fn() -> isize,
-}
-
-/// The hold, and whether its timer is being closed.
-struct HoldState {
-    hold: ForegroundHold<Held>,
-    closed: bool,
 }
 
 impl Tells {
@@ -166,12 +193,8 @@ impl Tells {
     /// test's stand-in for `GetForegroundWindow`.
     pub(super) fn with_front(sender: Sender<Waiting>, front: fn() -> isize) -> Self {
         Self {
-            state: Mutex::new(HoldState {
-                hold: ForegroundHold::default(),
-                closed: false,
-            }),
+            pending: Mutex::new(Foreground::Clear),
             sender,
-            timer: OnceLock::new(),
             front,
         }
     }
@@ -181,56 +204,51 @@ impl Tells {
         (self.front)()
     }
 
-    /// Places `held` in the order of tells: sent now, or kept behind a
-    /// pending foreground, whose window is looked for in front now.
-    pub(super) fn place(&self, held: Held) {
-        self.place_seen(held, self.front(), &SystemReads);
-    }
-
-    /// [`place`](Self::place), `front` the window in front as the
-    /// `WinEvent` callback read it for the foreground's watch, so that the
-    /// hold and the watch judge the event on one read, and the foreground
-    /// facts of what is sent read through `reads`.
-    pub(super) fn place_seen(&self, held: Held, front: isize, reads: &impl WindowReads) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let placed = state.hold.place(held, front, now_us());
-        self.apply(&state, placed, reads);
+    /// Places `held`, from any thread, the idle barrier's answer: sent
+    /// now, or held behind a hold in force, which it does not release.
+    pub(super) fn place_behind(&self, held: Held) {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(held) = pending.place_behind(held) {
+            self.apply(None, vec![held], &SystemReads);
+        }
     }
 
     /// Sends a UI Automation tell `held` at once, past any pending
-    /// foreground, which keeps what it holds (change B: the hold holds
-    /// MSAA events only, Dickson, 2026-11-17).
+    /// foreground, which keeps what it holds (the hold holds MSAA events
+    /// only, Dickson, 2026-11-17).
     pub(super) fn pass_hold(&self, held: Held) {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let placed = state.hold.passing(held);
-        self.apply(&state, placed, &SystemReads);
+        let _pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        self.apply(None, vec![held], &SystemReads);
     }
 
-    /// Places a foreground event's tell for `window`, `None` for one a
-    /// local drop took, which still awaits its window, `front` the window
-    /// in front as the callback read it, and the foreground facts of what
-    /// is sent read through `reads`.
-    pub(super) fn foreground(
+    /// A step of the pending foreground on the `WinEvent` thread, `seen`
+    /// an event or the hold's timer, `front` the window in front as the
+    /// step judges it, and `started` whether the foreground's watch has
+    /// started: the window found in front reported, then what the step
+    /// releases sent, each tell's foreground facts read through `reads`.
+    /// Returns the window reported, for the watch, and the timer's change,
+    /// which the `WinEvent` thread makes.
+    pub(super) fn step(
         &self,
-        window: isize,
-        tell: Option<Pending>,
-        front: isize,
+        seen: Seen<Held>,
+        (front, started): (isize, bool),
         reads: &impl WindowReads,
-    ) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let held = tell.map(|tell| Held::Tell(Box::new(tell)));
-        let placed = state.hold.foreground(window, held, front, now_us());
-        self.apply(&state, placed, reads);
+    ) -> (Option<Front>, TimerChange) {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        let placed = pending.step(seen, front, now_us(), started);
+        self.apply(placed.report, placed.send, reads);
+        (placed.report, placed.timer)
     }
 
-    /// Sends what a step of the hold released, in order, each tell's
-    /// foreground facts read through `reads` as it goes, and sets the
-    /// timer as it says, under the lock. The foreground window, the active
-    /// window and whether one window is inside another are read here, under
-    /// the lock, whatever `reads` has read before
-    /// ([`ReadOnce`](verbatim_win32::window_facts::ReadOnce)).
-    fn apply(&self, state: &HoldState, placed: Placed<Held>, reads: &impl WindowReads) {
-        for held in placed.send {
+    /// Sends the report of `report`, then `send`, in order, each tell's
+    /// foreground facts read through `reads` as it goes, under the lock.
+    /// The foreground window, the active window and whether one window is
+    /// inside another are read here, under the lock.
+    fn apply(&self, report: Option<Front>, send: Vec<Held>, reads: &impl WindowReads) {
+        if let Some(front) = report {
+            sent(&self.sender.send(Sent::Report(foreground_report(front))));
+        }
+        for held in send {
             match held {
                 Held::Tell(tell) => {
                     let (key, event) = tell.finish(reads);
@@ -249,36 +267,6 @@ impl Tells {
                 Held::IdleAnswer(round) => sent(&self.sender.send(Sent::IdleAnswer(round))),
             }
         }
-        let after = match placed.timer {
-            TimerChange::Keep => return,
-            TimerChange::Arm(after) if !state.closed => Some(Duration::from_micros(after)),
-            TimerChange::Arm(_) | TimerChange::Disarm => None,
-        };
-        if let Some(timer) = self.timer.get() {
-            timer(after);
-        }
-    }
-}
-
-impl Timed for Tells {
-    fn take_timer(&self, timer: TimerHandle) {
-        let _ = self.timer.set(Box::new(move |after| match after {
-            Some(after) => timer.set(after),
-            None => timer.stop(),
-        }));
-    }
-
-    fn fired(&self) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let placed = state.hold.fired(self.front(), now_us());
-        self.apply(&state, placed, &SystemReads);
-    }
-
-    fn closing(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .closed = true;
     }
 }
 
@@ -338,71 +326,89 @@ fn handle(window: isize) -> WindowHandle {
     WindowHandle(i64::try_from(window).unwrap_or(0).cast_unsigned())
 }
 
-/// Tells Core of `event`, received at `at_us`, unless a local drop takes
-/// it, placing its tell in the listener's order through `tells`; a
-/// foreground event's window is awaited by the foreground hold whether or
-/// not its tell is dropped after the window is known. A window's
-/// destruction is placed at once after the window's mapping, with the
-/// process of the thread that raised it when that thread can be opened and
-/// none when it cannot, so it is never dropped for its process: NVDA
-/// handles a destroy before any drop that applies to a window's
+/// What `event`, received at `at_us`, gives the pending foreground: its
+/// tell, unless a local drop takes it, as a foreground event's, the
+/// shell's or any other's ([`Seen`]); a foreground event's window is
+/// awaited whether or not its tell is dropped after the window is known.
+/// A window's destruction is told at once after the window's mapping,
+/// with the process of the thread that raised it when that thread can be
+/// opened and none when it cannot, so it is never dropped for its process:
+/// NVDA handles a destroy before any drop that applies to a window's
 /// destruction (`IAccessibleHandler/internalWinEventHandler.py` 101 to
-/// 103). The local drops, in
-/// NVDA's order (design, "Readers' local drops"): the window's mapping
-/// ([`tell_window`]), the process that serves the window, which must be
-/// known (a console window's is its console host, the process of the
-/// thread that raised the event, as Verbatim routes it today), the
-/// window's class and the shown object ([`dropped_by_class`]), and a hung
-/// or ghosted window, read live, for the kinds NVDA tests
-/// ([`hang_tested`]). `front` is the window in front as the
-/// callback read it, which the foreground hold judges the event on, and
-/// `windows` the facts of the event's windows, each read once for it.
+/// 103). The local drops, in NVDA's order (design, "Readers' local
+/// drops"): the window's mapping ([`tell_window`]), the process that
+/// serves the window, which must be known (a console window's is its
+/// console host, the process of the thread that raised the event, as
+/// Verbatim routes it today), the window's class and the shown object
+/// ([`dropped_by_class`]), and a hung or ghosted window, read live, for
+/// the kinds NVDA tests ([`hang_tested`]). `class` is the class of the
+/// event's window when the hook's filter read it; every other fact is
+/// read through `reads`.
 pub(super) fn tell_win_event(
-    tells: &Tells,
     applications: &mut Applications,
     event: WinEvent,
-    (at_us, front): (u64, isize),
-    windows: &EventWindows<'_, impl EventReads>,
-) {
-    let Some(kind) = verbatim_ia2::tell_kind(&event) else {
-        return;
+    (at_us, class): (u64, Option<&str>),
+    reads: &impl EventReads,
+) -> Seen<Held> {
+    let other = |item| Seen::Other {
+        item,
+        observed_at_us: at_us,
     };
-    let reads = windows.facts();
+    let Some(kind) = verbatim_ia2::tell_kind(&event) else {
+        return other(None);
+    };
     let window = match tell_window(
         kind,
         (event.hwnd, event.id_object, event.id_child),
-        |window| windows.exists(window),
+        |window| reads.exists(window),
         reads.desktop(),
     ) {
         Ok(window) => window,
         Err(reason) => {
             tracing::trace!(?kind, hwnd = event.hwnd, reason, "a WinEvent is not told");
-            return;
+            return other(None);
         }
     };
     if kind == EventKind::Destroy {
-        let destroyed = Held::Destroyed {
+        return other(Some(Held::Destroyed {
             window: handle(window),
-            process: windows.process_of_thread(event.thread).map(Pid),
+            process: reads.process_of_thread(event.thread).map(Pid),
             at_us,
-        };
-        tells.place_seen(destroyed, front, windows.live());
-        return;
+        }));
     }
-    let awaited = (event.kind == WinEventKind::Foreground).then_some(window);
-    let dropped = |reason: &'static str| {
-        tracing::trace!(?kind, window, reason, "a WinEvent is not told");
-        if let Some(window) = awaited {
-            tells.foreground(window, None, front, windows.live());
+    let class = match class {
+        Some(class) if event.hwnd == window => class.to_owned(),
+        _ => reads.class(window),
+    };
+    let console = class == CONSOLE_WINDOW_CLASS;
+    let seen = |item| {
+        let front = Front {
+            window,
+            thread: event.thread,
+            console,
+            observed_at_us: at_us,
+        };
+        match event.kind {
+            WinEventKind::Foreground => Seen::Foreground { front, item },
+            WinEventKind::ShellForeground => Seen::Shell {
+                front: Front {
+                    console: false,
+                    ..front
+                },
+                item,
+            },
+            _ => other(item),
         }
     };
-    let class = reads.class(window);
-    let console = class == CONSOLE_WINDOW_CLASS;
+    let dropped = |reason: &'static str| {
+        tracing::trace!(?kind, window, reason, "a WinEvent is not told");
+        seen(None)
+    };
     let owner = reads.owner(window).1;
     // A console window's events are served by the process of the thread
     // that raised them.
     let process = if console || owner == 0 {
-        windows.process_of_thread(event.thread)
+        reads.process_of_thread(event.thread)
     } else {
         Some(owner)
     };
@@ -412,12 +418,12 @@ pub(super) fn tell_win_event(
     if let Some(reason) = dropped_by_class(kind, &class, event.id_object) {
         return dropped(reason);
     }
-    if hang_tested(kind) && windows.readability(window).is_hung() {
+    if hang_tested(kind) && reads.hang_state(window).is_hung() {
         return dropped("its window is hung");
     }
     let payload = if kind == EventKind::DesktopSwitch {
         Payload::DesktopSwitch {
-            input_desktop_open: windows.input_desktop_opens(),
+            input_desktop_open: reads.input_desktop_opens(),
         }
     } else {
         Payload::None
@@ -443,10 +449,7 @@ pub(super) fn tell_win_event(
         )),
         checked: None,
     };
-    match awaited {
-        Some(window) => tells.foreground(window, Some(tell), front, windows.live()),
-        None => tells.place_seen(Held::Tell(Box::new(tell)), front, windows.live()),
-    }
+    seen(Some(Held::Tell(Box::new(tell))))
 }
 
 #[cfg(test)]
@@ -540,11 +543,25 @@ mod tests {
         }
     }
 
-    /// [`tell_win_event`] with the system's reads, the
-    /// hook having read no class.
+    /// [`tell_win_event`] with the system's reads, the hook having read
+    /// no class, stepped with the window in front `at.1`, before the
+    /// foreground's watch starts, so that no window is reported.
     fn tell(tells: &Tells, applications: &mut Applications, event: WinEvent, at: (u64, isize)) {
-        let windows = EventWindows::new(&SystemReads, None);
-        tell_win_event(tells, applications, event, at, &windows);
+        let seen = tell_win_event(applications, event, (at.0, None), &SystemReads);
+        let _ = tells.step(seen, (at.1, false), &SystemReads);
+    }
+
+    /// A foreground event for the window in front, or for none when
+    /// nothing is, its tell dropped: it ends the hold.
+    fn foreground_in_front(tells: &Tells) {
+        let front = Front {
+            window: foreground(),
+            thread: 0,
+            console: false,
+            observed_at_us: 9,
+        };
+        let seen = Seen::Foreground { front, item: None };
+        let _ = tells.step(seen, (foreground(), false), &SystemReads);
     }
 
     /// This test process's executable name, as the listener reads it.
@@ -720,7 +737,7 @@ mod tests {
             OBJID_CLIENT.0,
         );
         tell(&tells, &mut applications, other_change, (4, foreground()));
-        tells.foreground(foreground(), None, foreground(), &SystemReads);
+        foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
             .map(|message| match message {
@@ -767,10 +784,8 @@ mod tests {
             OBJID_CLIENT.0,
         );
         tell(&tells, &mut applications, name_change, (2, foreground()));
-        tells.place(Held::IdleAnswer(7));
-        // A foreground event for the window in front, or for none when
-        // nothing is, ends the hold; dropped itself, it is not told.
-        tells.foreground(foreground(), None, foreground(), &SystemReads);
+        tells.place_behind(Held::IdleAnswer(7));
+        foreground_in_front(&tells);
         let order: Vec<String> = sent_all(&sender, &mut reader)
             .into_iter()
             .map(|message| match message {

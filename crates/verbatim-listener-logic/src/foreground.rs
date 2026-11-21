@@ -16,10 +16,12 @@
 //! Explorer's folder window, 140 to 400 ms early, with no later event when
 //! it opens in front), or refused by Windows' foreground lock
 //! (`docs/parity/focus-events.md`, "Event acceptance"). Such a window is
-//! kept as the pending window, replacing any kept before, and is sent once
-//! a later event finds it in front, with that event's
-//! observation; a newer foreground event replaces it. None sent replaces
-//! another.
+//! the one pending foreground ([`Pending`]): every MSAA tell placed after
+//! it is held behind it until `GetForegroundWindow` names its window or
+//! [`FOREGROUND_HOLD_US`] pass, and the window is reported once an event,
+//! or the hold's timer, finds it in front, always before the tells that
+//! step releases; a newer foreground event replaces it. None sent
+//! replaces another.
 //!
 //! A console host window is the one window whose thread the listener must
 //! learn from an event: asked which thread owns it, Windows names the first
@@ -33,8 +35,10 @@
 //! that window's own names its thread, and then unhooks them: a console
 //! busy with output raises thousands a second (`books/dev/src/explanation/design/wake-ups.md`).
 //!
-//! [`ForegroundWatch`] is the pure state of that, on the listener's
-//! `WinEvent` thread; the listener makes the local reads and the hooking.
+//! [`ForegroundWatch`] is the pure state of the start and the consoles, on
+//! the listener's `WinEvent` thread, and [`Pending`] the pending
+//! foreground, under the lock every tell is placed under; the listener
+//! makes the local reads, the hooking and the timer.
 
 /// A window that came to the foreground, as the listener reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,10 +80,6 @@ pub struct ForegroundWatch {
     unnamed_console: Option<isize>,
     /// Whether every console's events are hooked.
     console_events: bool,
-    /// The newest foreground event's window, when it was not in front as
-    /// the event was handled: sent once a later event finds it in
-    /// front, and replaced by a newer foreground event.
-    pending: Option<Front>,
 }
 
 impl ForegroundWatch {
@@ -105,47 +105,12 @@ impl ForegroundWatch {
         }
     }
 
-    /// A foreground event for `front`, whose thread it names, its window
-    /// in front as the event is handled when `in_front`: reported, and any
-    /// wait for a console's thread is over. A window not in front replaces
-    /// the pending window and is reported once a later event finds it in
-    /// front ([`event_seen`](Self::event_seen)).
-    pub fn foreground(&mut self, front: Front, in_front: bool) -> Step {
-        if !self.started {
-            // Reported by the start, which reads the foreground after this.
-            return Step::default();
-        }
-        if in_front {
-            self.pending = None;
-            self.sent(front)
-        } else {
-            self.pending = Some(front);
-            Step::default()
-        }
-    }
-
-    /// Whether a window not in front at its foreground event waits to be
-    /// sent, for which every event reads the foreground window.
+    /// Whether [`start`](Self::start) has run: until then a window found
+    /// in front is not reported, since the start reads the foreground
+    /// itself.
     #[must_use]
-    pub fn has_pending(&self) -> bool {
-        self.pending.is_some()
-    }
-
-    /// An event the listener received at `observed_at_us`, with
-    /// `foreground` the window `GetForegroundWindow` names now: the pending
-    /// window, when it is that window, is reported with this event's
-    /// observation.
-    pub fn event_seen(&mut self, foreground: isize, observed_at_us: u64) -> Step {
-        match self.pending {
-            Some(pending) if self.started && pending.window == foreground => {
-                self.pending = None;
-                self.sent(Front {
-                    observed_at_us,
-                    ..pending
-                })
-            }
-            _ => Step::default(),
-        }
+    pub fn started(&self) -> bool {
+        self.started
     }
 
     /// A console's event, on `window`, raised by `thread`, observed at
@@ -168,14 +133,12 @@ impl ForegroundWatch {
         }
     }
 
-    /// `front` is reported, a window in front whose thread its event named:
-    /// any wait for a console's thread is over.
-    fn sent(&mut self, front: Front) -> Step {
+    /// A window in front whose thread its event named was reported: any
+    /// wait for a console's thread is over, and the consoles' events are
+    /// unhooked, when that changes them.
+    pub fn sent(&mut self) -> Option<bool> {
         self.unnamed_console = None;
-        Step {
-            report: Some(front),
-            console_events: self.hook_consoles(false),
-        }
+        self.hook_consoles(false)
     }
 
     /// Whether the console's events change to `hooked`: `Some(hooked)`
@@ -185,6 +148,307 @@ impl ForegroundWatch {
             self.console_events = hooked;
             hooked
         })
+    }
+}
+
+/// How long a pending foreground holds the tells placed behind it while
+/// `GetForegroundWindow` does not yet name its window: NVDA's two
+/// deferrals of its pump, each of up to 10 ms
+/// (`IAccessibleHandler/internalWinEventHandler.py` 30, 233 to 263;
+/// `core.py` 55), in microseconds.
+pub const FOREGROUND_HOLD_US: u64 = 20_000;
+
+/// The pending foreground: none, a foreground event's window that
+/// `GetForegroundWindow` did not name as the event was handled, holding
+/// every item placed since behind it, in order, until it does or
+/// [`FOREGROUND_HOLD_US`] pass, or such a window whose hold is over,
+/// awaited only to be reported. A newer foreground event replaces it and
+/// counts its time again, as NVDA sets the deferred window and resets its
+/// count at each foreground event
+/// (`IAccessibleHandler/internalWinEventHandler.py` 175 to 177, 233 to
+/// 263). Every MSAA item goes through it, so the order of those tells is
+/// the order they were placed in; a UI Automation tell passes it by, as
+/// NVDA's hold defers its `WinEvent` pump alone, and is sent at once
+/// (Dickson, 2026-11-17). Its window is reported only by a step of the
+/// `WinEvent` thread ([`step`](Self::step)), always before the items that
+/// step releases, so Core takes the window as the foreground before it
+/// judges them; an item placed from another thread
+/// ([`place_behind`](Self::place_behind)) releases nothing.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum Pending<T> {
+    /// No foreground is pending.
+    #[default]
+    Clear,
+    /// A foreground event's window not yet in front, holding what was
+    /// placed since.
+    Holding {
+        /// The window, as its event named it.
+        front: Front,
+        /// When the hold ends whatever the foreground, in microseconds.
+        until_us: u64,
+        /// What it holds, in order.
+        held: Vec<T>,
+    },
+    /// A foreground event's window not in front when its hold ended,
+    /// reported once an event finds it in front.
+    Awaiting {
+        /// The window, as its event named it.
+        front: Front,
+    },
+}
+
+/// What a `WinEvent`-thread step of the pending foreground is given.
+#[derive(Debug)]
+pub enum Seen<T> {
+    /// A foreground event for `front`, with its tell, `None` for one a
+    /// local drop took, which still awaits its window, as NVDA sets the
+    /// deferred window before it judges the event.
+    Foreground {
+        /// The window, its thread and its observation.
+        front: Front,
+        /// Its tell.
+        item: Option<T>,
+    },
+    /// The shell's foreground event (Program Manager or the taskbar), for
+    /// `front`: reported for the keyboard hook's view as a foreground
+    /// event's window is, and replacing the window awaited, but holding
+    /// nothing, as NVDA defers its pump for no shell window
+    /// (`IAccessibleHandler/internalWinEventHandler.py` 164 to 172).
+    Shell {
+        /// The window, its thread and its observation.
+        front: Front,
+        /// Its tell.
+        item: Option<T>,
+    },
+    /// Any other `WinEvent`, with its tell, `None` for one not told.
+    Other {
+        /// Its tell.
+        item: Option<T>,
+        /// When the listener observed it.
+        observed_at_us: u64,
+    },
+    /// The hold's timer went off, or a stale `WM_TIMER` that `KillTimer`
+    /// left posted arrived.
+    Timer,
+}
+
+/// How the hold's one timer changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimerChange {
+    /// As it is.
+    Keep,
+    /// Set to go off this many microseconds from now.
+    Arm(u64),
+    /// Stopped: no hold waits for it.
+    Disarm,
+}
+
+/// What a step of the pending foreground does, in order: the window to
+/// report, then what is sent, then the timer's change.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Placed<T> {
+    /// The window in front to report, before what is sent.
+    pub report: Option<Front>,
+    /// What is sent, in order.
+    pub send: Vec<T>,
+    /// The timer.
+    pub timer: TimerChange,
+}
+
+impl<T> Placed<T> {
+    /// `send` sent, nothing reported, the timer kept.
+    fn sent(send: Vec<T>) -> Self {
+        Self {
+            report: None,
+            send,
+            timer: TimerChange::Keep,
+        }
+    }
+}
+
+impl<T> Pending<T> {
+    /// An item placed from any thread, the idle barrier's answer: held
+    /// behind a hold in force, else given back to be sent now. It releases
+    /// nothing, since only the `WinEvent` thread reports a window.
+    pub fn place_behind(&mut self, item: T) -> Option<T> {
+        if let Self::Holding { held, .. } = self {
+            held.push(item);
+            None
+        } else {
+            Some(item)
+        }
+    }
+
+    /// A step of the `WinEvent` thread, `seen`, with `in_front` the window
+    /// `GetForegroundWindow` names now and `now` the time. `started` says
+    /// whether the foreground's watch has started: until then nothing is
+    /// reported, since the start reports the window in front itself, and
+    /// the hold keeps its order and its timer as after.
+    pub fn step(&mut self, seen: Seen<T>, in_front: isize, now: u64, started: bool) -> Placed<T> {
+        let mut placed = match seen {
+            Seen::Foreground { front, item } => self.foreground(front, item, in_front, now),
+            Seen::Shell { front, item } => {
+                let mut placed = self.other(item, in_front, front.observed_at_us, now);
+                if !matches!(self, Self::Holding { .. }) {
+                    *self = if front.window == in_front {
+                        placed.report = Some(front);
+                        Self::Clear
+                    } else {
+                        Self::Awaiting { front }
+                    };
+                }
+                placed
+            }
+            Seen::Other {
+                item,
+                observed_at_us,
+            } => self.other(item, in_front, observed_at_us, now),
+            Seen::Timer => self.timer(in_front, now),
+        };
+        if !started {
+            placed.report = None;
+        }
+        placed
+    }
+
+    /// A foreground event for `front`: reported with whatever was held and
+    /// its tell when its window is in front, else held, awaited for
+    /// [`FOREGROUND_HOLD_US`] from now.
+    fn foreground(
+        &mut self,
+        front: Front,
+        item: Option<T>,
+        in_front: isize,
+        now: u64,
+    ) -> Placed<T> {
+        let (had, mut held) = match std::mem::take(self) {
+            Self::Holding { held, .. } => (true, held),
+            Self::Clear | Self::Awaiting { .. } => (false, Vec::new()),
+        };
+        held.extend(item);
+        if front.window == in_front {
+            return Placed {
+                report: Some(front),
+                send: held,
+                timer: if had {
+                    TimerChange::Disarm
+                } else {
+                    TimerChange::Keep
+                },
+            };
+        }
+        *self = Self::Holding {
+            front,
+            until_us: now.saturating_add(FOREGROUND_HOLD_US),
+            held,
+        };
+        Placed {
+            report: None,
+            send: Vec::new(),
+            timer: TimerChange::Arm(FOREGROUND_HOLD_US),
+        }
+    }
+
+    /// Any other event: its tell sent, unless a hold in force keeps it;
+    /// the pending window, found in front, reported with this event's
+    /// observation, `observed_at_us`, before what it releases; a hold
+    /// whose time is over releases what it held and awaits its window.
+    fn other(
+        &mut self,
+        item: Option<T>,
+        in_front: isize,
+        observed_at_us: u64,
+        now: u64,
+    ) -> Placed<T> {
+        match std::mem::take(self) {
+            Self::Clear => Placed::sent(item.into_iter().collect()),
+            Self::Awaiting { front } if front.window == in_front => Placed {
+                report: Some(Front {
+                    observed_at_us,
+                    ..front
+                }),
+                send: item.into_iter().collect(),
+                timer: TimerChange::Keep,
+            },
+            awaiting @ Self::Awaiting { .. } => {
+                *self = awaiting;
+                Placed::sent(item.into_iter().collect())
+            }
+            Self::Holding {
+                front,
+                until_us,
+                mut held,
+            } => {
+                held.extend(item);
+                if front.window == in_front {
+                    Placed {
+                        report: Some(Front {
+                            observed_at_us,
+                            ..front
+                        }),
+                        send: held,
+                        timer: TimerChange::Disarm,
+                    }
+                } else if now >= until_us {
+                    *self = Self::Awaiting { front };
+                    Placed {
+                        report: None,
+                        send: held,
+                        timer: TimerChange::Disarm,
+                    }
+                } else {
+                    *self = Self::Holding {
+                        front,
+                        until_us,
+                        held,
+                    };
+                    Placed::sent(Vec::new())
+                }
+            }
+        }
+    }
+
+    /// The timer went off: a hold whose window is in front reports it with
+    /// its own event's observation and releases what it held; one whose
+    /// time is over releases what it held and awaits its window; one that
+    /// went off early is set again for the rest. With no hold in force the
+    /// `WM_TIMER` is a stale one, and does nothing.
+    fn timer(&mut self, in_front: isize, now: u64) -> Placed<T> {
+        let pending = std::mem::take(self);
+        let Self::Holding {
+            front,
+            until_us,
+            held,
+        } = pending
+        else {
+            *self = pending;
+            return Placed::sent(Vec::new());
+        };
+        if front.window == in_front {
+            Placed {
+                report: Some(front),
+                send: held,
+                timer: TimerChange::Disarm,
+            }
+        } else if now >= until_us {
+            *self = Self::Awaiting { front };
+            Placed {
+                report: None,
+                send: held,
+                timer: TimerChange::Disarm,
+            }
+        } else {
+            *self = Self::Holding {
+                front,
+                until_us,
+                held,
+            };
+            Placed {
+                report: None,
+                send: Vec::new(),
+                timer: TimerChange::Arm(until_us.saturating_sub(now)),
+            }
+        }
     }
 }
 
@@ -210,6 +474,22 @@ mod tests {
         console: false,
         observed_at_us: 3_000,
     };
+
+    /// A foreground event's step for `front`, its tell named `item`.
+    fn foreground(front: Front, item: &'static str) -> Seen<&'static str> {
+        Seen::Foreground {
+            front,
+            item: Some(item),
+        }
+    }
+
+    /// Any other event's step, observed at `at`, its tell named `item`.
+    fn other(item: &'static str, at: u64) -> Seen<&'static str> {
+        Seen::Other {
+            item: Some(item),
+            observed_at_us: at,
+        }
+    }
 
     #[test]
     fn a_window_in_front_at_the_start_is_reported_and_the_consoles_unhooked() {
@@ -268,289 +548,283 @@ mod tests {
         assert_eq!(watch.console_event(20, 202, 7_000), Step::default());
     }
 
+    /// Before the start nothing is reported, the window in front at a
+    /// foreground event included (the start reads the foreground itself);
+    /// after it, a console's foreground event reported names its thread
+    /// and ends the wait for it.
     #[test]
     fn a_foreground_event_names_its_thread_and_ends_any_wait() {
+        let mut pending = Pending::default();
         let mut watch = ForegroundWatch::default();
         assert_eq!(
-            watch.foreground(EDITOR, true),
-            Step::default(),
+            pending.step(foreground(EDITOR, "editor"), 10, 1_000, watch.started()),
+            Placed {
+                report: None,
+                send: vec!["editor"],
+                timer: TimerChange::Keep,
+            },
             "before the start, which reads the foreground itself"
         );
         watch.start(Some(CONSOLE));
-        assert_eq!(
-            watch.foreground(CONSOLE, true),
-            Step {
-                report: Some(CONSOLE),
-                console_events: Some(false),
-            },
-            "a console's foreground event names its thread"
-        );
+        let placed = pending.step(foreground(CONSOLE, "console"), 20, 2_000, watch.started());
+        assert_eq!(placed.report, Some(CONSOLE));
+        assert_eq!(watch.sent(), Some(false), "the consoles' events unhooked");
         assert_eq!(watch.console_event(20, 201, 5_000), Step::default());
-        assert_eq!(
-            watch.foreground(EDITOR, true),
-            Step {
-                report: Some(EDITOR),
-                console_events: None,
-            }
-        );
+        let placed = pending.step(foreground(EDITOR, "editor"), 10, 6_000, watch.started());
+        assert_eq!(placed.report, Some(EDITOR));
+        assert_eq!(watch.sent(), None);
     }
 
     /// Every foreground event in front is reported with its own
-    /// observation, in the order handled, a change back to an earlier
-    /// window included: none replaces another.
+    /// observation, before its tell, in the order handled, a change back
+    /// to an earlier window included: none replaces another.
     #[test]
     fn every_foreground_event_is_sent_with_its_stamp_none_replaced() {
-        let mut watch = ForegroundWatch::default();
-        watch.start(Some(EDITOR));
+        let mut pending = Pending::default();
         let returned = Front {
             observed_at_us: 4_000,
             ..EDITOR
         };
-        let reports: Vec<Option<Front>> = [EXPLORER, returned, EXPLORER]
+        let placed: Vec<Placed<&str>> = [EXPLORER, returned, EXPLORER]
             .into_iter()
-            .map(|front| watch.foreground(front, true).report)
+            .map(|front| pending.step(foreground(front, "tell"), front.window, 0, true))
             .collect();
+        let reports: Vec<Option<Front>> = placed.iter().map(|placed| placed.report).collect();
         assert_eq!(reports, [Some(EXPLORER), Some(returned), Some(EXPLORER)]);
+        assert!(placed.iter().all(|placed| placed.send == ["tell"]));
+        assert_eq!(pending, Pending::Clear);
     }
 
-    /// A foreground event whose window is not in front as it is handled is
-    /// sent once a later focus event finds the window in front, with that
-    /// event's observation, and not before.
+    /// A foreground event whose window is not in front as it is handled
+    /// holds what follows; once its hold is over it is reported when a
+    /// later event finds it in front, with that event's observation, and
+    /// not before.
     #[test]
     fn a_foreground_event_for_a_window_not_in_front_is_sent_when_a_later_event_finds_it_in_front() {
-        let mut watch = ForegroundWatch::default();
-        watch.start(Some(EDITOR));
-        assert_eq!(watch.foreground(EXPLORER, false), Step::default());
-        assert!(watch.has_pending());
-        assert_eq!(watch.event_seen(10, 3_500), Step::default());
+        let mut pending = Pending::default();
+        pending.step(foreground(EXPLORER, "foreground"), 10, 3_000, true);
         assert_eq!(
-            watch.event_seen(30, 3_600),
-            Step {
+            pending.step(other("change", 30_000), 10, 30_000, true),
+            Placed {
+                report: None,
+                send: vec!["foreground", "change"],
+                timer: TimerChange::Disarm,
+            },
+            "the hold's time is over: released, the window still awaited"
+        );
+        assert_eq!(pending, Pending::Awaiting { front: EXPLORER });
+        assert_eq!(
+            pending.step(other("focus", 30_600), 30, 30_600, true),
+            Placed {
                 report: Some(Front {
-                    observed_at_us: 3_600,
+                    observed_at_us: 30_600,
                     ..EXPLORER
                 }),
-                console_events: None,
+                send: vec!["focus"],
+                timer: TimerChange::Keep,
             }
         );
-        assert!(!watch.has_pending());
-        assert_eq!(watch.event_seen(30, 3_700), Step::default(), "sent once");
+        assert_eq!(
+            pending.step(other("next", 30_700), 30, 30_700, true).report,
+            None,
+            "sent once"
+        );
     }
 
     /// A newer foreground event replaces the pending window, whether or not
-    /// its own window is in front, so the replaced one is never sent.
+    /// its own window is in front, so the replaced one is never reported,
+    /// and nothing held behind either is lost.
     #[test]
     fn a_refused_foreground_event_replaced_by_a_newer_one_is_never_sent() {
-        let mut watch = ForegroundWatch::default();
-        watch.start(Some(EDITOR));
-        watch.foreground(EXPLORER, false);
-        watch.foreground(CONSOLE, false);
-        assert_eq!(watch.event_seen(30, 3_600), Step::default());
+        let mut pending = Pending::default();
+        pending.step(foreground(EXPLORER, "explorer"), 10, 0, true);
+        pending.step(foreground(CONSOLE, "console"), 10, 1_000, true);
         assert_eq!(
-            watch.foreground(EDITOR, true).report,
-            Some(EDITOR),
+            pending.step(other("change", 2_000), 30, 2_000, true),
+            Placed::sent(Vec::new()),
+            "the replaced window in front releases nothing"
+        );
+        assert_eq!(
+            pending.step(foreground(EDITOR, "editor"), 10, 3_000, true),
+            Placed {
+                report: Some(EDITOR),
+                send: vec!["explorer", "console", "change", "editor"],
+                timer: TimerChange::Disarm,
+            },
             "a newer event in front"
         );
-        assert_eq!(watch.event_seen(20, 3_700), Step::default());
+        assert_eq!(
+            pending.step(other("later", 4_000), 20, 4_000, true).report,
+            None
+        );
     }
 
-    /// One step of a sequence of the foreground watch.
-    #[derive(Clone, Copy, Debug)]
-    enum Input {
-        /// The listener starts with this window in front.
-        Start(Front),
-        /// A foreground event for this window, in front as it is handled
-        /// or not.
-        Foreground(Front, bool),
-        /// A focus event finds this window in front.
-        Seen(isize),
-        /// A console's event on this window, raised by thread 201.
-        Console(isize),
-    }
-
-    /// Each step a sequence may take.
-    const INPUTS: [Input; 6] = [
-        Input::Start(EDITOR),
-        Input::Start(CONSOLE),
-        Input::Foreground(EDITOR, true),
-        Input::Foreground(EXPLORER, false),
-        Input::Seen(30),
-        Input::Console(20),
-    ];
-
-    /// How many steps a sequence has at most.
-    const DEPTH: usize = 6;
-
-    /// A sequence, with what its steps have shown.
-    #[derive(Clone, Debug, Default)]
-    struct Run {
-        watch: ForegroundWatch,
-        trail: Vec<Input>,
-        started: bool,
-        /// Whether every console's events are hooked, as the steps' changes
-        /// left them: installed hooked with the rest.
-        hooked: bool,
-        /// The newest foreground event after the start, as given, and
-        /// whether it has been reported.
-        newest: Option<(Front, bool, bool)>,
-    }
-
-    impl Run {
-        /// Takes `input` at time `at`, checking its step against the
-        /// watch's rules.
-        fn step(&mut self, input: Input) {
-            self.trail.push(input);
-            let trail = format!("{:?}", self.trail);
-            let at = u64::try_from(self.trail.len()).unwrap_or(0) * 1_000;
-            let hooked = self.started.then_some(self.hooked);
-            let step = match input {
-                Input::Start(front) => {
-                    self.started = true;
-                    self.hooked = true;
-                    self.watch.start(Some(front))
-                }
-                Input::Foreground(front, in_front) => {
-                    let front = Front {
-                        observed_at_us: at,
-                        ..front
-                    };
-                    let step = self.watch.foreground(front, in_front);
-                    if self.started {
-                        self.newest = Some((front, in_front, false));
-                        // An event in front is reported at once; one not in
-                        // front waits.
-                        assert_eq!(step.report, in_front.then_some(front), "{trail}");
-                        assert_eq!(self.watch.has_pending(), !in_front, "{trail}");
-                    }
-                    step
-                }
-                Input::Seen(window) => {
-                    let step = self.watch.event_seen(window, at);
-                    if let Some(report) = step.report {
-                        // The newest foreground event, not in front and not
-                        // yet reported, is the window seen, reported once.
-                        let Some((front, false, false)) = self.newest else {
-                            panic!("a seen event reported {report:?}: {trail}");
-                        };
-                        assert_eq!(report.window, window, "{trail}");
-                        assert_eq!(
-                            report,
-                            Front {
-                                observed_at_us: at,
-                                ..front
-                            },
-                            "{trail}"
-                        );
-                        self.newest = Some((front, false, true));
-                    }
-                    if self.started {
-                        assert_eq!(
-                            self.watch.has_pending(),
-                            matches!(self.newest, Some((_, false, false))),
-                            "{trail}"
-                        );
-                    }
-                    step
-                }
-                Input::Console(window) => {
-                    let step = self.watch.console_event(window, 201, at);
-                    if let Some(report) = step.report {
-                        // A console's own event names its thread only while
-                        // the consoles' events are hooked, and unhooks them.
-                        assert_eq!(hooked, Some(true), "{trail}");
-                        assert_eq!(
-                            report,
-                            Front {
-                                window,
-                                thread: 201,
-                                console: true,
-                                observed_at_us: at,
-                            },
-                            "{trail}"
-                        );
-                        assert_eq!(step.console_events, Some(false), "{trail}");
-                    }
-                    step
-                }
-            };
-            if hooked.is_none() && !matches!(input, Input::Start(_)) {
-                assert_eq!(step, Step::default(), "nothing before the start: {trail}");
-            }
-            // The console's events change only when they are to.
-            if let Some(change) = step.console_events {
-                assert_ne!(change, self.hooked, "{trail}");
-                self.hooked = change;
-            }
-        }
-    }
-
-    /// Runs every sequence that extends `run` up to `depth` steps, the
-    /// listener starting once; a failing sequence is printed as a line for
-    /// [`found`] before the failure.
-    fn every_sequence(run: &Run, depth: usize) {
-        if run.trail.len() == depth {
-            return;
-        }
-        for input in INPUTS {
-            if matches!(input, Input::Start(_)) && run.started {
-                continue;
-            }
-            let mut next = run.clone();
-            if let Err(payload) =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| next.step(input)))
-            {
-                let inputs: Vec<String> = run
-                    .trail
-                    .iter()
-                    .chain([&input])
-                    .map(|input| format!("Input::{input:?}"))
-                    .collect();
-                eprintln!(
-                    "the failing sequence, as a line for `found()` in crates/verbatim-listener-logic/src/foreground.rs:\n            vec![{}],\n\
-                     the found sequences alone: cargo test -p verbatim-listener-logic --lib -- --exact foreground::tests::found_sequences_keep_the_watchs_rules",
-                    inputs.join(", ")
-                );
-                std::panic::resume_unwind(payload);
-            }
-            every_sequence(&next, depth);
-        }
-    }
-
-    /// The sequences the enumeration failed on, each kept as its list of
-    /// inputs, as the failure's report gives it.
-    fn found() -> Vec<Vec<Input>> {
-        Vec::new()
-    }
-
-    /// Every found sequence keeps the watch's rules.
+    /// The defect this record removes: a hold released by its timer with
+    /// the window in front reports the window before the tells it releases,
+    /// so Core accepts the foreground tell. Source-derived, approved by
+    /// Dickson on 2026-11-21: NVDA processes the event at its deferred pump
+    /// once `GetForegroundWindow` names the window
+    /// (`nvda/source/IAccessibleHandler/internalWinEventHandler.py` 233 to
+    /// 263; `nvda/source/IAccessibleHandler/__init__.py` 834 to 840).
     #[test]
-    fn found_sequences_keep_the_watchs_rules() {
-        for sequence in found() {
-            let mut run = Run::default();
-            for input in sequence {
-                run.step(input);
+    fn the_timer_with_the_window_in_front_reports_it_before_the_tells_it_releases() {
+        let mut pending = Pending::default();
+        assert_eq!(
+            pending.step(foreground(EXPLORER, "foreground"), 10, 3_000, true),
+            Placed {
+                report: None,
+                send: vec![],
+                timer: TimerChange::Arm(FOREGROUND_HOLD_US),
             }
-        }
+        );
+        pending.step(other("old window's change", 5_000), 10, 5_000, true);
+        assert_eq!(
+            pending.step(Seen::Timer, 30, 12_000, true),
+            Placed {
+                report: Some(EXPLORER),
+                send: vec!["foreground", "old window's change"],
+                timer: TimerChange::Disarm,
+            }
+        );
+        assert_eq!(pending, Pending::Clear);
     }
 
-    /// Every sequence of up to six steps of the foreground watch (the
-    /// start with a window or a console in front, foreground events in
-    /// front and not, a focus event finding the waiting window in front,
-    /// and a console's event) keeps the watch's rules: nothing before the
-    /// start; a foreground event in front reported at once with its own
-    /// observation; a window not in front waiting, and reported only as the
-    /// newest foreground event, once, with the observation of the event
-    /// that found it; a console's thread named by its own event only while
-    /// the consoles' events are hooked, which unhooks them; and a change to
-    /// the hooking given only when it changes. The exact cases, a console
-    /// in front at the start and a waiting window replaced, are the
-    /// examples above.
+    /// The timer early, with the window not yet in front, is set again for
+    /// the rest; at the hold's end it releases what it held and the window
+    /// is awaited.
     #[test]
-    fn every_short_sequence_keeps_the_watchs_rules() {
-        // Each depth in turn, so the sequence a failure prints is one of
-        // the shortest that fail.
-        for depth in 1..=DEPTH {
-            every_sequence(&Run::default(), depth);
-        }
+    fn the_timer_early_is_set_again_and_at_the_end_releases_what_was_held() {
+        let mut pending = Pending::default();
+        pending.step(foreground(EXPLORER, "foreground"), 10, 1_000, true);
+        assert_eq!(
+            pending.step(Seen::Timer, 10, 15_000, true),
+            Placed {
+                report: None,
+                send: vec![],
+                timer: TimerChange::Arm(6_000),
+            }
+        );
+        assert_eq!(
+            pending.step(Seen::Timer, 10, 21_000, true),
+            Placed {
+                report: None,
+                send: vec!["foreground"],
+                timer: TimerChange::Disarm,
+            }
+        );
+        assert_eq!(pending, Pending::Awaiting { front: EXPLORER });
+    }
+
+    /// A stale `WM_TIMER`, left posted by `KillTimer`, does nothing with no
+    /// hold in force, whether no foreground is pending or one is awaited.
+    #[test]
+    fn a_stale_timer_does_nothing_with_no_hold() {
+        let mut pending: Pending<&str> = Pending::default();
+        assert_eq!(
+            pending.step(Seen::Timer, 30, 1_000, true),
+            Placed::sent(vec![])
+        );
+        assert_eq!(pending, Pending::Clear);
+        let mut pending: Pending<&str> = Pending::Awaiting { front: EXPLORER };
+        assert_eq!(
+            pending.step(Seen::Timer, 30, 1_000, true),
+            Placed::sent(vec![])
+        );
+        assert_eq!(pending, Pending::Awaiting { front: EXPLORER });
+    }
+
+    /// Before the watch's start, the hold keeps its order and its timer
+    /// releases what it held, but reports nothing: the start reports the
+    /// window in front.
+    #[test]
+    fn before_the_start_a_release_reports_nothing() {
+        let mut pending = Pending::default();
+        pending.step(foreground(EXPLORER, "foreground"), 10, 0, false);
+        assert_eq!(
+            pending.step(Seen::Timer, 30, 5_000, false),
+            Placed {
+                report: None,
+                send: vec!["foreground"],
+                timer: TimerChange::Disarm,
+            }
+        );
+    }
+
+    /// An item placed from another thread, the idle barrier's answer, is
+    /// held behind a hold in force and releases nothing, even with the
+    /// window in front; with no hold it goes at once.
+    #[test]
+    fn an_item_placed_from_another_thread_is_held_and_releases_nothing() {
+        let mut pending = Pending::default();
+        assert_eq!(pending.place_behind("idle"), Some("idle"));
+        pending.step(foreground(EXPLORER, "foreground"), 10, 0, true);
+        assert_eq!(pending.place_behind("idle"), None);
+        assert_eq!(
+            pending.step(other("focus", 1_000), 30, 1_000, true),
+            Placed {
+                report: Some(Front {
+                    observed_at_us: 1_000,
+                    ..EXPLORER
+                }),
+                send: vec!["foreground", "idle", "focus"],
+                timer: TimerChange::Disarm,
+            }
+        );
+        pending = Pending::Awaiting { front: EXPLORER };
+        assert_eq!(pending.place_behind("idle"), Some("idle"));
+    }
+
+    /// A foreground event not in front while a window is awaited holds
+    /// again, for its own window; one in front reports it and ends the
+    /// wait.
+    #[test]
+    fn a_foreground_event_while_a_window_is_awaited_replaces_it() {
+        let mut pending = Pending::Awaiting { front: EXPLORER };
+        assert_eq!(
+            pending
+                .step(foreground(CONSOLE, "console"), 10, 0, true)
+                .timer,
+            TimerChange::Arm(FOREGROUND_HOLD_US)
+        );
+        let mut pending = Pending::Awaiting { front: EXPLORER };
+        assert_eq!(
+            pending.step(foreground(EDITOR, "editor"), 10, 0, true),
+            Placed {
+                report: Some(EDITOR),
+                send: vec!["editor"],
+                timer: TimerChange::Keep,
+            }
+        );
+        assert_eq!(pending, Pending::Clear);
+    }
+
+    /// The shell's foreground holds nothing: it is reported in front, and
+    /// awaited when it is not, replacing the window awaited, while a hold
+    /// in force keeps holding.
+    #[test]
+    fn the_shells_foreground_holds_nothing() {
+        let shell = |item| Seen::Shell {
+            front: EDITOR,
+            item: Some(item),
+        };
+        let mut pending = Pending::Awaiting { front: EXPLORER };
+        assert_eq!(
+            pending.step(shell("shell"), 10, 0, true),
+            Placed {
+                report: Some(EDITOR),
+                send: vec!["shell"],
+                timer: TimerChange::Keep,
+            }
+        );
+        assert_eq!(pending, Pending::Clear);
+        assert_eq!(pending.step(shell("shell"), 30, 0, true).send, ["shell"]);
+        assert_eq!(pending, Pending::Awaiting { front: EDITOR });
+        let mut pending = Pending::default();
+        pending.step(foreground(EXPLORER, "foreground"), 10, 0, true);
+        assert_eq!(
+            pending.step(shell("shell"), 10, 1_000, true).send,
+            Vec::<&str>::new()
+        );
+        assert!(matches!(pending, Pending::Holding { .. }));
     }
 }
