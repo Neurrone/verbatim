@@ -1358,8 +1358,8 @@ fn held_up_watch(session: &mut Session) -> Vec<verbatim_model::Watch> {
 }
 
 /// A terminal caret key's watch in the console host
-/// (`docs/design/readers-tell-core-asks-build1.md`, "A terminal's caret
-/// key"): from the starting point its starting read minted (anchor 3, after
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): from the starting point its
+/// starting read minted (anchor 3, after
 /// the baseline's start, 1, and the starting read's own, 2), from its pass
 /// at 300 ms, a check every 5 ms (Verbatim-only, ruled 2026-10-26) to
 /// NVDA's 100 ms bound, its multiplier 1 on consoles (`winConsoleUIA.py`

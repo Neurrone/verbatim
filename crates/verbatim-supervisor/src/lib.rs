@@ -1,7 +1,7 @@
 //! The Core-side supervisor (architecture section 1, decisions D9 and D13):
 //! the process owner, reduced to process facts and their effects
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-//! generation record"). Core's reducer owns the outpost generation record
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"). Core's
+//! reducer owns the outpost generation record
 //! and judges every generation; the supervisor launches children, watches
 //! their liveness by pings, sees pipes close and processes exit, and
 //! reports these to Core, carrying out Core's start, end and shutdown
@@ -230,8 +230,7 @@ pub enum OutpostMessage {
     },
     /// The owner is about to launch the listener of generation `listener`:
     /// sent before its process starts, so Core keeps its first tells
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-    /// generation record").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     ListenerStarted {
         /// The listener's generation.
         listener: OutpostId,

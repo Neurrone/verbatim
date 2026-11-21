@@ -546,7 +546,7 @@ pub struct NodeDetails {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell: Option<CellPosition>,
     /// The row and column counts of a table, read only for Report Current
-    /// Object's live read (`Query::ReadNode`), and from the node's own Grid
+    /// Object's live read, and from the node's own Grid
     /// pattern (`docs/parity/focus-announcement.md`, "Table cell
     /// coordinates"). Left out of the message when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,7 +1,7 @@
 //! Core's foreground record (`books/dev/src/reference/adr/0001-focus.md`, "The foreground and the
 //! window title"), driven through Core's event queue
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Focus and
-//! foreground"): the listener's foreground report, whose marker empties
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"): the
+//! listener's foreground report, whose marker empties
 //! the readers' last focus at an unrelated window; the whole-window focus,
 //! an MSAA foreground tell read by its application's outpost; acceptance
 //! on the facts a tell carries; and the title rule. Each test drives the

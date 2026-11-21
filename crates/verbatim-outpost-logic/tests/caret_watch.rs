@@ -1,6 +1,6 @@
-//! The caret watch's generated test (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Tests and scenarios", replacing the caret rework's `caret_lease`, whose
-//! world abandoned a read at a deadline that no longer exists): a caret key
+//! The caret watch's generated test
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md` describes
+//! it): a caret key
 //! from its read before it, through its watch, to what it says, across the
 //! hand-off between Core and the outpost. Core's reducer and the outpost's
 //! are driven together ([`seam`]) by a world of what real applications and

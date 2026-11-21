@@ -1,6 +1,6 @@
 //! Sends the key strokes Core's stroke line names
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The hook and Core's
-//! stroke line", Table 13). The shell keeps no line of its own: the hook
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"). The
+//! shell keeps no line of its own: the hook
 //! reports a held caret key with its stroke and every transition it
 //! deferred behind one, Core keeps them in its line, and names what goes,
 //! in line order ([`verbatim_model::request::QueueEffect::SendStrokes`]),

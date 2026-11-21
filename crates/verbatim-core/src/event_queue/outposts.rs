@@ -1,5 +1,5 @@
 //! The outpost generation record applied by the event queue's driver
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 5): the owner
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"): the owner
 //! thread's process facts become inputs here, and the record's
 //! transitions move the requests that wait for an application's outpost
 //! or are out to it. Core owns routing and judges a generation's

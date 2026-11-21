@@ -27,8 +27,7 @@
 //!   100 ms, a movement key and Delete its unit at the caret then, read
 //!   once more; Backspace, with its effect, what it deleted, from the read
 //!   before it, and at 100 ms nothing.
-//! - Dickson's decisions (ADR 0003, "Keys and commands";
-//!   `docs/design/readers-tell-core-asks-build1.md`, "What users hear"): a
+//! - Dickson's decisions (ADR 0003, "Keys and commands"): a
 //!   key and a focus are handled one at a time in arrival order; a held
 //!   caret key is sent to the application 150 ms after its press if it has
 //!   not been, and then says nothing; a key the hook did not hold says

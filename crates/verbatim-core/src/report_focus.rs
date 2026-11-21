@@ -1,5 +1,5 @@
-//! Report focus, Verbatim+Tab (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Report focus"): an event-queue entry that, at its turn, reads the
+//! Report focus, Verbatim+Tab (`books/dev/src/reference/crates/verbatim-core.md`, "Verbatim+Tab"):
+//! an event-queue entry that, at its turn, reads the
 //! committed focus node's properties live in one request and speaks them
 //! as NVDA's script speaks its focus object, its text summary included.
 //! The answer is only spoken: it never becomes Core's focus.

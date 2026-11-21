@@ -1,6 +1,6 @@
 //! A key or command as an event-queue entry (ADR 0003, "Keys and
-//! commands"; `docs/design/readers-tell-core-asks-build1.md`, "Keys and
-//! commands in this build"): the action the hook chose at the press, the
+//! commands"; `books/dev/src/reference/crates/verbatim-core.md`, "Key numbers"): the action the
+//! hook chose at the press, the
 //! marks a later key puts on the caret keys ahead of it, and the speech
 //! fence every entry carries.
 //!

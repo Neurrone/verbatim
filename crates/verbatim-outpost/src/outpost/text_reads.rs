@@ -573,8 +573,8 @@ fn failed_reply(error: TextError) -> TextReply {
 }
 
 /// Answers one of Core's text requests from the event queue or outside it
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-/// this build"): a caret key's starting read, a caret tell's read, and
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"): a
+/// caret key's starting read, a caret tell's read, and
 /// the shared list's reads and moves, a move answered with the next
 /// selection baseline.
 pub(super) fn answer_asked(

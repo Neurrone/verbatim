@@ -240,8 +240,8 @@ impl<E, F> Queue<E, F> {
 
 impl<E, F> Queue<E, F> {
     /// Whether the queue is idle for the test harness
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
-    /// harness's idle"): no entry at the front or waiting, none to be
+    /// (`books/dev/src/reference/crates/verbatim-app.md`, `AwaitIdle`): no entry at the front or
+    /// waiting, none to be
     /// appended later, no request waiting for its outpost or out, and no
     /// window in the recovery set, so no hang round is due either.
     pub(crate) fn idle(&self) -> bool {

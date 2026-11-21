@@ -1,13 +1,14 @@
 //! A sentence key's move, run whole in one request
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The sentence move"):
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on
+//! the event queue"):
 //! from the key's starting point, the caret's paragraph is read, the next
 //! or previous sentence found in it by Unicode's rules, the paragraph
 //! beside it read when the sentence is not in it, and the caret moved,
 //! as NVDA's `_caretMoveBySentenceHelper` moves the position it read
 //! before the key (`editableText.py` 245 to 262). At the text's ends the
 //! caret goes to the end past the last sentence, or stays at the start
-//! with the first sentence (`docs/design/caret-selection-rework.md`,
-//! "Moving by sentence"). Only a source with a sentence unit (an edit
+//! with the first sentence (`docs/parity/text.md`, "A caret
+//! key that moves nothing"). Only a source with a sentence unit (an edit
 //! control's messages) is asked.
 
 #![forbid(unsafe_code)]

@@ -1,6 +1,5 @@
 //! Core's focus rules under ADR 0003 ("Readers tell, Core asks"), each in
-//! its own module (`docs/design/readers-tell-core-asks-build1.md`, "How
-//! the code is organised").
+//! its own module.
 
 pub(crate) mod acceptance;
 pub(crate) mod backend;

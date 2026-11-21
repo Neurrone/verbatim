@@ -1,8 +1,7 @@
 //! Caret keys, caret tells and selection changes, with Core's reducer
 //! driving a real outpost watching mockapp's text
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-//! this build" and "Selection and the caret's text facts"; Tables 7, 15 and
-//! 17).
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on
+//! the event queue" and "Caret tells and Core's text facts").
 //!
 //! A caret key runs at its turn: a starting read, its stroke sent, then the
 //! outpost's watch, answered by a check that finds the key's effect,

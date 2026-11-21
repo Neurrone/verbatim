@@ -1,8 +1,8 @@
 //! The process owner: one thread that launches and ends every child,
 //! watches each one's liveness by pings, sees pipes close and processes
 //! exit, and reports these facts to Core, carrying out Core's start, end
-//! and shutdown effects (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The outpost generation record"). Core's reducer owns the outpost
+//! and shutdown effects (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost
+//! generation record"). Core's reducer owns the outpost
 //! generation record and judges every generation: when an outpost is
 //! started, replaced or ended, its backoff, its liveness, and which frames
 //! are current. The owner keeps only what carrying out those effects
@@ -1657,8 +1657,7 @@ impl Owner {
     /// Pings every running child, ends the listener when it has stopped
     /// answering, and finds the applications held that have exited. Core
     /// judges an outpost's missed pings and abandoned workers
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-    /// generation record").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     fn heartbeat(&mut self) {
         self.relay.commands().forget_finished();
         if self.shutting_down.is_some() {

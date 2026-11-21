@@ -1,7 +1,7 @@
 //! Key strokes the keyboard hook held or deferred, as Core's stroke line
 //! keeps them and names them to the shell to send
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The hook and Core's
-//! stroke line", Table 13). The shell keeps no line of its own: it sends
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"). The
+//! shell keeps no line of its own: it sends
 //! what Core names, with one `SendInput`, and at exit releases the keys
 //! Core lists that Windows still has down.
 

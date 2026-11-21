@@ -725,8 +725,8 @@ impl DecisionMachine {
     /// the keys it held: no release will come for a key down before the
     /// switch, so the machine forgets every key down, its modifiers among
     /// them, and its line, as NVDA clears its recorded modifiers
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The secure
-    /// desktop and the lock state"). The Alt keys in `alts_down`, each a
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock
+    /// state"). The Alt keys in `alts_down`, each a
     /// virtual-key code and extended flag, are the ones the keyboard's
     /// own state has physically down now; they stay down, their presses
     /// having reached the application, since NVDA judges a held Alt, the

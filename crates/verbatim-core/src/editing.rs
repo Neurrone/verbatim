@@ -585,8 +585,7 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
 /// navigator is on that node. An event-queue entry's answers are taken in
 /// arrival order, as one worker answers the queue's requests one at a
 /// time and an abandoned worker's commits are refused
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-/// caret's text facts").
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 pub(crate) fn take_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
     if state
         .versions

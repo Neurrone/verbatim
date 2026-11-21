@@ -505,7 +505,7 @@ pub struct TextThrough {
 }
 
 /// How the outpost reads a node's text, which Core names in each caret
-/// key's request (`docs/design/readers-tell-core-asks-build1.md`, "Terms").
+/// key's request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextProvider {
     /// UI Automation's text pattern.
@@ -524,8 +524,7 @@ impl TextProvider {
 }
 
 /// A formatting attribute a text read may fetch, one per attribute the
-/// theme switches (`docs/design/readers-tell-core-asks-build2.md`, "Rules,
-/// each with its reason").
+/// theme switches (`books/dev/src/reference/crates/verbatim-core.md`, "Formatting").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FormatAttribute {
     /// The font's name.
@@ -618,7 +617,7 @@ impl FormatSet {
 /// settings ask for, spelling and grammar errors, and links. Core chooses
 /// it per request from its settings, the read's unit and its reason, and
 /// the outpost reads exactly what it names
-/// (`docs/design/readers-tell-core-asks-build2.md`).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Formatting").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TextDetails {
     /// The format attributes.
@@ -836,8 +835,8 @@ pub enum SentenceMoved {
     },
 }
 
-/// A caret tell's read (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Selection and the caret's text facts"): the caret, and the selection
+/// A caret tell's read (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's
+/// text facts"): the caret, and the selection
 /// compared with the selection baseline Core names, against the
 /// baseline's range as it now is, its ends where the provider has moved
 /// them with the edits. The outpost mints the next baseline from the
@@ -1092,8 +1091,8 @@ pub enum TextReply {
     Selected(Vec<SelectionChange>),
     /// A [`TextOp::MoveCaret`] asked by an event-queue entry was done: the
     /// move begun at `read_at_us`, as [`TextReply::Moved`], with the
-    /// selection baseline it minted (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "Selection and the caret's text facts").
+    /// selection baseline it minted (`books/dev/src/reference/crates/verbatim-core.md`, "Caret
+    /// tells and Core's text facts").
     CaretPlaced {
         /// When the move began, in microseconds on the clock every process
         /// of a run shares.

@@ -1,15 +1,9 @@
-//! Announcements as event-queue entries (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Announcements" and Table 12): UI Automation notifications, toasts, UI
-//! Automation selections, MSAA alerts and shows, each judged at its turn by
-//! its kind's async function, in its own module.
-//!
-//! Each kind's entry is one [`Announcement`], the tell with what its kind
-//! parsed from it: the queue's rules read the kind for its place, its
-//! window and whether the foreground stop reaches it. No UI Automation
-//! announcement merges a waiting one: notifications and selections are
-//! handled one by one, in arrival order (`docs/parity/alerts.md`,
-//! "UIA notification events"; `docs/parity/changes-and-selection.md`,
-//! "Selection announcements").
+//! Announcements as event-queue entries, each kind judged at its turn by
+//! its own module's async function (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Focus, events and objects", its announcements). Each kind's entry is
+//! one [`Announcement`], the tell with what its kind parsed from it: the
+//! queue's rules read the kind for its place, its window and whether the
+//! foreground stop reaches it.
 
 pub(crate) mod alert;
 pub(crate) mod desktop_name;

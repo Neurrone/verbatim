@@ -5,8 +5,8 @@
 //! Every review command reads live (Dickson, 2026-10-08;
 //! `docs/design/m42-parity.md`): a command that answers from the review
 //! cursor's line reads it first, and a move goes straight to the read that
-//! moves. A press is an entry of the key line
-//! ([`crate::key_line::Press`]). A dead object reviews as an object with
+//! moves. A press is an entry of the event queue (`crate::keys::entry`).
+//! A dead object reviews as an object with
 //! empty text. Columns follow the design's one intentional difference from
 //! NVDA (`docs/parity/review.md`, "Review cursor columns"): moving to the next or
 //! previous line keeps the column. In a terminal the column is a cell
@@ -148,8 +148,8 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
 }
 
 /// A review press at its turn as an event-queue entry
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-/// this build"): it resolves the navigator, then makes each read of its
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The review cursor over text"): it resolves
+/// the navigator, then makes each read of its
 /// text, or the live read of the object for flat review, as the queue's
 /// request on the navigator's window, holding the queue until its last
 /// answer, as NVDA runs its scripts on its queue. One due time covers the

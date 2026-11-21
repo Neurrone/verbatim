@@ -1,24 +1,11 @@
-//! A caret key as an event-queue entry (`docs/design/readers-tell-core-asks-build1.md`,
-//! "A caret key at its turn", "The watch", "A later key and a pending
-//! focus", "The sentence move", Table 7).
-//!
-//! At its turn a held key asks its starting read of the node it was bound
-//! to at its press, which the outpost holds as the starting point; on the
-//! answer Core sends the key on (the pass) and asks the watch, which looks
-//! for the key's effect from the starting point until its bound, then reads
-//! the caret once more. A later key, command or key Core sends, or a focus
-//! pending behind the key, cancels it and the key says nothing, except
-//! Backspace and Control+Backspace, which say what they deleted from the
-//! starting read (Dickson, 2026-11-16). A sentence key that found no
-//! effect in text with a sentence unit moves by sentence from its starting
-//! point. There is no settle: the next key's starting read is taken at its
-//! turn. The 150 ms release counts from the press (`crate::keys::strokes`).
-//!
-//! Its states are its function's places: waiting (Table 7's S1, its stroke
-//! unsent, or S2, sent), starting (S3, the starting read out), watching
-//! (S4) and moving by sentence (S5). Whether it is marked is read from the
-//! arrivals and whether its stroke is unsent from the stroke line, each
-//! when needed, never stored on the entry.
+//! A caret key as an event-queue entry, at its turn on the node it was
+//! bound to at its press (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "The caret key on the event queue"). Its states are its function's
+//! places: waiting, its stroke unsent or sent; starting, the starting read
+//! out; confirming a focus behind it; watching; and moving by sentence.
+//! Whether it is marked is read from the arrivals and whether its stroke is
+//! unsent from the stroke line, each when needed, never stored on the
+//! entry.
 
 use verbatim_model::request::{CancelReason, CaretBinding, Reply, Request as Wire};
 use verbatim_model::{
@@ -657,8 +644,8 @@ async fn marked_end(
     }
 }
 
-/// A terminal's caret key at its turn (`docs/design/readers-tell-core-asks-build1.md`,
-/// "A terminal's caret key"): its starting read is the terminal's full
+/// A terminal's caret key at its turn
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): its starting read is the terminal's full
 /// read, which mints the caret starting point; the key passes, its model
 /// takes it, and the watch looks for its effect with no event shortcut;
 /// then the final read, another full read, whose answer the model takes.

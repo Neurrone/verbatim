@@ -141,8 +141,8 @@ pub struct HookForeground {
     /// away from the user's input desktop. The hook gets no release of a
     /// key down before such a switch, so when the number changes it
     /// clears its modifier record and its line, as Core drops its held
-    /// keys in the same step (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "The secure desktop and the lock state").
+    /// keys in the same step (`books/dev/src/reference/crates/verbatim-core.md`, "The secure
+    /// desktop and the lock state").
     #[serde(default)]
     pub desktop_switches: u32,
 }

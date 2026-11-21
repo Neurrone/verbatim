@@ -1,25 +1,8 @@
-//! The input desktop and the lock state (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The secure desktop and the lock state", Table 8), each handled at once
-//! in the inbox.
-//!
-//! A switch to another input desktop, one Verbatim cannot open such as
-//! the secure desktop, cuts speech, commits the sleeping focus (a focus
-//! Core commits itself, with no source, whose `Follow` names nothing),
-//! changes the hook view's desktop part so that the hook clears its
-//! modifier record, drops the held keys from Core's stroke line, and asks
-//! the old application nothing. NVDA: `winAPI/secureDesktop.py` 43 to 45,
-//! 50, 55 to 70. A switch whose input desktop opens arms a 200 ms timer,
-//! as NVDA does for every such switch (`IAccessibleHandler/__init__.py`
-//! 796 to 806); when it comes due the read after the return joins the
-//! back of the queue: the front application's current focus, with no
-//! duplicate test and none of the ancestors Core already knows, spoken
-//! with its window's title as NVDA's `gainFocus` after the sleeping focus
-//! is (809 to 813).
-//!
-//! Core holds the lock state from the shell's session notifications and
-//! its query at startup, unknown counting as locked (Verbatim-only:
-//! security mitigation B3). Nothing reads it before M8.7, which brings
-//! the rules that judge objects below the lock screen.
+//! The input desktop and the lock state, each handled at once in the
+//! inbox: [`InputDesktop`], the [`Desktop`] fact with the lock state beside
+//! it, and the switch, lock and timer inputs that change them
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the
+//! lock state").
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::Effect;

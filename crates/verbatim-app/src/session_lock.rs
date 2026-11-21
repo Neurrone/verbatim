@@ -1,5 +1,5 @@
-//! The session's lock state for Core (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The secure desktop and the lock state", Table 8): queried once at
+//! The session's lock state for Core (`books/dev/src/reference/crates/verbatim-core.md`, "The
+//! secure desktop and the lock state"): queried once at
 //! startup and then followed by Windows' session notifications, each
 //! entering Core's event queue as `QueueInput::Lock`. Core counts unknown
 //! as locked (security mitigation B3).

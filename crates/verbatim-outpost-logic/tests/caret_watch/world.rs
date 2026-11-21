@@ -1,11 +1,31 @@
 //! The world: what a real application and a real user do, written from the
-//! recordings of 2026-11-16 (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Recordings") and none of the code's rules. A case is a [`Script`]: the
-//! control, its text, the keys the user presses (at least 30 ms apart, as
-//! tests pace them, Dickson, 2026-11-16) and how the application handles
-//! each, how long each of Verbatim's reads of the application takes, and
-//! whether the application moves its focus. [`App`] is the application's
-//! state as strokes reach it.
+//! `verbatim-event-record` recordings below and none of the code's rules. A
+//! case is a [`Script`]: the control, its text, the keys the user presses
+//! (at least 30 ms apart, as tests pace them, Dickson, 2026-11-16) and how
+//! the application handles each, how long each of Verbatim's reads of the
+//! application takes, and whether the application moves its focus. [`App`]
+//! is the application's state as strokes reach it.
+//!
+//! The recordings, made on 2026-11-16, each gesture pressed about once a
+//! second with the top-level window recorded:
+//!
+//! - R1, the Windows Forms text box: every gesture that changes the
+//!   selection or moves the caret raises the system caret's location
+//!   change and show, with an MSAA text-selection change, within 1 to 3 ms;
+//!   Control+A with the caret at the text's end and Shift+End at a line's
+//!   end raise a caret hide and show with no location change;
+//!   Shift+Control with Up, Down, Page Up or Page Down raise no caret
+//!   event and change no selection; Delete and Backspace over a selection
+//!   raise caret hide and show pairs and the client's value change, no
+//!   location change.
+//! - R1, Windows 11 Notepad: every gesture raises exactly one UI Automation
+//!   `TextSelectionChanged` on the document, 3 to 13 ms after the key; in
+//!   Delete and Backspace over a selection it comes before `TextChanged`
+//!   and the value change.
+//! - R2, Settings' search box with suggestions open: Down and Up raise no
+//!   caret, text-selection, text-change or focus event on the box, only the
+//!   list items' selection events, within 4 ms of the key, so the key's
+//!   watch runs to its bound.
 
 use proptest::prelude::*;
 

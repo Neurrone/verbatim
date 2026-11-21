@@ -1,9 +1,6 @@
-//! The details each read fetches, chosen per request from Core's settings
-//! (the details the active theme reports, `Input::Reported`), the read's
-//! unit and its reason (`docs/design/readers-tell-core-asks-build2.md`,
-//! "Rules, each with its reason"): the readers keep no copy of the
-//! settings and fetch exactly what a request names, so a detail whose
-//! setting is off is left unread and its call unmade.
+//! The details each read fetches, chosen per request from Core's settings,
+//! the read's unit and its reason (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Formatting").
 
 use verbatim_model::property::PropertyId;
 use verbatim_model::{TextDetails, TextUnit};

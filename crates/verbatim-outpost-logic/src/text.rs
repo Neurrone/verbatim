@@ -2,7 +2,8 @@
 //! (`books/dev/src/explanation/design/ownership.md`): each node's anchors with their chunks' text, the positions the
 //! outpost reported, and the node's one last read, the only baseline a
 //! caret key or a comparison of selections has
-//! (`docs/design/caret-selection-rework.md`). A position is a fact of its own kind: an edit control's
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`). A position
+//! is a fact of its own kind: an edit control's
 //! offset, or the key of a UIA range the outpost's store keeps, so no
 //! application object is held here and an edit control's offsets cross
 //! between programs as they are.

@@ -220,8 +220,8 @@ impl<W> IdleBarrier<W> {
 
 /// The harness's marks of handled input, each held until the entries of
 /// every key the hook reported before it have ended in Core's event queue
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The test harness's
-/// idle": `InputHandled` at the end of the key's entry, not at the hook's
+/// (`books/dev/src/reference/crates/verbatim-app.md`, `AwaitIdle`: `InputHandled` at the end of
+/// the key's entry, not at the hook's
 /// post) and no lock key's announcement is still to come, then handed on
 /// in order, so the harness reads no speech before what its key caused.
 #[derive(Debug, Default)]

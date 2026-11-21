@@ -649,7 +649,8 @@ mod tests {
     }
 
     /// An editing chord is passed to the application and reported with its
-    /// gesture, never held (`docs/design/caret-selection-rework.md`).
+    /// gesture, never held
+    /// (`docs/parity/text.md`, "Keys outside the caret table").
     #[test]
     fn an_editing_chord_is_reported_with_its_gesture() {
         let reports = Arc::new(Mutex::new(Vec::new()));

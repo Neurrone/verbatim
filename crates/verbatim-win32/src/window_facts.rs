@@ -1,6 +1,6 @@
 //! The window facts a reader's tell carries, which Core's acceptance
-//! reads (design `docs/design/readers-tell-core-asks-build1.md`, "Focus and
-//! foreground"), and the facts of a node's window, gathered with calls to
+//! reads (design `books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"),
+//! and the facts of a node's window, gathered with calls to
 //! Windows only and none into an application, for both readers: the
 //! listener's tells and the outpost's tells of its followed nodes' changes.
 //! The gathering is pure over [`WindowReads`], so every case is a test

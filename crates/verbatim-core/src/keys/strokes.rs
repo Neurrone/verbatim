@@ -1,20 +1,10 @@
-//! Core's stroke line (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The hook and Core's stroke line", Table 13): the key transitions the
-//! hook held or deferred that Core has not yet sent, in the hook's order.
-//! The shell keeps no copy: it sends what Core names, and at exit releases
-//! the keys Core lists that Windows still has down.
-//!
-//! A held stroke is sent when its key passes, at its turn, by its 150 ms
-//! release, or when the foreground change ends its waiting entry, with
-//! every deferred transition behind it up to the next unsent held stroke.
-//! Releases fire in press order and keys reach the front in press order,
-//! so the line is always sent from its front. Whether a key's stroke is
-//! still to be sent is read from here, never stored on its entry: present
-//! is unsent, a dropped mark is dropped, and gone is sent.
-//!
-//! [`StrokeLine::pass`], [`StrokeLine::defer`] and the drops are the only
-//! writers, so the line M4.8's panic path reads can never be torn
-//! (`docs/design/guardian.md`).
+//! Core's stroke line, [`StrokeLine`]: the key transitions the hook held
+//! or deferred that Core has not yet sent, in the hook's order
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event
+//! queue"). Whether a key's stroke is still to be sent is read from here,
+//! never stored on its entry: present is unsent, a dropped mark is
+//! dropped, and gone is sent. [`StrokeLine::pass`], [`StrokeLine::defer`]
+//! and the drops are its only writers.
 
 use std::collections::{BTreeSet, VecDeque};
 

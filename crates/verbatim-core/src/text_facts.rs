@@ -1,16 +1,8 @@
-//! Core's text facts for the committed focus (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Selection and the caret's text facts", "Held anchors", Table 17): the
-//! selection baseline, the held anchor of the selection Core last spoke
-//! from, and the text-changed flag, the focus's text having changed since
-//! the selection was last compared (NVDA's
-//! `hasContentChangedSinceLastSelection`), each kept on the committed
-//! focus's record, so a new focus starts with neither.
-//!
-//! Only a caret tell's read compares selections, as only NVDA's caret
-//! event and focus do (`crate::caret_tell`); a caret key's starting and
-//! final reads name no baseline and change none. Verbatim's own moves
-//! (`MoveCaret`, a sentence move, `Select` on the focused text) mint the
-//! next baseline and say nothing of it.
+//! Core's text facts for the committed focus, [`SelectionFacts`]: the
+//! selection baseline and the text-changed flag, kept on the committed
+//! focus's record, and the functions that mint, take and clear them
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text
+//! facts").
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::request::{FocusCaret, Request as Wire};

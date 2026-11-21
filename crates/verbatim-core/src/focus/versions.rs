@@ -1,13 +1,8 @@
-//! The two versions of the focus (design Table 3; ADR 0003, "The two
-//! versions of the focus"): the committed focus, the focus Core has
-//! executed, which commands, the narrow rule and typed echo judge; and the
-//! readers' last focus, the newest focus a reader read that Core executed,
-//! which the duplicate tests, the whole-window refusal, a run's refusals
-//! and the system caret's target judge. Core can also commit a focus
-//! itself, which no reader read.
-//!
-//! The committed focus is one record, [`Focus`]: what Core spoke of it,
-//! what it keeps of its focus answer, and its line.
+//! The two versions of the focus, [`Versions`]: the committed focus, one
+//! [`Focus`] record of what Core spoke of it, what it keeps of its focus
+//! answer and its line, and the readers' last focus (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Focus, events and objects", the committed focus; ADR 0003, "The two
+//! versions of the focus").
 
 use std::sync::Arc;
 
@@ -148,8 +143,7 @@ pub(crate) struct Kept {
     /// window, or, for a focus Core read itself, whose nearest ancestor
     /// with a window of its own, is a console window. The console's caret
     /// event is its caret, so the system caret's tells are dropped while
-    /// it is committed (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "Terminals in this build").
+    /// it is committed (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals").
     pub(crate) console_terminal: bool,
 }
 

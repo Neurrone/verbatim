@@ -463,8 +463,8 @@ fn starting_point(terminal: &Terminal) -> TextAnchor {
 /// Core sends it for the terminal: no event is the key's effect, the
 /// checks are every 5 ms to NVDA's 100 ms bound in the console host and
 /// every 10 ms to 300 ms in Windows Terminal, and no unit is read at its
-/// end (`docs/design/readers-tell-core-asks-build1.md`, "A terminal's caret
-/// key"). Returns the request's number.
+/// end (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"). Returns the request's
+/// number.
 fn watch(terminal: &Terminal, point: TextAnchor) -> verbatim_model::request::RequestNumber {
     let (poll_us, bound_us) = if terminal.console {
         (5_000, 100_000)

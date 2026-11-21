@@ -11,7 +11,8 @@
 //! after its application exited ends as that exit, which follows; and an
 //! outpost Core ends, before its `Ready` or after, is ended as killed. Core
 //! judges what follows each end, its backoff and its missed pings among
-//! it (`docs/design/readers-tell-core-asks-build1.md`, Table 5); the test
+//! it (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"); the
+//! test
 //! stands in for Core.
 //!
 //! This test binary runs itself four ways: as an application, a process with

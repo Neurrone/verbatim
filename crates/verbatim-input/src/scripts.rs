@@ -373,8 +373,8 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
 /// alike: the Shift forms of [`caret_bindings`]' moves, and Control+A.
 /// They are observed, never held nor bound: each passes at once, deferred
 /// only behind a held key as every key is, and is reported so the reducer
-/// ends say-all at its turn (`docs/design/readers-tell-core-asks-build1.md`,
-/// "The hook and Core's stroke line": NVDA binds them only in controls
+/// ends say-all at its turn (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on
+/// the event queue": NVDA binds them only in controls
 /// that do not detect selection changes, which Verbatim does not read).
 /// The hook's map observes these gestures
 /// ([`crate::GestureMap::with_observed`]).
@@ -491,7 +491,8 @@ pub fn clearing_keys() -> Vec<GestureId> {
 
 /// The editing chords: Control+Z, Control+Y, Control+X, Control+V and Escape.
 /// NVDA binds no script to them, so in a text field they say nothing for
-/// the key (`docs/design/caret-selection-rework.md`). Observed like the
+/// the key (`docs/parity/text.md`, "Keys outside the caret table").
+/// Observed like the
 /// caret keys, never bound: the hook passes each to the application and
 /// reports it with its gesture, and the shell posts it as an editing
 /// chord's press.

@@ -1,6 +1,6 @@
 //! The navigator object's commands as event-queue entries
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-//! this build"): object navigation, activate, report the current object and
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Object navigation and review"): object
+//! navigation, activate, report the current object and
 //! move to the focus. Each resolves the navigator object at its turn and
 //! makes its reads as the queue's requests, naming the object's window, so
 //! each holds the queue until its last answer, as NVDA runs its scripts one

@@ -859,7 +859,7 @@ impl fmt::Display for ThemeProblem {
 /// shell gives it to the reducer at startup and whenever the theme in use
 /// changes, and Core chooses from it, per request, the property set of a
 /// node read and the details of a text read; no reader holds a copy
-/// (`docs/design/readers-tell-core-asks-build2.md`).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Formatting").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ReportedDetails {
     /// The node details reported.

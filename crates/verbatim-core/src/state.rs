@@ -584,8 +584,8 @@ pub struct SrState {
 }
 
 /// What the test harness's readiness reads of Core's outpost generation
-/// record (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-/// generation record"): the listener's readiness and Verbatim's own
+/// record (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"):
+/// the listener's readiness and Verbatim's own
 /// outpost's from the record, the spares' as the owner thread last
 /// counted them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -648,8 +648,8 @@ impl SrState {
 
     /// The committed focus's record a caret key pressed now is bound to,
     /// as the hook's view publishes it
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "A caret key at its
-    /// turn"): `None` with nothing committed, a focus whose reader ended,
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"):
+    /// `None` with nothing committed, a focus whose reader ended,
     /// Core's own focus, or a focus that cannot have text.
     #[must_use]
     pub fn caret_binding(&self) -> Option<verbatim_model::request::CaretBinding> {
@@ -718,8 +718,8 @@ impl SrState {
     }
 
     /// Whether Core's event queue is idle for the test harness
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The test
-    /// harness's idle"): the queue empty, with nothing to be appended
+    /// (`books/dev/src/reference/crates/verbatim-app.md`, `AwaitIdle`): the queue empty, with
+    /// nothing to be appended
     /// later; no request waiting for its outpost or out, and no window
     /// watched for recovery; no stroke in Core's line, so no key held; no
     /// lock key's new state still to be announced; and no delay of Core's
@@ -748,8 +748,8 @@ impl SrState {
     }
 
     /// Whether Core has committed a focus: the test harness's readiness
-    /// waits for one (`docs/design/readers-tell-core-asks-build1.md`, "The
-    /// outpost generation record").
+    /// waits for one (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation
+    /// record").
     #[must_use]
     pub fn focus_committed(&self) -> bool {
         !matches!(
@@ -813,8 +813,8 @@ impl SrState {
     }
 
     /// Whether the session counts as locked: locked, or its lock state
-    /// unknown (`docs/design/readers-tell-core-asks-build1.md`, "The
-    /// secure desktop and the lock state"; security mitigation B3).
+    /// unknown (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the
+    /// lock state"; security mitigation B3).
     #[must_use]
     pub fn session_locked(&self) -> bool {
         self.desktop.locked()

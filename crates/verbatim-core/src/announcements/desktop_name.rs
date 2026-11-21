@@ -1,5 +1,5 @@
-//! The virtual desktop's name at its turn (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Focus and foreground"): an MSAA name change on the desktop window is
+//! The virtual desktop's name at its turn (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Focus, events and objects", its announcements): an MSAA name change on the desktop window is
 //! read by the listener, the name alone, and kept until the next focus
 //! Core takes says it before its entered containers, or until 250 ms
 //! later, when it is said alone (`crate::desktop`). Any outcome but a

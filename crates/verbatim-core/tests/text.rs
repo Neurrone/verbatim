@@ -1274,7 +1274,7 @@ fn backspace_over_a_selection_whose_start_is_in_no_line_reported_says_only_the_c
 
 /// An undo that restores a selection, an editing chord, says the selection
 /// alone from the application's caret event and not the line it changed
-/// (`docs/design/caret-selection-rework.md`).
+/// (`docs/parity/text.md`, "Keys outside the caret table").
 #[test]
 fn an_undo_restoring_a_selection_says_only_the_selection() {
     let after_cut = "beta gamma\r\n";
@@ -3273,7 +3273,7 @@ fn a_focus_moving_while_the_before_read_runs_leaves_the_key_silent() {
 
 /// A chord in a text field says nothing for the line it changes, and a
 /// paste's caret tell, with no change of selection, says nothing either
-/// (`docs/design/caret-selection-rework.md`).
+/// (`docs/parity/text.md`, "Keys outside the caret table").
 #[test]
 fn a_paste_says_nothing_for_the_line_it_changes() {
     let mut text = editing("Nam\n", 3);

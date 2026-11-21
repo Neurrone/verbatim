@@ -258,8 +258,8 @@ pub enum KeyReport {
     },
     /// Whether either Alt key is down changed, reported before anything
     /// else the transition caused, for Core's key state, which the task
-    /// switcher's item reads (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "Keys and commands in this build"). Repeats, and keys Verbatim
+    /// switcher's item reads (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on
+    /// the event queue"). Repeats, and keys Verbatim
     /// passes on itself, change nothing and are not reported.
     Alt {
         /// Whether Alt is now down.

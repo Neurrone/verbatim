@@ -1360,7 +1360,7 @@ enum NavigateDirection {
     FirstChild,
 }
 
-/// The node `node` as it is now (`Query::ReadNode`): an object that no
+/// The node `node` as it is now (`Request::Properties`, `Request::ReadObject`): an object that no
 /// longer answers reads with an unknown role and no name, as NVDA's does.
 ///
 /// # Errors

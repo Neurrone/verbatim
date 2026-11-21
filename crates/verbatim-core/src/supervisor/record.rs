@@ -1,15 +1,8 @@
-//! The outpost generation record, owned by Core's reducer
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-//! generation record", Table 5; ruled 2026-11-15): one record per
-//! application, none, launching, starting, ready or waiting out a
-//! backoff. The supervisor's owner thread reports the process facts as
-//! inputs and carries out the effects the record decides (start an
-//! outpost, end a generation); it judges no generation itself.
-//!
-//! This module holds the record and its pure transitions; the event
-//! queue's driver applies them, since a generation's start and end move
-//! the requests that wait for it or are out to it
-//! (`crate::event_queue::outposts`).
+//! The outpost generation record, owned by Core's reducer: one record per
+//! application and its pure transitions, which the event queue's driver
+//! applies (`crate::event_queue::outposts`)
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation
+//! record").
 
 use std::collections::BTreeMap;
 use std::time::Duration;

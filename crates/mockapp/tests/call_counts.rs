@@ -3358,8 +3358,8 @@ fn uia_event_caches_cost_exactly() {
     // NVDA's UIA value change handler returns for one
     // (`NVDAObjects/UIA/__init__.py` 2511 to 2514, added with the tells
     // of a followed node's property changes;
-    // `docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-    // caret's text facts"). It caches the automation id too, one property
+    // `books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"). It
+    // caches the automation id too, one property
     // more, which a suggestions change's tell carries, so that Core plays
     // the suggestions-closed sound off the focus only for a suggestions
     // field (`docs/parity/changes-and-selection.md`, "Suggestions
@@ -4209,8 +4209,8 @@ fn uia_say_all_batches_cost_exactly() {
 /// Automation caret event on the document, which the outpost's `Follow`
 /// registration delivers and the outpost tells Core of with no read of its
 /// own; Core asks the read of the selection, compared with the baseline
-/// the focus answer minted (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Selection and the caret's text facts" and Table 17), and says what it
+/// the focus answer minted (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
+/// Core's text facts"), and says what it
 /// selected. With remote operations and classically: what Core said, and
 /// the read's calls.
 fn caret_tell_read(remote: bool) -> (Vec<Utterance>, CallCounts) {
@@ -4639,8 +4639,8 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 /// `ExpandCollapseState` more.
 ///
 /// The selection takes the path Core gives a UI Automation selection not
-/// on the committed focus (`docs/design/readers-tell-core-asks-build1.md`,
-/// Table 12; Dickson, 2026-11-15): the check finds the item's nearest
+/// on the committed focus (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+/// objects", its announcements; Dickson, 2026-11-15): the check finds the item's nearest
 /// window, one call; the listener reads the item it keeps, its cache and
 /// one step to the combo box Core knows, two; the outpost completes it
 /// from the route, the route's window's element, the walk down the route
@@ -4955,7 +4955,8 @@ fn uia_text_focus_reporting(
 /// element, route walk and states' read, which the outpost reads after its
 /// registration (Dickson, 2026-11-15). The caret is read after the states
 /// as the focus answer's selection baseline read
-/// (`docs/design/readers-tell-core-asks-build1.md`, Table 17): the line at
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): the
+/// line at
 /// the caret and the selection, with the selected text when there is one.
 /// Remotely that is the text pattern's fetch and one program, two calls,
 /// the selected text read in the program; the focus was 9 calls with its
@@ -5194,7 +5195,8 @@ fn text_field_focuses_cost_exactly() {
 /// focus-now answer on a text field"), with no ancestor known: mockapp's
 /// UIA document with nothing selected, remotely and classically, its caret
 /// read with the focus as the focus answer's selection baseline read
-/// (`docs/design/readers-tell-core-asks-build1.md`, Table 17), its line
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"), its
+/// line
 /// "alpha beta". Remotely 4 UIA calls and the probe, as before; classically
 /// 13, where the caret report the focus-now answer carried took 40.
 fn text_field_focus_now_costs(ratchet: &mut Ratchet) {

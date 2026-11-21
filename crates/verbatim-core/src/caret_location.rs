@@ -1,6 +1,6 @@
 //! Report caret location, an event-queue entry
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-//! this build"): at its turn it asks the committed focus's outpost where
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Text"): at its turn it asks the committed
+//! focus's outpost where
 //! the caret is, and holds the queue until the answer, as NVDA's script
 //! runs on its queue (`docs/parity/review.md`, "Review cursor
 //! line/word/character over object text"). Any outcome but a result says
