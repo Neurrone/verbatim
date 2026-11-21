@@ -1026,26 +1026,6 @@ pub(super) fn cut_at_known(
     }
 }
 
-/// Snapshots standing for the known nodes, by id alone, which a walk stops
-/// at when it reaches one of them.
-pub(super) fn known_stops(known: &[KnownAncestor]) -> Vec<NodeSnapshot> {
-    known
-        .iter()
-        .filter_map(|known| match known {
-            KnownAncestor::Node(id) => Some(NodeSnapshot {
-                id: *id,
-                backend: Backend::Msaa,
-                role: Role::Unknown,
-                name: None,
-                value: None,
-                states: StateSet::default(),
-                details: NodeDetails::default(),
-            }),
-            KnownAncestor::Uia(_) | KnownAncestor::Window(_) => None,
-        })
-        .collect()
-}
-
 /// `node`'s ancestors, nearest first, up to the first Core already knows,
 /// and its place in `known`; the walk stops at a known node of this
 /// outpost.
@@ -1055,10 +1035,9 @@ fn walk(
     node: &NodeSnapshot,
     known: &[KnownAncestor],
 ) -> Result<(Vec<NodeSnapshot>, Option<u32>), read::FocusLost> {
-    let stops = known_stops(known);
-    let candidates = candidates_of(&stops);
+    let candidates = candidates_of(known);
     let chain = if node.backend == Backend::Msaa {
-        read::msaa_enrichment(context, client, (node, &stops, Some(&candidates)))?
+        read::msaa_enrichment(context, client, (node, known, Some(&candidates)))?
     } else {
         read::ancestors(context, client, node.id).map_err(|_| read::FocusLost)?
     };
@@ -1067,8 +1046,16 @@ fn walk(
 
 /// The kept nodes of `stops`, for NVDA's equality to compare what a walk
 /// reads with.
-fn candidates_of(stops: &[NodeSnapshot]) -> verbatim_ia2::equality::Candidates {
-    verbatim_ia2::equality::Candidates::new(vec![stops.iter().map(|node| node.id).collect()])
+pub(super) fn candidates_of(known: &[KnownAncestor]) -> verbatim_ia2::equality::Candidates {
+    verbatim_ia2::equality::Candidates::new(vec![
+        known
+            .iter()
+            .filter_map(|known| match known {
+                KnownAncestor::Node(id) => Some(*id),
+                KnownAncestor::Uia(_) | KnownAncestor::Window(_) => None,
+            })
+            .collect(),
+    ])
 }
 
 /// A focus answer for `node`, read through `backend`, with `ancestors`
@@ -1301,10 +1288,9 @@ fn try_candidate(
         return Reply::Candidate(CandidateAnswer { facts, read: None });
     }
     let held_child = candidate.resolved_child();
-    let stops = known_stops(&run.known);
-    let candidates = candidates_of(&stops);
+    let candidates = candidates_of(&run.known);
     let node = candidate.read(context.nodes(), Some(&candidates));
-    let Ok(chain) = read::msaa_enrichment(context, client, (&node, &stops, Some(&candidates)))
+    let Ok(chain) = read::msaa_enrichment(context, client, (&node, &run.known, Some(&candidates)))
     else {
         return not_there;
     };
@@ -1385,7 +1371,7 @@ fn current_focus(
             context,
             client,
             (hwnd, read::FocusRead::FocusNow),
-            (&known_stops(known), depth),
+            (known, depth),
         )
     });
     let (control_window, mut control, focused) = match read {

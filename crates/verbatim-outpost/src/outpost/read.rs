@@ -31,7 +31,7 @@ use crate::dialog_text::{Visited as Identity, is_dialog};
 
 use crate::gates;
 use verbatim_model::protocol::{DumpedTree, UiaSnapshotFact};
-use verbatim_model::request::FocusDepth;
+use verbatim_model::request::{FocusDepth, KnownAncestor};
 use verbatim_win32::window::window_class_name;
 
 use super::window::{main_window_of, window_style, window_text};
@@ -68,30 +68,13 @@ type Visited<'a> = Option<verbatim_uia::Visited<'a>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FocusLost;
 
-/// `chain`, outermost first, whose outermost entry is `met`, its cache
-/// join, extended outward with the part of `previous`, the outpost's
-/// ancestry cache, above `met`: NVDA reuses the previous focus's ancestors
-/// from where the new focus's ancestry meets them, rather than reading
-/// them again.
-pub(super) fn join_cache(
-    previous: &[NodeSnapshot],
-    chain: Vec<NodeSnapshot>,
-    met: NodeId,
-) -> Vec<NodeSnapshot> {
-    join_cache_onto(previous, chain, met).0
-}
-
-/// [`join_cache`]'s chain, and the entries of `previous` it joined on.
-fn join_cache_onto(
-    previous: &[NodeSnapshot],
-    chain: Vec<NodeSnapshot>,
-    met: NodeId,
-) -> (Vec<NodeSnapshot>, &[NodeSnapshot]) {
-    let Some(index) = previous.iter().position(|node| node.id == met) else {
-        return (chain, &[]);
-    };
-    let above = &previous[..index];
-    (above.iter().cloned().chain(chain).collect(), above)
+/// Whether `id` is among `known`, the ancestors Core already knows, by its
+/// node id: a walk stops at it, and the answer is cut there
+/// ([`super::asked::cut_at_known`]).
+pub(super) fn knows(known: &[KnownAncestor], id: NodeId) -> bool {
+    known
+        .iter()
+        .any(|known| matches!(known, KnownAncestor::Node(node) if *node == id))
 }
 
 /// Why a read failed.
@@ -271,8 +254,8 @@ fn local_window_snapshot(context: &RequestContext<'_>, hwnd: isize) -> NodeSnaps
 /// first selected item (`verbatim_uia::map::value_from_selection`), that
 /// item, read
 /// from the element already in hand, `nearest` its nearest window. The
-/// walk stops at a container of `previous` (the last focus's ancestors and
-/// the focus itself) and reuses the rest, and is completed above as
+/// walk stops at an ancestor of `previous`, those Core knows, and is
+/// completed above as
 /// [`complete`] says, with no time limit but its program's deadline.
 /// A walk that fails goes on from the parent window of the element's
 /// nearest window ([`onward_after_failure`]), and a failed selected item
@@ -288,7 +271,7 @@ pub(super) fn uia_enrichment(
     (uia, nodes, ancestors): (&Uia, &Request<Node>, &Request<Ancestor>),
     (element, nearest): (&Cached<Node>, isize),
     parent_automation_id: &mut Option<String>,
-    (previous, visited): (&[NodeSnapshot], Visited<'_>),
+    (previous, visited): (&[KnownAncestor], Visited<'_>),
 ) -> Result<Enrichment, FocusLost> {
     let ancestors = uia_ancestors(
         context,
@@ -332,10 +315,10 @@ fn uia_ancestors(
     context: &RequestContext<'_>,
     (uia, request): (&Uia, &Request<Ancestor>),
     (element, element_window, nearest): (&Live, isize, isize),
-    (previous, parent_automation_id, visited): (&[NodeSnapshot], &mut Option<String>, Visited<'_>),
+    (previous, parent_automation_id, visited): (&[KnownAncestor], &mut Option<String>, Visited<'_>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
-    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let known = |id: NodeId| knows(previous, id);
     let Ok((chain, crossed, walked)) = uia.ancestors(
         (element, element_window, nearest),
         request,
@@ -397,8 +380,8 @@ pub(super) fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd
 enum Above {
     /// It does not: the walk reached the desktop.
     Nothing,
-    /// The previous chain takes over at this entry of it, the chain's
-    /// outermost.
+    /// The walk met this ancestor Core knows, the chain's outermost, where
+    /// the answer is cut.
     Met(NodeId),
     /// From this window's own object ([`window_onward`]): the walk reached
     /// a window read through the other API, stopped below the process
@@ -430,8 +413,8 @@ fn uia_above(crossed: Option<isize>, walked: AncestorWalk, outermost: Option<isi
     }
 }
 
-/// `chain`, outermost first, completed above as `above` says: spliced
-/// onto `previous` where it met a known ancestor, continued from a
+/// `chain`, outermost first, completed above as `above` says: ended
+/// where it met an ancestor Core knows, continued from a
 /// window's own object ([`window_onward`]), or completed by plain windows
 /// with no call ([`plain_windows_from`]).
 ///
@@ -442,11 +425,11 @@ fn complete(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     (chain, above): (Vec<NodeSnapshot>, Above),
-    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     Ok(match above {
-        Above::Nothing => chain,
-        Above::Met(met) => join_cache(previous, chain, met),
+        // A chain that met an ancestor Core knows is cut there.
+        Above::Nothing | Above::Met(_) => chain,
         Above::From(hwnd) => window_onward(context, uia, hwnd, (previous, candidates))?
             .into_iter()
             .chain(chain)
@@ -571,7 +554,7 @@ fn onward_after_failure(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     (own, nearest): (isize, isize),
-    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let nearest = if own == 0 { nearest } else { own };
     if nearest == 0 {
@@ -631,7 +614,7 @@ fn window_onward(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     hwnd: isize,
-    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let started = std::time::Instant::now();
     let desktop = desktop_window();
@@ -676,9 +659,9 @@ fn window_object_onward(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     hwnd: isize,
-    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Option<Vec<NodeSnapshot>>, FocusLost> {
-    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let known = |id: NodeId| knows(previous, id);
     if let Some((uia, request)) = uia
         && window_uses_uia(context, hwnd)
     {
@@ -694,7 +677,7 @@ fn window_object_onward(
         // every UIA ancestor is ([`Ancestor::is_focus_context`]).
         let below = if element.read().is_focus_context(&top) {
             if known(top_id) {
-                return Ok(Some(join_cache(previous, vec![top], top_id)));
+                return Ok(Some(vec![top]));
             }
             vec![top]
         } else {
@@ -727,8 +710,7 @@ fn window_object_onward(
         return Ok(None);
     };
     if known(client.id) {
-        let client_id = client.id;
-        return Ok(Some(join_cache(previous, vec![client], client_id)));
+        return Ok(Some(vec![client]));
     }
     let above = msaa_ancestors(context, uia, &client, (previous, candidates))?;
     Ok(Some(
@@ -782,8 +764,8 @@ pub(super) enum AncestorsEnd {
 /// raw-view chain the focus listener read from the event's own element,
 /// nearest first, `nearest`, the focus's nearest window the listener
 /// found, and `end`, how its walk ended: filtered as a walk here
-/// filters them, stopping at a container of `previous` and reusing the
-/// rest, and completed above as [`complete`] says: from a window read
+/// filters them, stopping at an ancestor of `previous`, those
+/// Core knows, and completed above as [`complete`] says: from a window read
 /// through MSAA that the chain reaches, from the window above the process
 /// boundary, where the listener's walk stops, from the window the listener
 /// named after a failed step, the parent window of the outermost entry's
@@ -800,10 +782,10 @@ pub(super) fn uia_chain_from_read(
     context: &RequestContext<'_>,
     client: &mut Client,
     (ancestors, own_window, nearest, end): (&[UiaAncestorFact], isize, Option<isize>, AncestorsEnd),
-    previous: &[NodeSnapshot],
+    previous: &[KnownAncestor],
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest.unwrap_or(0), hwnd);
-    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let known = |id: NodeId| knows(previous, id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors
         .iter()
         .map(|ancestor| verbatim_uia::AncestorParts {
@@ -857,12 +839,15 @@ pub(super) fn uia_chain_from_read(
 
 /// The UIA nodes of `previous`, a previous chain, by runtime id, for a
 /// walk to stop at, and their node ids, in the same order, for splicing.
-fn known_uia_nodes(context: &Context, previous: &[NodeSnapshot]) -> (Vec<NodeId>, Vec<Vec<i32>>) {
+fn known_uia_nodes(context: &Context, previous: &[KnownAncestor]) -> (Vec<NodeId>, Vec<Vec<i32>>) {
     previous
         .iter()
-        .filter_map(|node| {
-            let runtime_id = context.store.runtime_id_of(node.id)?;
-            Some((node.id, runtime_id))
+        .filter_map(|known| {
+            let KnownAncestor::Node(id) = known else {
+                return None;
+            };
+            let runtime_id = context.store.runtime_id_of(*id)?;
+            Some((*id, runtime_id))
         })
         .unzip()
 }
@@ -911,7 +896,7 @@ fn uia_remote_enrichment(
     (uia, request): (&Uia, &Request<Ancestor>),
     element: &Cached<Node>,
     (previous, parent_automation_id, table, visited): (
-        &[NodeSnapshot],
+        &[KnownAncestor],
         &mut Option<String>,
         &mut Option<TableId>,
         Visited<'_>,
@@ -1010,7 +995,7 @@ fn uia_remote_enrichment(
         .map(|child| child.snapshot(registry));
     let nearest = ancestry.window.or(window).unwrap_or(0);
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
-    let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let is_known = |id: NodeId| knows(previous, id);
     let (chain, crossed, mut walked) = Uia::ancestors_from(
         &ancestry.ancestors,
         registry,
@@ -1117,8 +1102,8 @@ fn window_read_without_its_handle(hwnd: isize, runtime_id: &[i32]) -> Option<isi
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
-/// above controls (see [`msaa_enrichment`]), stopping at a container of
-/// `previous` and reusing the rest, and completed above as [`complete`]
+/// above controls (see [`msaa_enrichment`]), stopping at an ancestor
+/// of `previous`, those Core knows, and completed above as [`complete`]
 /// says: where a parent lies in a window read through UIA, the walk goes
 /// on from that window's UIA element, as NVDA switches API when a parent
 /// is in such a window (`correctAPIForRelation`): in a Save As dialog, the
@@ -1138,9 +1123,9 @@ fn msaa_ancestors(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     node: &NodeSnapshot,
-    (previous, candidates): (&[NodeSnapshot], Option<&Candidates>),
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
-    let known = |id: NodeId| previous.iter().any(|node| node.id == id);
+    let known = |id: NodeId| knows(previous, id);
     // Another process's window is a plain window, and is not probed.
     let read_by_uia = |hwnd: isize| uia.is_some() && own_window_uses_uia(context, hwnd);
     let plain = |hwnd: isize| reads_as_plain(context, hwnd);
@@ -1178,8 +1163,8 @@ fn msaa_ancestors(
     complete(context, uia, (chain, above), (previous, candidates))
 }
 
-/// An MSAA node's ancestors, stopping at a container of `previous` and
-/// reusing the rest, and completed above as [`msaa_ancestors`] says, with
+/// An MSAA node's ancestors, stopping at an ancestor of `previous`, those
+/// Core knows, and completed above as [`msaa_ancestors`] says, with
 /// no time limit but the program's deadline: an MSAA call has no bound of
 /// its own, and a UIA call in the walk ends after UIA's call timeout.
 ///
@@ -1189,7 +1174,7 @@ fn msaa_ancestors(
 pub(super) fn msaa_enrichment(
     context: &RequestContext<'_>,
     client: &mut Client,
-    (node, previous, candidates): (&NodeSnapshot, &[NodeSnapshot], Option<&Candidates>),
+    (node, previous, candidates): (&NodeSnapshot, &[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     // A window object above a control is layout, never announced as an
     // entered container: NVDA gives a window object reached through its
@@ -1365,7 +1350,7 @@ pub(super) fn focused_control_in(
     context: &RequestContext<'_>,
     client: &mut Client,
     (hwnd, trigger): (isize, FocusRead),
-    (known, depth): (&[NodeSnapshot], FocusDepth),
+    (known, depth): (&[KnownAncestor], FocusDepth),
 ) -> Result<Focused, FocusReadMiss> {
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
@@ -1375,7 +1360,7 @@ pub(super) fn focused_control_in(
         // The walk stops at an ancestor Core already knows, `known`,
         // comparing what it reads with them by NVDA's equality
         // (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-        let candidates = Candidates::new(vec![known.iter().map(|node| node.id).collect()]);
+        let candidates = super::asked::candidates_of(known);
         let mut object =
             verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
                 .ok_or(FocusReadMiss::Failed(None))?;
@@ -1427,7 +1412,7 @@ fn uia_focused_control(
     context: &RequestContext<'_>,
     client: &mut Client,
     (hwnd, trigger): (isize, FocusRead),
-    known: &[NodeSnapshot],
+    known: &[KnownAncestor],
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
     {
         let (uia, nodes) = client
@@ -2497,8 +2482,7 @@ mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, join_cache_onto,
-        window_read_without_its_handle,
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, window_read_without_its_handle,
     };
     use verbatim_win32::window::window_owner;
 
@@ -2512,19 +2496,6 @@ mod tests {
             states: StateSet::new(),
             details: NodeDetails::default(),
         }
-    }
-
-    fn ids(chain: &[NodeSnapshot]) -> Vec<NodeId> {
-        chain.iter().map(|node| node.id).collect()
-    }
-
-    #[test]
-    fn a_walk_meeting_the_previous_chain_reuses_what_lies_above() {
-        let previous = vec![node(1), node(2), node(3)];
-        // The new walk read 4 and then met 2, its outermost entry.
-        let (joined, above) = join_cache_onto(&previous, vec![node(2), node(4)], NodeId::new(2));
-        assert_eq!(ids(&joined), ids(&[node(1), node(2), node(4)]));
-        assert_eq!(ids(above), ids(&[node(1)]));
     }
 
     #[test]
@@ -2582,14 +2553,6 @@ mod tests {
             assert_eq!(remote, (None, false), "the remote read");
             assert_eq!(classic, (Some(true), false), "the classic read");
         });
-    }
-
-    #[test]
-    fn a_walk_meeting_nothing_known_is_kept_whole() {
-        let previous = [node(1)];
-        let (joined, above) = join_cache_onto(&previous, vec![node(5), node(6)], NodeId::new(9));
-        assert_eq!(ids(&joined), ids(&[node(5), node(6)]));
-        assert_eq!(ids(above), Vec::<NodeId>::new());
     }
 
     fn text_area(role: Role) -> NodeSnapshot {

@@ -27,8 +27,8 @@ use verbatim_uia_rops::{Path, StatesQuery, focus_states};
 
 use super::RequestContext;
 use super::asked::{
-    Focus, ancestor_reads, ancestors_end, controlled_by, cut_at_known, focus_read, known_stops,
-    node_read, snapshot_of,
+    Focus, ancestor_reads, ancestors_end, controlled_by, cut_at_known, focus_read, node_read,
+    snapshot_of,
 };
 use super::focus_path;
 use super::read::{self, Client};
@@ -509,8 +509,7 @@ fn ancestors(
         .map_or(0, hwnd_of);
     let nearest = hwnd_of(route.window);
     if let Some(met) = met {
-        let stops = known_stops(&complete.known);
-        let known = |id: NodeId| stops.iter().any(|stop| stop.id == id);
+        let known = |id: NodeId| read::knows(&complete.known, id);
         let read_by_msaa = |hwnd: isize| read::uia_walk_leaves(context, nearest, hwnd);
         let parts: Vec<verbatim_uia::AncestorParts> = parents.iter().map(parts).collect();
         let (chain, _, _) = verbatim_uia::Uia::ancestor_chain_from_parts(
@@ -526,7 +525,6 @@ fn ancestors(
         let nearest_first = chain.into_iter().rev().collect();
         return Ok((nearest_first, Some(met)));
     }
-    let stops = known_stops(&complete.known);
     let chain = read::uia_chain_from_read(
         context,
         client,
@@ -536,7 +534,7 @@ fn ancestors(
             Some(nearest),
             ancestors_end(&route.end),
         ),
-        &stops,
+        &complete.known,
     )?;
     Ok(cut_at_known(context, chain, &complete.known))
 }
