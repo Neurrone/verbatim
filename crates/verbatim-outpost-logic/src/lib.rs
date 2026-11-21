@@ -373,28 +373,21 @@ impl Reducer {
                 // A caret wait waits in the table; a batch that does not
                 // parse is refused whole, as the worker refuses one.
                 if let verbatim_model::request::Question::Batch(batch) = &ask.request
-                    && let Some((node, wait)) = watch::caret_wait(batch)
+                    && let Some(arrived) =
+                        self.watches
+                            .arrive((ask.number, ask.window), batch, now.wall_us)
                 {
-                    let wait = wait.clone();
-                    match verbatim_model::batch::parse(
-                        batch.clone(),
-                        verbatim_model::batch::ReaderKind::Outpost,
-                    ) {
-                        Ok(parsed) => self.watches.arrive(
-                            (ask.number, ask.window, node),
-                            (wait, parsed),
-                            now.wall_us,
-                        ),
-                        Err(malformed) => effects.push(Effect::Send(Box::new(
-                            OutpostToCore::Answer(verbatim_model::request::Answer {
+                    if let Err(malformed) = arrived {
+                        effects.push(Effect::Send(Box::new(OutpostToCore::Answer(
+                            verbatim_model::request::Answer {
                                 number: ask.number,
                                 outcome: verbatim_model::request::Outcome::Refused(
                                     verbatim_model::request::Refusal::Malformed(malformed),
                                 ),
                                 probes: Vec::new(),
                                 detail: String::new(),
-                            }),
-                        ))),
+                            },
+                        ))));
                     }
                     return;
                 }

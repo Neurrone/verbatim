@@ -33,7 +33,7 @@
 //! failed, which counts as no effect; a last check that ends so is
 //! answered failed.
 
-use verbatim_model::batch::{Batch, CaretWait, Op, Parsed, Subject};
+use verbatim_model::batch::{Batch, CaretWait, Malformed, Op, ReaderKind, Step, Subject};
 use verbatim_model::request::{Answer, Cancel, Outcome, RequestNumber};
 use verbatim_model::{NodeId, WindowHandle};
 
@@ -126,17 +126,68 @@ enum Phase {
 struct Watching {
     number: RequestNumber,
     window: WindowHandle,
+    /// The watched node, the subject of its batch's first step.
     node: NodeId,
-    /// The wait, a copy of the batch's first step.
+    /// The wait, its batch's first step.
     wait: CaretWait,
-    batch: Batch,
+    /// Its batch with the first step taken out: the steps after the wait.
+    after: Batch,
     phase: Phase,
 }
 
 impl Watching {
+    /// `batch`, whose first step is a caret wait on a node, as a watch
+    /// numbered `number` in `window`, its first check due at `due_us`;
+    /// `None` for any other batch.
+    fn new(
+        (number, window): (RequestNumber, WindowHandle),
+        mut batch: Batch,
+        due_us: u64,
+    ) -> Option<Self> {
+        let mut steps = std::mem::take(&mut batch.steps).into_iter();
+        let Some(Step {
+            op:
+                Op::WaitForCaret {
+                    subject: Subject::Node(node),
+                    wait,
+                },
+            when: None,
+        }) = steps.next()
+        else {
+            return None;
+        };
+        batch.steps = steps.collect();
+        Some(Self {
+            number,
+            window,
+            node,
+            wait: *wait,
+            after: batch,
+            phase: Phase::Waiting { due_us },
+        })
+    }
+
     /// Its wait, the batch's first step.
     fn wait(&self) -> &CaretWait {
         &self.wait
+    }
+
+    /// Its batch whole, the wait first.
+    fn batch(&self) -> Batch {
+        let wait = Step {
+            op: Op::WaitForCaret {
+                subject: Subject::Node(self.node),
+                wait: Box::new(self.wait.clone()),
+            },
+            when: None,
+        };
+        Batch {
+            steps: std::iter::once(wait)
+                .chain(self.after.steps.iter().cloned())
+                .collect(),
+            placement: self.after.placement,
+            spare: self.after.spare,
+        }
     }
 
     /// When the bound passes, on the run's shared clock.
@@ -195,23 +246,27 @@ impl Watches {
         self.table.is_empty()
     }
 
-    /// Watch `number` in `window` arrives at `now_us`: `parsed`, whose
-    /// first step is `wait` on `node` ([`caret_wait`]). Its first check is
-    /// due now.
+    /// Watch `number` in `window` arrives at `now_us`, its first check due
+    /// now, when `batch`'s first step is a caret wait on a node
+    /// ([`caret_wait`]) and it parses; `None` for any other batch, which
+    /// the caller runs as any batch, and `Some(Err)` for a wait that does
+    /// not parse, which is refused whole, as the worker refuses one.
     pub fn arrive(
         &mut self,
-        (number, window, node): (RequestNumber, WindowHandle, NodeId),
-        (wait, parsed): (CaretWait, Parsed),
+        (number, window): (RequestNumber, WindowHandle),
+        batch: &Batch,
         now_us: u64,
-    ) {
-        self.table.push(Watching {
-            number,
-            window,
-            node,
-            wait,
-            batch: parsed.into_batch(),
-            phase: Phase::Waiting { due_us: now_us },
-        });
+    ) -> Option<Result<(), Malformed>> {
+        caret_wait(batch)?;
+        let parsed = match verbatim_model::batch::parse(batch.clone(), ReaderKind::Outpost) {
+            Ok(parsed) => parsed,
+            Err(malformed) => return Some(Err(malformed)),
+        };
+        // A parsed batch's first step has no condition, having no step
+        // before it to name.
+        let watching = Watching::new((number, window), parsed.into_batch(), now_us)?;
+        self.table.push(watching);
+        Some(Ok(()))
     }
 
     /// A caret or text-change event of the followed node was heard at
@@ -259,7 +314,7 @@ impl Watches {
             number: watching.number,
             node: watching.node,
             wait: wait.clone(),
-            batch: watching.batch.clone(),
+            batch: watching.batch(),
             work: WatchWork::Check { word, last },
         })
     }
@@ -473,12 +528,10 @@ mod tests {
     fn arrived(motion: CaretMotion, events: bool) -> Watches {
         let mut watches = Watches::default();
         let batch = watch(motion, events);
-        let (node, wait) = caret_wait(&batch).expect("a wait on a node");
-        let (node, wait) = (node, wait.clone());
-        let parsed =
-            verbatim_model::batch::parse(batch, verbatim_model::batch::ReaderKind::Outpost)
-                .expect("a wait parses");
-        watches.arrive((RequestNumber(4), WINDOW, node), (wait, parsed), PASS);
+        watches
+            .arrive((RequestNumber(4), WINDOW), &batch, PASS)
+            .expect("a wait on a node")
+            .expect("a wait parses");
         watches
     }
 

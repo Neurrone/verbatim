@@ -43,13 +43,17 @@ fn ids_window(request: &Question) -> Option<WindowHandle> {
 }
 
 /// Whether `request` only moves the outpost's registration: a batch of
-/// `Follow` steps alone, which names the whole registration.
+/// `Follow` steps alone, which names the whole registration, and at least
+/// one of them.
 fn is_follow(request: &Question) -> bool {
     match request {
-        Question::Batch(batch) => batch
-            .steps
-            .iter()
-            .all(|step| matches!(step.op, Op::Follow(_))),
+        Question::Batch(batch) => {
+            !batch.steps.is_empty()
+                && batch
+                    .steps
+                    .iter()
+                    .all(|step| matches!(step.op, Op::Follow(_)))
+        }
         Question::Terminal(_) => false,
     }
 }
@@ -218,6 +222,27 @@ mod tests {
             verdict: WindowVerdict::Uia,
             request: one(Op::Follow(None), Placement::Queue),
         })
+    }
+
+    /// A batch of no steps, which the worker refuses as malformed, is no
+    /// `Follow`: it replaces no `Follow` queued.
+    #[test]
+    fn an_empty_batch_replaces_no_follow() {
+        let mut asks = Asks::default();
+        let _ = asks.push(follow(1, 1));
+        let empty = Box::new(Ask {
+            number: RequestNumber(2),
+            window: WindowHandle(1),
+            verdict: WindowVerdict::Uia,
+            request: Batch {
+                steps: Vec::new(),
+                placement: Placement::Queue,
+                spare: None,
+            }
+            .into(),
+        });
+        assert_eq!(asks.push(empty), []);
+        assert_eq!(numbers(&asks), [1, 2]);
     }
 
     fn numbers(asks: &Asks) -> Vec<u64> {
