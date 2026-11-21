@@ -654,12 +654,6 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
         }
         return true;
     }
-    if let Command::Freeze = command {
-        hits::arm_hold();
-        acknowledge("applied");
-        hits::held("freeze");
-        return true;
-    }
     if let Command::WindowFocus = command {
         // SAFETY: `hwnd` is this thread's own live window. The previous
         // focus window the call answers is not needed.
@@ -677,10 +671,6 @@ fn apply(hwnd: HWND, context: &'static WindowContext, command: Command) -> bool 
             Ok(window) => acknowledge(&format!("thread-window {window}")),
             Err(error) => acknowledge(&format!("rejected: {error}")),
         }
-        return true;
-    }
-    if let Command::PopupMenu | Command::MenuSelect(_) | Command::MenuClose = command {
-        acknowledge(&crate::menu::command(&command));
         return true;
     }
     let applied = match command {

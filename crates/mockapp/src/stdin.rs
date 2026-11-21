@@ -7,7 +7,7 @@
 //! `set-states <id> <state>...`, `select <id>`,
 //! `caret <id> <start> [<end> [end]]`, `caret-event <id>`,
 //! `console-caret <column> <row>`, `system-caret [show]`,
-//! `set-text <id> <text>`, `write-on-read <id> <text>`, `text-changed <id>`,
+//! `set-text <id> <text>`, `text-changed <id>`,
 //! `screen <id> <rows>`, `active-text-position <id> <start> <end>`,
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `island <command>`,
@@ -16,9 +16,8 @@
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
-//! `hold-acc-parent <id>`, `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
+//! `fail-acc-parent <id>`, `move <id> <left> <top> <width> <height>`,
 //! `fail-acc-location <id>`, `recreate <id>`, `report-window <id>`,
-//! `popup <id>`,
 //! `take-runtime-id <id> <from>`, `share-runtime-id <id> <from>`,
 //! `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
@@ -158,16 +157,6 @@ pub(crate) enum Command {
     /// and `\\` a backslash, so one stdin line can carry many lines. In the MSAA backend, the edit
     /// control's text is replaced (`WM_SETTEXT`).
     SetText(String, String),
-    /// `write-on-read <id> <text>`: the next time any range of a UIA text
-    /// node's text is read, `text` is first written over the text at the
-    /// caret and the caret moved past it, raising no event, as a terminal
-    /// writes a typed character between two calls of a client's read. In
-    /// the MSAA backend, the next time another thread reads the edit
-    /// control's text or selection, `text` is first typed over the
-    /// selection (`EM_REPLACESEL`) and the control's value change raised,
-    /// as an application handles a typed character during a client's read
-    /// of the caret event before it.
-    WriteOnRead(String, String),
     /// `stale-focus-on-left`: gives the window's edit control the focus,
     /// then at the first read of its text or selection from another thread
     /// after each Left Arrow it receives, raises `EVENT_OBJECT_FOCUS` on the
@@ -298,11 +287,6 @@ pub(crate) enum Command {
     /// `slow-acc-parent ended <us>` around each wait; 0 answers at once
     /// again. MSAA-only.
     SlowAccParent(String, u64),
-    /// `hold-acc-parent <id>`: node `id`'s next `accParent` says
-    /// `held AccParent` on stdout and waits until `release`, as `hold`
-    /// holds the next call of any kind, so a test decides when the call
-    /// ends. MSAA-only.
-    HoldAccParent(String),
     /// `fail-acc-parent <id>`: node `id`'s `accParent` fails with `E_FAIL`
     /// from now on, while every other call on it answers as usual, printing
     /// `fail-acc-parent started <us>` and `fail-acc-parent ended <us>` as
@@ -327,15 +311,6 @@ pub(crate) enum Command {
     /// node as that window's element, runtime id `[42, handle]`, with no
     /// parent. UIA-only.
     ReportWindow(String),
-    /// `popup <id>`: makes an owned popup window, a top-level window of
-    /// its own owned by the host window, hidden as the host is unless
-    /// `--show`, which hosts node `id`: its `WM_GETOBJECT` answers the
-    /// node's provider, and the node's provider names the popup as its host
-    /// and its window handle, so UIA moves the popup from the desktop's
-    /// children to the node's place under its parent, and the popup's
-    /// accessibility parent is in its owner, as a combo box's drop-down
-    /// list is the combo box's child. UIA-only.
-    Popup(String),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -432,16 +407,6 @@ pub(crate) enum Command {
     /// window of the application on another thread than the host's, which
     /// the user can move on to while the host's thread is slow.
     ThreadWindow,
-    /// `popup-menu`: shows a Win32 popup menu of two items, "First" and
-    /// "Second", on a UI thread of its own (`crate::menu`), and answers
-    /// `popup-menu <hwnd>`, the menu window's decimal handle, once it is
-    /// shown.
-    PopupMenu,
-    /// `menu-select <index>`: selects the open menu's item at `index`,
-    /// from 0, as its arrow keys do, raising its focus event.
-    MenuSelect(usize),
-    /// `menu-close`: ends the open menu, answered once it has closed.
-    MenuClose,
     /// `child-client-identity`: the client area of the child window
     /// `child-window` made answers as `client-identity` makes the host's
     /// answer, `IAccIdentity` with its address and `accParent` with the
@@ -460,19 +425,13 @@ pub(crate) enum Command {
     /// finishes. Applied on the window thread, so the calls before it are
     /// not held.
     Hold,
-    /// `freeze`: the window thread acknowledges, prints `held freeze` and
-    /// then waits until `release`, outside any call, so its window takes
-    /// no message and Windows comes to judge it hung while no client has
-    /// called into it.
-    Freeze,
     /// `hold-message <message>`: the window thread blocks inside the window
     /// procedure of the native control that answers `message`, on the next
     /// such message sent to it, printing `held <message>`, until `release`
     /// (`crate::held_message`): `EM_GETSEL` for the edit control,
     /// `LVM_GETITEMTEXTW` for the list view. MSAA-only.
     HoldMessage(u32),
-    /// `release`: lets the call `hold`, `hold-acc-parent`, `hold-message`
-    /// or `freeze` held go on.
+    /// `release`: lets the call `hold` or `hold-message` held go on.
     /// Applied and acknowledged on the stdin thread, since the window
     /// thread is the one held.
     Release,
@@ -602,8 +561,7 @@ fn slow_parent(rest: &str, with_after: bool) -> Option<(String, u64, u32)> {
     parts.next().is_none().then(|| (id.to_owned(), ms, after))
 }
 
-/// `slow-parent`, `slow-acc-parent`, `hold-acc-parent` or
-/// `fail-acc-parent`, as `verb` names, with its arguments.
+/// `slow-parent`, `slow-acc-parent` or `fail-acc-parent`, as `verb` names, with its arguments.
 fn parent_step(verb: &str, rest: &str) -> Option<Command> {
     match verb {
         "slow-parent" => {
@@ -612,8 +570,6 @@ fn parent_step(verb: &str, rest: &str) -> Option<Command> {
         "slow-acc-parent" => {
             slow_parent(rest, false).map(|(id, ms, _)| Command::SlowAccParent(id, ms))
         }
-        "hold-acc-parent" => (!rest.is_empty() && !rest.contains(' '))
-            .then(|| Command::HoldAccParent(rest.to_owned())),
         _ => (!rest.is_empty() && !rest.contains(' '))
             .then(|| Command::FailAccParent(rest.to_owned())),
     }
@@ -632,13 +588,6 @@ fn runtime_id_from(rest: &str, command: fn(String, String) -> Command) -> Option
         .then(|| command(id.to_owned(), from.to_owned()))
 }
 
-/// `write-on-read`'s arguments, a node's id and the text to write.
-fn write_on_read(rest: &str) -> Option<Command> {
-    let (id, text) = rest.split_once(' ')?;
-    (!id.is_empty() && !text.is_empty())
-        .then(|| Command::WriteOnRead(id.to_owned(), text.to_owned()))
-}
-
 /// Parses one stdin line into a [`Command`]. Blank lines and unrecognized
 /// verbs yield `None` (a stray blank line is ignored; the caller hands an
 /// unknown verb on as [`Command::Unrecognized`], to be rejected).
@@ -653,7 +602,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
     match verb {
         "quit" => Some(Command::Quit),
         "hold" => Some(Command::Hold),
-        "freeze" => Some(Command::Freeze),
         "hold-message" => crate::held_message::message_named(rest).map(Command::HoldMessage),
         "release" => Some(Command::Release),
         "await-advised-at-least" => {
@@ -695,9 +643,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         },
         "answer-property" => answer_property(rest),
         "answer-parent" => answer_parent(rest),
-        "slow-parent" | "slow-acc-parent" | "hold-acc-parent" | "fail-acc-parent" => {
-            parent_step(verb, rest)
-        }
+        "slow-parent" | "slow-acc-parent" | "fail-acc-parent" => parent_step(verb, rest),
         "move" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?.to_owned();
@@ -714,7 +660,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             Some(Command::Recreate(rest.to_owned()))
         }
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
-        "popup" if !rest.is_empty() => Some(Command::Popup(rest.to_owned())),
         "take-runtime-id" => runtime_id_from(rest, Command::TakeRuntimeId),
         "share-runtime-id" => runtime_id_from(rest, Command::ShareRuntimeId),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
@@ -738,7 +683,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let (id, rows) = rest.split_once(' ')?;
             Some(Command::Screen(id.to_owned(), rows.trim().parse().ok()?))
         }
-        "write-on-read" => write_on_read(rest),
         "set-text" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
@@ -757,9 +701,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "child-window" => Some(Command::ChildWindow),
         "destroy-child-window" => Some(Command::DestroyChildWindow),
         "thread-window" => Some(Command::ThreadWindow),
-        "popup-menu" => Some(Command::PopupMenu),
-        "menu-select" => rest.trim().parse().ok().map(Command::MenuSelect),
-        "menu-close" => Some(Command::MenuClose),
         "child-client-identity" => Some(Command::ChildClientIdentity),
         "window-focus" => Some(Command::WindowFocus),
         "fail-window-element" => Some(Command::FailWindowElement),
@@ -1045,11 +986,6 @@ mod tests {
             Some(Command::SlowAccParent(ref id, 15000)) if id == "item"
         ));
         assert!(parse_command("slow-acc-parent item 15000 1").is_none());
-        assert!(matches!(
-            parse_command("hold-acc-parent item"),
-            Some(Command::HoldAccParent(ref id)) if id == "item"
-        ));
-        assert!(parse_command("hold-acc-parent item 1").is_none());
         assert!(matches!(
             parse_command("fail-acc-parent item"),
             Some(Command::FailAccParent(ref id)) if id == "item"

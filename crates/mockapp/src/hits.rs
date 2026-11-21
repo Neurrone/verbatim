@@ -630,7 +630,7 @@ pub(crate) fn hold_next() {
 }
 
 /// Makes the next call held ([`held`]) wait for the next [`release`]: the
-/// `hold` and `hold-acc-parent` commands.
+/// `hold` command.
 pub(crate) fn arm_hold() {
     *RELEASED
         .0

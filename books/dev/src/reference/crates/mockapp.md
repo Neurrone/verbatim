@@ -123,10 +123,7 @@ complete name tables. The fields:
   `tests/fixtures/console_window.json` is a console host's window,
   `ConsoleWindowClass`, whose text area reports the automation id "Text
   Area" as the console's does; `console_terminal.json` is the same window
-  with a terminal's text; and `console_terminal_button.json` adds a native
-  push button and serves the root's MSAA client, so a focus can move from
-  the text area, read through UIA, to a Win32 control read through MSAA,
-  as a Find dialog takes it. The tests start mockapp with no console, so
+  with a terminal's text. The tests start mockapp with no console, so
   no console host can be read for that window, and mockapp serves it.
 - `frameless`, on the root: the host window is a pop-up window with no
   frame, as the taskbar's `Shell_TrayWnd` is, so UIA's proxy for a
@@ -236,22 +233,6 @@ reviewable surface.
   and its children. Windows' own window objects answer MSAA for it. At
   most one per fixture. `island <command>` applies a command to its tree,
   with its window.
-- `popup`: the owned popup the `popup <id>` command makes, a top-level
-  window owned by the host, which hosts one node of the host's own tree:
-  its `WM_GETOBJECT` answers that node's provider, and the node's
-  provider names the popup as its host (`HostRawElementProvider`) and
-  its `NativeWindowHandle`, so UIA moves the popup from the desktop's
-  children to the node's place, its accessibility parent in its owner,
-  as UIA's provider repositioning does for a combo box's drop-down
-  (`tests/fixtures/popup.json`).
-- `menu`: the Win32 popup menu the `popup-menu` command shows, the
-  system's own `#32768` window, served by MSAA's menu proxy: two items,
-  "First" and "Second", tracked by `TrackPopupMenuEx` on a thread of its
-  own, owned by a hidden window there, so the host's thread goes on
-  serving its provider and the commands. `menu-select <index>` selects an
-  item by the menu's own `MN_SELECTITEM`, which raises its focus event,
-  and `menu-close` ends the menu, answered once its loop has returned.
-  Nothing takes the foreground or the input.
 - `hits`: the provider-side hit counters (below).
 
 ### The UIA text pattern
@@ -359,9 +340,7 @@ Every counted call is also where `slow` delays a call and `hold` holds
 one. A parent step's own delay or failure, `slow-parent`,
 `slow-acc-parent` and `fail-acc-parent`, is a per-node setting in the
 tree instead (`Tree::parent_delay`), applied by the step after it is
-counted and bracketed by `window::announce_call`'s two lines;
-`hold-acc-parent` marks the node's next `accParent` to wait as `hold`'s
-call does (`hits::held`). The tests compile `src/hits.rs` into their shared module, so the
+counted and bracketed by `window::announce_call`'s two lines. The tests compile `src/hits.rs` into their shared module, so the
 method list and message numbers cannot drift apart.
 
 ## The Windows Forms and WPF programs

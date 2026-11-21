@@ -246,10 +246,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ChildWindow
         | Command::DestroyChildWindow
         | Command::ThreadWindow
-        | Command::WindowFocus
-        | Command::PopupMenu
-        | Command::MenuSelect(_)
-        | Command::MenuClose => {
+        | Command::WindowFocus => {
             return Err("applied by the window".into());
         }
         Command::FailWindowElement => {
@@ -361,11 +358,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let list = crate::list_view::find(hwnd).ok_or("the window hosts no list view")?;
             crate::list_view::delete_row(list, row);
         }
-        Command::WriteOnRead(_, text) => {
-            // The text is the edit control's.
-            let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
-            crate::edit::write_on_read(edit, &text);
-        }
         Command::Screen(..) => {
             return Err("screen is not supported on the msaa backend".into());
         }
@@ -410,14 +402,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].parent_delay = (ms, 0);
         }
-        Command::HoldAccParent(id) => {
-            let mut guard = tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
-            crate::hits::arm_hold();
-            guard.nodes[index].acc_parent_held = true;
-        }
         Command::FailAccParent(id) => {
             let mut guard = tree
                 .lock()
@@ -439,9 +423,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ReportWindow(_) => {
             return Err("report-window is not supported on the msaa backend".into());
         }
-        Command::Popup(_) => {
-            return Err("popup is not supported on the msaa backend".into());
-        }
         Command::Flood(count, interval, kind) => flood(tree, hwnd, count, interval, kind)?,
         Command::Stall(..)
         | Command::OnActivate(_)
@@ -453,7 +434,6 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::AnswerProperty(..)
         | Command::Hold
         | Command::HoldMessage(_)
-        | Command::Freeze
         | Command::Release
         | Command::AwaitAdvised(..)
         | Command::AwaitAdvisedAtLeast(..)
@@ -853,19 +833,15 @@ mod handler {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
             alive(&self.tree, (self.index, self.generation))?;
-            let (delay, held, fails, parent) = {
+            let (delay, fails, parent) = {
                 let mut guard = self
                     .tree
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let delay = guard.parent_delay(self.index);
                 let node = &mut guard.nodes[self.index];
-                let held = std::mem::take(&mut node.acc_parent_held);
-                (delay, held, node.acc_parent_fails, node.parent)
+                (delay, node.acc_parent_fails, node.parent)
             };
-            if held {
-                hits::held("AccParent");
-            }
             if delay > 0 {
                 crate::window::announce_call("slow-acc-parent", delay);
             }

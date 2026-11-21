@@ -70,9 +70,6 @@ pub(crate) struct NodeData {
     /// How many of the text's last lines are on screen, as a terminal shows
     /// the end of its buffer (`screen`); `None` shows the whole text.
     pub(crate) screen_rows: Option<usize>,
-    /// Text written over the text at the caret, and the caret moved past
-    /// it, as the text is next read (`write-on-read`).
-    pub(crate) write_on_read: Option<Vec<u16>>,
     /// The text's spelling errors and bold stretches, UTF-16 offsets.
     pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
@@ -100,9 +97,6 @@ pub(crate) struct NodeData {
     /// Whether the node's MSAA `accParent` fails with `E_FAIL`
     /// (`fail-acc-parent`).
     pub(crate) acc_parent_fails: bool,
-    /// Whether the node's next MSAA `accParent` is held until `release`
-    /// (`hold-acc-parent`).
-    pub(crate) acc_parent_held: bool,
     /// The node's MSAA location, left, top, width and height, from the
     /// fixture's `location` (all 0 when it gives none), as `move` changes it.
     pub(crate) location: [i32; 4],
@@ -117,11 +111,6 @@ pub(crate) struct NodeData {
     /// provider answers `NativeWindowHandle` with (`report-window`), and
     /// `None` for its usual answer.
     pub(crate) reports_window: Option<isize>,
-    /// The owned popup window that hosts the node (`popup`), which its UIA
-    /// provider names as its host and its window handle, so UIA moves the
-    /// popup from the desktop's children to the node's place in the tree;
-    /// `None` for a node with no window of its own.
-    pub(crate) popup: Option<isize>,
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
     /// Whether MSAA reads the node's role as a window's client area's
@@ -413,7 +402,6 @@ fn insert(
         selection: (0, 0),
         caret_at_end: false,
         screen_rows: None,
-        write_on_read: None,
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,
@@ -435,12 +423,10 @@ fn insert(
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
         parent_delay: (0, 0),
         acc_parent_fails: false,
-        acc_parent_held: false,
         location: node.location,
         location_fails: false,
         generation: 0,
         reports_window: None,
-        popup: None,
         content: node.content,
         client_role: node.client_role,
         window_class: node.window_class,

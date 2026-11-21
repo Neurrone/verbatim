@@ -117,12 +117,6 @@ parses them.
   padded to the width, each ended by a carriage return and line feed, as
   the terminals give them. On the MSAA backend it sends `WM_SETTEXT`, on
   which the edit control raises its own value change.
-- `write-on-read <id> <text>` writes the text at the caret, and moves the
-  caret past it, the next time any range of a UIA node's text is read, as
-  a terminal writes a typed character in the middle of a client's read; in
-  the MSAA backend, it types the text over the edit control's selection
-  and raises the control's value change the next time another thread
-  reads its text or selection.
 - `text-changed <id>` raises UIA's text changed event from a text node,
   or under MSAA `EVENT_OBJECT_VALUECHANGE` from the edit control's client
   object.
@@ -204,10 +198,6 @@ parses them.
 - `slow-acc-parent <id> <ms>` (MSAA only) does the same for the node's
   `accParent`, from the next call on, printing `slow-acc-parent started
   <us>` and `slow-acc-parent ended <us>`; 0 answers at once again.
-- `hold-acc-parent <id>` (MSAA only) holds the node's next `accParent`
-  as `hold` holds the next call of any kind: the call prints
-  `held AccParent` and waits until `release`, so a test decides when a
-  stuck parent step ends rather than racing a fixed delay.
 - `move <id> <left> <top> <width> <height>` (MSAA only) makes the node's
   `accLocation` answer that rectangle, raising no event; a fixture node's
   `location`, four integers, gives its first one (all 0 otherwise).
@@ -234,15 +224,6 @@ parses them.
   `[42, handle]`, with no parent. A live window's handle would not do:
   UIA navigates from such an element by its window, up to the top-level
   window.
-- `popup <id>` (UIA only) makes an owned popup, a top-level window of
-  its own owned by the host window, hidden unless the host is shown,
-  which hosts node `id`: its `WM_GETOBJECT` answers the node's provider,
-  and the node's provider names the popup as its host and its
-  `NativeWindowHandle`. UIA then moves the popup from the desktop's
-  children to the node's place under its parent, so the popup's
-  accessibility parent is in its owner, as a combo box's drop-down list
-  is the combo box's child (`crates/mockapp/tests/fixtures/popup.json`).
-  Its window class is `VerbatimMockAppPopup`.
 - `take-runtime-id <id> <from>` (UIA only) removes node `from` from the
   tree, every call on its elements failing with
   `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File
@@ -323,16 +304,13 @@ parses them.
 - `hold` makes the next provider call, whichever client makes it, print
   `held <method>` as it begins and wait until `release`, so a test knows a
   client's call is in progress and decides when it ends.
-- `freeze` makes the window thread acknowledge, print `held freeze` and
-  wait until `release` outside any call, so the window takes no message
-  and Windows comes to judge it hung before any client calls into it.
 - `hold-message <message>` (MSAA only) makes the window thread block
   inside the window procedure of the native control that answers
   `message`, on the next such message sent to it, printing
   `held <message>`, until `release`: `EM_GETSEL` for the edit control and
   `LVM_GETITEMTEXTW` for the list view, so a test decides when a client's
   message is answered.
-- `release` lets the call `hold`, `hold-acc-parent`, `hold-message` or `freeze` held go on; it is
+- `release` lets the call `hold` or `hold-message` held go on; it is
   applied and acknowledged by the stdin thread, since the window thread
   is the one held.
 - `quit` exits the process.

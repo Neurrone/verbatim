@@ -12,23 +12,21 @@ use std::cell::RefCell;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Accessibility::NotifyWinEvent;
-use windows::Win32::UI::Controls::{EM_REPLACESEL, EM_SETSEL};
+use windows::Win32::UI::Controls::EM_SETSEL;
 use windows::Win32::UI::Input::KeyboardAndMouse::VK_LEFT;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_VALUECHANGE, FindWindowExW, GWLP_WNDPROC, HMENU, InSendMessage, OBJID_CLIENT,
-    SendMessageW, SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETTEXT, WM_GETTEXTLENGTH,
-    WM_KEYDOWN, WM_SETTEXT, WNDPROC, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
+    FindWindowExW, GWLP_WNDPROC, HMENU, InSendMessage, OBJID_CLIENT, SendMessageW,
+    SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETTEXT, WM_GETTEXTLENGTH, WM_KEYDOWN,
+    WM_SETTEXT, WNDPROC, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
 thread_local! {
-    /// The edit control's own window procedure, once [`write_on_read`]
-    /// has put [`read_watching_proc`] in front of it.
+    /// The edit control's own window procedure, once
+    /// [`stale_focus_on_left`] has put [`read_watching_proc`] in front of
+    /// it.
     static EDIT_PROC: RefCell<Option<isize>> = const { RefCell::new(None) };
-    /// The text [`write_on_read`] waits to type, as another thread next
-    /// reads the control's text.
-    static WRITE_ON_READ: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The stale focus [`stale_focus_on_left`] raises after each Left
     /// Arrow: the window and its child id, and whether a Left Arrow armed
     /// it.
@@ -210,16 +208,6 @@ pub(crate) fn select(edit: HWND, start: usize, end: usize) {
     }
 }
 
-/// Types `text` over the edit control's selection the next time another
-/// thread reads its text or selection (`write-on-read`), before the read
-/// is answered, and raises the control's value change: a typed character
-/// the application handles while a client's read of the caret event
-/// before it is on its way, the value change raised during that read.
-pub(crate) fn write_on_read(edit: HWND, text: &str) {
-    WRITE_ON_READ.with_borrow_mut(|waiting| *waiting = Some(text.to_owned()));
-    watch_messages(edit);
-}
-
 /// Raises `EVENT_OBJECT_FOCUS` on child `child` of `window`, a control that
 /// does not have the focus, at the first read of the edit control's text or
 /// selection sent from another thread after each Left Arrow it receives
@@ -248,11 +236,10 @@ fn watch_messages(edit: HWND) {
     });
 }
 
-/// The edit control's window procedure once [`write_on_read`] or
-/// [`stale_focus_on_left`] is used: types the waiting text at a read sent
-/// from another thread; at a Left Arrow arms the stale focus, and raises it
-/// at the next such read; then passes every message on to the control's
-/// own procedure.
+/// The edit control's window procedure once [`stale_focus_on_left`] is
+/// used: at a Left Arrow arms the stale focus, and raises it at the next
+/// read sent from another thread; then passes every message on to the
+/// control's own procedure.
 ///
 /// # Safety
 ///
@@ -287,27 +274,6 @@ unsafe extern "system" fn read_watching_proc(
                 );
             }
         }
-    }
-    if is_read
-        // SAFETY: InSendMessage has no preconditions.
-        && unsafe { InSendMessage() }.as_bool()
-        && let Some(text) = WRITE_ON_READ.with_borrow_mut(Option::take)
-    {
-        let typed: Vec<u16> = text.encode_utf16().collect();
-        let contents = contents(&typed);
-        // SAFETY: `contents` is a live, NUL-terminated buffer for the
-        // duration of the call; `hwnd` is this thread's own control.
-        unsafe {
-            SendMessageW(
-                hwnd,
-                EM_REPLACESEL,
-                Some(WPARAM(0)),
-                Some(LPARAM(contents.as_ptr() as isize)),
-            );
-        }
-        // SAFETY: `hwnd` is this thread's own control, which answers for
-        // its client object.
-        unsafe { NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, hwnd, OBJID_CLIENT.0, 0) };
     }
     let original = EDIT_PROC.with_borrow(|original| original.unwrap_or_default());
     // SAFETY: `original` is the control's own procedure, stored before this
