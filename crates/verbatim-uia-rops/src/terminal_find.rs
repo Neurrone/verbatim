@@ -40,7 +40,10 @@
 //! so closes that direction, when the hit is that range. In a provider
 //! that answers null both checks pass by: a null first hit is nothing
 //! found, and a null answer for [`ABSENT`] leaves no nowhere range to
-//! compare. The classic implementation takes any failed call as not found.
+//! compare. The nowhere range compares unequal to an empty range at the
+//! document's start or end, without faulting (probed 2026-11-22), so only
+//! a search for [`ABSENT`] identifies it. The classic implementation takes
+//! any failed call as not found.
 //! The first search's two `FindText` calls count within [`FIND_CALLS`].
 //!
 //! Limits: output that trims the text from the history after the first
