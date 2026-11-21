@@ -986,6 +986,7 @@ fn batch_object_shapes_execute_exactly() {
 
     let mut fixture = Fixture::start("wide.json", "mockapp-instructions-batch-wide");
     let fill = batch::node_fill(&fixture.uia);
+    let many = batch::many_node_fill(&fixture.uia);
     common::apply(
         &mut fixture.app,
         fixture.hwnd,
@@ -1002,14 +1003,14 @@ fn batch_object_shapes_execute_exactly() {
     let (none, every) = (judged(false), judged(true));
     let controlled = run(
         &fixture.uia,
-        batch::controlled_selection(&item, &fill, &none),
+        batch::controlled_selection(&item, (&fill, &many), &none),
     );
     let walk = (View::Raw, false, false, 4_096);
     let dump = run(
         &fixture.uia,
         vec![batch::step(
             0,
-            batch::descendants(held(&root), &fill, &every, walk),
+            batch::descendants(held(&root), &many, &every, walk),
         )],
     );
     fixture.app.quit();
@@ -1022,8 +1023,8 @@ fn batch_object_shapes_execute_exactly() {
             vec![205],
             // The list's hundred items fill no run alone, and are read by
             // a call between the first program and the second.
-            vec![3386, 3473, 2045],
-            vec![3213, 3217, 3554, 2250],
+            vec![3366, 3448, 2020],
+            vec![3188, 3192, 3529, 2225],
         ],
         "navigation, a read, the controlled selection, the tree dump"
     );

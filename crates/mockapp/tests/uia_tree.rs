@@ -17,8 +17,10 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use common::outpost::OutpostUnderTest;
 use verbatim_model::batch::{Place, Relation, View};
-use verbatim_model::{NodeDetails, Role, State, StateSet};
+use verbatim_model::request::{Outcome, WindowVerdict};
+use verbatim_model::{NodeDetails, Role, State, StateSet, WindowHandle};
 use verbatim_uia::{
     Cached, DialogText, Fill, Live, NodeIdRegistry, PropertyEvent, Request, RoleCore, Shape,
     TextEvent, Uia, map,
@@ -561,14 +563,6 @@ fn many_nodes(uia: &Uia) -> Request<verbatim_uia::Node> {
     .expect("the node's request")
 }
 
-/// Every node of `nodes` that has a rectangle or is off the screen.
-fn placed(nodes: &[verbatim_model::NodeSnapshot]) -> usize {
-    nodes
-        .iter()
-        .filter(|node| node.details.rect.is_some() || node.states.contains(State::Offscreen))
-        .count()
-}
-
 /// A tree dump of mockapp's list (`small.json`) whose first item dies where
 /// it stands when the dump asks it for its first child, as an element of a
 /// menu that closes during a dump does (`disconnect-at-first-child`), after
@@ -670,36 +664,52 @@ fn a_dump_keeps_its_start_and_earlier_children_when_a_child_is_gone() {
     );
 }
 
-/// The dump of mockapp's whole window (`small.json`) as the outposts make
-/// it, by remote programs, with locations not asked for: no element's
-/// location or off-screen state is read, so the title bar UIA adds for the
-/// window's frame and its buttons cost mockapp's window thread no
-/// `WM_GETTITLEBARINFOEX`, of which a dump reading them made 8, and no node,
-/// the title bar first among them, has a rectangle or is off the screen.
+/// The tree dump of mockapp's whole window (`small.json`), asked as Core
+/// asks it of the window's outpost (`verbatim_core::outside::dump`), with
+/// locations not asked for: no element's location or off-screen state is
+/// read, so the title bar UIA adds for the window's frame and its buttons
+/// cost mockapp's window thread no `WM_GETTITLEBARINFOEX`, of which a dump
+/// reading them made 8, and no node, the title bar first among them, has a
+/// rectangle or is off the screen. Windows answers that message for one
+/// window at a time across every desktop, so a walk reading it waits on
+/// every other window's.
 fn a_dump_reads_nothing_the_title_bar_asks_the_window_for() {
+    common::init_com();
     let title = common::unique_title("mockapp-uia-dump-title-bar");
     let app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    let nodes = many_nodes(&uia);
-    let root = uia
-        .window_element(hwnd.0 as isize, &nodes)
-        .expect("mockapp's window element");
-    let fill = Fill::new(&nodes);
+    let outpost = OutpostUnderTest::new(&app);
     common::reset_hits(hwnd);
-    let (_, snapshots, complete) = dump(&uia, root.live().element(), (&fill, 4096), true);
+    let asked = verbatim_core::outside::dump(WindowHandle(hwnd.0 as u64), false);
+    let number = outpost.request_with(hwnd, WindowVerdict::Uia, asked.question());
+    let Outcome::Result(reply) = outpost.answer(number).outcome else {
+        panic!("the dump is answered");
+    };
+    let dumped = verbatim_core::outside::dumped(&asked, reply, false).expect("the tree");
     let title_bar_requests = common::read_hits(hwnd)
         .into_iter()
         .find(|(method, _)| *method == "WM_GETTITLEBARINFOEX");
+    let mut snapshots = Vec::new();
+    let mut waiting = vec![&dumped.root];
+    while let Some(node) = waiting.pop() {
+        snapshots.push(&node.snapshot);
+        waiting.extend(node.children.iter().rev());
+    }
+    let placed = snapshots
+        .iter()
+        .filter(|node| node.details.rect.is_some() || node.states.contains(State::Offscreen))
+        .count();
     assert_eq!(
         (
             title_bar_requests,
             snapshots[1].role,
-            placed(&snapshots),
-            complete,
+            placed,
+            dumped.truncated,
         ),
-        (None, Role::TitleBar, 0, true)
+        (None, Role::TitleBar, 0, false)
     );
+    outpost.settled();
+    drop(outpost);
     app.quit();
 }
 

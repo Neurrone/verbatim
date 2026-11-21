@@ -66,6 +66,23 @@ pub fn node_fill(uia: &Uia) -> Fill<Node> {
     )
 }
 
+/// A node's fill among many, as the outpost's walks read: every detail
+/// but a grid's counts, its place and its cell. For a window's title bar
+/// and its buttons UI Automation asks the application's UI thread and the
+/// window manager for the place, which waits while the window manager is
+/// behind, as it is with many test desktops made at once.
+pub fn many_node_fill(uia: &Uia) -> Fill<Node> {
+    Fill::new(
+        &uia.request::<Node>(verbatim_uia::NodeGates {
+            counts: None,
+            place: None,
+            cell: None,
+            ..Node::all_on()
+        })
+        .expect("a cache request"),
+    )
+}
+
 /// A step at `place`, with no condition.
 pub fn step(place: u8, input: Input<'_>) -> Fused<'_> {
     Fused {
@@ -346,11 +363,12 @@ pub fn descendants<'a>(
     }
 }
 
-/// The controlled selection: what `focus` controls, and its subtree
-/// searched for the element whose runtime id is in `judge`.
+/// The controlled selection: what `focus` controls, read with `fill`, and
+/// its subtree, read with `many`, searched for the element whose runtime
+/// id is in `judge`.
 pub fn controlled_selection<'a>(
     focus: &'a IUIAutomationElement,
-    fill: &'a Fill<Node>,
+    (fill, many): (&'a Fill<Node>, &'a Fill<Node>),
     judge: &'a dyn Fn(&Cached<Node>) -> Judged,
 ) -> Vec<Fused<'a>> {
     vec![
@@ -370,7 +388,7 @@ pub fn controlled_selection<'a>(
             0,
             descendants(
                 Object::Result(Place(0)),
-                fill,
+                many,
                 judge,
                 (View::Raw, false, true, 1),
             ),

@@ -366,6 +366,24 @@ impl<'a> RequestContext<'a> {
         uia.request(crate::gates::node_gates(self.node_details()))
     }
 
+    /// The request a walk's nodes are fetched with, read among many
+    /// ([`crate::gates::many_node_gates`]): no place, since for some
+    /// elements, a top-level window's title bar and its buttons among them,
+    /// UI Automation asks the application's UI thread and the window
+    /// manager for it (`verbatim_uia::Place`).
+    fn many_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(crate::gates::many_node_gates(self.node_details()))
+    }
+
+    /// [`Self::many_node_request`] with each node's place, for a walk that
+    /// asks for its nodes' rectangles, as the tree dump with locations does.
+    fn located_many_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
+        uia.request(verbatim_uia::NodeGates {
+            place: Some(()),
+            ..crate::gates::many_node_gates(self.node_details())
+        })
+    }
+
     /// The request a review command's live read of a node
     /// (`Query::ReadNode`) is made with: a node read alone, with its table's
     /// row and column counts.

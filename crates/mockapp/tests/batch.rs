@@ -12,7 +12,7 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use batch::{Text, after, describe, node_fill, read_text, step, units};
+use batch::{Text, after, describe, many_node_fill, node_fill, read_text, step, units};
 use verbatim_model::batch::{Relation, View};
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{AncestorStops, Cached, Live, Node, NodeIdRegistry, Shape, Uia, runtime_id};
@@ -257,6 +257,7 @@ fn review_shapes_agree() {
 fn object_shapes_agree() {
     let mut fixture = Fixture::start("controller.json", "mockapp-batch-objects");
     let fill = node_fill(&fixture.uia);
+    let many = many_node_fill(&fixture.uia);
     let display = fixture.find("Display settings");
     // From elements of the application's own: "System" would name the
     // title bar's menu, which UI Automation's proxies serve.
@@ -295,7 +296,7 @@ fn object_shapes_agree() {
     };
     let search = fixture.find("Search box");
     fixture.agree("controlled selection", None, ("", 1), &|| {
-        batch::controlled_selection(&search, &fill, &judge)
+        batch::controlled_selection(&search, (&fill, &many), &judge)
     });
     let registry = NodeIdRegistry::new(std::sync::Arc::default());
     let request = fixture
@@ -337,7 +338,7 @@ fn walks_agree() {
     // runs by calls, a call a step, as today's tray walk does.
     for (fixture_name, programs, steps) in [("tree.json", 1, 59), ("wide.json", 5, 215)] {
         let mut fixture = Fixture::start(fixture_name, "mockapp-batch-walk");
-        let fill = node_fill(&fixture.uia);
+        let fill = many_node_fill(&fixture.uia);
         let every = |_: &Cached<Node>| Judged {
             matched: true,
             pruned: false,

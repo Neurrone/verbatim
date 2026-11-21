@@ -926,7 +926,12 @@ impl Run<'_, '_> {
         else {
             return Ok(Err(Box::new(StepOutcome::NotThere(Missing::Node(start)))));
         };
-        let Ok((uia, nodes)) = self.client.uia_with(context, RequestContext::node_request) else {
+        let request = if walk.set.contains(&PropertyId::Rect) {
+            RequestContext::located_many_node_request
+        } else {
+            RequestContext::many_node_request
+        };
+        let Ok((uia, nodes)) = self.client.uia_with(context, request) else {
             return Ok(Err(Box::new(StepOutcome::Failed)));
         };
         let fill = verbatim_uia::Fill::new(&nodes);
