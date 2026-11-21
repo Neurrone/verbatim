@@ -15,10 +15,10 @@
 //! element with text raises (`docs/parity/text.md`, "A text pattern
 //! missing at the focus").
 //!
-//! A program's text calls work on a copy of the node's text facts from its
-//! own copies of the reducer's facts, with clones of the UIA ranges they
+//! A program's text calls work on a copy of the node's text facts from the
+//! program's own copy of the store's, with clones of the UIA ranges they
 //! name, taken from the store in one hold of its lock. What a call changes
-//! is applied to the program's copies at once and carried, with the ranges
+//! is applied to the program's copy at once and carried, with the ranges
 //! it made and the patterns and support it learned, to the program's next
 //! commit ([`ProgramText`]); the shell writes them to the store only when
 //! the reducer accepts that commit.
@@ -110,7 +110,7 @@ impl<P: Clone, K> TextCall<P, K> {
 }
 
 /// A copy of `node_id`'s UIA text facts for a text call: the part its
-/// operation names (`named`), as the program's copies hold it, its ranges
+/// operation names (`named`), as the program's copy holds it, its ranges
 /// cloned from the program's own or, in one hold, from the store.
 fn uia_call(
     context: &RequestContext<'_>,
@@ -118,8 +118,7 @@ fn uia_call(
     named: &[u64],
 ) -> TextCall<UiaPos, RangeKey> {
     let (part, copied) = context
-        .facts()
-        .text
+        .text_facts()
         .uia(node_id.number())
         .map(|anchors| anchors.part(named))
         .unwrap_or_default();
@@ -151,8 +150,7 @@ fn uia_call(
 /// [`uia_call`] makes one: its positions are offsets.
 fn edit_call(context: &RequestContext<'_>, node_id: NodeId, named: &[u64]) -> TextCall<u32, u32> {
     let (part, copied) = context
-        .facts()
-        .text
+        .text_facts()
         .edit(node_id.number())
         .map(|anchors| anchors.part(named))
         .unwrap_or_default();
@@ -219,7 +217,7 @@ fn put_edit(context: &RequestContext<'_>, node_id: NodeId, call: TextCall<u32, u
     record(context, change, (Vec::new(), touched));
 }
 
-/// Applies `change` to the program's copies and carries it to the
+/// Applies `change` to the program's copy and carries it to the
 /// program's next commit, with the UIA ranges it names that it made and
 /// the anchors it minted or reported.
 fn record(
@@ -440,8 +438,8 @@ fn keep_support(context: &RequestContext<'_>, node_id: NodeId, source: &UiaText)
 
 /// Forgets `node_id`'s text, for a node whose runtime id names a new
 /// element: its patterns, what it supports, and its text facts in both
-/// backends, in the program's copies now and in the store and the reducer
-/// with its next commit.
+/// backends, in the program's copy now and in the store with its next
+/// commit.
 pub(super) fn forget_text(context: &RequestContext<'_>, node_id: NodeId) {
     {
         let mut program_text = context.program_text.borrow_mut();
@@ -456,27 +454,6 @@ pub(super) fn forget_text(context: &RequestContext<'_>, node_id: NodeId) {
         TextChange::Forget(node_id.number()),
         (Vec::new(), Vec::new()),
     );
-}
-
-/// Forgets the text facts of `gone`, the nodes of a destroyed window the
-/// store freed with everything it kept for them.
-pub(super) fn forget_nodes(context: &RequestContext<'_>, gone: &[NodeId]) {
-    let with_text: Vec<NodeId> = {
-        let facts = context.facts();
-        gone.iter()
-            .copied()
-            .filter(|node| {
-                facts.text.uia(node.number()).is_some() || facts.text.edit(node.number()).is_some()
-            })
-            .collect()
-    };
-    for node in with_text {
-        record(
-            context,
-            TextChange::Forget(node.number()),
-            (Vec::new(), Vec::new()),
-        );
-    }
 }
 
 /// Logs a text read of `node_id` that fell back from its remote operation

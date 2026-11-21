@@ -1,6 +1,8 @@
 //! The outpost's reducer (`books/dev/src/explanation/design/ownership.md`): the pure state machine that holds every
-//! remembered fact of the outpost's application, with no Windows type and
-//! no application object. Inputs come in mailbox order; effects go out.
+//! remembered fact its rules read, with no Windows type and no application
+//! object. The text facts no rule reads ([`TextFacts`]) are the object
+//! store's, in `verbatim-outpost`; their type is here, as pure data tested
+//! on any host. Inputs come in mailbox order; effects go out.
 //! The outpost's shell (`verbatim-outpost`'s `outpost::shell` module) runs
 //! it on a thread of its own, applies its effects, and keeps its time. It is
 //! a logic crate: in the GPL tier, with no Windows dependency, so it builds
@@ -10,8 +12,8 @@
 //! Core's requests ([`waiting`]), the program in flight
 //! with the worker generation in charge ([`charge`]), and the idle
 //! barrier's round.
-//! Programs, run by a worker on copies ([`Facts`]), make every call into
-//! the application; their commits come back as inputs, and the reducer
+//! Programs, run by a worker, make every call into the application; their
+//! commits come back as inputs, and the reducer
 //! applies a commit only while its request is live: the program in flight
 //! of the generation in charge.
 //!
@@ -72,7 +74,6 @@ mod waiting;
 mod watch;
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::time::Duration;
 
 use self::charge::{Abandoned, InCharge};
@@ -82,7 +83,7 @@ use verbatim_model::protocol::OutpostToCore;
 
 pub use self::charge::Request;
 pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
-pub use self::follow::{Change, Facts, FocusPath, Route};
+pub use self::follow::{Change, FocusPath, Route};
 pub use self::text::{
     Anchor, KeptSelection, LastRead, NodeAnchors, RangeKey, ReadSelection, TextChange, TextFacts,
 };
@@ -126,14 +127,11 @@ pub enum Work {
     Forget(Vec<verbatim_model::WindowHandle>),
 }
 
-/// A program for the worker in charge: its request, its copies, and its
-/// work.
+/// A program for the worker in charge: its request and its work.
 #[derive(Clone, Debug)]
 pub struct Program {
     /// The request it runs as.
     pub request: Request,
-    /// Its copies of the reducer's facts.
-    pub facts: Facts,
     /// What it does.
     pub work: Work,
 }
@@ -160,9 +158,6 @@ pub enum Effect {
     },
     /// Drop the objects parked under these keys, on a worker.
     Unpark(Vec<u64>),
-    /// Let go of the UIA ranges the store keeps under these keys, by node,
-    /// which no text fact names any more, for a worker to drop.
-    ForgetRanges(Vec<(u64, RangeKey)>),
     /// Mark the generation dead in its charge and start `replacement`: the
     /// shell counts the abandoned workers that have not returned.
     Abandon {
@@ -204,13 +199,8 @@ pub enum Input {
         /// Whether it panicked.
         panicked: bool,
     },
-    /// What a release let go of, nodes and anchors by number, and whether
-    /// there are objects to drop.
+    /// A release was made, and whether it let go of objects to drop.
     Released {
-        /// The nodes let go of, by number.
-        nodes: BTreeSet<u64>,
-        /// The text anchors let go of, by number.
-        anchors: BTreeSet<u64>,
         /// Whether there are objects to drop.
         objects: bool,
     },
@@ -256,7 +246,6 @@ pub struct Reducer {
     /// Core's other requests.
     watches: Watches,
     intake: intake::Intake,
-    facts: Facts,
     /// The program in flight, and the worker generation in charge.
     flight: InCharge<Current>,
     /// Whether a release let go of objects for a worker to drop.
@@ -275,13 +264,6 @@ impl Reducer {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// The facts as the reducer holds them.
-    #[cfg(test)]
-    #[must_use]
-    pub fn facts(&self) -> &Facts {
-        &self.facts
     }
 
     /// The worker generation in charge.
@@ -335,15 +317,14 @@ impl Reducer {
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
-                    self.commit(&change, &mut effects);
+                    Self::commit(*change, &mut effects);
                 }
             }
             Input::Finished { request, .. } => self.finished(request, &mut effects),
-            Input::Released {
-                nodes,
-                anchors,
-                objects,
-            } => self.released(&nodes, &anchors, objects, &mut effects),
+            Input::Released { objects } => {
+                self.releasing = false;
+                self.to_drop |= objects;
+            }
             // Not pumped here: the shell ticks the reducer once it has
             // drained its mailbox, so the destroys drained together are
             // forgotten by one program.
@@ -485,33 +466,11 @@ impl Reducer {
         }
     }
 
-    /// Applies a commit of the program in flight: its message sent, then
-    /// the rest.
-    fn commit(&mut self, change: &Change, effects: &mut Vec<Effect>) {
-        if let Some(message) = change.result.clone() {
+    /// Applies a commit of the program in flight: its message sent.
+    fn commit(change: Change, effects: &mut Vec<Effect>) {
+        if let Some(message) = change.result {
             effects.push(Effect::Send(Box::new(message)));
         }
-        let ranges = follow::apply(&mut self.facts, change);
-        if !ranges.is_empty() {
-            effects.push(Effect::ForgetRanges(ranges));
-        }
-    }
-
-    /// What a release let go of: nodes and anchors by number, and whether
-    /// there are objects to drop.
-    fn released(
-        &mut self,
-        nodes: &BTreeSet<u64>,
-        anchors: &BTreeSet<u64>,
-        objects: bool,
-        effects: &mut Vec<Effect>,
-    ) {
-        self.releasing = false;
-        let ranges = Arc::make_mut(&mut self.facts.text).release(nodes, anchors);
-        if !ranges.is_empty() {
-            effects.push(Effect::ForgetRanges(ranges));
-        }
-        self.to_drop |= objects;
     }
 
     /// The worker in charge was abandoned: its replacement is started.
@@ -566,7 +525,6 @@ impl Reducer {
     pub fn shutdown_drop(&mut self) -> Program {
         Program {
             request: self.flight.next_request(),
-            facts: Facts::default(),
             work: Work::Drop,
         }
     }
@@ -648,11 +606,7 @@ impl Reducer {
             },
         };
         let request = self.flight.start(current);
-        effects.push(Effect::Dispatch(Box::new(Program {
-            request,
-            facts: self.facts.clone(),
-            work,
-        })));
+        effects.push(Effect::Dispatch(Box::new(Program { request, work })));
         request
     }
 }

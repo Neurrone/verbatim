@@ -1,16 +1,18 @@
-//! Text support per node, as the reducer remembers it
+//! Text support per node, as the outpost's object store keeps it
 //! (`books/dev/src/explanation/design/ownership.md`): each node's anchors with their chunks' text, the positions the
 //! outpost reported, and the node's one last read, the only baseline a
 //! caret key or a comparison of selections has
 //! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`). A position
 //! is a fact of its own kind: an edit control's
-//! offset, or the key of a UIA range the outpost's store keeps, so no
+//! offset, or the key of a UIA range the store keeps beside these, so no
 //! application object is held here and an edit control's offsets cross
-//! between programs as they are.
+//! between programs as they are. No rule of the reducer reads them, so the
+//! store holds them; the type is pure data, here so that it is tested on
+//! any host.
 //!
-//! A program reads these in its copies ([`super::Facts`]); its text calls
+//! A program reads a copy of them, taken as it starts; its text calls
 //! change them only through [`TextChange`]s, which it applies to its own
-//! copies as it makes them and commits for the reducer to apply.
+//! copy as it makes them and commits for the shell to write to the store.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

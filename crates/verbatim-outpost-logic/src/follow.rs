@@ -1,16 +1,13 @@
-//! What a program's commit changes (`books/dev/src/explanation/design/ownership.md`):
-//! its message to Core and its changes of text facts, reducer state with no
-//! application object, and the focus line's paths a UI Automation
-//! completion finds its elements by. A program is given a copy ([`Facts`]),
-//! to which its text calls apply their changes as they make them, so what
-//! it reads after a commit is what the reducer will hold.
+//! What a program's commit carries to the reducer
+//! (`books/dev/src/explanation/design/ownership.md`): its message to Core;
+//! and the focus line's paths a UI Automation completion finds its
+//! elements by. A program's text facts are the outpost's object store's,
+//! not the reducer's: the shell writes them to the store as it gives the
+//! reducer the commit.
 
-use std::sync::Arc;
 use verbatim_model::protocol::OutpostToCore;
 
 use verbatim_reader_rules::Window;
-
-use super::text::{RangeKey, TextChange, TextFacts};
 
 /// The raw-view chain of a UI Automation element the listener read: the
 /// element, then its ancestors, nearest first, each with its runtime id
@@ -134,41 +131,13 @@ impl FocusPath {
     }
 }
 
-/// What one commit of a program changes, its pure part: built by the
-/// program with every call it needs already made, and applied by the
-/// reducer, after the shell has made its store writes: its message sent,
-/// then its text facts' changes.
+/// What one commit of a program gives the reducer, built by the program
+/// with every call it needs already made, after the shell has made its
+/// store writes.
 #[derive(Clone, Debug, Default)]
 pub struct Change {
     /// The program's message to Core: a tell.
     pub result: Option<OutpostToCore>,
-    /// The program's changes of text facts, in order: a program applies
-    /// each to its own copies as its text call makes it, so its own commit
-    /// carries them only for the reducer.
-    pub text: Vec<TextChange>,
-}
-
-/// What a program is given a copy of: everything it reads of what the
-/// outpost remembers.
-#[derive(Clone, Debug, Default)]
-pub struct Facts {
-    /// Each node's text facts, shared until a change ([`super::text`]).
-    pub text: Arc<TextFacts>,
-}
-
-/// Applies the pure part of a commit, `change`, but for its message, which
-/// the caller sends first, to the reducer's facts. Returns the UIA ranges
-/// no text fact names any more, by node and key, for the store to let go
-/// of.
-pub fn apply(facts: &mut Facts, change: &Change) -> Vec<(u64, RangeKey)> {
-    let mut ranges = Vec::new();
-    if !change.text.is_empty() {
-        let text = Arc::make_mut(&mut facts.text);
-        for text_change in &change.text {
-            ranges.extend(text.apply(text_change));
-        }
-    }
-    ranges
 }
 
 #[cfg(test)]

@@ -50,7 +50,6 @@ use super::reducer::{
     Entry, Item, Program, Request, UiaEvent, UiaKind, WatchProgram, WinKind, Work,
 };
 use super::shell::{Garbage, Posted};
-use super::text_reads;
 use super::{Context, RequestContext};
 
 pub(super) use super::reducer::is_state_property;
@@ -206,16 +205,13 @@ fn node_details_of(work: &Work) -> NodeDetailSet {
 /// Forgets each window of `windows`, which Core named destroyed: its
 /// classic-read mark, and its MSAA nodes with their text
 /// facts, so a reused window handle never inherits them. The nodes'
-/// objects are released once the store's lock is let go, and their text
-/// facts are forgotten with the program's commit. Nothing reads the
+/// objects are released once the store's lock is let go. Nothing reads the
 /// application.
 fn forget(context: &RequestContext<'_>, windows: &[verbatim_model::WindowHandle]) {
     for &window in windows {
         let hwnd = super::window::hwnd_of(window);
         context.forget_window(hwnd);
-        let (removed, gone) = context.store.forget_window(hwnd);
-        drop(removed);
-        text_reads::forget_nodes(context, &gone);
+        drop(context.store.forget_window(hwnd));
     }
 }
 
@@ -227,11 +223,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     if let Work::Ask(ask) = &program.work {
         tracing::debug!(request = %ask.number, "request received by the worker");
     }
-    let Program {
-        request,
-        facts,
-        work,
-    } = program;
+    let Program { request, work } = program;
     let started = Instant::now();
     if let Work::Ask(ask) = &work {
         tracing::debug!(request = %ask.number, "request program begins");
@@ -239,7 +231,7 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&work));
     let details = node_details_of(&work);
     let mut request_context =
-        RequestContext::for_program(context, details, (request, facts), Arc::clone(charge));
+        RequestContext::for_program(context, details, request, Arc::clone(charge));
     let handled = catching(|| match work {
         Work::Entry(entry) => {
             Worker {

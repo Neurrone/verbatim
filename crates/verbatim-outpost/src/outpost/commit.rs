@@ -1,9 +1,8 @@
 //! A program's commit (`books/dev/src/explanation/design/ownership.md`): what one step of a program changes, built
 //! with every call it needs already made, and posted to the mailbox. The
-//! reducer applies it only while the program's request is live; until
-//! then the program applies its pure part to its own copies
-//! ([`super::reducer::Facts`]), so what it reads after a commit is what the
-//! reducer will hold.
+//! shell makes it only while the program's request is live; until then the
+//! program applies its text facts' changes to its own copy, so what it
+//! reads after a commit is what the store will hold.
 //!
 //! [`Effects`] carries, besides the reducer's [`Change`], what only the
 //! shell can apply: the program's text writes since its last commit,
@@ -30,14 +29,14 @@ pub(super) struct Effects {
 }
 
 impl Effects {
-    /// The reducer's part, its text facts' changes given by the store as
-    /// it makes the text writes, and the text writes only the shell makes.
+    /// The reducer's part, and the text writes only the shell makes.
     pub(super) fn split(self) -> (Change, Vec<TextWrite>) {
-        let change = Change {
-            result: self.result,
-            text: Vec::new(),
-        };
-        (change, self.text)
+        (
+            Change {
+                result: self.result,
+            },
+            self.text,
+        )
     }
 }
 

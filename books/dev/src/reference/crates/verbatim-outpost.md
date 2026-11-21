@@ -336,9 +336,8 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds Core's requests
-  queued for the worker, the intake's order,
-  each node's text facts, the caret keys' watches, and the program in
-  flight with the worker generation in charge. Inputs come in mailbox
+  queued for the worker, the intake's order, the caret keys' watches, and
+  the program in flight with the worker generation in charge. Inputs come in mailbox
   order; effects go out: dispatch a program, send a message, release,
   abandon a worker. It names no Windows type, holds no application object
   and makes no call. A program has no deadline and the outpost judges no
@@ -385,11 +384,11 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   worker is parked or returns and read once per ping.
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, Core's request, a watch's check or
-  final read, an entry's handling, or a release's drop, with copies of
-  what it reads (`Facts`: the text facts), and posts
-  each commit (`commit::Effects`) to the mailbox, applying its pure part
-  to its own copies (`reducer::apply`), so what it reads after is what the
-  reducer will hold. The shell applies a commit only while its request is
+  final read, an entry's handling, or a release's drop, with a copy of
+  the store's text facts taken as it starts (`Store::text_facts`), and
+  posts each commit (`commit::Effects`) to the mailbox, applying its text
+  facts' changes to its own copy, so what it reads after is what the
+  store will hold. The shell applies a commit only while its request is
   live, the program in flight of the generation in charge, and refuses
   any other whole: first the
   writes only it makes, to the store and its table of the elements the
@@ -742,36 +741,36 @@ as NVDA's handlers read them.
   lock and then the store's, it frees a node, anchor or caret tell's
   element Core does not hold that either no message carried or was
   carried at or before that position with none waiting that carries it,
-  by position and Core's view alone; with it go the node's text and terminal entry,
-  and the reducer is given the released nodes and anchors before it
-  dispatches any program, dropping their reports, focus-following groups
-  and text facts, so no program is given a vanishing node; it then has the
-  store let go of the freed anchors' UIA ranges (`Effect::ForgetRanges`).
+  by position and Core's view alone; with it go the node's text facts,
+  text objects and terminal entry, and in the same hold of the store's
+  lock a freed anchor's text facts and the UIA ranges no fact names any
+  more. The reducer dispatches no program until the release's answer, so
+  no program is given a vanishing node.
   The objects are dropped by a release
   program on a worker, never on the reducer's thread. A
   never-carried node of an ended request or an abandoned generation goes
   at the next release. A released node answers `Gone`, a forgotten anchor
   `AnchorLost`. Only the newest list is kept.
-- Text on copies: each node's text facts are the reducer's
-  (`reducer::text`, "Text and caret"), and a program reads them in its
-  copies. A text call copies the part its operation names
+- Text on copies: each node's text facts are the store's
+  (`reducer::TextFacts`, "Text and caret"), and a program reads them in
+  its copy. A text call copies the part its operation names
   (`NodeAnchors::part`), clones the UIA ranges that part names from the
   program's own or from the store in one hold (`Store::ranges`), and works
   on the copy with no lock held (`text_reads::uia_call`, `edit_call`).
-  What it changed is applied to the program's copies at once and carried,
+  What it changed is applied to the program's copy at once and carried,
   with the ranges it made under new keys and the anchors it minted or
   reported, to the program's next commit (`text_reads::put_uia`,
   `put_edit`, `ProgramText`); a program that ends with text writes no
   commit carried commits them alone. The shell makes them only for a
-  commit the reducer accepts (`Store::write_text`): the ranges are kept,
-  the anchors tagged with the commit's request, and the facts' change
-  given to the reducer, but a change that adds to a node the store has
+  commit the reducer accepts (`Store::write_text`): the facts' change is
+  made, the ranges and anchors kept, and the ranges no fact names after
+  the change let go of, but a change that adds to a node the store has
   released is not made. A refused commit's writes, with the terminal entry
   it made, are dropped by a worker.
   The other text writes, the patterns and what a text supports, a
   forgotten answer of no pattern, and a node's text forgotten for a new
   element, ride the same commits. A destroyed window's nodes have their
-  text facts forgotten with the program's next commit.
+  text facts forgotten as the store frees them (`Store::forget_window`).
 
 ### What to read
 
@@ -885,15 +884,16 @@ Core alone judges a caret key and a selection
 this build" and Table 17): the outpost keeps no note of a key and makes
 no comparison Core did not ask for.
 
-- Each node's text facts are the reducer's: its anchors, the positions
+- Each node's text facts are the object store's: its anchors, the positions
   reported, its one last read (`LastRead`: the caret, its line and the
   selection with its text, and when the read began) and the reads held
   behind ids Core names. A position is an edit control's offset, or the
   key under which the store keeps a UIA range, so the facts hold no
   application object and an edit control's offsets cross between
   programs as they are. They change only by a program's commits
-  (`TextChange`), and the reducer has the store let go of each UIA range
-  no fact names any more (`Effect::ForgetRanges`).
+  (`TextChange`) and a release, and the store lets go of each UIA range
+  no fact names any more as it makes the change. No rule of the reducer
+  reads them, so the store holds them (Claude, 2026-11-21).
 - A report's selection starts where Core can read before it: at the
   caret, in the caret's line, since a UIA caret is the selection's start,
   as NVDA's is (`CaretRead::selection_start`).

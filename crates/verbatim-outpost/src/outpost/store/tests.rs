@@ -96,8 +96,8 @@ fn a_spliced_or_looked_up_node_is_recorded_as_carried() {
 }
 
 /// A commit's text write for a node the store released meanwhile is not
-/// made: its anchors are not kept and the reducer is not given its
-/// change, while the write for a node still held is made.
+/// made: its anchors are not kept and its change is not in the store's
+/// text facts, while the write for a node still held is made.
 #[test]
 fn a_text_write_for_a_released_node_is_not_made() {
     let (outbound, _pipe) = outbound();
@@ -120,8 +120,10 @@ fn a_text_write_for_a_released_node_is_not_made() {
         ranges: Vec::new(),
         touched: vec![anchor],
     };
-    let (changes, _) = store.write_text(vec![write(node_held, 5), write(gone, 6)]);
-    assert_eq!(changes, vec![change(node_held)]);
+    drop(store.write_text(vec![write(node_held, 5), write(gone, 6)]));
+    let text = store.text_facts();
+    assert!(text.edit(node_held.number()).is_some());
+    assert_eq!(text.edit(gone.number()), None);
     assert!(store.keeps_anchor(5));
     assert!(!store.keeps_anchor(6));
 }

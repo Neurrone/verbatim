@@ -4,7 +4,6 @@
 //! ordering that once needed a real bound, a real deadline or a race to
 //! reproduce is one test here.
 
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 use verbatim_model::TraceId;
@@ -42,17 +41,6 @@ impl Replay {
                 request,
                 reported: false,
                 panicked: false,
-            },
-            at_ms,
-        )
-    }
-
-    /// Commits `change` for `request` at `at_ms`.
-    fn commit(&mut self, request: Request, change: Change, at_ms: u64) -> Vec<Effect> {
-        self.input(
-            Input::Commit {
-                request,
-                change: Box::new(change),
             },
             at_ms,
         )
@@ -190,66 +178,8 @@ fn a_release_waits_for_the_program_in_flight() {
     );
     // Nothing is dispatched until the release's result is in.
     assert!(programs(&effects).is_empty());
-    let effects = replay.input(
-        Input::Released {
-            nodes: BTreeSet::new(),
-            anchors: BTreeSet::new(),
-            objects: true,
-        },
-        11_002,
-    );
+    let effects = replay.input(Input::Released { objects: true }, 11_002);
     assert!(matches!(program(&effects).work, Work::Drop));
-}
-
-/// An edit control's text facts with one anchor, `anchor`, at offset
-/// `offset`, as a text call leaves them.
-fn edit_part(anchor: u64, offset: u32) -> NodeAnchors<u32> {
-    let mut part = NodeAnchors::default();
-    part.anchors.insert(
-        anchor,
-        Anchor {
-            pos: offset,
-            text: Arc::from("line"),
-        },
-    );
-    part
-}
-
-/// A commit of `part` as node `node`'s edit control text facts.
-fn edit_commit(node: u64, part: NodeAnchors<u32>) -> Change {
-    Change {
-        text: vec![TextChange::Edit {
-            node,
-            part,
-            copied: std::collections::BTreeSet::new(),
-        }],
-        ..Change::default()
-    }
-}
-
-/// A program's change of text facts reaches the copies of the program
-/// dispatched after it once its commit is applied, while a commit the
-/// reducer refuses, a dead generation's, changes nothing of them.
-#[test]
-fn a_programs_text_change_reaches_the_next_programs_copy() {
-    let mut replay = Replay::new();
-    let effects = replay.push(console_update(1), 1);
-    let first = program(&effects).request;
-    replay.push(console_update(2), 2);
-    let dead = Request {
-        generation: 7,
-        number: 99,
-    };
-    assert!(
-        replay
-            .commit(dead, edit_commit(2, edit_part(5, 9)), 3)
-            .is_empty()
-    );
-    replay.commit(first, edit_commit(1, edit_part(3, 4)), 4);
-    let effects = replay.finish(first, 5);
-    let text = &program(&effects).facts.text;
-    assert_eq!(text.edit(1), Some(&edit_part(3, 4)));
-    assert_eq!(text.edit(2), None);
 }
 
 /// What `effects` send as the idle barrier's answer and dispatch, in

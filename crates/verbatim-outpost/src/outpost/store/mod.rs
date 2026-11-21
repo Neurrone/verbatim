@@ -2,10 +2,10 @@
 //! outpost keeps, and of the identity it gives each
 //! (`books/dev/src/explanation/design/ownership.md`).
 //!
-//! It owns, as private fields, the UIA and MSAA node registries, the text
-//! objects (each node's text patterns, and the UIA ranges of its text
-//! positions under the keys the reducer's text facts name them by, with
-//! what its text is known to support),
+//! It owns, as private fields, the UIA and MSAA node registries, each
+//! node's text facts ([`TextFacts`]), the text objects (each node's text
+//! patterns, and the UIA ranges of its text positions under the keys its
+//! text facts name them by, with what its text is known to support),
 //! the terminals' kept ranges, the text anchors it keeps, and the
 //! elements of the caret tells sent to Core. No other module holds a
 //! registry. A plain window and a foreground's
@@ -38,14 +38,18 @@
 //!   messages are read in one hold of the backlog's lock and then the
 //!   store's, the one nesting in the outpost, so no message can be queued
 //!   between the decision and the removal.
-//! - A text call works on clones of the UIA ranges its copy of the node's
-//!   text facts names ([`Store::ranges`]), with no lock held. Its program
-//!   commits what it changed, and the shell makes the commit's text writes
-//!   only when the reducer accepts the commit ([`Store::write_text`]): the
-//!   ranges it made, under their new keys, its anchors kept, and the
-//!   node's patterns and what its text supports. A range
-//!   is let go of when no text fact names it any more
-//!   ([`Store::forget_ranges`]), or with its node.
+//! - A program reads a copy of the text facts taken as it starts
+//!   ([`Store::text_facts`]). A text call works on clones of the UIA ranges
+//!   its copy of the node's text facts names ([`Store::ranges`]), with no
+//!   lock held. Its program commits what it changed, and the shell makes
+//!   the commit's text writes only when the reducer accepts the commit
+//!   ([`Store::write_text`]): the facts' changes, the ranges it made, under
+//!   their new keys, its anchors kept, and the node's patterns and what its
+//!   text supports. A range is let go of in the same hold of the lock as
+//!   the change or release after which no text fact names it, or with its
+//!   node. No rule of the reducer reads the text facts, so the store holds
+//!   them; their type stays in `verbatim-outpost-logic`, pure data tested
+//!   on any host (Claude, 2026-11-21).
 
 #![forbid(unsafe_code)]
 
@@ -66,7 +70,7 @@ use verbatim_model::{NodeId, Role};
 use verbatim_uia::{Agile, Cached, Kept, NodeIdRegistry as UiaRegistry};
 
 use super::outbound::{Carried, Outbound};
-use super::reducer::{RangeKey, TextChange};
+use super::reducer::{RangeKey, TextChange, TextFacts};
 use super::text_reads::Patterns;
 use crate::text::uia::{TextSupport, UiaPos};
 use verbatim_reader_rules::numbered::too_early;
@@ -165,6 +169,9 @@ impl Recorded {
 
 /// What the store keeps under its lock besides the registries.
 struct State {
+    /// Each node's text facts, shared with the programs' copies until a
+    /// change.
+    text: Arc<TextFacts>,
     /// The node of each anchor kept.
     anchor_nodes: HashMap<u64, u64>,
     /// The UIA ranges of each node's text positions, by node and by the
@@ -221,9 +228,13 @@ impl Parked {
 }
 
 impl State {
-    /// Forgets everything kept for the nodes `gone`: their text, terminal
-    /// and anchors, into `removed`.
+    /// Forgets everything kept for the nodes `gone`: their text facts and
+    /// objects, terminal and anchors, into `removed`.
     fn forget_nodes(&mut self, gone: &BTreeSet<u64>, removed: &mut Removed) {
+        if !gone.is_empty() {
+            // The nodes' ranges go with them below.
+            let _ = Arc::make_mut(&mut self.text).release(gone, &BTreeSet::new());
+        }
         self.anchor_nodes.retain(|_, node| !gone.contains(node));
         for &node in gone {
             if let Some(ranges) = self.ranges.remove(&node) {
@@ -233,6 +244,19 @@ impl State {
             self.support.remove(&node);
             self.nearest_windows.remove(&node);
             self.routes.remove(&node);
+        }
+    }
+
+    /// Lets go of the UIA ranges `ranges` names, by node and key, which no
+    /// text fact names any more, into `removed`.
+    fn forget_ranges(&mut self, ranges: &[(u64, RangeKey)], removed: &mut Removed) {
+        for (node, key) in ranges {
+            if let Some(kept) = self.ranges.get_mut(node) {
+                removed.ranges.extend(kept.remove(key));
+                if kept.is_empty() {
+                    self.ranges.remove(node);
+                }
+            }
         }
     }
 }
@@ -266,6 +290,7 @@ impl Store {
             anchor_numbers: anchors,
             range_keys: AtomicU64::new(0),
             state: Lock::new(State {
+                text: Arc::default(),
                 anchor_nodes: HashMap::new(),
                 ranges: HashMap::new(),
                 patterns: HashMap::new(),
@@ -465,10 +490,12 @@ impl Store {
                 .msaa
                 .push(self.msaa.retain(|id| !nodes.contains(&id.number())));
             state.forget_nodes(&nodes, &mut removed);
-            // A freed anchor's ranges stay until the reducer, given the
-            // anchors freed, says no fact names them ([`Store::forget_ranges`]).
             for anchor in &anchors {
                 state.anchor_nodes.remove(anchor);
+            }
+            if !anchors.is_empty() {
+                let unnamed = Arc::make_mut(&mut state.text).release(&BTreeSet::new(), &anchors);
+                state.forget_ranges(&unnamed, &mut removed);
             }
             for key in told {
                 state.told.remove(&key);
@@ -496,16 +523,15 @@ impl Store {
 
     /// Frees every node of window `hwnd`, which has been destroyed, so a
     /// reused window handle never inherits them, with everything kept for
-    /// them. Returns what it let go of and the nodes it freed, whose text
-    /// facts the caller has the reducer forget.
-    pub(super) fn forget_window(&self, hwnd: isize) -> (Removed, Vec<NodeId>) {
+    /// them, their text facts included. Returns what it let go of.
+    pub(super) fn forget_window(&self, hwnd: isize) -> Removed {
         let mut state = self.lock();
         let (gone, released) = self.msaa.forget_window(hwnd);
         let numbers: BTreeSet<u64> = gone.iter().map(|node| node.number()).collect();
         let mut removed = Removed::default();
         removed.msaa.push(released);
         state.forget_nodes(&numbers, &mut removed);
-        (removed, gone)
+        removed
     }
 
     /// Frees everything, for the outpost's shutdown once no worker runs.
@@ -534,6 +560,7 @@ impl Store {
                 .flat_map(|(_, ranges)| ranges.into_values()),
         );
         state.anchor_nodes.clear();
+        state.text = Arc::default();
         removed
             .parked
             .extend(state.parked.drain().map(|(_, parked)| parked));
@@ -542,6 +569,13 @@ impl Store {
     }
 
     // Text.
+
+    /// The text facts, a copy for a program as it starts: only the program
+    /// in flight's commits change them, and a release runs between
+    /// programs, so they are the facts as the program's dispatch left them.
+    pub(super) fn text_facts(&self) -> Arc<TextFacts> {
+        Arc::clone(&self.lock().text)
+    }
 
     /// The text patterns kept for `node`: `None` when none were fetched,
     /// `Some(None)` when its element answered it has none. Clones.
@@ -583,12 +617,13 @@ impl Store {
 
     /// Makes `writes`, the text writes of a commit the reducer accepts, in
     /// order. A change that adds to a node's facts is made only while the
-    /// store holds the node: its ranges and its anchors are kept. Returns the facts' changes made, for the
-    /// reducer, and what the writes replaced or did not keep, for the
-    /// caller to drop once no lock is held.
-    pub(super) fn write_text(&self, writes: Vec<TextWrite>) -> (Vec<TextChange>, Removed) {
+    /// store holds the node: its ranges and its anchors are kept. The UIA
+    /// ranges no text fact names once the changes are made are let go of.
+    /// Returns what the writes replaced or did not keep, for the caller to
+    /// drop once no lock is held.
+    pub(super) fn write_text(&self, writes: Vec<TextWrite>) -> Removed {
         let mut removed = Removed::default();
-        let mut changes = Vec::new();
+        let mut unnamed = Vec::new();
         let mut state = self.lock();
         for write in writes {
             match write {
@@ -613,7 +648,7 @@ impl Store {
                             removed.ranges.extend(kept.insert(key, range));
                         }
                     }
-                    changes.push(change);
+                    unnamed.extend(Arc::make_mut(&mut state.text).apply(&change));
                 }
                 TextWrite::Patterns(node, patterns) => {
                     if self.holds(node) {
@@ -646,22 +681,7 @@ impl Store {
                 }
             }
         }
-        (changes, removed)
-    }
-
-    /// Lets go of the UIA ranges `ranges` names, by node and key, which no
-    /// text fact names any more.
-    pub(super) fn forget_ranges(&self, ranges: &[(u64, RangeKey)]) -> Removed {
-        let mut removed = Removed::default();
-        let mut state = self.lock();
-        for (node, key) in ranges {
-            if let Some(kept) = state.ranges.get_mut(node) {
-                removed.ranges.extend(kept.remove(key));
-                if kept.is_empty() {
-                    state.ranges.remove(node);
-                }
-            }
-        }
+        state.forget_ranges(&unnamed, &mut removed);
         removed
     }
 

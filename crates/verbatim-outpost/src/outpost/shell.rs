@@ -15,7 +15,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -213,7 +213,8 @@ pub(super) struct Shell {
 }
 
 /// The change the reducer is given for `effects`, a commit of `request`:
-/// for a commit it accepts, its text writes made ([`write`]). Any other is
+/// for a commit it accepts, its text writes made to the store, in the
+/// order the program made them ([`Store::write_text`]). Any other is
 /// refused whole, `None`: its writes are not made and its objects are let
 /// go of into `garbage`.
 fn admit(
@@ -222,28 +223,15 @@ fn admit(
     (request, effects): (Request, Effects),
     garbage: &mut Garbage,
 ) -> Option<Change> {
-    let (mut change, text) = effects.split();
+    let (change, text) = effects.split();
     if reducer.accepts(request) {
         if !text.is_empty() {
-            change.text = write(store, text, garbage);
+            garbage.store.push(store.write_text(text));
         }
         return Some(change);
     }
     garbage.store.push(Removed::of_text(text));
     None
-}
-
-/// Makes `text`, the text writes of a commit the reducer accepts, to the
-/// store, in the order the program made them, and returns the text facts'
-/// changes the store made.
-fn write(
-    store: &Store,
-    text: Vec<super::store::TextWrite>,
-    garbage: &mut Garbage,
-) -> Vec<super::reducer::TextChange> {
-    let (changes, removed) = store.write_text(text);
-    garbage.store.push(removed);
-    changes
 }
 
 impl Shell {
@@ -460,11 +448,6 @@ impl Shell {
                 told,
                 acknowledged,
             } => return vec![self.release((&nodes, &anchors, &told), acknowledged)],
-            Effect::ForgetRanges(ranges) => {
-                self.garbage
-                    .store
-                    .push(self.context.store.forget_ranges(&ranges));
-            }
             Effect::Unpark(keys) => {
                 for key in keys {
                     self.garbage
@@ -576,11 +559,7 @@ impl Shell {
                 .release(&self.context.outbound, &held, acknowledged);
         let Some(released) = released else {
             tracing::debug!(?held, acknowledged, position, "nothing to release");
-            return Input::Released {
-                nodes: BTreeSet::new(),
-                anchors: BTreeSet::new(),
-                objects: false,
-            };
+            return Input::Released { objects: false };
         };
         tracing::debug!(
             ?held,
@@ -592,8 +571,6 @@ impl Shell {
         );
         self.garbage.store.push(released.objects);
         Input::Released {
-            nodes: released.nodes,
-            anchors: released.anchors,
             objects: !self.garbage.is_empty(),
         }
     }
@@ -637,9 +614,10 @@ mod tests {
     }
 
     /// A commit the reducer refuses makes none of its text writes: the
-    /// anchor its text call minted is not kept in the store, and the
-    /// reducer is given nothing. The same commit of the program in flight
-    /// has its anchor kept and its change given to the reducer.
+    /// anchor its text call minted is not kept in the store, its change is
+    /// not in the store's text facts, and the reducer is given nothing.
+    /// The same commit of the program in flight has its anchor kept and its
+    /// change in the text facts the next program's copy is taken from.
     #[test]
     fn a_refused_commits_text_writes_are_not_made() {
         let store = Store::new();
@@ -676,10 +654,14 @@ mod tests {
         let admitted = admit(&store, &reducer, (dead, refused), &mut garbage);
         assert!(admitted.is_none());
         assert!(!store.keeps_anchor(7));
+        assert_eq!(store.text_facts().edit(node), None);
         let (accepted, change) = minted(node, 8);
-        let admitted = admit(&store, &reducer, (in_flight, accepted), &mut garbage)
+        admit(&store, &reducer, (in_flight, accepted), &mut garbage)
             .expect("the change of the program in flight");
-        assert_eq!(admitted.text, vec![change]);
+        let TextChange::Edit { part, .. } = change else {
+            unreachable!("an edit control's change")
+        };
+        assert_eq!(store.text_facts().edit(node), Some(&part));
         assert!(store.keeps_anchor(8));
     }
     /// The context of an outpost of this process watching this process,

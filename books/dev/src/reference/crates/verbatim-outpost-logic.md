@@ -64,8 +64,8 @@ Public API:
   windows destroyed in one drain are forgotten together at the tick), a
   a commit, a program finished, a release's answer, and the
   shell's close. `Effect`: dispatch a `Program`, send a
-  message, release, let go of parked elements (`Unpark`), forget text
-  ranges (`ForgetRanges`), abandon a worker generation (`Abandon`, with
+  message, release, let go of parked elements (`Unpark`), abandon a
+  worker generation (`Abandon`, with
   the dead generation and its replacement; the shell alone counts the
   abandoned workers that have not returned), or report a settle reached
   (`Settled`).
@@ -82,10 +82,8 @@ Public API:
   Core's `Ask`, a watch's program, or `Forget`, the windows owed a
   forget, dispatched first of all, so every request Core sent after a
   window's destruction runs after its forget): what the worker generation in
-  charge runs, with its copies of the facts (`Facts`:
-  each node's text facts), whose commits come back as `Change`s (the
-  program's tell and its text changes) and are applied while their
-  `Request` is live.
+  charge runs, whose commits come back as `Change`s (the program's tell)
+  and are applied while their `Request` is live.
 - The vocabulary of its state, used by the shell and the worker: the
   intake's `Entry`, `Item`, `UiaEvent` and `Asker`; the focus line's
   paths a UI Automation completion finds its elements by (`FocusPath`,
@@ -94,7 +92,10 @@ Public API:
   `NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`, `ReadSelection`,
   `TextChange`), among them the reads held behind ids Core names
   (`NodeAnchors::held`: a caret key's starting point and a selection
-  baseline, numbered and released as anchors are, Table 16); and
+  baseline, numbered and released as anchors are, Table 16), which the
+  outpost's object store holds and the reducer does not, since no rule of
+  it reads them, their type here as pure data tested on any host (Claude,
+  2026-11-21); and
   `WinKind` and `UiaKind`, its own copies of the backends' event kinds,
   since it names no backend crate.
 

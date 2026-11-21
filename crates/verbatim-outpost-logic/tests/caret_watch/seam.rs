@@ -476,15 +476,10 @@ impl Seam {
                         ));
                     }
                 }
-                OutpostEffect::Release { nodes, anchors, .. } => {
-                    let effects = self.outpost.input(
-                        OutpostInput::Released {
-                            nodes: nodes.into_iter().collect(),
-                            anchors: anchors.into_iter().collect(),
-                            objects: false,
-                        },
-                        now_of(self.now),
-                    );
+                OutpostEffect::Release { .. } => {
+                    let effects = self
+                        .outpost
+                        .input(OutpostInput::Released { objects: false }, now_of(self.now));
                     seen.extend(self.outpost_effects(effects, app));
                 }
                 _ => {}

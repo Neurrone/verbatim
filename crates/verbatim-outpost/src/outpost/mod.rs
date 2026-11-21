@@ -101,7 +101,7 @@ use verbatim_outpost_logic as reducer;
 use commit::{Committed, Effects};
 use outbound::Outbound;
 pub(crate) use reducer::{Anchor, NodeAnchors, ReadSelection};
-use reducer::{Entry, Facts, Item, UiaEvent, UiaKind};
+use reducer::{Entry, Item, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
 
@@ -302,9 +302,9 @@ pub type FocusedElementReader =
 struct RequestContext<'a> {
     context: &'a Context,
     nodes: store::Nodes<'a>,
-    /// The facts the program reads: its copies, which its commits are
-    /// applied to.
-    facts: RefCell<Facts>,
+    /// The text facts the program reads: its copy of the store's, taken as
+    /// it starts, which its text calls' changes are applied to.
+    text: RefCell<Arc<reducer::TextFacts>>,
     /// What the program holds of the store's text, and its text writes
     /// not yet committed ([`text_reads::ProgramText`]).
     program_text: RefCell<text_reads::ProgramText>,
@@ -329,18 +329,18 @@ struct Program<'a> {
 }
 
 impl<'a> RequestContext<'a> {
-    /// The context of program `request`, given `facts`, `waiting`, and its
-    /// worker's `charge`.
+    /// The context of program `request`, with a copy of the store's text
+    /// facts and its worker's `charge`.
     fn for_program(
         context: &'a Context,
         details: NodeDetailSet,
-        (request, facts): (reducer::Request, Facts),
+        request: reducer::Request,
         charge: Arc<Charge>,
     ) -> Self {
         Self {
             context,
             nodes: context.store.nodes_for(details),
-            facts: RefCell::new(facts),
+            text: RefCell::new(context.store.text_facts()),
             program_text: RefCell::default(),
             program: Program {
                 request,
@@ -396,9 +396,9 @@ impl<'a> RequestContext<'a> {
         &self.program().charge
     }
 
-    /// The facts as the program's copies hold them.
-    fn facts(&self) -> Ref<'_, Facts> {
-        self.facts.borrow()
+    /// The text facts as the program's copy holds them.
+    fn text_facts(&self) -> Ref<'_, Arc<reducer::TextFacts>> {
+        self.text.borrow()
     }
 
     /// The route to the element `runtime_id` names, kept with the node a
@@ -412,11 +412,10 @@ impl<'a> RequestContext<'a> {
     }
 
     /// Applies `change`, a change of text facts one of the program's text
-    /// calls made, to the program's copies at once, so what it reads after
-    /// is what the reducer will hold once its commit is applied.
+    /// calls made, to the program's copy at once, so what it reads after
+    /// is what the store will hold once its commit is made.
     fn apply_text(&self, change: &reducer::TextChange) {
-        let mut facts = self.facts.borrow_mut();
-        let _ = Arc::make_mut(&mut facts.text).apply(change);
+        let _ = Arc::make_mut(&mut self.text.borrow_mut()).apply(change);
     }
 
     /// Commits the program's text writes not yet committed, if it has
