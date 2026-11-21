@@ -282,7 +282,9 @@ impl Checking<'_> {
                 Op::Read { subject, .. }
                 | Op::Ancestors { subject, .. }
                 | Op::IsOneOf { subject, .. }
-                | Op::Descendants { subject, .. } => kept_or_earlier(subject),
+                // Only on an element it kept: its read answers that
+                // element's own values, never an earlier step's node.
+                | Op::Descendants { subject, .. } => matches!(subject, Subject::Kept { .. }),
                 _ => false,
             },
         };
@@ -421,14 +423,5 @@ fn many_nodes(kind: OpKind) -> bool {
     matches!(
         kind,
         OpKind::Related | OpKind::Ancestors | OpKind::Descendants
-    )
-}
-
-/// Whether the listener can read `subject`: an element it kept, or an
-/// earlier result of the same batch.
-fn kept_or_earlier(subject: &Subject) -> bool {
-    matches!(
-        subject,
-        Subject::Kept { .. } | Subject::Result(_) | Subject::Item { .. }
     )
 }

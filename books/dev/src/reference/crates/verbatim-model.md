@@ -318,7 +318,8 @@ tell, Core asks", which the protocol below carries.
   wrong kind, a `Bound` broken (depth, node cap, limit, count, poll, wait),
   a caret wait not first, a matcher value of another type, two `keep`
   marks on one element, an operation the reader does not run (the
-  listener reads only `LISTENER_MSAA_SET` of an MSAA object), a subject
+  listener reads only `LISTENER_MSAA_SET` of an MSAA object, and runs
+  its other operations only on kept elements), a subject
   the operation does not take, or an anchor on a subject that is no node.
   `Batch::visit_nodes` and `visit_outcomes` are the one walk each over the
   node ids (and the outcomes' anchors) Core stamps and an outpost keeps;

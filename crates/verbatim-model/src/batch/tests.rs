@@ -751,6 +751,43 @@ fn a_batch_a_reader_cannot_run_is_refused_whole() {
         ReaderKind::Listener,
         not_run(OpKind::Read),
     );
+    // The listener reads only elements it kept, never an earlier step's
+    // node: it would answer the kept element's own values.
+    refused(
+        vec![
+            step(Op::Ancestors {
+                subject: kept(7, true),
+                until: Vec::new(),
+                depth: 60,
+                set: vec![PropertyId::Name],
+            }),
+            step(read(Subject::Item {
+                of: Place(0),
+                index: 1,
+            })),
+        ],
+        ReaderKind::Listener,
+        Malformed::NotRun {
+            step: Place(1),
+            op: OpKind::Read,
+        },
+    );
+    refused(
+        vec![
+            step(read(kept(7, true))),
+            step(Op::Ancestors {
+                subject: Subject::Result(Place(0)),
+                until: Vec::new(),
+                depth: 60,
+                set: vec![PropertyId::Name],
+            }),
+        ],
+        ReaderKind::Listener,
+        Malformed::NotRun {
+            step: Place(1),
+            op: OpKind::Ancestors,
+        },
+    );
     refused(
         vec![step(focus_read(msaa()))],
         ReaderKind::Plain,
