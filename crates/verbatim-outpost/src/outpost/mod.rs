@@ -67,7 +67,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationTextRange, UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
+    UIA_RangeValueValuePropertyId, UIA_Text_TextChangedEventId,
     UIA_Text_TextSelectionChangedEventId, UIA_ValueValuePropertyId,
 };
 
@@ -252,9 +252,6 @@ pub enum Heard {
     UiaTextSelection,
     /// A text focus's text changed event.
     UiaTextChanged,
-    /// A text focus's active text position changed event, which the
-    /// outpost hears and drops: Core has no handler for it.
-    UiaActiveTextPosition,
     /// A `WinEvent` of one of the kinds the outpost hooks.
     Msaa(verbatim_ia2::WinEventKind),
 }
@@ -830,14 +827,15 @@ impl Outpost {
         let make_handlers: MakeHandlers = Arc::new(move || {
             let context = Arc::clone(&hook_context);
             EventHandlers {
+                // Stamped as the callback begins, as the listener stamps
+                // its own copy before its reads.
                 win_event: Box::new(move |event: WinEvent, _class: Option<&str>| {
-                    take_in_hooked(
-                        event,
-                        &mut (),
-                        || context.observed_now(),
-                        |(), _| {},
-                        |(), event, timing| context.take_in_win_event(event, timing),
-                    );
+                    let timing = EventTiming {
+                        raised_ms_ago: Some(event.raised_ms_ago),
+                        observed_at_us: context.observed_now(),
+                        ..EventTiming::default()
+                    };
+                    context.take_in_win_event(event, timing);
                 }),
                 nudge: None,
                 timer: None,
@@ -1149,71 +1147,6 @@ fn unstamped_ask(ask: &verbatim_model::request::Ask) -> Box<verbatim_model::requ
     ask
 }
 
-/// Handles `event`, a `WinEvent` the outpost's own hook delivered: stamps
-/// its observation from `clock` as the callback begins, before `note`, the
-/// event thread's own bookkeeping, which can take the arbitrator's lock and
-/// hook or unhook kinds when the narrowing changes, as it does when the
-/// user switches applications; then takes it in with that stamp, as the
-/// listener stamps its forwarded copy before its own reads.
-fn take_in_hooked<S>(
-    event: WinEvent,
-    state: &mut S,
-    clock: impl FnOnce() -> u64,
-    note: impl FnOnce(&mut S, &WinEvent),
-    take_in: impl FnOnce(&mut S, WinEvent, EventTiming),
-) {
-    let timing = EventTiming {
-        raised_ms_ago: Some(event.raised_ms_ago),
-        observed_at_us: clock(),
-        ..EventTiming::default()
-    };
-    note(state, &event);
-    take_in(state, event, timing);
-}
-
-#[cfg(test)]
-mod hook_stamp_tests {
-    use std::cell::Cell;
-
-    use verbatim_ia2::{WinEvent, WinEventKind};
-
-    use super::take_in_hooked;
-    use verbatim_model::protocol::EventTiming;
-
-    /// A hooked event is stamped when its callback began, not after the
-    /// event thread's bookkeeping, however long that took. This exercises
-    /// `take_in_hooked` alone: that the outpost's hook callback calls it,
-    /// rather than stamping on its own, rests on reading the callback.
-    #[test]
-    fn a_hooked_event_is_stamped_before_its_bookkeeping() {
-        let clock = Cell::new(7_000_000);
-        let event = WinEvent {
-            kind: WinEventKind::Focus,
-            event: 0x8005,
-            hwnd: 0x10,
-            id_object: -4,
-            id_child: 0,
-            thread: 1,
-            time: 2,
-            raised_ms_ago: 3,
-        };
-        let mut taken = None::<EventTiming>;
-        take_in_hooked(
-            event,
-            &mut taken,
-            || clock.get(),
-            // The bookkeeping takes 2 ms: hooking kinds again, say.
-            |_, _| clock.set(7_002_000),
-            |taken, _, timing| *taken = Some(timing),
-        );
-        let timing = taken.expect("the event is taken in");
-        assert_eq!(
-            (timing.observed_at_us, timing.raised_ms_ago),
-            (7_000_000, Some(3))
-        );
-    }
-}
-
 /// What a UIA callback captures of a property change on the focus: the
 /// element's parts and window handle, read from its cache, the element for
 /// anything the worker must ask it, and the acceptance facts of the
@@ -1351,7 +1284,9 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 /// caret event (`Text_TextSelectionChanged`); the extended group, given
 /// only the focus Core's `Follow` names with it (Word's document and
 /// Windows Terminal's text area, as NVDA's list has it), also holds the
-/// text changes (`Text_TextChanged`) and the active text position changes.
+/// text changes (`Text_TextChanged`). The active text position changes are
+/// not registered: NVDA acts on them only in browse mode, which M7 builds
+/// (`docs/parity/backends.md`, "The active text position").
 /// A focus's completion gives the base group, except to the node `Follow`
 /// names, which keeps the group Core named. A third
 /// group, given only the parent of a focus that is a `SensitiveSlider`'s
@@ -1361,8 +1296,8 @@ fn capture_text(context: &Context, event: &Cached<TextEvent>, kind: UiaKind) -> 
 /// One group carries a cache request per handler, so each event's element
 /// arrives with what its handling reads: a property change with what the
 /// focus's name, value, and states are read from
-/// ([`verbatim_uia::PropertyEvent`]), and a caret, text, or active text
-/// position change with little more than its window
+/// ([`verbatim_uia::PropertyEvent`]), and a caret or text change with
+/// little more than its window
 /// ([`verbatim_uia::TextEvent`]), since the worker reads the text itself.
 fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
     let property_context = Arc::clone(context);
@@ -1410,25 +1345,11 @@ fn register_focus_events(context: &Arc<Context>) -> Option<Registration> {
         events: vec![UIA_Text_TextChangedEventId],
         callback: text_callback,
     };
-    // NVDA registers the active text position changes desktop-wide, in
-    // its global group (`UIAHandler/__init__.py` 634 to 639); the outpost
-    // registers them on a text focus with its text changes, and tells Core
-    // nothing of them, Core having no handler for them, so each is heard
-    // and dropped.
-    let position_context = Arc::clone(context);
-    let position = Subscription::ActiveTextPosition {
-        callback: Arc::new(
-            move |_: &Cached<TextEvent>, _: Option<&IUIAutomationTextRange>| {
-                position_context.tell_heard(Heard::UiaActiveTextPosition);
-            },
-        ),
-    };
     let parts = vec![
         Part::shaped::<PropertyEvent>(properties),
         Part::shaped::<PropertyEvent>(values).value_only(),
         Part::shaped::<TextEvent>(caret).text_events(),
         Part::shaped::<TextEvent>(text).extended().text_events(),
-        Part::shaped::<TextEvent>(position).extended(),
     ];
     match Registration::with_parts(parts, Scope::Nothing) {
         Ok(registration) => Some(registration),

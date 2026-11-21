@@ -1996,8 +1996,9 @@ with remote operations on or off.
   calls instead of 3, and moving the registration to the element it
   already follows costs 6 instead of 0 (`books/dev/src/reference/uia-bugs.md`, "UI
   Automation's copy of an element's runtime id lapses").
-- A text focus's caret, text and active text position changes are one
-  group on the focus (`uia_active_text_position_costs_exactly`):
+- A text focus's caret, text and active text position changes as one
+  group on the focus, as browse mode (M7) will register them
+  (`uia_active_text_position_costs_exactly`):
   registering it on mockapp's text costs 1 `HostRawElementProvider` and 2
   `FragmentRoot`, 0.89 ms at the median. An active text position change is
   kept as a position without reading anything.

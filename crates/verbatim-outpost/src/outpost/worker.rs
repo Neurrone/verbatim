@@ -52,8 +52,6 @@ use super::reducer::{
 use super::shell::{Garbage, Posted};
 use super::{Context, RequestContext};
 
-pub(super) use super::reducer::is_state_property;
-
 /// A program for a worker, with what the shell let go of for the worker to
 /// drop before it runs.
 pub(super) struct Job {
@@ -353,19 +351,28 @@ pub(super) fn win_kind(kind: WinEventKind) -> Option<WinKind> {
 /// `id` carries, from the event's element `parts`: the states, name or
 /// value it carried; for a help text change a description change and for a
 /// `ControllerFor` change a suggestions change, each with no value, since
-/// Core asks the node for them (`docs/design/readers-tell-core-asks-build1.md`,
+/// Core asks the node for them; any other property, such as the expand
+/// state or the toggle state, as a change of the element's states (`docs/design/readers-tell-core-asks-build1.md`,
 /// "Changes on objects"). The states of a menu item that no pattern makes
 /// checkable are completed from `element`'s legacy MSAA state, as NVDA's
 /// menu item reads its states (`NVDAObjects/UIA/__init__.py`, `MenuItem`).
-/// `None` for a property no `Follow` group registers.
 fn told_property(
     id: i32,
     parts: &UiaSnapshotFact,
     element: Option<&Cached<Kept>>,
-) -> Option<(PropertyId, Option<PropertyValue>)> {
+) -> (PropertyId, Option<PropertyValue>) {
     let text = |text: &Option<String>| text.clone().map(PropertyValue::Text);
-    Some(match id {
-        id if is_state_property(id) => (
+    match id {
+        id if id == UIA_NamePropertyId.0 => (PropertyId::Name, text(&parts.name)),
+        id if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 => {
+            (PropertyId::Value, text(&parts.value))
+        }
+        // NVDA maps the help text to a description change
+        // (`UIAPropertyIdsToNVDAEventNames`), whose description it reads
+        // when it handles it.
+        id if id == UIA_HelpTextPropertyId.0 => (PropertyId::Description, None),
+        id if id == UIA_ControllerForPropertyId.0 => (PropertyId::Suggestions, None),
+        _ => (
             PropertyId::States,
             Some(PropertyValue::States(match element {
                 Some(element) => verbatim_uia::map::with_legacy_checked_states(
@@ -376,17 +383,7 @@ fn told_property(
                 None => parts.states,
             })),
         ),
-        id if id == UIA_NamePropertyId.0 => (PropertyId::Name, text(&parts.name)),
-        id if id == UIA_ValueValuePropertyId.0 || id == UIA_RangeValueValuePropertyId.0 => {
-            (PropertyId::Value, text(&parts.value))
-        }
-        // NVDA maps the help text to a description change
-        // (`UIAPropertyIdsToNVDAEventNames`), whose description it reads
-        // when it handles it.
-        id if id == UIA_HelpTextPropertyId.0 => (PropertyId::Description, None),
-        id if id == UIA_ControllerForPropertyId.0 => (PropertyId::Suggestions, None),
-        _ => return None,
-    })
+    }
 }
 
 /// One entry's handling, by the worker in charge.
@@ -644,9 +641,7 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_us: u64,
     ) {
-        let Some((property, value)) = told_property(id, &event.parts, element) else {
-            return;
-        };
+        let (property, value) = told_property(id, &event.parts, element);
         let mut cached = vec![PropertyAnswer {
             id: PropertyId::HasTextPattern,
             value: Some(PropertyValue::Flag(text_pattern)),

@@ -1,6 +1,6 @@
 //! What the mailbox carries to the reducer: an entry, with no application
-//! object in it. A UIA event's element and an active text position's range
-//! are parked in the store as the entry is pushed, and the entry carries
+//! object in it. A UIA event's element is parked in the store as the entry
+//! is pushed, and the entry carries
 //! the key they are parked under (`books/dev/src/explanation/design/ownership.md`).
 
 use verbatim_model::TraceId;
@@ -19,37 +19,6 @@ pub enum WinKind {
     ConsoleUpdate,
     /// `EVENT_CONSOLE_CARET`: the console's cursor moved.
     ConsoleCaret,
-}
-
-/// The UIA property ids the reducer tells apart, as `UIAutomationClient.h`
-/// numbers them: the reducer names no Windows binding.
-pub mod property {
-    /// `UIA_NamePropertyId`.
-    pub const NAME: i32 = 30005;
-    /// `UIA_HelpTextPropertyId`.
-    pub const HELP_TEXT: i32 = 30013;
-    /// `UIA_ValueValuePropertyId`.
-    pub const VALUE: i32 = 30045;
-    /// `UIA_RangeValueValuePropertyId`.
-    pub const RANGE_VALUE: i32 = 30047;
-    /// `UIA_ControllerForPropertyId`.
-    pub const CONTROLLER_FOR: i32 = 30104;
-}
-
-/// Whether a change of UIA property `id` is reported as a change of the
-/// element's states: every property but the name, the value, the range
-/// value, the help text and `ControllerFor`, such as the expand state and
-/// the toggle state.
-#[must_use]
-pub fn is_state_property(id: i32) -> bool {
-    ![
-        property::NAME,
-        property::VALUE,
-        property::RANGE_VALUE,
-        property::HELP_TEXT,
-        property::CONTROLLER_FOR,
-    ]
-    .contains(&id)
 }
 
 /// What a UIA event reports.
@@ -97,9 +66,9 @@ pub struct UiaEvent {
 pub enum Asker {
     /// Core's idle query, of this round.
     Round(u64),
-    /// A test's `Outpost::settle`, numbered so the shell finds who waits
-    /// on it.
-    Settle(u64),
+    /// A test's `Outpost::settle`. Barriers are never merged or reordered,
+    /// so the shell answers its waiters in the order they asked.
+    Settle,
 }
 
 /// One unit of work: what a program handles, or what the reducer does

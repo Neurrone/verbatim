@@ -21,7 +21,7 @@
 
 use std::collections::VecDeque;
 
-use super::entry::{Asker, Entry, Item, UiaKind, WinKind};
+use super::entry::{Entry, Item, UiaKind, WinKind};
 
 /// The object and kind an entry concerns, for the one-per-object rule.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -119,27 +119,6 @@ impl Intake {
             .chain(self.batch.drain(..));
         dropped.flat_map(|entry| entry.item.parked()).collect()
     }
-
-    /// The entries waiting, then those planned and not yet handed out.
-    fn entries(&self) -> impl Iterator<Item = &Entry> {
-        self.waiting
-            .iter()
-            .map(|waiting| &waiting.entry)
-            .chain(self.batch.iter())
-    }
-
-    /// The tests' settles waiting, planned or not, by number.
-    pub fn settles(&self) -> std::collections::BTreeSet<u64> {
-        self.entries()
-            .filter_map(|entry| match entry.item {
-                Item::Barrier {
-                    asker: Asker::Settle(id),
-                    ..
-                } => Some(id),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 /// Removes the entry waiting with `key` behind the last idle query: an
@@ -182,7 +161,7 @@ mod tests {
     use verbatim_model::TraceId;
     use verbatim_model::protocol::UiaSnapshotFact;
 
-    use super::super::entry::UiaEvent;
+    use super::super::entry::{Asker, UiaEvent};
     use super::*;
 
     fn snapshot(runtime_id: Vec<i32>) -> UiaSnapshotFact {

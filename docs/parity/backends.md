@@ -334,15 +334,13 @@ the object, and only a UIA browse mode document acts on it, moving its
 caret to the range's line and speaking the line when the caret was not
 already on it; an event whose element is gone, or from an application
 that is not responding, is dropped, and outside browse mode nothing
-happens. Verbatim: **partial**. Matched as far as it goes: the outpost
-registers for it on a focus Core names with text changes (see "Which
-focus takes text-change events"), in the same event handler group as
-its caret and text changes (the range belongs to the application and
+happens. Verbatim: **partial**. Matched as far as it goes: outside
+browse mode nothing happens, and no reader registers for the event,
+since nothing would act on it. Not yet (M7): browse mode, which moves
+its caret there and speaks the line, as NVDA's does; it will need the
+registration in the outpost (the range belongs to the application and
 cannot travel to another process, so the focus listener cannot carry
-it), and hears each such event and drops it, telling Core nothing,
-since Core has no handler for it. Not yet (M7): browse mode, which moves its caret there
-and speaks the line, as NVDA's does; it will need the registration on
-the document a focus is inside, not only a text focus.
+it), on the document a focus is inside.
 
 ### Text attributes through UIA
 

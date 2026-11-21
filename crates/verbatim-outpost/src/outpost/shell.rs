@@ -190,13 +190,11 @@ struct Generation {
 pub(super) struct Shell {
     context: Arc<Context>,
     reducer: Reducer,
-    /// Who waits on each test's settle, by its number: kept while the
-    /// settle waits in the intake ([`Reducer::settles`]), answered as the
-    /// reducer reaches it, and dropped as the outpost closes, which ends
-    /// the wait too.
-    settles: HashMap<u64, mpsc::Sender<()>>,
-    /// The last settle numbered.
-    settles_taken: u64,
+    /// Who waits on each test's settle, in the order they asked: the first
+    /// answered as the reducer reaches a settle, since barriers are never
+    /// merged or reordered, and all dropped as the outpost closes, which
+    /// ends their waits too.
+    settles: VecDeque<mpsc::Sender<()>>,
     garbage: Garbage,
     /// The generation in charge, and the threads of every worker started.
     generations: HashMap<u64, Generation>,
@@ -244,8 +242,7 @@ impl Shell {
         let mut shell = Shell {
             context: Arc::clone(context),
             reducer: Reducer::new(),
-            settles: HashMap::new(),
-            settles_taken: 0,
+            settles: VecDeque::new(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),
@@ -392,18 +389,16 @@ impl Shell {
         self.apply(effects);
     }
 
-    /// Numbers a test's settle that `done` waits on, and gives the reducer
+    /// Keeps the waiter `done` of a test's settle, and gives the reducer
     /// its barrier; once the outpost is closing it is dropped, which
     /// answers it.
     fn settle(&mut self, done: mpsc::Sender<()>) -> Option<Input> {
         if self.closing {
             return None;
         }
-        self.settles_taken += 1;
-        let id = self.settles_taken;
-        self.settles.insert(id, done);
+        self.settles.push_back(done);
         let barrier = Item::Barrier {
-            asker: Asker::Settle(id),
+            asker: Asker::Settle,
         };
         Some(Input::Entry(Entry::own(
             barrier,
@@ -429,7 +424,6 @@ impl Shell {
                 effects.push_front(effect);
             }
         }
-        self.check_tables();
     }
 
     /// Carries out `effect`, returning the answers to one that asks, in
@@ -463,8 +457,8 @@ impl Shell {
                 self.count_parked();
                 self.spawn_worker(replacement, false);
             }
-            Effect::Settled(id) => {
-                if let Some(done) = self.settles.remove(&id) {
+            Effect::Settled => {
+                if let Some(done) = self.settles.pop_front() {
                     let _ = done.send(());
                 }
             }
@@ -475,20 +469,6 @@ impl Shell {
     /// The pong's count of the abandoned workers that have not returned.
     fn count_parked(&self) {
         *self.context.parked.lock() = self.parked.len();
-    }
-
-    /// Checks, in debug builds, that the shell's table matches the
-    /// reducer's: a waiter for every settle waiting in the intake, and no
-    /// other.
-    fn check_tables(&self) {
-        debug_assert_eq!(
-            self.settles
-                .keys()
-                .copied()
-                .collect::<std::collections::BTreeSet<u64>>(),
-            self.reducer.settles(),
-            "a waiter for every settle waiting in the intake, and no other"
-        );
     }
 
     /// Hands `program` to the worker in charge, with what the shell has let
@@ -687,8 +667,7 @@ mod tests {
         Shell {
             context: context(),
             reducer: Reducer::new(),
-            settles: HashMap::new(),
-            settles_taken: 0,
+            settles: VecDeque::new(),
             garbage: Garbage::default(),
             generations: HashMap::new(),
             threads: Vec::new(),

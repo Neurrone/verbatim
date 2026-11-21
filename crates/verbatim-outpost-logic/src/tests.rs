@@ -216,9 +216,9 @@ fn the_idle_answer_waits_for_nothing_that_arrived_after_its_query() {
     assert_eq!(handles(program(&effects)), 3);
 }
 
-fn settle(id: u64) -> Item {
+fn settle() -> Item {
     Item::Barrier {
-        asker: Asker::Settle(id),
+        asker: Asker::Settle,
     }
 }
 
@@ -227,7 +227,7 @@ fn settled_and_dispatches(effects: &[Effect]) -> Vec<String> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Settled(id) => Some(format!("settled {id}")),
+            Effect::Settled => Some("settled".to_owned()),
             Effect::Dispatch(_) => Some("dispatch".to_owned()),
             _ => None,
         })
@@ -242,23 +242,19 @@ fn a_settle_is_answered_as_it_is_reached_and_a_close_drops_it() {
     // Pushed while a program is in flight: it waits, with no program of
     // its own, and the entry after it is not waited for.
     assert_eq!(
-        settled_and_dispatches(&replay.push(settle(1), 2)),
+        settled_and_dispatches(&replay.push(settle(), 2)),
         [] as [String; 0]
     );
     replay.push(console_update(7), 3);
-    assert_eq!(replay.reducer.settles(), [1].into_iter().collect());
     let effects = replay.finish(busy, 4);
-    assert_eq!(settled_and_dispatches(&effects), ["settled 1", "dispatch"]);
+    assert_eq!(settled_and_dispatches(&effects), ["settled", "dispatch"]);
     assert_eq!(handles(program(&effects)), 3);
-    assert!(replay.reducer.settles().is_empty());
     // A settle behind the program in flight when the outpost closes is
     // dropped with the intake, unanswered.
     let next = program(&effects).request;
-    replay.push(settle(2), 5);
-    assert_eq!(replay.reducer.settles(), [2].into_iter().collect());
+    replay.push(settle(), 5);
     let effects = replay.input(Input::Close, 6);
     assert_eq!(settled_and_dispatches(&effects), [] as [String; 0]);
-    assert!(replay.reducer.settles().is_empty());
     assert_eq!(
         settled_and_dispatches(&replay.finish(next, 7)),
         [] as [String; 0]

@@ -73,7 +73,6 @@ mod text;
 mod waiting;
 mod watch;
 
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 use self::charge::{Abandoned, InCharge};
@@ -82,7 +81,7 @@ use verbatim_model::TextOp;
 use verbatim_model::protocol::OutpostToCore;
 
 pub use self::charge::Request;
-pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind, is_state_property};
+pub use self::entry::{Asker, Entry, Item, UiaEvent, UiaKind, WinKind};
 pub use self::follow::{Change, FocusPath, Route};
 pub use self::text::{
     Anchor, KeptSelection, LastRead, NodeAnchors, RangeKey, ReadSelection, TextChange, TextFacts,
@@ -166,9 +165,9 @@ pub enum Effect {
         /// The generation started in its place.
         replacement: u64,
     },
-    /// A test's settle, number `0`, was reached: the shell answers whoever
-    /// waits on it.
-    Settled(u64),
+    /// A test's settle was reached: the shell answers the first who waits
+    /// on one.
+    Settled,
 }
 
 /// Inputs, in mailbox order.
@@ -272,14 +271,6 @@ impl Reducer {
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.flight.generation()
-    }
-
-    /// The tests' settles waiting in the intake, by number, which the
-    /// shell's waiters match: a settle is answered as it is reached, so
-    /// these are the settles not yet answered.
-    #[must_use]
-    pub fn settles(&self) -> BTreeSet<u64> {
-        self.intake.settles()
     }
 
     /// Whether a program is in flight.
@@ -587,7 +578,7 @@ impl Reducer {
                     self.idle_query = Some(round);
                     self.answer_idle(effects);
                 }
-                Asker::Settle(id) => effects.push(Effect::Settled(id)),
+                Asker::Settle => effects.push(Effect::Settled),
             },
             Item::NodesHeld {
                 nodes,
