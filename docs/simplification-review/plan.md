@@ -103,7 +103,7 @@ The session fills in a row when its build is pushed and its GitHub run is read. 
 | 4. The readers | not started | | | | |
 | 5. Remote operations and text | not started | | | | |
 | 6. The tests and the harness | phase A pushed 2026-11-21; the capture series paused by Dickson after five compare-mode fixes followed its review (three-fix rule), the capture check off; phases B (after build 4) and C (after build 5), and compare mode's remaining fixes as their own piece, to come | 5713c64d and after (flaky list), 7d6bca51, ba69005b, 39091874, 1410e7d8; phase A 29f14ccf to the push | phase A about 2,760 added and 4,700 removed across harness, scenarios and tools, against the design's 765 added | in the above | none yet |
-| 7. The documents | not started | | | | |
+| 7. The documents | groups A to C pushed 2026-11-21 (design cleared three review rounds; implementation review's four must-fixes fixed); groups D to F wait for build 4 and Dickson's points 1 to 9 | 4d2425ff, 0dc51431 to 71c39e25 | documents about 410 added and 910 removed in groups A to C; 2.18 MB of uncited evidence deleted; about 1,650 lines of uia-facts programs removed | about 110 removed | none: the records build 7 cites are cited by builds 4 to 11 |
 | 8. The request list closed | not started | | | | |
 | 9. The terminal rebuild | not started | | | | |
 | 10. The structural parts of later milestones | not started | | | | |
