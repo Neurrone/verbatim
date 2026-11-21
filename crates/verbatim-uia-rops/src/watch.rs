@@ -218,7 +218,6 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
         learning: crate::caret::Attributes::NONE,
         max_text: query.max_text,
         max_change_text: 0,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };

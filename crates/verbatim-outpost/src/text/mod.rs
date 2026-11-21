@@ -90,9 +90,6 @@ pub struct CaretRequest<'a, P> {
     /// Whether to read the line's formatting, with the attributes the
     /// theme asks for.
     pub formats: bool,
-    /// Whether to read the caret again once everything else is read, to
-    /// say whether it moved meanwhile ([`CaretRead::moved_while_read`]).
-    pub recheck: bool,
     /// Whether to read the selection's text, up to the source's cap for
     /// compared text (513 UTF-16 code units through UIA,
     /// `verbatim_uia_rops::MAX_COMPARED_TEXT`), when something is selected
@@ -127,10 +124,6 @@ pub struct CaretRead<P> {
     /// rest; `None` when the source did not read them, which the caller
     /// then does.
     pub changes: Option<Vec<(bool, Vec<u16>)>>,
-    /// With [`CaretRequest::recheck`], whether the caret read again after
-    /// everything else had moved: the line may show what the application
-    /// wrote after the caret was read. False without a recheck.
-    pub moved_while_read: bool,
     /// With [`CaretRequest::read_selection_text`], the selection's text up
     /// to the source's cap when something is selected and its ends are not
     /// `previous`'s, or there was no `previous`; `None` otherwise, and from

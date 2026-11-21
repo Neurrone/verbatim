@@ -460,7 +460,6 @@ fn remote_and_classic_caret_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };
@@ -668,7 +667,6 @@ fn a_failing_attribute_is_not_supported() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };
@@ -712,7 +710,6 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };
@@ -928,7 +925,6 @@ fn remote_and_classic_text_reads_agree() {
         learning: Attributes::NONE,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     })
@@ -1439,7 +1435,6 @@ fn every_attribute_is_read_both_ways() {
         learning,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };
@@ -1554,7 +1549,6 @@ fn unsupported_attributes_are_found_both_ways() {
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     };

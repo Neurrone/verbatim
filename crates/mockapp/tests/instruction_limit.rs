@@ -356,7 +356,6 @@ fn caret_query<'a>(
         learning: Attributes::ALL,
         max_text: 1024,
         max_change_text: 1024,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     }
@@ -385,7 +384,6 @@ fn caret_reads_execute_exactly() {
         let mut worst = caret_query(&notes, &pattern, Some(old));
         worst.read_selection_text = true;
         worst.read_previous_text = true;
-        worst.recheck = true;
         let answer = caret_read_remote(&worst).expect("the program runs");
         assert_eq!(answer.runs.len(), 64);
         assert_eq!(answer.changes.map(|changes| changes.len()), Some(1));
@@ -409,9 +407,11 @@ fn caret_reads_execute_exactly() {
     // the caret again at its end, as a key's check does (2026-11-09), and
     // 4485 and 97 before the caret became the selection's start, read with
     // no `TextPattern2` caret and no search for where the selection starts
-    // (2026-11-17), and 4453 before the word read with it went with the
-    // caret keys' starting read (2026-11-22).
-    assert_eq!([worst, typical], [4446, 91], "caret read worst and typical");
+    // (2026-11-17), 4453 before the word read with it went with the
+    // caret keys' starting read (2026-11-22), and 4446 before the caret read
+    // stopped reading the caret again, which a caret wait's check does
+    // instead (2026-11-22).
+    assert_eq!([worst, typical], [4429, 91], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one

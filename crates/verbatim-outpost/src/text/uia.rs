@@ -291,7 +291,6 @@ impl UiaText {
             formats: Vec::new(),
             changes: None,
             since_place: None,
-            moved_while_read: false,
             selection_text: None,
             previous_text: None,
             selection_start: SelectionStart::unknown(),
@@ -651,7 +650,6 @@ impl TextSource for UiaText {
             learning,
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
             max_change_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
-            recheck: request.recheck,
             read_selection_text: request.read_selection_text,
             read_previous_text: request.read_previous_text,
         };
@@ -684,7 +682,6 @@ impl TextSource for UiaText {
                     .map(|change| (change.selected, change.text))
                     .collect()
             }),
-            moved_while_read: answer.moved_while_read,
             selection_text: answer.selection_text,
             previous_text: answer.previous_text,
             selection_start: SelectionStart {

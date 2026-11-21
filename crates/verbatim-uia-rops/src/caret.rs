@@ -232,9 +232,6 @@ pub struct CaretQuery<'a> {
     /// The most UTF-16 code units read for each selection change, when the
     /// selection is not [`previous_selection`](Self::previous_selection).
     pub max_change_text: i32,
-    /// Whether to read the caret again once everything else is read, to
-    /// say whether it moved meanwhile ([`CaretAnswer::moved_while_read`]).
-    pub recheck: bool,
     /// Whether to read the selection's text, up to [`MAX_COMPARED_TEXT`],
     /// when something is selected and its ends are not those of the
     /// [`previous_selection`](Self::previous_selection), or there is none
@@ -356,13 +353,6 @@ pub struct CaretAnswer {
     /// `None` for any other read: a character's one read, or an empty
     /// line's, says too little about the provider.
     pub unsupported: Option<Attributes>,
-    /// With [`CaretQuery::recheck`], whether the caret read again after
-    /// everything else is not where it was first read. A provider takes
-    /// each call of a program on its own (the console host takes its lock
-    /// for each), so an application can write between them: the line then
-    /// shows a character whose write moved the caret past where the caret
-    /// was read. False without a recheck.
-    pub moved_while_read: bool,
     /// With [`CaretQuery::read_selection_text`], the selection's text up to
     /// [`MAX_COMPARED_TEXT`] when something is selected and its ends moved
     /// from the previous selection's, or there was none; `None` otherwise.
@@ -447,7 +437,6 @@ impl CaretLineRegisters {
             runs: Vec::new(),
             changes: None,
             unsupported: None,
-            moved_while_read: false,
             selection_text: None,
             previous_text: None,
             selection_start: None,
@@ -534,7 +523,6 @@ fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Er
         learning: Attributes::NONE,
         max_text: query.max_text,
         max_change_text: 0,
-        recheck: false,
         read_selection_text: false,
         read_previous_text: false,
     })
@@ -1149,14 +1137,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
     let runs = (query.formats && !ids.is_empty())
         .then(|| emit_runs(b, &c, (line.range, line.text), false, &ids, query.learning));
 
-    // The caret read again, once everything else is read.
-    let moved_while_read = query.recheck.then(|| {
-        let again = emit_caret_with(b, &c, pattern, false);
-        let order = b.text_range_compare_endpoints(again.caret, c.start, point, c.start);
-        let differs = b.not_equal(order, c.zero);
-        b.add_to_results(differs)
-    });
-
     ReadRegisters {
         caret: registers,
         moved,
@@ -1165,7 +1145,6 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         changes,
         line,
         runs,
-        moved_while_read,
         selection_text,
         previous_text,
         start_first,
@@ -1189,7 +1168,6 @@ struct ProgramKey {
     learning: Attributes,
     max_text: i32,
     max_change_text: i32,
-    recheck: bool,
     read_selection_text: bool,
     read_previous_text: bool,
 }
@@ -1210,7 +1188,6 @@ impl ProgramKey {
             learning: query.learning,
             max_text: query.max_text,
             max_change_text: query.max_change_text,
-            recheck: query.recheck,
             read_selection_text: query.read_selection_text,
             read_previous_text: query.read_previous_text,
         }
@@ -1241,7 +1218,6 @@ struct ReadRegisters {
     changes: Option<(Reg<kind::Array>, Reg<kind::Array>)>,
     line: UnitRegisters,
     runs: Option<RunRegisters>,
-    moved_while_read: Option<Reg<kind::Bool>>,
     selection_text: Option<Reg<kind::Str>>,
     previous_text: Option<Reg<kind::Str>>,
     start_first: Reg<kind::Bool>,
@@ -1281,7 +1257,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         changes,
         line,
         runs,
-        moved_while_read,
         selection_text,
         previous_text,
         start_first,
@@ -1335,10 +1310,6 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             .map(|(selected, texts)| read_changes(&outcome, selected, texts))
             .transpose()?,
         unsupported,
-        moved_while_read: match moved_while_read {
-            Some(moved) => outcome.get(moved)?,
-            None => false,
-        },
         selection_text,
         previous_text,
         selection_start,
@@ -1500,7 +1471,7 @@ pub(crate) fn emit_caret(
 
 /// [`emit_caret`], its registers among the program's results when
 /// `results`, and only the program's own otherwise (a caret read again to
-/// compare, [`CaretQuery::recheck`]).
+/// compare, as a caret wait's check does).
 pub(crate) fn emit_caret_with(
     b: &mut Builder,
     c: &Constants,
@@ -1840,12 +1811,6 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         Some(_) => (Some(line.offset), classic_first(query, &line)?),
     };
     let (runs, unsupported) = classic_formats(query, &line)?;
-    let moved_while_read = if query.recheck {
-        let (again, _, _) = classic_caret(query)?;
-        again.compare_endpoints(Endpoint::Start, &point, Endpoint::Start)? != 0
-    } else {
-        false
-    };
     Ok(CaretAnswer {
         caret,
         collapsed: collapsed_caret,
@@ -1858,7 +1823,6 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         runs,
         changes,
         unsupported,
-        moved_while_read,
         selection_text,
         previous_text,
         selection_start,

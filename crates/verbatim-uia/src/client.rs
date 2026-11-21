@@ -16,7 +16,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
+    TreeScope_Children, UIA_InvokePatternId,
     UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
     UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
@@ -514,69 +514,17 @@ impl Uia {
     ) -> windows::core::Result<Option<Cached<S>>> {
         let (cache, gates) = request.parts();
         Ok(self
-            .element_by_runtime_id_within(parent.element(), runtime_id, cache, TreeScope_Children)?
+            .child_by_runtime_id(parent.element(), runtime_id, cache)?
             .map(|found| Cached::filled(found, gates)))
     }
 
-    /// The element `runtime_id` names, its cache filled by `request`, when
-    /// it is a descendant of one of the elements `focused` names in its UIA
-    /// `ControllerFor` relation or is one of them: NVDA's test for a
-    /// selection in a list the focus controls, such as a search result
-    /// while the focus stays in the search box. `None` when `focused`
-    /// controls nothing or the element is in none of what it controls.
-    /// With it, the runtime ids of
-    /// the elements the relation names, in its order, which a caller logs
-    /// when the element is in none of them. The classic implementation
-    /// behind `verbatim_uia_rops::controlled_selection`. Cross-process; the
-    /// outpost's worker only, guarded by the caller's deadline.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the relation cannot be read or a search
-    /// fails for a reason other than the element being absent.
-    #[expect(
-        clippy::type_complexity,
-        reason = "the element found and what the relation named, read in one pass"
-    )]
-    pub fn controlled<S: Shape>(
+    /// The child of `parent` that `runtime_id` names, rebuilt with `cache`;
+    /// `Ok(None)` when it is not there.
+    fn child_by_runtime_id(
         &self,
-        focused: &Live,
-        runtime_id: &[i32],
-        request: &Request<S>,
-    ) -> windows::core::Result<(Option<Cached<S>>, Vec<Vec<i32>>)> {
-        let (cache, gates) = request.parts();
-        let roots = focused.element().controller_for()?;
-        let (found, controlled) = self.controlled_descendant(&roots, runtime_id, cache);
-        Ok((found.map(|found| Cached::filled(found, gates)), controlled))
-    }
-
-    /// The element `runtime_id` names inside `root`'s subtree, rebuilt with
-    /// `cache`, for the controlled-element search
-    /// ([`controlled_descendant`](Self::controlled_descendant)); `Ok(None)`
-    /// when it is not there. `FindFirst` has no index behind it, so the
-    /// search walks `root`'s whole subtree. Cross-process; the outpost's
-    /// worker only.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if building the condition or the search fails for
-    /// a reason other than the element being absent.
-    fn element_by_runtime_id(
-        &self,
-        root: &IUIAutomationElement,
+        parent: &IUIAutomationElement,
         runtime_id: &[i32],
         cache: &IUIAutomationCacheRequest,
-    ) -> windows::core::Result<Option<IUIAutomationElement>> {
-        self.element_by_runtime_id_within(root, runtime_id, cache, TreeScope_Subtree)
-    }
-
-    /// The element `runtime_id` names within `scope` of `root`.
-    fn element_by_runtime_id_within(
-        &self,
-        root: &IUIAutomationElement,
-        runtime_id: &[i32],
-        cache: &IUIAutomationCacheRequest,
-        scope: TreeScope,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
         if runtime_id.is_empty() {
             return Ok(None);
@@ -589,36 +537,7 @@ impl Uia {
         // to this spot under the M3 focus-enrichment query.
         let variant = unsafe { InitVariantFromInt32Array(runtime_id) }?;
         let condition = self.property_condition(UIA_RuntimeIdPropertyId, &variant)?;
-        // The search walks `scope` under the caller's `root`.
-        root.find_first_build_cache(scope, &condition, cache)
-    }
-
-    /// The element `runtime_id` names, rebuilt with `cache`, when it is one
-    /// of `roots` or inside one, the elements a focus names in its UIA
-    /// `ControllerFor` relation: NVDA's test for a selection in a list the
-    /// focus controls, such as a search result while the focus stays in
-    /// the search box. `None` when `roots` is empty or the element is in
-    /// none of them; with it, the runtime ids of `roots`
-    /// ([`Uia::controlled`]). A search that fails is no element found.
-    /// Cross-process; the outpost's worker only, guarded by the caller's
-    /// deadline.
-    fn controlled_descendant(
-        &self,
-        roots: &[IUIAutomationElement],
-        runtime_id: &[i32],
-        cache: &IUIAutomationCacheRequest,
-    ) -> (Option<IUIAutomationElement>, Vec<Vec<i32>>) {
-        let mut controlled = Vec::new();
-        for root in roots {
-            // A failed read is no runtime id.
-            controlled.push(crate::com::runtime_id_or_none(root));
-            // A search that fails under one controlled element leaves the
-            // others to try.
-            if let Ok(Some(found)) = self.element_by_runtime_id(root, runtime_id, cache) {
-                return (Some(found), controlled);
-            }
-        }
-        (None, controlled)
+        parent.find_first_build_cache(TreeScope_Children, &condition, cache)
     }
 
     /// Walks the chain of ancestors of `element`, each read as an

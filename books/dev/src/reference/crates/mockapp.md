@@ -564,7 +564,8 @@ Each file's module comment says exactly what it asserts; in outline:
   window, which answers none until the flood ends. These use
   property, selection and notification changes rather than focus, so they
   never depend on real keyboard focus.
-- `controller_for.rs`: `verbatim_uia::Uia::controlled_descendant` finds a
+- `controller_for.rs`: the controller-for relation and the walk down what
+  it names (`verbatim_uia_rops::batch`), remote and by calls, find a
   selection inside the list a search box's `ControllerFor` names and
   nothing elsewhere, and a search box holding text has its focus come with
   the line at its caret ahead of a selection in its list.

@@ -101,8 +101,7 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   tree dump are gathered this way.
 - `find_child_by_runtime_id(parent, runtime_id, request)`: a search of
   `parent`'s children only. No search of a whole subtree by runtime id is
-  offered but the controlled-element search's, since one enters any child
-  window another process serves
+  offered, since one enters any child window another process serves
   ([ADR 0005](../adr/0005-calls-that-reach-another-application.md), "A node whose element is gone"). The runtime id
   condition's `VARIANT` is built by `InitVariantFromInt32Array`, so no raw
   array is handled; `windows`'s `VARIANT` clears its array on drop. A
@@ -112,11 +111,6 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
 - A `Node` read for Report Current Object includes `GridCounts`, the
   element's own Grid pattern's row and column counts
   (`NodeGates::counts`), which no other read takes.
-- `controlled(focused, runtime_id, request)`: the selected element when
-  it is an element the focus names in its `ControllerFor` relation or is
-  inside one. Nothing calls it: Core asks a controlled selection as a
-  batch's `Related` controller-for and `Descendants` steps
-  ([verbatim-uia-rops](verbatim-uia-rops.md)).
 - `selected(container, request)`: the first element of a selection
   container's current selection, or `None`. One `BuildUpdatedCache`
   refreshes the container as the `SelectionContainer` shape, which holds

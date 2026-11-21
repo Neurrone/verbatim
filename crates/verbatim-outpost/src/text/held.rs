@@ -42,7 +42,6 @@ fn read_caret<S: TextSource>(
         previous: None,
         previous_collapsed: false,
         formats: true,
-        recheck: false,
         read_selection_text: true,
         read_previous_text: false,
     };
