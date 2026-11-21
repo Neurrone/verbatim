@@ -263,7 +263,13 @@ Verbatim reads the relation live for each selection event, as NVDA
 reads it (Dickson, 2026-10-10): Core asks the focus listener to read the
 selected item and its outpost to complete it, and the completion reads
 the committed focus's controller-for relation and answers whether the
-item is an element it names or inside one, from which Core judges.
+item is an element it names or inside one, from which Core judges. A
+relation read that fails, as one timing out does, answers the whole read
+not there and nothing is said for that selection, as NVDA's COM error
+from `controllerFor` ends its whole `event_selection`, the state change
+included (`NVDAObjects/__init__.py` 1314 to 1340; its UIA
+`_get_controllerFor` catches only `KeyError`, `NVDAObjects/UIA/__init__.py`
+2465 to 2482).
 NVDA's results captured on mockapp's list fixtures (2026-11-09):
 a selection of the controlled list itself says "Suggestions list selected",
 as NVDA's `NormalizeElement` answers the element itself

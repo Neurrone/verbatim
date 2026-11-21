@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
@@ -26,7 +27,7 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use crate::dialog_text::is_dialog;
+use crate::dialog_text::{Visited as Identity, is_dialog};
 
 use crate::gates;
 use verbatim_model::protocol::{DumpedTree, UiaSnapshotFact};
@@ -2211,9 +2212,51 @@ fn corrected_backend(
         .map_or(neighbor, |element| element.snapshot(context.nodes()))
 }
 
-/// Activates a node.
-/// How many ancestors activation tries when the node itself has no action.
-const ACTIVATION_PARENT_HOPS: u32 = 8;
+/// How many parents activation tries when the node itself has no action:
+/// a safety bound against a tree with no identity that loops, far above
+/// any real tree, where NVDA walks with no cap (Dickson, 2026-11-21;
+/// `docs/design/security-model.md`, U2).
+const ACTIVATION_PARENT_HOPS: u32 = 1_024;
+
+/// What activation's walk up the parents calls, a seam for its tests.
+trait ActivationWalk {
+    /// Activates exactly `node`, answering the action's name.
+    fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError>;
+    /// The parent of `node`, `None` when it has none or it cannot be read.
+    fn parent(&mut self, node: NodeId) -> Option<NodeId>;
+    /// What identifies `node`, `None` for a node with no identity.
+    fn visited(&self, node: NodeId) -> Option<Identity>;
+}
+
+/// The real walk, through the request's store and client.
+struct LiveActivation<'a, 'b> {
+    context: &'a RequestContext<'b>,
+    client: &'a mut Client,
+}
+
+impl ActivationWalk for LiveActivation<'_, '_> {
+    fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError> {
+        activate_one(self.context, self.client, node)
+    }
+    fn parent(&mut self, node: NodeId) -> Option<NodeId> {
+        match step(self.context, self.client, node, QueryKind::Parent) {
+            Ok(Some(parent)) => Some(parent.id),
+            _ => None,
+        }
+    }
+    fn visited(&self, node: NodeId) -> Option<Identity> {
+        let store = &self.context.store;
+        store.runtime_id_of(node).map(Identity::Uia).or_else(|| {
+            store
+                .address_of(node)
+                .map(|(window, object, child)| Identity::Msaa {
+                    window,
+                    object,
+                    child,
+                })
+        })
+    }
+}
 
 /// Activates `node_id`, or failing that its nearest ancestor that can be
 /// activated, as NVDA's review activate walks up the navigator object's
@@ -2223,10 +2266,26 @@ pub(super) fn activate(
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<Option<ActionName>, ReadError> {
+    activate_walk(&mut LiveActivation { context, client }, node_id)
+}
+
+/// The walk of [`activate`]: the node, then up to
+/// [`ACTIVATION_PARENT_HOPS`] parents, stopping at a node it has visited
+/// before, where the tree loops.
+fn activate_walk(
+    walk: &mut impl ActivationWalk,
+    node_id: NodeId,
+) -> Result<Option<ActionName>, ReadError> {
     let mut current = node_id;
     let mut first_error = None;
+    let mut visited = BTreeSet::new();
     for _ in 0..=ACTIVATION_PARENT_HOPS {
-        match activate_one(context, client, current) {
+        if let Some(identity) = walk.visited(current)
+            && !visited.insert(identity)
+        {
+            break;
+        }
+        match walk.activate(current) {
             Ok(action) => return Ok(action),
             // A node that is gone has no parent to reach: a step to it
             // would find the node, and walk its route, again.
@@ -2237,9 +2296,9 @@ pub(super) fn activate(
                 }
             }
         }
-        match step(context, client, current, QueryKind::Parent) {
-            Ok(Some(parent)) => current = parent.id,
-            _ => break,
+        match walk.parent(current) {
+            Some(parent) => current = parent,
+            None => break,
         }
     }
     Err(first_error.unwrap_or_else(|| ReadError::Failed("nothing to activate".to_owned())))
@@ -2326,6 +2385,107 @@ pub(super) fn dump_tree(
             truncated,
             locations,
         })
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use verbatim_model::{ActionName, NodeId};
+
+    use super::{ACTIVATION_PARENT_HOPS, ActivationWalk, Identity, ReadError, activate_walk};
+
+    /// A chain of parents above node 0, node `n`'s parent `n + 1`, whose
+    /// node `action` alone activates; `identity` names each node's
+    /// identity.
+    struct Chain {
+        action: u64,
+        identity: fn(u64) -> Option<Identity>,
+        tried: Vec<u64>,
+    }
+
+    impl ActivationWalk for Chain {
+        fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError> {
+            self.tried.push(node.number());
+            if node.number() == self.action {
+                Ok(Some(ActionName::Invoke))
+            } else {
+                Err(ReadError::Failed("no action".to_owned()))
+            }
+        }
+        fn parent(&mut self, node: NodeId) -> Option<NodeId> {
+            Some(NodeId::new(node.number() + 1))
+        }
+        fn visited(&self, node: NodeId) -> Option<Identity> {
+            (self.identity)(node.number())
+        }
+    }
+
+    fn chain(action: u64, identity: fn(u64) -> Option<Identity>) -> Chain {
+        Chain {
+            action,
+            identity,
+            tried: Vec::new(),
+        }
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the chain's identity, which can be none"
+    )]
+    fn unique(node: u64) -> Option<Identity> {
+        Some(Identity::Uia(vec![42, i32::try_from(node).expect("small")]))
+    }
+
+    /// An action 12 parents up is reached and performed, as NVDA's review
+    /// activate walks the parents with no cap. Source-derived, approved
+    /// by Dickson on 2026-11-21 (`nvda/source/globalCommands.py` 1880 to
+    /// 1901).
+    #[test]
+    fn an_action_12_parents_up_is_performed() {
+        let mut walk = chain(12, unique);
+        assert_eq!(
+            activate_walk(&mut walk, NodeId::new(0)).ok(),
+            Some(Some(ActionName::Invoke))
+        );
+        assert_eq!(walk.tried, (0..=12).collect::<Vec<_>>());
+    }
+
+    /// An action one parent past the cap of 1,024 is not reached: the walk
+    /// tries the node and 1,024 parents, then answers its first failure
+    /// (Dickson, 2026-11-21).
+    #[test]
+    fn an_action_past_the_cap_is_not_reached() {
+        let hops = u64::from(ACTIVATION_PARENT_HOPS);
+        let mut walk = chain(hops + 1, unique);
+        assert!(matches!(
+            activate_walk(&mut walk, NodeId::new(0)),
+            Err(ReadError::Failed(reason)) if reason == "no action"
+        ));
+        assert_eq!(walk.tried.last(), Some(&hops));
+        assert_eq!(walk.tried.len(), usize::try_from(hops + 1).expect("small"));
+    }
+
+    /// A parent met again, a tree that loops every three nodes, ends the
+    /// walk at the repeated node, before the action above it.
+    #[test]
+    fn a_repeated_parent_ends_the_walk() {
+        let mut walk = chain(5, |node| {
+            Some(Identity::Msaa {
+                window: 7,
+                object: -4,
+                child: i32::try_from(node % 3).expect("small"),
+            })
+        });
+        assert!(activate_walk(&mut walk, NodeId::new(0)).is_err());
+        assert_eq!(walk.tried, [0, 1, 2]);
+    }
+
+    /// Nodes with no identity are bounded by the cap alone.
+    #[test]
+    fn nodes_with_no_identity_are_walked_up_to_the_cap() {
+        let mut walk = chain(5, |_| None);
+        assert!(activate_walk(&mut walk, NodeId::new(0)).is_ok());
+        assert_eq!(walk.tried, (0..=5).collect::<Vec<_>>());
     }
 }
 

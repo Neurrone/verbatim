@@ -416,7 +416,13 @@ then its name spoken, or "No action". Verbatim: **matched (unverified)**:
 an MSAA object's default action is spoken by its own name
 ("Press"), a UIA element's Invoke as "invoke", and an action with no
 name as "Activate"; a UIA element is activated by Invoke, then Toggle,
-then selecting it, NVDA's order. NVDA first tries the review
+then selecting it, NVDA's order. NVDA walks the parents with no cap;
+Verbatim's walk tries the object and up to 1,024 parents, a safety bound
+far above any real tree, and stops at an object it has visited before,
+by runtime id for UI Automation and by window, object id and child id
+for an MSAA object acquired at its address, answering "No action" in
+either case (Dickson, 2026-11-21; `docs/design/security-model.md`, U2).
+NVDA first tries the review
 position's own activation, which the M4 text model brings.
 
 ### Move focus to navigator / caret routing

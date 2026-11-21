@@ -578,6 +578,32 @@ fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() 
     );
 }
 
+/// A selected item whose controller-for read fails is answered not there,
+/// and Core says nothing for that selection, as NVDA's COM error from the
+/// focus's `controllerFor` ends the whole selection event. Source-derived,
+/// approved by Dickson on 2026-11-21 (`docs/parity/changes-and-selection.md`).
+#[test]
+fn a_selected_item_whose_relation_cannot_be_read_says_nothing() {
+    let mut state = committed();
+    feed_at(&mut state, 4_000, entry(selected(8, StateSet::default())));
+    feed_at(&mut state, 5_000, answer(LISTENER, 4, item_read()));
+    assert_eq!(
+        feed_at(
+            &mut state,
+            6_000,
+            answer_outcome(OUTPOST, 5, WireOutcome::NotThere)
+        ),
+        NOTHING
+    );
+    assert_ne!(
+        state
+            .navigator
+            .as_ref()
+            .map(|navigator| navigator.object.id),
+        Some(node(7))
+    );
+}
+
 /// The committed focus's `HasValuePattern`, `WindowClass` and `Value`,
 /// as its outpost answers them.
 fn value_facts(has_value: bool, class: &str, value: &str) -> Reply {

@@ -974,7 +974,8 @@ window before it is handled.
   read live from the focus's `ControllerFor` (`controlled_by`, one remote
   program where the window allows), the object itself (`Controlled`) or
   inside one (`InsideControlled`); an MSAA object, or a focus that is not
-  a UI Automation node, controls nothing. A selection's relation falls
+  a UI Automation node, controls nothing; a relation read that fails
+  answers the whole read not there. A selection's relation falls
   back to its place among the nodes Core names.
 - `MsaaRun`: one candidate, answered skipped when its window is read
   through UI Automation, not there when no object is at its address, else
@@ -1073,6 +1074,10 @@ window before it is handled.
 - `Navigate` and `Activate` go to the issuing registry: UIA's raw-view
   walker with the base cache, or MSAA's `accParent`, `accNavigate`, and
   `accDoDefaultAction`. An unknown or unreachable node answers not there.
+  An activation tries the node, then up to 1,024 parents
+  (`ACTIVATION_PARENT_HOPS`), stopping at a node it has visited before, by
+  runtime id or by an MSAA object's address where it was acquired at it
+  (`Store::address_of`), and answers "nothing activated" past either.
 
 ### Selection and notification events
 

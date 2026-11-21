@@ -73,9 +73,7 @@ pub(super) fn complete(
     // The node's window, fixed as it is made, as NVDA's object fixes its
     // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
     // once it is dead.
-    context
-        .store
-        .record_nearest_window(node, snapshot.details.window.map_or(nearest, hwnd_of));
+    context.store.record_nearest_window(node, own_window);
     let met = match &route.end {
         RouteEnd::Known(known) => {
             let Some(place) = complete
@@ -129,10 +127,13 @@ pub(super) fn complete(
     }
     if let CompletionFor::SelectionItem { focus } = complete.completes {
         // A selection's item: its relation to the committed focus, read
-        // live, and its ancestors, its parent first (Table 12).
+        // live (or not there), and its ancestors, parent first (Table 12).
+        let Ok(relation) = controlled_by(context, client, focus, node) else {
+            return Outcome::NotThere;
+        };
         return Outcome::Result(Reply::Object(Box::new(ObjectRead {
             object: node_read(context, &snapshot, Some(nearest), &complete.set),
-            relation: Some(controlled_by(context, client, focus, node)),
+            relation: Some(relation),
             descendants: Vec::new(),
             ancestors: ancestor_reads(context, &ancestors, Some(nearest), &complete.set),
             met,

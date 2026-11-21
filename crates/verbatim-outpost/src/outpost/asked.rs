@@ -662,13 +662,17 @@ fn read_object(
                 None => None,
                 Some(RelationQuery::OneOf(nodes)) => Some(one_of(*node, nodes)),
                 Some(RelationQuery::ControlledBy(focus)) => {
-                    Some(controlled_by(context, client, *focus, *node))
+                    match controlled_by(context, client, *focus, *node) {
+                        Ok(found) => Some(found),
+                        Err(RelationUnread) => return Outcome::NotThere,
+                    }
                 }
                 Some(RelationQuery::Selection { focus, nodes }) => {
-                    Some(match controlled_by(context, client, *focus, *node) {
-                        RelationFound::Unrelated => one_of(*node, nodes),
-                        found => found,
-                    })
+                    match controlled_by(context, client, *focus, *node) {
+                        Ok(RelationFound::Unrelated) => Some(one_of(*node, nodes)),
+                        Ok(found) => Some(found),
+                        Err(RelationUnread) => return Outcome::NotThere,
+                    }
                 }
             };
             match read::read_node(context, client, *node) {
@@ -847,13 +851,16 @@ fn descendants(
 /// (`NVDAObjects/__init__.py` 1314 to 1330). A focus or an object that is
 /// not a UI Automation node, or a focus whose element the outpost no
 /// longer holds, controls nothing, as NVDA's object of either backend
-/// equals no object of the other and a dead focus names no relation.
+/// equals no object of the other and a dead focus names no relation. A
+/// relation that cannot be read is [`RelationUnread`], which the read
+/// answers as not there, as NVDA's COM error ends the whole selection
+/// event (its `_get_controllerFor` catches only `KeyError`).
 pub(super) fn controlled_by(
     context: &RequestContext<'_>,
     client: &mut Client,
     focus: NodeId,
     object: NodeId,
-) -> RelationFound {
+) -> Result<RelationFound, RelationUnread> {
     let (Some(runtime_id), Some(focused)) = (
         context.store.runtime_id_of(object),
         context
@@ -861,10 +868,10 @@ pub(super) fn controlled_by(
             .element_of(focus)
             .and_then(|agile| agile.resolve().ok()),
     ) else {
-        return RelationFound::Unrelated;
+        return Ok(RelationFound::Unrelated);
     };
     let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
-        return RelationFound::Unrelated;
+        return Ok(RelationFound::Unrelated);
     };
     let fill = verbatim_uia::Fill::new(&nodes);
     let query = verbatim_uia_rops::ControlledQuery {
@@ -874,27 +881,44 @@ pub(super) fn controlled_by(
     };
     let window = known_nearest_of(context, focus);
     let remote = context.tries_remote(window);
-    let (answer, path) = match verbatim_uia_rops::controlled_selection(uia, &query, remote) {
-        Ok(found) => found,
-        Err(error) => {
-            tracing::debug!(%error, "the focus's controller-for relation could not be read");
-            return RelationFound::Unrelated;
-        }
-    };
-    if let (verbatim_uia_rops::Path::Fallback(verbatim_uia_rops::Error::Import(_)), Some(hwnd)) =
-        (&path, window)
-    {
-        context.read_classically(verbatim_win32::window::top_level_of(hwnd));
-    }
-    match answer.selected {
+    let found =
+        verbatim_uia_rops::controlled_selection(uia, &query, remote).map(|(answer, path)| {
+            if let (
+                verbatim_uia_rops::Path::Fallback(verbatim_uia_rops::Error::Import(_)),
+                Some(hwnd),
+            ) = (&path, window)
+            {
+                context.read_classically(verbatim_win32::window::top_level_of(hwnd));
+            }
+            answer
+        });
+    relation_of(found, &runtime_id)
+}
+
+/// The controller-for relation's read could not be made: the read it is
+/// part of answers not there.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct RelationUnread;
+
+/// What the read of the focus's controller-for relation found of the
+/// object of `runtime_id`.
+fn relation_of(
+    found: Result<verbatim_uia_rops::Controlled, verbatim_uia_rops::Error>,
+    runtime_id: &[i32],
+) -> Result<RelationFound, RelationUnread> {
+    let answer = found.map_err(|error| {
+        tracing::debug!(%error, "the focus's controller-for relation could not be read");
+        RelationUnread
+    })?;
+    Ok(match answer.selected {
         None => RelationFound::Unrelated,
         // The relation's elements are listed up to the one it was found
         // in: the last is the object itself when it is one of them.
-        Some(_) if answer.controlled.last() == Some(&verbatim_uia::runtime_id_key(&runtime_id)) => {
+        Some(_) if answer.controlled.last() == Some(&verbatim_uia::runtime_id_key(runtime_id)) => {
             RelationFound::Controlled
         }
         Some(_) => RelationFound::InsideControlled,
-    }
+    })
 }
 
 /// The nearest window of node `node` known without a call, by its id.
@@ -1433,5 +1457,36 @@ pub(super) fn ancestors_end(end: &RouteEnd) -> super::read::AncestorsEnd {
         RouteEnd::Known(_) | RouteEnd::ProcessBoundary | RouteEnd::Root => AncestorsEnd::Top,
         RouteEnd::ContinueFrom(window) => AncestorsEnd::ContinueFrom(hwnd_of(*window)),
         RouteEnd::PlainFrom(window) => AncestorsEnd::PlainFrom(hwnd_of(*window)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use verbatim_model::request::RelationFound;
+    use windows::Win32::Foundation::E_FAIL;
+
+    use super::{RelationUnread, relation_of};
+
+    /// A controller-for read that fails, as one timing out does, answers
+    /// the read not there, so Core says nothing for that selection, as
+    /// NVDA's COM error from `focus.controllerFor` ends the whole
+    /// `event_selection`. Source-derived, approved by Dickson on
+    /// 2026-11-21 (`nvda/source/NVDAObjects/__init__.py` 1314 to 1340;
+    /// `nvda/source/NVDAObjects/UIA/__init__.py` 2465 to 2482).
+    #[test]
+    fn a_failed_controller_for_read_is_unread() {
+        let failed = Err(verbatim_uia_rops::Error::Execute(E_FAIL.into()));
+        assert_eq!(relation_of(failed, &[42, 7]), Err(RelationUnread));
+    }
+
+    /// A read that finds the object in nothing the focus controls is
+    /// unrelated.
+    #[test]
+    fn a_read_finding_nothing_is_unrelated() {
+        let found = Ok(verbatim_uia_rops::Controlled {
+            selected: None,
+            controlled: Vec::new(),
+        });
+        assert_eq!(relation_of(found, &[42, 7]), Ok(RelationFound::Unrelated));
     }
 }

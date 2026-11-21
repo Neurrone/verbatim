@@ -415,6 +415,15 @@ impl Store {
         self.msaa.key_of(node)
     }
 
+    /// The MSAA address of the MSAA node `node` when it was acquired at that
+    /// address, so the address identifies it: none for an object reached
+    /// through its parent or as a child object, whose address is made up.
+    pub(super) fn address_of(&self, node: NodeId) -> Option<MsaaKey> {
+        self.msaa
+            .locate(node)
+            .and_then(|(key, _, at_address)| at_address.then_some(key))
+    }
+
     /// The nearest window recorded for the UIA node `node`
     /// ([`Self::record_nearest_window`]).
     pub(super) fn nearest_window_of(&self, node: NodeId) -> Option<isize> {
