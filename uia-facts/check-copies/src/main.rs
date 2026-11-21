@@ -1,5 +1,5 @@
 //! Checks the copies uia-facts keeps of the main workspace's settings
-//! (`uia-facts/readme.md`, "Reusing the main build"). Cargo cannot inherit
+//! (`uia-facts/readme.md`, "The workspace"). Cargo cannot inherit
 //! `[workspace.dependencies]`, `[workspace.lints]` or a profile across
 //! workspaces, so uia-facts copies them; a copy that drifts would build a
 //! second `windows` into the shared target directory, or fail to reuse the

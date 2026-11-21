@@ -1,5 +1,5 @@
-//! What the UIA fact binaries share (`uia-facts/readme.md`, "Shared
-//! support"):
+//! What the UIA fact binaries share (`uia-facts/readme.md`, "Writing a
+//! fact program"):
 //!
 //! - [`provider`]: the provider program's client side, launched from the
 //!   fact binary's own folder in a job object, with its requests and logs.

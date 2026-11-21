@@ -28,9 +28,11 @@
 //!   request is", one at a time, each marked for a debugger with
 //!   `OutputDebugString` (`uia-facts op <name> begin` and `end`), and
 //!   under `--pause` preceded by a wait for Enter; prints the provider calls
-//!   each made, for trends. The requests guide
-//!   (`uia-facts/requests-per-client-operation/readme.md`) counts the
-//!   requests with cdb around these markers.
+//!   each made, for trends. It reproduces the figures of
+//!   `books/dev/src/explanation/windows/uia.md`, "What one request is";
+//!   the debugger procedure that counts the requests around these markers
+//!   is the requests guide, in git at commit e29c8f3a
+//!   (<https://github.com/Neurrone/verbatim/blob/e29c8f3a/uia-facts/requests-per-client-operation/readme.md>).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

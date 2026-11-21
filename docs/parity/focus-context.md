@@ -119,7 +119,9 @@ containers a rule drops, whose container is the desktop, as NVDA's task
 switcher item's is with Alt held. The first focus Verbatim takes cuts nothing, as
 NVDA, starting, makes the focus its focus object before it handles it. A
 combo box's drop-down opened by Alt+Down says "expanded" and cuts
-nothing: the focus stays on the combo box, so no chain is compared.
+nothing: the focus stays on the combo box, so no chain is compared, and
+NVDA says "expanded" alone
+(`experiments/focus-pipeline-rework-measurements/captures/combo-box-drop-down.txt`).
 
 An invisible ancestor, MSAA's `STATE_SYSTEM_INVISIBLE` on an object read
 through MSAA, is not presented, as NVDA counts an invisible object

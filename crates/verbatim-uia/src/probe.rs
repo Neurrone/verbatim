@@ -2,6 +2,50 @@
 //! `UiaRootObjectId`, which the outposts make on their own application's
 //! windows and the focus listener on the windows of the focuses it reads
 //! (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2).
+//!
+//! It replaces `UiaHasServerSideProvider`, the call NVDA makes, because
+//! that call answers "no" after about 3 seconds for a new console window
+//! while another process has a UI Automation event handler
+//! (`books/dev/src/reference/uia-bugs.md`, the fault named after that
+//! call). The question asked stays NVDA's, asked once, with a "no" for
+//! a window that does not answer within about 3 seconds; the class lists
+//! and the console and Windows Forms checks after a "yes" are unchanged.
+//! A failed, timed-out or refused message is a "no"; an answer of 0, which
+//! is `DefWindowProc`'s, is a "no"; only an answer of exactly `0x10000` is
+//! a "yes", because three File Explorer child windows answer
+//! `0xffffffff80040201` where UI Automation says they have no provider.
+//!
+//! # The LRESULT
+//!
+//! Microsoft documents `UiaReturnRawElementProvider`'s answer only as "the
+//! key for the client process to connect to the server process", says
+//! that applications never send this message directly, and documents no
+//! release for the answer, so the probe calls nothing on it. Three facts
+//! say no reference is created: the answer was `0x10000` in every trial,
+//! from two different servers (a test window and the console host);
+//! `LresultFromObject`'s references are global atoms, `0xC000` to `0xFFFF`,
+//! outside which `0x10000` lies; and `ObjectFromLresult` on a value it did
+//! not issue fails. This is inferred, not shown. After a timeout the
+//! message stays queued and the window answers it later, unread, which is
+//! harmless while the answer holds no reference.
+//!
+//! # The judges
+//!
+//! 1. The unit tests below for [`raw_probe_verdict`]: a timeout, a refusal,
+//!    a dead window, an answer of 0, `0x10000` and another nonzero answer.
+//! 2. Mockapp's arbitration tests (`crates/mockapp/tests/arbitration.rs`):
+//!    a UI Automation window answers `0x10000`, a window with no provider
+//!    answers 0, and a stalled window is asked with one message and is a
+//!    "no".
+//! 3. Before the switch, both probes were compared on the windows of real
+//!    applications, and agreed on every window answering 0 or `0x10000`.
+//! 4. The fault itself is not a test: a mockapp version needs a window
+//!    stalled before its first pump and another process holding a tooltip
+//!    handler, and the fault came in at most a third of trials, which is
+//!    not deterministic.
+//!
+//! The proposal and its amendments after the review are in git
+//! ([`design-raw-probe.md` at commit e29c8f3a](https://github.com/Neurrone/verbatim/blob/e29c8f3a/experiments/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/design-raw-probe.md)).
 
 use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_INVALID_WINDOW_HANDLE, ERROR_TIMEOUT, GetLastError, HWND, LPARAM,
@@ -15,8 +59,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use verbatim_model::CallKind;
 
 /// How long the raw probe waits for the window to answer: the "no" UIA's
-/// own probe gives a busy window comes after about as long
-/// (`design-raw-probe.md`, decision 2).
+/// own probe gives a busy window comes after about as long, and a longer
+/// wait would hold a busy window's first reads longer than NVDA does.
 pub const UIA_RAW_PROBE_TIMEOUT_MS: u32 = 3000;
 
 /// The one answer that means a window has a server-side provider: what
@@ -102,7 +146,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// [`UIA_RAW_PROBE_TIMEOUT_MS`], and MUST be called only from a
 /// deadline-guarded worker, never from an event thread. Nothing is done
 /// with the window's answer but compare it: it holds no reference
-/// (`design-raw-probe.md`, "The LRESULT").
+/// (the module's "The LRESULT").
 #[must_use]
 pub fn raw_probe(hwnd: isize) -> RawProbe {
     // UIA's first-time setup happens where it always has, though this
@@ -183,7 +227,7 @@ mod tests {
     #[test]
     fn another_nonzero_answer_is_no_provider() {
         // A File Explorer child window's answer, which UIA's own probe
-        // also takes as no provider (design-raw-probe.md, amendments).
+        // also takes as no provider (the module doc).
         // 0xffffffff80040201 as a signed LRESULT.
         let answer: isize = -0x7ffb_fdff;
         let verdict = raw_probe_verdict(true, answer, 0);

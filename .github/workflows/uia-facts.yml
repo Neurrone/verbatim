@@ -1,7 +1,7 @@
 # Builds and lints the UIA facts workspace (uia-facts/readme.md) on x64 and
-# ARM64. It runs no fact binary: each one takes over the desktop and judges
-# the machine it runs on, so they are run by hand on Dickson's machine,
-# before and after a Windows update.
+# ARM64. It runs no fact binary: each one judges the machine it runs on,
+# and some take over the desktop, so they are run by hand on Dickson's
+# machine, before and after a Windows update.
 #
 # The build cache is the main CI's, read-only: the job ids equal ci.yml's,
 # the top-level env equals ci.yml's (check-copies compares them), no step

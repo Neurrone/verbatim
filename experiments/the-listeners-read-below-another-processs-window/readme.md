@@ -2,6 +2,8 @@
 
 This experiment settles risk 14 and decision 13 of `docs/design/listener-without-connections.md` before section 10, step 6 is built. It ran on Dickson's x64 machine (Windows 11, build 26200) on 2026-10-19, in a debug build at d441c6be, against mockapp on a desktop of its own (`harness::run_isolated`), with no other UIA client on that desktop.
 
+This folder keeps the two summaries, `main-summary.txt` and `cto2-summary.txt`. The trial files (`main.txt`, `cto2.txt`, `fix.txt`, `fix-outpost.txt`), the two patches and the summary scripts are in git at commit e29c8f3a ([the folder then](https://github.com/Neurrone/verbatim/tree/e29c8f3a/experiments/the-listeners-read-below-another-processs-window)).
+
 ## The question
 
 When the listener reads a focus in a child window whose parent window belongs to another process, UIA's client side sends the parent `WM_GETOBJECT` with `UiaRootObjectId` and a nonzero wParam, the message a UIA connection begins with, each time a listener call returns the child window's element (decision 13; the boundary test in `crates/mockapp/tests/call_counts.rs`). If the parent's process has another process's remote operation queued at that moment, as an outpost's would be, does the listener's read wait, and for how long, and does it fail or return anything different, compared with the same read with nothing queued?

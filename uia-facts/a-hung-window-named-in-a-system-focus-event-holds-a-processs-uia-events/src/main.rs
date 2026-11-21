@@ -4,11 +4,9 @@
 //!
 //! The scene is support's `uia_facts_support::hung`. The outpost stand-in,
 //! with no focus registration, is
-//! `uia-facts/a-process-with-no-uia-focus-registration-is-not-held-by-a-hung-window/`'s;
-//! the dropped focus
-//! `uia-facts/a-focus-change-in-a-window-busy-past-both-of-uias-waits-is-dropped/`'s;
-//! the open-and-show route
-//! `uia-facts/focus-for-a-newly-opened-or-shown-window-is-not-held/`'s.
+//! `uia-facts/a-process-with-no-uia-focus-registration-is-not-held-by-a-hung-window/`'s,
+//! and the dropped focus
+//! `uia-facts/a-focus-change-in-a-window-busy-past-both-of-uias-waits-is-dropped/`'s.
 
 use std::time::Duration;
 

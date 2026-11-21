@@ -117,9 +117,9 @@ outpost reads the window through MSAA, as NVDA takes a cancelled probe as
 after the probe's end, where NVDA times its cache from before the probe. A
 provider probe so stays within the outpost's deadline. The 3 seconds stay,
 though `UiaHasServerSideProvider` waits about 5 seconds on a window that
-does not pump (Dickson, 2026-10-30;
-`uia-facts/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/`,
-its `stall` case).
+does not pump (Dickson, 2026-10-30; the `stall` case of
+[the program that measured it](https://github.com/Neurrone/verbatim/blob/e29c8f3a/uia-facts/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md),
+in git at commit e29c8f3a).
 
 ### UIA timeouts
 

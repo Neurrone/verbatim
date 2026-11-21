@@ -17,6 +17,8 @@
 //!   Default 24.
 //! - `--bridge`: a UIA window also answers `OBJID_CLIENT` with its UIA
 //!   provider, so an MSAA client reaches UIA's MSAA bridge.
+//! - `--tree-view`: node 1 of each UIA window is a tree view and its
+//!   children are its items.
 //!
 //! At start it prints `window <i> <kind> <hwnd> <thread id>` for each
 //! window, then `ready <process id>`.
@@ -65,7 +67,7 @@
 //!   answered with whether it is the foreground window.
 //! - `show <w>` and `hide <w>`: shows or hides window w, without changing
 //!   the foreground.
-//! - `post-null <w>`: posts `WM_NULL` to window w.
+
 //! - `menu <w>`: shows window w, brings it to the foreground and opens a
 //!   popup menu of its own over it (`TrackPopupMenuEx`), with the items
 //!   `Menu first item` and `Menu second item`, the first selected by a Down
@@ -74,7 +76,7 @@
 //!   thread dispatching. `menu-close <w>` ends it.
 //! - `parent <w> <hwnd>`: makes window w a visible child window of window
 //!   `hwnd`, of this process or another, on window w's UI thread.
-//! - `hung <w>`: answers `IsHungAppWindow` of window w, `true` or `false`.
+
 //! - `log`: prints every log entry since the last `log`, one
 //!   `entry <start µs> <end µs> <kind> <name> <w> <n> <thread id> <extra>`
 //!   line each, then `ok <count>`. Kinds are `call` (a provider method),
@@ -99,10 +101,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_OBJECT_NAMECHANGE,
-    EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-    IsHungAppWindow, MSG, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE,
-    SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_NULL, WNDCLASSW,
-    WS_OVERLAPPEDWINDOW,
+    EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, MSG,
+    PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SetForegroundWindow,
+    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -441,22 +442,7 @@ fn handle(line: &str) -> String {
             let _ = unsafe { ShowWindow(hwnd, command) };
             "ok".to_owned()
         }
-        "post-null" | "hung" => {
-            let Some(index) = number(0) else {
-                return format!("err {verb} takes a window");
-            };
-            let hwnd = HWND(state::window(index).hwnd as *mut _);
-            if verb == "hung" {
-                // SAFETY: a window of this process.
-                return format!("ok {}", unsafe { IsHungAppWindow(hwnd) }.as_bool());
-            }
-            // SAFETY: a window of this process; the message waits in its
-            // queue.
-            match unsafe { PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0)) } {
-                Ok(()) => "ok".to_owned(),
-                Err(error) => format!("err {error}"),
-            }
-        }
+
         "parent" => {
             let (Some(index), Some(parent)) =
                 (number(0), rest.get(1).and_then(|s| s.parse::<isize>().ok()))
