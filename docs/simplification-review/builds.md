@@ -53,6 +53,7 @@ Asked while he was present so the builds can run without him; each build acts on
 - Build 7's document points take their defaults: crate guides drop their Public API sections and point at rustdoc (CLAUDE.md's wording follows); each decision keeps its latest date when its "Amended" lines go; the deferred simulation entry is judged again at the second pass; the later-milestone notes move to the extension, security and roadmap documents; the terminal design file goes with the terminal rebuild; the 2026-10-30 ruling is recorded as retired by build 3's code; the testing rule moves to `testing.md`.
 - Terminals: switching back to a window or tab says its terminal and the caret's line, whatever the line holds, as the console host does in NVDA; NVDA's leaving the line out in Windows Terminal is not copied (extends the 2026-10-09 close-tab ruling; recorded in `docs/parity/terminals.md`, "Windows and tabs").
 - The dead text protocol (`ReadFacts`, `Change`, `CaretChanges` and their five fields, text B2) is removed as planned.
+- Build 5: `Role::Caret` and `Role::Cursor` ("caret", "cursor", as NVDA's) are added and become extension-matcher role names (apis Q4); review by word through the provider (text B13), the previous-word ruling and the word-edge short-cut move to build 8, which does each as one batch.
 - The three refusals Core no longer logs stay unlogged until the request list closes. The 5-second figure's program stays in git history only.
 
 ### The session's defaults (REPORT.md section 9, "unless you object")
