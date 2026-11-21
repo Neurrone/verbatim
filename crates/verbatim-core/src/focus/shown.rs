@@ -7,7 +7,9 @@
 //! is in front; at that tell's turn, or at a foreground report naming the
 //! dialog, the focus is read again. Typed text or a command pressed while
 //! the dialog is postponed and in front reads the focus first, as it is.
-//! Any commit, and the dialog's destruction, end the fact.
+//! A reader's focus executed, Core's own commit and the dialog's
+//! destruction end the fact; the committed focus spoken again in place
+//! (`Commit::InPlace`) leaves it.
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::WindowHandle;

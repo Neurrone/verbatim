@@ -14,6 +14,9 @@
 //! is `DefWindowProc`'s, is a "no"; only an answer of exactly `0x10000` is
 //! a "yes", because three File Explorer child windows answer
 //! `0xffffffff80040201` where UI Automation says they have no provider.
+//! A window of higher integrity than Verbatim's refuses the message, so
+//! the probe answers "no" at once, where UI Automation and MSAA cannot
+//! read that window either.
 //!
 //! # The LRESULT
 //!

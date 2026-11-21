@@ -260,7 +260,8 @@ pub(crate) struct Versions {
     /// left for an unrelated top-level window.
     pub(crate) last: Option<LastFocus>,
     /// The postponed dialog, read again at its show (`super::shown`);
-    /// every commit ends it.
+    /// a reader's focus executed and Core's own commit end it, and the
+    /// committed focus spoken again in place leaves it.
     pub(crate) postponed: Option<super::shown::Postponed>,
 }
 
