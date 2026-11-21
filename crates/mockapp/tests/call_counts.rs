@@ -43,9 +43,10 @@
 //! own clients' event registrations are not called into while an
 //! operation is measured.
 //!
-//! An MSAA window's verdict of no UIA provider runs out after its lifetime,
-//! and the window's next event probes it again with a `WM_GETOBJECT`. The
-//! outpost reads that time from the test (`OutpostUnderTest::pass_time`),
+//! A window's verdict in Core's cache runs out half a second after its
+//! probe began, and the window's next request carries "probe first" and
+//! probes it again with a `WM_GETOBJECT`; the outpost keeps a verdict for
+//! one request alone. The outpost stamps its probes with time from the test (`OutpostUnderTest::pass_time`),
 //! on the frozen observation clock (`OutpostUnderTest::on_frozen_time`),
 //! so every probe here is made where the test says, whatever the test's own
 //! speed, and every `WM_GETOBJECT` is pinned.
@@ -113,11 +114,9 @@ fn label(name: &str) -> SegmentContent {
 /// Nothing said.
 const NOTHING: [Utterance; 0] = [];
 
-/// Long enough for a window's verdict of no UIA provider, which Core keeps
-/// from the probe's start, to have lapsed.
-const VERDICT_LAPSED: std::time::Duration = std::time::Duration::from_micros(
-    verbatim_reader_rules::verdicts::NEGATIVE_VERDICT_LIFETIME_US + 1_000,
-);
+/// Long enough for a window's verdict, which Core keeps for half a second
+/// from the probe's start, NVDA's cache period, to have lapsed.
+const VERDICT_LAPSED: std::time::Duration = std::time::Duration::from_millis(501);
 
 /// The dialog fixture's first button, by its index in mockapp's tree.
 const YES: usize = 3;
@@ -344,7 +343,7 @@ fn msaa_focus_changes_cost_exactly() {
         ],
     );
 
-    // The window's verdict of no UIA provider runs out once its lifetime
+    // The window's verdict in Core's cache runs out once half a second
     // has passed by the test's clock, which Core and the outpost read: the
     // next focus's request carries "probe first", and the arrow back to the
     // second item then finds the verdict renewed. The two differ by the
@@ -732,8 +731,9 @@ fn msaa_form_focus_costs_exactly() {
 
     // Core's start read the application's focus, the button at the form's
     // own window, and probed that window: the focus event in the child
-    // window probes the child window alone, and its walk stops at the
-    // form's client area Core knows.
+    // window probes the child window, and the form's window its walk
+    // crosses, once each, since the outpost keeps a verdict for one request
+    // alone, and its walk stops at the form's client area Core knows.
     let (said, cost) = measure_msaa_focus(&mut app, child, &mut core, ("ok", FORM_OK));
     assert_eq!(
         said,
@@ -742,7 +742,7 @@ fn msaa_form_focus_costs_exactly() {
     ratchet.check_calls(
         "MSAA focus in a form, after Core's start",
         cost.calls,
-        calls(0, 48, 1),
+        calls(0, 48, 2),
     );
 
     let (said, cost) = measure_msaa_focus(&mut app, child, &mut core, ("cancel", FORM_CANCEL));
@@ -971,10 +971,10 @@ fn msaa_identity_check_costs_exactly() {
     ratchet.check(
         "MSAA identity check, the same",
         &cost,
-        calls(0, 6, 0),
+        calls(0, 6, 1),
         0,
         &[
-            ("WM_GETOBJECT", 1),
+            ("WM_GETOBJECT", 2),
             ("accParent", 1),
             ("get_accChild", 1),
             ("get_accName", 1),
@@ -996,12 +996,12 @@ fn msaa_identity_check_costs_exactly() {
     ratchet.check(
         "MSAA identity check, the name differs",
         &cost,
-        calls(0, 24, 0),
+        calls(0, 24, 1),
         0,
         // The name read once more than the full read reads it, the value
         // not: the check stopped at the name.
         &[
-            ("WM_GETOBJECT", 1),
+            ("WM_GETOBJECT", 2),
             ("accParent", 12),
             ("get_accChild", 1),
             ("get_accName", 3),
@@ -1026,10 +1026,10 @@ fn msaa_identity_check_costs_exactly() {
     ratchet.check(
         "MSAA identity check, the value alone differs",
         &cost,
-        calls(0, 25, 0),
+        calls(0, 25, 1),
         0,
         &[
-            ("WM_GETOBJECT", 1),
+            ("WM_GETOBJECT", 2),
             ("accParent", 12),
             ("get_accChild", 1),
             ("get_accName", 3),
@@ -1052,11 +1052,11 @@ fn msaa_identity_check_costs_exactly() {
     ratchet.check(
         "MSAA identity check, other ids",
         &cost,
-        calls(0, 23, 0),
+        calls(0, 23, 1),
         0,
         // The full read alone: no identity read.
         &[
-            ("WM_GETOBJECT", 1),
+            ("WM_GETOBJECT", 2),
             ("accParent", 12),
             ("get_accChild", 1),
             ("get_accName", 2),
@@ -1085,11 +1085,11 @@ fn msaa_identity_check_costs_exactly() {
     ratchet.check(
         "MSAA identity check, not focused",
         &cost,
-        calls(0, 14, 0),
+        calls(0, 14, 1),
         0,
         // The focused-state test over the object and its ancestors alone.
         &[
-            ("WM_GETOBJECT", 1),
+            ("WM_GETOBJECT", 2),
             ("accParent", 5),
             ("get_accChild", 1),
             ("get_accRole", 4),
@@ -1168,7 +1168,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
     ratchet.check_calls(
         "MSAA list view item's identity, the same",
         cost,
-        calls(0, 13, 6),
+        calls(0, 13, 7),
     );
     let (reply, cost) = unless(verbatim_model::request::Identity {
         set_size: Some(3),
@@ -1181,7 +1181,7 @@ fn msaa_list_view_identity_check_costs_exactly() {
     ratchet.check_calls(
         "MSAA list view item's identity, a set one smaller, then the full read",
         cost,
-        calls(0, 30, 7),
+        calls(0, 30, 8),
     );
     ratchet.finish();
     drop(outpost);
@@ -5183,7 +5183,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "edit control focus with its caret",
         step.calls,
-        calls(0, 53, 5),
+        calls(0, 53, 6),
     );
     drop(core);
     app.quit();
@@ -5256,15 +5256,16 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
 /// read as the current focus, a second read, of its sibling "Remember",
 /// meets their group, which Core knows, and reads nothing above it. The
 /// answer names the group's place among the known ancestors and carries
-/// no ancestor. Classically the read is two calls, the focused element and
-/// one step, to the group, and mockapp answers 42 property reads, where a
-/// walk to the top took 8 calls and 129 reads; remotely it is the focused
-/// element and the program, which reads the group alone, 55 property
-/// reads.
+/// no ancestor. Each way the read probes the focus's window once, since the
+/// outpost keeps a verdict for one request alone. Classically the read is
+/// two calls, the focused element and one step, to the group, and mockapp
+/// answers 42 property reads, where a walk to the top took 8 calls and 129
+/// reads; remotely it is the focused element and the program, which reads
+/// the group alone, 55 property reads.
 fn a_focus_now_walk_stops_at_an_ancestor_core_knows() {
     for (path, remote, expected) in [
-        ("remotely", true, (calls(2, 0, 0), 55)),
-        ("classically", false, (calls(2, 0, 0), 42)),
+        ("remotely", true, (calls(2, 0, 1), 55)),
+        ("classically", false, (calls(2, 0, 1), 42)),
     ] {
         let title = common::unique_title("mockapp-counts-focus-now-known");
         let mut app = common::spawn_visible("ancestry.json", "uia", &title);

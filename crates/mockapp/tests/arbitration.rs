@@ -1,9 +1,8 @@
 //! Cross-process arbitration (architecture section 4, decision D1): asserts
 //! that a `uia`-backend mockapp window has a server-side UIA provider and a
 //! `msaa`-backend one does not, each found by a single raw probe, the one
-//! `WM_GETOBJECT` the outposts and the focus listener make, and that
-//! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
-//! resolves each to the matching backend, and that a window too busy to
+//! `WM_GETOBJECT` the outposts and the focus listener make, the real
+//! `Arbitrator`'s class lists leaving the verdict to it, and that a window too busy to
 //! answer is asked once, and read through MSAA, in Core's request that
 //! asked.
 
@@ -18,7 +17,7 @@ use verbatim_model::request::{
     CandidateKind, Depth, MsaaIds, MsaaRun, Outcome, Reply, Request, RunCandidate, WindowVerdict,
 };
 use verbatim_model::{CallCounts, WindowHandle};
-use verbatim_outpost::arbitration::{Arbitrator, Verdicts};
+use verbatim_outpost::arbitration::Arbitrator;
 use verbatim_uia::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe};
 use verbatim_win32::window::window_classes;
 
@@ -29,9 +28,8 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
 
     let classes = window_classes(hwnd);
     let arbitrator = Arbitrator::new(&[]);
-    let mut verdicts = Verdicts::default();
     assert_eq!(
-        arbitrator.verdict(&verdicts, hwnd, &classes),
+        arbitrator.class_verdict(&classes),
         None,
         "only the probe decides"
     );
@@ -39,12 +37,6 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
         raw_probe(hwnd),
         RawProbe::Provider,
         "the raw probe finds a uia-backend mockapp window's provider"
-    );
-    arbitrator.record_probe(&mut verdicts, hwnd, true);
-    assert_eq!(
-        arbitrator.verdict(&verdicts, hwnd, &classes),
-        Some(true),
-        "the real arbitrator must resolve a uia-backend window to UIA"
     );
 
     app.quit();
@@ -205,9 +197,8 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
 
     let classes = window_classes(hwnd);
     let arbitrator = Arbitrator::new(&[]);
-    let mut verdicts = Verdicts::default();
     assert_eq!(
-        arbitrator.verdict(&verdicts, hwnd, &classes),
+        arbitrator.class_verdict(&classes),
         None,
         "only the probe decides"
     );
@@ -216,12 +207,6 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
         raw_probe(hwnd),
         RawProbe::Answered(0),
         "a msaa-backend mockapp window answers the raw probe with the default window procedure's answer"
-    );
-    arbitrator.record_probe(&mut verdicts, hwnd, false);
-    assert_eq!(
-        arbitrator.verdict(&verdicts, hwnd, &classes),
-        Some(false),
-        "the real arbitrator must resolve a msaa-backend window to MSAA"
     );
 
     app.quit();

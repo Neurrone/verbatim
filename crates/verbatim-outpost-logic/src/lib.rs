@@ -7,8 +7,7 @@
 //! and is tested on any host.
 //!
 //! It holds the intake's order ([`intake`]), the follow state ([`follow`]),
-//! the arbitrator's verdicts
-//! ([`Verdicts`]), Core's requests ([`waiting`]), the program in flight
+//! Core's requests ([`waiting`]), the program in flight
 //! with the worker generation in charge ([`charge`]), and the idle
 //! barrier's round.
 //! Programs, run by a worker on copies ([`Facts`]), make every call into
@@ -89,7 +88,6 @@ pub use self::text::{
 };
 pub use self::waiting::{Asks, Cancelled};
 pub use self::watch::{EVENT_WINDOW_US, WORD_AFTER_US, WatchProgram, WatchWork, Watches};
-pub use verbatim_reader_rules::verdicts::{Probe, Probed, VerdictChange, Verdicts};
 
 /// The time an input comes at: the shell's monotonic clock, from the
 /// outpost's start, and the observation clock events are stamped with, in
@@ -123,7 +121,7 @@ pub enum Work {
     /// with [`Input::Answered`] when it ends the watch.
     Watch(Box<WatchProgram>),
     /// Forgets the windows Core named destroyed, in the order named: each
-    /// one's MSAA nodes, text facts, kept verdicts and classic-read mark,
+    /// one's MSAA nodes, text facts and classic-read mark,
     /// so a reused handle inherits none of them.
     Forget(Vec<verbatim_model::WindowHandle>),
 }
@@ -138,30 +136,6 @@ pub struct Program {
     pub facts: Facts,
     /// What it does.
     pub work: Work,
-}
-
-/// The rule of whose probe an outpost's reducer records from a worker
-/// generation no longer in charge: a probe that timed out, and a destroyed
-/// window's forgetting, so a window is not probed again more often than
-/// NVDA probes it (`books/dev/src/reference/adr/0001-focus.md`, "One judge
-/// per fact"). The outposts' own, so it is not on the shared type.
-pub trait KeptFromAnyGeneration {
-    /// Whether the reducer records it from a generation no longer in
-    /// charge.
-    fn kept_from_any_generation(&self) -> bool;
-}
-
-impl KeptFromAnyGeneration for VerdictChange {
-    fn kept_from_any_generation(&self) -> bool {
-        matches!(
-            self,
-            Self::Forget(_)
-                | Self::Probed(Probe {
-                    probed: Probed::TimedOut(_),
-                    ..
-                })
-        )
-    }
 }
 
 /// What the reducer asks of the shell, in order.
@@ -211,15 +185,6 @@ pub enum Effect {
 pub enum Input {
     /// An entry from a producer.
     Entry(Entry),
-    /// A verdict a program of generation `generation` probed, or a window
-    /// it found destroyed, posted alone as it was made, even from an
-    /// abandoned worker.
-    Verdict {
-        /// The worker generation of the program that made it.
-        generation: u64,
-        /// The verdict.
-        change: VerdictChange,
-    },
     /// A commit of a program's, its store writes made: the shell gives
     /// the reducer only a commit it accepts.
     Commit {
@@ -367,9 +332,6 @@ impl Reducer {
         match input {
             Input::Entry(entry) => {
                 self.entry(entry, now, &mut effects);
-            }
-            Input::Verdict { generation, change } => {
-                self.record_verdict(generation, &change);
             }
             Input::Commit { request, change } => {
                 if self.accepts(request) {
@@ -533,18 +495,6 @@ impl Reducer {
         if !ranges.is_empty() {
             effects.push(Effect::ForgetRanges(ranges));
         }
-    }
-
-    /// Records a verdict of a program of `generation`'s: one from the
-    /// generation in charge, and a probe that timed out or a window's
-    /// forgetting from any generation, so a window whose probe timed out
-    /// is not probed again within the negative verdict's lifetime even
-    /// when the worker that probed it was abandoned.
-    fn record_verdict(&mut self, generation: u64, change: &VerdictChange) {
-        if generation != self.generation() && !change.kept_from_any_generation() {
-            return;
-        }
-        Arc::make_mut(&mut self.facts.verdicts).apply(change);
     }
 
     /// What a release let go of: nodes and anchors by number, and whether

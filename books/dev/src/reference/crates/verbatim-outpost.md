@@ -231,66 +231,44 @@ clock and `peek` are `verbatim_process::message`'s
 
 ### The arbitrator
 
-`Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`),
-each outpost's one verdict per window. It holds the configuration: the
-class lists and the clocks. The verdicts probes
-found are the reducer's state, `Verdicts` (`verbatim-reader-rules`),
-which callers give it. `verdict(&verdicts, hwnd, &WindowClasses)` answers
-from the good class list, the Windows 11 shell rule, the bad class list,
-the override, or a kept probe, and `None` when only the probe can decide;
-a program then probes the window with the raw probe
-(`verbatim_uia::raw_probe`) through `arbitration::uses_uia`, and records
-its answer through its `arbitration::Judgement`, the request's context
-(`Arbitrator::record_probe` makes the same record for a test that probes
-by hand). No connection follows a probe
+`Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`)
+as the outpost reads a window. It holds the configuration: the class
+lists and the classic walks' clock. `class_verdict(&WindowClasses)`
+answers from the good class list, the Windows 11 shell rule, the bad
+class list or the override, and `None` when only the probe can decide; a
+program then probes the window with the raw probe
+(`verbatim_uia::raw_probe`) through `arbitration::uses_uia`. No
+connection follows a probe
 (`books/dev/src/explanation/design/listener-without-connections.md`, decision 2). The listener
 makes no verdict; it skips a read only by
 `verbatim_reader_rules::class::class_verdict`, the class lists alone, from
 the same tables and code, which the arbitrator's own lists are built from.
 
+- Core's backend cache is the one lasting keeper of a window's verdict
+  ([ADR 0004](../adr/0004-focus-validity.md)): a request carries Core's
+  verdict for its window, or "probe first". The outpost keeps what it
+  probes only for the request it probes in
+  (`arbitration::RequestVerdicts`, held by the request's context and
+  dropped with it), so a window a walk crosses is probed at most once per
+  request, and a "probe first" request reports only a probe it made,
+  begun when that probe began on the observation clock. A window Core is
+  never told of costs one probe per request that crosses it.
 - `verbatim_win32::window::window_classes(hwnd)` reads a window's
   `WindowClasses` (`verbatim_reader_rules::class`): the raw class, the
   class normalized as NVDA does (`verbatim_model::class::normalize`), and the root
   ancestor's class.
 - `post_probe_check` (`verbatim-reader-rules`) names NVDA's check before using a provider: a list
   view's Windows Forms origin, or a console's formatted text, read from
-  the window. A provider that fails is recorded as excluded
-  (`Probed::Excluded`), MSAA for the window's lifetime.
-- A "yes" is kept for the window's lifetime and dropped on destruction
-  (`VerdictChange::Forget`, which the program handling the window's
-  destroy event commits; decision D15). A "no" is kept for events observed until
-  `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's cache period) after the
-  probe's end, since a busy application answers late. A timed-out probe is
-  an unknown verdict (`arbitration::Verdict::Unknown`), which the worker
-  reads through MSAA and keeps as "no" the same way (`Probed::TimedOut`); a
-  verdict kept for the window's lifetime meanwhile stays.
-- A kept verdict is compared with the observation of the event it judges,
-  never with when the worker handles it: each worker entry is judged at
-  its event's observation, or, for a program with no event, now at each
-  judgement (`Judgement::judged_at`), and a verdict judges the
-  events observed from its probe's beginning, stamped with the observation
-  of the judgement that probed, until its keep ends. A verdict judges no
-  event observed before its probe began; each window keeps its previous
-  verdict for those (`Verdicts::kept_at`).
-- A program reads its own copy of the verdicts (`Facts::verdicts`, an
-  `Arc` the reducer replaces on change, so a copy costs a reference count).
-  Each probe is posted as it returns, as a message of its own
-  (`Posted::Verdict`, `Input::Verdict`, taken even after the mailbox
-  closes, as a commit is), and applied to the program's copy, which it
-  judges by for the rest of its walk. The reducer records a probe only
-  from the worker generation in charge, but a timed-out probe and a destroyed window's
-  forgetting from any generation, so a window is not probed again more
-  often than NVDA probes it. A probe committed before its worker is
-  abandoned stays recorded.
-- `lasting_verdict` answers only a verdict that lasts the window's
-  lifetime.
+  the window. A provider that fails it is read through MSAA.
+- A timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`),
+  which the worker reads through MSAA for the rest of its request. A
+  probe on an abandoned worker sends nothing and keeps nothing.
 - `Clock` (`verbatim_process::clock`), `Arbitrator::set_clock`, and
   `Arbitrator::now` time the classic
-  walk budgets; `Outpost::set_clock` sets it for tests that count calls. The keeps'
-  ends and an entry with no event are stamped by the `ObservationClock`
-  (`Arbitrator::set_observation_clock`), the run's shared clock, which
-  `Outpost::set_observation_clock` sets, with the stamps of the outpost's
-  own events, for a test that moves that time on.
+  walk budgets; `Outpost::set_clock` sets it for tests that count calls.
+  `Outpost::set_observation_clock` sets the clock the outpost's own
+  events and the probes it reports are stamped by, for a test that moves
+  that time on.
 - Both class lists are `verbatim_model::class`'s, written from
   `docs/parity/backends.md` ("The class lists the per-window verdict
   reads").
@@ -322,7 +300,7 @@ the same tables and code, which the arbitrator's own lists are built from.
   worker the window of each foreground change a program is about to
   handle, so a test can hold the worker there);
   `set_focus_window_reader` (a `FocusWindowReader` for focus-now); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
-  for the outpost's own events' stamps and its verdicts' keeps).
+  for the outpost's own events' stamps and the probes it reports).
 - `Outpost::settle` posts a barrier (`Item::Barrier` with
   `Asker::Settle`) and waits until the reducer reaches it with no program
   in flight, everything queued before it handled and a noted caret read,
@@ -358,7 +336,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - The reducer ([verbatim-outpost-logic](verbatim-outpost-logic.md)), a
   pure state machine on a thread of
   its own, run by its shell (`outpost::shell`): it holds Core's requests
-  queued for the worker, the intake's order, the arbitrator's verdicts,
+  queued for the worker, the intake's order,
   each node's text facts, the caret keys' watches, and the program in
   flight with the worker generation in charge. Inputs come in mailbox
   order; effects go out: dispatch a program, send a message, release,
@@ -408,7 +386,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
 - Programs (`outpost::worker`): the worker generation in charge takes one
   program at a time from its inbox, Core's request, a watch's check or
   final read, an entry's handling, or a release's drop, with copies of
-  what it reads (`Facts`: the verdicts and the text facts), and posts
+  what it reads (`Facts`: the text facts), and posts
   each commit (`commit::Effects`) to the mailbox, applying its pure part
   to its own copies (`reducer::apply`), so what it reads after is what the
   reducer will hold. The shell applies a commit only while its request is
@@ -733,8 +711,8 @@ as NVDA's handlers read them.
 
 ### Window destruction and held objects
 
-- Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
-  its classic mark, and its MSAA nodes.
+- Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its
+  classic mark, and its MSAA nodes.
 - Held objects: the object store (`outpost::store`;
   `books/dev/src/explanation/design/ownership.md`) owns both
   registries, each node's text patterns and anchors, the terminals' kept
@@ -948,8 +926,8 @@ Each `CoreToOutpost::Request` is one program on the worker
 node read with its nearest window's facts (`NodeWindow`, read from
 Windows with no call into the application) and its properties by the
 request's set, from the snapshot the outpost's reads make. A window with
-no verdict in force is probed first and the probe carried in the answer,
-by every request: a completion, an MSAA run and a read of an MSAA object
+no verdict in force in Core is probed first, always, and the probe
+carried in the answer, by every request: a completion, an MSAA run and a read of an MSAA object
 consult the verdict themselves, and every other request probes its
 window before it is handled.
 
@@ -1038,7 +1016,7 @@ window before it is handled.
   stays queued, whatever window it was asked on. The reducer owes the
   window a forget, and the windows destroyed in one drain of the mailbox
   are forgotten by one program (`Work::Forget`, `worker::forget`) ahead of
-  every later program: each window's kept verdicts and classic-read mark,
+  every later program: each window's classic-read mark,
   and its MSAA nodes with their text facts, so a reused handle inherits
   none. A followed node's registration is Core's to end, with a `Follow`
   naming nothing, which runs after the forget. `Outpost::holds` says

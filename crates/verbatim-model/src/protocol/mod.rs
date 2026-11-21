@@ -148,8 +148,8 @@ pub enum CoreToOutpost {
     /// listener told Core (`docs/design/readers-tell-core-asks-build1.md`,
     /// "Changes on objects"): the outpost answers "not there" the queued
     /// reads whose MSAA ids name it and the watches waiting on it, and
-    /// forgets its MSAA nodes, text facts, kept verdicts and classic-read
-    /// mark before any later work. A followed node's registration is
+    /// forgets its MSAA nodes, text facts and classic-read mark before any
+    /// later work. A followed node's registration is
     /// Core's to end, with a `Follow` naming nothing.
     WindowDestroyed(crate::WindowHandle),
 }

@@ -100,8 +100,7 @@ use verbatim_outpost_logic as reducer;
 
 use commit::{Committed, Effects};
 use outbound::Outbound;
-pub use reducer::Verdicts;
-pub(crate) use reducer::{Anchor, NodeAnchors, Probe, Probed, ReadSelection, VerdictChange};
+pub(crate) use reducer::{Anchor, NodeAnchors, ReadSelection};
 use reducer::{Entry, Facts, Item, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use worker::Charge;
@@ -312,10 +311,9 @@ struct RequestContext<'a> {
     /// The program's own: its request, the caret events waiting when it
     /// was dispatched, and its worker's charge.
     program: Program<'a>,
-    /// The observation its verdicts are judged at: its entry's event's, or,
-    /// when `None`, now on the arbitrator's observation clock at each
-    /// judgement (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
-    judged_at: Option<u64>,
+    /// What the request's probes found, kept for the request alone
+    /// ([`crate::arbitration::RequestVerdicts`]).
+    verdicts: crate::arbitration::RequestVerdicts,
     /// Core's verdict for the window its request names, which the request
     /// carries (`docs/design/readers-tell-core-asks-build1.md`, Table 4):
     /// every judgement of that window while the request is answered takes
@@ -349,15 +347,9 @@ impl<'a> RequestContext<'a> {
                 charge,
                 _context: std::marker::PhantomData,
             },
-            judged_at: None,
+            verdicts: crate::arbitration::RequestVerdicts::default(),
             given_verdict: Cell::new(None),
         }
-    }
-
-    /// Judges every verdict the program asks for at the observation
-    /// `at_us`.
-    fn judge_at(&mut self, at_us: u64) {
-        self.judged_at = Some(at_us);
     }
 
     /// The program this context runs.
@@ -453,28 +445,6 @@ impl<'a> RequestContext<'a> {
             effects: Box::new(effects),
         });
         Committed::Applied
-    }
-}
-
-impl crate::arbitration::Judgement for RequestContext<'_> {
-    fn judged_at(&self, arbitrator: &Arbitrator) -> u64 {
-        self.judged_at.unwrap_or_else(|| arbitrator.observed_now())
-    }
-
-    fn verdicts(&self) -> Arc<Verdicts> {
-        Arc::clone(&self.facts().verdicts)
-    }
-
-    /// Keeps `change` in the program's copies and posts it at once, as a
-    /// message of its own, even from an abandoned worker: the reducer
-    /// judges by its generation whether to record it, and a probe that
-    /// timed out is recorded from any.
-    fn record(&self, change: VerdictChange) {
-        let _ = Arc::make_mut(&mut self.facts.borrow_mut().verdicts).apply(&change);
-        self.mailbox.post(Posted::Verdict {
-            generation: self.program.request.generation,
-            change,
-        });
     }
 }
 
@@ -1086,16 +1056,10 @@ impl Outpost {
     }
 
     /// Stamps the observation of every event the outpost's own hook and
-    /// subscriptions take in with `clock` from now on, in place of the
-    /// run's shared clock, and times its verdicts' keeps by it: a test that
-    /// counts an operation's calls says when a window's verdict of no UIA
-    /// provider runs out and its probe is made again, by moving that time
-    /// on, since a verdict is compared with the observation of the event it
-    /// judges. Set once; a later call changes nothing.
+    /// subscriptions take in, and the start of every probe it reports, with
+    /// `clock` from now on, in place of the run's shared clock. Set once; a
+    /// later call changes nothing.
     pub fn set_observation_clock(&self, clock: verbatim_process::clock::ObservationClock) {
-        self.context
-            .arbitrator()
-            .set_observation_clock(Arc::clone(&clock));
         let _ = self.context.observation.set(clock);
     }
 

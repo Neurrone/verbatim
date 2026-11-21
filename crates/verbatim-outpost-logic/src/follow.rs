@@ -11,7 +11,6 @@ use verbatim_model::protocol::OutpostToCore;
 use verbatim_reader_rules::Window;
 
 use super::text::{RangeKey, TextChange, TextFacts};
-use verbatim_reader_rules::verdicts::Verdicts;
 
 /// The raw-view chain of a UI Automation element the listener read: the
 /// element, then its ancestors, nearest first, each with its runtime id
@@ -153,9 +152,6 @@ pub struct Change {
 /// outpost remembers.
 #[derive(Clone, Debug, Default)]
 pub struct Facts {
-    /// The arbitrator's kept verdicts, a snapshot the reducer replaces on
-    /// change ([`super::verdicts`]).
-    pub verdicts: Arc<Verdicts>,
     /// Each node's text facts, shared until a change ([`super::text`]).
     pub text: Arc<TextFacts>,
 }

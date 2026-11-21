@@ -1624,8 +1624,8 @@ pub enum QueueEffect {
     ReleaseAtExit(Vec<crate::stroke::Stroke>),
     /// Tell the instance a window was destroyed: it answers "not there"
     /// the queued reads whose MSAA ids name the window and the watches
-    /// waiting on it, and forgets the window's MSAA nodes, text facts,
-    /// kept verdicts and classic-read mark before any later work.
+    /// waiting on it, and forgets the window's MSAA nodes, text facts and
+    /// classic-read mark before any later work.
     WindowDestroyed {
         /// The outpost instance of the process that raised it.
         to: Instance,

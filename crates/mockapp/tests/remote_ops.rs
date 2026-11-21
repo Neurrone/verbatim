@@ -852,8 +852,8 @@ fn a_focus_whose_walk_times_out_is_reported_below_its_window() {
             },
         );
         // A focus before, in the same window, read at mockapp's own pace:
-        // the outpost probes the window for arbitration and keeps the
-        // answer, as it has for a window it already reads. (Here the
+        // the outpost probes the window for arbitration within that
+        // request. (Here the
         // listener's read shares the outpost's process, whose UI Automation
         // answers a probe of the window that it has no provider once a
         // transaction with it has timed out; a listener of its own does not

@@ -78,18 +78,6 @@ fn entry(item: Item, at_ms: u64) -> Entry {
     }
 }
 
-/// A console caret event of window `window`: an event the outpost hears,
-/// its program handling one entry.
-fn console_caret(window: isize) -> Item {
-    Item::Msaa {
-        kind: WinKind::ConsoleCaret,
-        hwnd: window,
-        id_object: -8,
-        id_child: 0,
-        raiser: 3,
-    }
-}
-
 /// A console update of window `window`.
 fn console_update(window: isize) -> Item {
     Item::Msaa {
@@ -213,102 +201,6 @@ fn a_release_waits_for_the_program_in_flight_and_names_no_dead_request_live() {
         11_002,
     );
     assert!(matches!(program(&effects).work, Work::Drop));
-}
-
-/// The probe of window 0x20, owned by thread 5, judging from 1 ms, that
-/// found `probed`.
-fn probe(probed: Probed) -> VerdictChange {
-    VerdictChange::Probed(Probe {
-        hwnd: 0x20,
-        owner: 5,
-        from_us: 1_000,
-        probed,
-    })
-}
-
-impl Replay {
-    /// Posts `change`, a verdict of `request`'s program, at `at_ms`.
-    fn verdict(&mut self, request: Request, change: VerdictChange, at_ms: u64) -> Vec<Effect> {
-        self.input(
-            Input::Verdict {
-                generation: request.generation,
-                change,
-            },
-            at_ms,
-        )
-    }
-}
-
-/// Window 0x20's verdict in `verdicts` for an event observed at `at_us`.
-fn verdict_of(verdicts: &Verdicts, at_us: u64) -> Option<Probed> {
-    verdicts.kept_at(0x20, 5, at_us)
-}
-
-#[test]
-fn a_probe_is_recorded_when_committed_and_reaches_the_next_program() {
-    let mut replay = Replay::new();
-    let effects = replay.push(console_caret(1), 1);
-    let request = program(&effects).request;
-    let effects = replay.verdict(request, probe(Probed::Uia), 2);
-    assert_eq!(
-        verdict_of(&replay.reducer.facts().verdicts, 1_000),
-        Some(Probed::Uia)
-    );
-    assert_eq!(effects.len(), 0, "a probe asks nothing of the shell");
-    // The next program is given the same snapshot.
-    replay.finish(request, 3);
-    let effects = replay.push(console_update(1), 4);
-    let next = program(&effects);
-    assert!(Arc::ptr_eq(
-        &next.facts.verdicts,
-        &replay.reducer.facts().verdicts
-    ));
-    assert_eq!(verdict_of(&next.facts.verdicts, 1_000), Some(Probed::Uia));
-}
-
-#[test]
-fn a_dead_generations_probe_is_not_recorded() {
-    let mut replay = Replay::new();
-    let effects = replay.input(core_ask(1), 1);
-    let dead = program(&effects).request;
-    assert!(abandons(
-        &replay.input(cancel_for_the_foreground(1), 11_000)
-    ));
-    let effects = replay.verdict(dead, probe(Probed::Uia), 11_002);
-    assert_eq!(verdict_of(&replay.reducer.facts().verdicts, 1_000), None);
-    assert!(effects.is_empty());
-}
-
-#[test]
-fn a_dead_generations_timed_out_probe_is_recorded() {
-    let mut replay = Replay::new();
-    let effects = replay.input(core_ask(1), 1);
-    let dead = program(&effects).request;
-    assert!(abandons(
-        &replay.input(cancel_for_the_foreground(1), 11_000)
-    ));
-    replay.verdict(dead, probe(Probed::TimedOut(11_502_000)), 11_002);
-    assert_eq!(
-        verdict_of(&replay.reducer.facts().verdicts, 1_000),
-        Some(Probed::TimedOut(11_502_000))
-    );
-}
-
-#[test]
-fn a_timed_out_probe_committed_before_its_worker_is_abandoned_stays_recorded() {
-    let mut replay = Replay::new();
-    let effects = replay.input(core_ask(1), 1);
-    let request = program(&effects).request;
-    // The probe returns at 3 s, timed out, and is committed at once; the
-    // program then hangs in its next call until Core cancels its request
-    // because the foreground moved away.
-    replay.verdict(request, probe(Probed::TimedOut(3_501_000)), 3_001);
-    let effects = replay.input(cancel_for_the_foreground(1), 11_000);
-    assert!(abandons(&effects));
-    assert_eq!(
-        verdict_of(&replay.reducer.facts().verdicts, 1_000),
-        Some(Probed::TimedOut(3_501_000))
-    );
 }
 
 /// An edit control's text facts with one anchor, `anchor`, at offset

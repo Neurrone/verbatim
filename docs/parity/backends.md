@@ -17,11 +17,12 @@ button; NVDA's bad classes are MSAA; otherwise the window is probed, as
 read through MSAA when NVDA would not use the provider: a console whose
 text does not report formatting (older consoles; the Windows 11 console
 reports it and stays UIA, checked live), and a list view outside
-Windows Forms (a Windows Forms list view was recognized live). A probe
-that finds a UIA provider is kept for the window's lifetime, one that
-finds none for 500 ms, NVDA's cache period; no window's answer was seen
-to change from a provider to none during its life, across about 65
-windows of Explorer, Settings, Start, and the desktop.
+Windows Forms (a Windows Forms list view was recognized live). A probe's
+verdict, a provider or none, is kept by Core for half a second from the
+probe's start, NVDA's cache period; an outpost keeps a verdict only
+within one request, so a window a walk crosses that Core is never told
+of is probed once per request ([ADR
+0004](../../books/dev/src/reference/adr/0004-focus-validity.md)).
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA

@@ -29,9 +29,7 @@ use verbatim_model::protocol::OutpostToCore;
 use super::Context;
 use super::commit::Effects;
 use super::outbound::Carried;
-use super::reducer::{
-    Asker, Change, Effect, Entry, Input, Item, Now, Program, Reducer, Request, VerdictChange,
-};
+use super::reducer::{Asker, Change, Effect, Entry, Input, Item, Now, Program, Reducer, Request};
 use super::store::{Removed, Store, Tag};
 use super::worker::{self, Charge, Job};
 use verbatim_process::alarm::Alarm;
@@ -46,12 +44,6 @@ pub(super) enum Posted {
     Entry(Entry),
     /// `Outpost::settle`, answered on `0` once the reducer reaches it.
     Settle(mpsc::Sender<()>),
-    /// A verdict a program of generation `generation` made, posted alone,
-    /// and taken after the mailbox closes, as a commit is.
-    Verdict {
-        generation: u64,
-        change: VerdictChange,
-    },
     /// A program's commit.
     Commit {
         request: Request,
@@ -379,7 +371,6 @@ impl Shell {
                 tracing::debug!(request = %answer.number, "answer taken by the reducer");
                 Input::Answered { request, answer }
             }
-            Posted::Verdict { generation, change } => Input::Verdict { generation, change },
             Posted::Commit { request, effects } => {
                 // A dead generation's or a claimed request's commit gives
                 // the reducer nothing, and its objects go to a worker.

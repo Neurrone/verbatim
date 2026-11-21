@@ -47,12 +47,11 @@ use verbatim_model::protocol::{OutpostToCore, UiaSnapshotFact};
 use super::commit::{Committed, Effects};
 use super::read::Client;
 use super::reducer::{
-    Entry, Item, Program, Request, UiaEvent, UiaKind, VerdictChange, WatchProgram, WinKind, Work,
+    Entry, Item, Program, Request, UiaEvent, UiaKind, WatchProgram, WinKind, Work,
 };
 use super::shell::{Garbage, Posted};
 use super::text_reads;
 use super::{Context, RequestContext};
-use crate::arbitration::Judgement as _;
 
 pub(super) use super::reducer::is_state_property;
 
@@ -204,8 +203,8 @@ fn node_details_of(work: &Work) -> NodeDetailSet {
     }
 }
 
-/// Forgets each window of `windows`, which Core named destroyed: its kept
-/// verdicts and classic-read mark, and its MSAA nodes with their text
+/// Forgets each window of `windows`, which Core named destroyed: its
+/// classic-read mark, and its MSAA nodes with their text
 /// facts, so a reused window handle never inherits them. The nodes'
 /// objects are released once the store's lock is let go, and their text
 /// facts are forgotten with the program's commit. Nothing reads the
@@ -213,7 +212,6 @@ fn node_details_of(work: &Work) -> NodeDetailSet {
 fn forget(context: &RequestContext<'_>, windows: &[verbatim_model::WindowHandle]) {
     for &window in windows {
         let hwnd = super::window::hwnd_of(window);
-        context.record(VerdictChange::Forget(hwnd));
         context.forget_window(hwnd);
         let (removed, gone) = context.store.forget_window(hwnd);
         drop(removed);
@@ -249,10 +247,6 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
     );
     let handled = catching(|| match work {
         Work::Entry(entry) => {
-            // Every verdict the entry asks for is judged at its event's
-            // observation, or, for an entry with no event, at its start
-            // (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
-            request_context.judge_at(judged_at(context, &entry));
             Worker {
                 context: &request_context,
             }
@@ -311,7 +305,6 @@ fn run_watch(
     request: Request,
     watch: &WatchProgram,
 ) {
-    request_context.judge_at(context.observed_now());
     let outcome = super::text_reads::watch(request_context, watch);
     if let Some(observer) = context.request_calls.get() {
         observer(watch.number, take_calls());
@@ -326,17 +319,6 @@ fn run_watch(
                 detail: String::new(),
             }),
         });
-    }
-}
-
-/// The observation `entry`'s verdicts are judged at: its event's, for an
-/// event the outpost's hook or subscriptions took in or a fact the listener
-/// sent; for anything else, which has no event, now, on the arbitrator's
-/// observation clock, the entry's start.
-fn judged_at(context: &Context, entry: &Entry) -> u64 {
-    match entry.item {
-        Item::Msaa { .. } | Item::Uia(_) if entry.observed_at_us != 0 => entry.observed_at_us,
-        _ => context.observed_now(),
     }
 }
 

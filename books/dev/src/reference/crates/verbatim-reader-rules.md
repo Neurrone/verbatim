@@ -1,7 +1,7 @@
 # verbatim-reader-rules
 
 What both of Verbatim's readers, an outpost and the focus listener, apply
-before reading a window: NVDA's class verdict, the kept verdicts on a window's provider,
+before reading a window: NVDA's class verdict,
 NVDA's limit on a thread's events, and a window's handle that is never 0.
 NVDA's acceptance test is Core's (`crates/verbatim-core/src/focus/acceptance.rs`),
 since Core judges every tell. A rule both readers apply is defined here once, because the two
@@ -32,13 +32,6 @@ Public API:
   listener's answer from them, the one its check threads' probes and its
   value changes are judged by: a list view's provider counts only from
   Windows Forms, and a console's with no check, a limit its guide states.
-- `verdicts` — the kept verdicts on a window's provider: `Verdicts`,
-  `Probe`, `Probed`, `VerdictChange`. An outpost's reducer holds them as an
-  immutable snapshot, and the listener's event thread keeps a record per
-  application of them. `kept_at` answers for an event's observation, the
-  verdict before the newest for one observed before the newest's probe
-  began, `newest` the latest whether or not its keep has ended, and
-  `len` and `evict_oldest` keep a record to a cap.
 - `Window` — a window's handle that is never 0. The protocol and the
   system's calls carry a handle as an `isize`, 0 for none; the logic
   crates parse one where it enters them, `Window::new(handle)` giving
@@ -47,6 +40,6 @@ Public API:
 - `CONSOLE_WINDOW_CLASS` — the console host's window class.
 
 Tests: the class normalization, the class lists pinned to their NVDA
-sources so an NVDA sync is a diff, the limit per thread, and a window's
-handle parsed. The verdicts' keeping is tested through the outposts'
-arbitrator and the listener.
+sources so an NVDA sync is a diff, the class verdict `classify_with` gives
+with NVDA's lists (the good, bad and shell rules), the limit per thread,
+and a window's handle parsed.

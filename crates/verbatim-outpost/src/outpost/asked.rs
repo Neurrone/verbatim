@@ -292,14 +292,17 @@ fn verdict(
             if !read::serves(context, hwnd) {
                 return None;
             }
-            let began_us = context.observed_now();
             let uia = read::window_uses_uia(context, hwnd);
-            probes.push(Probe {
-                window: window_handle(hwnd),
-                thread: verbatim_win32::window::window_owner(hwnd).0,
-                provider: uia,
-                began_us,
-            });
+            // Only a probe this request made is reported: Core's cache is
+            // the one that keeps a verdict past its request.
+            if let Some(probed) = context.verdicts.probed(hwnd) {
+                probes.push(Probe {
+                    window: window_handle(hwnd),
+                    thread: verbatim_win32::window::window_owner(hwnd).0,
+                    provider: uia,
+                    began_us: probed.began_us,
+                });
+            }
             Some(uia)
         }
     }

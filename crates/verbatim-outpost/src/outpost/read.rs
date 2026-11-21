@@ -163,9 +163,12 @@ pub(super) fn window_uses_uia(context: &RequestContext<'_>, hwnd: isize) -> bool
     {
         return uia;
     }
-    crate::arbitration::uses_uia(&context.arbitrator, context, hwnd, || {
-        verbatim_uia::console_reports_formatting(hwnd)
-    })
+    crate::arbitration::uses_uia(
+        &context.arbitrator,
+        (&context.verdicts, context.observed_now()),
+        hwnd,
+        || verbatim_uia::console_reports_formatting(hwnd),
+    )
 }
 
 /// Whether the outpost's application serves window `hwnd`, by the

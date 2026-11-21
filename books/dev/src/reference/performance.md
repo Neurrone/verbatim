@@ -252,7 +252,7 @@ Rules that hold for every UIA focus:
   (`uia_repeated_focus_costs_exactly`): the nearest window, the kept
   element's keyboard focus and the sender's. They cost mockapp 37
   provider calls. Core drops the repeat with no read; the
-  window's verdict is kept, so the window is asked nothing.
+  window's verdict is in Core's cache, so the window is asked nothing.
 - A focus on a console window's own element is dropped after the
   console's provider check, made once per console window by the listener
   from the held sender: four calls from the console window's element and
@@ -435,8 +435,8 @@ was answered (measured 2026-10-07).
 
 - Minimum: 1 window message and 4 UIA calls for a windowless sender, 3
   for a sender that is a window, plus one step per ancestor up to the
-  desktop's root: the nearest window, the window's provider probed once in
-  its lifetime (the outpost's raw probe), the keyboard focus, the cache
+  desktop's root: the nearest window, the window's provider probed while
+  Core holds no verdict for it (the outpost's raw probe), the keyboard focus, the cache
   refreshed, and the steps; no comparison, since no focus was taken
   before.
 - Today: 9 UIA calls, 1 connection and 1 window message with the
@@ -447,7 +447,7 @@ was answered (measured 2026-10-07).
   nearest window, keyboard focus, cache and three steps (to the group, the
   window and the desktop's root), and the outpost's raw probe of the
   window, the one verdict, before it reports the listener's read
-  ([ADR 0001](adr/0001-focus.md), "One judge per fact"), once in the window's lifetime; the listener makes
+  ([ADR 0001](adr/0001-focus.md), "One judge per fact"), while Core holds no verdict for it; the listener makes
   no probe. 413 provider calls with the outpost's remote walk and 392 with
   its classic walk, 12 of them the grid item's row and column and the
   ancestors' automation ids, and 5 the outpost's probe.
@@ -847,13 +847,14 @@ the second focus of a split pair; every other focus is read as before.
 
 - Today, a generic MSAA object that reads as named: 6 MSAA calls, the
   acquisition, its focused state, role, name and value, and one
-  `accFocus` of the wider redirect's test, with nothing more read. One
+  `accFocus` of the wider redirect's test, with nothing more read, and
+  the window's probe, since the request carries "probe first". One
   whose name differs stops there and is read in full (24 calls, against
   23 for the full read alone); one whose value alone differs reads its
   value too (25).
 - Today, an item of a one-column report-view list view that reads as
   named: its states and role, its set's size (`LVM_GETITEMCOUNT`) and its
-  name by its column, 6 window messages, with the 10 MSAA calls of the
+  name by its column, 6 window messages and the window's probe, with the 10 MSAA calls of the
   focused-state check the test's list view without the keyboard focus
   makes and a focused item does not. The same item named with a set one
   larger stops at the size, 1 window message, and is read in full.
@@ -900,21 +901,20 @@ of a full read from the role it was last read with
   `get_accChild` and the property's method.
 - Bound: one property per event.
 
-A window's verdict of no UIA provider is renewed every half second, as
-NVDA renews it, because nothing tells a client that a window began to
+A window's verdict is renewed every half second, as NVDA renews it, by
+Core's cache, because nothing tells a client that a window began to
 answer the probe. A focus whose window's verdict has run out costs the
-probe again, 1 window message and 1 `WM_GETOBJECT` more. The ratchet's
+probe again, 1 window message and 1 `WM_GETOBJECT` more; an outpost
+keeps a verdict only within one request. The ratchet's
 outpost reads time from the test, so no count depends on the test's
 speed. The two focuses it pins this way are arrows between list items
 whose previous focus was itself reached by an arrow, 31 MSAA calls each:
 one `accRole` more than an arrow whose previous focus was reached from
-the list, for a reason not yet known. A verdict is compared with the
-observation of the event it judges, so the ratchet's outpost stamps its
-own events on the test's time too (`Outpost::set_observation_clock`). A
-probe that times out after 3 seconds is kept as "no" by an outpost for
-the events observed until 500 ms after the probe's end, its entry's
-included, so an entry sends the window one probe at most; the listener
-makes no probe.
+the list, for a reason not yet known. The ratchet's outpost stamps the
+probes it reports on the test's time too (`Outpost::set_observation_clock`).
+A probe that times out after 3 seconds is kept as "no" by an outpost for
+the rest of its request, so a request sends the window one probe at
+most.
 
 ### A selection, MSAA
 

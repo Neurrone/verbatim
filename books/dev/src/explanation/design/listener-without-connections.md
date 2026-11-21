@@ -127,7 +127,7 @@ The proxy rule. An outpost's lookup by handle of a window whose verdict says it 
 
 ## 6. The verdict caching
 
-A "yes" is kept for the window's lifetime, a deliberate difference from NVDA's half-second cache (`docs/parity/backends.md`), as Dickson decided; a "no" for 500 ms, as NVDA keeps both. The outpost alone keeps the verdict and decides which backend's focus counts in each of its windows; the listener makes no probe and skips a read only for a window whose class is on NVDA's MSAA class list, from the same table, so no verdict passes between them ([ADR 0001](../../reference/adr/0001-focus.md), "One judge per fact").
+Core's backend cache keeps a window's verdict, a provider or none, for half a second from its probe's start, NVDA's cache period (`docs/parity/backends.md`), and decides which backend's events count in each window; an outpost keeps what it probes only within one request ([ADR 0004](../../reference/adr/0004-focus-validity.md)). The listener's check thread records the probes it began in the last half second only to spare a repeated probe, and skips a read for a window whose class is on NVDA's MSAA class list, from the same table, so no verdict passes between the readers ([ADR 0001](../../reference/adr/0001-focus.md), "One judge per fact").
 
 ## 7. What the rule replaced, and the tests that pin it
 

@@ -895,11 +895,9 @@ language tagging, synth driver, PCM, the mixer (D17), and the
   utterances before returning. The process model is not where the time
   goes (three pipe hops cost under a millisecond); the first half is met
   by batching ancestry through UIA remote operations, caching MSAA
-  ancestry per window, resolving a UIA element once per event, keeping a
-  verdict that a window has a UIA provider for the window's lifetime (a
-  verdict that it has none is trusted for 500 ms, NVDA's cache period,
-  then probed again, since a busy or starting application can fail the
-  probe), and never delaying a control behind its window's announcement.
+  ancestry per window, resolving a UIA element once per event, a
+  window's verdict kept by Core for half a second from its probe, NVDA's
+  cache period, and never delaying a control behind its window's announcement.
   The latency ledger records observed, queued, and first audio; the
   per-stage timeline it is to record is observed, routed, worker start,
   backend decided, read, ancestors read, sent, reduced, queued, first

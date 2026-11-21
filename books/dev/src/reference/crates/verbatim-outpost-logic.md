@@ -5,7 +5,7 @@ that holds every remembered fact of an outpost's application, with no
 Windows type and no application object. It is a logic crate: in the GPL
 tier, with no Windows dependency, so it builds and is tested on any host.
 It depends on `verbatim-model` and
-on [verbatim-reader-rules](verbatim-reader-rules.md) for the verdicts and
+on [verbatim-reader-rules](verbatim-reader-rules.md) for
 the window type it shares with the focus listener.
 
 The outpost ([verbatim-outpost](verbatim-outpost.md)) runs it on a thread
@@ -62,7 +62,7 @@ Public API:
   the window, and the watches waiting on it are answered "not there", and
   the window is owed a forget; this input alone does not dispatch, so the
   windows destroyed in one drain are forgotten together at the tick), a
-  verdict, a commit, a program finished, a release's answer, and the
+  a commit, a program finished, a release's answer, and the
   shell's close. `Effect`: dispatch a `Program`, send a
   message, release, let go of parked elements (`Unpark`), forget text
   ranges (`ForgetRanges`), abandon a worker generation (`Abandon`, with
@@ -82,7 +82,7 @@ Public API:
   Core's `Ask`, a watch's program, or `Forget`, the windows owed a
   forget, dispatched first of all, so every request Core sent after a
   window's destruction runs after its forget): what the worker generation in
-  charge runs, with its copies of the facts (`Facts`: the verdicts and
+  charge runs, with its copies of the facts (`Facts`:
   each node's text facts), whose commits come back as `Change`s (the
   program's tell and its text changes) and are applied while their
   `Request` is live.
@@ -90,10 +90,7 @@ Public API:
   intake's `Entry`, `Item`, `UiaEvent` and `Asker`; the focus line's
   paths a UI Automation completion finds its elements by (`FocusPath`,
   `Route`); the caret key's watches (`Watches`, `WatchProgram`,
-  `WatchWork`, above); the verdicts (`Verdicts`, `VerdictChange`,
-  `Probe`, `Probed`, from `verbatim-reader-rules`, and
-  `KeptFromAnyGeneration`, this crate's rule of which a generation no
-  longer in charge may record); each node's text facts (`TextFacts`,
+  `WatchWork`, above); each node's text facts (`TextFacts`,
   `NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`, `ReadSelection`,
   `TextChange`), among them the reads held behind ids Core names
   (`NodeAnchors::held`: a caret key's starting point and a selection

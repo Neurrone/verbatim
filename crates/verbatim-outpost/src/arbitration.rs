@@ -5,95 +5,45 @@
 //! config-overridable "good" class list forces UIA, and so does a Windows 11
 //! shell window, recognized by its root ancestor's class; a "bad" class list
 //! (seeded from NVDA's, where UIA implementations are known to interfere with
-//! MSAA) forces MSAA; otherwise the window is probed, by an outpost on its
-//! own application's windows and by the focus listener alike, with the raw
-//! probe, one `WM_GETOBJECT` and no UIA connection
-//! ([`verbatim_uia::raw_probe`];
-//! `books/dev/src/explanation/design/listener-without-connections.md`, decision 2). A window
-//! with a provider is still set aside
-//! for MSAA when its provider is one NVDA does not use: an old console's,
-//! or a list view's outside Windows Forms
-//! ([`verbatim_reader_rules::class::post_probe_check`]), which
-//! both read from the window's class name, a local call.
-//! Class-list checks are fast local window calls; the probe blocks on the
-//! target's message pump and runs only on a deadline-guarded worker.
+//! MSAA) forces MSAA; otherwise the window is probed with the raw probe, one
+//! `WM_GETOBJECT` and no UIA connection ([`verbatim_uia::raw_probe`];
+//! `books/dev/src/explanation/design/listener-without-connections.md`,
+//! decision 2). A window with a provider is still set aside for MSAA when
+//! its provider is one NVDA does not use: an old console's, or a list
+//! view's outside Windows Forms
+//! ([`verbatim_reader_rules::class::post_probe_check`]), which both read
+//! from the window's class name, a local call. Class-list checks are fast
+//! local window calls; the probe blocks on the target's message pump and
+//! runs only on the worker.
 //!
-//! The verdicts probes found are the outpost reducer's state ([`Verdicts`]):
-//! a program reads its own copy and commits each probe as it returns, and
-//! the event thread reads the push-time copy
-//! (`books/dev/src/explanation/design/ownership.md`). The arbitrator
-//! holds the configuration they are read with: the class lists and the
-//! clocks.
-//!
-//! A probe that finds a UIA provider is kept for the window's lifetime and
-//! forgotten when the window is destroyed ([`VerdictChange::Forget`]), as
-//! decision D15 specifies: a server-side provider does not go away. Each
-//! kept verdict also records the thread that owned the window, and a
-//! window now owned by another thread is probed afresh, so a reused window
-//! handle does not inherit a verdict when its destroy event was lost. A probe
-//! that finds none is kept for [`NEGATIVE_VERDICT_LIFETIME`], NVDA's cache
-//! period, from the probe's end, and then the window is probed again. The
-//! probe asks once, as NVDA does, and a window too busy to answer it in time
+//! Core's backend cache is the one lasting keeper of a window's verdict
+//! (`books/dev/src/reference/adr/0004-focus-validity.md`): a request
+//! carries Core's verdict for its window, or "probe first". The outpost
+//! keeps what it probes only for the request it probes in
+//! ([`RequestVerdicts`]), as one program's memo, so a window a walk crosses
+//! is probed at most once per request, and a "probe first" request reports
+//! only a probe it made. A probe that did not answer in time
 //! ([`verbatim_uia::UIA_RAW_PROBE_TIMEOUT_MS`]) has an unknown verdict
 //! ([`Verdict::Unknown`]), which the outpost reads through MSAA, as NVDA
-//! takes a cancelled probe as no provider, and keeps as "no" for the same
-//! half second from the probe's end, a deliberate difference from NVDA,
-//! which times its cache from before the probe, so a busy window is not
-//! probed again within half a second of a probe that waited three seconds
-//! (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact").
-//!
-//! A kept verdict is compared with the observation of the event being
-//! judged, never with when the worker handles it: each worker entry is
-//! judged at its event's observation, or at its start for an entry with no
-//! event ([`Judgement::judged_at`]), and a verdict judges the events
-//! observed from its probe's beginning, stamped with the observation of the
-//! judgement that probed, until its keep ends. So a focus's `WinEvent` copy
-//! and its UIA focus, observed a few milliseconds apart, meet one verdict
-//! whatever order and delay they reach the worker in, as NVDA's one cache
-//! meets both as they arrive. A verdict judges no event observed before its
-//! probe began: each window keeps its previous verdict for those, one being
-//! enough behind the intake's marker barrier, since the intake orders by
-//! arrival and the outpost's own event can be handled before a listener's
-//! read observed earlier. The reducer records a verdict only from the worker
-//! in charge: a probe returning on an abandoned worker records nothing but
-//! in its own copy, so no verdict lands between a focus's two judgements
-//! after the first was made; a probe that timed out is kept as unknown
-//! whichever worker made it, so a window is not probed again more often
-//! than NVDA probes it.
-//!
-//! The keep runs out by time because nothing else can end it: an
-//! application that starts answering the probe raises no event, as a
-//! provider is created on demand when the window is asked for one. Its ends
-//! and the stamps of entries with no event are read from the arbitrator's
-//! observation clock ([`ObservationClock`], the run's shared clock by
-//! default), so a test that counts an operation's calls moves that time
-//! itself ([`Arbitrator::set_observation_clock`]) and the probe is made
-//! again exactly when the test says.
+//! takes a cancelled probe as no provider.
 //!
 //! These verdicts decide only how the outpost reads a window; which
 //! backend's events speak for a window is Core's judgement, by its own
 //! verdicts (`books/dev/src/reference/adr/0001-focus.md`, "One judge per
 //! fact").
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::outpost::lock::{Lock, LockGuard};
-use std::time::{Duration, Instant};
 
-pub use crate::outpost::Verdicts;
-use crate::outpost::{Probe as KeptProbe, Probed, VerdictChange};
 use verbatim_model::class::{BAD, GOOD};
-use verbatim_process::clock::{Clock, ObservationClock};
+use verbatim_process::clock::Clock;
 use verbatim_reader_rules::class::{
     ClassVerdict, WindowClasses, classify_with, post_probe_check, provider_usable,
 };
-use verbatim_reader_rules::verdicts::NEGATIVE_VERDICT_LIFETIME_US;
-use verbatim_win32::window::window_thread;
-
-/// How long a probe that found no UIA provider is trusted before the window
-/// is probed again: NVDA's `isUIAWindow` cache period.
-pub const NEGATIVE_VERDICT_LIFETIME: Duration = Duration::from_millis(500);
 
 /// A window's backend as [`decide`] judges it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,36 +56,45 @@ pub(crate) enum Verdict {
     Unknown,
 }
 
+/// A probe one request made: what it found, and when it began on the
+/// outpost's observation clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Probed {
+    /// What it found.
+    pub(crate) verdict: Verdict,
+    /// When it began.
+    pub(crate) began_us: u64,
+}
+
+/// What one request's probes found, by window: kept for that request
+/// alone, and dropped with it.
+#[derive(Debug, Default)]
+pub(crate) struct RequestVerdicts {
+    probed: RefCell<BTreeMap<isize, Probed>>,
+}
+
+impl RequestVerdicts {
+    /// The probe this request made of `hwnd`, if it made one.
+    pub(crate) fn probed(&self, hwnd: isize) -> Option<Probed> {
+        self.probed.borrow().get(&hwnd).copied()
+    }
+
+    fn record(&self, hwnd: isize, probed: Probed) {
+        self.probed.borrow_mut().insert(hwnd, probed);
+    }
+}
+
 /// The raw probe an arbitrator asks a window with:
 /// [`verbatim_uia::raw_probe`], unless a unit test injects its outcome.
 type Probe = Arc<dyn Fn(isize) -> verbatim_uia::RawProbe + Send + Sync>;
 
-/// What a judgement of window backends reads and records verdicts through:
-/// a program's copy of the reducer's verdicts, at its entry's observation
-/// (`books/dev/src/explanation/design/ownership.md`).
-pub(crate) trait Judgement {
-    /// The observation the judgement is made at: its entry's event's, or
-    /// now on the arbitrator's observation clock for a judgement with no
-    /// event.
-    fn judged_at(&self, arbitrator: &Arbitrator) -> u64;
-    /// The verdicts it reads: its own copy, with what it recorded.
-    fn verdicts(&self) -> Arc<Verdicts>;
-    /// Keeps `change` in its own copy and commits it to the reducer, which
-    /// records it only from the worker generation in charge, but a probe
-    /// that timed out and a window's forgetting from any.
-    fn record(&self, change: VerdictChange);
-}
-
 /// Decides the backend for each window of one application, from its
-/// configuration, the class lists and the clocks, and the
-/// verdicts the reducer keeps ([`Verdicts`]), which each caller gives.
+/// configuration and the class lists, probing a window they do not decide.
 pub struct Arbitrator {
     good_classes: HashSet<String>,
     bad_classes: HashSet<String>,
     /// The time a classic walk's budget is measured by.
     clock: Clock,
-    /// The time a keep's end and an entry with no event are stamped by.
-    observed: ObservationClock,
     /// The probe [`decide`] asks a window with.
     probe: Probe,
 }
@@ -161,29 +120,25 @@ impl Arbitrator {
             good_classes,
             bad_classes,
             clock: Arc::new(Instant::now),
-            observed: Arc::new(verbatim_process::clock::now_us),
             probe: Arc::new(verbatim_uia::raw_probe),
         }
     }
 
-    /// Answers every probe with `outcome`, for a unit test that decides
-    /// what the window answered rather than timing it.
+    /// Answers every probe with `outcome`, counting each in `count`, for a
+    /// unit test that decides what the window answered rather than timing
+    /// it.
     #[cfg(test)]
-    pub(crate) fn set_probe(&mut self, outcome: verbatim_uia::RawProbe) {
-        self.probe = Arc::new(move |_| outcome);
+    fn set_probe(&mut self, outcome: verbatim_uia::RawProbe, count: Arc<Lock<u32>>) {
+        self.probe = Arc::new(move |_| {
+            *count.lock() += 1;
+            outcome
+        });
     }
 
     /// Reads the time from `clock` from now on, in place of the system's:
     /// for a test that decides when a classic walk's time budget is spent.
     pub fn set_clock(&mut self, clock: Clock) {
         self.clock = clock;
-    }
-
-    /// Reads the observation time from `clock` from now on, in place of the
-    /// run's shared clock: for a test that decides when a verdict's keep
-    /// ends, by stamping the events it judges on the same clock.
-    pub fn set_observation_clock(&mut self, clock: ObservationClock) {
-        self.observed = clock;
     }
 
     /// The time by the arbitrator's clock, which a classic walk's budget is
@@ -200,166 +155,64 @@ impl Arbitrator {
         Arc::clone(&self.clock)
     }
 
-    /// Now on the arbitrator's observation clock.
+    /// The verdict the class lists give a window of `classes`:
+    /// `Some(true)` for UIA, `Some(false)` for MSAA, and `None` when only
+    /// the probe can decide.
     #[must_use]
-    pub fn observed_now(&self) -> u64 {
-        (self.observed)()
-    }
-
-    /// Records in `verdicts` a probe of `hwnd` that found a provider when
-    /// `is_uia`, judging from now on the observation clock, the probe's
-    /// end: a UIA verdict is kept until the window is destroyed, a non-UIA
-    /// verdict for [`NEGATIVE_VERDICT_LIFETIME`] from now. What an
-    /// outpost's program commits for its probe, for a test that probes by
-    /// hand.
-    pub fn record_probe(&self, verdicts: &mut Verdicts, hwnd: isize, is_uia: bool) {
-        let now = self.observed_now();
-        verdicts.apply(&self.probed(hwnd, now, is_uia));
-    }
-
-    /// The change recording a probe of `hwnd`, judging from `from_us`,
-    /// that found a provider when `is_uia`, ending now on the observation
-    /// clock.
-    fn probed(&self, hwnd: isize, from_us: u64, is_uia: bool) -> VerdictChange {
-        let probed = if is_uia {
-            Probed::Uia
-        } else {
-            Probed::NotUia(
-                self.observed_now()
-                    .saturating_add(NEGATIVE_VERDICT_LIFETIME_US),
-            )
-        };
-        kept(hwnd, from_us, probed)
-    }
-
-    /// The change recording that `hwnd` did not answer its probe in time,
-    /// judging from `from_us`, the probe having returned now: no provider
-    /// for [`NEGATIVE_VERDICT_LIFETIME`] from now, recorded whichever
-    /// worker probed, so that a window is not probed again more often than
-    /// NVDA probes it (`books/dev/src/reference/adr/0001-focus.md`, "One judge per fact"). A
-    /// verdict kept for the window's lifetime stays, since a
-    /// provider does not go away ([`Verdicts`]).
-    fn timed_out(&self, hwnd: isize, from_us: u64) -> VerdictChange {
-        let until = self
-            .observed_now()
-            .saturating_add(NEGATIVE_VERDICT_LIFETIME_US);
-        kept(hwnd, from_us, Probed::TimedOut(until))
-    }
-
-    fn classify(&self, classes: &WindowClasses) -> ClassVerdict {
-        classify_with(
+    pub fn class_verdict(&self, classes: &WindowClasses) -> Option<bool> {
+        match classify_with(
             |class| self.good_classes.contains(class),
             |class| self.bad_classes.contains(class),
             classes,
-        )
-    }
-
-    /// The verdict without probing, given the kept `verdicts`, for an event
-    /// observed now on the observation clock: `Some(true)` for a UIA
-    /// window, `Some(false)` for a non-UIA window, and `None` when only the
-    /// blocking probe can decide, as no kept verdict judges that
-    /// observation.
-    #[must_use]
-    pub fn verdict(
-        &self,
-        verdicts: &Verdicts,
-        hwnd: isize,
-        classes: &WindowClasses,
-    ) -> Option<bool> {
-        self.verdict_at(verdicts, hwnd, classes, self.observed_now())
-    }
-
-    /// The verdict without probing for an event observed at `at_us`.
-    #[must_use]
-    pub fn verdict_at(
-        &self,
-        verdicts: &Verdicts,
-        hwnd: isize,
-        classes: &WindowClasses,
-        at_us: u64,
-    ) -> Option<bool> {
-        match self.classify(classes) {
+        ) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
-            ClassVerdict::Unknown => match verdicts.kept_at(hwnd, window_thread(hwnd), at_us)? {
-                Probed::Uia => Some(true),
-                Probed::Excluded | Probed::NotUia(_) | Probed::TimedOut(_) => Some(false),
-            },
+            ClassVerdict::Unknown => None,
         }
     }
-
-    /// The verdict [`verdict`](Self::verdict) gives, and whether it holds
-    /// for the window's lifetime: one from the class lists, or a kept probe that found a provider, or
-    /// one NVDA does not use. A probe that found none runs out, and a
-    /// window not yet probed has no verdict, so neither lasts.
-    #[must_use]
-    pub fn lasting_verdict(
-        &self,
-        verdicts: &Verdicts,
-        hwnd: isize,
-        classes: &WindowClasses,
-    ) -> (Option<bool>, bool) {
-        let lasting = self.classify(classes) != ClassVerdict::Unknown
-            || verdicts.lasts(hwnd, window_thread(hwnd));
-        (self.verdict(verdicts, hwnd, classes), lasting)
-    }
-}
-
-/// The change keeping `probed` for `hwnd`, judging from `from_us`, with the
-/// thread that owns the window now.
-fn kept(hwnd: isize, from_us: u64, probed: Probed) -> VerdictChange {
-    VerdictChange::Probed(KeptProbe {
-        hwnd,
-        owner: window_thread(hwnd),
-        from_us,
-        probed,
-    })
 }
 
 /// [`decide`] for an outpost's worker, `true` for UIA: a window whose probe
-/// timed out is read through MSAA, and kept as a "no" for
-/// [`NEGATIVE_VERDICT_LIFETIME`] from the probe's end.
+/// timed out is read through MSAA.
 pub(crate) fn uses_uia(
     arbitrator: &Lock<Arbitrator>,
-    judgement: &dyn Judgement,
+    (verdicts, now_us): (&RequestVerdicts, u64),
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
 ) -> bool {
-    decide(arbitrator, judgement, hwnd, console) == Verdict::Uia
+    decide(arbitrator, (verdicts, now_us), hwnd, console) == Verdict::Uia
 }
 
 /// Decides window `hwnd`'s backend with `arbitrator`, as NVDA's
-/// `isUIAWindow` decides it, judged at `judgement`'s observation: the class
-/// lists and its kept verdicts first, then the provider probe, whose answer
-/// `judgement` records (a provider for the window's lifetime, none for a
-/// short while), and the reducer keeps only from the worker in charge. A
-/// probe that timed out is [`Verdict::Unknown`], kept whichever worker made
-/// it. The probe is the raw probe ([`verbatim_uia::raw_probe`]), and no
-/// connection follows it. A console window with a provider is used only
-/// when `console` answers that its text reports formatting
-/// ([`verbatim_reader_rules::class::PostProbeCheck::Console`]), which an outpost reads by the window's
-/// handle ([`verbatim_uia::console_reports_formatting`]).
+/// `isUIAWindow` decides it: the class lists, then what this request
+/// probed of the window, then the provider probe, begun at `now_us`, which
+/// `verdicts` keeps for the rest of the request. The probe is the raw
+/// probe ([`verbatim_uia::raw_probe`]), and no connection follows it. A
+/// console window with a provider is used only when `console` answers that
+/// its text reports formatting
+/// ([`verbatim_reader_rules::class::PostProbeCheck::Console`]), which an
+/// outpost reads by the window's handle
+/// ([`verbatim_uia::console_reports_formatting`]).
 fn decide(
     arbitrator: &Lock<Arbitrator>,
-    judgement: &dyn Judgement,
+    (verdicts, now_us): (&RequestVerdicts, u64),
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
 ) -> Verdict {
     let classes = verbatim_win32::window::window_classes(hwnd);
-    let verdicts = judgement.verdicts();
-    let (probe, at_us) = {
+    let probe = {
         let arbitrator = lock(arbitrator);
-        let at_us = judgement.judged_at(&arbitrator);
-        match arbitrator.verdict_at(&verdicts, hwnd, &classes, at_us) {
+        match arbitrator.class_verdict(&classes) {
             Some(true) => return Verdict::Uia,
             Some(false) => return Verdict::NotUia,
-            None => (Arc::clone(&arbitrator.probe), at_us),
+            None => Arc::clone(&arbitrator.probe),
         }
     };
-    drop(verdicts);
-    let started = std::time::Instant::now();
+    if let Some(probed) = verdicts.probed(hwnd) {
+        return probed.verdict;
+    }
+    let started = Instant::now();
     let probed = probe(hwnd);
-    let is_uia = probed.has_provider();
     tracing::debug!(
         hwnd,
         class = classes.raw,
@@ -367,44 +220,35 @@ fn decide(
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"
     );
-    if is_uia && let Some(check) = post_probe_check(&classes) {
-        // NVDA uses some providers only after checking them.
-        let usable = provider_usable(check, &classes, console);
-        tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
-        return match usable {
-            Some(true) => {
-                let change = lock(arbitrator).probed(hwnd, at_us, true);
-                judgement.record(change);
-                Verdict::Uia
-            }
-            Some(false) => {
-                judgement.record(kept(hwnd, at_us, Probed::Excluded));
-                Verdict::NotUia
-            }
-            // The application did not answer: asked again next time.
-            None => Verdict::NotUia,
-        };
-    }
-    if probed == verbatim_uia::RawProbe::Abandoned {
+    let verdict = match probed {
         // The worker was abandoned: nothing was sent, and nothing is
         // learned of the window.
-        return Verdict::Unknown;
-    }
-    if probed == verbatim_uia::RawProbe::TimedOut {
-        // Kept from the probe's end whichever worker probed, so that a busy
-        // window is not probed again within half a second of a probe that
-        // waited its whole bound.
-        let change = lock(arbitrator).timed_out(hwnd, at_us);
-        judgement.record(change);
-        return Verdict::Unknown;
-    }
-    let change = lock(arbitrator).probed(hwnd, at_us, is_uia);
-    judgement.record(change);
-    if is_uia {
-        Verdict::Uia
-    } else {
-        Verdict::NotUia
-    }
+        verbatim_uia::RawProbe::Abandoned => return Verdict::Unknown,
+        verbatim_uia::RawProbe::TimedOut => Verdict::Unknown,
+        verbatim_uia::RawProbe::Provider => match post_probe_check(&classes) {
+            // NVDA uses some providers only after checking them; one whose
+            // application did not answer the check is read through MSAA.
+            Some(check) => {
+                let usable = provider_usable(check, &classes, console);
+                tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
+                if usable == Some(true) {
+                    Verdict::Uia
+                } else {
+                    Verdict::NotUia
+                }
+            }
+            None => Verdict::Uia,
+        },
+        _ => Verdict::NotUia,
+    };
+    verdicts.record(
+        hwnd,
+        Probed {
+            verdict,
+            began_us: now_us,
+        },
+    );
+    verdict
 }
 
 /// `arbitrator`, locked: a poisoned lock is taken as it is, as its state
@@ -416,9 +260,6 @@ fn lock(arbitrator: &Lock<Arbitrator>) -> LockGuard<'_, Arbitrator> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::{Cell, RefCell};
-    use verbatim_outpost_logic::KeptFromAnyGeneration as _;
-
     use super::*;
 
     /// The classes of a top-level window of class `class`.
@@ -427,343 +268,76 @@ mod tests {
     }
 
     #[test]
-    fn good_class_is_uia_without_probing() {
-        let arb = Arbitrator::new(&[]);
-        assert_eq!(
-            arb.verdict(&Verdicts::default(), 1, &top("RAIL_WINDOW")),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn bad_class_is_non_uia_without_probing() {
-        let arb = Arbitrator::new(&[]);
-        assert_eq!(
-            arb.verdict(&Verdicts::default(), 1, &top("Edit")),
-            Some(false)
-        );
-        assert_eq!(
-            arb.verdict(&Verdicts::default(), 1, &top("RichEdit20")),
-            Some(false)
-        );
-    }
-
-    #[test]
     fn extra_good_class_overrides_to_uia() {
         let arb = Arbitrator::new(&["MyAppCanvas"]);
+        assert_eq!(arb.class_verdict(&top("MyAppCanvas")), Some(true));
         assert_eq!(
-            arb.verdict(&Verdicts::default(), 1, &top("MyAppCanvas")),
-            Some(true)
+            Arbitrator::new(&[]).class_verdict(&top("MyAppCanvas")),
+            None
         );
     }
 
-    /// An arbitrator with the reducer's record of verdicts, as the tests
-    /// judge `WINDOW` with them.
-    struct Judged {
-        arb: Lock<Arbitrator>,
-        /// The reducer's record.
-        record: RefCell<Verdicts>,
-        /// The worker generation in charge.
-        in_charge: Cell<u64>,
-    }
-
-    impl Judged {
-        fn set_probe(&self, probe: verbatim_uia::RawProbe) {
-            lock(&self.arb).set_probe(probe);
-        }
-
-        fn set_in_charge(&self, generation: u64) {
-            self.in_charge.set(generation);
-        }
-
-        /// `WINDOW`'s verdict by the reducer's record, for an event of
-        /// classes `classes` observed at `at_us`.
-        fn verdict_at(&self, classes: &WindowClasses, at_us: u64) -> Option<bool> {
-            lock(&self.arb).verdict_at(&self.record.borrow(), WINDOW, classes, at_us)
-        }
-    }
-
-    /// One entry's judgement, by worker `generation`, at `at_us`: its own
-    /// copy of the record, and each change committed to the record as the
-    /// reducer records it, only from the generation in charge but a probe
-    /// that timed out and a window's forgetting.
-    struct Entry<'a> {
-        judged: &'a Judged,
-        at_us: u64,
-        generation: u64,
-        copy: RefCell<Arc<Verdicts>>,
-    }
-
-    impl Judgement for Entry<'_> {
-        fn judged_at(&self, _: &Arbitrator) -> u64 {
-            self.at_us
-        }
-
-        fn verdicts(&self) -> Arc<Verdicts> {
-            Arc::clone(&self.copy.borrow())
-        }
-
-        fn record(&self, change: VerdictChange) {
-            Arc::make_mut(&mut self.copy.borrow_mut()).apply(&change);
-            if self.generation == self.judged.in_charge.get() || change.kept_from_any_generation() {
-                self.judged.record.borrow_mut().apply(&change);
-            }
-        }
-    }
-
-    /// An arbitrator whose observation clock reads the time the test sets
-    /// in the returned cell, in microseconds, which starts at 0, and whose
-    /// probe answers `probe`, with an empty record.
-    fn arbitrator_on_test_clock(probe: verbatim_uia::RawProbe) -> (Judged, Arc<Lock<u64>>) {
-        let time = Arc::new(Lock::new(0));
+    /// An arbitrator whose probe answers `outcome`, with its count of
+    /// probes.
+    fn probing(outcome: verbatim_uia::RawProbe) -> (Lock<Arbitrator>, Arc<Lock<u32>>) {
+        let count = Arc::new(Lock::new(0));
         let mut arb = Arbitrator::new(&[]);
-        let read = Arc::clone(&time);
-        arb.set_observation_clock(Arc::new(move || *read.lock()));
-        arb.set_probe(probe);
-        let judged = Judged {
-            arb: Lock::new(arb),
-            record: RefCell::new(Verdicts::default()),
-            in_charge: Cell::new(0),
-        };
-        (judged, time)
+        arb.set_probe(outcome, Arc::clone(&count));
+        (Lock::new(arb), count)
     }
 
-    /// The test clock's cell set to `us`.
-    fn set(time: &Lock<u64>, us: u64) {
-        *time.lock() = us;
-    }
+    /// The window of these tests: no window, whose class no list names.
+    const WINDOW: isize = 0x7777_0001;
 
-    /// The window the tests judge: not a real window, so its classes are
-    /// on no list and its probe is the one the test injects.
-    const WINDOW: isize = 42;
-
-    /// Whether worker generation `generation`'s entry judged at `at_us`
-    /// finds `WINDOW` UIA, probing it if no kept verdict judges that
-    /// observation.
-    fn judged_at(judged: &Judged, at_us: u64, generation: u64) -> bool {
-        let entry = Entry {
-            judged,
-            at_us,
-            generation,
-            copy: RefCell::new(Arc::new(judged.record.borrow().clone())),
-        };
-        uses_uia(&judged.arb, &entry, WINDOW, || None)
-    }
-
+    /// A window a request judges twice is probed once, and a "probe first"
+    /// request reports that probe, begun when it began; the next request
+    /// keeps nothing of it and probes again, so it reports only a probe it
+    /// made. Source-derived, approved by Dickson on 2026-11-21: NVDA
+    /// probes again once its half-second cache lapses
+    /// (`nvda/source/UIAHandler/__init__.py` 1371 to 1378), and Core's
+    /// cache is the one that keeps the verdict that long.
     #[test]
-    fn a_verdict_of_no_provider_is_probed_again_after_its_lifetime() {
-        let (arb, time) = arbitrator_on_test_clock(verbatim_uia::RawProbe::Answered(0));
-        let classes = top("SomeUnknownClass");
-        assert!(!judged_at(&arb, 0, 0));
+    fn a_probe_first_request_whose_window_has_a_kept_verdict_reports_only_a_probe_it_made() {
+        let (arb, count) = probing(verbatim_uia::RawProbe::Provider);
+        let first = RequestVerdicts::default();
+        assert!(uses_uia(&arb, (&first, 1_000), WINDOW, || None));
+        assert!(uses_uia(&arb, (&first, 2_000), WINDOW, || None));
+        assert_eq!(*count.lock(), 1, "one probe within a request");
         assert_eq!(
-            arb.verdict_at(&classes, NEGATIVE_VERDICT_LIFETIME_US - 1),
-            Some(false)
+            first.probed(WINDOW),
+            Some(Probed {
+                verdict: Verdict::Uia,
+                began_us: 1_000
+            })
         );
+        let next = RequestVerdicts::default();
+        assert_eq!(next.probed(WINDOW), None, "the next request keeps nothing");
+        assert!(uses_uia(&arb, (&next, 600_000), WINDOW, || None));
+        assert_eq!(*count.lock(), 2);
         assert_eq!(
-            arb.verdict_at(&classes, NEGATIVE_VERDICT_LIFETIME_US),
-            None,
-            "a probe that found no provider may have met a busy application"
-        );
-        arb.set_probe(verbatim_uia::RawProbe::Provider);
-        set(&time, NEGATIVE_VERDICT_LIFETIME_US);
-        assert!(judged_at(&arb, NEGATIVE_VERDICT_LIFETIME_US, 0));
-        assert_eq!(
-            arb.verdict_at(&classes, 3_600_000_000),
-            Some(true),
-            "a provider, once found, is kept"
+            next.probed(WINDOW).map(|probed| probed.began_us),
+            Some(600_000)
         );
     }
 
     #[test]
-    fn a_verdict_of_no_provider_runs_out_by_the_events_observation() {
-        let (arb, time) = arbitrator_on_test_clock(verbatim_uia::RawProbe::Answered(0));
-        let classes = top("SomeUnknownClass");
-        // Probed at 1 ms, the probe answering at 2 ms.
-        set(&time, 2_000);
-        assert!(!judged_at(&arb, 1_000, 0));
-        // Handled long after, an event is judged by when it was observed.
-        set(&time, 10_000_000);
+    fn a_probe_that_timed_out_is_read_through_msaa_for_the_rest_of_its_request() {
+        let (arb, count) = probing(verbatim_uia::RawProbe::TimedOut);
+        let request = RequestVerdicts::default();
+        assert!(!uses_uia(&arb, (&request, 1_000), WINDOW, || None));
+        assert!(!uses_uia(&arb, (&request, 2_000), WINDOW, || None));
+        assert_eq!(*count.lock(), 1);
         assert_eq!(
-            arb.verdict_at(&classes, 2_000 + NEGATIVE_VERDICT_LIFETIME_US - 1),
-            Some(false)
-        );
-        assert_eq!(
-            arb.verdict_at(&classes, 2_000 + NEGATIVE_VERDICT_LIFETIME_US),
-            None
+            request.probed(WINDOW).map(|probed| probed.verdict),
+            Some(Verdict::Unknown)
         );
     }
 
     #[test]
-    fn a_probe_that_timed_out_is_kept_for_half_a_second_from_its_end() {
-        let (arb, time) = arbitrator_on_test_clock(verbatim_uia::RawProbe::TimedOut);
-        let classes = top("SomeUnknownClass");
-        // Judged at its event's observation, 0, the probe returning at 3 s.
-        let probe_ended = 3_000_000;
-        set(&time, probe_ended);
-        assert!(!judged_at(&arb, 0, 0));
-        assert_eq!(
-            arb.verdict_at(&classes, probe_ended + NEGATIVE_VERDICT_LIFETIME_US - 1),
-            Some(false),
-            "the slow no holds for events observed until half a second after the probe's end"
-        );
-        assert_eq!(
-            arb.verdict_at(&classes, probe_ended + NEGATIVE_VERDICT_LIFETIME_US),
-            None,
-            "half a second after the probe's end the window is probed again"
-        );
-    }
-
-    #[test]
-    fn a_kept_verdict_judges_an_event_observed_before_its_keep_ended() {
-        let (arb, time) = arbitrator_on_test_clock(verbatim_uia::RawProbe::TimedOut);
-        // The copy, observed at 0 and handled at once, waits 3 seconds for
-        // its probe, which times out.
-        set(&time, 3_000_000);
-        assert!(!judged_at(&arb, 0, 0));
-        // Its UIA focus, observed at 10 ms, is handled after it, at 3 s, and
-        // a provider has appeared meanwhile: judged at its observation, it
-        // meets the unknown, with no probe.
-        arb.set_probe(verbatim_uia::RawProbe::Provider);
-        assert!(!judged_at(&arb, 10_000, 0));
-        // An event observed after the keep ended is probed again.
-        assert!(judged_at(&arb, 3_000_000 + NEGATIVE_VERDICT_LIFETIME_US, 0));
-    }
-
-    #[test]
-    fn a_fresh_probe_does_not_judge_an_event_observed_before_it() {
-        let (arb, time) = arbitrator_on_test_clock(verbatim_uia::RawProbe::Answered(0));
-        let classes = top("SomeUnknownClass");
-        // A "no" judged at 0, kept for events observed until 500 ms.
-        assert!(!judged_at(&arb, 0, 0));
-        // The outpost's own event observed at 600 ms is handled first and
-        // probes afresh: the window now has a provider.
-        arb.set_probe(verbatim_uia::RawProbe::Provider);
-        set(&time, 600_000);
-        assert!(judged_at(&arb, 600_000, 0));
-        // A listener's read observed at 450 ms, handled after it, is judged
-        // by the verdict that stood at its observation.
-        assert_eq!(arb.verdict_at(&classes, 450_000), Some(false));
-        assert_eq!(arb.verdict_at(&classes, 600_000), Some(true));
-    }
-
-    #[test]
-    fn an_abandoned_workers_probe_records_no_verdict() {
-        let (arb, _) = arbitrator_on_test_clock(verbatim_uia::RawProbe::Provider);
-        let classes = top("SomeUnknownClass");
-        arb.set_in_charge(1);
-        assert!(
-            judged_at(&arb, 0, 0),
-            "the abandoned worker's own entry still reads its probe's answer"
-        );
-        assert_eq!(
-            arb.verdict_at(&classes, 0),
-            None,
-            "nothing kept for the worker in charge"
-        );
-    }
-
-    #[test]
-    fn an_abandoned_workers_timed_out_probe_is_kept_as_unknown() {
-        let (arb, _) = arbitrator_on_test_clock(verbatim_uia::RawProbe::TimedOut);
-        let classes = top("SomeUnknownClass");
-        arb.set_in_charge(1);
-        assert!(!judged_at(&arb, 0, 0));
-        assert_eq!(arb.verdict_at(&classes, 0), Some(false));
-    }
-
-    #[test]
-    fn a_probed_verdict_lasts_until_the_window_is_destroyed() {
-        let arb = Arbitrator::new(&[]);
-        let mut verdicts = Verdicts::default();
-        assert_eq!(arb.verdict(&verdicts, 42, &top("SomeUnknownClass")), None);
-        arb.record_probe(&mut verdicts, 42, true);
-        assert_eq!(
-            arb.verdict(&verdicts, 42, &top("SomeUnknownClass")),
-            Some(true)
-        );
-        verdicts.apply(&VerdictChange::Forget(42));
-        assert_eq!(
-            arb.verdict(&verdicts, 42, &top("SomeUnknownClass")),
-            None,
-            "a reused handle is probed afresh"
-        );
-    }
-
-    #[test]
-    fn shell_classes_arbitrate_to_uia_without_probing() {
-        let arb = Arbitrator::new(&[]);
-        for class in [
-            "Shell_TrayWnd",
-            "Shell_InputSwitchTopLevelWindow",
-            "XamlExplorerHostIslandWindow",
-            "TopLevelWindowForOverflowXamlIsland",
-        ] {
-            assert_eq!(
-                arb.verdict(&Verdicts::default(), 1, &top(class)),
-                Some(true),
-                "{class} must arbitrate to UIA"
-            );
-        }
-    }
-
-    #[test]
-    fn a_window_under_a_shell_window_is_uia_except_the_start_button() {
-        let arb = Arbitrator::new(&[]);
-        assert_eq!(
-            arb.verdict(
-                &Verdicts::default(),
-                1,
-                &WindowClasses::new("Windows.UI.Input.InputSite.WindowClass", "Shell_TrayWnd")
-            ),
-            Some(true)
-        );
-        assert_eq!(
-            arb.verdict(
-                &Verdicts::default(),
-                1,
-                &WindowClasses::new("Edit", "Shell_TrayWnd")
-            ),
-            Some(true),
-            "the shell rule comes before the bad list, as in NVDA"
-        );
-        assert_eq!(
-            arb.verdict(
-                &Verdicts::default(),
-                1,
-                &WindowClasses::new("Start", "Shell_TrayWnd")
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn a_normalized_bad_class_is_msaa_without_probing() {
-        let arb = Arbitrator::new(&[]);
-        assert_eq!(
-            arb.verdict(
-                &Verdicts::default(),
-                1,
-                &top("WindowsForms10.EDIT.app.0.141b42a_r9_ad1")
-            ),
-            Some(false)
-        );
-        assert_eq!(
-            arb.verdict(&Verdicts::default(), 1, &top("TRichEdit")),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn an_excluded_provider_is_msaa_until_the_window_is_destroyed() {
-        let arb = Arbitrator::new(&[]);
-        let mut verdicts = Verdicts::default();
-        let classes = top("ConsoleWindowClass");
-        verdicts.apply(&kept(5, arb.observed_now(), Probed::Excluded));
-        assert_eq!(
-            arb.verdict_at(&verdicts, 5, &classes, arb.observed_now() + 3_600_000_000),
-            Some(false)
-        );
-        verdicts.apply(&VerdictChange::Forget(5));
-        assert_eq!(arb.verdict(&verdicts, 5, &classes), None);
+    fn an_abandoned_workers_probe_keeps_nothing() {
+        let (arb, _) = probing(verbatim_uia::RawProbe::Abandoned);
+        let request = RequestVerdicts::default();
+        assert!(!uses_uia(&arb, (&request, 1_000), WINDOW, || None));
+        assert_eq!(request.probed(WINDOW), None);
     }
 }

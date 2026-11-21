@@ -168,6 +168,71 @@ impl WindowClasses {
 mod tests {
     use super::*;
 
+    /// The class verdict with NVDA's class lists, as both readers apply it.
+    fn listed(classes: &WindowClasses) -> ClassVerdict {
+        classify_with(
+            |class| verbatim_model::class::GOOD.contains(&class),
+            |class| verbatim_model::class::BAD.contains(&class),
+            classes,
+        )
+    }
+
+    fn top(class: &str) -> WindowClasses {
+        WindowClasses::new(class, class)
+    }
+
+    #[test]
+    fn a_good_class_is_uia() {
+        assert_eq!(listed(&top("RAIL_WINDOW")), ClassVerdict::Uia);
+    }
+
+    #[test]
+    fn a_bad_class_is_msaa() {
+        assert_eq!(listed(&top("Edit")), ClassVerdict::NonUia);
+        assert_eq!(listed(&top("RichEdit20")), ClassVerdict::NonUia);
+    }
+
+    #[test]
+    fn shell_classes_are_uia() {
+        for class in [
+            "Shell_TrayWnd",
+            "Shell_InputSwitchTopLevelWindow",
+            "XamlExplorerHostIslandWindow",
+            "TopLevelWindowForOverflowXamlIsland",
+        ] {
+            assert_eq!(listed(&top(class)), ClassVerdict::Uia, "{class}");
+        }
+    }
+
+    #[test]
+    fn a_window_under_a_shell_window_is_uia_except_the_start_button() {
+        assert_eq!(
+            listed(&WindowClasses::new(
+                "Windows.UI.Input.InputSite.WindowClass",
+                "Shell_TrayWnd"
+            )),
+            ClassVerdict::Uia
+        );
+        assert_eq!(
+            listed(&WindowClasses::new("Edit", "Shell_TrayWnd")),
+            ClassVerdict::Uia,
+            "the shell rule comes before the bad list, as in NVDA"
+        );
+        assert_eq!(
+            listed(&WindowClasses::new("Start", "Shell_TrayWnd")),
+            ClassVerdict::Unknown
+        );
+    }
+
+    #[test]
+    fn a_normalized_bad_class_is_msaa() {
+        assert_eq!(
+            listed(&top("WindowsForms10.EDIT.app.0.141b42a_r9_ad1")),
+            ClassVerdict::NonUia
+        );
+        assert_eq!(listed(&top("TRichEdit")), ClassVerdict::NonUia);
+    }
+
     #[test]
     fn consoles_and_list_views_are_checked_after_the_probe() {
         assert_eq!(

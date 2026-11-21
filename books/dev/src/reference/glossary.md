@@ -29,8 +29,9 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
   WebView2. [extensions](https://github.com/Neurrone/verbatim/blob/main/docs/design/extensions.md).
 - **Arbitration** — the per-window choice of backend (UIA or
   MSAA/IA2), decided by class lists lifted from NVDA plus a live
-  provider probe; the result is a **verdict**, kept for the window's
-  lifetime.
+  provider probe; the result is a **verdict**, kept by Core for half a
+  second from the probe's start, and by an outpost only within one
+  request.
   [verbatim-outpost](crates/verbatim-outpost.md); NVDA's referee is in
   [The UIA client](https://github.com/Neurrone/verbatim/blob/main/docs/nvda/uia.md).
 - **Ask** — a request from Core to a reader; every call into an application is made for one, and it gets exactly one answer.

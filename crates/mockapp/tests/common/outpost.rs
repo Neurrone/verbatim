@@ -28,14 +28,14 @@
 //! budget a real wait must spend, as a stalled window's raw probe spends
 //! it, makes the time the system's instead
 //! ([`OutpostUnderTest::follow_the_system_clock`]). The outpost stamps its
-//! own events' observations, and times its verdicts' keeps, by the test's
+//! own events' observations, and the start of each probe it reports, by the test's
 //! observation clock ([`Outpost::set_observation_clock`]), which a test
 //! chooses once, as it makes the outpost ([`ObservationTime`]): the run's
 //! shared clock moved on by every time the test has passed
 //! ([`OutpostUnderTest::new`]), or that clock frozen when the outpost was
 //! made, moved on by the time passed and by a microsecond each time it is
 //! read ([`OutpostUnderTest::on_frozen_time`]). On the frozen clock a
-//! window's verdict of no UIA provider runs out only once the test passes
+//! window's verdict in Core's cache runs out only once the test passes
 //! the time, however long its steps take, so every test whose assertions
 //! depend on a verdict's keep uses it. The others keep the real one,
 //! because the outpost compares the stamps of caret, text and terminal
@@ -380,8 +380,8 @@ impl TestClock {
     }
 }
 
-/// Has `outpost` stamp its own events' observations, and time its
-/// verdicts' keeps, by the test's observation clock, `time`: the clock,
+/// Has `outpost` stamp its own events' observations, and the start of each
+/// probe it reports, by the test's observation clock, `time`: the clock,
 /// which the test moves on.
 fn observe_on_the_tests_time(outpost: &Outpost, time: ObservationTime) -> Arc<TestClock> {
     let clock = Arc::new(TestClock {
