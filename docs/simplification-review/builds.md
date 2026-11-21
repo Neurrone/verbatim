@@ -974,6 +974,8 @@ About 3,050 document lines with the clearing-up step and up to about 1,450 more 
 
 ## Build 8. The request list closed: the design study, then the second proof
 
+Built (2026-11-22): 8f2093e3, 6f56d812, 78a9641f, 62c6b288, 2fdc3d5f, 4735d977, 68b74ef5, a284654e, 3ec949c2, 6cb318f3, 9619b41c, 015e80dc, 145fa267, 8a824534, e786784b, 653cb334, 703139cb, 527affab, 9b651d75, 84fe2dc8, 9ec01c14, 2a58bc01, 16660469, 8d41b4e8, 89d2f298 and the documents in 57f0bb7b.
+
 ### Purpose
 
 The centre of the strategy: build what ADR 0003 decided, one request list of generic operations shared by Core's features and the extension surface, so that a new behaviour adds no kind of request and the twins stop being written by hand. It starts as a design study during builds 3 to 5, measures its premise first, and ends with the second proof: one ordinary behaviour rebuilt on the generic crossing and counted against NVDA.
