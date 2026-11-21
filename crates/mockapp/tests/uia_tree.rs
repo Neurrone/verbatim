@@ -731,10 +731,11 @@ fn a_title_bar_is_stepped_from_by_the_classic_calls() {
     let app = common::spawn("tree.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
     let uia = Uia::new().expect("Uia::new");
-    let fill = Fill::new(
-        &uia.request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
-            .expect("the node's request"),
-    );
+    // As a read of many nodes asks, with no place: a title bar's place has
+    // UIA ask the window's thread (`WM_GETTITLEBARINFOEX`), which can take
+    // seconds while the Desktop Window Manager is busy with a parallel
+    // mockapp run (`books/dev/src/how-to/troubleshooting.md`).
+    let fill = Fill::new(&many_nodes(&uia));
     let root = uia.window_live(hwnd).expect("mockapp's window element");
     let root = root
         .refresh(&uia.request_fixed::<TextEvent>().expect("a request"))
@@ -766,20 +767,21 @@ fn a_title_bar_is_stepped_from_by_the_classic_calls() {
     let (first, _) = step(&window, NavigationDirection::FirstChild, false);
     let title_bar = first.neighbor.expect("the title bar");
     let title_bar_kept = kept(&title_bar.narrow());
-    // Only the path is asserted, not the neighbour: a step from the title
-    // bar goes through UIA's proxy to the window, which can take seconds
-    // and fail while the Desktop Window Manager is busy with a parallel
-    // mockapp run (`books/dev/src/how-to/troubleshooting.md`), and the old
-    // path's import failed before any step was taken.
-    let (_, path) = step(&title_bar_kept, NavigationDirection::NextSibling, true);
+    let (next, path) = step(&title_bar_kept, NavigationDirection::NextSibling, true);
 
     assert_eq!(
         (
             title_bar.read().role.role(),
             title_bar_kept.served_only_by_uia_proxies(),
             matches!(path, Path::Classic),
+            next.neighbor.map(|neighbor| neighbor.read().name),
         ),
-        (Role::TitleBar, Some(true), true),
+        (
+            Role::TitleBar,
+            Some(true),
+            true,
+            Some(Some("Group One".to_owned()))
+        ),
         "{path:?}"
     );
     app.quit();
