@@ -90,7 +90,10 @@ recorder unchanged. What the reducer does with each type is in
   read only for a node read alone), and `window` (the `WindowHandle` of
   the window the node is, carried only by a plain window, a UI Automation
   element that is its window's own, and an MSAA window or client object,
-  never a nearest window, and left out of the message when absent).
+  never a nearest window, and left out of the message when absent), and
+  `uia_layout` (a UI Automation ancestor that UI Automation does not
+  count both a control and content, which Core does not present as focus
+  context; carried to Core on `FocusAncestor::uia_layout`).
   Everything in `NodeDetails` defaults
   to "not reported", and its serde default keeps older recordings
   deserializing.

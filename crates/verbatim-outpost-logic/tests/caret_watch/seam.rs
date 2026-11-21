@@ -804,6 +804,7 @@ fn focus_read(node: NodeId, window: NodeWindow, values: PropertyValues) -> Focus
                 runtime_id: None,
             },
             simple_child: false,
+            uia_layout: false,
         }],
         met: None,
         foreground: None,

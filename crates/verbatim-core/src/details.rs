@@ -28,19 +28,6 @@ pub(crate) fn focus_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId>
     )
 }
 
-/// The property set of a listener read whose walk a completion judges
-/// ([`node_set`]), with the description kept whatever the settings: the
-/// completion judges each ancestor's layout with it, as NVDA's
-/// presentation type reads it whatever the theme, so an unnamed grouping
-/// with a description stays focus context
-/// (`books/dev/src/explanation/design/uia-shapes.md`, decision 4). The
-/// completion reports the description only as [`node_set`] names it. The
-/// listener reads it with every element of the walk in any case, so this
-/// adds no call.
-pub(crate) fn walk_set(state: &SrState, base: &[PropertyId]) -> Vec<PropertyId> {
-    set_keeping(state, base, &[PropertyId::Description])
-}
-
 /// [`node_set`], with the description kept whatever the settings: a live
 /// read of an object reviewed as flat text, whose text, NVDA's basic text,
 /// holds the description whatever the theme reports
@@ -91,7 +78,7 @@ mod tests {
     use verbatim_model::property::{NodeDetail, NodeDetailSet, PropertyId};
     use verbatim_model::{FormatSet, ReportedDetails, TextDetails, TextUnit};
 
-    use super::{node_set, text_details, walk_set};
+    use super::{description_kept, node_set, text_details};
     use crate::state::SrState;
 
     fn state(reported: ReportedDetails) -> SrState {
@@ -171,11 +158,11 @@ mod tests {
         assert_eq!(without(NodeDetail::Cell), less(&[PropertyId::Cell]));
     }
 
-    /// A walked read keeps the description with descriptions off, for the
-    /// completion's layout judgment, and leaves out every other detail
+    /// A flat review's live read keeps the description with descriptions
+    /// off, for the object's flat text, and leaves out every other detail
     /// turned off.
     #[test]
-    fn a_walked_read_keeps_the_description_whatever_the_settings() {
+    fn a_flat_reviews_read_keeps_the_description_whatever_the_settings() {
         let off = state(ReportedDetails {
             node: NodeDetailSet::ALL
                 .without(NodeDetail::Description)
@@ -183,7 +170,7 @@ mod tests {
             ..ReportedDetails::ALL
         });
         assert_eq!(
-            walk_set(&off, BASE),
+            description_kept(&off, BASE),
             [
                 PropertyId::Name,
                 PropertyId::Description,
@@ -194,7 +181,7 @@ mod tests {
                 PropertyId::Rect,
             ]
         );
-        assert_eq!(walk_set(&state(ReportedDetails::ALL), BASE), BASE);
+        assert_eq!(description_kept(&state(ReportedDetails::ALL), BASE), BASE);
     }
 
     /// A caret key's paragraph read leaves out spelling and

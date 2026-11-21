@@ -2334,3 +2334,120 @@ fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_com
         )
     );
 }
+
+/// The Details view button's description in the capture.
+const DESCRIBED: &str = "Displays information about each item in the window.";
+
+/// NVDA's capture `tests/fixtures/f5-address-tab.jsonl`, Tab from File
+/// Explorer's address bar: at step 8 the items list and its first item,
+/// "Items View  list" then "Inbox  not selected  1 of 3", no pane between;
+/// at step 10 "Status bar  status bar", "View Modes  grouping", then the
+/// radio button; at step 11 "tab control", "list", then the tab. The
+/// readers report every ancestor, layout ones included, and Core judges
+/// which are focus context, over the whole chain, as NVDA's focus ancestry
+/// holds every object and its speech filters them (`api.py` 104 to 147;
+/// `eventHandler.py` 418; `NVDAObjects/__init__.py` 1164 to 1177). The
+/// chains are made for this test to the capture's speech: unnamed panes
+/// and an element UI Automation counts no content stand where File
+/// Explorer has layout, which no recording of its whole chain shows yet.
+#[test]
+fn focus_context_is_judged_over_the_whole_chain_as_nvdas_capture() {
+    let mut desk = Desk::new();
+    let window = frame(ONE, "verbatim-e2e-b5 - File Explorer");
+    let plain = |id, role, name: Option<&str>| node(ONE, id, role, name, None, StateSet::new());
+    let position = |position, size| {
+        UtteranceSegment::new(SegmentContent::Position {
+            position,
+            set_size: Some(size),
+        })
+    };
+    let pane = |id| plain(id, Role::Pane, None);
+    let mut hidden = plain(12, Role::Group, Some("Shell view"));
+    hidden.details.uia_layout = true;
+    let details = plain(20, Role::Button, Some("Details"));
+    let _ = desk.focus(ONE, &details, &[window.clone(), pane(10), pane(11)]);
+
+    // Step 8.
+    let list = plain(30, Role::List, Some("Items View"));
+    let mut inbox = plain(31, Role::ListItem, Some("Inbox"));
+    inbox.states = states(&[State::Selectable, State::Focusable]);
+    inbox.details.position_in_set = Some(1);
+    inbox.details.set_size = Some(3);
+    let items = [window.clone(), pane(10), hidden, pane(13), list];
+    assert_eq!(
+        desk.focus(ONE, &inbox, &items),
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 31, &[FRAME, 10, 12, 13, 30]),
+            vec![
+                vec![UtteranceSegment::label("Items View"), role(Role::List)],
+                vec![
+                    UtteranceSegment::label("Inbox"),
+                    UtteranceSegment::new(SegmentContent::NegatedState(State::Selected)),
+                    position(1, 3),
+                ],
+            ]
+        )
+    );
+    let header = plain(32, Role::SplitButton, Some("Name"));
+    let mut header_line = items.to_vec();
+    header_line.push(plain(33, Role::Group, None));
+    let _ = desk.focus(ONE, &header, &header_line);
+
+    // Step 10.
+    let mut radio = plain(52, Role::RadioButton, Some("Details"));
+    radio.states = states(&[State::Checked, State::Focusable]);
+    radio.details.description = Some(DESCRIBED.to_owned());
+    let status = [
+        window.clone(),
+        pane(10),
+        plain(50, Role::StatusBar, Some("Status bar")),
+        plain(51, Role::Group, Some("View Modes")),
+    ];
+    assert_eq!(
+        desk.focus(ONE, &radio, &status),
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 52, &[FRAME, 10, 50, 51]),
+            vec![
+                vec![UtteranceSegment::label("Status bar"), role(Role::StatusBar)],
+                vec![UtteranceSegment::label("View Modes"), role(Role::Group)],
+                vec![
+                    UtteranceSegment::label("Details"),
+                    role(Role::RadioButton),
+                    state(State::Checked),
+                    UtteranceSegment::new(SegmentContent::Description(DESCRIBED.to_owned())),
+                ],
+            ]
+        )
+    );
+
+    // Step 11.
+    let mut tab = plain(63, Role::Tab, Some("verbatim-e2e-b5"));
+    tab.states = states(&[State::Selected, State::Selectable, State::Focusable]);
+    tab.details.position_in_set = Some(1);
+    tab.details.set_size = Some(1);
+    let tabs = [
+        window,
+        pane(60),
+        plain(61, Role::TabControl, None),
+        plain(62, Role::List, None),
+    ];
+    assert_eq!(
+        desk.focus(ONE, &tab, &tabs),
+        focus_heard(
+            ONE,
+            focus_now_in(ONE, 63, &[FRAME, 60, 61, 62]),
+            vec![
+                vec![role(Role::TabControl)],
+                vec![role(Role::List)],
+                vec![
+                    UtteranceSegment::label("verbatim-e2e-b5"),
+                    role(Role::Tab),
+                    state(State::Selected),
+                    position(1, 1),
+                ],
+            ]
+        )
+    );
+}

@@ -2203,6 +2203,7 @@ fn read_snapshot_with(
             window,
             above_boundary: false,
             desktop_window: false,
+            uia_layout: false,
         },
     }
 }

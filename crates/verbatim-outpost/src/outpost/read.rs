@@ -707,20 +707,15 @@ fn window_object_onward(
             tracing::debug!(hwnd, %error, "a UIA window's element could not be read; the focus is lost");
             FocusLost
         })?;
-        let top = element.snapshot(context.nodes());
-        let top_id = top.id;
         // The window's own element, the UIA object NVDA switches to there
         // (`correctAPIForRelation`, `NVDAObjects/window/__init__.py` 319),
-        // is reported only when it is focus context by UIA's rule, as
-        // every UIA ancestor is ([`Ancestor::is_focus_context`]).
-        let below = if element.read().is_focus_context(&top) {
-            if known(top_id) {
-                return Ok(Some(vec![top]));
-            }
-            vec![top]
-        } else {
-            Vec::new()
-        };
+        // is reported as every UIA ancestor is, whatever it is, for Core
+        // to judge.
+        let top = element.ancestor_snapshot(context.nodes());
+        if known(top.id) {
+            return Ok(Some(vec![top]));
+        }
+        let below = vec![top];
         // The raw view's chain this walk steps through, from the window's
         // element, for the routes to the nodes it mints.
         let walked = RefCell::new(vec![(element.runtime_id(), hwnd)]);

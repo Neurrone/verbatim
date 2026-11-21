@@ -1405,9 +1405,8 @@ the MSAA read takes the system's keyboard focus, which no test on its own
 desktop can give mockapp.
 
 - Minimum and today: the query's read, 2 UIA calls and 1 window message,
-  plus the text pattern's fetch and one program remotely (2), or the
-  fetch and 35 calls classically (36): 4 UIA calls and 1 window message
-  remotely, 40 and 1 classically; met. A selection adds what it adds to a
+  plus the text pattern's fetch and one program remotely, or the fetch
+  and the classic reads; the figures are the test's; met. A selection adds what it adds to a
   reported focus. A terminal's follow-up read is outside the answer's
   count.
 

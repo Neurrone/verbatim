@@ -511,6 +511,10 @@ pub struct TableCounts {
 /// can (UIA from cached properties, MSAA from its per-property calls), and
 /// absence never suppresses an announcement — the reducer simply says less.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a fact of its own that one reader sets, left out of the message when false"
+)]
 pub struct NodeDetails {
     /// Accessible description, when it adds information beyond the name
     /// (UIA `FullDescription`/`HelpText`, MSAA `accDescription`).
@@ -592,6 +596,15 @@ pub struct NodeDetails {
     /// `false`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub desktop_window: bool,
+    /// Whether UI Automation does not count the node both a control and a
+    /// content element, which makes NVDA take a UI Automation object for
+    /// layout whatever its role (`presentationType`,
+    /// `NVDAObjects/UIA/__init__.py` 2121 to 2128), so Core does not
+    /// present it as focus context. Set only on a UI Automation ancestor
+    /// of a focus, which the reader reports whatever it is; `false` on
+    /// every other node. Left out of the message when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uia_layout: bool,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

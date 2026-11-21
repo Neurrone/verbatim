@@ -16,6 +16,19 @@ level, or (except a list) keyboard shortcut. Top-level windows are the
 exception, in the next entry; a slider that focuses its thumb is
 another, in "A slider that focuses its thumb".
 
+The readers report every ancestor below the desktop, layout ones
+included, with whether UI Automation counts it a control and content,
+and Core alone applies the filter, to what it speaks, so the meeting
+point below is judged over the whole chain, as NVDA's focus difference
+level is. **Matched** against NVDA's capture of Tab through File
+Explorer from its address bar
+(`crates/verbatim-core/tests/fixtures/f5-address-tab.jsonl`: "Items View
+list" then the item with no pane between; "Status bar", "View Modes
+grouping", then the radio button; "tab control", "list", then the tab),
+pinned by `focus_context_is_judged_over_the_whole_chain_as_nvdas_capture`
+over chains made to the capture, since no recording of File Explorer's
+whole chain exists yet.
+
 The containers entered are found as NVDA builds its focus line when the
 focus moves (`api.setFocusObject`): the new focus's chain is walked from
 the focus outward, and at each entry the previous line, the previous
@@ -107,11 +120,10 @@ user is away, from NVDA's capture) and `measure_focus_return`.
 Speech is cut when the two lines differ just below the desktop, sharing
 no entry, NVDA's focus difference level of one or less, which runs its
 foreground event and cancels speech (`eventHandler.doPreGainFocus`); not
-when they meet below it. The readers leave out of a chain entries
-that NVDA's line holds: the UI Automation reader every entry that is not
-presentable, among them an unnamed top-level window and every layout
-container, and the MSAA reader its window objects only, so a chain can
-be empty, and the focus's top-level window,
+when they meet below it. The UI Automation reader reports every entry
+below the desktop; the MSAA reader leaves out its window objects, which
+NVDA's line holds, so an MSAA chain can be empty, and the focus's
+top-level window,
 which its window facts name, stands for the entry just below the
 desktop: two chains in one top-level window that share no entry meet
 there, empty chains or not, and speech is not cut, except for a focus whose

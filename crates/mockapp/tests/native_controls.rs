@@ -400,7 +400,7 @@ fn bidirectional_marks_are_stripped_from_a_name() {
     assert_eq!(
         core.command(verbatim_model::ReviewCommand::ReviewNextCharacter)
             .spoken(),
-        [vec![SegmentContent::Text("8".to_owned())]]
+        [vec![SegmentContent::Character("8".to_owned())]]
     );
     drop(core);
     app.quit();
@@ -483,8 +483,9 @@ fn a_win32_control_in_a_uia_window_has_the_windows_element_as_context() {
 }
 
 /// The same button, in a UIA window that UIA does not count as content:
-/// the window is layout by NVDA's rule for a UIA object, so it is not among
-/// the button's ancestors, and the button is spoken alone.
+/// the window is reported among the button's ancestors, marked so, and is
+/// layout by NVDA's rule for a UIA object, which Core applies, so the
+/// button is spoken alone.
 fn a_uia_window_that_is_not_content_is_no_context_for_a_win32_control() {
     let (app, host, mut core) = started(
         "boundary_uia_layout_host.json",
@@ -492,7 +493,10 @@ fn a_uia_window_that_is_not_content_is_no_context_for_a_win32_control() {
         "mockapp-boundary-uia-layout",
     );
     let (said, apply) = msaa_heard(&mut core, button(host, w!("Apply")), (OBJID_CLIENT.0, 0));
-    assert_eq!(apply.chain(), [Some("Apply")]);
+    assert_eq!(
+        apply.chain(),
+        [Some("Mockapp Boundary Fixture"), Some("Apply")]
+    );
     assert_eq!(
         said,
         [vec![

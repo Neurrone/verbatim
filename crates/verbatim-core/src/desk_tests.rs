@@ -361,6 +361,7 @@ pub(crate) fn focus_read_of(
             .map(|ancestor| FocusAncestor {
                 node: focus_node(app, ancestor),
                 simple_child: false,
+                uia_layout: ancestor.details.uia_layout,
             })
             .collect(),
         met: None,

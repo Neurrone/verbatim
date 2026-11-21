@@ -374,6 +374,7 @@ fn focus_read(depth: u64, console: bool) -> FocusRead {
                 ])),
             },
             simple_child: false,
+            uia_layout: false,
         })
         .chain(console.then(console_window))
         .collect();
@@ -435,6 +436,7 @@ fn console_window() -> verbatim_model::request::FocusAncestor {
             runtime_id: Some(RuntimeId(vec![42, 99_999])),
         },
         simple_child: false,
+        uia_layout: false,
     }
 }
 

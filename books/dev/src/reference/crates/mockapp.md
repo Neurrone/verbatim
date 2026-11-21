@@ -614,9 +614,7 @@ Each file's module comment says exactly what it asserts; in outline:
   from the nearest window its read carries; a focus captured
   before its item was selected is reported with the item selected; a
   foreground event for a UIA-read window is dropped and the focus that
-  follows reported alone; and over `described_group.json` an unnamed
-  grouping with a description is reported as focus context without the
-  description when the theme turns descriptions off.
+  follows reported alone.
 - `slow_application.rs`: a real outpost waits for a slow application
   rather than cutting it off. It reports a focus on an `msaa`-backend
   mockapp whose window thread is stalled with `stall`, the read having

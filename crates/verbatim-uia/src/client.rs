@@ -647,8 +647,10 @@ impl Uia {
     /// ([`AncestorWalk::Cut`]); and at a hop that fails, by UIA's
     /// transaction timeout or otherwise, or finds no parent, from an
     /// element below the root, reporting where the chain goes on
-    /// ([`AncestorWalk::Failed`]): only the root ends a complete walk. Ancestors that are not presentable focus context are
-    /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
+    /// ([`AncestorWalk::Failed`]): only the root ends a complete walk, the
+    /// root itself unreported. Every ancestor below it is reported, with
+    /// whether UI Automation counts it a control and content, for Core to
+    /// judge ([`verbatim_model::NodeDetails::uia_layout`]).
     /// `nearest` is `element`'s nearest window, from which the outermost
     /// element's is followed ([`outermost_nearest_window`](verbatim_win32::provider::outermost_nearest_window)),
     /// 0 when not known.
@@ -778,6 +780,11 @@ impl Uia {
                     chain.reverse();
                     log(hops, "met a known ancestor");
                     return Ok((chain, None, AncestorWalk::MetKnown(id)));
+                }
+                Taken::Desktop => {
+                    chain.reverse();
+                    log(hops, "root");
+                    return Ok((chain, None, AncestorWalk::Complete));
                 }
             }
         }
@@ -959,6 +966,9 @@ enum Taken {
     Crossed(isize),
     /// The ancestor was reported and is already known.
     Known(verbatim_model::NodeId),
+    /// The ancestor is the desktop's root, which ends the chain unreported,
+    /// since a focus's chain ends below the desktop.
+    Desktop,
 }
 
 /// The chain of ancestors already read, `parents`, nearest first, each
@@ -983,6 +993,7 @@ fn chain_of<T>(
                 ending = (None, AncestorWalk::MetKnown(id));
                 break;
             }
+            Taken::Desktop => break,
         }
     }
     chain.reverse();
@@ -990,16 +1001,14 @@ fn chain_of<T>(
 }
 
 /// One ancestor of a walk, nearest first, read as an [`Ancestor`]: the
-/// stop at a window read through the other API, then the report, filtered,
-/// and the stop at a known ancestor. Non-presentable ancestors are crossed
-/// but never reported, NVDA's `isPresentableFocusAncestor`, which filters
-/// spoken focus context regardless of its review-mode setting (object
-/// navigation, by contrast, sees the full tree, the recorded decision in
-/// `verbatim-uia-rops`' navigation step); a
-/// UIA element is content only when UIA counts it both a control and
-/// content, as NVDA requires. The layout judgment reads the ancestor's
-/// description whatever the theme, while the snapshot reported carries the
-/// description only when the theme's gate fetched it.
+/// stop at a window read through the other API, the end at the desktop's
+/// root (Claude, 2026-11-21), then the report, and the stop at a known
+/// ancestor. Every ancestor below the desktop is reported, with whether UI
+/// Automation counts it both a control and content
+/// ([`verbatim_model::NodeDetails::uia_layout`]): Core alone judges which
+/// ancestors are focus context, over the whole chain, as NVDA's focus
+/// ancestry holds every object and only its speech filters them
+/// (`api.py` 104 to 147; `eventHandler.py` 418).
 fn take_shaped_ancestor(
     parent: &Cached<Ancestor>,
     registry: &dyn Interning,
@@ -1014,15 +1023,16 @@ fn take_shaped_ancestor(
     if let Some(visited) = stops.visited {
         visited(&parent.runtime_id(), hwnd);
     }
-    let snapshot = parent.snapshot(registry);
-    let description = read.layout_description();
-    take_reported(
-        snapshot,
-        read.is_control_and_content(),
-        description.as_deref(),
-        stops.known,
-        chain,
-    )
+    if is_desktop(hwnd) {
+        return Taken::Desktop;
+    }
+    take_reported(parent.ancestor_snapshot(registry), stops.known, chain)
+}
+
+/// Whether `hwnd` is the desktop window, whose element is UI Automation's
+/// root. Local.
+fn is_desktop(hwnd: isize) -> bool {
+    hwnd != 0 && hwnd == verbatim_win32::window::desktop_window()
 }
 
 /// [`take_shaped_ancestor`] for an ancestor another process read
@@ -1040,7 +1050,12 @@ fn take_ancestor_parts(
     if let Some(visited) = stops.visited {
         visited(&parent.parts.runtime_id, parent.hwnd);
     }
+    if is_desktop(parent.hwnd) {
+        return Taken::Desktop;
+    }
     let parts = &parent.parts;
+    let mut details = parts.details.clone();
+    details.uia_layout = !parent.content;
     let snapshot = NodeSnapshot {
         id: registry.id_for(&parts.runtime_id),
         backend: verbatim_model::Backend::Uia,
@@ -1048,49 +1063,23 @@ fn take_ancestor_parts(
         name: parts.name.clone(),
         value: parts.value.clone(),
         states: parts.states,
-        details: parts.details.clone(),
+        details,
     };
-    let description = parts.details.description.clone();
-    take_reported(
-        snapshot,
-        parent.content,
-        description.as_deref(),
-        stops.known,
-        chain,
-    )
+    take_reported(snapshot, stops.known, chain)
 }
 
-/// The report of one ancestor, filtered, and the stop at a known one: the
-/// part of [`take_shaped_ancestor`] that does not depend on where the ancestor
-/// was read. `description` is the one the layout judgment reads.
+/// The report of one ancestor and the stop at a known one: the part of
+/// [`take_shaped_ancestor`] that does not depend on where the ancestor was
+/// read.
 fn take_reported(
     snapshot: NodeSnapshot,
-    content: bool,
-    description: Option<&str>,
     known: &dyn Fn(verbatim_model::NodeId) -> bool,
     chain: &mut Vec<NodeSnapshot>,
 ) -> Taken {
-    let presentable = is_presentable_focus_ancestor(&snapshot, description);
-    if !(presentable && content) {
-        tracing::debug!(
-            role = ?snapshot.role,
-            name = ?snapshot.name,
-            presentable,
-            content,
-            "focus ancestor not reported: {}",
-            if presentable {
-                "not a control and content element"
-            } else {
-                "layout or an item, not focus context"
-            }
-        );
-    }
-    if presentable && content {
-        let id = snapshot.id;
-        chain.push(snapshot);
-        if known(id) {
-            return Taken::Known(id);
-        }
+    let id = snapshot.id;
+    chain.push(snapshot);
+    if known(id) {
+        return Taken::Known(id);
     }
     Taken::Continue
 }
@@ -1265,168 +1254,9 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
     unsafe { client.SetTransactionTimeout(milliseconds(UIA_TRANSACTION_TIMEOUT)) }
 }
 
-/// NVDA's layout judgment (`presentationType`), ported from
-/// `nvda/source/NVDAObjects/__init__.py` onto Verbatim's role vocabulary: a
-/// layout element structures the tree without communicating anything on its
-/// own. Unknown and pane roles are always layout; static text with no
-/// readable text is layout; a window, property page, or grouping with
-/// neither name nor description is layout. NVDA's "unavailable" tier
-/// (invisible objects) is deliberately not ported: our `State::Offscreen`
-/// maps UIA's `IsOffscreen`, which also marks scrolled-out but perfectly
-/// real content.
-///
-/// Used only to filter *spoken focus ancestry* (see
-/// [`is_presentable_focus_ancestor`]); object navigation deliberately sees
-/// the full tree, matching NVDA with its simple review mode off (the
-/// recorded decision in `verbatim-uia-rops`' navigation step).
-/// `description` is the node's
-/// description whatever the theme, as NVDA's judgment reads it whatever
-/// its setting (decision 4 of `books/dev/src/explanation/design/uia-shapes.md`).
-fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
-    use verbatim_model::Role;
-    fn blank(text: Option<&str>) -> bool {
-        text.is_none_or(|text| text.trim().is_empty())
-    }
-    match snapshot.role {
-        Role::Unknown | Role::Pane | Role::TitleBar => true,
-        Role::StaticText => blank(snapshot.name.as_deref()),
-        Role::Window | Role::PropertyPage | Role::Group => {
-            blank(snapshot.name.as_deref()) && blank(description)
-        }
-        _ => false,
-    }
-}
-
-impl Ancestor {
-    /// Whether the element read as this ancestor, and reported as
-    /// `snapshot`, is worth speaking as focus context by NVDA's rule for a
-    /// UIA object: presentable by its role, name, and description
-    /// (`is_presentable_focus_ancestor`), and counted by UI Automation both
-    /// a control and content, without which NVDA takes a UIA object for
-    /// layout (`_get_presentationType`, `NVDAObjects/UIA/__init__.py` 2121
-    /// to 2130). Every UIA ancestor a walk reports passes it; the outpost
-    /// applies it as well to the element of a window read through UIA that
-    /// an MSAA walk crosses into. Judged with its description whatever the
-    /// theme. Local.
-    #[must_use]
-    pub fn is_focus_context(&self, snapshot: &NodeSnapshot) -> bool {
-        let description = self.layout_description();
-        is_presentable_focus_ancestor(snapshot, description.as_deref())
-            && self.is_control_and_content()
-    }
-}
-
-/// NVDA's `isPresentableFocusAncestor`: whether an ancestor is worth
-/// speaking as focus context. Layout elements are not; neither are roles
-/// that never meaningfully contain the focus for announcement purposes —
-/// list items, tree items, progress bars, and editable text. NVDA applies
-/// this to focus ancestry regardless of its review-mode setting.
-/// `description` is the one [`is_layout`] reads.
-fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {
-    use verbatim_model::Role;
-    if is_layout(snapshot, description) {
-        return false;
-    }
-    !matches!(
-        snapshot.role,
-        Role::ListItem | Role::TreeItem | Role::ProgressBar | Role::EditableText
-    )
-}
-
 #[cfg(test)]
 mod presentation_tests {
-    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
-
-    /// [`super::is_layout`], judged with the snapshot's own description.
-    fn is_layout(snapshot: &NodeSnapshot) -> bool {
-        super::is_layout(snapshot, snapshot.details.description.as_deref())
-    }
-
-    /// [`super::is_presentable_focus_ancestor`], judged with the snapshot's
-    /// own description.
-    fn is_presentable_focus_ancestor(snapshot: &NodeSnapshot) -> bool {
-        super::is_presentable_focus_ancestor(snapshot, snapshot.details.description.as_deref())
-    }
-
-    fn snapshot(role: Role, name: Option<&str>, description: Option<&str>) -> NodeSnapshot {
-        let details = NodeDetails {
-            description: description.map(str::to_owned),
-            ..NodeDetails::default()
-        };
-        NodeSnapshot {
-            id: NodeId::new(1),
-            backend: Backend::Uia,
-            role,
-            name: name.map(str::to_owned),
-            value: None,
-            states: StateSet::default(),
-            details,
-        }
-    }
-
-    #[test]
-    fn panes_and_unknowns_are_always_layout() {
-        assert!(is_layout(&snapshot(Role::Pane, Some("named"), None)));
-        assert!(is_layout(&snapshot(Role::Unknown, Some("named"), None)));
-    }
-
-    #[test]
-    fn unnamed_groupings_and_windows_are_layout_but_named_ones_are_content() {
-        assert!(is_layout(&snapshot(Role::Group, None, None)));
-        assert!(is_layout(&snapshot(Role::Window, Some("  "), None)));
-        assert!(!is_layout(&snapshot(
-            Role::Group,
-            Some("Quick access"),
-            None
-        )));
-        assert!(!is_layout(&snapshot(Role::Group, None, Some("described"))));
-    }
-
-    #[test]
-    fn blank_static_text_is_layout_and_real_text_is_content() {
-        assert!(is_layout(&snapshot(Role::StaticText, None, None)));
-        assert!(!is_layout(&snapshot(
-            Role::StaticText,
-            Some("3 items"),
-            None
-        )));
-    }
-
-    #[test]
-    fn interactive_roles_are_content_even_unnamed() {
-        assert!(!is_layout(&snapshot(Role::List, None, None)));
-        assert!(!is_layout(&snapshot(Role::ListItem, None, None)));
-        assert!(!is_layout(&snapshot(Role::Button, None, None)));
-    }
-
-    #[test]
-    fn item_and_text_roles_are_not_presentable_focus_ancestors() {
-        assert!(!is_presentable_focus_ancestor(&snapshot(
-            Role::ListItem,
-            Some("Desktop"),
-            None
-        )));
-        assert!(!is_presentable_focus_ancestor(&snapshot(
-            Role::TreeItem,
-            Some("Home"),
-            None
-        )));
-        assert!(!is_presentable_focus_ancestor(&snapshot(
-            Role::EditableText,
-            Some("Search"),
-            None
-        )));
-        assert!(is_presentable_focus_ancestor(&snapshot(
-            Role::Group,
-            Some("Quick access"),
-            None
-        )));
-        assert!(!is_presentable_focus_ancestor(&snapshot(
-            Role::Pane,
-            Some("named"),
-            None
-        )));
-    }
+    use verbatim_model::{NodeDetails, NodeSnapshot, Role, StateSet};
 
     /// An ancestor another process read, named `name` with role `role`,
     /// runtime id `[42, id]`, window `hwnd`, both a control and content.
@@ -1450,14 +1280,16 @@ mod presentation_tests {
     }
 
     #[test]
-    fn ancestors_read_elsewhere_are_filtered_and_stop_at_a_window_of_the_other_api() {
+    fn ancestors_read_elsewhere_are_all_reported_and_stop_at_a_window_of_the_other_api() {
         let registry =
             crate::NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
         let mut hidden = parts(3, Role::Group, "not content", 0);
         hidden.content = false;
-        // Nearest first: a list, a pane (layout), a group UIA counts no
-        // content, a named group, and the root of a window read through
-        // MSAA, where the chain stops with that window.
+        // Nearest first: a list, a pane, a group UIA counts no content, a
+        // named group, and the root of a window read through MSAA, where
+        // the chain stops with that window. Every one below it is
+        // reported, the group UIA counts no content marked so, for Core
+        // to judge.
         let parents = [
             parts(1, Role::List, "Items", 0),
             parts(2, Role::Pane, "Shell", 0),
@@ -1474,15 +1306,30 @@ mod presentation_tests {
         };
         let (chain, crossed, walked) =
             super::Uia::ancestor_chain_from_parts(&parents, &registry, &stops);
-        assert_eq!(names(&chain), [Some("Folder"), Some("Items")]);
+        assert_eq!(
+            names(&chain),
+            [
+                Some("Folder"),
+                Some("not content"),
+                Some("Shell"),
+                Some("Items")
+            ]
+        );
+        assert_eq!(
+            chain
+                .iter()
+                .map(|node| node.details.uia_layout)
+                .collect::<Vec<_>>(),
+            [false, true, false, false]
+        );
         assert_eq!((crossed, walked), (Some(77), super::AncestorWalk::Complete));
         assert_eq!(
-            registry.runtime_id_of(chain[1].id),
+            registry.runtime_id_of(chain[3].id),
             Some(vec![42, 1]),
             "each node is minted from its runtime id"
         );
         assert!(
-            registry.element_of(chain[1].id).is_none(),
+            registry.element_of(chain[3].id).is_none(),
             "with no element kept"
         );
     }

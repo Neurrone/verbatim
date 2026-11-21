@@ -520,8 +520,11 @@ fn entered_window(
 /// window's own entry in its chain, `ancestors`, the outermost entry with
 /// that window handle, which stands for the window (its UIA element, MSAA
 /// window or client object, or plain window), unless its line already
-/// speaks it among the `entered` containers. An entry with no name, and a
-/// chain with no entry for the window, add nothing.
+/// speaks it among the `entered` containers. An entry UI Automation does
+/// not count a control and content does not stand for the window
+/// ([`verbatim_model::NodeDetails::uia_layout`]), as it said nothing before
+/// the reader reported such entries (Claude, 2026-11-21). An entry with no
+/// name, and a chain with no entry for the window, add nothing.
 fn window_title<'a>(
     top_level: WindowHandle,
     ancestors: &'a [LineEntry],
@@ -530,6 +533,7 @@ fn window_title<'a>(
     let entry = ancestors
         .iter()
         .map(|ancestor| &ancestor.snapshot)
+        .filter(|ancestor| !ancestor.details.uia_layout)
         .find(|ancestor| ancestor.details.window == Some(top_level))?;
     let spoken = entered.iter().any(|container| {
         container.id == entry.id
@@ -1539,11 +1543,13 @@ struct JoinedAncestry<'a> {
 /// replaced by a new one with the same role and name, such as File
 /// Explorer's items view list after a folder is opened, among them; the
 /// outpost gives an MSAA object reached by another path the id NVDA's
-/// equality finds it to have. The readers leave out of a chain the entries that are not presentable,
-/// among them an unnamed UI Automation top-level window, an MSAA window
-/// object and every layout container, which NVDA's line holds, so the
-/// focus's top-level window, which its window facts name, stands for the
-/// entry just below the desktop ([`ancestry_top`]): with no object of the
+/// equality finds it to have. The chains are whole, layout containers
+/// included, as NVDA's focus ancestry is, so the meeting point is NVDA's
+/// focus difference level and only speech filters what is not presentable
+/// ([`is_presentable_container`]); the MSAA reader alone leaves out a
+/// window object, as NVDA's own walk does, so the focus's top-level
+/// window, which its window facts name, stands for the entry just below
+/// the desktop ([`ancestry_top`]): with no object of the
 /// chains shared, two lines in one top-level window meet there, empty
 /// chains or not, the whole chain is entered and speech is not cut, and
 /// lines in two top-level windows differ just below the desktop: the whole
@@ -1684,6 +1690,10 @@ fn committed_top(state: &SrState) -> Option<WindowHandle> {
 /// - `StaticText` with no text, which is nothing.
 /// - Any node that is invisible ([`State::Invisible`]), which NVDA counts
 ///   unavailable, never presented in the focus ancestry.
+/// - A UI Automation node that UI Automation does not count both a control
+///   and a content element ([`verbatim_model::NodeDetails::uia_layout`]),
+///   which NVDA takes for layout whatever its role
+///   (`NVDAObjects/UIA/__init__.py` 2121 to 2128).
 ///
 /// Whitespace-only names and descriptions count as absent. Everything else
 /// speaks on entry whether named or not: dialogs, toolbars, and an unnamed
@@ -1691,7 +1701,7 @@ fn committed_top(state: &SrState) -> Option<WindowHandle> {
 /// behavior is recorded in `docs/parity/focus-context.md`, "Focus-ancestry
 /// context".
 fn is_presentable_container(node: &NodeSnapshot) -> bool {
-    if node.states.contains(State::Invisible) {
+    if node.states.contains(State::Invisible) || node.details.uia_layout {
         return false;
     }
     let named = has_text(node.name.as_deref());

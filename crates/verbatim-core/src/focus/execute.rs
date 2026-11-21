@@ -322,8 +322,10 @@ fn ready(
     // Nearest first, as the walk read them.
     let mut ancestors = Vec::new();
     for ancestor in &read.ancestors {
+        let mut entry = snapshot(&ancestor.node, node_backend(&ancestor.node, backend))?;
+        entry.details.uia_layout = ancestor.uia_layout;
         ancestors.push(LineEntry {
-            snapshot: snapshot(&ancestor.node, node_backend(&ancestor.node, backend))?,
+            snapshot: entry,
             runtime_id: ancestor.node.runtime_id.clone(),
             simple_child: ancestor.simple_child,
         });

@@ -1115,6 +1115,7 @@ pub(super) fn focus_read(
                 .store
                 .key_of(ancestor.id)
                 .is_some_and(|(_, _, child)| child != verbatim_ia2::CHILDID_SELF),
+            uia_layout: ancestor.details.uia_layout,
         })
         .collect();
     FocusRead {

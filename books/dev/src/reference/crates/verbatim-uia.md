@@ -189,16 +189,14 @@ hop from an element whose own window has a parent window, or visible
 owner, that another process serves, it stops and answers that window as
 the one to continue through the other API.
 
-Ancestors that are not presentable focus context, by NVDA's
-`isPresentableFocusAncestor` ported (layout elements, that is unknown and
-pane roles, textless static text, nameless windows, property pages, and
-groupings, plus list items, tree items, and editable text), are crossed
-but never reported; a UIA element must also be both a control and
-content. `Ancestor::is_focus_context(snapshot)` is that whole test,
-public so the outpost applies it to the element of a UIA window an MSAA
-walk crosses into. The layout judgment reads the ancestor's own
-description whatever the theme, as NVDA's `presentationType` does
-(decision 4 of `books/dev/src/explanation/design/uia-shapes.md`).
+Every ancestor below the desktop is reported, layout ones included, as
+NVDA's focus ancestry holds every object; the desktop's root element
+ends the walk unreported, since a focus's chain ends below the desktop
+(Claude, 2026-11-21). Each carries whether UI Automation counts it both a
+control and content (`NodeDetails::uia_layout`, set by
+`Cached<Ancestor>::ancestor_snapshot`), and Core alone judges which are
+focus context, by NVDA's `isPresentableFocusAncestor`, over the whole
+chain.
 
 - `Uia::ancestors_from(parents, registry, stops)` gives the same result
   from ancestors already fetched as `Ancestor`s, nearest first, such as
@@ -643,7 +641,8 @@ patterns its request holds.
   keeps the element), covering `Kept` and `FocusInput`; `Ancestor` (a
   `Node`, its own ungated `Description`, the content and control flags,
   and its automation id: 27 to 37; `is_control_and_content()`,
-  `layout_description()`, and `snapshot` on `Cached<Ancestor>`), covering
+  `layout_description()`, and `snapshot` and `ancestor_snapshot` on
+  `Cached<Ancestor>`), covering
   `Kept`; `DialogText` (role, value, states, name and description), a
   dialog's child; `SelectionContainer` (`SelectionPattern2`'s first
   selected item, read as an `ElementValue`, and the `Selection` pattern);

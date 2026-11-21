@@ -422,11 +422,15 @@ code is in `reduce.rs` unless named.
   (`FocusValidity::holds`).
 - Focus-ancestry context (`docs/parity/focus-context.md`, "Focus-ancestry
   context" and "Top-level windows in the ancestry"). A `FocusChanged`
-  carries the ancestor chain, outermost first, complete to the desktop
-  but for the entries the readers leave out as not presentable, so it can
-  be empty; the reducer joins it to the previous focus line where they
-  meet (`focus_line`) and speaks the presentable containers
-  (`is_presentable_container`) below the meeting point. The meeting point
+  carries the ancestor chain, outermost first, complete to just below the
+  desktop, layout entries included, but for the MSAA reader's window
+  objects, so it can be empty; each UI Automation ancestor carries
+  whether UI Automation counts it a control and content
+  (`FocusAncestor::uia_layout`, kept as `NodeDetails::uia_layout`). The
+  reducer joins it to the previous focus line where they meet
+  (`focus_line`), NVDA's focus difference level over the whole chain, and
+  speaks the presentable containers (`is_presentable_container`, which
+  alone judges presentation) below the meeting point. The meeting point
   is the first entry from the focus outward with a node id, or a window
   (`NodeDetails::window`) when both carry one, of the previous line, so a
   Settings page's frame, the frame host's own focus and a pane above the

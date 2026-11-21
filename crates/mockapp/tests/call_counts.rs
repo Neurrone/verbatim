@@ -4062,8 +4062,8 @@ fn text_field_focuses_cost_exactly() {
 /// read with the focus as the focus answer's selection baseline read
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"), its
 /// line
-/// "alpha beta". Remotely 4 UIA calls and the probe, as before; classically
-/// 13, where the caret report the focus-now answer carried took 40.
+/// "alpha beta". Remotely 4 UIA calls and the probe; classically 12, the
+/// walk ending at the desktop's root with no step above it.
 fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
     for (operation, remote, expected) in [
         (
@@ -4074,7 +4074,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         (
             "UIA text field focus-now answer with its caret, classically",
             false,
-            calls(13, 0, 1),
+            calls(12, 0, 1),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-text-focus-now");

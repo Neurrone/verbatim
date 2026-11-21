@@ -329,6 +329,7 @@ fn focus_read(
             .map(|ancestor| FocusAncestor {
                 node: read_node(app, win, via, ancestor),
                 simple_child: false,
+                uia_layout: ancestor.details.uia_layout,
             })
             .collect(),
         met: None,

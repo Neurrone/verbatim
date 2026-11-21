@@ -167,6 +167,7 @@ pub(crate) fn focus_read(msaa: Option<HeldIds>) -> FocusRead {
                 runtime_id: None,
             },
             simple_child: false,
+            uia_layout: false,
         }],
         met: None,
         foreground: None,
@@ -1396,6 +1397,7 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
     exit.ancestors.push(FocusAncestor {
         node: frame_menu_read(3, "Context", Role::Menu, 0, false).focus,
         simple_child: false,
+        uia_layout: false,
     });
     assert_eq!(
         feed_at(

@@ -1,0 +1,43 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch without the foreground right explorer.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\build5\\b5-output\\verbatim-e2e-b5","step":0}
+{"label":"front explorer.exe \"verbatim-e2e-b5\"","step":1}
+{"kind":"event","ms":215,"step":1,"text":"cancel"}
+{"kind":"speech","ms":217,"step":1,"tag":"Normal","text":"verbatim-e 2e-b 5 - File Explorer"}
+{"label":"alt+d","step":2}
+{"kind":"event","ms":3,"step":2,"text":"cancel"}
+{"kind":"speech","ms":62,"step":2,"tag":"Normal","text":"Address Bar  edit  selected C: Users Dickson App Data Local Temp claude c 40fa 9024444163f 990789da-d 197-48da-b 8ce-ec 282be 48107 scratchpad build 5 b 5-output verbatim-e 2e-b 5"}
+{"kind":"event","ms":254,"step":2,"text":"cancel"}
+{"kind":"speech","ms":255,"step":2,"tag":"Normal","text":"4 suggestions"}
+{"label":"tab","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"label":"tab","step":4}
+{"kind":"speech","ms":55,"step":4,"tag":"Normal","text":"This PC  split button  collapsed  1 of 15"}
+{"label":"tab","step":5}
+{"kind":"event","ms":2,"step":5,"text":"cancel"}
+{"kind":"speech","ms":28,"step":5,"tag":"Normal","text":"Search verbatim-e 2e-b 5  edit  blank"}
+{"label":"tab","step":6}
+{"kind":"event","ms":3,"step":6,"text":"cancel"}
+{"kind":"speech","ms":32,"step":6,"tag":"Normal","text":"More options  button"}
+{"label":"tab","step":7}
+{"kind":"event","ms":2,"step":7,"text":"cancel"}
+{"kind":"speech","ms":23,"step":7,"tag":"Normal","text":"Details  button  Show or hide the details pane.  1 of 1"}
+{"label":"tab","step":8}
+{"kind":"event","ms":2,"step":8,"text":"cancel"}
+{"kind":"speech","ms":64,"step":8,"tag":"Normal","text":"Items View  list"}
+{"kind":"speech","ms":71,"step":8,"tag":"Normal","text":"Inbox  not selected  1 of 3"}
+{"label":"tab","step":9}
+{"kind":"event","ms":4,"step":9,"text":"cancel"}
+{"kind":"speech","ms":24,"step":9,"tag":"Normal","text":"Name  split button  collapsed  Sorted (Ascending)"}
+{"label":"tab","step":10}
+{"kind":"event","ms":2,"step":10,"text":"cancel"}
+{"kind":"speech","ms":28,"step":10,"tag":"Normal","text":"Status bar  status bar"}
+{"kind":"speech","ms":32,"step":10,"tag":"Normal","text":"View Modes  grouping"}
+{"kind":"speech","ms":37,"step":10,"tag":"Normal","text":"Details  radio button  checked  Displays information about each item in the window.  (Ctrl plus Shift plus 6)"}
+{"label":"tab","step":11}
+{"kind":"event","ms":3,"step":11,"text":"cancel"}
+{"kind":"speech","ms":52,"step":11,"tag":"Normal","text":"tab control"}
+{"kind":"speech","ms":57,"step":11,"tag":"Normal","text":"list"}
+{"kind":"speech","ms":65,"step":11,"tag":"Normal","text":"verbatim-e 2e-b 5  tab  selected  1 of 1"}
+{"label":"tab","step":12}
+{"kind":"event","ms":3,"step":12,"text":"cancel"}
+{"kind":"speech","ms":16,"step":12,"tag":"Normal","text":"Add New Tab  button"}

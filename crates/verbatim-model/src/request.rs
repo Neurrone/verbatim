@@ -757,6 +757,11 @@ pub struct FocusAncestor {
     /// Whether it is a simple child, never spoken as a state change's
     /// ancestor.
     pub simple_child: bool,
+    /// Whether UI Automation does not count it both a control and a
+    /// content element ([`crate::NodeDetails::uia_layout`]), which the
+    /// reader reports for Core to judge it by; `false` for an MSAA node.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uia_layout: bool,
 }
 
 /// A focus answer: what Core keeps with the committed focus, each carried
