@@ -25,9 +25,7 @@ Public API:
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries
-  in the target's memory; and one hold point, `ListenerLaunchReported`
-  (the listener generation, a `u64`), where the supervisor's launch helper
-  has launched a listener and is about to report it to the owner thread.
+  in the target's memory.
 - `arm(fault, selects, times)` — arms a point to fire `times` times, each
   at a call whose subject, of the type `selects` takes, `selects` picks,
   so a test names the one call that fails. Returns a `Guard`, whose drop
@@ -45,11 +43,6 @@ Public API:
   for the evidence that the code got there with `Guard::wait_fired`, or
   counts how often it did, and the guard's drop fails a test whose code
   got there more often than armed; the code goes on either way.
-- `hold(fault, &subject)` — what a hold point calls: it counts as a
-  firing, as `reach` does, then waits until every armed point that picked
-  the subject is disarmed, so a test does what it must while the code is
-  held there, the firing its evidence, and releases it by dropping the
-  guard.
 - `hit_with(fault, subject)` — `hit` with the subject built by the
   closure `subject` only while `fault` is armed, for a subject whose
   making is itself a call, such as reading an element's runtime id, which
