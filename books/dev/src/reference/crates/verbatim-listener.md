@@ -69,13 +69,14 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   application's reading thread (`asked::read_element`): the element
   afresh, its class from its event's cache, as NVDA's object for the
   event reads it, and a menu item's legacy checked state. Its name is
-  the one read afresh in the same cache request when the batch also
-  walks its ancestors, a focus's or a selected item's (Core chooses the
-  event's name for a focus and the fresh one for a selection's item, by
-  Dickson's ruling of 2026-10-20, [changes and
+  the one read afresh in the same cache request, and Core chooses
+  between it and the name its tell's cached values carry: the event's
+  for a focus and a toast, the fresh one for a selection's item, by
+  Dickson's ruling of 2026-10-20 ([changes and
   selection](https://github.com/Neurrone/verbatim/blob/main/docs/parity/changes-and-selection.md),
-  "Selection in a list the focus controls"), and its event's cached name
-  for a lone `Read`, a toast's (Claude, 2026-11-21). For a batch's
+  "Selection in a list the focus controls"). Its operations on UI
+  Automation take only `Kept` subjects, never an earlier step's node.
+  For a batch's
   `Ancestors` step, its ancestors by the
   classic walk up to the first Core already knows (a window by its own
   element's runtime id), the desktop root or the process boundary, and

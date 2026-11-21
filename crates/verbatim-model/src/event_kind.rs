@@ -449,7 +449,12 @@ const UIA_WINDOW_OPENED: EventKindEntry = kind(
     "UI Automation window opened",
     Teller::ListenerGlobalGroup,
     Source::Uia(uia_event::WINDOW_OPENED),
-    &[PropertyId::ClassName, PropertyId::NativeWindow],
+    // The name, which a toast is spoken by (Claude, 2026-11-22).
+    &[
+        PropertyId::Name,
+        PropertyId::ClassName,
+        PropertyId::NativeWindow,
+    ],
 );
 
 const UIA_NOTIFICATION: EventKindEntry = kind(

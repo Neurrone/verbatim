@@ -1944,6 +1944,11 @@ fn windows_toast(desk: &mut Desk, id: u64, at_us: u64) -> Vec<Heard> {
             token: ElementToken(id),
             runtime_id: runtime_of(id),
         },
+        // Its event's cache names it, which it is spoken by.
+        cached: PropertyValues(vec![PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text("Download complete".to_owned())),
+        }]),
         window: TellWindow::Found(Box::new(facts)),
         checked: None,
         ..focus_tell(TWO, id, at_us)

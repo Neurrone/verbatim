@@ -48,6 +48,8 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: K
     let Outcome::Result(Single::Done(mut node)) = cx.ask(request, due_us).await else {
         return;
     };
+    // Spoken by the name its event's cache had, as a focus is.
+    crate::focus::uia_focus::with_cached_name(&mut node.values, &tell.cached);
     // The listener mints no node; a toast is announced, never followed.
     node.node = Some(NodeId::new(0));
     let Some(snapshot) = crate::focus::execute::snapshot(

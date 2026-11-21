@@ -3804,8 +3804,8 @@ fn a_toast_without_a_window_of_its_own_is_passed_on_with_its_nearest() {
 
 /// A toast renamed between its event and Core's read of it is spoken by
 /// the name its event's cache had, as NVDA's object for the event reads
-/// it: the listener's lone read of a kept element answers that name, its
-/// other properties read afresh.
+/// it: Core takes that name from the toast's tell in place of the one the
+/// listener read afresh, as it does a focus's.
 fn a_toast_is_spoken_by_the_name_its_events_cache_had() {
     let title = common::unique_title("mockapp-toast-renamed");
     let mut app = common::spawn_visible("toast_element.json", "uia", &title);

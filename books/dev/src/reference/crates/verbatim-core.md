@@ -772,8 +772,9 @@ code is in `reduce.rs` unless named.
     Windows Runtime core window (NVDA's toast test), is dropped when its
     element is not native or it repeats the toast spoken last within a
     second (ruled 2026-11-12), judged at its turn; else the listener reads
-    its name, value, states, description and position, and it is
-    announced as NVDA's `Notification.event_alert` speaks the object,
+    its value, states, description and position, and it is announced by
+    the name its tell's cached values carry, as NVDA's object for the
+    event reads it and `Notification.event_alert` speaks the object,
     queued.
   - A UI Automation selection is dropped when not native, with no
     committed focus, or when refused, but for the Windows Forms list

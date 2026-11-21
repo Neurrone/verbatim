@@ -197,20 +197,28 @@ async fn complete(
 }
 
 /// `values`, a focus's element as the listener read it, as a focus
-/// answers it: the name its event's cache had, `cached`, as NVDA's object
-/// for the event reads it, and the focused state.
+/// answers it: the name its event's cache had, `cached`
+/// ([`with_cached_name`]), and the focused state.
 fn as_focus(values: &mut PropertyValues, cached: &PropertyValues) {
+    with_cached_name(values, cached);
     for answer in &mut values.0 {
-        match (answer.id, &mut answer.value) {
-            (PropertyId::Name, value) => {
-                *value = cached
-                    .answer(PropertyId::Name)
-                    .and_then(|cached| cached.value.clone());
-            }
-            (PropertyId::States, Some(PropertyValue::States(states))) => {
-                *states = states.with(State::Focused);
-            }
-            _ => {}
+        if let (PropertyId::States, Some(PropertyValue::States(states))) =
+            (answer.id, &mut answer.value)
+        {
+            *states = states.with(State::Focused);
+        }
+    }
+}
+
+/// `values`, an element as the listener read it, with the name its event's
+/// cache had, `cached`, in place of the name read afresh, as NVDA's object
+/// for the event reads it.
+pub(crate) fn with_cached_name(values: &mut PropertyValues, cached: &PropertyValues) {
+    for answer in &mut values.0 {
+        if answer.id == PropertyId::Name {
+            answer.value = cached
+                .answer(PropertyId::Name)
+                .and_then(|cached| cached.value.clone());
         }
     }
 }

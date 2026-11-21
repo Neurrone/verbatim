@@ -290,13 +290,20 @@ fn two_notifications_of_one_key_waiting_behind_an_ask_are_both_spoken_in_order()
     );
 }
 
+/// A toast, its event's cache naming it "Download complete".
 fn toast() -> Event {
-    uia(
-        EventKind::UiaWindowOpened,
-        30,
-        "Windows.UI.Core.CoreWindow",
-        Payload::None,
-    )
+    Event {
+        cached: PropertyValues(vec![PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text("Download complete".to_owned())),
+        }]),
+        ..uia(
+            EventKind::UiaWindowOpened,
+            30,
+            "Windows.UI.Core.CoreWindow",
+            Payload::None,
+        )
+    }
 }
 
 #[test]
@@ -306,7 +313,8 @@ fn a_toast_is_read_by_the_listener_and_announced_and_its_repeat_within_a_second_
         feed_at(&mut state, 4_000, entry(toast())),
         ["send Listener ReadObject"]
     );
-    let read = shown(values("Download complete", Role::Pane));
+    // Spoken by the name its event's cache had, not the one read.
+    let read = shown(values("Downloading", Role::Pane));
     assert_eq!(
         feed_at(&mut state, 5_000, answer(LISTENER, 4, read)),
         ["Label(\"Download complete\")"]
