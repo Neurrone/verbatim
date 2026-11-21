@@ -327,10 +327,6 @@ pub struct Scenario {
     /// played the application-not-responding sound, one a line, for the
     /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
     not_responding_chains: Option<Vec<String>>,
-    /// The values the scenario read from the system for this run, each
-    /// with its label ([`Scenario::read_value`]), which the check against
-    /// the scenario's capture replaces by their labels.
-    values: Vec<(String, String)>,
     /// Each Verbatim a second start replaced, by its process id, with the
     /// path of its stderr log, whose artifacts are collected with the
     /// run's.
@@ -636,7 +632,6 @@ impl Scenario {
                 held: Vec::new(),
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
-                values: Vec::new(),
                 replaced: Vec::new(),
             });
         }
@@ -755,7 +750,6 @@ impl Scenario {
             held: Vec::new(),
             launch_evidence: Vec::new(),
             not_responding_chains: None,
-            values: Vec::new(),
             replaced: Vec::new(),
         })
     }
@@ -777,29 +771,6 @@ impl Scenario {
         }
     }
 
-    /// Records `value`, read from the system for this run, such as a lock
-    /// key's state or a suggestion's name, under `label`, and returns it:
-    /// the check of the run against the scenario's capture, and compare
-    /// mode's report, which becomes the capture, write `{label}` in its
-    /// place, so neither depends on the machine
-    /// (`books/dev/src/how-to/e2e.md`, "The check against the capture").
-    /// Register a whole utterance or a distinctive name, never a short
-    /// word that other speech may hold.
-    pub fn read_value(&mut self, label: &str, value: String) -> String {
-        self.values.push((label.to_owned(), value.clone()));
-        value
-    }
-
-    /// The values of this run that its capture names by label: the run's
-    /// token in every harness title ([`harness_marker`]), as `{run}`, and
-    /// each value [`Scenario::read_value`] recorded.
-    #[must_use]
-    pub fn substitutions(&self) -> Vec<(String, String)> {
-        let mut values = vec![("run".to_owned(), run_token().to_owned())];
-        values.extend(self.values.iter().cloned());
-        values
-    }
-
     /// Declares that the step under way, begun by the last input,
     /// deliberately differs from NVDA, as the parity ledger's entry headed
     /// `entry` in `file` (such as `docs/parity/review.md`) records: a note
@@ -810,15 +781,14 @@ impl Scenario {
         self.timeline.push_deviation(file, entry);
     }
 
-    /// Closes the step under way, as an input does, and starts one whose
-    /// input is an action of the harness's that changes what is in front,
-    /// such as launching a window or bringing one forward, of `kind`, acting
-    /// on `detail`, recorded on the timeline: so what is said about the
-    /// window is not counted with the step before. A step is compared by
-    /// the action's kind alone, which is the same in every run, and its
-    /// detail, such as a title or a process id, is only reported. In
-    /// compare mode it first requires everything said to be asserted, as an
-    /// input does.
+    /// In compare mode, closes the step under way, as an input does, and
+    /// starts one whose input is an action of the harness's that changes
+    /// what is in front, such as launching a window or bringing one
+    /// forward, of `kind`, acting on `detail`, recorded on the timeline: so
+    /// what NVDA says about the window is not counted with the step
+    /// before. The report names the step by the action's kind, which is the
+    /// same in every run, and gives its detail, such as a title or a
+    /// process id, on a line of its own. A normal run is unchanged by it.
     ///
     /// # Panics
     ///
@@ -827,10 +797,8 @@ impl Scenario {
     pub(crate) fn begin_action(&mut self, kind: &str, detail: &str) {
         if self.is_comparing() {
             self.speech.require_all_asserted(&format!("before {kind}"));
-        } else {
-            self.speech.close_step();
+            self.timeline.push_action(kind, detail);
         }
-        self.timeline.push_action(kind, detail);
     }
 
     /// [`Scenario::begin_action`] for an action that opens a window or
@@ -2125,8 +2093,10 @@ impl Scenario {
     pub fn focus_by_automation_id(&mut self, automation_id: &str) -> io::Result<u32> {
         self.speech
             .require_all_asserted(&format!("before focusing {automation_id:?}"));
-        self.timeline
-            .push_action("focus an element by its automation id", automation_id);
+        if self.is_comparing() {
+            self.timeline
+                .push_action("focus an element by its automation id", automation_id);
+        }
         self.agent.focus_by_automation_id(automation_id)
     }
 

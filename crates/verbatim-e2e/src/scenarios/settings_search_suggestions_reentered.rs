@@ -84,9 +84,7 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         panic!("the agent read {names:?}, not three suggestions");
     };
     let said = |name: &str, position: u32| format!("{name} {position} of {count}");
-    let suggestion = scenario.read_value("the first suggestion", said(first, 1));
-    scenario.read_value("the second suggestion", said(second, 2));
-    scenario.read_value("the third suggestion", said(third, 3));
+    let suggestion = said(first, 1);
     scenario.speech().expect_sequence(&[heard(&suggestion)]);
 
     scenario.send_keys(&["escape"]).expect("sends Escape");
@@ -97,7 +95,6 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let account = scenario
         .name_by_automation_id(ACCOUNT_BUTTON)
         .expect("the agent reads the account button's name");
-    let account = scenario.read_value("the account", account);
     // Settings sometimes raises the box's ControllerFor change twice, a
     // few milliseconds apart, as the suggestions close, and the sound is
     // played for each, as NVDA plays it for each it receives (NVDA's UIA

@@ -59,8 +59,6 @@ pub struct Entry {
     pub group: String,
     /// Whether it is marked `.local_only`.
     pub local_only: bool,
-    /// Whether its speech source is `Capture`, its committed NVDA capture.
-    pub capture: bool,
 }
 
 /// The test the binary adds outside the registry: the agent's session
@@ -213,7 +211,6 @@ pub fn registry_entries(source: &str) -> Result<Vec<Entry>, String> {
                 name: name.to_string(),
                 group: group.to_string(),
                 local_only: false,
-                capture: line.contains(", Capture)"),
             });
         }
         if line.contains(".local_only(")
@@ -439,13 +436,13 @@ mod tests {
     fn the_suite_is_read_from_the_registry() {
         let registry = r#"
 pub const SCENARIOS: &[ScenarioDef] = &[
-    suite!(kept, Own("a reason")),
-    suite!("named", module::{setup, body, teardown}, Capture),
-    // suite!(commented_out, Capture),
-    suite!(only_here, Capture)
+    suite!(kept, Refused("a reason")),
+    suite!("named", module::{setup, body, teardown}, Runs),
+    // suite!(commented_out, Runs),
+    suite!(only_here, Runs)
         .document(only_here::document)
         .local_only("a reason"),
-    demo!(demo_kind, &["kept"]),
+    demo!(demo_kind),
     measure!("measure_kind", measure::{setup, body, teardown}),
 ];
 "#;
@@ -456,24 +453,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         assert_eq!(
             registry_entries(registry).map(|entries| entries
                 .into_iter()
-                .map(|entry| (entry.name, entry.group, entry.local_only, entry.capture))
+                .map(|entry| (entry.name, entry.group, entry.local_only))
                 .collect::<Vec<_>>()),
             Ok(vec![
-                ("kept".to_string(), "Suite".to_string(), false, false),
-                ("named".to_string(), "Suite".to_string(), false, true),
-                ("only_here".to_string(), "Suite".to_string(), true, true),
-                ("demo_kind".to_string(), "Demo".to_string(), false, false),
-                (
-                    "measure_kind".to_string(),
-                    "Measure".to_string(),
-                    false,
-                    false
-                ),
+                ("kept".to_string(), "Suite".to_string(), false),
+                ("named".to_string(), "Suite".to_string(), false),
+                ("only_here".to_string(), "Suite".to_string(), true),
+                ("demo_kind".to_string(), "Demo".to_string(), false),
+                ("measure_kind".to_string(), "Measure".to_string(), false),
             ])
         );
         assert!(
             registry_entries(
-                "pub const SCENARIOS: &[ScenarioDef] = &[\n    suite!(Not a name, Capture),\n];"
+                "pub const SCENARIOS: &[ScenarioDef] = &[\n    suite!(Not a name, Runs),\n];"
             )
             .is_err()
         );

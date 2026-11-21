@@ -78,12 +78,11 @@
 //! variable set, so a skip is never reported as a pass. The skip comes from
 //! that setting alone, never from detecting the machine.
 //!
-//! Every entry states where its expected speech comes from, its
-//! [`Speech`]. In compare mode ([`crate::compare`]) [`run_named`] runs a
-//! scenario against NVDA instead, with [`run`]'s order, and writes
-//! its report; compare mode runs only a scenario whose speech comes from
-//! its capture ([`Speech::Capture`]), and refuses any other with its
-//! source.
+//! In compare mode ([`crate::compare`]), an exploration tool,
+//! [`run_named`] runs a scenario against NVDA instead, with [`run`]'s
+//! order, and writes its report. Every entry says whether compare mode
+//! can run it, its [`Compare`]: a scenario that needs Verbatim itself,
+//! such as one that opens Verbatim's own menu, is refused with why.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -162,48 +161,17 @@ pub enum Group {
     Measure,
 }
 
-/// Where a scenario's expected speech comes from
-/// (`books/dev/src/reference/testing.md`, "Exact assertions": every
-/// expected utterance comes from an NVDA capture or is marked as
-/// Verbatim's own with the ruling that allows it).
+/// Whether compare mode ([`crate::compare`]) can run a scenario against
+/// NVDA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Speech {
-    /// NVDA's capture of the scenario: its compare report, kept by `cargo
-    /// xtask nvda compare <name> --keep` ([`crate::compare::capture_path`]).
+pub enum Compare {
     /// Compare mode runs it.
-    Capture,
-    /// Verbatim's own speech, for Verbatim's own GUI and lifecycle, which
-    /// NVDA does not have, and why; compare mode refuses it.
-    Own(&'static str),
-    /// Speech a capture cannot record, such as a tone or a flood's middle,
-    /// derived from NVDA's pinned source, which it names by file and lines;
-    /// compare mode refuses it.
-    SourceDerived(&'static str),
-    /// The measure set's: it asserts only the startup speech and the
-    /// desktop's announcement, outside the testing standard.
-    Measurement,
-    /// A demonstration's: it shows the steps of the suite's scenarios it
-    /// names, whose own sources cover them.
-    Demonstration(&'static [&'static str]),
-}
-
-impl Speech {
-    /// Why compare mode refuses a scenario with this source, or `None` when
-    /// it runs it.
-    #[must_use]
-    pub fn not_comparable(self) -> Option<String> {
-        match self {
-            Self::Capture => None,
-            Self::Own(why) => Some(format!("its speech is Verbatim's own: {why}")),
-            Self::SourceDerived(source) => Some(format!(
-                "its speech is derived from NVDA's source, which a capture cannot record: {source}"
-            )),
-            Self::Measurement => Some("it is a measurement workload".to_owned()),
-            Self::Demonstration(_) => {
-                Some("it is a demonstration, recorded by cargo xtask demo".to_owned())
-            }
-        }
-    }
+    Runs,
+    /// Compare mode refuses it, for this reason: it needs Verbatim itself,
+    /// such as Verbatim's own menu, or NVDA's speech for it could not be
+    /// compared, such as a progress bar's tones, which the transcript
+    /// add-on does not record.
+    Refused(&'static str),
 }
 
 /// Scenario-specific state a [`ScenarioDef::setup`] creates and its matching
@@ -262,8 +230,8 @@ pub struct ScenarioDef {
     pub name: &'static str,
     /// Which runs include this scenario.
     pub group: Group,
-    /// Where its expected speech comes from.
-    pub speech: Speech,
+    /// Whether compare mode can run it.
+    pub compare: Compare,
     /// Changes the fixed settings this scenario's Verbatim is launched
     /// with ([`Scenario::launch_with`]), for a scenario that needs
     /// a reader setting other than its default; `None` for most.
@@ -294,13 +262,13 @@ impl ScenarioDef {
     pub const fn new(
         name: &'static str,
         group: Group,
-        speech: Speech,
+        compare: Compare,
         (setup, body, teardown): (Setup, Body, Teardown),
     ) -> Self {
         Self {
             name,
             group,
-            speech,
+            compare,
             settings: None,
             local_only: None,
             document: None,
@@ -333,36 +301,35 @@ impl ScenarioDef {
     }
 }
 
-/// A scenario of the suite: `suite!(module, speech)` runs `module`'s
+/// A scenario of the suite: `suite!(module, compare)` runs `module`'s
 /// `setup`, `body` and `teardown` and is named after it;
-/// `suite!("name", module::{setup, body, teardown}, speech)` names them.
+/// `suite!("name", module::{setup, body, teardown}, compare)` names them.
 macro_rules! suite {
-    ($module:ident, $speech:expr) => {
+    ($module:ident, $compare:expr) => {
         ScenarioDef::new(
             stringify!($module),
             Group::Suite,
-            $speech,
+            $compare,
             ($module::setup, $module::body, $module::teardown),
         )
     };
-    ($name:literal, $module:ident::{$setup:ident, $body:ident, $teardown:ident}, $speech:expr) => {
+    ($name:literal, $module:ident::{$setup:ident, $body:ident, $teardown:ident}, $compare:expr) => {
         ScenarioDef::new(
             $name,
             Group::Suite,
-            $speech,
+            $compare,
             ($module::$setup, $module::$body, $module::$teardown),
         )
     };
 }
 
-/// A demonstration, named after its module, and the suite's scenarios
-/// whose steps it shows.
+/// A demonstration, named after its module.
 macro_rules! demo {
-    ($module:ident, $shows:expr) => {
+    ($module:ident) => {
         ScenarioDef::new(
             stringify!($module),
             Group::Demo,
-            Speech::Demonstration($shows),
+            Compare::Refused("it is a demonstration, recorded by cargo xtask demo"),
             ($module::setup, $module::body, $module::teardown),
         )
     };
@@ -374,7 +341,7 @@ macro_rules! measure {
         ScenarioDef::new(
             $name,
             Group::Measure,
-            Speech::Measurement,
+            Compare::Refused("it is a measurement workload"),
             ($module::$setup, $module::$body, $module::$teardown),
         )
     };
@@ -383,164 +350,164 @@ macro_rules! measure {
 /// A Windows 11 Notepad scenario's reason to be local-only.
 const NOTEPAD: &str = "Windows 11 Notepad, which GitHub's Windows Server runner does not have: its Notepad is classic Notepad";
 
-/// Why a scenario on Verbatim's own menu or settings dialog is Verbatim's own speech.
+/// Why compare mode refuses a scenario on Verbatim's own menu or settings dialog.
 const OWN_GUI: &str =
     "it drives Verbatim's own menu or settings dialog, which do not exist without Verbatim";
 
-/// Where a progress bar scenario's tones come from.
-const PROGRESS_TONES: &str = "nvda/source/NVDAObjects/behaviors.py 41-88: a progress bar's value change is a tone, which a capture does not record";
+/// Why compare mode refuses a progress bar scenario.
+const PROGRESS_TONES: &str = "nvda/source/NVDAObjects/behaviors.py 41-88: a progress bar's value change is a tone, which the transcript add-on does not record";
 
-/// Where a terminal flood's middle comes from.
-const TERMINAL_FLOOD: &str = "nvda/source/NVDAObjects/behaviors.py 420-510: LiveText reads each change's new lines, and which of a flood's middle lines a capture hears depends on timing";
+/// Why compare mode refuses a terminal flood's scenario.
+const TERMINAL_FLOOD: &str = "nvda/source/NVDAObjects/behaviors.py 420-510: LiveText reads each change's new lines, and which of a flood's middle lines NVDA says depends on timing";
 
 /// Why the Settings search box's scenarios are local-only.
 const SUGGESTIONS_REPLACED: &str = "Settings replaced its suggestions list as it opened, after raising the first selection, in 2 of 13 local runs (2026-11-09), so nothing was said of it, as in NVDA; on GitHub's runner \"Suggestions available\" played to its end (run 39558690998), likely the same. Settings' timing is not Verbatim's to control. It runs there again once dispatched runs show the runner's Settings keeping its first selection (`docs/flaky-tests.md`).";
 
-use Speech::{Capture, Own, SourceDerived};
+use Compare::{Refused, Runs};
 
 /// Every registered scenario, in a fixed, stable order.
 pub const SCENARIOS: &[ScenarioDef] = &[
-    suite!(menu_and_settings_dialog, Own(OWN_GUI)),
-    suite!(second_application_and_verbatim_menu, Own("it reads Verbatim's status and opens Verbatim's own menu")),
-    suite!(rapid_tabbing_in_settings, Own("it takes speech until Verbatim is idle (take_until_idle) and drives Verbatim's own settings dialog")),
-    suite!(switch_to_onecore, Own("it reads Verbatim's status and drives Verbatim's own settings dialog")),
-    suite!(crash_recovery, Own("it ends Verbatim's synthesizer host, an outpost and its focus listener")),
-    suite!(verbatim_lifecycle, Own("it starts a second Verbatim to replace the first")),
-    suite!(quit_inside_a_modal_dialog, Own("it quits Verbatim inside Verbatim's own modal dialog")),
-    suite!(quit_inside_the_verbatim_menu, Own("it quits Verbatim inside Verbatim's own menu")),
-    suite!(quit_inside_the_remove_theme_confirmation, Own("it quits Verbatim inside Verbatim's own confirmation")),
-    suite!(quit_inside_a_file_dialog, Own("it quits Verbatim inside a file dialog Verbatim opened")),
-    suite!(speak_time_and_date, Capture),
-    suite!(toast, Capture)
+    suite!(menu_and_settings_dialog, Refused(OWN_GUI)),
+    suite!(second_application_and_verbatim_menu, Refused("it reads Verbatim's status and opens Verbatim's own menu")),
+    suite!(rapid_tabbing_in_settings, Refused("it takes speech until Verbatim is idle (take_until_idle) and drives Verbatim's own settings dialog")),
+    suite!(switch_to_onecore, Refused("it reads Verbatim's status and drives Verbatim's own settings dialog")),
+    suite!(crash_recovery, Refused("it ends Verbatim's synthesizer host, an outpost and its focus listener")),
+    suite!(verbatim_lifecycle, Refused("it starts a second Verbatim to replace the first")),
+    suite!(quit_inside_a_modal_dialog, Refused("it quits Verbatim inside Verbatim's own modal dialog")),
+    suite!(quit_inside_the_verbatim_menu, Refused("it quits Verbatim inside Verbatim's own menu")),
+    suite!(quit_inside_the_remove_theme_confirmation, Refused("it quits Verbatim inside Verbatim's own confirmation")),
+    suite!(quit_inside_a_file_dialog, Refused("it quits Verbatim inside a file dialog Verbatim opened")),
+    suite!(speak_time_and_date, Runs),
+    suite!(toast, Runs)
         .local_only("No reason was recorded when it was added, and it has never run on GitHub's runner; a dispatched run of it there gives one, or lets it run there (`docs/flaky-tests.md`)."),
-    suite!(msaa_flood_then_focus, SourceDerived("nvda/source/IAccessibleHandler/orderedWinEventLimiter.py 10-120: NVDA keeps at most 10 of a thread's events, and a capture records no flood")),
-    suite!(stale_focus_behind_a_caret_key, Capture),
-    suite!(read_only_field_typing, Capture),
-    suite!(twin_item_at_a_deleted_items_ids, Capture),
-    suite!(foreground_progress_bar, SourceDerived(PROGRESS_TONES)),
-    suite!("background_progress_bar", background_progress_bar::{setup, on_body, teardown}, SourceDerived(PROGRESS_TONES))
+    suite!(msaa_flood_then_focus, Refused("nvda/source/IAccessibleHandler/orderedWinEventLimiter.py 10-120: NVDA keeps at most 10 of a thread's events, and a capture records no flood")),
+    suite!(stale_focus_behind_a_caret_key, Runs),
+    suite!(read_only_field_typing, Runs),
+    suite!(twin_item_at_a_deleted_items_ids, Runs),
+    suite!(foreground_progress_bar, Refused(PROGRESS_TONES)),
+    suite!("background_progress_bar", background_progress_bar::{setup, on_body, teardown}, Refused(PROGRESS_TONES))
         .settings(background_progress_bar::report_background_bars),
-    suite!("background_progress_bar_off", background_progress_bar::{setup, off_body, teardown}, SourceDerived(PROGRESS_TONES)),
-    suite!(controlled_list_selections, Capture),
-    suite!(review_dead_object, Capture),
-    suite!(table_cells, Capture),
-    suite!(alt_tab_switcher, Capture),
-    suite!(return_from_a_held_application, Capture),
-    suite!(menu_end_over_a_hung_window, SourceDerived("nvda/source/IAccessibleHandler/__init__.py 984-1008: NVDA fakes the focus on the desktop after the menu ends")),
-    suite!(owned_dialog_across_processes, Capture),
-    suite!(lock_key_announcements, Capture),
-    suite!(quick_link_menu, Capture),
-    suite!(explorer_folder_window, Capture)
+    suite!("background_progress_bar_off", background_progress_bar::{setup, off_body, teardown}, Refused(PROGRESS_TONES)),
+    suite!(controlled_list_selections, Runs),
+    suite!(review_dead_object, Runs),
+    suite!(table_cells, Runs),
+    suite!(alt_tab_switcher, Runs),
+    suite!(return_from_a_held_application, Runs),
+    suite!(menu_end_over_a_hung_window, Refused("nvda/source/IAccessibleHandler/__init__.py 984-1008: NVDA fakes the focus on the desktop after the menu ends")),
+    suite!(owned_dialog_across_processes, Runs),
+    suite!(lock_key_announcements, Runs),
+    suite!(quick_link_menu, Runs),
+    suite!(explorer_folder_window, Runs)
         .local_only("On GitHub's runner its new explorer.exe window sometimes stops responding, with dwm.exe's window thread blocked too (run 44344991044); the cause is not named, and the harness does not wait for the Desktop Window Manager (Dickson, 2026-10-26). It runs there again once a wait chain names what Explorer's thread waits on and Verbatim's part, if any, is fixed, or Dickson rules to keep it there (`docs/flaky-tests.md`)."),
-    suite!(settings_dialog_keys, Own(OWN_GUI)),
-    suite!(settings_combo_box_expanded, Capture)
+    suite!(settings_dialog_keys, Refused(OWN_GUI)),
+    suite!(settings_combo_box_expanded, Runs)
         .local_only("The runner's Date and time page opens with its focus on its location settings link, not the Region button. It runs there again once the runner's Settings opens it on the Region button."),
-    suite!(settings_search_suggestions_reentered, Capture)
+    suite!(settings_search_suggestions_reentered, Runs)
         .local_only(SUGGESTIONS_REPLACED),
-    suite!("notepad_editing", editing::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("notepad_editing", editing::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(editing::document),
-    suite!("text_box_editing", editing::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!("notepad_selection_keys", selection_keys::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("text_box_editing", editing::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!("notepad_selection_keys", selection_keys::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(selection_keys::document),
-    suite!("text_box_selection_keys", selection_keys::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!("notepad_caret_keys", caret_keys::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("text_box_selection_keys", selection_keys::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!("notepad_caret_keys", caret_keys::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(caret_keys::document),
-    suite!("text_box_caret_keys", caret_keys::{text_box_setup, text_box_body, teardown}, Capture)
+    suite!("text_box_caret_keys", caret_keys::{text_box_setup, text_box_body, teardown}, Runs)
         .local_only("On GitHub's runner the outpost releases a caret key's starting anchor before Core commits it, so the reads after a paste answer not there and the line is never said (runs 44514942878 and 44754313469; docs/flaky-tests.md). It runs again on GitHub when build 8, which redesigns how anchors cross, fixes the release."),
-    suite!("notepad_document_keys", document_keys::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("notepad_document_keys", document_keys::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(document_keys::document),
-    suite!("text_box_document_keys", document_keys::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!("notepad_page_keys", document_keys::{notepad_pages_setup, notepad_pages_body, teardown}, Capture)
+    suite!("text_box_document_keys", document_keys::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!("notepad_page_keys", document_keys::{notepad_pages_setup, notepad_pages_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(document_keys::pages_document),
-    suite!("text_box_page_keys", document_keys::{text_box_pages_setup, text_box_pages_body, teardown}, Capture),
-    suite!("notepad_paragraph_keys", document_keys::{notepad_paragraphs_setup, notepad_paragraphs_body, teardown}, Capture)
+    suite!("text_box_page_keys", document_keys::{text_box_pages_setup, text_box_pages_body, teardown}, Runs),
+    suite!("notepad_paragraph_keys", document_keys::{notepad_paragraphs_setup, notepad_paragraphs_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(document_keys::paragraphs_document),
-    suite!("text_box_paragraph_keys", document_keys::{text_box_paragraphs_setup, text_box_paragraphs_body, teardown}, Capture),
-    suite!("notepad_select_all_count", document_keys::{notepad_count_setup, notepad_count_body, teardown}, Capture)
+    suite!("text_box_paragraph_keys", document_keys::{text_box_paragraphs_setup, text_box_paragraphs_body, teardown}, Runs),
+    suite!("notepad_select_all_count", document_keys::{notepad_count_setup, notepad_count_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(document_keys::count_document),
-    suite!("text_box_select_all_count", document_keys::{text_box_count_setup, text_box_count_body, teardown}, Capture),
-    suite!("text_box_password", password::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!("wpf_password", password::{wpf_setup, wpf_body, teardown}, Capture),
-    suite!("notepad_review_cursor", review_cursor::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("text_box_select_all_count", document_keys::{text_box_count_setup, text_box_count_body, teardown}, Runs),
+    suite!("text_box_password", password::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!("wpf_password", password::{wpf_setup, wpf_body, teardown}, Runs),
+    suite!("notepad_review_cursor", review_cursor::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(review_cursor::document),
-    suite!("text_box_review_cursor", review_cursor::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!(notepad_say_all, Capture)
+    suite!("text_box_review_cursor", review_cursor::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!(notepad_say_all, Runs)
         .local_only(NOTEPAD)
         .document(notepad_say_all::document),
-    suite!("notepad_typed_words", typed_words::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("notepad_typed_words", typed_words::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(typed_words::document),
-    suite!("text_box_typed_words", typed_words::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!("notepad_review_words", review_words::{notepad_setup, notepad_body, teardown}, Capture)
+    suite!("text_box_typed_words", typed_words::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!("notepad_review_words", review_words::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(review_words::document),
-    suite!("text_box_review_words", review_words::{text_box_setup, text_box_body, teardown}, Capture),
-    suite!(text_box_say_all, Capture),
-    suite!(spelling_errors, Capture),
-    suite!(notepad_spelling_errors, Capture)
+    suite!("text_box_review_words", review_words::{text_box_setup, text_box_body, teardown}, Runs),
+    suite!(text_box_say_all, Runs),
+    suite!(spelling_errors, Runs),
+    suite!(notepad_spelling_errors, Runs)
         .local_only("Windows 11 Notepad's own spell checker, which GitHub's Windows Server runner does not have: its Notepad is classic Notepad, a Win32 edit control. `spelling_errors` hears the same speech from mockapp's scripted text everywhere.")
         .document(notepad_spelling_errors::document),
-    suite!(theme_panel, Own(OWN_GUI)),
-    suite!(terminal_settings_page, Own(OWN_GUI)),
-    suite!("windows_terminal_commands", terminal_commands::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_commands", terminal_commands::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_flood", terminal_flood::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_flood", terminal_flood::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_control_flood", terminal_key_timing::{setup_control_windows_terminal, body_control_windows_terminal, teardown}, SourceDerived(TERMINAL_FLOOD))
+    suite!(theme_panel, Refused(OWN_GUI)),
+    suite!(terminal_settings_page, Refused(OWN_GUI)),
+    suite!("windows_terminal_commands", terminal_commands::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_commands", terminal_commands::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_flood", terminal_flood::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_flood", terminal_flood::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_control_flood", terminal_key_timing::{setup_control_windows_terminal, body_control_windows_terminal, teardown}, Refused(TERMINAL_FLOOD))
         .settings(terminal_flood::lowered_limits),
-    suite!("conhost_control_flood", terminal_key_timing::{setup_control_console_host, body_control_console_host, teardown}, SourceDerived(TERMINAL_FLOOD))
+    suite!("conhost_control_flood", terminal_key_timing::{setup_control_console_host, body_control_console_host, teardown}, Refused(TERMINAL_FLOOD))
         .settings(terminal_flood::lowered_limits),
-    suite!("windows_terminal_line_key_flood", terminal_key_timing::{setup_line_key_windows_terminal, body_line_key_windows_terminal, teardown}, Capture),
-    suite!("conhost_line_key_flood", terminal_key_timing::{setup_line_key_console_host, body_line_key_console_host, teardown}, Capture),
-    suite!("windows_terminal_leave_flood", terminal_windows::{setup_leave_windows_terminal, body_leave_windows_terminal, teardown}, Capture),
-    suite!("conhost_leave_flood", terminal_windows::{setup_leave_console_host, body_leave_console_host, teardown}, Capture),
-    suite!("windows_terminal_scrollback_overflow_during_group", terminal_overflow::{setup_windows_terminal, body_overflow_during_group_windows_terminal, teardown}, SourceDerived(TERMINAL_FLOOD))
+    suite!("windows_terminal_line_key_flood", terminal_key_timing::{setup_line_key_windows_terminal, body_line_key_windows_terminal, teardown}, Runs),
+    suite!("conhost_line_key_flood", terminal_key_timing::{setup_line_key_console_host, body_line_key_console_host, teardown}, Runs),
+    suite!("windows_terminal_leave_flood", terminal_windows::{setup_leave_windows_terminal, body_leave_windows_terminal, teardown}, Runs),
+    suite!("conhost_leave_flood", terminal_windows::{setup_leave_console_host, body_leave_console_host, teardown}, Runs),
+    suite!("windows_terminal_scrollback_overflow_during_group", terminal_overflow::{setup_windows_terminal, body_overflow_during_group_windows_terminal, teardown}, Refused(TERMINAL_FLOOD))
         .settings(terminal_flood::half_limits),
-    suite!("conhost_scrollback_overflow_during_group", terminal_overflow::{setup_console_host, body_overflow_during_group_console_host, teardown}, SourceDerived(TERMINAL_FLOOD))
+    suite!("conhost_scrollback_overflow_during_group", terminal_overflow::{setup_console_host, body_overflow_during_group_console_host, teardown}, Refused(TERMINAL_FLOOD))
         .settings(terminal_flood::half_limits),
-    suite!("windows_terminal_editing", terminal_editing::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_editing", terminal_editing::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_review_grid", terminal_review_grid::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_review_grid", terminal_review_grid::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_progress", terminal_progress::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_progress", terminal_progress::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_typing", terminal_typing::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_typing", terminal_typing::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_long_lines", terminal_screens::{setup_windows_terminal, body_long_lines_windows_terminal, teardown}, Capture)
+    suite!("windows_terminal_editing", terminal_editing::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_editing", terminal_editing::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_review_grid", terminal_review_grid::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_review_grid", terminal_review_grid::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_progress", terminal_progress::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_progress", terminal_progress::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_typing", terminal_typing::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_typing", terminal_typing::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_long_lines", terminal_screens::{setup_windows_terminal, body_long_lines_windows_terminal, teardown}, Runs)
         .local_only("GitHub's runner once delivered no UI Automation focus for the new terminal to the listener (run 44414430624), a loss Verbatim accepts as NVDA does (ADR 0001). It runs there again once dispatched runs show the runner delivering the terminal's focus (`docs/flaky-tests.md`)."),
-    suite!("conhost_long_lines", terminal_screens::{setup_console_host, body_long_lines_console_host, teardown}, Capture),
-    suite!("windows_terminal_full_screen", terminal_screens::{setup_windows_terminal, body_full_screen_windows_terminal, teardown}, Capture),
-    suite!("conhost_full_screen", terminal_screens::{setup_console_host, body_full_screen_console_host, teardown}, Capture),
-    suite!("windows_terminal_marker_list", terminal_lists::{setup_windows_terminal, body_marker_windows_terminal, teardown}, Capture),
-    suite!("conhost_marker_list", terminal_lists::{setup_console_host, body_marker_console_host, teardown}, Capture),
-    suite!("windows_terminal_pager_history", terminal_pager::{setup_history_windows_terminal, body_history_windows_terminal, teardown}, Capture)
+    suite!("conhost_long_lines", terminal_screens::{setup_console_host, body_long_lines_console_host, teardown}, Runs),
+    suite!("windows_terminal_full_screen", terminal_screens::{setup_windows_terminal, body_full_screen_windows_terminal, teardown}, Runs),
+    suite!("conhost_full_screen", terminal_screens::{setup_console_host, body_full_screen_console_host, teardown}, Runs),
+    suite!("windows_terminal_marker_list", terminal_lists::{setup_windows_terminal, body_marker_windows_terminal, teardown}, Runs),
+    suite!("conhost_marker_list", terminal_lists::{setup_console_host, body_marker_console_host, teardown}, Runs),
+    suite!("windows_terminal_pager_history", terminal_pager::{setup_history_windows_terminal, body_history_windows_terminal, teardown}, Runs)
         .settings(terminal_flood::half_limits),
-    suite!("conhost_pager_history", terminal_pager::{setup_history_console_host, body_history_console_host, teardown}, Capture)
+    suite!("conhost_pager_history", terminal_pager::{setup_history_console_host, body_history_console_host, teardown}, Runs)
         .settings(terminal_flood::half_limits),
-    suite!("windows_terminal_status_bar", terminal_status_bar::{setup_windows_terminal, body_windows_terminal, teardown}, Capture),
-    suite!("conhost_status_bar", terminal_status_bar::{setup_console_host, body_console_host, teardown}, Capture),
-    suite!("windows_terminal_two_windows", terminal_windows::{setup_windows_terminal, body_two_windows_terminal, teardown}, Capture)
+    suite!("windows_terminal_status_bar", terminal_status_bar::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
+    suite!("conhost_status_bar", terminal_status_bar::{setup_console_host, body_console_host, teardown}, Runs),
+    suite!("windows_terminal_two_windows", terminal_windows::{setup_windows_terminal, body_two_windows_terminal, teardown}, Runs)
         .local_only("On GitHub's elevated runner the console host's \"Administrator: \" title reaches Windows Terminal's window after the harness restores it, so the first announcement carries the prefix; what sends the prefixed title is not established. It runs there again once a dispatched run with the window's title logged at each name change names the sender, and a harness wait on that evidence is built (`docs/flaky-tests.md`)."),
-    suite!("windows_terminal_tabs", terminal_windows::{setup_tabs, body_tabs, teardown}, Capture),
-    suite!("event_recorder_records_mockapp", event_recorder::{setup, body, teardown}, Own("the recorder's file is what is under test, which NVDA does not write")),
-    suite!(object_navigation_over_uia, Capture),
-    suite!(system_information_tree, Capture),
-    demo!(demo_notepad_editing, &["notepad_editing"])
+    suite!("windows_terminal_tabs", terminal_windows::{setup_tabs, body_tabs, teardown}, Runs),
+    suite!("event_recorder_records_mockapp", event_recorder::{setup, body, teardown}, Refused("the recorder's file is what is under test, which NVDA does not write")),
+    suite!(object_navigation_over_uia, Runs),
+    suite!(system_information_tree, Runs),
+    demo!(demo_notepad_editing)
         .document(demo_notepad_editing::document),
-    demo!(demo_review_cursor, &["notepad_review_cursor"])
+    demo!(demo_review_cursor)
         .document(demo_review_cursor::document),
-    demo!(demo_say_all, &["notepad_say_all", "text_box_say_all"])
+    demo!(demo_say_all)
         .document(notepad_say_all::document),
-    demo!(demo_terminal_session, &["windows_terminal_commands", "windows_terminal_editing", "windows_terminal_flood"]),
-    demo!(demo_settings_dialog_keys, &["settings_dialog_keys"]),
+    demo!(demo_terminal_session),
+    demo!(demo_settings_dialog_keys),
     measure!("measure_focus_windows_terminal", measure::{setup_focus_windows_terminal, body_focus_windows_terminal, teardown}),
     measure!("measure_focus_windows_terminal_tabs", measure::{setup_focus_tabs, body_focus_tabs, teardown}),
     measure!("measure_focus_text_box", measure::{setup_focus_text_box, body_focus_text_box, teardown}),
@@ -682,8 +649,8 @@ enum Mode {
 /// Runs one scenario in `mode` and fails it, after collecting everything,
 /// if anything went wrong.
 ///
-/// The order: refuse, in compare mode, a scenario whose speech is not its
-/// capture, giving its source ([`Speech::not_comparable`]); start from the
+/// The order: refuse, in compare mode, a scenario it cannot run, giving
+/// why ([`Compare::Refused`]); start from the
 /// minimized desktop, launching Verbatim, or with NVDA's transcript
 /// connected ([`Scenario::compare_with`]); assert Verbatim's startup speech
 /// ([`startup_speech`]), or hear NVDA's desktop as an ordinary step; run
@@ -707,7 +674,7 @@ enum Mode {
 )]
 fn run(def: &ScenarioDef, mode: Mode) {
     if mode == Mode::Compare
-        && let Some(why) = def.speech.not_comparable()
+        && let Compare::Refused(why) = def.compare
     {
         panic!(
             "scenario {:?} cannot be compared with NVDA: {why}",
@@ -791,16 +758,13 @@ fn run(def: &ScenarioDef, mode: Mode) {
     // with a modifier down.
     problems.extend(scenario.release_held_keys());
 
-    // The steps as compare mode divides them, each with its expected
-    // texts: compare mode's report, or the run's to check against the
-    // scenario's capture.
-    let steps = scenario.speech().take_steps();
-    if mode == Mode::Verbatim {
-        if def.speech == Speech::Capture {
-            problems.extend(check_capture(def, &steps, &scenario.substitutions()));
+    let steps = match mode {
+        Mode::Compare => Some(scenario.speech().take_steps()),
+        Mode::Verbatim => {
+            problems.extend(check_and_quit(&mut scenario, &dir));
+            None
         }
-        problems.extend(check_and_quit(&mut scenario, &dir));
-    }
+    };
     let teardown_outcome = state.map(|state| caught(|| (def.teardown)(&mut scenario, state)));
     if let Some(Err(payload)) = &teardown_outcome {
         problems.push(format!(
@@ -810,8 +774,8 @@ fn run(def: &ScenarioDef, mode: Mode) {
     }
     problems.extend(scenario.clean_up());
     problems.extend(scenario.collect_run_artifacts(&dir));
-    let outpost_crashes = if mode == Mode::Compare {
-        problems.extend(write_comparison(def, &scenario, &dir, &steps));
+    let outpost_crashes = if let Some(steps) = &steps {
+        problems.extend(write_comparison(def, &scenario, &dir, steps));
         None
     } else {
         verbatim_artifacts(def, &mut scenario, &dir, body_end_ms, &mut problems)
@@ -982,43 +946,6 @@ fn verbatim_artifacts(
     outpost_crashes
 }
 
-/// Whether a scenario whose speech is its capture fails when the capture
-/// is missing: not until build 6 commits the captures its scenarios are
-/// checked against, which turns this on in the same commit.
-const CAPTURES_REQUIRED: bool = false;
-
-/// Against Verbatim, for a scenario whose speech is its capture: checks
-/// the run's expectations, `steps`, against the capture
-/// ([`compare::check_against_capture`]), the run's `values` replaced by
-/// their labels. Returns the problem, if any, naming the step and how to
-/// capture the scenario again.
-fn check_capture(
-    def: &ScenarioDef,
-    steps: &[compare::CompareStep],
-    values: &[(String, String)],
-) -> Option<String> {
-    let path = compare::capture_path(&crate::scenario::workspace_root(), def.name);
-    let again = format!(
-        "capture it again with `cargo xtask nvda compare {} --keep`",
-        def.name
-    );
-    match std::fs::read_to_string(&path) {
-        Ok(capture) => compare::check_against_capture(&capture, steps, values)
-            .err()
-            .map(|why| {
-                format!(
-                    "the scenario's expectations are not its capture's, {}: {why}; if the change is meant, {again}",
-                    path.display()
-                )
-            }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound && !CAPTURES_REQUIRED => None,
-        Err(error) => Some(format!(
-            "could not read the scenario's capture {}: {error}; {again}",
-            path.display()
-        )),
-    }
-}
-
 /// In compare mode, writes the report of `steps` as `compare.txt` in
 /// `dir` and prints it. Returns the problems it met.
 fn write_comparison(
@@ -1041,12 +968,12 @@ fn write_comparison(
         pin_matches,
         quiet,
     };
-    // The run's own values, such as the harness titles' token, written as
-    // their labels, so the report kept as the capture is the same on
-    // every machine.
+    // The run's token in the harness's window titles written as its
+    // label, so a report names it in the same way on both sides and in
+    // every run.
     let report = compare::substituted(
         &compare::render_report(&header, steps),
-        &scenario.substitutions(),
+        &[("run".to_owned(), crate::scenario::run_token().to_owned())],
     );
     // Written to the handle itself, past the test harness's capture, so
     // the report shows for a run that passes.
@@ -1197,7 +1124,7 @@ mod tests {
                 ScenarioDef::new(
                     name,
                     Group::Suite,
-                    Speech::Capture,
+                    Compare::Runs,
                     (no_setup, no_body, no_teardown),
                 )
             })
@@ -1395,39 +1322,6 @@ mod tests {
                     .any(|line| line.strip_prefix("### ") == Some(heading.as_str())),
                 "{source} names the entry {heading:?}, which is no ### heading in {file}"
             );
-        }
-    }
-
-    #[test]
-    fn once_captures_are_required_every_scenario_whose_speech_is_its_capture_has_one() {
-        let root = crate::scenario::workspace_root();
-        let missing: Vec<&str> = SCENARIOS
-            .iter()
-            .filter(|def| {
-                def.speech == Speech::Capture && !compare::capture_path(&root, def.name).exists()
-            })
-            .map(|def| def.name)
-            .collect();
-        assert!(
-            !CAPTURES_REQUIRED || missing.is_empty(),
-            "scenarios whose speech is their capture, with none committed: {missing:?}; make each with `cargo xtask nvda compare <name> --keep`"
-        );
-    }
-
-    #[test]
-    fn a_demonstration_shows_only_scenarios_of_the_suite() {
-        for def in SCENARIOS {
-            if let Speech::Demonstration(shows) = def.speech {
-                assert_eq!(def.group, Group::Demo, "{}", def.name);
-                for shown in shows {
-                    assert_eq!(
-                        find(shown).map(|shown| shown.group),
-                        Some(Group::Suite),
-                        "{} shows {shown}, which is no scenario of the suite",
-                        def.name
-                    );
-                }
-            }
         }
     }
 }

@@ -68,10 +68,7 @@ for its session id to find NVDA's port. It refuses to run when the NVDA
 there is not the build the `nvda` submodule pins (the build it prints
 first, such as `alpha-58022,732d1ce2`, must name the submodule's
 commit), since expectations come from captures and ported code from the
-pinned source. Before its first step it prints the header compare mode's
-report starts with, the lines "NVDA: \<build>" and "Submodule pin:
-\<pin>", or with `--json` one object of kind `header` with `nvda` and
-`pin`, so every capture names the build it was made with and the pin.
+pinned source.
 
 A step is a key to press, or one of these:
 
@@ -217,11 +214,7 @@ its menu with `--open-menu`, and move through the menu and
 dialogs with plain keys, which both screen readers let through.
 
 A capture that an expectation cites is committed beside the test that
-cites it (`CLAUDE.md`, standing rules), and a unit test in `cargo xtask
-ci` fails on a committed capture without the header, made at a pin that
-is not the submodule's, or that nothing cites ([the end-to-end
-guide](e2e.md), "The check against the capture"); other captures are working
-
+cites it (`CLAUDE.md`, standing rules); other captures are working
 material, not kept: they serve exploratory testing and comparing what
 Verbatim says with what NVDA says.
 
@@ -258,9 +251,14 @@ waiting once had them open a game from the desktop.
 setup and body, unchanged, with NVDA running instead of Verbatim. Every
 speech assertion records what it expects instead of checking it, and the
 run writes a report, `compare.txt` in the scenario's artifacts folder
-(`target/e2e-artifacts/<scenario>`), and prints it. It is a research
-instrument, not a test: it asserts nothing, never runs in continuous
-integration, and passes unless the harness itself fails, such as a
+(`target/e2e-artifacts/<scenario>`), and prints it.
+
+Compare mode is for exploration only: for hearing what NVDA says in a
+scenario and drafting Verbatim's expected speech from it, since the two
+differ. It is never run in CI, and its reports are never committed or
+checked against.
+
+It asserts nothing and passes unless the harness itself fails, such as a
 window that does not come to the front. It takes over the desktop like
 any local end-to-end run.
 
@@ -272,24 +270,11 @@ To run it:
    `--agent <address>` names an agent already running in place of the
    one the command starts, and `--quiet-ms <ms>` sets the quiet period,
    by default 1000 and never less than 500.
-3. To keep the report as the scenario's capture, add `--keep`. It
-   writes the report to `crates/verbatim-e2e/captures/<scenario>.txt` and
-   prints "--keep wrote" and the path. It refuses, keeping nothing,
-   printing "--keep kept nothing:" and the reason, and exiting with code
-   2, when the run did not end with exit code 0 (a run that stopped on a
-   harness error still writes its report), when the report does not say
-   the pin is the installed build, when a step is judged "differs", and
-   when NVDA's speech did not settle in a step, since the quiet period
-   may have cut speech from a step that still reads "same". So a
-   committed capture agrees with the scenario's expectations, or names
-   each difference as a declared deviation. The report writes the run's
-   own values as labels: `{run}` for the token in every harness title, and
-   `{<label>}` for each value the scenario registered with
-   `Scenario::read_value`. Each run of the scenario then checks its
-   expectations against it ([the end-to-end guide](e2e.md), "The check
-   against the capture"). A step's input names a harness action by its
-   kind, with what it acted on in a "Detail:" line.
 
+The report writes the token in every harness title as `{run}`, found as
+written and as NVDA speaks it, with a space where letters and digits
+meet, so a report reads the same from run to run. A step's input names a
+harness action by its kind, with what it acted on in a "Detail:" line.
 
 The command starts its own agent as a capture does, checks that the
 NVDA running is the pinned build, deletes the report an earlier

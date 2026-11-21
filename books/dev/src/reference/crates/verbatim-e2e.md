@@ -266,7 +266,8 @@ as `latency.csv`; no latency budget is enforced (`books/dev/src/reference/testin
 Compare mode runs a scenario's own setup and body against NVDA instead of
 Verbatim, asserts nothing, and writes a report setting what the scenario
 expects Verbatim to say beside what NVDA said, step by step. It is a
-research instrument, not a test, and never runs in CI;
+tool for exploration only, never run in CI, its reports never committed
+or checked;
 [the NVDA guide](../../how-to/nvda.md), "Comparing a scenario", says how to
 run it, how steps are formed, the report's contents and verdicts, and
 which scenarios cannot be compared. `compare::ENV`
@@ -315,7 +316,7 @@ shorter (`compare::QuietPeriod`).
   `take_until_idle` and `take_all_queued` cannot keep their promises
   without Verbatim and fail as a harness error. An optional utterance is
   left out of the texts recorded. `take_steps` hands the steps to
-  the registry, in every mode.
+  the registry.
 - The scenario. `Scenario::compare_with` does what `Scenario::launch_with`
   does up to opening the document, building and staging included, then
   connects to the transcript in the agent's session, before minimizing,
@@ -328,7 +329,8 @@ shorter (`compare::QuietPeriod`).
   `terminal::expect_prompt_read`'s writing of the file that lets the shell
   show its first prompt) calls `Scenario::begin_action`, which in compare
   mode closes the step under way and starts one with the action as its
-  input (`Timeline::push_action`); a normal run is unchanged by it.
+  input (`Timeline::push_action`), named by the action's kind with what
+  it acted on as its detail; a normal run is unchanged by it.
   `send_gesture` presses a gesture's keys as in a normal run. What needs Verbatim itself (`status`,
   `subscribe_events`, `verbatim_children`, `end_verbatim_process`,
   `send_keys_from_verbatim`, and the checks after the body) is an error.
@@ -346,21 +348,9 @@ shorter (`compare::QuietPeriod`).
   form, and checks the entry is a `###` heading of that file; it fails on
   a call whose file or entry is not a string literal, and does not see a
   call made through a wrapper.
-- `ScenarioDef::speech`: compare mode runs only a scenario whose speech
-  source is `Speech::Capture`, and refuses any other with its source
-  (`Speech::not_comparable`).
-- The check against the capture (`registry::check_capture`,
-  `compare::check_against_capture`). The collector keeps the steps in
-  every mode (`SpeechCollector::take_steps`), each action of the harness
-  on the timeline as its kind and its detail (`Scenario::begin_action`),
-  and a scenario whose speech is its capture has its steps compared with
-  the capture's after the body: input, an action by its kind, and the
-  expected texts, the run's values (`Scenario::read_value`, and the run's
-  token, `scenario::run_token`) replaced by their labels
-  (`compare::substituted`), as compare mode's report writes them.
-  `registry::CAPTURES_REQUIRED` turns a missing capture into a failure
-  once the captures are committed. `xtask/src/captures.rs` tests the
-  committed captures' headers, pins and citations.
+- `ScenarioDef::compare`: compare mode runs a scenario whose entry says
+  `Compare::Runs`, and refuses one marked `Compare::Refused`, giving its
+  reason.
 - The run (`registry::run`, in its compare mode). It hears the desktop as an ordinary
   step, runs setup, the body and the end of the speech, the teardown and
   the cleanup, writes the timeline, the report, the foreground record and
@@ -692,19 +682,18 @@ Verbatim's run.
 ## The registry
 
 `ScenarioDef` is one named, grouped scenario: `name` (its test, its name on `cargo xtask e2e`, artifacts directory, and video name),
-`group`, `speech` (where its expected speech comes from), `settings` (a change to the fixed settings), `local_only` (the reason it runs only off GitHub's runner), `document`, and `setup`, `body` and `teardown`.
+`group`, `compare` (whether compare mode can run it), `settings` (a change to the fixed settings), `local_only` (the reason it runs only off GitHub's runner), `document`, and `setup`, `body` and `teardown`.
 An entry is one line, a constructor with its defaults: `suite!(module,
-speech)` for a scenario named after its module, whose `setup`, `body` and
+compare)` for a scenario named after its module, whose `setup`, `body` and
 `teardown` it runs, `suite!("name", module::{setup, body, teardown},
-speech)` for one of several in a module, `demo!(module, &[scenarios])` and
+compare)` for one of several in a module, `demo!(module)` and
 `measure!("name", module::{...})`, each followed by the methods for what
 it changes, `.local_only("reason")`, `.settings(f)` and `.document(f)`.
-The speech source (`Speech`) is required: `Capture`, the scenario's
-committed NVDA capture; `Own("why")`, Verbatim's own GUI and lifecycle;
-`SourceDerived("NVDA file lines")`, speech a capture cannot record, such
-as tones or a flood's middle; `Measurement` for the measure set; and
-`Demonstration(&[scenarios])`, the suite's scenarios whose steps a
-demonstration shows, which a unit test checks are in the suite.
+A suite entry says whether compare mode can run it: `Runs`, or
+`Refused("why")` for one that needs Verbatim itself, such as Verbatim's
+own GUI and lifecycle, or whose NVDA speech the comparison cannot judge,
+such as tones or a flood's middle. A demonstration and a measurement are
+always refused.
 `cargo xtask e2e-plan` reads the constructors from the source, since its
 Linux job builds neither this crate nor the test binary.
 

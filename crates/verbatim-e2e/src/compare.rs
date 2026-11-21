@@ -3,9 +3,12 @@
 //! Verbatim to say beside what NVDA said, step by step
 //! (`books/dev/src/how-to/nvda.md`, "Comparing a scenario").
 //!
-//! It is a research instrument, not a test: it asserts nothing, never runs
-//! in continuous integration, and passes unless the harness itself fails,
-//! such as a window that does not come to the front. [`ENV`] set to the
+//! It is a tool for exploration only, to hear what NVDA says and draft
+//! Verbatim's expected speech from it: never run in CI and never a check,
+//! its reports never committed or compared against
+//! (`books/dev/src/how-to/nvda.md`, "Comparing a scenario"). It asserts
+//! nothing and passes unless the harness itself fails, such as a window
+//! that does not come to the front. [`ENV`] set to the
 //! name of the scenario being run selects it ([`selects`]); set to any
 //! other name, the scenario fails at once as a harness error, so a suite
 //! run with the variable left set cannot pass. The scenario's
@@ -74,16 +77,6 @@ pub const QUIET_FLOOR: Duration = Duration::from_millis(500);
 
 /// The report's file name in the run's artifacts.
 pub const REPORT_FILE_NAME: &str = "compare.txt";
-
-/// The folder, relative to the workspace root, that holds each scenario's
-/// capture: its compare report, kept by `cargo xtask nvda compare --keep`.
-pub const CAPTURES_DIR: &str = "crates/verbatim-e2e/captures";
-
-/// The capture of `scenario` under the workspace `root`.
-#[must_use]
-pub fn capture_path(root: &Path, scenario: &str) -> std::path::PathBuf {
-    root.join(CAPTURES_DIR).join(format!("{scenario}.txt"))
-}
 
 /// Whether a run of `scenario` is in compare mode, [`ENV`] being `setting`:
 /// `Ok(true)` when it names `scenario`, `Ok(false)` when it is unset or
@@ -501,10 +494,11 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
 }
 
 /// `text` with each value of `values`, a label and the value this run
-/// read, replaced by its label in braces, the longest value first, so
-/// that what a run read from the system does not make it differ from its
-/// capture. A value is found as written and as NVDA speaks it, with white
-/// space inserted inside it: NVDA's speech breaks a word where letters and
+/// read, such as the token in the harness's window titles, replaced by
+/// its label in braces, the longest value first, so that the report names
+/// a run's own values in the same way on both sides and in every run. A
+/// value is found as written and as NVDA speaks it, with white space
+/// inserted inside it: NVDA's speech breaks a word where letters and
 /// digits meet, so it says the token `mwpjps1l` as "mwpjps 1l", and a
 /// value matched only as written was left in a report whenever the run's
 /// token held a digit.
@@ -558,176 +552,6 @@ fn spoken_match(text: &[char], value: &[char]) -> Option<usize> {
         at += 1;
     }
     Some(at)
-}
-
-/// One step as the check against a capture compares it: its input, an
-/// action by its kind alone, and its expected texts as the report writes
-/// them, joined with single spaces.
-type Checked = (String, String);
-
-/// The steps of a run the check compares, the run's values replaced by
-/// their labels: every step but the start and those with neither an input
-/// nor an expected text, as compare mode's report lists them.
-fn checked_run(steps: &[CompareStep], values: &[(String, String)]) -> Vec<Checked> {
-    steps
-        .iter()
-        .filter(|step| !step.start && (step.input != NO_INPUT || !step.expected.is_empty()))
-        .map(|step| {
-            let texts: Vec<String> = step
-                .expected
-                .iter()
-                .map(|text| readable(&substituted(text, values)))
-                .collect();
-            (
-                substituted(&step.input, values),
-                normalized(texts.iter().map(String::as_str)),
-            )
-        })
-        .collect()
-}
-
-/// The steps of a capture, a report [`render_report`] wrote, as
-/// [`checked_run`] gives a run's.
-fn checked_capture(capture: &str) -> Result<Vec<Checked>, String> {
-    /// Which of a step's lists a line of the report belongs to.
-    #[derive(PartialEq)]
-    enum Side {
-        Verbatim,
-        Nvda,
-        Neither,
-    }
-    let mut steps: Vec<CompareStep> = Vec::new();
-    let mut side = Side::Neither;
-    for line in capture.lines() {
-        if let Some((_, input)) = line
-            .strip_prefix("Step ")
-            .and_then(|rest| rest.split_once(": "))
-        {
-            steps.push(CompareStep {
-                input: input.to_owned(),
-                expected: Vec::new(),
-                heard: Vec::new(),
-                deviations: Vec::new(),
-                notes: Vec::new(),
-                details: Vec::new(),
-                start: input == "start",
-            });
-            side = Side::Neither;
-            continue;
-        }
-        let Some(step) = steps.last_mut() else {
-            continue;
-        };
-        if line == "Verbatim:" {
-            side = Side::Verbatim;
-        } else if line == "NVDA:" {
-            side = Side::Nvda;
-        } else if let Some(rest) = line.strip_prefix("Declared deviation: ") {
-            step.deviations.push((rest.to_owned(), rest.to_owned()));
-            side = Side::Neither;
-        } else if let Some(text) = line.strip_prefix("  ")
-            && text != "(nothing)"
-        {
-            let text = if text == "(empty)" { "" } else { text };
-            match side {
-                Side::Verbatim => step.expected.push(
-                    text.strip_suffix(" (not compared)")
-                        .unwrap_or(text)
-                        .to_owned(),
-                ),
-                Side::Nvda if text == "cancel" => step.heard.push(Said::Event(text.to_owned())),
-                Side::Nvda => step.heard.push(Said::Speech(text.to_owned())),
-                Side::Neither => {}
-            }
-        } else if !line.starts_with("  ") {
-            side = Side::Neither;
-        }
-    }
-    // A capture agrees with NVDA in every step it does not declare
-    // different, as `--keep` kept it; one edited by hand may not.
-    if let Some((index, _)) = steps
-        .iter()
-        .enumerate()
-        .find(|(_, step)| step.verdict() == Verdict::Differs)
-    {
-        return Err(format!(
-            "step {} of the capture differs from NVDA's speech with no deviation declared",
-            index + 1
-        ));
-    }
-    Ok(steps
-        .into_iter()
-        .filter(|step| !step.start && (step.input != NO_INPUT || !step.expected.is_empty()))
-        .map(|step| {
-            let texts: Vec<String> = step.expected.iter().map(|text| readable(text)).collect();
-            (step.input, normalized(texts.iter().map(String::as_str)))
-        })
-        .collect())
-}
-
-/// Checks a run's expectations, `steps`, against the scenario's capture,
-/// a report [`render_report`] wrote and `cargo xtask nvda compare --keep`
-/// kept: the same steps, each with the same input, an action compared by
-/// its kind alone, and the same expected texts, once the run's `values`
-/// are replaced by their labels. It compares expectations with
-/// expectations, not speech with NVDA's, so it needs no NVDA.
-///
-/// # Errors
-///
-/// Returns the first step that differs, with both sides, or the steps
-/// one side has beyond the other; or the capture's first step that
-/// differs from NVDA's speech with no deviation declared, as a capture
-/// edited by hand can.
-pub fn check_against_capture(
-    capture: &str,
-    steps: &[CompareStep],
-    values: &[(String, String)],
-) -> Result<(), String> {
-    let run = checked_run(steps, values);
-    let kept = checked_capture(capture)?;
-    for (index, pair) in run.iter().zip(&kept).enumerate() {
-        let (ours, theirs) = pair;
-        if ours != theirs {
-            return Err(format!(
-                "step {} differs from the capture: the run expects {:?} after {:?}, the capture {:?} after {:?}",
-                index + 1,
-                ours.1,
-                ours.0,
-                theirs.1,
-                theirs.0
-            ));
-        }
-    }
-    if run.len() != kept.len() {
-        return Err(format!(
-            "the run has {} compared steps and the capture {}",
-            run.len(),
-            kept.len()
-        ));
-    }
-    Ok(())
-}
-
-/// Why a report [`render_report`] wrote cannot be kept as the scenario's
-/// capture, or `None` when it can: its pin is not the installed build, a
-/// step is judged `differs`, or NVDA's speech did not settle in a step, since
-/// the quiet period may have cut speech from a step that still reads `same`.
-#[must_use]
-pub fn keep_refusal(report: &str) -> Option<String> {
-    let mut step = "the header";
-    for line in report.lines() {
-        if let Some(rest) = line.strip_prefix("Step ") {
-            step = rest;
-        } else if line == "Verdict: differs" {
-            return Some(format!("step {step} differs from NVDA"));
-        } else if line.starts_with("Note: NVDA's speech did not settle") {
-            return Some(format!("NVDA's speech did not settle in step {step}"));
-        }
-    }
-    (!report
-        .lines()
-        .any(|line| line == "The pin is the installed build."))
-    .then(|| "the report does not say the pin is the installed build".to_owned())
 }
 
 /// `text` on one line of the report: an empty utterance named, and a line
@@ -1072,126 +896,6 @@ mod tests {
              \x20 declared deviation: 1\n\
              \x20 declared, but NVDA agrees: 0\n\
              \x20 not compared: 1\n"
-        );
-    }
-
-    #[test]
-    fn keep_refuses_a_differing_or_unsettled_step_and_an_unmatched_pin() {
-        let matched = ReportHeader {
-            pin_matches: Some(true),
-            ..header()
-        };
-        let same = step(&["Name edit"], &[speech("Name edit")]);
-        assert_eq!(
-            keep_refusal(&render_report(&matched, std::slice::from_ref(&same))),
-            None
-        );
-        assert_eq!(
-            keep_refusal(&render_report(&header(), std::slice::from_ref(&same))),
-            Some("the report does not say the pin is the installed build".to_owned())
-        );
-        let differs = step(&["Name edit"], &[speech("Name")]);
-        assert_eq!(
-            keep_refusal(&render_report(&matched, &[same.clone(), differs])),
-            Some("step 2: keys [tab] differs from NVDA".to_owned())
-        );
-        let mut unsettled = same;
-        unsettled
-            .notes
-            .push("NVDA's speech did not settle within 15s".to_owned());
-        assert_eq!(
-            keep_refusal(&render_report(&matched, &[unsettled])),
-            Some("NVDA's speech did not settle in step 1: keys [tab]".to_owned())
-        );
-    }
-
-    #[test]
-    fn the_check_compares_actions_by_kind_and_expectations_with_read_values_as_labels() {
-        let mut start = step(&["sound: start", "Desktop list"], &[]);
-        start.input = "start".to_owned();
-        start.start = true;
-        let mut action = step(&["x-abc window"], &[speech("x-abc window")]);
-        action.input = "launch a window".to_owned();
-        action.details = vec!["mockapp.exe, its window titled \"x-abc\"".to_owned()];
-        let keys = |name: &str| {
-            let said = format!("{name} 1 of 22");
-            step(&[&said], &[speech(&said)])
-        };
-        let values = |run: &str, name: &str| {
-            vec![
-                ("run".to_owned(), run.to_owned()),
-                ("first suggestion".to_owned(), name.to_owned()),
-            ]
-        };
-        let capture = substituted(
-            &render_report(
-                &header(),
-                &[start.clone(), action.clone(), keys("Sound settings")],
-            ),
-            &values("abc", "Sound settings"),
-        );
-        assert!(capture.contains("x-{run} window"), "{capture}");
-        assert!(capture.contains("{first suggestion} 1 of 22"), "{capture}");
-
-        // Another run, with its own token, title and suggestion, each
-        // registered, is the same.
-        let mut other_action = action.clone();
-        other_action.expected = vec!["x-def window".to_owned()];
-        other_action.details = vec!["another title, another process".to_owned()];
-        assert_eq!(
-            check_against_capture(
-                &capture,
-                &[start.clone(), other_action, keys("Sound mixer")],
-                &values("def", "Sound mixer"),
-            ),
-            Ok(())
-        );
-
-        // A changed expectation, an unregistered value, an action of
-        // another kind and a missing step each fail.
-        let changed = step(&["Sound settings 1 of 21"], &[]);
-        assert_eq!(
-            check_against_capture(
-                &capture,
-                &[start.clone(), action.clone(), changed],
-                &values("abc", "Sound settings"),
-            ),
-            Err("step 2 differs from the capture: the run expects \"{first suggestion} 1 of 21\" after \"keys [tab]\", the capture \"{first suggestion} 1 of 22\" after \"keys [tab]\"".to_owned())
-        );
-        assert_eq!(
-            check_against_capture(
-                &capture,
-                &[start.clone(), action.clone(), keys("Sound mixer")],
-                &values("abc", "Sound settings"),
-            ),
-            Err("step 2 differs from the capture: the run expects \"Sound mixer 1 of 22\" after \"keys [tab]\", the capture \"{first suggestion} 1 of 22\" after \"keys [tab]\"".to_owned())
-        );
-        let mut other_kind = action.clone();
-        other_kind.input = "bring a window forward".to_owned();
-        assert_eq!(
-            check_against_capture(
-                &capture,
-                &[start.clone(), other_kind, keys("Sound settings")],
-                &values("abc", "Sound settings"),
-            ),
-            Err("step 1 differs from the capture: the run expects \"x-{run} window\" after \"bring a window forward\", the capture \"x-{run} window\" after \"launch a window\"".to_owned())
-        );
-        // A capture edited by hand to expect what NVDA did not say fails.
-        let edited = capture.replacen("  x-{run} window\nNVDA:", "  x-{run} dialog\nNVDA:", 1);
-        assert_eq!(
-            check_against_capture(
-                &edited,
-                &[start.clone(), action.clone()],
-                &values("abc", "Sound settings")
-            ),
-            Err(
-                "step 2 of the capture differs from NVDA's speech with no deviation declared"
-                    .to_owned()
-            )
-        );
-        assert_eq!(
-            check_against_capture(&capture, &[start, action], &values("abc", "Sound settings")),
-            Err("the run has 1 compared steps and the capture 2".to_owned())
         );
     }
 
