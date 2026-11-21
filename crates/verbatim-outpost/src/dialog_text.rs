@@ -13,14 +13,39 @@
 //! it as the dialog's description, as NVDA does, so Core speaks it after
 //! the dialog's name, role, and states and before the focused control.
 
+use std::collections::BTreeSet;
+
 use verbatim_model::{Role, State, StateSet};
 use verbatim_uia::map::CachedUiaParts;
 use verbatim_uia::{DialogText, Live, Request, Uia};
 
-/// The most objects one gathering looks at, so a dialog with an enormous
-/// tree costs a bounded number of calls; a dialog that has more says
-/// nothing rather than part of its text.
-pub const MAX_OBJECTS: usize = 512;
+/// The most objects one gathering fetches, every child counted as it is
+/// fetched: a safety bound against a tree with no identity that loops,
+/// far above any real dialog (the largest measured, 1,500 objects), where
+/// NVDA gathers with no cap. A dialog that has more gives the text read up
+/// to it (Dickson, 2026-11-21; `docs/design/security-model.md`, U2 and
+/// U3).
+pub const MAX_OBJECTS: usize = 65_536;
+
+/// What identifies an object a gathering has visited, where it has an
+/// identity: a UI Automation element's runtime id, or an MSAA object with
+/// an address of its own, its window, object id and child id. An MSAA
+/// object reached through its parent's children with no address has
+/// none, and only the cap bounds a walk through such objects.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Visited {
+    /// A UI Automation element's runtime id.
+    Uia(Vec<i32>),
+    /// An MSAA object's window, object id and child id.
+    Msaa {
+        /// Its window.
+        window: isize,
+        /// Its object id.
+        object: i32,
+        /// Its child id.
+        child: i32,
+    },
+}
 
 /// What a dialog's text is gathered under: the dialog, or a container in
 /// it. Its one method may call into the application.
@@ -46,6 +71,8 @@ pub trait DialogObject: DialogParent<Child = Self> + Sized {
     fn value(&self) -> Option<String>;
     /// Its description, `None` when empty.
     fn description(&self) -> Option<String>;
+    /// What identifies it, `None` for an object with no identity.
+    fn visited(&self) -> Option<Visited>;
 }
 
 impl DialogParent for verbatim_ia2::dialog::DialogObject {
@@ -73,6 +100,13 @@ impl DialogObject for verbatim_ia2::dialog::DialogObject {
     }
     fn description(&self) -> Option<String> {
         Self::description(self)
+    }
+    fn visited(&self) -> Option<Visited> {
+        self.address().map(|(window, object, child)| Visited::Msaa {
+            window,
+            object,
+            child,
+        })
     }
 }
 
@@ -116,29 +150,46 @@ fn is_never_labelled(role: Role) -> bool {
     )
 }
 
-/// Why a gathering gave no text at all.
-enum Stop {
-    /// A dialog inside the dialog has the focus within it.
-    Focused,
-    /// It looked at [`MAX_OBJECTS`] objects.
-    TooMany,
+/// A dialog inside the dialog has the focus within it: the gathering
+/// gives no text at all.
+struct Focused;
+
+/// How far a gathering has come: the objects fetched, the identities
+/// visited, and whether it has ended, and why.
+#[derive(Default)]
+struct Walk {
+    fetched: usize,
+    visited: BTreeSet<Visited>,
+    end: Option<End>,
+}
+
+/// Why a gathering ended before the tree did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End {
+    /// It fetched [`MAX_OBJECTS`]: the objects fetched still give their
+    /// text, and nothing more is fetched.
+    Cap,
+    /// It met an object it visited before: the tree loops, and nothing
+    /// after it is read.
+    Repeat,
 }
 
 /// The text of `dialog`, its pieces joined by line breaks; `None` when it
-/// has none, when a dialog inside it holds the focus, or when it is too big
-/// to gather.
+/// has none, or when a dialog inside it holds the focus. A gathering that
+/// reaches [`MAX_OBJECTS`], or an object it visited before, gives the text
+/// read up to there.
 #[must_use]
 pub fn dialog_text<P: DialogParent>(dialog: &P) -> Option<String> {
-    let mut looked_at = 0;
-    match gather(dialog, true, &mut looked_at) {
-        Ok(pieces) if !pieces.is_empty() => Some(pieces.join("\n")),
-        // No text, or a dialog inside holding the focus.
-        Ok(_) | Err(Stop::Focused) => None,
-        Err(Stop::TooMany) => {
-            tracing::debug!("a dialog's text was not gathered: it has too many objects");
-            None
-        }
+    let mut walk = Walk::default();
+    let pieces = gather(dialog, true, &mut walk).ok()?;
+    if let Some(end) = walk.end {
+        tracing::debug!(
+            ?end,
+            fetched = walk.fetched,
+            "a dialog's text was gathered up to where its walk ended"
+        );
     }
+    (!pieces.is_empty()).then(|| pieces.join("\n"))
 }
 
 /// The pieces of text inside `parent`. `allow_focused` is false inside a
@@ -147,26 +198,42 @@ pub fn dialog_text<P: DialogParent>(dialog: &P) -> Option<String> {
 fn gather<P: DialogParent>(
     parent: &P,
     allow_focused: bool,
-    looked_at: &mut usize,
-) -> Result<Vec<String>, Stop> {
-    let children = parent.children();
-    *looked_at += children.len();
-    if *looked_at > MAX_OBJECTS {
-        return Err(Stop::TooMany);
+    walk: &mut Walk,
+) -> Result<Vec<String>, Focused> {
+    if walk.end.is_some() {
+        return Ok(Vec::new());
     }
+    let mut children = parent.children();
+    let room = MAX_OBJECTS.saturating_sub(walk.fetched);
+    if children.len() > room {
+        children.truncate(room);
+        walk.end = Some(End::Cap);
+    }
+    walk.fetched += children.len();
     let mut pieces = Vec::new();
     for (index, child) in children.iter().enumerate() {
+        if let Some(visited) = child.visited()
+            && !walk.visited.insert(visited)
+        {
+            walk.end = Some(End::Repeat);
+        }
+        if walk.end == Some(End::Repeat) {
+            break;
+        }
         let states = child.states();
         if child.invisible() || states.contains(State::Disabled) {
             continue;
         }
         let role = child.role();
         if is_container(role) {
-            pieces.extend(gather(child, !is_dialog(role), looked_at)?);
+            pieces.extend(gather(child, !is_dialog(role), walk)?);
+            if walk.end == Some(End::Repeat) {
+                break;
+            }
             continue;
         }
         if !allow_focused && states.contains(State::Focused) {
-            return Err(Stop::Focused);
+            return Err(Focused);
         }
         if !gives_text(role, states) {
             continue;
@@ -340,6 +407,9 @@ impl DialogObject for UiaObject<'_> {
             .clone()
             .filter(|description| !description.is_empty())
     }
+    fn visited(&self) -> Option<Visited> {
+        (!self.parts.runtime_id.is_empty()).then(|| Visited::Uia(self.parts.runtime_id.clone()))
+    }
 }
 
 /// `text`, unless it is empty or blank.
@@ -360,6 +430,7 @@ mod tests {
         name: Option<&'static str>,
         value: Option<&'static str>,
         children: Vec<Fake>,
+        id: Option<i32>,
     }
 
     impl DialogParent for Fake {
@@ -387,6 +458,9 @@ mod tests {
         }
         fn description(&self) -> Option<String> {
             None
+        }
+        fn visited(&self) -> Option<Visited> {
+            self.id.map(|id| Visited::Uia(vec![id]))
         }
     }
 
@@ -484,9 +558,59 @@ mod tests {
         assert_eq!(dialog_text(page).as_deref(), Some("Page text"));
     }
 
+    /// A dialog of 600 objects, past the 512 at which Verbatim once said
+    /// nothing, gives its whole text, as NVDA, which gathers with no cap.
+    /// Source-derived, approved by Dickson on 2026-11-21
+    /// (`nvda/source/NVDAObjects/behaviors.py` 93 to 188).
     #[test]
-    fn a_dialog_with_too_many_objects_says_nothing() {
-        let crowd = dialog(vec![object(Role::StaticText, "Line"); MAX_OBJECTS + 1]);
-        assert_eq!(dialog_text(&crowd), None);
+    fn a_dialog_of_600_objects_gives_its_whole_text() {
+        let lines = dialog(vec![object(Role::StaticText, "Line"); 600]);
+        assert_eq!(
+            dialog_text(&lines),
+            Some(vec!["Line"; 600].join(
+                "
+"
+            ))
+        );
+    }
+
+    /// A dialog of one object more than the cap gives the text of the
+    /// first 65,536, the text read up to the cap (Dickson, 2026-11-21).
+    #[test]
+    fn a_dialog_past_the_cap_gives_the_text_read_up_to_it() {
+        let mut children = vec![object(Role::StaticText, "Line"); MAX_OBJECTS];
+        children.push(object(Role::StaticText, "Past the cap"));
+        let crowd = dialog(children);
+        assert_eq!(
+            dialog_text(&crowd),
+            Some(vec!["Line"; MAX_OBJECTS].join(
+                "
+"
+            ))
+        );
+    }
+
+    /// A tree that loops, an element met again below itself, ends the
+    /// walk at the repeated element, with the text read before it.
+    #[test]
+    fn a_repeated_element_ends_the_walk() {
+        let looping = Fake {
+            role: Some(Role::Pane),
+            id: Some(1),
+            children: vec![
+                object(Role::StaticText, "Before"),
+                Fake {
+                    role: Some(Role::Pane),
+                    id: Some(1),
+                    children: vec![object(Role::StaticText, "Again")],
+                    ..Fake::default()
+                },
+                object(Role::StaticText, "After"),
+            ],
+            ..Fake::default()
+        };
+        let mut dialog = dialog(vec![looping]);
+        dialog.id = Some(0);
+        assert_eq!(dialog_text(&dialog).as_deref(), Some("Before"));
     }
 }

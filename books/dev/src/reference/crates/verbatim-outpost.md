@@ -571,7 +571,11 @@ and the inherited pipe handles.
   `UiaDialog::new(uia, request, element)` and `UiaObject`, each child read as
   a `verbatim_uia::DialogText` with its description whatever the theme
   (`books/dev/src/explanation/design/uia-shapes.md`, decision 5). `is_dialog(role)` says which
-  roles have such text; more than `MAX_OBJECTS` objects gives no text.
+  roles have such text. The walk counts every child it fetches against
+  `MAX_OBJECTS` (65,536) and stops at an object it visited before
+  (`Visited`, by runtime id for UIA and by window, object id and child id
+  for an MSAA window's client area, `verbatim_ia2::dialog::DialogObject::address`),
+  giving the text read up to either.
 
 ## Implementation notes
 

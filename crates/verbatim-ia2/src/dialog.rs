@@ -97,6 +97,17 @@ impl DialogObject {
         Some(Self::new(acc, hwnd, client))
     }
 
+    /// The object's own address, its window, object id and child id, for
+    /// a window's client area, the one object a dialog's walk reaches that
+    /// has an address of its own; `None` for any other, reached through
+    /// its parent's children, which has no address and no usable COM
+    /// identity.
+    #[must_use]
+    pub fn address(&self) -> Option<(isize, i32, i32)> {
+        self.client
+            .then_some((self.hwnd, OBJID_CLIENT.0, CHILDID_SELF))
+    }
+
     /// The object's children, in order, each a window's client area where
     /// the child is a window object; none when they cannot be read. Two
     /// calls (`accChildCount` and `AccessibleChildren`), then for each

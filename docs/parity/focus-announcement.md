@@ -360,5 +360,7 @@ window's client area through whichever API it uses for that window,
 where Verbatim reads a dialog's children in the dialog's own API; an
 owner-drawn static text with no name, which NVDA reads from the screen,
 gives nothing; the Windows Installer's dialog class, and web dialogs,
-are not recognized; and a dialog with more than 512 objects says
-nothing.
+are not recognized. NVDA gathers with no cap; Verbatim's walk stops at
+65,536 objects fetched, or at an element it visited before, and gives
+the text read up to there, a safety bound far above any real dialog
+(Dickson, 2026-11-21).
