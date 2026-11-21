@@ -2387,6 +2387,7 @@ version = "0.1.0"
 dependencies = [
  "verbatim-model",
  "verbatim-uia",
+ "verbatim-win32",
  "windows",
  "windows-collections",
  "windows-core",

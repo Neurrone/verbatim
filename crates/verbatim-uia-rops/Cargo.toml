@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 verbatim-model.workspace = true
 verbatim-uia.workspace = true
+verbatim-win32.workspace = true
 windows.workspace = true
 windows-collections.workspace = true
 windows-core.workspace = true

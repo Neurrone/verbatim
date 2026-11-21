@@ -806,7 +806,7 @@ impl OutpostUnderTest {
         read: &ReadObject,
     ) -> (Outcome, CallCounts) {
         let uia = verbatim_uia::Uia::new().expect("a UIA client for the listener's reads");
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
         let readability = self.listener_readability();
         let outcome = match self.read_observer.borrow().clone() {
             Some(observer) => verbatim_listener::read_object_observed(
@@ -823,7 +823,7 @@ impl OutpostUnderTest {
                 read,
             ),
         };
-        (outcome, verbatim_uia::calls::take())
+        (outcome, verbatim_win32::calls::take())
     }
 
     /// The listener's read of a UI Automation focus on `element`, as Core

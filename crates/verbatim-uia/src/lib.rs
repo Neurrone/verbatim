@@ -10,10 +10,9 @@
 //!
 //! - [`Uia`] — a per-thread client wrapper; each outpost thread that talks to
 //!   UIA owns one. Beyond focus/query lookups, it walks a node's ancestor
-//!   chain and navigates to a neighbor (a navigation `QueryKind`) via the
-//!   raw-view tree walker's per-hop `*BuildCache` methods (one cross-process
-//!   round trip per hop; M4's remote-ops work replaces the per-hop walk with
-//!   a single batched round trip), and activates a node through the
+//!   chain via the raw-view tree walker's per-hop `*BuildCache` methods
+//!   (one cross-process round trip per hop, where `verbatim-uia-rops`
+//!   reads the same in one remote operation), and activates a node through the
 //!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
 //! - [`Registration`] — a property-change, automation-event, or notification
 //!   subscription over a [`Scope`] (given windows, the whole desktop, or
@@ -38,15 +37,9 @@
 //!   cached read of an element, declared together with the cache request
 //!   that fills it (`books/dev/src/explanation/design/uia-shapes.md`): the only cached reads in
 //!   the workspace.
-//! - [`provider_process`], [`served_by`] and [`console_host_of`] — the
-//!   process that serves a window's UIA, a console window's being its
-//!   console host, read with local calls only, re-exported from
-//!   `verbatim_win32::provider` under the same names;
-//!   [`parent_across_process_boundary`], the
-//!   parent window, or a top-level window's visible owner, served by
-//!   another process, where a walk up stops.
-//! - [`calls`] — the per-thread count of the cross-process calls this crate
-//!   makes, which the outpost's worker takes around each entry it handles.
+//! - [`calls`] — what this crate counts as a cross-process call, in the
+//!   per-thread count `verbatim_win32::calls` keeps, and its count of
+//!   failed cached reads.
 //! - [`ElementExt`] and [`WalkerExt`] — safe wrappers over an element's
 //!   live reads and the tree walker's steps, each holding one documented
 //!   `unsafe` call and counting its cross-process call, so the code that
@@ -99,14 +92,10 @@ pub use shape::{
 pub use subscribe::kept_for_tests;
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
-    NotificationCallback, Part, PropertyCallback, PropertyValueCallback, Registration, Scope,
-    StructureCallback, Subscription, registering_thread_runs,
+    LISTENER_EVENTS, NotificationCallback, Part, PropertyCallback, PropertyValueCallback,
+    Registration, Scope, StructureCallback, Subscription, registering_thread_runs,
 };
 pub use verbatim_model::UIA_TRANSACTION_TIMEOUT;
-pub use verbatim_win32::provider::{
-    console_host_of, is_top_level_window, outermost_nearest_window, parent_across_process_boundary,
-    parent_window, plain_windows_start, provider_process, raw_view_parent_window, served_by,
-};
 
 /// Releases the UIA objects this crate keeps for the calling thread: the
 /// client behind [`console_reports_formatting`], and the walker behind

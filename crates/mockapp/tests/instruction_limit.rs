@@ -19,7 +19,7 @@ mod harness;
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
     Ancestor, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry,
-    Shape, Uia, runtime_id,
+    Shape, Uia,
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, CaretUnit, Comparison, ControlledQuery, Error,
@@ -158,6 +158,11 @@ impl Fixture {
                 .expect("a cache request"),
         )
     }
+}
+
+/// `element`'s runtime id, which every element of mockapp's has.
+fn runtime_id(element: &windows::Win32::UI::Accessibility::IUIAutomationElement) -> Vec<i32> {
+    verbatim_uia::runtime_id(element).expect("a runtime id")
 }
 
 /// Runs `run` with counting on and returns how many instructions the one

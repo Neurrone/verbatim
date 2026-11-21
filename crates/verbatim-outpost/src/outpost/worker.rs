@@ -84,7 +84,7 @@ impl Charge {
 /// since the last take, resetting the count. Only a worker calls into the
 /// application, so on a worker this is what the program in hand has made.
 pub(super) fn take_calls() -> CallCounts {
-    verbatim_uia::calls::take() + verbatim_ia2::calls::take()
+    verbatim_win32::calls::take()
 }
 
 /// Starts a worker generation, which takes its programs from

@@ -433,7 +433,7 @@ impl<S: Shape> Cached<S> {
     /// whatever its cache holds. Local.
     #[must_use]
     pub fn runtime_id(&self) -> Vec<i32> {
-        crate::com::runtime_id(&self.live.element)
+        crate::com::runtime_id_or_none(&self.live.element)
     }
 
     /// Whether every provider of the element is one of UIA's own proxies,
@@ -600,7 +600,7 @@ impl Live {
     /// The element's runtime id, which UIA keeps with every element. Local.
     #[must_use]
     pub fn runtime_id(&self) -> Vec<i32> {
-        crate::com::runtime_id(&self.element)
+        crate::com::runtime_id_or_none(&self.element)
     }
 
     /// The element with its cache filled by `request`. Cross-process.
@@ -674,7 +674,7 @@ impl Live {
         walker: &IUIAutomationTreeWalker,
         direction: Direction,
     ) -> windows::core::Result<Self> {
-        crate::calls::count(verbatim_model::CallKind::Uia)?;
+        verbatim_win32::calls::count(verbatim_model::CallKind::Uia)?;
         let element = &self.element;
         let found = match direction {
             // SAFETY: the walker and the element are live COM objects.

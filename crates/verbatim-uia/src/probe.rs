@@ -155,7 +155,7 @@ pub fn raw_probe(hwnd: isize) -> RawProbe {
     // UIA's first-time setup happens where it always has, though this
     // probe does not use UIA.
     let _ = crate::client::ensure_ready();
-    if crate::calls::count(CallKind::WindowMessage).is_err() {
+    if verbatim_win32::calls::count(CallKind::WindowMessage).is_err() {
         return RawProbe::Abandoned;
     }
     let mut answer = 0usize;

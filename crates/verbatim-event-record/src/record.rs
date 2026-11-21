@@ -358,7 +358,7 @@ fn target_sink(
                 if destroyed {
                     let _ = changes.send(WindowChange::Gone(raw.hwnd));
                 } else if shows_window(raw.event, window_object)
-                    && verbatim_uia::is_top_level_window(raw.hwnd)
+                    && verbatim_win32::provider::is_top_level_window(raw.hwnd)
                 {
                     let _ = changes.send(WindowChange::Shown(raw.hwnd));
                 }
@@ -377,7 +377,7 @@ fn shows_window(event: u32, window_object: bool) -> bool {
 /// What the desktop's focus hook does with each focus event.
 fn focus_sink(target: Target, arrivals: Arc<Arrivals>) -> Sink {
     Box::new(move |raw: RawEvent| {
-        let provider = verbatim_uia::provider_process(raw.hwnd);
+        let provider = verbatim_win32::provider::provider_process(raw.hwnd);
         let in_target = match target {
             Target::Process(pid) => provider == Some(pid),
             Target::Window { hwnd, pid } => window_in_target(hwnd, pid, raw.hwnd),
@@ -512,7 +512,7 @@ fn watch(
                 WindowChange::Shown(window)
                     if !windows.contains_key(&window)
                         && window_is_visible(window)
-                        && verbatim_uia::served_by(window, pid) =>
+                        && verbatim_win32::provider::served_by(window, pid) =>
                 {
                     match find_window(&uia, &request, window).as_ref().map(agile) {
                         Some(Ok(element)) => {

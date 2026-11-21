@@ -1112,11 +1112,11 @@ impl UiaUnderTest {
 
     /// Runs `operation` on this thread and measures it.
     fn measure<T>(&self, operation: impl FnOnce(&Self) -> T) -> (T, Cost) {
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
         let result = operation(self);
         let cost = Cost {
-            calls: verbatim_uia::calls::take(),
+            calls: verbatim_win32::calls::take(),
             failed_reads: verbatim_uia::calls::take_failed_reads(),
         };
         (result, cost)
@@ -1662,7 +1662,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             .expect("the focus's cache request"),
     );
     common::reset_hits(parent);
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let ancestry = focus_ancestry_classic(
         &under_test.uia,
         &FocusQuery {
@@ -1682,7 +1682,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
         },
     )
     .expect("the walk");
-    let walk_calls = verbatim_uia::calls::take();
+    let walk_calls = verbatim_win32::calls::take();
     let FocusAncestry::Focused(ancestry) = ancestry else {
         panic!("the walk required no focus");
     };
@@ -2406,7 +2406,8 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
     );
     route.steps.truncate(1);
     route.end = RouteEnd::ContinueFrom(WindowHandle(
-        u64::try_from(verbatim_uia::parent_window(hwnd.0 as isize)).expect("a window handle"),
+        u64::try_from(verbatim_win32::provider::parent_window(hwnd.0 as isize))
+            .expect("a window handle"),
     ));
     read.object.ancestors.clear();
     let (outcome, calls_made) = outpost.complete_focus(read);
@@ -2552,7 +2553,7 @@ fn uia_event_registrations_cost_exactly() {
 /// (`uia_event_registrations_cost_exactly` says why).
 fn warm_runtime_id(element: &IUIAutomationElement) {
     assert!(
-        !verbatim_uia::runtime_id(element).is_empty(),
+        verbatim_uia::runtime_id(element).is_ok_and(|id| !id.is_empty()),
         "the element's runtime id"
     );
 }
@@ -2751,13 +2752,13 @@ fn measure_text(
     anchors: &mut verbatim_outpost::text::NodeText<'_, verbatim_outpost::text::uia::UiaPos>,
     op: &TextOp,
 ) -> (TextReply, Cost) {
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let _ = verbatim_uia::calls::take_failed_reads();
     let reply = perform(source, anchors, op);
     (
         reply,
         Cost {
-            calls: verbatim_uia::calls::take(),
+            calls: verbatim_win32::calls::take(),
             failed_reads: verbatim_uia::calls::take_failed_reads(),
         },
     )
@@ -3326,7 +3327,7 @@ fn starting_reads_cost_exactly() {
             &mut app,
             hwnd,
             &mut source,
-            (verbatim_uia::calls::take, read),
+            (verbatim_win32::calls::take, read),
         );
         app.quit();
         ratchet.check_calls(operation, measured, expected);
@@ -3362,7 +3363,7 @@ fn starting_reads_cost_exactly() {
             &mut app,
             hwnd,
             &mut source,
-            (verbatim_ia2::calls::take, read),
+            (verbatim_win32::calls::take, read),
         );
         ratchet.check_calls(operation, measured, expected);
     }
@@ -3452,7 +3453,7 @@ fn watch_checks_cost_exactly() {
         )
         .expect("the starting read");
         common::apply(&mut app, hwnd, "caret doc 11");
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
         let watched = verbatim_outpost::text::check::check(
             &mut source,
             &mut anchors,
@@ -3469,7 +3470,7 @@ fn watch_checks_cost_exactly() {
             2,
         )
         .expect("the check");
-        let measured = verbatim_uia::calls::take();
+        let measured = verbatim_win32::calls::take();
         app.quit();
         assert!(
             matches!(&watched, Some(verbatim_model::Watched::Effect(read)) if read.caret.line.text == "gamma\n"),
@@ -3512,7 +3513,7 @@ fn edit_control_select_and_location_cost_exactly() {
             offset,
         })
     };
-    let _ = verbatim_ia2::calls::take();
+    let _ = verbatim_win32::calls::take();
     let reply = perform(
         &mut source,
         &mut anchors,
@@ -3525,7 +3526,7 @@ fn edit_control_select_and_location_cost_exactly() {
             }),
         },
     );
-    let measured = verbatim_ia2::calls::take();
+    let measured = verbatim_win32::calls::take();
     assert_eq!(selected_texts(&reply), [(true, "alpha", 5)]);
     // `EM_GETSEL`, `EM_SETSEL` and `EM_SCROLLCARET`, `EM_GETSEL` again,
     // and the change's text (`WM_GETTEXTLENGTH`, `WM_GETTEXT`).
@@ -3535,13 +3536,13 @@ fn edit_control_select_and_location_cost_exactly() {
     // text's length (`WM_GETTEXTLENGTH`) for the percentage, and
     // `EM_POSFROMCHAR`; `tests/text.rs` pins the place itself.
     let mut source = EditText::new(edit.0 as isize, 0);
-    let _ = verbatim_ia2::calls::take();
+    let _ = verbatim_win32::calls::take();
     let reply = perform(
         &mut source,
         &mut anchors,
         &TextOp::Location(TextPoint::Caret),
     );
-    let measured = verbatim_ia2::calls::take();
+    let measured = verbatim_win32::calls::take();
     assert!(
         matches!(
             reply,

@@ -30,8 +30,11 @@ listener make. Its remote operations are in `verbatim-uia-rops`
   does (`books/dev/src/reference/performance.md`, "Newer UIA features"), and tells UIA's
   proxies never to raise, from an application's `WinEvent`s, the UIA
   events Verbatim subscribes to other than focus changes (the `proxy`
-  module, as NVDA's `ignoreWinEventsMap`); a mapping is cleared with a
-  null array, since UIA refuses an empty one.
+  module, as NVDA's `ignoreWinEventsMap`): the focus-following properties
+  (`FOCUS_PROPERTIES`), the focus listener's automation events, which
+  one table names (`LISTENER_EVENTS`: a selected item, a menu opened, a
+  notification and a window opened), and the text events; a mapping is
+  cleared with a null array, since UIA refuses an empty one.
 - UIA's first-time setup: every client in the crate, and the provider
   probe, first wait for it. It creates a client and builds a cache request
   once, under a lock, on a thread of its own (so a thread that only probes
@@ -71,18 +74,14 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   `UIAutomationCore.dll`'s own proxies serve the element returned, as a
   lookup of an application busy past the connection timeout returns; the
   rule reads the provider description cached with the lookup, an empty
-  one counting as answered, and the count of a window's refusals in a row
-  is kept for the logs. The description counts as served only by those
+  one counting as answered. The description counts as served only by those
   proxies when every provider it names, whatever its role (main,
   override, nested), is from `UIAutomationCore.dll`, so File Explorer's
   child windows whose main provider is the MSAA proxy under an override
   from `DUI70.dll` are answered; that test is public as
   `served_only_by_uia_proxies(description)`, which the UIA facts'
-  programs (`uia-facts/`) apply to the lookups they classify. A refusal
-  is logged at debug, and from a
-  window's fourth refusal in a row at info with the count
-  (`REFUSALS_BEFORE_INFO`), so a window that never answers shows in the
-  logs; a refusal is never retried, the next event or query that needs
+  programs (`uia-facts/`) apply to the lookups they classify. Each
+  refusal is logged at debug with its window; a refusal is never retried, the next event or query that needs
   the window looking it up again. `focused(request)` is the focused element under
   the same rule. `any_window_element(hwnd, request)` is the lookup without
   the rule, for a window with no provider.
@@ -233,7 +232,11 @@ states), and `RangeValueValue`, the rounded value of a control with no
 and `IsRangeValuePatternAvailable` say the pattern is there, because a
 remotely filled cache stores their defaults where a local one stores "not
 supported". An ancestor adds `IsContentElement` and `IsControlElement`.
-`runtime_id(element)` reads an element's runtime id.
+`runtime_id(element)` reads an element's runtime id, local, and answers
+the COM error when the read fails; `Cached::runtime_id()` and
+`Live::runtime_id()` take a failed read as no runtime id and log it at
+debug, so the node registry mints such an element an identity it never
+deduplicates, as it does one without an id.
 
 UIA returns default values for properties an element does not support,
 so every mapping treats the default as "not reported": the toggle,
@@ -244,7 +247,9 @@ to `Selectable` as MSAA's selectable bit does, and the details' empty
 string and zero map to `None`. Every snapshot's name, value, and
 description lose their bidirectional formatting characters as they are
 read (`verbatim_text::strip_bidi_controls`), as NVDA strips the direction
-marks from File Explorer's dates and the clock.
+marks from File Explorer's dates and the clock: every shape's parts are
+built by one constructor that strips them, which a selected item's name
+goes through too.
 
 `map` holds the role and state mapping, the total
 `notification_kind_from_uia` and `notification_processing_from_uia`
@@ -373,7 +378,10 @@ subscriptions".
   their reads are counted in `Registration::failed_reads()`.
   `.extended()` marks a part held only by the extended groups,
   `.text_events()` one that delivers text or caret changes, and
-  `.value_only()` one held by the value group alone.
+  `.value_only()` one held by the value group alone. Which groups hold a
+  part is one value: shared, with its two marks, or held by the value
+  group alone, which carries no mark, so a part cannot be marked both
+  ways.
 - A `Group` is NVDA's `Base` (every part not marked extended) or
   `Extended` (every part), or `ExtendedWithoutTextEvents`, every part but
   the text events, for an element whose text and caret changes reach the
@@ -496,8 +504,9 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
   risk 7 of `books/dev/src/explanation/design/listener-without-connections.md`.
 - The functions below, from `provider_process` to
   `raw_view_parent_window`, are `verbatim_win32::provider`'s
-  ([verbatim-win32](verbatim-win32.md)), re-exported here under the same
-  names, so the window queries have one crate under both backends.
+  ([verbatim-win32](verbatim-win32.md)), which callers in both backends
+  use from there; they are described here, beside the checks that use
+  them.
 - `provider_process(hwnd)` and `console_host_of(client)`: the process that
   serves a window's UIA, by local calls: the window's owner, except a
   console window, whose provider is its console host, read from the
@@ -531,15 +540,14 @@ shapes, are described in `books/dev/src/reference/crates/verbatim-outpost.md`.
 
 ## Counting calls
 
-`calls` counts the cross-process calls this crate makes, per thread:
-`calls::count(kind)` counts one, once the thread's call gate lets it
-be made (`verbatim_win32::calls`): an abandoned outpost worker's call
-fails with `CallError::Abandoned`, carried as the error `E_ABORT`, which
-no caller reads as a fact about the application, and is neither made nor
-counted. `calls::take()` returns this thread's
-`CallCounts` since the last take and resets them, and `calls::peek()`
-returns them without resetting, so a step can log its own calls by the
-difference. Every call that reaches the application is counted where it
+This crate counts its cross-process calls in the one per-thread count
+`verbatim_win32::calls` keeps for both backends: `count(kind)` counts
+one, once the thread's call gate lets it be made: an abandoned outpost
+worker's call fails with `CallError::Abandoned`, carried as the error
+`E_ABORT`, which no caller reads as a fact about the application, and is
+neither made nor counted. `take()` returns this thread's `CallCounts`
+since the last take and resets them, and `peek()` returns them without
+resetting, so a step can log its own calls by the difference. Every call that reaches the application is counted where it
 is made: the `*BuildCache` fetches and tree-walker steps,
 `BuildUpdatedCache`, `FindFirst`, `CurrentControllerFor`, pattern fetches
 and methods, `NormalizeElementBuildCache`, and the provider checks' text

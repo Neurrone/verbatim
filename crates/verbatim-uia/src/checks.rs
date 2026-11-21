@@ -20,12 +20,9 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::{BSTR, HRESULT};
 
 use crate::client::Uia;
-use crate::element::{ElementExt, attribute_value, visible_ranges};
+use crate::element::ElementExt;
 use crate::shape::{Cached, ListenerEvent, TextAreaPattern};
-
-/// UIA's error for a provider that did not answer within the connection
-/// timeout.
-const UIA_E_TIMEOUT: HRESULT = HRESULT(0x8013_1505_u32.cast_signed());
+use crate::text::{TextPatternExt, TextRangeExt};
 
 thread_local! {
     /// This thread's client, built on first use; `None` again after a failed
@@ -58,7 +55,7 @@ fn with_client(read: impl FnOnce(&Uia) -> windows::core::Result<bool>) -> Option
 fn answer(read: windows::core::Result<bool>) -> Option<bool> {
     match read {
         Ok(answer) => Some(answer),
-        Err(error) if error.code() == UIA_E_TIMEOUT => None,
+        Err(error) if crate::timed_out(&error) => None,
         Err(_) => Some(false),
     }
 }
@@ -122,14 +119,14 @@ pub fn held_console_reports_formatting(
         if out_of_time() {
             return Ok(None);
         }
-        let ranges = visible_ranges(&pattern)?;
+        let ranges = pattern.visible_ranges()?;
         let [range] = ranges.as_slice() else {
             return Ok(Some(false));
         };
         if out_of_time() {
             return Ok(None);
         }
-        let font = attribute_value(range, UIA_FontNameAttributeId)?;
+        let font = range.attribute(UIA_FontNameAttributeId)?;
         Ok(Some(font.vt() == VT_BSTR))
     })();
     match read {
@@ -164,10 +161,10 @@ fn reports_formatting(text_area: &IUIAutomationElement) -> windows::core::Result
 /// [`reports_formatting`] from the text area's Text pattern `pattern`: its
 /// visible ranges and the first range's font, two calls.
 fn formatting_of(pattern: &IUIAutomationTextPattern) -> windows::core::Result<bool> {
-    let ranges = visible_ranges(pattern)?;
+    let ranges = pattern.visible_ranges()?;
     let [range] = ranges.as_slice() else {
         return Ok(false);
     };
-    let font = attribute_value(range, UIA_FontNameAttributeId)?;
+    let font = range.attribute(UIA_FontNameAttributeId)?;
     Ok(font.vt() == VT_BSTR)
 }

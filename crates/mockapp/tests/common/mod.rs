@@ -370,7 +370,7 @@ pub fn now_us() -> u64 {
 /// guard. mockapp runs with no console (`DETACHED_PROCESS`), whatever the
 /// test runner's, so a console fixture's window has no console host to
 /// read: its provider is the process whose threads created it, mockapp
-/// (`verbatim_uia::served_by`). Panics with a clear message if the process never becomes ready.
+/// (`verbatim_win32::provider::served_by`). Panics with a clear message if the process never becomes ready.
 #[must_use]
 pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     spawn_with(fixture, backend, title, &[])

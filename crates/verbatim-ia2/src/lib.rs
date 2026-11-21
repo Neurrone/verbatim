@@ -26,9 +26,9 @@
 //! - [`event_thread`] — the thread that installs the `WinEvent` hooks and
 //!   runs the message loop they are delivered through, which an outpost
 //!   and the focus listener each run.
-//! - [`calls`] — the per-thread count of the cross-process calls
-//!   [`acquire`] makes, which the outpost's worker takes around each entry
-//!   it handles.
+//! - [`calls`] — what [`acquire`] and the rest count as a cross-process
+//!   call, in the per-thread count `verbatim_win32::calls` keeps, which
+//!   the outpost's worker takes around each entry it handles.
 //! - [`dialog`] — the objects a dialog's own text is gathered from, read
 //!   as the gathering asks for each property.
 //! - [`edit`] — the standard Win32 edit and rich edit controls' text,

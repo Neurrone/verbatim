@@ -89,8 +89,10 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationTextRange, NotificationKind, NotificationProcessing, StructureChangeType,
     TreeScope, TreeScope_Element, TreeScope_Subtree, UIA_ControllerForPropertyId, UIA_EVENT_ID,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_HelpTextPropertyId,
-    UIA_IsEnabledPropertyId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-    UIA_RangeValueValuePropertyId, UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId,
+    UIA_IsEnabledPropertyId, UIA_MenuOpenedEventId, UIA_NamePropertyId, UIA_NotificationEventId,
+    UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RangeValueValuePropertyId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_ToggleToggleStatePropertyId,
+    UIA_ValueValuePropertyId, UIA_Window_WindowOpenedEventId,
 };
 use windows::core::AgileReference;
 use windows_core::Interface;
@@ -158,6 +160,18 @@ pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 8] = [
     UIA_ControllerForPropertyId,
 ];
 
+/// The automation events the focus listener subscribes to desktop-wide:
+/// a selected item, a menu opened, a notification and a window opened.
+/// UIA's proxies are told not to raise them from `WinEvent`s
+/// (`proxy::ignore_win_events`), as NVDA builds its ignore map from its
+/// one event table (`UIAHandler/__init__.py` 291 to 295).
+pub const LISTENER_EVENTS: [UIA_EVENT_ID; 4] = [
+    UIA_SelectionItem_ElementSelectedEventId,
+    UIA_MenuOpenedEventId,
+    UIA_NotificationEventId,
+    UIA_Window_WindowOpenedEventId,
+];
+
 /// Where a registration listens.
 #[derive(Clone)]
 pub enum Scope {
@@ -193,27 +207,34 @@ pub enum Group {
     Value,
 }
 
-/// The one group a part is kept for alone, if it is: no other group holds
-/// it, and it is in none of the others' reckoning.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Alone {
-    /// The part is shared by the groups, as its other marks say.
-    #[default]
-    No,
+/// Which of a registration's groups hold a part: its marks, which mean
+/// something only for a part the groups share, so a part kept for
+/// [`Group::Value`] alone carries none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Holders {
+    /// Shared by the groups other than [`Group::Value`].
+    Shared {
+        /// Only the extended groups ([`Group::Extended`] and
+        /// [`Group::ExtendedWithoutTextEvents`]) hold it; otherwise
+        /// [`Group::Base`] does too.
+        extended_only: bool,
+        /// It delivers text or caret changes, which
+        /// [`Group::ExtendedWithoutTextEvents`] leaves out.
+        text_events: bool,
+    },
     /// Only [`Group::Value`] holds it.
-    Value,
+    ValueAlone,
 }
 
 impl Group {
-    /// Whether this group holds a part marked as `extended_only`, as
-    /// `text_events`, and as kept for one group `alone`.
-    fn holds(self, extended_only: bool, text_events: bool, alone: Alone) -> bool {
-        match self {
-            Group::Value => alone == Alone::Value,
-            _ if alone != Alone::No => false,
-            Group::Base => !extended_only,
-            Group::Extended => true,
-            Group::ExtendedWithoutTextEvents => !text_events,
+    /// Whether this group holds a part held by `holders`.
+    fn holds(self, holders: Holders) -> bool {
+        match (self, holders) {
+            (Group::Value, holders) => holders == Holders::ValueAlone,
+            (_, Holders::ValueAlone) => false,
+            (Group::Base, Holders::Shared { extended_only, .. }) => !extended_only,
+            (Group::Extended, Holders::Shared { .. }) => true,
+            (Group::ExtendedWithoutTextEvents, Holders::Shared { text_events, .. }) => !text_events,
         }
     }
 }
@@ -358,15 +379,8 @@ pub struct Part {
     /// The properties each event's element arrives with: the part's handler
     /// is added to its group with a cache request of exactly these.
     properties: &'static [UIA_PROPERTY_ID],
-    /// Whether only the extended groups ([`Group::Extended`] and
-    /// [`Group::ExtendedWithoutTextEvents`]) hold the part; otherwise every
-    /// group does.
-    extended_only: bool,
-    /// Whether the part delivers text or caret changes, which
-    /// [`Group::ExtendedWithoutTextEvents`] leaves out.
-    text_events: bool,
-    /// The one group that alone holds the part, if one does.
-    alone: Alone,
+    /// Which groups hold the part.
+    holders: Holders,
     /// The patterns the cache request also holds, such as the Text
     /// pattern [`crate::ListenerEvent`] prefetches, as NVDA's base cache
     /// request holds it.
@@ -382,30 +396,27 @@ impl Part {
         Self {
             subscription: subscription.erase(),
             properties: S::PROPERTIES,
-            extended_only: false,
-            text_events: false,
-            alone: Alone::No,
+            holders: Holders::Shared {
+                extended_only: false,
+                text_events: false,
+            },
             patterns: S::PATTERNS,
         }
     }
 
-    /// The part, held only by the extended groups.
+    /// The part, held only by the extended groups. A part held by
+    /// [`Group::Value`] alone ([`Part::value_only`]) stays so.
     #[must_use]
     pub fn extended(self) -> Self {
-        Self {
-            extended_only: true,
-            ..self
-        }
+        self.shared(|extended_only, _| *extended_only = true)
     }
 
     /// The part, marked as one that delivers text or caret changes, which
-    /// [`Group::ExtendedWithoutTextEvents`] leaves out.
+    /// [`Group::ExtendedWithoutTextEvents`] leaves out. A part held by
+    /// [`Group::Value`] alone ([`Part::value_only`]) stays so.
     #[must_use]
     pub fn text_events(self) -> Self {
-        Self {
-            text_events: true,
-            ..self
-        }
+        self.shared(|_, text_events| *text_events = true)
     }
 
     /// The part, held by [`Group::Value`] alone, as one that delivers the
@@ -413,9 +424,21 @@ impl Part {
     #[must_use]
     pub fn value_only(self) -> Self {
         Self {
-            alone: Alone::Value,
+            holders: Holders::ValueAlone,
             ..self
         }
+    }
+
+    /// The part with `mark` applied to the marks of a shared part.
+    fn shared(mut self, mark: impl FnOnce(&mut bool, &mut bool)) -> Self {
+        if let Holders::Shared {
+            extended_only,
+            text_events,
+        } = &mut self.holders
+        {
+            mark(extended_only, text_events);
+        }
+        self
     }
 }
 
@@ -955,7 +978,7 @@ impl Handler {
 }
 
 /// A part's handler as the registering thread holds it: with its cache
-/// request, and whether only the extended group holds it. Each group is
+/// request, and which groups hold it. Each group is
 /// given handlers of its own, made from `subscription`, never this one:
 /// UI Automation removes a group from an element by its handlers, so a
 /// handler two groups shared would leave the element no handler once a
@@ -964,9 +987,7 @@ struct Built {
     handler: Handler,
     subscription: Subscription,
     cache: IUIAutomationCacheRequest,
-    extended_only: bool,
-    text_events: bool,
-    alone: Alone,
+    holders: Holders,
 }
 
 /// A group built on the registering thread for one registration, for one
@@ -1230,9 +1251,7 @@ impl Follower {
                     cache,
                     handler: Handler::of(part.subscription.clone(), failed_reads),
                     subscription: part.subscription,
-                    extended_only: part.extended_only,
-                    text_events: part.text_events,
-                    alone: part.alone,
+                    holders: part.holders,
                 })
             })
             .collect::<windows::core::Result<Vec<_>>>()
@@ -1340,12 +1359,12 @@ impl Follower {
             from = ?self
                 .registered
                 .iter()
-                .map(|registered| (crate::com::runtime_id(&registered.element), registered.group))
+                .map(|registered| (crate::com::runtime_id_or_none(&registered.element), registered.group))
                 .collect::<Vec<_>>(),
             to = describe(&target.scope),
             elements = ?wanted
                 .iter()
-                .map(|(element, group, _)| (crate::com::runtime_id(element), *group))
+                .map(|(element, group, _)| (crate::com::runtime_id_or_none(element), *group))
                 .collect::<Vec<_>>(),
             group = ?target.group,
             "a UIA subscription moves"
@@ -1413,7 +1432,7 @@ impl Follower {
             // The runtime id is a call into the application, made only
             // while the point is armed.
             let refused = verbatim_faults::hit_with(verbatim_faults::Fault::RemoveGroup, || {
-                (self.id, crate::com::runtime_id(&registered.element))
+                (self.id, crate::com::runtime_id_or_none(&registered.element))
             });
             #[cfg(not(any(test, feature = "faults")))]
             let refused = false;
@@ -1574,7 +1593,7 @@ impl Follower {
         // SAFETY: a local call on this thread's live client.
         let handlers = unsafe { client.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
-            if group.holds(built.extended_only, built.text_events, built.alone) {
+            if group.holds(built.holders) {
                 Handler::of(built.subscription.clone(), &self.failed_reads).add_to(
                     &handlers,
                     tree_scope,
@@ -1789,7 +1808,7 @@ mod handlers {
 
 #[cfg(test)]
 mod tests {
-    use super::{Alone, Command, Group, Scope, Target, plan_keep, superseded};
+    use super::{Command, Group, Holders, Scope, Target, plan_keep, superseded};
 
     /// Each group holds the parts it should, as (extended only, text
     /// events): the group without text events holds the base parts and the
@@ -1801,11 +1820,14 @@ mod tests {
             parts
                 .iter()
                 .map(|&(extended_only, text_events)| {
-                    group.holds(
-                        extended_only,
-                        text_events,
-                        if value_only { Alone::Value } else { Alone::No },
-                    )
+                    group.holds(if value_only {
+                        Holders::ValueAlone
+                    } else {
+                        Holders::Shared {
+                            extended_only,
+                            text_events,
+                        }
+                    })
                 })
                 .collect()
         };

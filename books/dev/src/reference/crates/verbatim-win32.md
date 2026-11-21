@@ -19,7 +19,13 @@ Public API:
   `CallError::Abandoned` once the worker's generation is abandoned, so
   the call is not made, its error `E_ABORT` (`ABANDONED`, `is_abandoned`)
   never read as a fact about the application. A thread with no gate makes
-  every call.
+  every call. Beside the gate is the one per-thread count of the calls
+  both backends make: `count(kind)` counts one once `check()` lets it
+  through, and runs the debug-build lock check first;
+  `count_connection()` marks the call just counted as a connection to a
+  window by its handle; `take()` returns the thread's `CallCounts` since
+  the last take and resets them, and `peek()` returns them without
+  resetting. An outpost's worker takes them once around each entry.
 - `held_locks` — the debug-build lock check: `hold(location)` records in
   the calling thread's eight slots that it holds a lock taken there,
   returning a `Held` whose drop empties that slot, so the record is right
@@ -73,9 +79,9 @@ Public API:
   `readability` is what an outpost's and the listener's
   `WindowReadabilityReader` answers, the one judge of a hung window each
   asks at the moment of its decision, which tests replace, as a `ForegroundReader`
-  replaces `GetForegroundWindow`. `served_by(hwnd, pid)` and
-  `top_level_windows(pid)` judge a window's application by the process
-  that serves its UIA. `is_another_thread_of_its_application(hwnd, other)`
+  replaces `GetForegroundWindow`. `top_level_windows(pid)` judges a
+  window's application by the process that serves its UIA
+  (`provider::served_by`). `is_another_thread_of_its_application(hwnd, other)`
   is whether `other` is a window of the same application as `hwnd` on
   another UI thread, so, with `other` the window with the keyboard focus,
   whether the user has moved on from `hwnd`;
@@ -88,8 +94,8 @@ Public API:
   `provider_process(hwnd)`, `served_by`, `console_host_of(client)`,
   `is_top_level_window`, `parent_across_process_boundary`,
   `raw_view_parent_window`, `parent_window`, `outermost_nearest_window`
-  and `plain_windows_start`. `verbatim-uia` re-exports them under the same
-  names, where its guide describes them ([verbatim-uia](verbatim-uia.md),
+  and `plain_windows_start`. Callers in both backends use them from
+  here; `verbatim-uia`'s guide describes them ([verbatim-uia](verbatim-uia.md),
   "Provider checks and the process boundary").
 - `window_facts` — the window facts a reader's tell carries for Core's
   acceptance, and a node's window, gathered with calls to Windows only:

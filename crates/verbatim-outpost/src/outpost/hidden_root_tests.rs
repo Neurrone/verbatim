@@ -136,14 +136,14 @@ fn a_hidden_root_whose_role_fails_is_not_there() {
 fn the_check_costs_nothing_for_a_shown_root_and_two_calls_for_a_hidden_one() {
     let dialog = top_level(w!("#32770"));
     let field = field_in(dialog);
-    let _ = verbatim_ia2::calls::take();
+    let _ = verbatim_win32::calls::take();
     let _ = hidden_root(raw(field));
-    assert_eq!(verbatim_ia2::calls::take().msaa, 2);
+    assert_eq!(verbatim_win32::calls::take().msaa, 2);
     // SAFETY: a live window of this thread's.
     let _ = unsafe { ShowWindow(dialog, SW_SHOWNA) };
     let _ = hidden_root(raw(field));
     assert_eq!(
-        verbatim_ia2::calls::take(),
+        verbatim_win32::calls::take(),
         verbatim_model::CallCounts {
             uia: 0,
             msaa: 0,

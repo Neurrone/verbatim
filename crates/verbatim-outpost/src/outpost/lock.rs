@@ -111,7 +111,7 @@ mod tests {
         let guard = lock.lock();
         let called_at = line!() + 2;
         let payload = std::panic::catch_unwind(|| {
-            let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+            let _ = verbatim_win32::calls::count(verbatim_model::CallKind::Uia);
         })
         .expect_err("the counted call panicked");
         drop(guard);
@@ -119,7 +119,7 @@ mod tests {
             check_message(&*payload),
             Some(counted_under(called_at, &[taken_at]))
         );
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
     }
 
     /// Guards dropped out of order: taking A and B and dropping A leaves B
@@ -133,7 +133,7 @@ mod tests {
         drop(held_a);
         let called_at = line!() + 2;
         let payload = std::panic::catch_unwind(|| {
-            let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+            let _ = verbatim_win32::calls::count(verbatim_model::CallKind::Uia);
         })
         .expect_err("the counted call panicked");
         drop(held_b);
@@ -141,7 +141,7 @@ mod tests {
             check_message(&*payload),
             Some(counted_under(called_at, &[b_at]))
         );
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
     }
 
     /// The child's side of
@@ -166,7 +166,7 @@ mod tests {
     fn child_program() {
         let lock = Lock::new(());
         let _guard = lock.lock();
-        let _ = verbatim_uia::calls::count(verbatim_model::CallKind::Uia);
+        let _ = verbatim_win32::calls::count(verbatim_model::CallKind::Uia);
     }
 
     /// The environment variable that makes [`lock_check_child`] run.

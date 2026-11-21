@@ -448,8 +448,8 @@ fn the_walk_stops_at_a_known_ancestor_or_the_depth_limit() {
     // An unrelated id first, so the index reported is the one met.
     let known = vec![
         vec![1, 2, 3],
-        verbatim_uia::runtime_id(&outer),
-        verbatim_uia::runtime_id(&tools),
+        verbatim_uia::runtime_id(&outer).expect("a runtime id"),
+        verbatim_uia::runtime_id(&tools).expect("a runtime id"),
     ];
     let ancestry = both_agree(&fixture.uia, &query(&deep, &known, &fixture.fill));
     assert_eq!(names(&ancestry.ancestors), ["Inner group", "Tools"]);
@@ -715,9 +715,9 @@ fn a_timed_out_nearest_window_lookup_fails_at_the_timeout_with_one_call() {
     fixture
         .app
         .send(&format!("slow-parent deep {}", SLOW_PARENT.as_millis()));
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let lookup = verbatim_uia::nearest_window_lookup(deep.live().element());
-    let calls = verbatim_uia::calls::take();
+    let calls = verbatim_win32::calls::take();
     let returned = common::now_us();
     let ended = {
         fixture.app.stamped_line("slow-parent started");

@@ -2184,6 +2184,48 @@ mod tests {
         );
     }
 
+    /// The listener subscribes to exactly the automation events UIA's
+    /// proxies are told not to raise from `WinEvent`s, which one table
+    /// names (`verbatim_uia::LISTENER_EVENTS`).
+    #[test]
+    fn the_listeners_automation_events_are_the_ones_the_proxies_ignore() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening(|_| Readability::Hung, &asked);
+        let event = |subscription: Subscription<Cached<ListenerEvent>>| match subscription {
+            Subscription::Event { event, .. } => event,
+            Subscription::Notifications { .. } => {
+                windows::Win32::UI::Accessibility::UIA_NotificationEventId
+            }
+            _ => unreachable!("an automation event's subscription"),
+        };
+        let Subscription::Event {
+            event: selection, ..
+        } = selection_subscription(&parts.outgoing, &parts.readers, &parts.checks)
+        else {
+            unreachable!("the selection subscription");
+        };
+        let subscribed = [
+            selection,
+            event(menu_subscription(
+                &parts.outgoing,
+                &parts.readers,
+                &parts.checks,
+            )),
+            event(notification_subscription(
+                &parts.outgoing,
+                &parts.readers,
+                &parts.checks,
+            )),
+            event(toast_subscription(
+                &parts.outgoing,
+                &parts.readers,
+                &parts.checks,
+            )),
+        ];
+        assert_eq!(subscribed, verbatim_uia::LISTENER_EVENTS);
+        assert_eq!(parts.stop(), []);
+    }
+
     /// A window opened that is not a toast by NVDA's rule costs only the
     /// callback: nothing is told and no window is tested.
     #[test]

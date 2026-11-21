@@ -200,7 +200,7 @@ the element does not have the focus, and otherwise an `Ancestry`:
   `Cached<Ancestor>`, ending at the top-level window of the element's
   process or below the process boundary
   (`books/dev/src/explanation/design/listener-without-connections.md` defines it;
-  `verbatim_uia::parent_across_process_boundary` judges it by local
+  `verbatim_win32::provider::parent_across_process_boundary` judges it by local
   calls).
 - `met_known`: which known runtime id the last ancestor has, when the
   walk stopped there; `depth_limited`: the walk stopped at the depth limit
@@ -247,8 +247,8 @@ below the root, and any step below it that fails or answers none sets
 `failed_hop`. Inside a program the parent of a top-level window, and of a
 window below the process boundary, is null, so the program's walk ends at
 any null parent and then checks, with local calls
-(`verbatim_uia::is_top_level_window`,
-`verbatim_uia::parent_across_process_boundary`), that the last element
+(`verbatim_win32::provider::is_top_level_window`,
+`verbatim_win32::provider::parent_across_process_boundary`), that the last element
 read has as its window one of those two; otherwise it sets `NoParent`. An
 element's window is the one its runtime id `[42, handle]` names, since a
 read inside the provider can leave the handle out (`books/dev/src/reference/uia-bugs.md`,

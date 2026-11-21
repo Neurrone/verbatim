@@ -23,8 +23,8 @@ use windows::core::{BSTR, Interface};
 use verbatim_model::CallKind;
 
 use crate::ElementExt;
-use crate::calls::count;
 use crate::com::{take_f64_safearray, take_variant_safearray, variant_i32};
+use verbatim_win32::calls::count;
 
 pub use windows::Win32::System::Variant::VARIANT;
 

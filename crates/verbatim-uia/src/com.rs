@@ -285,18 +285,32 @@ fn name_callback_thread() {
     }
 }
 
-/// `element`'s runtime id, empty when the read fails or the array is not
-/// one of `i32`. The array UIA returns is owned here and destroyed once, so
-/// no caller handles it.
-#[must_use]
-pub fn runtime_id(element: &IUIAutomationElement) -> Vec<i32> {
+/// `element`'s runtime id, empty when the array is not one of `i32`. The
+/// array UIA returns is owned here and destroyed once, so no caller handles
+/// it. Local: UIA keeps the runtime id with the element.
+///
+/// # Errors
+///
+/// The COM error when the read fails, which is not an element without a
+/// runtime id ([`runtime_id_or_none`] makes it one, saying so).
+pub fn runtime_id(element: &IUIAutomationElement) -> windows::core::Result<Vec<i32>> {
     // SAFETY: `element` is a live interface; the call returns a SAFEARRAY
     // the caller owns.
     unsafe { element.GetRuntimeId() }
         // SAFETY: the array was just returned to this caller, which hands
         // its ownership to the helper.
         .map(|array| unsafe { take_safearray::<i32>(array) })
-        .unwrap_or_default()
+}
+
+/// `element`'s runtime id ([`runtime_id`]), a failed read taken as no
+/// runtime id and logged at debug: the node registry mints such an element
+/// an identity it never deduplicates, as it does one without an id
+/// ([`crate::NodeIdRegistry::id_for`]). Local.
+pub(crate) fn runtime_id_or_none(element: &IUIAutomationElement) -> Vec<i32> {
+    runtime_id(element).unwrap_or_else(|error| {
+        tracing::debug!(%error, "an element's runtime id could not be read: taken as none");
+        Vec::new()
+    })
 }
 
 /// Copies a `SAFEARRAY` of `f64` (a text range's bounding rectangles) into

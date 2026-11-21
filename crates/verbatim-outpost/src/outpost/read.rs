@@ -39,8 +39,9 @@ use verbatim_win32::window::window_class_name;
 use super::window::{main_window_of, window_style, window_text};
 use super::{Context, RequestContext};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
+use verbatim_win32::provider::served_by;
 use verbatim_win32::window::{
-    desktop_window, parent, served_by, top_level_of, window_belongs_to_hidden_frame, window_exists,
+    desktop_window, parent, top_level_of, window_belongs_to_hidden_frame, window_exists,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -393,7 +394,7 @@ enum Above {
     /// By plain windows from this window, included: the walk was cut at
     /// its depth limit, and the window is the outermost element's nearest
     /// window, never read, or its parent when that element is the window's
-    /// own ([`verbatim_uia::plain_windows_start`]).
+    /// own ([`verbatim_win32::provider::plain_windows_start`]).
     Plain(isize),
 }
 
@@ -401,7 +402,7 @@ enum Above {
 /// `crossed` names, goes on above its chain. A complete walk with no window
 /// crossed into goes on above the process boundary when `outermost`, the
 /// window of its outermost element, is below one
-/// ([`verbatim_uia::parent_across_process_boundary`]), as a chain the
+/// ([`verbatim_win32::provider::parent_across_process_boundary`]), as a chain the
 /// listener or a remote program read stops there.
 fn uia_above(crossed: Option<isize>, walked: AncestorWalk, outermost: Option<isize>) -> Above {
     match (walked, crossed) {
@@ -410,7 +411,7 @@ fn uia_above(crossed: Option<isize>, walked: AncestorWalk, outermost: Option<isi
         (AncestorWalk::Cut(hwnd), None) => Above::Plain(hwnd),
         (AncestorWalk::Complete, None) => outermost
             .filter(|&window| window != 0)
-            .and_then(verbatim_uia::parent_across_process_boundary)
+            .and_then(verbatim_win32::provider::parent_across_process_boundary)
             .map_or(Above::Nothing, Above::From),
     }
 }
@@ -793,7 +794,7 @@ pub(super) enum AncestorsEnd {
     /// is completed by plain windows from this window, included: the
     /// outermost ancestor's nearest window, or its parent window when that
     /// ancestor is the window's own element
-    /// ([`verbatim_uia::plain_windows_start`]).
+    /// ([`verbatim_win32::provider::plain_windows_start`]).
     PlainFrom(isize),
 }
 
@@ -1064,13 +1065,15 @@ fn uia_remote_enrichment(
         if let Some(hop) = ancestry.failed_hop {
             walked = AncestorWalk::Failed(
                 hop,
-                verbatim_uia::parent_window(verbatim_uia::outermost_nearest_window(
-                    nearest,
-                    hwnds(),
-                )),
+                verbatim_win32::provider::parent_window(
+                    verbatim_win32::provider::outermost_nearest_window(nearest, hwnds()),
+                ),
             );
         } else if ancestry.depth_limited {
-            walked = AncestorWalk::Cut(verbatim_uia::plain_windows_start(nearest, hwnds()));
+            walked = AncestorWalk::Cut(verbatim_win32::provider::plain_windows_start(
+                nearest,
+                hwnds(),
+            ));
         }
     }
     let above = uia_above(crossed, walked, Some(outermost));
@@ -1089,14 +1092,14 @@ fn uia_remote_enrichment(
 }
 
 /// Whether a window above `window`, as UIA's raw view goes up
-/// ([`verbatim_uia::raw_view_parent_window`]), below the process boundary,
+/// ([`verbatim_win32::provider::raw_view_parent_window`]), below the process boundary,
 /// cannot be read: a ghost's or a hung application's
 /// ([`Context::window_unreadable`]). Local calls, a few per window.
 fn plain_window_above(context: &Context, window: isize) -> bool {
     let desktop = desktop_window();
     let mut current = window;
     for _ in 0..MAX_ANCESTOR_HOPS {
-        let Some(above) = verbatim_uia::raw_view_parent_window(current) else {
+        let Some(above) = verbatim_win32::provider::raw_view_parent_window(current) else {
             return false;
         };
         if above == desktop || !serves(context, above) {

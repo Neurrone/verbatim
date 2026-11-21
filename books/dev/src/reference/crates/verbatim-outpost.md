@@ -70,7 +70,7 @@ carries its application's name, read once per process and kept with the
 process held open (`outpost::ApplicationNames`).
 
 An outpost takes a window as its application's when the application serves
-its UIA (`verbatim_win32::window::served_by`, through
+its UIA (`verbatim_win32::provider::served_by`, through
 `verbatim_win32::provider::served_by`, local calls), and `read::focused_control_in` reads no focused element in another
 process's window (`read::control_window`). `GetFocusedElementBuildCache`
 reads the keyboard focus again itself and can return an element of the
@@ -154,7 +154,7 @@ it. The check is asked before the outpost's verdict for the window, so a
 hung window is never probed. A remote program cannot judge a window
 between its steps, so a current-focus request whose focus has such a window
 above its own (`read::plain_window_above`, local calls by
-`verbatim_uia::raw_view_parent_window`) reads its ancestors by the classic
+`verbatim_win32::provider::raw_view_parent_window`) reads its ancestors by the classic
 walk instead. The outpost's walks have no time limit: a listener read cut at its depth limit
 (`AncestorsEnd::PlainFrom`), and a walk cut at its depth limit of 64, are
 completed by plain windows from the outermost element's nearest window,
@@ -672,7 +672,7 @@ and the inherited pipe handles.
   is completed by plain windows (`AncestorWalk::Cut`, `Walked::Cut`), for
   a UIA walk from the parent window of its outermost element's window
   when that element is the window's own, so the window is not in the
-  chain twice (`verbatim_uia::plain_windows_start`); a walk that fails
+  chain twice (`verbatim_win32::provider::plain_windows_start`); a walk that fails
   before it reads anything, or an MSAA node no longer reachable, goes on
   from the parent window of the focus's nearest window, read live
   (`read::onward_after_failure`).

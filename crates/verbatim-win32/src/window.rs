@@ -28,7 +28,7 @@ use windows::core::{BOOL, HSTRING, s, w};
 use verbatim_model::HIDDEN_FRAME_WINDOW_PROP;
 use verbatim_reader_rules::class::WindowClasses;
 
-use crate::provider::provider_process;
+use crate::provider::{provider_process, served_by};
 
 /// The `HWND` for a handle value.
 fn hwnd(handle: isize) -> HWND {
@@ -443,18 +443,6 @@ pub fn hung_window_from_ghost(handle: isize) -> Option<isize> {
     // it is not a ghost window.
     let hung = unsafe { function(hwnd(handle)) }.0 as isize;
     (hung != 0).then_some(hung)
-}
-
-/// Whether window `handle` is `target_pid`'s, the application an outpost
-/// serves: whether that process serves the window's UIA
-/// ([`crate::provider::served_by`]), so a console window is its console host's
-/// and never its client's, whom `GetWindowThreadProcessId` names, even when
-/// the host cannot be read from the client
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3). Every
-/// filter below decides by it. Local calls only.
-#[must_use]
-pub fn served_by(handle: isize, target_pid: u32) -> bool {
-    crate::provider::served_by(handle, target_pid)
 }
 
 /// The window with the keyboard focus right now (falling back to the active

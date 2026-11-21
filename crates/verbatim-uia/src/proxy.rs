@@ -12,23 +12,20 @@
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomationProxyFactoryEntry, UIA_ActiveTextPositionChangedEventId,
-    UIA_AutomationPropertyChangedEventId, UIA_EVENT_ID, UIA_MenuOpenedEventId,
-    UIA_NotificationEventId, UIA_PROPERTY_ID, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_AutomationPropertyChangedEventId, UIA_EVENT_ID, UIA_PROPERTY_ID,
     UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId,
 };
 
 use crate::com::take_i32_safearray;
-use crate::subscribe::FOCUS_PROPERTIES;
+use crate::subscribe::{FOCUS_PROPERTIES, LISTENER_EVENTS};
 
 /// The events Verbatim subscribes to that UIA's proxies are told not to
 /// raise from `WinEvent`s, each with its property: every property the
 /// focus-following subscription follows, for property changes, and 0 for
-/// the automation events.
+/// the automation events, the listener's ([`LISTENER_EVENTS`]) and the
+/// text events.
 fn ignored_events() -> Vec<(UIA_EVENT_ID, UIA_PROPERTY_ID)> {
-    let automation_events = [
-        UIA_SelectionItem_ElementSelectedEventId,
-        UIA_MenuOpenedEventId,
-        UIA_NotificationEventId,
+    let text_events = [
         UIA_Text_TextSelectionChangedEventId,
         UIA_Text_TextChangedEventId,
         UIA_ActiveTextPositionChangedEventId,
@@ -37,8 +34,9 @@ fn ignored_events() -> Vec<(UIA_EVENT_ID, UIA_PROPERTY_ID)> {
         .iter()
         .map(|&property| (UIA_AutomationPropertyChangedEventId, property))
         .chain(
-            automation_events
+            LISTENER_EVENTS
                 .into_iter()
+                .chain(text_events)
                 .map(|event| (event, UIA_PROPERTY_ID(0))),
         )
         .collect()

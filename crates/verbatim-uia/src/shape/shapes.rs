@@ -346,23 +346,20 @@ impl ListenerEvent {
     /// element selected carries them too ([`ListenerSelection::parts`]).
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
-        let mut name = self.name.clone();
-        strip_bidi_controls([&mut name]);
         let mut states = StateSet::new();
         if self.has_focus {
             states.insert(State::Focused);
         }
-        CachedUiaParts {
+        parts_of(
             runtime_id,
-            role: self.role.role(),
-            name,
-            value: None,
+            self.role.role(),
+            (self.name.clone(), None),
             states,
-            details: NodeDetails {
+            NodeDetails {
                 window: self.role.window(),
                 ..NodeDetails::default()
             },
-        }
+        )
     }
 }
 
@@ -438,27 +435,25 @@ impl ListenerSelection {
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let role = self.event.role.role();
-        let mut name = self.event.name.clone();
-        let mut value = self.value.value(self.event.role.class_name.as_deref());
-        let mut details = NodeDetails {
-            cell: self.cell.position(),
-            description: self.description.description(),
-            keyboard_shortcut: self.shortcut.shortcut(),
-            position_in_set: self.position.position_in_set,
-            set_size: self.position.size_of_set,
-            level: self.level,
-            window: self.event.role.window(),
-            ..NodeDetails::default()
-        };
-        strip_bidi_controls([&mut name, &mut value, &mut details.description]);
-        CachedUiaParts {
+        parts_of(
             runtime_id,
             role,
-            name,
-            value,
-            states: self.states.states(role, false),
-            details,
-        }
+            (
+                self.event.name.clone(),
+                self.value.value(self.event.role.class_name.as_deref()),
+            ),
+            self.states.states(role, false),
+            NodeDetails {
+                cell: self.cell.position(),
+                description: self.description.description(),
+                keyboard_shortcut: self.shortcut.shortcut(),
+                position_in_set: self.position.position_in_set,
+                set_size: self.position.size_of_set,
+                level: self.level,
+                window: self.event.role.window(),
+                ..NodeDetails::default()
+            },
+        )
     }
 }
 
@@ -501,20 +496,19 @@ impl PropertyEvent {
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let role = self.role.role();
-        let mut name = self.name.clone();
-        let mut value = self.value.value(self.role.class_name.as_deref());
-        strip_bidi_controls([&mut name, &mut value]);
-        CachedUiaParts {
+        parts_of(
             runtime_id,
             role,
-            name,
-            value,
-            states: self.states.states(role, false),
-            details: NodeDetails {
+            (
+                self.name.clone(),
+                self.value.value(self.role.class_name.as_deref()),
+            ),
+            self.states.states(role, false),
+            NodeDetails {
                 window: self.role.window(),
                 ..NodeDetails::default()
             },
-        }
+        )
     }
 }
 
@@ -769,9 +763,7 @@ impl Node {
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let role = self.role.role();
-        let mut name = self.name.clone();
-        let mut value = self.value.value(self.role.class_name.as_deref());
-        let mut details = NodeDetails {
+        let details = NodeDetails {
             description: self.description.as_ref().and_then(Description::description),
             keyboard_shortcut: self.shortcut.as_ref().and_then(Shortcut::shortcut),
             position_in_set: self
@@ -793,16 +785,17 @@ impl Node {
             above_boundary: false,
             desktop_window: false,
         };
-        strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);
-        CachedUiaParts {
+        parts_of(
             runtime_id,
             role,
-            name,
-            value,
-            states: self.states.states(role, offscreen),
+            (
+                self.name.clone(),
+                self.value.value(self.role.class_name.as_deref()),
+            ),
+            self.states.states(role, offscreen),
             details,
-        }
+        )
     }
 
     /// Whether the node's value is its first selected item's name
@@ -815,6 +808,28 @@ impl Node {
             self.role.class_name.as_deref(),
             self.states.value_available,
         )
+    }
+}
+
+/// A snapshot's parts from what a shape read, with runtime id
+/// `runtime_id`: the one place a read element's name, value, and
+/// description lose their bidirectional control characters, as NVDA's
+/// UIA objects strip them.
+fn parts_of(
+    runtime_id: Vec<i32>,
+    role: Role,
+    (mut name, mut value): (Option<String>, Option<String>),
+    states: StateSet,
+    mut details: NodeDetails,
+) -> CachedUiaParts {
+    strip_bidi_controls([&mut name, &mut value, &mut details.description]);
+    CachedUiaParts {
+        runtime_id,
+        role,
+        name,
+        value,
+        states,
+        details,
     }
 }
 
@@ -973,22 +988,20 @@ impl DialogText {
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let role = self.role.role();
-        let mut name = self.name.clone();
-        let mut value = self.value.value(self.role.class_name.as_deref());
-        let mut description = self.description.description();
-        strip_bidi_controls([&mut name, &mut value, &mut description]);
-        CachedUiaParts {
+        parts_of(
             runtime_id,
             role,
-            name,
-            value,
-            states: self.states.states(role, false),
-            details: NodeDetails {
-                description,
+            (
+                self.name.clone(),
+                self.value.value(self.role.class_name.as_deref()),
+            ),
+            self.states.states(role, false),
+            NodeDetails {
+                description: self.description.description(),
                 window: self.role.window(),
                 ..NodeDetails::default()
             },
-        }
+        )
     }
 }
 
@@ -1042,9 +1055,14 @@ impl SelectedItem {
     /// control characters.
     #[must_use]
     pub fn name(&self) -> Option<String> {
-        let mut name = self.name.clone();
-        strip_bidi_controls([&mut name]);
-        name
+        parts_of(
+            Vec::new(),
+            Role::Unknown,
+            (self.name.clone(), None),
+            StateSet::new(),
+            NodeDetails::default(),
+        )
+        .name
     }
 }
 

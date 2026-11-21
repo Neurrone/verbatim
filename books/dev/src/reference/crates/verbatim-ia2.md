@@ -518,11 +518,11 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   `faults` feature each send reaches the observation point
   `WindowMessageSent` with its window, message, time limit and buffer
   ([verbatim-faults](verbatim-faults.md)).
-- `calls` — the count of the cross-process calls `acquire` makes, kept per
-  thread like `verbatim-uia`'s: `calls::count(kind)`, which fails with
+- `calls` — what `acquire` and the rest count as a cross-process call,
+  in the one per-thread count `verbatim_win32::calls` keeps for both
+  backends: `verbatim_win32::calls::count(kind)`, which fails with
   `CallError::Abandoned`, making and counting no call, once the thread's
-  call gate's worker is abandoned (`verbatim_win32::calls`), and
-  `calls::take()`.
+  call gate's worker is abandoned.
   `count`, and the making of an object's agile reference, call the
   debug-build lock check (`verbatim_win32::held_locks::check`), which
   fails when the thread holds one of the outpost's locks.

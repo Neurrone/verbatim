@@ -233,10 +233,12 @@ pub fn read<'a>(
         },
     };
     let timer = std::time::Instant::now();
-    let calls_before = verbatim_uia::calls::peek().uia;
+    let calls_before = verbatim_win32::calls::peek().uia;
     let result = terminal_snapshot(uia, &query, remote);
     let elapsed_us = u64::try_from(timer.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let calls = verbatim_uia::calls::peek().uia.saturating_sub(calls_before);
+    let calls = verbatim_win32::calls::peek()
+        .uia
+        .saturating_sub(calls_before);
     let (mut snapshot, path) = match result {
         Ok(answer) => answer,
         Err(error) => {

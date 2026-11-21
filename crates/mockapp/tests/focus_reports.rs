@@ -1487,7 +1487,8 @@ fn cut_route(focus: &mut common::outpost::ListenerFocus, hwnd: HWND) {
     );
     route.steps.truncate(1);
     route.end = RouteEnd::ContinueFrom(WindowHandle(
-        u64::try_from(verbatim_uia::parent_window(hwnd.0 as isize)).expect("a window handle"),
+        u64::try_from(verbatim_win32::provider::parent_window(hwnd.0 as isize))
+            .expect("a window handle"),
     ));
     focus.object.ancestors.clear();
 }

@@ -52,10 +52,10 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
     // answer, from one message, as NVDA takes it.
     let stall = Duration::from_millis(u64::from(UIA_RAW_PROBE_TIMEOUT_MS) * 2);
     app.stall(stall);
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let probed = raw_probe(hwnd);
     let returned_at = common::now_us();
-    let calls = verbatim_uia::calls::take();
+    let calls = verbatim_win32::calls::take();
     let stall_ended_at = app.stall_ended(stall);
     assert_eq!(
         probed,

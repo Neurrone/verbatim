@@ -580,9 +580,9 @@ fn a_classic_dump_reads_each_elements_children_in_one_call() {
         max_depth: 8,
         max_nodes: 64,
     };
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let ((dumped, truncated), path) = tree_dump(&uia, &query, false).expect("the dump");
-    let calls = verbatim_uia::calls::take().uia;
+    let calls = verbatim_win32::calls::take().uia;
     assert_eq!(
         (named(&dumped), truncated, path.name(), calls),
         (
@@ -618,9 +618,9 @@ fn a_remote_dump_reads_a_small_tree_in_one_call() {
         max_depth: 8,
         max_nodes: 64,
     };
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let ((dumped, truncated), path) = tree_dump(&uia, &query, true).expect("the dump");
-    let calls = verbatim_uia::calls::take().uia;
+    let calls = verbatim_win32::calls::take().uia;
     assert_eq!(
         (named(&dumped), truncated, path.name(), calls),
         (

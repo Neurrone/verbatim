@@ -88,12 +88,12 @@ fn controlled(
         selected,
         fill: &fill,
     };
-    let _ = verbatim_uia::calls::take();
+    let _ = verbatim_win32::calls::take();
     let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
     let (remote_ids, remote) = (remote.controlled, remote.selected);
     assert!(matches!(path, Path::Remote), "answered by {}", path.name());
     assert_eq!(
-        verbatim_uia::calls::take(),
+        verbatim_win32::calls::take(),
         CallCounts {
             uia: 1,
             msaa: 0,
@@ -171,7 +171,7 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
         None,
         "a box that controls nothing finds nothing"
     );
-    let results_id = verbatim_uia::runtime_id(&results);
+    let results_id = verbatim_uia::runtime_id(&results).expect("a runtime id");
     assert_eq!(
         controlled(&uia, &search, &results_id),
         Some((Some("Suggestions".to_owned()), results_id.clone())),
@@ -353,7 +353,8 @@ fn a_stale_selection_after_a_replacement_reports_nothing_and_an_ordinary_one_the
         Payload::None,
     );
     app.send("replace-items suggestions");
-    let current = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
+    let current =
+        verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings")).expect("a runtime id");
     assert_ne!(
         Some(current.as_slice()),
         match &stale.object {

@@ -17,23 +17,20 @@
 //! setup.
 //!
 //! Every method that reaches the application's process counts one call
-//! on this thread ([`crate::calls`]).
+//! on this thread (`verbatim_win32::calls`).
 
-use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationCondition, IUIAutomationElement,
     IUIAutomationElementArray, IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern,
-    IUIAutomationSelectionPattern, IUIAutomationTextPattern, IUIAutomationTextRange,
-    IUIAutomationTextRangeArray, IUIAutomationTogglePattern, IUIAutomationTreeWalker, TreeScope,
+    IUIAutomationSelectionPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker, TreeScope,
     UIA_CONTROLTYPE_ID, UIA_GridItemContainingGridPropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID,
-    UIA_TEXTATTRIBUTE_ID,
 };
 use windows::core::Interface;
 
 use verbatim_model::{CallKind, TableId};
 
-use crate::calls::count;
 use crate::com::{runtime_id, variant_element, variant_i32};
+use verbatim_win32::calls::count;
 
 /// Safe live reads and calls on a UIA element ([`IUIAutomationElement`]),
 /// each a cross-process call to the application's provider, counted once.
@@ -168,7 +165,7 @@ pub fn table_id(key: &str) -> TableId {
 pub fn containing_grid(element: &IUIAutomationElement) -> Option<TableId> {
     match element.current_containing_grid() {
         Ok(grid) => grid
-            .map(|grid| runtime_id(&grid))
+            .and_then(|grid| runtime_id(&grid).ok())
             .filter(|runtime_id| !runtime_id.is_empty())
             .map(|runtime_id| table_id(&runtime_id_key(&runtime_id))),
         Err(error) => {
@@ -436,35 +433,4 @@ pub(crate) fn select(pattern: &IUIAutomationSelectionItemPattern) -> windows::co
     count(CallKind::Uia)?;
     // SAFETY: `pattern` is a live pattern object (see the module comment).
     unsafe { pattern.Select() }
-}
-
-/// A `Text` pattern's visible ranges. Cross-process.
-pub(crate) fn visible_ranges(
-    pattern: &IUIAutomationTextPattern,
-) -> windows::core::Result<Vec<IUIAutomationTextRange>> {
-    count(CallKind::Uia)?;
-    // SAFETY: `pattern` is a live pattern object (see the module comment).
-    let array = unsafe { pattern.GetVisibleRanges() }?;
-    Ok(ranges_of(&array))
-}
-
-/// The ranges of a text range array, in order. Local.
-fn ranges_of(array: &IUIAutomationTextRangeArray) -> Vec<IUIAutomationTextRange> {
-    // SAFETY: `array` is a live range array (see the module comment).
-    let length = unsafe { array.Length() }.unwrap_or(0);
-    (0..length)
-        // SAFETY: `array` is live; an index outside it just fails with
-        // `E_INVALIDARG`, and these are all within its length.
-        .filter_map(|index| unsafe { array.GetElement(index) }.ok())
-        .collect()
-}
-
-/// A text range's value for the text attribute `attribute`. Cross-process.
-pub(crate) fn attribute_value(
-    range: &IUIAutomationTextRange,
-    attribute: UIA_TEXTATTRIBUTE_ID,
-) -> windows::core::Result<VARIANT> {
-    count(CallKind::Uia)?;
-    // SAFETY: `range` is a live text range (see the module comment).
-    unsafe { range.GetAttributeValue(attribute) }
 }

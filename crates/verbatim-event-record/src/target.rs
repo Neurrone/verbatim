@@ -3,7 +3,7 @@
 use std::os::windows::io::{FromRawHandle as _, OwnedHandle, RawHandle};
 
 use serde_json::{Value, json};
-use verbatim_uia::{is_top_level_window, provider_process};
+use verbatim_win32::provider::{is_top_level_window, provider_process};
 use verbatim_win32::window::{
     related, top_level_of, top_level_windows, window_class_name, window_is_visible, window_text,
 };

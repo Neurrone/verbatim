@@ -365,7 +365,7 @@ fn below_the_boundary(hwnd: isize, runtime_id: &[i32], nearest: Option<isize>) -
             .filter(|&nearest| is_window_element(runtime_id, nearest))
             .unwrap_or(0)
     };
-    window != 0 && verbatim_uia::parent_across_process_boundary(window).is_some()
+    window != 0 && verbatim_win32::provider::parent_across_process_boundary(window).is_some()
 }
 
 /// Whether a step up reached a window, `hwnd`, that another process than
@@ -374,7 +374,8 @@ fn stepped_across(hwnd: isize, nearest: Option<isize>) -> bool {
     nearest.is_some_and(|nearest| {
         hwnd != 0
             && hwnd != nearest
-            && verbatim_uia::provider_process(hwnd) != verbatim_uia::provider_process(nearest)
+            && verbatim_win32::provider::provider_process(hwnd)
+                != verbatim_win32::provider::provider_process(nearest)
     })
 }
 
@@ -410,8 +411,8 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
         _ => 0,
     };
     let at_the_top = |window: isize| {
-        verbatim_uia::is_top_level_window(window)
-            || verbatim_uia::parent_across_process_boundary(window).is_some()
+        verbatim_win32::provider::is_top_level_window(window)
+            || verbatim_win32::provider::parent_across_process_boundary(window).is_some()
     };
     (own != 0 && at_the_top(own)) || (hwnd != 0 && hwnd != own && at_the_top(hwnd))
 }
@@ -890,7 +891,7 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// The boundary is judged with local calls only, twice. Before each step,
 /// an element whose window has a parent window, or a visible owner for a
 /// top-level window, that another process serves
-/// ([`verbatim_uia::parent_across_process_boundary`]) is the last
+/// ([`verbatim_win32::provider::parent_across_process_boundary`]) is the last
 /// ancestor; its window is its own, or, for the nearest window's own
 /// element held without its handle (runtime id `[42, window]`), that
 /// nearest window, so that such an element never steps into the other
@@ -981,7 +982,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
     // The desktop root is served in this process, so reading it is local.
     before_call("the desktop root and the tree walker");
-    let root = verbatim_uia::runtime_id(&uia.root_element()?);
+    let root = verbatim_uia::runtime_id(&uia.root_element()?)?;
     let walker = uia.raw_view_walker()?;
     let mut ancestry = Ancestry {
         ancestors: Vec::new(),

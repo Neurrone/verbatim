@@ -1040,7 +1040,7 @@ impl CoreDriver {
             }
             Start::NotAsked => panic!("Core asked of {token:?} twice"),
         };
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
         let readability = self.outpost.listener_readability();
         let outcome = verbatim_listener::read_object(
             (&self.uia, &readability),
@@ -1051,7 +1051,7 @@ impl CoreDriver {
             ),
             read,
         );
-        self.calls += verbatim_uia::calls::take();
+        self.calls += verbatim_win32::calls::take();
         let _ = self
             .kept
             .read_ended((self.app, token), element, true, &mut self.reported);
@@ -1100,7 +1100,7 @@ impl CoreDriver {
         let reads = TestReads {
             foreground: self.outpost.foreground(),
         };
-        let _ = verbatim_uia::calls::take();
+        let _ = verbatim_win32::calls::take();
         let told = check_event(
             &event,
             (Some(element), &kept),
@@ -1113,7 +1113,7 @@ impl CoreDriver {
                 }
             },
         );
-        self.checked += verbatim_uia::calls::take();
+        self.checked += verbatim_win32::calls::take();
         if let Some(observer) = observer.as_mut() {
             observer(CheckMoment::Checked);
         }

@@ -53,8 +53,7 @@ pub(super) fn complete(
     // A focus whose own element is not found still has the element kept
     // under its runtime id judged, so that a stale one's text is never
     // read as the focus's.
-    let reused =
-        (focus || found.is_some()) && replaced_stale(context, client, &runtime_id, found.as_ref());
+    let reused = (focus || found.is_some()) && replaced_stale(context, client, &runtime_id);
     let node = match &found {
         Some(element) => context
             .nodes()
@@ -344,27 +343,17 @@ fn keep_window_element(
 /// or that the focus has when its own element was not found (`found` is
 /// `None`). Its element is then evicted and its text forgotten, so the
 /// node keeps its id and the found element, if any, replaces it
-/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
-fn replaced_stale(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    runtime_id: &[i32],
-    found: Option<&Cached<Node>>,
-) -> bool {
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression"). The
+/// kept element is always read: no local comparison tells it from the
+/// element found, since the kept one is found by the same runtime id and
+/// a new agile reference is never equal to a kept one.
+fn replaced_stale(context: &RequestContext<'_>, client: &mut Client, runtime_id: &[i32]) -> bool {
     let Some(node) = context.nodes().existing(runtime_id) else {
         return false;
     };
     let Some(kept) = context.store.element_of(node) else {
         return false;
     };
-    if let Some(found) = found {
-        let Ok(found) = found.agile() else {
-            return false;
-        };
-        if kept.reference() == found.reference() {
-            return false;
-        }
-    }
     let stale = match kept.resolve() {
         Err(_) => true,
         Ok(element) => match client.uia_with(context, RequestContext::node_request) {

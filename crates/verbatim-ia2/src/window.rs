@@ -33,7 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use verbatim_model::CallKind;
 
-use crate::calls::count;
+use verbatim_win32::calls::count;
 
 pub(crate) use verbatim_win32::window::{
     desktop_window, is_child, is_enabled, is_multiline_edit, parent, rect, related, style,

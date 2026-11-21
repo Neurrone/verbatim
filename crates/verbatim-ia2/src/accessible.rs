@@ -32,8 +32,8 @@ use windows::core::{AgileReference, IUnknown, Interface};
 
 use verbatim_model::{CallKind, Rect};
 
-use crate::calls::count;
 use crate::com::{CHILDID_SELF, child_variant};
+use verbatim_win32::calls::count;
 
 /// The most children [`Accessible::children`] asks for in one call, far
 /// more than any real container presents at once.

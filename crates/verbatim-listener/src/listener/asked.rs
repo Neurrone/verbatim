@@ -591,8 +591,12 @@ fn route_end(
     }
     let windows =
         || std::iter::once(hwnd).chain(walked.ancestors.iter().map(|ancestor| ancestor.hwnd));
-    let continue_from =
-        || verbatim_uia::parent_window(verbatim_uia::outermost_nearest_window(nearest, windows()));
+    let continue_from = || {
+        verbatim_win32::provider::parent_window(verbatim_win32::provider::outermost_nearest_window(
+            nearest,
+            windows(),
+        ))
+    };
     Ok(match ended {
         Ok(Some(FocusAncestry::Focused(ancestry))) => {
             if let Some(plain) = ancestry.plain_window {
@@ -600,10 +604,9 @@ fn route_end(
             } else if ancestry.failed_hop.is_some() {
                 RouteEnd::ContinueFrom(WindowHandle::from(continue_from()))
             } else if ancestry.depth_limited {
-                RouteEnd::PlainFrom(WindowHandle::from(verbatim_uia::plain_windows_start(
-                    nearest,
-                    windows(),
-                )))
+                RouteEnd::PlainFrom(WindowHandle::from(
+                    verbatim_win32::provider::plain_windows_start(nearest, windows()),
+                ))
             } else {
                 // The walk ends at the process's top-level window or at the
                 // window below the process boundary
@@ -777,7 +780,7 @@ fn nearest_windows((hwnd, nearest): (isize, isize), ancestors: &[Read]) -> Vec<i
         .map(|ancestor| ancestor.hwnd)
         .chain(std::iter::once(hwnd))
         .find(|&window| window != 0);
-    let mut above = match outermost.map(verbatim_uia::parent_window) {
+    let mut above = match outermost.map(verbatim_win32::provider::parent_window) {
         None => nearest,
         Some(0) => outermost.unwrap_or(nearest),
         Some(parent) => parent,

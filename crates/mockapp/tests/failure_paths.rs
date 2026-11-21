@@ -123,7 +123,7 @@ fn window_runtime_id(hwnd: HWND) -> Vec<i32> {
     let window = uia
         .window_live(hwnd.0 as isize)
         .expect("the window's element");
-    verbatim_uia::runtime_id(window.element())
+    verbatim_uia::runtime_id(window.element()).expect("the window's runtime id")
 }
 
 /// Arms the removal of the group from the element whose runtime id is

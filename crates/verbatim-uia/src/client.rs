@@ -25,13 +25,13 @@ use windows::core::Interface;
 
 use verbatim_model::{CallKind, NodeSnapshot};
 
-use crate::calls::count;
 use crate::com::init_mta;
 use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::Interning;
 use crate::shape::{
     Ancestor, Cached, Direction, ElementValue, Live, Node, Request, SelectionContainer, Shape,
 };
+use verbatim_win32::calls::count;
 
 /// A UIA client bound to the current thread's multithreaded apartment.
 pub struct Uia {
@@ -73,7 +73,7 @@ pub enum AncestorWalk {
     /// the chain is completed by plain windows from this window, included:
     /// the outermost element's nearest window, or its parent window when
     /// that element is the window's own
-    /// ([`plain_windows_start`](crate::plain_windows_start)), 0 when not
+    /// ([`plain_windows_start`](verbatim_win32::provider::plain_windows_start)), 0 when not
     /// known (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call fails").
     Cut(isize),
     /// A step to a parent failed this way from an element below the root,
@@ -269,7 +269,7 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia)?;
-        crate::calls::count_connection();
+        verbatim_win32::calls::count_connection();
         // A new connection to the focused application, made only by that
         // application's outpost (`books/dev/src/explanation/design/listener-without-connections.md`,
         // section 2).
@@ -373,7 +373,7 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia)?;
-        crate::calls::count_connection();
+        verbatim_win32::calls::count_connection();
         // A new connection to the window by its handle, which returns UIA's
         // client-side window proxy in place of the application's element
         // when it arrives while a remote operation from another process
@@ -429,7 +429,7 @@ impl Uia {
     /// The element for the top-level window `hwnd`, its cache filled by
     /// `request`, found by descending its owner chain from the desktop's
     /// root in the raw view, since the raw view puts an owned window under
-    /// its visible owner ([`crate::raw_view_parent_window`]). No proxy
+    /// its visible owner ([`verbatim_win32::provider::raw_view_parent_window`]). No proxy
     /// rule, and no connection by handle: a new connection by handle while
     /// another process's remote operation waits can answer UIA's window
     /// proxy, and a walk down from the root is not affected. `Ok(None)`
@@ -459,7 +459,7 @@ impl Uia {
         while let Some(owner) = chain
             .last()
             .copied()
-            .and_then(crate::raw_view_parent_window)
+            .and_then(verbatim_win32::provider::raw_view_parent_window)
         {
             chain.push(owner);
         }
@@ -491,7 +491,7 @@ impl Uia {
     /// Returns the COM error if the handle has no UIA element or the call fails.
     pub fn window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
         count(CallKind::Uia)?;
-        crate::calls::count_connection();
+        verbatim_win32::calls::count_connection();
         // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle
         // tolerates an invalid handle by returning an error.
         unsafe { self.client.ElementFromHandle(HWND(hwnd as *mut _)) }.map(Live::new)
@@ -611,7 +611,7 @@ impl Uia {
         let mut controlled = Vec::new();
         for root in roots {
             // A failed read is no runtime id.
-            controlled.push(crate::com::runtime_id(root));
+            controlled.push(crate::com::runtime_id_or_none(root));
             // A search that fails under one controlled element leaves the
             // others to try.
             if let Ok(Some(found)) = self.element_by_runtime_id(root, runtime_id, cache) {
@@ -650,14 +650,14 @@ impl Uia {
     /// ([`AncestorWalk::Failed`]): only the root ends a complete walk. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
     /// `nearest` is `element`'s nearest window, from which the outermost
-    /// element's is followed ([`outermost_nearest_window`](crate::outermost_nearest_window)),
+    /// element's is followed ([`outermost_nearest_window`](verbatim_win32::provider::outermost_nearest_window)),
     /// 0 when not known.
     ///
     /// The walk never steps across the process boundary: before each hop,
     /// from an element whose own window, `element_window` for `element`
     /// and the cached handle for an ancestor, has a parent window, or a
     /// visible owner for a top-level window, that another process serves
-    /// ([`parent_across_process_boundary`](crate::parent_across_process_boundary)),
+    /// ([`parent_across_process_boundary`](verbatim_win32::provider::parent_across_process_boundary)),
     /// it stops and returns that parent or owner window as the window to
     /// continue through the other API, local calls only
     /// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3).
@@ -688,9 +688,12 @@ impl Uia {
         let mut current_window = element_window;
         // The outermost element's nearest window, followed as the walk goes.
         let mut trail = vec![element_window];
-        let outermost =
-            |trail: &[isize]| crate::outermost_nearest_window(nearest, trail.iter().copied());
-        let cut_from = |trail: &[isize]| crate::plain_windows_start(nearest, trail.iter().copied());
+        let outermost = |trail: &[isize]| {
+            verbatim_win32::provider::outermost_nearest_window(nearest, trail.iter().copied())
+        };
+        let cut_from = |trail: &[isize]| {
+            verbatim_win32::provider::plain_windows_start(nearest, trail.iter().copied())
+        };
         let started = std::time::Instant::now();
         let mut hops = 0u32;
         let log = |hops: u32, ending: &str| {
@@ -709,7 +712,7 @@ impl Uia {
                 return Ok((chain, None, AncestorWalk::Cut(cut_from(&trail))));
             }
             if let Some(across) = (current_window != 0)
-                .then(|| crate::parent_across_process_boundary(current_window))
+                .then(|| verbatim_win32::provider::parent_across_process_boundary(current_window))
                 .flatten()
             {
                 chain.reverse();
@@ -734,7 +737,8 @@ impl Uia {
                     }
                     let at_root = self
                         .root_element()
-                        .is_ok_and(|root| crate::com::runtime_id(&root) == current.runtime_id());
+                        .and_then(|root| crate::com::runtime_id(&root))
+                        .is_ok_and(|root| root == current.runtime_id());
                     if at_root {
                         log(hops, "root");
                         return Ok((chain, None, AncestorWalk::Complete));
@@ -746,7 +750,7 @@ impl Uia {
                         elapsed_us = started.elapsed().as_micros(),
                         "UIA ancestor walk ended at a failed step below the root"
                     );
-                    let onward = crate::parent_window(outermost(&trail));
+                    let onward = verbatim_win32::provider::parent_window(outermost(&trail));
                     return Ok((chain, None, AncestorWalk::Failed(hop, onward)));
                 }
             };
