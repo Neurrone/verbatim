@@ -208,10 +208,16 @@ fn a_dialog_whose_events_arrive_while_its_window_is_hung_is_spoken_once_it_answe
     // the task dialog, first by handle, is read again, then the Theme
     // dialog, whose read finds the same focus.
     heard.extend(rounds_until(&mut desk, 1_795_249_231_700_000));
+    let mut answered = Vec::new();
     for _ in [TASK_DIALOG, THEME_DIALOG] {
         let (number, to) = last_current_focus(&desk);
+        answered.push(number);
         heard.extend(desk.answer(to, number, the_confirmation_read()));
     }
+    assert_ne!(
+        answered[0], answered[1],
+        "each dialog's recovery read is its own"
+    );
     heard.extend(rounds_until(&mut desk, 1_795_249_232_700_000));
     let segment = |content| UtteranceSegment {
         content,

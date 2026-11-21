@@ -79,7 +79,11 @@ Public API:
   entry is dispatched, so before its own tell, once per stall of the
   thread; a responsive window unmarks its thread. The marks end with the
   outpost, which serves one application. The intake's merge keeps the
-  newer entry, so the later read stands.
+  newer entry, so the later read stands. A limit: an entry is handed out
+  only once the program in flight ends, so while a worker is inside a
+  call into the stalled application the report waits with it, and may
+  reach Core after the window answers; the listener's report of the same
+  stall is not held so.
 - The program in flight is the generation in charge's (`InCharge`, the
   `charge` module), numbered by `Request` within its generation so that a
   dead generation's and an earlier program's results are refused. What it

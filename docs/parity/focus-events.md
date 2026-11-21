@@ -940,8 +940,9 @@ and
 
 - Different: a key, command or focus whose request is stopped or
   refused as hung plays the sound, for the first window of its
-  application to join the recovery set, where NVDA plays nothing
-  (`docs/nvda/main-loop-and-watchdog.md`).
+  application to join the recovery set (the bound is Claude's,
+  2026-11-21, within the difference Dickson approved below), where NVDA
+  plays nothing (`docs/nvda/main-loop-and-watchdog.md`).
 - Different (Dickson, 2026-11-21): a window whose events are dropped as
   hung is reported to Core, where NVDA says nothing. The focus listener
   drops a hung window's events as NVDA drops them and reports the
@@ -950,8 +951,8 @@ and
   window, read as it arrived, is hung. Each reports once per stall of
   the window's thread, a foreground event letting the listener report
   again (ADR 0003, "A frozen window"). While the application holds
-  attention, "not responding" plays once and the window's focus is read
-  when it answers. The incident is `theme_panel` on GitHub (run
+  attention, "not responding" plays once, by the bound above, and the
+  window's focus is read when it answers. The incident is `theme_panel` on GitHub (run
   44883440325): the Remove Theme confirmation's events arrived while
   Verbatim's own GUI thread was flagged hung, and NVDA's drops left 75 s
   of silence. NVDA's speech there: nothing. Verbatim's: "not
