@@ -25,7 +25,7 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWind
 use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
 use crate::state::{Navigator, NavigatorRead, SrState};
-use crate::text_request::TextRequest;
+use crate::text_request::{Answerer, TextAsk};
 
 /// The navigator object and its window, as a command finds them at its
 /// turn.
@@ -203,27 +203,22 @@ async fn text(
     read: NavigatorRead,
 ) {
     let start = editing::navigator_text_start(&mut cx.facts_mut(), trace_id, object, read);
-    let mut op = match start {
+    let mut ask: TextAsk = match start {
         Ok(said) => return emit_all(cx, said),
-        Err(op) => op,
+        Err(ask) => ask,
     };
     let mut selection = true;
     loop {
-        let request = TextRequest {
-            process: window.process,
-            window,
-            node: object.id,
-            op,
-        };
         let due_us = cx.due_in(OTHER_DUE_US);
-        let Outcome::Result(reply) = cx.ask(request, due_us).await else {
+        let by = (object.id, Answerer::Outpost(window));
+        let Some(answer) = crate::text_request::ask(cx, by, ask, due_us).await else {
             return;
         };
-        match editing::navigator_text_answered(trace_id, object, read, selection, reply) {
+        match editing::navigator_text_answered(trace_id, object, read, selection, answer) {
             NavigatorText::Said(said) => return emit_all(cx, said),
             NavigatorText::ReadLine if selection => {
                 selection = false;
-                op = editing::navigator_line_op();
+                ask = editing::navigator_line_read();
             }
             NavigatorText::ReadLine => return,
         }

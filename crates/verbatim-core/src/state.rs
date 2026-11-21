@@ -236,6 +236,9 @@ pub(crate) enum TextFollowUp {
     },
     /// The review cursor moved to another line: land on it and speak.
     Land(Landing),
+    /// A review word command read its word, and for a move the line it
+    /// lands on.
+    Word { command: ReviewCommand, repeat: u8 },
     /// A select then copy selected the text.
     Selected,
     /// A select then copy read the text to copy: the copy clears the start
@@ -282,10 +285,6 @@ pub(crate) enum LandingPlace {
     Column(usize),
     /// At the line's start.
     Start,
-    /// On the first word.
-    FirstWord,
-    /// On the last word.
-    LastWord,
     /// At the point read.
     Point,
     /// On the character before the point read (the end of a selection).

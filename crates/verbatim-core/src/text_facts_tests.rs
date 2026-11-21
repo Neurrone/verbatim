@@ -2,18 +2,13 @@
 //! out (design, "Held anchors").
 
 use verbatim_model::batch::{Batch, CaretWait, EffectTest, Op, Placement, Step, Subject};
-use verbatim_model::request::Request as Wire;
-use verbatim_model::{TextAnchor, TextDetails, TextOp, TextPoint, TextPosition, TextThrough};
+use verbatim_model::{TextAnchor, TextDetails, TextPoint, TextPosition};
 
 use super::named_by;
 use crate::entries::tests::node;
 
 fn at(anchor: u64) -> TextPoint {
     TextPoint::At(TextPosition::at(TextAnchor(anchor)))
-}
-
-fn on_node(op: TextOp) -> Wire {
-    Wire::Text { node: node(2), op }
 }
 
 /// A batch of the one operation `op`.
@@ -56,25 +51,28 @@ fn a_wait_and_a_sentence_move_name_their_starting_point() {
 
 #[test]
 fn a_selection_names_both_ends_and_both_points_past_them() {
-    let select = TextOp::Select {
-        start: at(1),
-        end: at(2),
-        through: Some(TextThrough {
-            start: at(3),
-            end: at(4),
+    let point = |anchor| verbatim_model::batch::Point::At(at(anchor));
+    let select = Op::Select {
+        subject: Subject::Node(node(2)),
+        start: point(1),
+        end: point(2),
+        through: Some(verbatim_model::batch::Through {
+            start: point(3),
+            end: point(4),
         }),
     };
     assert_eq!(
-        named_by(&verbatim_model::request::Question::from(on_node(select))),
+        named_by(&one(select)),
         [(
             node(2),
             vec![TextAnchor(1), TextAnchor(2), TextAnchor(3), TextAnchor(4)]
         )]
     );
-    assert_eq!(
-        named_by(&verbatim_model::request::Question::from(on_node(
-            TextOp::MoveCaret(TextPoint::Caret)
-        ))),
-        [(node(2), Vec::new())]
-    );
+    let to_caret = Op::Select {
+        subject: Subject::Node(node(2)),
+        start: verbatim_model::batch::Point::At(TextPoint::Caret),
+        end: verbatim_model::batch::Point::At(TextPoint::Caret),
+        through: None,
+    };
+    assert_eq!(named_by(&one(to_caret)), [(node(2), Vec::new())]);
 }

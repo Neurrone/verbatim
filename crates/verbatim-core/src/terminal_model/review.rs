@@ -24,13 +24,15 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::batch::{Batch, Chunks, Done, Missing, RangeText, StepOutcome, StepRefusal};
 use verbatim_model::{
     MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, TerminalMatch, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
+    TextMovement, TextOp, TextPoint, TextUnit,
 };
 use verbatim_text::terminal_rows::{Anchor, Row, rows_of};
 
 use super::{HistoryRead, TERMINAL_ANCHORS, TerminalModel};
+use crate::text_request::{LocalStep, Span};
 
 /// What a history read asked for: rows from `above` rows above the start,
 /// or the whole document when `whole`.
@@ -62,43 +64,48 @@ pub(crate) struct CaretAt {
     pub(crate) column: usize,
 }
 
-/// Whether Core answers `op` from `model`'s memory: a read of the text
-/// from the caret, the start, the end, or a position at an anchor Core
+/// Whether Core answers a request naming `points` from `model`'s memory:
+/// each is the caret, the start, the end, or a position at an anchor Core
 /// minted for the terminal; a request naming another anchor, such as a
 /// caret report's, goes to the outpost and is answered as any text's.
-pub(crate) fn answers(model: &TerminalModel, op: &TextOp) -> bool {
-    let known = |point: &TextPoint| match point {
+pub(crate) fn answers(model: &TerminalModel, points: &[TextPoint]) -> bool {
+    points.iter().all(|point| match point {
         TextPoint::At(position) => place_of(model, position.anchor).is_some(),
         _ => true,
-    };
-    match op {
-        TextOp::Read(TextRead { at, .. }) | TextOp::ReadAhead(TextReadAhead { at, .. }) => {
-            known(at)
-        }
-        TextOp::ReadRange { start, end, .. } | TextOp::Select { start, end, .. } => {
-            known(start) && known(end)
-        }
-        TextOp::Location(point) | TextOp::MoveCaret(point) => known(point),
-        _ => false,
-    }
+    })
 }
 
-/// Answers `op` from `model`'s memory ([`answers`] says which requests it
-/// answers), with `history`, the rows above the memory the command read,
-/// numbering new anchors from `next_anchor` and keeping the places of the
-/// anchors in `held`.
+/// Answers `batch` from `model`'s memory ([`answers`] says which requests
+/// it answers), step by step ([`crate::text_request::answer_steps`]), with
+/// `history`, the rows above the memory the command read, numbering new
+/// anchors from `next_anchor` and keeping the places of the anchors in
+/// `held`. A line or a screen's rows read at a time; a word by Core's own
+/// words ([`crate::text_request::local_word`]); a range. A terminal's text
+/// is not selected, nor its caret moved, by Verbatim, and a place's
+/// position on the screen is not read: those steps are refused.
 ///
 /// # Errors
 ///
 /// [`Need`] when the answer needs rows of the history that have not been
-/// read: nothing is changed, and the answer is worked out again once they
-/// come.
+/// read: the answer is worked out again, whole, once they come.
 pub(crate) fn answer(
     model: &mut TerminalModel,
-    (op, history): (&TextOp, Option<&HistoryRead>),
+    (batch, history): (&Batch, Option<&HistoryRead>),
     next_anchor: &mut u64,
     held: &BTreeSet<TextAnchor>,
-) -> Result<TextReply, Need> {
+) -> Result<Vec<StepOutcome>, Need> {
+    crate::text_request::answer_steps(batch, |step| {
+        answer_step(model, (step, history), next_anchor, held)
+    })
+}
+
+/// One step of [`answer`].
+fn answer_step(
+    model: &mut TerminalModel,
+    (step, history): (LocalStep, Option<&HistoryRead>),
+    next_anchor: &mut u64,
+    held: &BTreeSet<TextAnchor>,
+) -> Result<StepOutcome, Need> {
     let caret = model.caret;
     let plan = {
         let above = history.map(|read| {
@@ -109,17 +116,27 @@ pub(crate) fn answer(
             )
         });
         let mut rows = Rows { model, above };
-        match op {
-            TextOp::Read(read) => read_unit(&mut rows, caret, read)?,
-            TextOp::ReadAhead(ahead) => read_ahead(&mut rows, caret, ahead)?,
-            TextOp::ReadRange {
-                start,
-                end,
-                through,
-            } => read_range(&mut rows, caret, (*start, *end), *through)?,
-            // A terminal's text is not selected, nor its caret moved, by
-            // Verbatim, and a place's position on the screen is not read.
-            _ => Plan::Reply(TextReply::Unsupported),
+        match step {
+            LocalStep::Read {
+                at,
+                movement,
+                unit: TextUnit::Word,
+                count: 1,
+            } => read_word(&mut rows, caret, (at, movement))?,
+            LocalStep::Read {
+                at,
+                movement,
+                unit,
+                count: 1,
+            } => read_unit(&mut rows, caret, (at, movement, unit))?,
+            LocalStep::Read {
+                at,
+                movement,
+                unit,
+                count,
+            } => read_ahead(&mut rows, caret, (at, movement, unit), count)?,
+            LocalStep::Range(span) => read_range(&mut rows, caret, span)?,
+            LocalStep::Other => Plan::Outcome(StepOutcome::Refused(StepRefusal::Unsupported)),
         }
     };
     let mut mint = || {
@@ -166,8 +183,17 @@ enum Plan {
     Read(i32, Chunked),
     /// A read ahead: how far it moved, and the rows.
     Ahead(i32, Vec<Chunked>),
+    /// A word read: how far it moved, the row it is on, its byte range in
+    /// the row's text, and the point's offset in it.
+    Word {
+        moved: i32,
+        row: isize,
+        line: Line,
+        word: std::ops::Range<usize>,
+        offset: usize,
+    },
     /// Any other answer.
-    Reply(TextReply),
+    Outcome(StepOutcome),
 }
 
 /// The place the terminal keeps for text anchor `anchor`, if Core minted
@@ -207,7 +233,7 @@ fn finish(
     plan: Plan,
     mint: &mut dyn FnMut() -> u64,
     held: &BTreeSet<TextAnchor>,
-) -> TextReply {
+) -> StepOutcome {
     let mut chunk_of = |model: &mut TerminalModel, chunked: Chunked| {
         let number = mint();
         keep_place(
@@ -243,16 +269,58 @@ fn finish(
             };
             let chunk = chunk_of(model, chunked);
             model.rules().memory_mut().set_review_anchor(review);
-            TextReply::Read { moved, chunk }
+            StepOutcome::Done(Done::ReadText(Chunks {
+                moved,
+                chunks: vec![chunk],
+            }))
         }
         Plan::Ahead(moved, rows) => {
             let chunks = rows
                 .into_iter()
                 .map(|chunked| chunk_of(model, chunked))
                 .collect();
-            TextReply::Chunks { moved, chunks }
+            StepOutcome::Done(Done::ReadText(Chunks { moved, chunks }))
         }
-        Plan::Reply(reply) => reply,
+        Plan::Word {
+            moved,
+            row,
+            line,
+            word,
+            offset,
+        } => {
+            // The word's anchor is a place at its first character, so a
+            // read from the word's start begins there.
+            let number = mint();
+            let column = verbatim_text::proven::text_in(&line.text, ..word.start)
+                .chars()
+                .count();
+            keep_place(
+                model,
+                number,
+                Anchor {
+                    row,
+                    column,
+                    line_hash: line.hash,
+                },
+                held,
+            );
+            let text = verbatim_text::proven::text_in(&line.text, word).to_owned();
+            StepOutcome::Done(Done::ReadText(Chunks {
+                moved,
+                chunks: vec![TextChunk {
+                    unit: TextUnit::Word,
+                    start: TextAnchor(number),
+                    offset: u32::try_from(offset).unwrap_or(u32::MAX),
+                    text,
+                    languages: Vec::new(),
+                    first: false,
+                    last: false,
+                    truncated: false,
+                    formats: Vec::new(),
+                }],
+            }))
+        }
+        Plan::Outcome(outcome) => outcome,
     }
 }
 
@@ -418,13 +486,23 @@ fn byte_at(text: &str, column: usize) -> usize {
         .map_or(text.len(), |(at, _)| at)
 }
 
-/// Where `point` is, or the reply that ends the request: a place gone
-/// with its row is an anchor lost.
+/// The outcome of a read at `at` whose point is not there: the anchor it
+/// names lost; a point with no anchor, whose row is always there, failed.
+fn lost(at: TextPoint) -> StepOutcome {
+    match at {
+        TextPoint::At(position) => StepOutcome::NotThere(Missing::Anchor(position.anchor)),
+        _ => StepOutcome::Failed,
+    }
+}
+
+/// Where `point` is, or the outcome that ends the step: a place gone with
+/// its row is an anchor lost. A position counts from its anchor's place,
+/// a row's start or a word's first character.
 fn resolve(
     rows: &mut Rows<'_>,
     caret: Option<CaretAt>,
     point: TextPoint,
-) -> Result<Result<Point, TextReply>, Need> {
+) -> Result<Result<Point, StepOutcome>, Need> {
     let at_caret = |rows: &mut Rows<'_>| -> Result<Point, Need> {
         let Some(caret) = caret else {
             return Ok(Point {
@@ -453,14 +531,17 @@ fn resolve(
             let place = place_of(rows.model, position.anchor)
                 .and_then(|place| rows.model.reader.memory().place(place));
             let Some(place) = place else {
-                return Ok(Err(TextReply::AnchorLost));
+                return Ok(Err(lost(point)));
             };
             let Some(row) = rows.found(place.row, place.line_hash)? else {
-                return Ok(Err(TextReply::AnchorLost));
+                return Ok(Err(lost(point)));
             };
+            let column = rows
+                .row(row)?
+                .map_or(0, |line| byte_at(&line.text, place.column));
             Point {
                 row,
-                offset: crate::text::byte_offset(position.offset),
+                offset: column.saturating_add(crate::text::byte_offset(position.offset)),
             }
         }
     }))
@@ -473,14 +554,14 @@ fn moved(
     rows: &mut Rows<'_>,
     point: Point,
     movement: Option<TextMovement>,
-) -> Result<Result<(Point, i32), TextReply>, Need> {
+) -> Result<Result<(Point, i32), StepOutcome>, Need> {
     let Some(movement) = movement else {
         return Ok(Ok((point, 0)));
     };
     let per = match movement.unit {
         TextUnit::Line => 1,
         TextUnit::Page => rows.height().max(1),
-        unit => return Ok(Err(TextReply::UnsupportedUnit(unit))),
+        _ => return Ok(Err(StepOutcome::Refused(StepRefusal::NoSuchUnit))),
     };
     let wanted = point.row.saturating_add(
         isize::try_from(movement.count)
@@ -520,43 +601,48 @@ fn moved(
     )))
 }
 
-/// A read of one unit, a row ([`TextOp::Read`]).
-fn read_unit(rows: &mut Rows<'_>, caret: Option<CaretAt>, read: &TextRead) -> Result<Plan, Need> {
-    if read.unit != TextUnit::Line {
-        return Ok(Plan::Reply(TextReply::UnsupportedUnit(read.unit)));
+/// A read of one unit, a row.
+fn read_unit(
+    rows: &mut Rows<'_>,
+    caret: Option<CaretAt>,
+    (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
+) -> Result<Plan, Need> {
+    if unit != TextUnit::Line {
+        return Ok(Plan::Outcome(StepOutcome::Refused(StepRefusal::NoSuchUnit)));
     }
-    let point = match resolve(rows, caret, read.at)? {
+    let point = match resolve(rows, caret, at)? {
         Ok(point) => point,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
-    let (point, count) = match moved(rows, point, read.movement)? {
+    let (point, count) = match moved(rows, point, movement)? {
         Ok(moved) => moved,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
     Ok(match rows.chunked(point.row, point.offset)? {
         Some(chunked) => Plan::Read(count, chunked),
-        None => Plan::Reply(TextReply::AnchorLost),
+        None => Plan::Outcome(lost(at)),
     })
 }
 
-/// Rows read ahead, for say-all ([`TextOp::ReadAhead`]).
+/// Rows read ahead, for say-all.
 fn read_ahead(
     rows: &mut Rows<'_>,
     caret: Option<CaretAt>,
-    ahead: &TextReadAhead,
+    (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
+    count: u8,
 ) -> Result<Plan, Need> {
-    if ahead.unit != TextUnit::Line {
-        return Ok(Plan::Reply(TextReply::UnsupportedUnit(ahead.unit)));
+    if unit != TextUnit::Line {
+        return Ok(Plan::Outcome(StepOutcome::Refused(StepRefusal::NoSuchUnit)));
     }
-    let point = match resolve(rows, caret, ahead.at)? {
+    let point = match resolve(rows, caret, at)? {
         Ok(point) => point,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
-    let (point, count) = match moved(rows, point, ahead.movement)? {
+    let (point, moved_by) = match moved(rows, point, movement)? {
         Ok(moved) => moved,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
-    let wanted = usize::from(ahead.count.clamp(1, MAX_READ_AHEAD));
+    let wanted = usize::from(count.clamp(1, MAX_READ_AHEAD));
     let mut chunks: Vec<Chunked> = Vec::new();
     let mut bytes: usize = 0;
     let mut row = point.row;
@@ -574,28 +660,76 @@ fn read_ahead(
         row = row.saturating_add(1);
     }
     if chunks.is_empty() {
-        return Ok(Plan::Reply(TextReply::AnchorLost));
+        return Ok(Plan::Outcome(lost(at)));
     }
-    Ok(Plan::Ahead(count, chunks))
+    Ok(Plan::Ahead(moved_by, chunks))
 }
 
-/// The text between two points ([`TextOp::ReadRange`]), in document
-/// order whichever comes first; with `through`, through the character at
+/// A word, by Core's own words over each row's text, as review read it
+/// before words were the provider's ([`crate::text_request::local_word`]):
+/// the word at `at`, moved by `movement`, a move by word.
+fn read_word(
+    rows: &mut Rows<'_>,
+    caret: Option<CaretAt>,
+    (at, movement): (TextPoint, Option<TextMovement>),
+) -> Result<Plan, Need> {
+    let count = match movement {
+        None => 0,
+        Some(TextMovement {
+            unit: TextUnit::Word,
+            count,
+        }) => count,
+        Some(_) => return Ok(Plan::Outcome(StepOutcome::Refused(StepRefusal::NoSuchUnit))),
+    };
+    let point = match resolve(rows, caret, at)? {
+        Ok(point) => point,
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
+    };
+    let found = crate::text_request::local_word(
+        |row| Ok(rows.row(row)?.map(|line| line.text)),
+        (point.row, point.offset),
+        count,
+    )?;
+    let Some((moved, row, word)) = found else {
+        return Ok(Plan::Outcome(lost(at)));
+    };
+    let Some(line) = rows.row(row)? else {
+        return Ok(Plan::Outcome(lost(at)));
+    };
+    let offset = if moved == 0 && word.contains(&point.offset) {
+        point.offset.saturating_sub(word.start)
+    } else {
+        0
+    };
+    Ok(Plan::Word {
+        moved,
+        row,
+        line,
+        word,
+        offset,
+    })
+}
+
+/// The text between two points, in document order whichever comes
+/// first; with the points past their characters, through the character at
 /// the later end. Rows of one line are joined as they are, and lines with
 /// a line break between them.
 fn read_range(
     rows: &mut Rows<'_>,
     caret: Option<CaretAt>,
-    (start, end): (TextPoint, TextPoint),
-    through: Option<TextThrough>,
+    Span {
+        start,
+        end,
+        through,
+    }: Span,
 ) -> Result<Plan, Need> {
     let a = match resolve(rows, caret, start)? {
         Ok(point) => point,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
     let b = match resolve(rows, caret, end)? {
         Ok(point) => point,
-        Err(reply) => return Ok(Plan::Reply(reply)),
+        Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
     let (from, mut to) = if (a.row, a.offset) <= (b.row, b.offset) {
         (a, b)
@@ -635,7 +769,9 @@ fn read_range(
             break;
         }
     }
-    Ok(Plan::Reply(TextReply::Range { text, truncated }))
+    Ok(Plan::Outcome(StepOutcome::Done(Done::ReadRange(
+        RangeText { text, truncated },
+    ))))
 }
 
 /// How many searches one move between command marks makes at most: a mark
@@ -682,8 +818,8 @@ enum Resolved {
 /// within the memory near its place, and above the memory by the search
 /// the outpost runs ([`TextOp::TerminalFind`]), outward from its place; a
 /// mark not found is dropped, and the next one tried, with nothing said.
-/// The answer is a line move's ([`TextReply::Read`] at the start of the
-/// mark's row), the review position going there; `None` when no mark is
+/// The answer is a line move's (a line read at the start of the mark's
+/// row), the review position going there; `None` when no mark is
 /// left that way, when the move has made [`MARK_SEARCHES`] searches
 /// (`searches` counts them), or when a search's rows could not be placed,
 /// the marks not found kept. `found` is the search that came for this
@@ -700,7 +836,7 @@ pub(crate) fn mark(
     (found, searches): (&mut Option<Placed>, &mut u32),
     next_anchor: &mut u64,
     held: &BTreeSet<TextAnchor>,
-) -> Result<Option<TextReply>, Search> {
+) -> Result<Option<StepOutcome>, Search> {
     let review = match from {
         TextPoint::At(position) => place_of(model, position.anchor)
             .and_then(|place| model.reader.memory().place(place))

@@ -25,9 +25,10 @@
 
 use std::sync::Arc;
 
+use verbatim_model::batch::{Batch, Chunks, Done, Located, RangeText, StepOutcome, StepRefusal};
 use verbatim_model::{
-    Effect, Message, NodeId, Phrase, ReviewCommand, SegmentContent, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextThrough, TextUnit, TraceId, UtteranceSegment,
+    Effect, Message, NodeId, Phrase, ReviewCommand, SegmentContent, TextAnchor, TextChunk,
+    TextMovement, TextPoint, TextPosition, TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
@@ -41,7 +42,7 @@ use crate::state::{
     ReviewText, SharedChunk, SrState, StartMarker, TextFollowUp,
 };
 use crate::text;
-use crate::text_request::TextRequest;
+use crate::text_request::{Answerer, LocalStep, Span, TextAnswer, TextAsk, WordStep, Worded};
 use verbatim_text::proven;
 
 /// Whether `command` is one this module runs: every review-cursor command
@@ -81,14 +82,11 @@ fn answers_from_line(command: ReviewCommand) -> bool {
     matches!(
         command,
         ReviewCommand::ReviewCurrentLine
-            | ReviewCommand::ReviewCurrentWord
             | ReviewCommand::ReviewCurrentCharacter
             | ReviewCommand::ReviewStartOfLine
             | ReviewCommand::ReviewEndOfLine
             | ReviewCommand::ReviewPreviousCharacter
             | ReviewCommand::ReviewNextCharacter
-            | ReviewCommand::ReviewPreviousWord
-            | ReviewCommand::ReviewNextWord
             | ReviewCommand::SetStartMarker
             | ReviewCommand::SelectThenCopy
     )
@@ -103,7 +101,7 @@ pub(crate) enum Next {
     /// These words, and the press ends.
     Said(Vec<Effect>),
     /// A read or move of `node`'s text, followed up as the follow-up says.
-    Text(NodeId, TextOp, TextFollowUp),
+    Text(NodeId, TextAsk, TextFollowUp),
     /// A live read of the navigator object, whose text is reviewed flat.
     ReadObject,
     /// The press run on this flat text of the navigator object, every
@@ -197,10 +195,6 @@ async fn run_next(
                 flat = Some(text);
                 next
             }
-            Next::Text(node, op, then) if flat.is_some() => {
-                let reply = flat_answer(flat.as_deref().unwrap_or_default(), &op);
-                answered(&mut cx.facts_mut(), trace_id, (node, press), then, reply)
-            }
             Next::SayAll(_, at) if flat.is_some() => {
                 // Say-all from the review cursor in flat text speaks the
                 // rest of it at once, with no caret or reading to move.
@@ -208,40 +202,23 @@ async fn run_next(
                 let rest = proven::text_in(text, flat_offset(text, at)..);
                 Next::Said(vec![speak(trace_id, text::text_segments(rest, None))])
             }
-            Next::Text(node, op, then)
-                if crate::terminal::commands::answers(&cx.facts(), node, &op) =>
-            {
-                if !fresh {
-                    crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
-                    fresh = true;
-                }
-                let Some(reply) =
-                    crate::terminal::commands::answer(&mut cx, (window, node), &op, due_us).await
+            Next::Text(node, ask, then) => {
+                let by = if let Some(text) = flat.as_deref() {
+                    Answerer::Flat(text)
+                } else if crate::terminal::commands::answers(&cx.facts(), node, &ask.points()) {
+                    if !fresh {
+                        crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
+                        fresh = true;
+                    }
+                    Answerer::Terminal(window)
+                } else {
+                    Answerer::Outpost(window)
+                };
+                let Some(answer) = crate::text_request::ask(&mut cx, (node, by), ask, due_us).await
                 else {
                     return;
                 };
-                answered(&mut cx.facts_mut(), trace_id, (node, press), then, reply)
-            }
-            Next::Text(node, op, then) => {
-                let request = TextRequest {
-                    process: window.process,
-                    window,
-                    node,
-                    op,
-                };
-                let reply = match cx.ask(request, due_us).await {
-                    // A selection made on the focused text mints the next
-                    // selection baseline, and is said as any selection the
-                    // command makes (Table 17, column F).
-                    Outcome::Result(TextReply::SelectionPlaced { changes, baseline }) => {
-                        crate::text_facts::minted(&mut cx.facts_mut(), node, baseline);
-                        TextReply::Selected(changes)
-                    }
-                    Outcome::Result(reply) => reply,
-                    Outcome::NotThere => TextReply::Gone,
-                    _ => return,
-                };
-                answered(&mut cx.facts_mut(), trace_id, (node, press), then, reply)
+                answered(&mut cx.facts_mut(), trace_id, (node, press), then, answer)
             }
             Next::ReadObject => {
                 let Some(object) = cx
@@ -357,19 +334,52 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
 }
 
 /// Reads the line at `at` to place the review cursor there, then runs the
-/// command.
+/// command; a word command reads its word there at once.
 fn seed(press: ReviewPress, node: NodeId, at: TextPoint) -> Next {
+    if let Some(step) = word_step(press.command) {
+        return word(press, node, at, step);
+    }
     Next::Text(
         node,
-        TextOp::Read(TextRead {
-            at,
-            movement: None,
-            unit: TextUnit::Line,
-        }),
+        line_read(at, None),
         TextFollowUp::Seed {
             command: press.command,
             repeat: press.repeat,
             at_caret: at == TextPoint::Caret,
+        },
+    )
+}
+
+/// The read of the line at `at`, after `movement`.
+fn line_read(at: TextPoint, movement: Option<TextMovement>) -> TextAsk {
+    TextAsk::Read {
+        at,
+        movement,
+        unit: TextUnit::Line,
+        count: 1,
+    }
+}
+
+/// The word a review word command reads, `None` for any other command.
+fn word_step(command: ReviewCommand) -> Option<WordStep> {
+    match command {
+        ReviewCommand::ReviewCurrentWord => Some(WordStep::Current),
+        ReviewCommand::ReviewPreviousWord => Some(WordStep::Previous),
+        ReviewCommand::ReviewNextWord => Some(WordStep::Next),
+        _ => None,
+    }
+}
+
+/// A review word command at `at`, by the text's own word: one batch a
+/// press (`docs/parity/review.md`, "Review words by the provider's
+/// word").
+fn word(press: ReviewPress, node: NodeId, at: TextPoint, step: WordStep) -> Next {
+    Next::Text(
+        node,
+        TextAsk::Word { at, step },
+        TextFollowUp::Word {
+            command: press.command,
+            repeat: press.repeat,
         },
     )
 }
@@ -413,14 +423,7 @@ fn execute(
         .unwrap_or(u32::MAX),
     };
     let read_line = |movement: Option<TextMovement>, at: TextPoint, landing: Landing| {
-        (
-            TextOp::Read(TextRead {
-                at,
-                movement,
-                unit: TextUnit::Line,
-            }),
-            TextFollowUp::Land(landing),
-        )
+        (line_read(at, movement), TextFollowUp::Land(landing))
     };
     let landing = |place, speak, edge| Landing {
         place,
@@ -431,24 +434,12 @@ fn execute(
     let from_line = TextPoint::At(TextPosition::at(line.start));
     let by = |unit, count| Some(TextMovement { unit, count });
 
-    let (op, then) = match command {
+    let (ask, then) = match command {
         ReviewCommand::ReviewCurrentLine => {
             let segments = match repeat {
                 0 => text::text_segments(content, line.language_at(0)),
                 1 => spell_or_blank(content, false, line.language_at(0)),
                 _ => spell_or_blank(content, true, line.language_at(0)),
-            };
-            return Next::Said(vec![speak(trace_id, segments)]);
-        }
-        ReviewCommand::ReviewCurrentWord => {
-            let words = text::words(content, line.language_at(0));
-            let word =
-                text::word_at(&words, position.offset).map(|range| proven::text_in(content, range));
-            let segments = match (word, repeat) {
-                (None, _) => text::text_segments("", None),
-                (Some(word), 0) => text::word_segments(word, language),
-                (Some(word), 1) => text::spelled(word, false, language),
-                (Some(word), _) => text::spelled(word, true, language),
             };
             return Next::Said(vec![speak(trace_id, segments)]);
         }
@@ -522,57 +513,13 @@ fn execute(
                 },
             );
         }
-        ReviewCommand::ReviewPreviousWord | ReviewCommand::ReviewNextWord => {
-            let forward = command == ReviewCommand::ReviewNextWord;
-            let words = text::words(content, line.language_at(0));
-            let current = text::word_at(&words, position.offset);
-            let target = if forward {
-                words.iter().find(|range| {
-                    current
-                        .as_ref()
-                        .is_none_or(|current| range.start > current.start)
-                })
-            } else {
-                words.iter().rev().find(|range| {
-                    current
-                        .as_ref()
-                        .is_some_and(|current| range.start < current.start)
-                })
+        ReviewCommand::ReviewCurrentWord
+        | ReviewCommand::ReviewPreviousWord
+        | ReviewCommand::ReviewNextWord => {
+            return match word_step(command) {
+                Some(step) => word(press, node, TextPoint::At(cursor), step),
+                None => Next::Said(Vec::new()),
             };
-            if let Some(target) = target {
-                let start = target.start;
-                set_position(state, position_at(line, start, grid));
-                return Next::Said(vec![speak(
-                    trace_id,
-                    text::word_segments(proven::text_in(content, target.clone()), language),
-                )]);
-            }
-            let at_edge = if forward { line.last } else { line.first };
-            let message = if forward {
-                Message::Bottom
-            } else {
-                Message::Top
-            };
-            if at_edge {
-                let word = current.map(|range| proven::text_in(content, range));
-                return Next::Said(vec![speak(
-                    trace_id,
-                    with_edge(message, text::word_segments(word.unwrap_or(""), language)),
-                )]);
-            }
-            read_line(
-                by(TextUnit::Line, if forward { 1 } else { -1 }),
-                from_line,
-                landing(
-                    if forward {
-                        LandingPlace::FirstWord
-                    } else {
-                        LandingPlace::LastWord
-                    },
-                    TextUnit::Word,
-                    Some(message),
-                ),
-            )
         }
         ReviewCommand::ReviewPreviousLine | ReviewCommand::ReviewNextLine => {
             let forward = command == ReviewCommand::ReviewNextLine;
@@ -661,15 +608,10 @@ fn execute(
             // (`docs/parity/review.md`, "Select then copy from the review
             // cursor"): which comes first only the outpost can tell, so
             // both ends go with the points just past their characters.
-            let range = |(end, end_after): (TextPosition, TextPosition)| {
-                (
-                    TextPoint::At(at),
-                    TextPoint::At(end),
-                    Some(TextThrough {
-                        start: TextPoint::At(after),
-                        end: TextPoint::At(end_after),
-                    }),
-                )
+            let range = |(end, end_after): (TextPosition, TextPosition)| Span {
+                start: TextPoint::At(at),
+                end: TextPoint::At(end),
+                through: Some((TextPoint::At(after), TextPoint::At(end_after))),
             };
             if repeat == 0 && selected_to.is_some() {
                 // The range a first press selected is kept until a second
@@ -691,30 +633,21 @@ fn execute(
                         selected_to: Some((cursor, after_cursor())),
                     },
                 ));
-                let (start, end, through) = range((cursor, after_cursor()));
                 (
-                    TextOp::Select {
-                        start,
-                        end,
-                        through,
-                    },
+                    TextAsk::Select(range((cursor, after_cursor()))),
                     TextFollowUp::Selected,
                 )
             } else {
-                let (start, end, through) =
-                    range(selected_to.unwrap_or_else(|| (cursor, after_cursor())));
                 (
-                    TextOp::ReadRange {
-                        start,
-                        end,
-                        through,
-                    },
+                    TextAsk::Range(range(
+                        selected_to.unwrap_or_else(|| (cursor, after_cursor())),
+                    )),
                     TextFollowUp::Copy,
                 )
             }
         }
         ReviewCommand::ReportReviewLocation => (
-            TextOp::Location(TextPoint::At(cursor)),
+            TextAsk::Locate(TextPoint::At(cursor)),
             TextFollowUp::Location,
         ),
         ReviewCommand::SayAllFromReview => {
@@ -722,7 +655,7 @@ fn execute(
         }
         _ => return Next::Said(Vec::new()),
     };
-    Next::Text(node, op, then)
+    Next::Text(node, ask, then)
 }
 
 /// Whether the navigator's text is reviewed flat, the text a press on it
@@ -872,29 +805,29 @@ fn move_column(
     )]
 }
 
-/// What a press does with `reply`, the answer to its read of `node`'s text
-/// followed up by `then`.
+/// What a press does with `answer`, the answer to its read of `node`'s
+/// text followed up by `then`.
 pub(crate) fn answered(
     state: &mut SrState,
     trace_id: TraceId,
     (node, press): (NodeId, ReviewPress),
     then: TextFollowUp,
-    reply: TextReply,
+    answer: TextAnswer,
 ) -> Next {
-    match (then, reply) {
+    match (then, answer) {
         // A dead object: one rule at the boundary, the press run on empty
         // flat text. A copy clears its marker as it does for any answer,
         // and says nothing.
-        (then @ TextFollowUp::Copy, TextReply::Gone) => reply_to(
+        (then @ TextFollowUp::Copy, TextAnswer::Gone) => reply_to(
             state,
             trace_id,
             press,
             PendingText { node, then },
-            TextReply::Gone,
+            TextAnswer::Gone,
         ),
-        (_, TextReply::Gone) => gone(state),
-        (_, TextReply::Unanswered) => Next::Said(Vec::new()),
-        (then, reply) => reply_to(state, trace_id, press, PendingText { node, then }, reply),
+        (_, TextAnswer::Gone) => gone(state),
+        (_, TextAnswer::Failed) => Next::Said(Vec::new()),
+        (then, answer) => reply_to(state, trace_id, press, PendingText { node, then }, answer),
     }
 }
 
@@ -1042,104 +975,178 @@ fn flat_chunk(
     }
 }
 
-/// The answer to `op` over flat `text`, as Core answers a review press's
-/// request on an object with no text interface: a line read at a point,
-/// the start or the end, moving by line or not, and a range read for a
-/// copy. A move that cannot move answers the review cursor's own line.
-/// Flat text has no screen place, selection or caret, so a selection, a
-/// location or a selection point is unsupported, and it has no pages.
-fn flat_answer(text: &str, op: &TextOp) -> TextReply {
-    match op {
-        TextOp::Read(TextRead {
+/// The answers to `batch` over flat `text`, as Core answers a review
+/// press's request on an object with no text interface
+/// ([`crate::text_request::answer_steps`]): a line read at a point, the
+/// start or the end, moving by line or not; a word read, moving by word or
+/// not, by Core's own words ([`crate::text_request::local_word`]); and a
+/// range read for a copy. A move that cannot move answers the review
+/// cursor's own line or word. Flat text has no screen place, selection or
+/// caret, so a selection, a location or a selection point is unsupported,
+/// and it has no pages.
+pub(crate) fn flat_steps(text: &str, batch: &Batch) -> Vec<StepOutcome> {
+    let Ok(outcomes) = crate::text_request::answer_steps(batch, |step| {
+        Ok::<_, std::convert::Infallible>(flat_step(text, step))
+    });
+    outcomes
+}
+
+/// One step over flat `text`.
+fn flat_step(text: &str, step: LocalStep) -> StepOutcome {
+    let read = |moved, chunk| {
+        StepOutcome::Done(Done::ReadText(Chunks {
+            moved,
+            chunks: vec![chunk],
+        }))
+    };
+    match step {
+        LocalStep::Read {
             at: at @ (TextPoint::At(_) | TextPoint::Start | TextPoint::End),
             movement,
-            unit: TextUnit::Line,
-        }) => {
-            let offset = flat_offset(text, *at);
+            unit: unit @ (TextUnit::Line | TextUnit::Word),
+            count: 1,
+        } => {
+            let offset = flat_offset(text, at);
             let lines = verbatim_text::lines(text);
             let index = flat_line_index(&lines, offset);
+            if unit == TextUnit::Word {
+                let count = match movement {
+                    None => 0,
+                    Some(TextMovement {
+                        unit: TextUnit::Word,
+                        count,
+                    }) => count,
+                    Some(_) => return StepOutcome::Refused(StepRefusal::NoSuchUnit),
+                };
+                return flat_word(text, &lines, (index, offset), count)
+                    .map_or(StepOutcome::Failed, |(moved, chunk)| read(moved, chunk));
+            }
             let target = match movement {
                 None => index,
                 Some(TextMovement {
                     unit: TextUnit::Line,
                     count,
                 }) => index
-                    .checked_add_signed(isize::try_from(*count).unwrap_or_default())
+                    .checked_add_signed(isize::try_from(count).unwrap_or_default())
                     .filter(|target| *target < lines.len())
                     .unwrap_or(index),
-                Some(TextMovement { unit, .. }) => return TextReply::UnsupportedUnit(*unit),
+                Some(_) => return StepOutcome::Refused(StepRefusal::NoSuchUnit),
             };
             if target == index {
-                return TextReply::Read {
-                    moved: 0,
-                    chunk: flat_chunk(text, &lines, index, offset),
-                };
+                return read(0, flat_chunk(text, &lines, index, offset));
             }
             let moved = i32::try_from(target.abs_diff(index)).unwrap_or(i32::MAX);
-            TextReply::Read {
-                moved: if target < index {
+            read(
+                if target < index {
                     moved.saturating_neg()
                 } else {
                     moved
                 },
-                chunk: flat_chunk(text, &lines, target, 0),
-            }
+                flat_chunk(text, &lines, target, 0),
+            )
         }
-        TextOp::Read(TextRead { unit, .. }) if *unit != TextUnit::Line => {
-            TextReply::UnsupportedUnit(*unit)
+        LocalStep::Read { unit, .. } if !matches!(unit, TextUnit::Line | TextUnit::Word) => {
+            StepOutcome::Refused(StepRefusal::NoSuchUnit)
         }
-        TextOp::ReadRange {
+        LocalStep::Range(Span {
             start,
             end,
             through,
-        } => {
-            let (start, end) = (flat_offset(text, *start), flat_offset(text, *end));
+        }) => {
+            let (start, end) = (flat_offset(text, start), flat_offset(text, end));
             let (from, to) = match through {
-                Some(through) if end < start => (end, flat_offset(text, through.start)),
-                Some(through) => (start, flat_offset(text, through.end)),
+                Some((past_start, _)) if end < start => (end, flat_offset(text, past_start)),
+                Some((_, past_end)) => (start, flat_offset(text, past_end)),
                 None => (start.min(end), start.max(end)),
             };
-            TextReply::Range {
+            StepOutcome::Done(Done::ReadRange(RangeText {
                 text: proven::text_in(text, from..to.max(from)).to_owned(),
                 truncated: false,
-            }
+            }))
         }
-        _ => TextReply::Unsupported,
+        _ => StepOutcome::Refused(StepRefusal::Unsupported),
     }
 }
 
+/// The word of flat `text`, whose `lines` they are, reached from byte
+/// `offset` of the text, on line `index`, by `count` words: a chunk whose
+/// anchor is the byte offset where the word starts in the text, its offset
+/// the point's in it where the word is the one at the point, with how far
+/// it moved.
+fn flat_word(
+    text: &str,
+    lines: &[std::ops::Range<usize>],
+    (index, offset): (usize, usize),
+    count: i32,
+) -> Option<(i32, TextChunk)> {
+    let content = |line: isize| {
+        Ok::<_, std::convert::Infallible>(
+            usize::try_from(line)
+                .ok()
+                .and_then(|line| lines.get(line))
+                .map(|range| {
+                    text::line_content(proven::text_in(text, range.clone()), false).to_owned()
+                }),
+        )
+    };
+    let line_of = |line: usize| lines.get(line).map_or(0, |range| range.start);
+    let at = (
+        isize::try_from(index).ok()?,
+        offset.saturating_sub(line_of(index)),
+    );
+    let Ok(found) = crate::text_request::local_word(content, at, count);
+    let (moved, line, word) = found?;
+    let start = line_of(usize::try_from(line).ok()?);
+    let range = start.saturating_add(word.start)..start.saturating_add(word.end);
+    let point = if moved == 0 && range.contains(&offset) {
+        offset.saturating_sub(range.start)
+    } else {
+        0
+    };
+    Some((
+        moved,
+        TextChunk {
+            unit: TextUnit::Word,
+            text: proven::text_in(text, range.clone()).to_owned(),
+            start: TextAnchor(u64::try_from(range.start).unwrap_or(u64::MAX)),
+            offset: u32::try_from(point).unwrap_or(u32::MAX),
+            languages: Vec::new(),
+            first: false,
+            last: false,
+            truncated: false,
+            formats: Vec::new(),
+        },
+    ))
+}
+
 /// The caret's or the review cursor's location answered.
-pub(crate) fn location(trace_id: TraceId, reply: &TextReply) -> Vec<Effect> {
-    match reply {
-        TextReply::Location { x, y } => vec![speak(
-            trace_id,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::Positioned { x: *x, y: *y },
-            ))],
-        )],
+pub(crate) fn location(trace_id: TraceId, answer: &TextAnswer) -> Vec<Effect> {
+    let phrase = match answer {
         // Text measured by character offsets says how far through the text
         // the place is, then where it is on the screen
         // (`docs/parity/review.md`, "Review cursor line/word/character over
         // object text").
-        TextReply::OffsetLocation {
-            offset,
-            length,
-            point,
-        } => vec![speak(
-            trace_id,
-            vec![UtteranceSegment::new(SegmentContent::Phrase(
-                Phrase::OffsetPositioned {
-                    offset: *offset,
-                    length: *length,
-                    point: *point,
-                },
-            ))],
-        )],
-        TextReply::Unsupported | TextReply::UnsupportedUnit(_) | TextReply::NoText => {
-            vec![speak(trace_id, message(Message::NotSupported))]
+        TextAnswer::Located(Located {
+            offset: Some(offset),
+            screen,
+        }) => Phrase::OffsetPositioned {
+            offset: offset.offset,
+            length: offset.length,
+            point: *screen,
+        },
+        TextAnswer::Located(Located {
+            screen: Some((x, y)),
+            offset: None,
+        }) => Phrase::Positioned { x: *x, y: *y },
+        TextAnswer::Located(_) | TextAnswer::Refused(_) => {
+            return vec![speak(trace_id, message(Message::NotSupported))];
         }
-        _ => Vec::new(),
-    }
+        _ => return Vec::new(),
+    };
+    vec![speak(
+        trace_id,
+        vec![UtteranceSegment::new(SegmentContent::Phrase(phrase))],
+    )]
 }
 
 /// The answer to a press's text read.
@@ -1148,43 +1155,47 @@ fn reply_to(
     trace_id: TraceId,
     press: ReviewPress,
     pending: PendingText,
-    reply: TextReply,
+    answer: TextAnswer,
 ) -> Next {
     let on_navigator = state
         .navigator
         .as_ref()
         .is_some_and(|navigator| navigator.object.id == pending.node);
-    let said = match (pending.then, reply) {
-        (TextFollowUp::Location, reply) => location(trace_id, &reply),
+    let said = match (pending.then, answer) {
+        (TextFollowUp::Location, answer) => location(trace_id, &answer),
         // A copy clears the start marker it copied from whatever it found,
         // so a further press has none, but keeps a marker set while the
         // read was in flight; a range with nothing in it copies nothing and
         // says nothing (`docs/parity/review.md`, "Select then copy from
         // the review cursor").
-        (TextFollowUp::Copy, reply) => {
+        (TextFollowUp::Copy, answer) => {
             state.start_marker = None;
-            match reply {
-                TextReply::Range { text, .. } if !text.is_empty() => {
+            match answer {
+                TextAnswer::Range(text) if !text.is_empty() => {
                     vec![Effect::CopyToClipboard(text)]
                 }
-                TextReply::Unsupported | TextReply::UnsupportedUnit(_) | TextReply::NoText => {
+                TextAnswer::Refused(_) => {
                     vec![speak(trace_id, message(Message::NotSupported))]
                 }
                 _ => Vec::new(),
             }
         }
-        // The selection the command made is spoken as a caret key's is,
-        // "selected" and "unselected" from the same comparison
-        // (`docs/parity/review.md`, "Select then copy from the review
-        // cursor").
-        (TextFollowUp::Selected, TextReply::Selected(changes)) => {
+        // The selection the command made mints the next selection
+        // baseline, and is spoken as a caret key's is, "selected" and
+        // "unselected" from the same comparison (`docs/parity/review.md`,
+        // "Select then copy from the review cursor").
+        (TextFollowUp::Selected, TextAnswer::Selected { changes, baseline }) => {
+            crate::text_facts::minted(state, pending.node, baseline);
             speak_each(trace_id, selection_segments(&changes, None))
         }
         // The text cannot be selected: the second press still copies it.
-        (TextFollowUp::Selected, TextReply::Unsupported | TextReply::NoText) => {
+        (
+            TextFollowUp::Selected,
+            TextAnswer::Refused(StepRefusal::Unsupported | StepRefusal::NoText),
+        ) => {
             vec![speak(trace_id, message(Message::CannotSelect))]
         }
-        (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_)) => {
+        (_, TextAnswer::Refused(StepRefusal::Unsupported | StepRefusal::NoSuchUnit)) => {
             vec![speak(trace_id, message(Message::NotSupported))]
         }
         (_, _) if !on_navigator => Vec::new(),
@@ -1192,8 +1203,11 @@ fn reply_to(
             TextFollowUp::Seed {
                 command, repeat, ..
             },
-            TextReply::Read { chunk, .. },
+            TextAnswer::Read { chunks, .. },
         ) => {
+            let Some(chunk) = chunks.into_iter().next() else {
+                return Next::Said(Vec::new());
+            };
             let grid = navigator_grid(state);
             let offset = text::byte_offset(chunk.offset);
             let mut position = position_at(&Arc::new(chunk), offset, grid);
@@ -1216,23 +1230,33 @@ fn reply_to(
             };
             return execute(state, trace_id, press, pending.node, &position);
         }
-        (TextFollowUp::Seed { .. }, TextReply::NoText) => {
+        (
+            TextFollowUp::Seed { .. } | TextFollowUp::Word { .. },
+            TextAnswer::Refused(StepRefusal::NoText),
+        ) => {
             if let Some(navigator) = state.navigator.as_mut() {
                 navigator.text = ReviewText::Flat(FlatPosition::default());
             }
             return Next::ReadObject;
         }
-        (TextFollowUp::Land(landing), TextReply::Read { moved, chunk }) => {
-            land(state, trace_id, landing, moved, chunk)
+        (TextFollowUp::Land(landing), TextAnswer::Read { moved, chunks }) => {
+            match chunks.into_iter().next() {
+                Some(chunk) => land(state, trace_id, landing, moved, chunk),
+                None => Vec::new(),
+            }
+        }
+        (TextFollowUp::Word { command, repeat }, TextAnswer::Word(worded)) => {
+            words_said(state, trace_id, (command, repeat), *worded)
         }
         (
             TextFollowUp::Land(Landing { command, .. })
+            | TextFollowUp::Word { command, .. }
             | TextFollowUp::Seed {
                 command,
                 at_caret: false,
                 ..
             },
-            TextReply::AnchorLost,
+            TextAnswer::Lost,
         ) => {
             // The position the cursor was at is gone: start again from the
             // caret. The caret's own line lost as it was read has nowhere to
@@ -1253,6 +1277,41 @@ fn reply_to(
     Next::Said(said)
 }
 
+/// What a review word command says of its answer (`docs/parity/review.md`,
+/// "Review words by the provider's word"): the current word, spelled on
+/// the second press and with character descriptions on the third; a move
+/// says the word it reached and puts the review cursor at its start, on
+/// the line read there, or, at the text's edge, says "Top" or "Bottom"
+/// and the word at the cursor, which stays. A word that is a line break is
+/// said by its character's name ([`text::word_segments`]).
+fn words_said(
+    state: &mut SrState,
+    trace_id: TraceId,
+    (command, repeat): (ReviewCommand, u8),
+    worded: Worded,
+) -> Vec<Effect> {
+    let Worded { word, landed } = worded;
+    let language = word.language_at(0);
+    let spoken = text::word_text(&word.text);
+    let segments = match (command, repeat) {
+        (ReviewCommand::ReviewCurrentWord, 1) => spell_or_blank(spoken, false, language),
+        (ReviewCommand::ReviewCurrentWord, 2..) => spell_or_blank(spoken, true, language),
+        _ => text::word_segments(&word.text, language),
+    };
+    let segments = match (command, landed) {
+        (ReviewCommand::ReviewCurrentWord, _) => segments,
+        (_, Some(line)) => {
+            let grid = navigator_grid(state);
+            let offset = text::byte_offset(line.offset);
+            set_position(state, position_at(&Arc::new(line), offset, grid));
+            segments
+        }
+        (ReviewCommand::ReviewNextWord, None) => with_edge(Message::Bottom, segments),
+        (_, None) => with_edge(Message::Top, segments),
+    };
+    vec![speak(trace_id, segments)]
+}
+
 /// Whether the navigator object is a terminal.
 fn navigator_grid(state: &SrState) -> bool {
     state
@@ -1262,7 +1321,7 @@ fn navigator_grid(state: &SrState) -> bool {
 }
 
 /// Lands the review cursor on a line it moved to and speaks there; when the
-/// movement could not move, says the edge and speaks the current unit.
+/// movement could not move, says the edge and speaks the line.
 fn land(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1286,21 +1345,11 @@ fn land(
             _ => return Vec::new(),
         };
         let content = text::line_content(&position.line.text, grid);
-        let language = position.line.language_at(position.offset);
-        let segments = match landing.speak {
-            TextUnit::Word => {
-                let words = text::words(content, position.line.language_at(0));
-                let word = text::word_at(&words, position.offset)
-                    .map_or("", |range| proven::text_in(content, range));
-                text::word_segments(word, language)
-            }
-            _ => text::text_segments(content, position.line.language_at(0)),
-        };
+        let segments = text::text_segments(content, position.line.language_at(0));
         return vec![speak(trace_id, with_edge(edge, segments))];
     }
     let line = Arc::new(chunk);
     let content = text::line_content(&line.text, grid);
-    let words = || text::words(content, line.language_at(0));
     let position = match landing.place {
         LandingPlace::Column(column) => ReviewPosition {
             line: Arc::clone(&line),
@@ -1308,12 +1357,6 @@ fn land(
             column,
         },
         LandingPlace::Start => position_at(&line, 0, grid),
-        LandingPlace::FirstWord => {
-            position_at(&line, words().first().map_or(0, |range| range.start), grid)
-        }
-        LandingPlace::LastWord => {
-            position_at(&line, words().last().map_or(0, |range| range.start), grid)
-        }
         LandingPlace::Point => position_at(&line, text::byte_offset(line.offset), grid),
         LandingPlace::BeforePoint => {
             let offset = text::byte_offset(line.offset).min(content.len());
@@ -1328,12 +1371,6 @@ fn land(
             text::character_at(&line.text, position.offset, grid),
             language,
         ),
-        TextUnit::Word => {
-            let words = words();
-            let word = text::word_at(&words, position.offset)
-                .map_or("", |range| proven::text_in(content, range));
-            text::word_segments(word, language)
-        }
         _ => text::text_segments(content, line.language_at(0)),
     };
     set_position(state, position);

@@ -8,8 +8,8 @@
 //! (`verbatim-text`); a provider with no sentence unit (UIA) answers that
 //! it has none, and reading goes by line, as it always does in a terminal.
 //!
-//! Each read asks for a batch of units ahead ([`READ_AHEAD`],
-//! `TextOp::ReadAhead`), one round trip where the provider runs remote
+//! Each read asks for a batch of units ahead ([`READ_AHEAD`], one
+//! `ReadText` of that many units), one round trip where the provider runs remote
 //! operations. Every unit read is spoken without pauses
 //! (`docs/nvda/speech.md`, "Say-all speaks without pauses"): an utterance
 //! ends at the last sentence end in a unit, and what follows it is held
@@ -44,20 +44,20 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     Effect, KeySeq, Message, NodeId, SayAllUnit, SegmentContent, SpeechMark, SpeechPriority,
-    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextReadAhead, TextReply, TextUnit,
-    TraceId, Utterance, UtteranceSegment,
+    TextChunk, TextMovement, TextPoint, TextPosition, TextUnit, TraceId, Utterance,
+    UtteranceSegment,
 };
 use verbatim_text::Segmenter;
 
 use crate::editing::is_grid;
 use crate::entries::Entries;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, RequestWindow};
 use crate::keys::entry::Fence;
 use crate::state::{
     BufferedPiece, QueuedMark, ReviewText, SayAll, SharedChunk, SrState, UnitStart,
 };
 use crate::text;
-use crate::text_request::{CaretTarget, TextRequest};
+use crate::text_request::{Answerer, CaretTarget, TextAnswer, TextAsk};
 
 /// How many units each read asks for: a line or a sentence each, a batch
 /// lasts tens of seconds of speech, so a round trip is rare.
@@ -229,7 +229,7 @@ pub(crate) fn read_unneeded(state: &SrState, run: TraceId) -> bool {
 /// outcome but a result or the text not there stops it, as a failed read
 /// does.
 pub(crate) async fn read_entry(mut cx: Cx<Entries>, run: TraceId) {
-    let request = {
+    let (node, window, ask) = {
         let facts = cx.facts();
         let Some(say_all) = facts.say_all.as_ref() else {
             return;
@@ -238,15 +238,11 @@ pub(crate) async fn read_entry(mut cx: Cx<Entries>, run: TraceId) {
         if own.trace != run {
             return;
         }
-        TextRequest {
-            process: own.window.process,
-            window: own.window,
-            node: say_all.node,
-            op: next_op(say_all),
-        }
+        (say_all.node, own.window, next_read(say_all))
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let outcome = cx.ask(request, due_us).await;
+    let answer =
+        crate::text_request::ask(&mut cx, (node, Answerer::Outpost(window)), ask, due_us).await;
     let effects = {
         let mut facts = cx.facts_mut();
         let Some(own) = facts
@@ -258,10 +254,9 @@ pub(crate) async fn read_entry(mut cx: Cx<Entries>, run: TraceId) {
             return;
         };
         own.read = QueueRead::Idle;
-        match outcome {
-            Outcome::Result(answer) => reply(&mut facts, answer),
-            Outcome::NotThere => reply(&mut facts, TextReply::Gone),
-            _ => stop(&mut facts),
+        match answer {
+            Some(answer) => reply(&mut facts, answer),
+            None => stop(&mut facts),
         }
     };
     for effect in effects {
@@ -280,7 +275,7 @@ pub(crate) fn stop(state: &mut SrState) -> Vec<Effect> {
 
 /// The next batch's read: the first at the starting point, each later one
 /// a unit on from the last chunk read.
-fn next_op(say_all: &SayAll) -> TextOp {
+fn next_read(say_all: &SayAll) -> TextAsk {
     let (at, movement) = match say_all.last_chunk {
         None => (say_all.start, None),
         Some((position, unit)) => (
@@ -288,12 +283,12 @@ fn next_op(say_all: &SayAll) -> TextOp {
             Some(TextMovement { unit, count: 1 }),
         ),
     };
-    TextOp::ReadAhead(TextReadAhead {
+    TextAsk::Read {
         at,
         movement,
         unit: say_all.unit,
         count: READ_AHEAD,
-    })
+    }
 }
 
 /// Asks for the next batch: in the event queue, its entry is wanted and
@@ -309,14 +304,15 @@ fn read_next(state: &mut SrState) {
 /// Handles the answer to say-all's read: buffers the chunks' pieces, hands
 /// speech what it can take, and reads on when little is left to speak;
 /// ends at the document's end, and on any failure.
-pub(crate) fn reply(state: &mut SrState, reply: TextReply) -> Vec<Effect> {
+pub(crate) fn reply(state: &mut SrState, answer: TextAnswer) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
-    let (moved, chunks) = match reply {
-        TextReply::Chunks { moved, chunks } => (moved, chunks),
-        TextReply::Read { moved, chunk } => (moved, vec![chunk]),
-        TextReply::UnsupportedUnit(_) if say_all.unit != TextUnit::Line => {
+    let (moved, chunks) = match answer {
+        TextAnswer::Read { moved, chunks } => (moved, chunks),
+        TextAnswer::Refused(verbatim_model::batch::StepRefusal::NoSuchUnit)
+            if say_all.unit != TextUnit::Line =>
+        {
             say_all.unit = TextUnit::Line;
             read_next(state);
             return Vec::new();
@@ -558,16 +554,18 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
     let Some((moved, window)) = moved else {
         return;
     };
-    let request = TextRequest {
-        process: window.process,
-        window,
-        node: moved.node,
-        op: TextOp::MoveCaret(TextPoint::At(moved.position)),
-    };
     let due_us = cx.due_in(OTHER_DUE_US);
+    let ask = TextAsk::MoveCaret(TextPoint::At(moved.position));
     // The move mints the next selection baseline, and says nothing of it
     // (Table 17, column F).
-    if let Outcome::Result(TextReply::CaretPlaced { baseline }) = cx.ask(request, due_us).await {
+    if let Some(TextAnswer::Moved(baseline)) = crate::text_request::ask(
+        &mut cx,
+        (moved.node, Answerer::Outpost(window)),
+        ask,
+        due_us,
+    )
+    .await
+    {
         let mut facts = cx.facts_mut();
         crate::editing::caret_placed(&mut facts, moved.node, moved.line);
         crate::text_facts::minted(&mut facts, moved.node, baseline);

@@ -320,6 +320,37 @@ fn the_review_reads_where_the_caret_is() {
     assert_eq!(session.heard(), plain(&["ready> abc", "c"]));
 }
 
+/// Review words in a terminal Core reads are Core's own words over its
+/// rows (the request list's design, section 6, the local answerers), so
+/// word review keeps the words it had: previous word from a row's first
+/// word lands on the last word of the row above, next word from a row's
+/// last word on the first word of the row below, and previous word on
+/// the text's first word says "Top" and that word, and stays. Each press
+/// answers from memory after its fresh read.
+#[test]
+fn terminal_review_words_are_cores_own_words_over_its_rows() {
+    let mut session = showing(20, 4, 100, "zero\r\none two\r\nthree\r\n");
+    session.press(&command(ReviewCommand::ReviewPreviousLine));
+    assert_eq!(session.heard(), plain(&["three"]));
+    for (word, said) in [
+        (ReviewCommand::ReviewPreviousWord, "two"),
+        (ReviewCommand::ReviewPreviousWord, "one"),
+        (ReviewCommand::ReviewPreviousWord, "zero"),
+        (ReviewCommand::ReviewNextWord, "one"),
+        (ReviewCommand::ReviewNextWord, "two"),
+        (ReviewCommand::ReviewNextWord, "three"),
+        (ReviewCommand::ReviewCurrentWord, "three"),
+    ] {
+        session.press(&command(word));
+        assert_eq!(session.heard(), plain(&[said]), "{word:?}");
+    }
+    session.press(&command(ReviewCommand::ReviewTop));
+    let _ = session.heard();
+    session.press(&command(ReviewCommand::ReviewPreviousWord));
+    assert_eq!(session.heard(), plain(&["Message(Top) zero"]));
+    assert!(session.requests().iter().all(|asked| *asked == FRESH));
+}
+
 // Keys against reads.
 
 fn typed(text: &str, at_ms: u64) -> (TraceId, Key) {

@@ -5,15 +5,17 @@
 use crate::entries::tests::found_at;
 use crate::readers::Found;
 
+use verbatim_model::batch::{Batch, Op, StepRefusal};
 use verbatim_model::request::{
-    Cancel, CancelReason, Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire,
+    Cancel, CancelReason, Outcome as WireOutcome, Press, PressAction, Question, Reply,
     RequestNumber,
 };
 use verbatim_model::{
     Effect as Said, KeySeq, ReviewCommand, Role, SegmentContent, SpeechMark, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
-    TraceId, WindowHandle,
+    TextMovement, TextPoint, TextPosition, TextUnit, TraceId, WindowHandle,
 };
+
+use crate::text_batches;
 
 use crate::entries::tests::{
     APP, Held, OUTPOST, answer, answer_outcome, feed_at, focus_read, node, ready, values,
@@ -94,7 +96,7 @@ fn at_mark(mark: SpeechMark) -> Input<Entry> {
 #[derive(Debug, Default)]
 struct Step {
     /// Each request sent: its number and what it asks of node 2's text.
-    sent: Vec<(u64, TextOp)>,
+    sent: Vec<(u64, Batch)>,
     /// Each say-all utterance: its marks, its texts and the key number it
     /// carries.
     said: Vec<Utterance>,
@@ -118,7 +120,7 @@ struct Utterance {
 
 impl Step {
     /// The one request sent.
-    fn one_sent(&self) -> (u64, TextOp) {
+    fn one_sent(&self) -> (u64, Batch) {
         assert_eq!(self.sent.len(), 1, "one request: {self:?}");
         self.sent[0].clone()
     }
@@ -168,15 +170,10 @@ fn reduce(held: &mut Held, input: &verbatim_model::Input) -> Step {
 
 fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
-        Effect::Queue(QueueEffect::Send { ask, .. }) => {
-            match crate::event_queue::legacy_for_tests(&ask.request) {
-                Wire::Text { node: asked, op } => {
-                    assert_eq!(asked, node(2));
-                    step.sent.push((ask.number.0, op));
-                }
-                other => panic!("a text request: {other:?}"),
-            }
-        }
+        Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
+            Question::Batch(batch) => step.sent.push((ask.number.0, batch)),
+            other @ Question::Legacy(_) => panic!("a text batch: {other:?}"),
+        },
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => step.cancelled.push(cancel),
         Effect::Queue(QueueEffect::AnswerDropped { number, .. }) => step.dropped.push(number.0),
         Effect::Queue(QueueEffect::StartOutpost(process)) => step.started.push(process),
@@ -222,17 +219,12 @@ fn line(text: &str, anchor: u64, offset: u32) -> TextChunk {
 }
 
 /// Say-all's read ahead from `at`, after `movement`, by `unit`.
-fn read_ahead(at: TextPoint, movement: Option<TextMovement>, unit: TextUnit) -> TextOp {
-    TextOp::ReadAhead(TextReadAhead {
-        at,
-        movement,
-        unit,
-        count: 20,
-    })
+fn read_ahead(at: TextPoint, movement: Option<TextMovement>, unit: TextUnit) -> Batch {
+    text_batches::read(node(2), at, movement, unit, 20)
 }
 
 /// The read a line on from the line at `anchor`.
-fn a_line_on(anchor: u64) -> TextOp {
+fn a_line_on(anchor: u64) -> Batch {
     read_ahead(
         TextPoint::At(TextPosition::at(TextAnchor(anchor))),
         Some(TextMovement {
@@ -244,25 +236,23 @@ fn a_line_on(anchor: u64) -> TextOp {
 }
 
 /// The caret moved to the start of the line at `anchor`.
-fn caret_to(anchor: u64) -> TextOp {
-    TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(anchor))))
+fn caret_to(anchor: u64) -> Batch {
+    text_batches::move_caret(node(2), TextPoint::At(TextPosition::at(TextAnchor(anchor))))
 }
 
 /// A caret move made, minting baseline 60.
-fn placed() -> TextReply {
-    TextReply::CaretPlaced {
-        baseline: TextAnchor(60),
-    }
+fn placed() -> Reply {
+    text_batches::moved(60)
 }
 
 /// The answer to request `number`.
-fn text_answer(number: u64, reply: TextReply) -> Input<Entry> {
-    answer(OUTPOST, number, Reply::Text(reply))
+fn text_answer(number: u64, reply: Reply) -> Input<Entry> {
+    answer(OUTPOST, number, reply)
 }
 
 /// The answer to request `number`: `chunks`, moved by none.
 fn chunks(number: u64, chunks: Vec<TextChunk>) -> Input<Entry> {
-    text_answer(number, TextReply::Chunks { moved: 0, chunks })
+    text_answer(number, text_batches::one(text_batches::chunks(0, chunks)))
 }
 
 /// Say-all from the caret pressed as key 1 on "Body", its first read
@@ -278,7 +268,10 @@ fn by_line(state: &mut Held, lines: Vec<TextChunk>) -> Step {
     let again = step(
         state,
         1_100,
-        text_answer(3, TextReply::UnsupportedUnit(TextUnit::Sentence)),
+        text_answer(
+            3,
+            text_batches::one(text_batches::refused(StepRefusal::NoSuchUnit)),
+        ),
     );
     assert_eq!(
         again.one_sent(),
@@ -359,7 +352,7 @@ fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
     let reads = |step: &Step| {
         step.sent
             .iter()
-            .filter(|(_, op)| matches!(op, TextOp::ReadAhead(_)))
+            .filter(|(_, batch)| matches!(batch.steps[0].op, Op::ReadText { count: 20, .. }))
             .count()
     };
     assert_eq!(reads(&read), 0);
@@ -374,8 +367,11 @@ fn say_all_reads_the_next_batch_when_fewer_than_ten_pieces_are_left() {
             at_mark(marks[usize::try_from(index).unwrap()]),
         );
         marks.extend(reached.said.iter().map(|said| said.marks[0]));
-        let (number, op) = reached.one_sent();
-        assert!(matches!(op, TextOp::MoveCaret(_)), "{reached:?}");
+        let (number, batch) = reached.one_sent();
+        assert!(
+            matches!(batch.steps[0].op, Op::Select { .. }),
+            "{reached:?}"
+        );
         let moved = step(state, at_us + 10, text_answer(number, placed()));
         reads(&moved)
     };
@@ -454,10 +450,13 @@ fn say_all_moves_the_caret_to_a_sentence_inside_a_paragraph() {
         reached.one_sent(),
         (
             5,
-            TextOp::MoveCaret(TextPoint::At(TextPosition {
-                anchor: TextAnchor(400),
-                offset: 5
-            }))
+            text_batches::move_caret(
+                node(2),
+                TextPoint::At(TextPosition {
+                    anchor: TextAnchor(400),
+                    offset: 5
+                })
+            )
         )
     );
 }
@@ -699,10 +698,7 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
         950,
         text_answer(
             3,
-            TextReply::Read {
-                moved: 0,
-                chunk: line("one\n", 100, 0),
-            },
+            text_batches::one(text_batches::chunks(0, vec![line("one\n", 100, 0)])),
         ),
     );
     let started = step(&mut state, 1_000, press(2, ReviewCommand::SayAllFromReview));
@@ -738,14 +734,14 @@ fn say_all_from_the_review_cursor_leaves_the_review_cursor_where_it_stopped() {
         next.one_sent(),
         (
             5,
-            TextOp::Read(TextRead {
-                at: TextPoint::At(TextPosition {
+            text_batches::line(
+                node(2),
+                TextPoint::At(TextPosition {
                     anchor: TextAnchor(500),
                     offset: 5
                 }),
-                movement: None,
-                unit: TextUnit::Line,
-            })
+                None
+            )
         )
     );
 }

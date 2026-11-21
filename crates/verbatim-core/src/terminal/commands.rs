@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 
+use verbatim_model::batch::{Batch, StepOutcome};
 use verbatim_model::request::{Reply, Request as Wire};
 use verbatim_model::{
     Effect, Message, NodeId, TextAnchor, TextFailure, TextOp, TextPoint, TextReply, TraceId,
@@ -25,6 +26,7 @@ use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow};
 use crate::state::SrState;
 use crate::terminal::reading;
 use crate::terminal_model::{self, review};
+use crate::text_request::TextAnswer;
 
 /// A history read or a search on the focused terminal, a follow-up of a
 /// review command.
@@ -63,12 +65,12 @@ impl Request for FollowUp {
     }
 }
 
-/// Whether Core answers `op`, a review command's request on `node`, from
-/// the focused terminal's memory: `node` is the modelled focused terminal
-/// and `op` one its memory answers.
-pub(crate) fn answers(state: &SrState, node: NodeId, op: &TextOp) -> bool {
+/// Whether Core answers a review command's request on `node` naming
+/// `points` from the focused terminal's memory: `node` is the modelled
+/// focused terminal and its memory knows each point.
+pub(crate) fn answers(state: &SrState, node: NodeId, points: &[TextPoint]) -> bool {
     reading::modelled(state) == Some(node)
-        && terminal_model::model_of(state, node).is_some_and(|model| review::answers(model, op))
+        && terminal_model::model_of(state, node).is_some_and(|model| review::answers(model, points))
 }
 
 /// The anchors Core holds of terminal `node`'s outpost.
@@ -133,17 +135,18 @@ fn place_row(state: &mut SrState, node: NodeId, place: u64) -> Option<isize> {
     row
 }
 
-/// Answers `op`, a review command's request on the focused terminal
-/// `node`, from Core's memory, reading the rows above it the answer needs
-/// as a history read from the start Core names, a screen more than needed;
-/// `None` when the command ends saying nothing: its model is gone, the
-/// history read failed, or it does not hold the row needed.
+/// Answers `batch`, a review command's request on the focused terminal
+/// `node`, from Core's memory, one outcome a step, reading the rows above
+/// it the answer needs as a history read from the start Core names, a
+/// screen more than needed; `None` when the command ends saying nothing:
+/// its model is gone, the history read failed, or it does not hold the
+/// row needed.
 pub(crate) async fn answer(
     cx: &mut Cx<Entries>,
     (window, node): (RequestWindow, NodeId),
-    op: &TextOp,
+    batch: &Batch,
     due_us: u64,
-) -> Option<TextReply> {
+) -> Option<Vec<StepOutcome>> {
     let mut history = None;
     loop {
         let need = {
@@ -151,11 +154,11 @@ pub(crate) async fn answer(
             let held = held_anchors(&facts, node);
             let mut mint = facts.next_terminal_anchor;
             let model = terminal_model::model_mut(&mut facts, node)?;
-            let answer = review::answer(model, (op, history.as_ref()), &mut mint, &held);
+            let answer = review::answer(model, (batch, history.as_ref()), &mut mint, &held);
             let height = model.height;
             facts.next_terminal_anchor = mint;
             match answer {
-                Ok(reply) => return Some(reply),
+                Ok(outcomes) => return Some(outcomes),
                 // The history read for this request does not hold the row
                 // it needs, as when more than a screen of output scrolled
                 // while it was out: the command ends, saying nothing.
@@ -221,7 +224,7 @@ pub(crate) async fn command_mark(
     (window, node): (RequestWindow, NodeId),
     (forward, from): (bool, TextPoint),
     due_us: u64,
-) -> Option<TextReply> {
+) -> Option<TextAnswer> {
     let mut found = None;
     let mut searches = 0;
     loop {
@@ -239,7 +242,7 @@ pub(crate) async fn command_mark(
             );
             facts.next_terminal_anchor = mint;
             match moved {
-                Ok(reply) => return reply,
+                Ok(outcome) => return outcome.map(TextAnswer::of_line),
                 Err(search) => search,
             }
         };

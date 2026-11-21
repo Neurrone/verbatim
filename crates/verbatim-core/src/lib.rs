@@ -91,6 +91,9 @@ pub mod supervisor;
 mod terminal;
 mod terminal_model;
 mod text;
+#[cfg(test)]
+#[path = "../tests/support/text_batches.rs"]
+pub(crate) mod text_batches;
 mod text_facts;
 mod text_request;
 mod wants;

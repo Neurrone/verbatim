@@ -1,0 +1,37 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch notepad.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\build5\\b5-output\\documents\\verbatim-e2e-p1.txt","step":0}
+{"label":"front notepad.exe \"verbatim-e2e-p1\"","step":1}
+{"kind":"event","ms":168,"step":1,"text":"cancel"}
+{"kind":"speech","ms":169,"step":1,"tag":"Normal","text":"verbatim-e 2e-p 1 dot txt - Notepad"}
+{"kind":"speech","ms":178,"step":1,"tag":"Normal","text":"Text editor  document  alpha beta"}
+{"label":"control+end","step":2}
+{"kind":"event","ms":3,"step":2,"text":"cancel"}
+{"kind":"speech","ms":66,"step":2,"tag":"Normal","text":"gamma"}
+{"label":"home","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":17,"step":3,"tag":"Normal","text":"g"}
+{"label":"numpad4","step":4}
+{"kind":"event","ms":2,"step":4,"text":"cancel"}
+{"kind":"speech","ms":7,"step":4,"tag":"Normal","text":"carriage return"}
+{"label":"numpad4","step":5}
+{"kind":"event","ms":4,"step":5,"text":"cancel"}
+{"kind":"speech","ms":9,"step":5,"tag":"Normal","text":"beta"}
+{"label":"numpad4","step":6}
+{"kind":"event","ms":2,"step":6,"text":"cancel"}
+{"kind":"speech","ms":7,"step":6,"tag":"Normal","text":"alpha"}
+{"label":"numpad6","step":7}
+{"kind":"event","ms":3,"step":7,"text":"cancel"}
+{"kind":"speech","ms":7,"step":7,"tag":"Normal","text":"beta"}
+{"label":"numpad6","step":8}
+{"kind":"event","ms":3,"step":8,"text":"cancel"}
+{"kind":"speech","ms":8,"step":8,"tag":"Normal","text":"carriage return"}
+{"label":"numpad6","step":9}
+{"kind":"event","ms":3,"step":9,"text":"cancel"}
+{"kind":"speech","ms":7,"step":9,"tag":"Normal","text":"gamma"}
+{"label":"control+end","step":10}
+{"kind":"event","ms":3,"step":10,"text":"cancel"}
+{"kind":"speech","ms":30,"step":10,"tag":"Normal","text":"gamma"}
+{"label":"numpad6","step":11}
+{"kind":"event","ms":3,"step":11,"text":"cancel"}
+{"kind":"speech","ms":5,"step":11,"tag":"Normal","text":"Bottom"}
+{"kind":"speech","ms":9,"step":11,"tag":"Normal","text":"gamma"}

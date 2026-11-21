@@ -1,0 +1,81 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch notepad.exe C:\\Users\\Dickson\\Desktop\\projects\\verbatim\\target\\captures-2026-11-20\\s10-review-words-output\\verbatim-e2e-review-words.txt","step":0}
+{"label":"front notepad.exe \"verbatim-e2e-review-words\"","step":1}
+{"kind":"event","ms":173,"step":1,"text":"cancel"}
+{"kind":"speech","ms":175,"step":1,"tag":"Normal","text":"verbatim-e 2e-review-words dot txt - Notepad"}
+{"kind":"speech","ms":211,"step":1,"tag":"Normal","text":"Text editor  document  Fruit   Color   Price"}
+{"label":"control+home","step":2}
+{"kind":"event","ms":5,"step":2,"text":"cancel"}
+{"kind":"speech","ms":132,"step":2,"tag":"Normal","text":"Fruit   Color   Price"}
+{"label":"numpad5","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":6,"step":3,"tag":"Normal","text":"Fruit"}
+{"label":"numpad6","step":4}
+{"kind":"event","ms":3,"step":4,"text":"cancel"}
+{"kind":"speech","ms":8,"step":4,"tag":"Normal","text":"Color"}
+{"label":"numpad6","step":5}
+{"kind":"event","ms":3,"step":5,"text":"cancel"}
+{"kind":"speech","ms":8,"step":5,"tag":"Normal","text":"Price"}
+{"label":"numpad6","step":6}
+{"kind":"event","ms":3,"step":6,"text":"cancel"}
+{"kind":"speech","ms":7,"step":6,"tag":"Normal","text":"carriage return"}
+{"label":"numpad6","step":7}
+{"kind":"event","ms":3,"step":7,"text":"cancel"}
+{"kind":"speech","ms":7,"step":7,"tag":"Normal","text":"Apple"}
+{"label":"numpad6","step":8}
+{"kind":"event","ms":3,"step":8,"text":"cancel"}
+{"kind":"speech","ms":6,"step":8,"tag":"Normal","text":"red"}
+{"label":"numpad4","step":9}
+{"kind":"event","ms":3,"step":9,"text":"cancel"}
+{"kind":"speech","ms":6,"step":9,"tag":"Normal","text":"Apple"}
+{"label":"numpad4","step":10}
+{"kind":"event","ms":3,"step":10,"text":"cancel"}
+{"kind":"speech","ms":7,"step":10,"tag":"Normal","text":"carriage return"}
+{"label":"numpad4","step":11}
+{"kind":"event","ms":3,"step":11,"text":"cancel"}
+{"kind":"speech","ms":7,"step":11,"tag":"Normal","text":"Price"}
+{"label":"numpad4","step":12}
+{"kind":"event","ms":3,"step":12,"text":"cancel"}
+{"kind":"speech","ms":7,"step":12,"tag":"Normal","text":"Color"}
+{"label":"numpad4","step":13}
+{"kind":"event","ms":3,"step":13,"text":"cancel"}
+{"kind":"speech","ms":7,"step":13,"tag":"Normal","text":"Fruit"}
+{"label":"numpad4","step":14}
+{"kind":"event","ms":3,"step":14,"text":"cancel"}
+{"kind":"speech","ms":4,"step":14,"tag":"Normal","text":"Top"}
+{"kind":"speech","ms":8,"step":14,"tag":"Normal","text":"Fruit"}
+{"label":"numpad4","step":15}
+{"kind":"event","ms":3,"step":15,"text":"cancel"}
+{"kind":"speech","ms":4,"step":15,"tag":"Normal","text":"Top"}
+{"kind":"speech","ms":7,"step":15,"tag":"Normal","text":"Fruit"}
+{"label":"control+home","step":16}
+{"kind":"event","ms":4,"step":16,"text":"cancel"}
+{"kind":"speech","ms":138,"step":16,"tag":"Normal","text":"Fruit   Color   Price"}
+{"label":"shift+numpad1","step":17}
+{"kind":"event","ms":3,"step":17,"text":"cancel"}
+{"kind":"speech","ms":7,"step":17,"tag":"Normal","text":"F"}
+{"label":"downarrow","step":18}
+{"kind":"event","ms":4,"step":18,"text":"cancel"}
+{"kind":"speech","ms":93,"step":18,"tag":"Normal","text":"Apple   red 1.20"}
+{"label":"numpad4","step":19}
+{"kind":"event","ms":3,"step":19,"text":"cancel"}
+{"kind":"speech","ms":7,"step":19,"tag":"Normal","text":"carriage return"}
+{"label":"numpad4","step":20}
+{"kind":"event","ms":3,"step":20,"text":"cancel"}
+{"kind":"speech","ms":7,"step":20,"tag":"Normal","text":"Price"}
+{"label":"numpad4","step":21}
+{"kind":"event","ms":3,"step":21,"text":"cancel"}
+{"kind":"speech","ms":7,"step":21,"tag":"Normal","text":"Color"}
+{"label":"shift+numpad9","step":22}
+{"kind":"event","ms":4,"step":22,"text":"cancel"}
+{"kind":"speech","ms":8,"step":22,"tag":"Normal","text":"blank"}
+{"label":"numpad7","step":23}
+{"kind":"event","ms":3,"step":23,"text":"cancel"}
+{"kind":"speech","ms":7,"step":23,"tag":"Normal","text":"Banana  yellow  0.50"}
+{"label":"control+end","step":24}
+{"kind":"event","ms":4,"step":24,"text":"cancel"}
+{"kind":"speech","ms":25,"step":24,"tag":"Normal","text":"blank"}
+{"label":"numpad6","step":25}
+{"kind":"event","ms":3,"step":25,"text":"cancel"}
+{"kind":"speech","ms":4,"step":25,"tag":"Normal","text":"Bottom"}
+{"kind":"speech","ms":7,"step":25,"tag":"Normal","text":"carriage return"}

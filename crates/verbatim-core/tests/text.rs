@@ -25,13 +25,16 @@ use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReport, CaretSelection, EditSelection, Effect, Input,
     KeySeq, Message, NodeDetails, NodeId, NodeSnapshot, Phrase, ReaderSettings, ReviewCommand,
     Role, SegmentContent, Selection, SelectionChange, SelectionDifference, SelectionText,
-    SpeechMark, SpeechPriority, StateSet, TextAnchor, TextChunk, TextOp, TextPoint, TextPosition,
-    TextProvider, TextReply, TextUnit, TraceId, UtteranceSegment,
+    SpeechMark, SpeechPriority, StateSet, TextAnchor, TextChunk, TextPoint, TextPosition,
+    TextProvider, TextUnit, TraceId, UtteranceSegment,
 };
 
 #[path = "support/caret_batches.rs"]
 mod caret_batches;
 use caret_batches::Facts;
+#[path = "support/text_batches.rs"]
+mod text_batches;
+use verbatim_model::batch::{Located, StepRefusal};
 
 std::thread_local! {
     /// The last caret key's or caret tell's batch asked, which an answer
@@ -59,12 +62,37 @@ struct WatchedRead {
 }
 
 /// Whether `batch` is a caret key's or a caret tell's: its first step a
-/// text operation.
+/// text operation, and no step selecting, as review select's does.
 fn is_text(batch: &Batch) -> bool {
     matches!(
         batch.steps.first().map(|step| &step.op),
         Some(Op::Caret { .. } | Op::WaitForCaret { .. } | Op::MoveBySentence { .. })
-    )
+    ) && !batch
+        .steps
+        .iter()
+        .any(|step| matches!(step.op, Op::Select { .. }))
+}
+
+/// The node every text command's batch is compared with: these tests
+/// compare what a command asks, whichever node it asks of.
+const ANY: NodeId = NodeId::new(0);
+
+/// `batch` with every node it names made [`ANY`].
+fn of_any(batch: &Batch) -> Batch {
+    let mut whole = serde_json::to_value(batch).expect("a batch serializes");
+    let any = serde_json::to_value(ANY).expect("a node id serializes");
+    if let Some(steps) = whole["steps"].as_array_mut() {
+        for step in steps {
+            if let Some(op) = step["op"]
+                .as_object_mut()
+                .and_then(|op| op.values_mut().next())
+                && op["subject"].get("Node").is_some()
+            {
+                op["subject"]["Node"] = any.clone();
+            }
+        }
+    }
+    serde_json::from_value(whole).expect("the batch reads back")
 }
 
 /// The edit field of most tests, node 5 of [`ONE`].
@@ -131,8 +159,8 @@ enum Heard {
     Say(SpeechPriority, Vec<UtteranceSegment>),
     /// A say-all utterance: its segments, its marks among them.
     SayAll(Vec<UtteranceSegment>),
-    /// A text request: what it asks.
-    Asked(TextOp),
+    /// A text command's batch: what it asks, of any node.
+    Asked(Batch),
     /// A caret key's or a caret tell's batch.
     Batch(Batch),
     /// Another request, by its kind.
@@ -171,12 +199,14 @@ fn heard_of(effect: Effect) -> Option<Heard> {
         Effect::SettingsChanged(settings) => Some(Heard::Settings(settings)),
         Effect::KeepDisplayOn(on) => Some(Heard::Display(on)),
         Effect::Queue(QueueEffect::Send { ask, .. }) => Some(match &ask.request {
-            verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) => {
-                Heard::Asked(op.clone())
-            }
             verbatim_model::request::Question::Batch(batch) if is_text(batch) => {
                 ASKED.with(|asked| *asked.borrow_mut() = Some(batch.clone()));
                 Heard::Batch(batch.clone())
+            }
+            verbatim_model::request::Question::Batch(batch)
+                if batch.steps.iter().all(|step| step.op.kind().is_text()) =>
+            {
+                Heard::Asked(of_any(batch))
             }
             other => Heard::Sent(desk::kind(other)),
         }),
@@ -262,14 +292,17 @@ impl Text {
         let mut heard = Vec::new();
         for effect in effects {
             if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
-                && let Some(Wire::Text { op, .. }) = ask.request.legacy()
-                && let Some(chunk) = self.unchanged(op)
+                && let verbatim_model::request::Question::Batch(batch) = &ask.request
+                && let Some(chunk) = self.unchanged(batch)
             {
                 let answer = QueueInput::Answer {
                     from: *to,
                     answer: verbatim_model::request::Answer {
                         number: ask.number,
-                        outcome: Outcome::Result(Reply::Text(TextReply::Read { moved: 0, chunk })),
+                        outcome: Outcome::Result(text_batches::one(text_batches::chunks(
+                            0,
+                            vec![chunk],
+                        ))),
                         probes: Vec::new(),
                         detail: String::new(),
                     },
@@ -297,14 +330,23 @@ impl Text {
         heard
     }
 
-    /// The review cursor's line as the state holds it, when `op` reads it
-    /// again where the review cursor is, in text that is not a terminal's.
-    fn unchanged(&self, op: &TextOp) -> Option<TextChunk> {
-        let TextOp::Read(verbatim_model::TextRead {
-            at: TextPoint::At(position),
-            movement: None,
-            unit: TextUnit::Line,
-        }) = op
+    /// The review cursor's line as the state holds it, when `batch` reads
+    /// it again where the review cursor is, in text that is not a
+    /// terminal's.
+    fn unchanged(&self, batch: &Batch) -> Option<TextChunk> {
+        let [
+            verbatim_model::batch::Step {
+                op:
+                    Op::ReadText {
+                        at: verbatim_model::batch::Point::At(TextPoint::At(position)),
+                        movement: None,
+                        unit: TextUnit::Line,
+                        count: 1,
+                        ..
+                    },
+                ..
+            },
+        ] = batch.steps.as_slice()
         else {
             return None;
         };
@@ -351,8 +393,8 @@ impl Text {
     }
 
     /// Answers the one text request out with `reply`.
-    fn reply(&mut self, reply: TextReply) -> Vec<Heard> {
-        self.outcome(Outcome::Result(Reply::Text(reply)))
+    fn reply(&mut self, reply: Reply) -> Vec<Heard> {
+        self.outcome(Outcome::Result(reply))
     }
 
     /// Answers the last caret key's or caret tell's batch from `facts`.
@@ -807,20 +849,17 @@ impl Text {
             self.command(ReviewCommand::ReviewCurrentCharacter, 0),
             [Heard::Asked(line_read(TextPoint::Caret, None))]
         );
-        let _ = self.reply(TextReply::Read {
-            moved: 0,
-            chunk: line,
-        });
+        let _ = self.reply(text_batches::one(text_batches::chunks(0, vec![line])));
     }
 }
 
 /// A read of the line at `at`, after moving by `movement` when given.
-fn line_read(at: TextPoint, movement: Option<(TextUnit, i32)>) -> TextOp {
-    TextOp::Read(verbatim_model::TextRead {
+fn line_read(at: TextPoint, movement: Option<(TextUnit, i32)>) -> Batch {
+    text_batches::line(
+        ANY,
         at,
-        movement: movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
-        unit: TextUnit::Line,
-    })
+        movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
+    )
 }
 
 /// A classic edit control focused, read through its messages, its caret
@@ -986,12 +1025,13 @@ fn a_word_of_one_space_is_spoken_as_that_space() {
 #[test]
 fn the_review_cursor_speaks_a_word_of_one_character_by_its_name() {
     let mut text = reviewing("the river bank.\r\n", 11);
+    let line = ("the river bank.\r\n", 14);
     assert_eq!(
-        text.command(ReviewCommand::ReviewNextWord, 0),
+        text.word(ReviewCommand::ReviewNextWord, line, "."),
         words(vec![character(".")])
     );
     assert_eq!(
-        text.command(ReviewCommand::ReviewCurrentWord, 0),
+        text.word(ReviewCommand::ReviewCurrentWord, line, "."),
         words(vec![character(".")])
     );
 }
@@ -1611,10 +1651,35 @@ fn a_read_only_terminal_echoes_nothing_typed() {
 }
 
 impl Text {
+    /// Review word command `command` pressed, its one batch answered as a
+    /// provider reads its words: the word `word`, at byte `start` of the
+    /// line at anchor 100 holding `line`, where a move lands.
+    fn word(
+        &mut self,
+        command: ReviewCommand,
+        (line, start): (&str, u32),
+        word: &str,
+    ) -> Vec<Heard> {
+        let asked = self.command(command, 0);
+        assert!(matches!(asked.as_slice(), [Heard::Asked(_)]), "{asked:?}");
+        let found = |moved| text_batches::word(moved, word, 300 + u64::from(start));
+        let landed = || text_batches::line_at(line, 100, start);
+        let steps = match command {
+            ReviewCommand::ReviewPreviousWord => {
+                vec![text_batches::word(0, "x", 299), found(-1), landed()]
+            }
+            ReviewCommand::ReviewNextWord => {
+                vec![found(1), text_batches::range_text("x"), landed()]
+            }
+            _ => vec![found(0)],
+        };
+        self.reply(Reply::Steps(steps))
+    }
+
     /// Answers the one text request out with a line read that moved
     /// `moved` lines and found `chunk`.
     fn read(&mut self, moved: i32, chunk: TextChunk) -> Vec<Heard> {
-        self.reply(TextReply::Read { moved, chunk })
+        self.reply(text_batches::one(text_batches::chunks(moved, vec![chunk])))
     }
 }
 
@@ -1632,7 +1697,7 @@ fn focused(number: u64, role: Role, line: TextChunk) -> Text {
 fn a_review_cursor_moved_off_the_caret_reviews_from_where_it_is() {
     let mut text = reviewing("one two\n", 0);
     assert_eq!(
-        text.command(ReviewCommand::ReviewNextWord, 0),
+        text.word(ReviewCommand::ReviewNextWord, ("one two\n", 4), "two"),
         words(vec![UtteranceSegment::text("two")])
     );
     assert_eq!(
@@ -1766,7 +1831,12 @@ fn a_navigator_without_a_caret_reads_its_line_first_and_falls_back_to_flat_text(
     );
     // With no text, the object is read afresh and its flat text reviewed:
     // its name and value joined, NVDA's basic text.
-    assert_eq!(text.reply(TextReply::NoText), [Heard::Sent("Properties")]);
+    assert_eq!(
+        text.reply(text_batches::one(text_batches::refused(
+            StepRefusal::NoText
+        ))),
+        [Heard::Sent("Properties")]
+    );
     assert_eq!(
         text.properties(&edit),
         words(vec![UtteranceSegment::text("Body flat value")])
@@ -1784,21 +1854,25 @@ fn at(offset: u32) -> TextPoint {
 /// The range select then copy selects or copies: from the review cursor
 /// or the marker at `start` to the other at `end`, each with the point
 /// past its character.
-fn through(start: u32, end: u32) -> verbatim_model::TextThrough {
-    verbatim_model::TextThrough {
-        start: at(start + 1),
-        end: at(end + 1),
-    }
+fn through(start: u32, end: u32) -> (TextPoint, TextPoint) {
+    (at(start + 1), at(end + 1))
 }
 
-/// "Hello w" selected, as the outpost answers select then copy's first
-/// press.
-fn hello_w_selected() -> TextReply {
-    TextReply::Selected(vec![SelectionChange {
-        selected: true,
-        text: "hello w".to_owned(),
-        characters: 7,
-    }])
+impl Text {
+    /// "Hello w" selected, as the outpost answers select then copy's first
+    /// press, minting the next baseline: every effect.
+    fn hello_w_selected(&mut self) -> Vec<Heard> {
+        self.baseline += 1;
+        let selected = text_batches::selected(
+            vec![SelectionChange {
+                selected: true,
+                text: "hello w".to_owned(),
+                characters: 7,
+            }],
+            self.baseline,
+        );
+        self.reply(selected)
+    }
 }
 
 #[test]
@@ -1812,22 +1886,22 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
         text.command(ReviewCommand::SetStartMarker, 0),
         words(vec![message(Message::StartMarked)])
     );
-    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    let _ = text.word(ReviewCommand::ReviewNextWord, ("hello world\n", 6), "world");
 
     // The marker on "h" and the review cursor on "w", each with the point
     // just past its character, for the range from the earlier through the
     // character at the later.
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 0),
-        [Heard::Asked(TextOp::Select {
-            start: at(0),
-            end: at(6),
-            through: Some(through(0, 6)),
-        })]
+        [Heard::Asked(text_batches::select(
+            ANY,
+            (at(0), at(6)),
+            Some(through(0, 6))
+        ))]
     );
     // The selection made is spoken as a selecting key's is.
     assert_eq!(
-        text.reply(hello_w_selected()),
+        text.hello_w_selected(),
         words(vec![phrase(Phrase::Selected(SelectionText::Text(
             "hello w".to_owned()
         )))])
@@ -1844,17 +1918,14 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
     );
     assert_eq!(
         text.read(0, line("hello world\n", 101, 0)),
-        [Heard::Asked(TextOp::ReadRange {
-            start: at(0),
-            end: at(6),
-            through: Some(through(0, 6)),
-        })]
+        [Heard::Asked(text_batches::range(
+            ANY,
+            (at(0), at(6)),
+            Some(through(0, 6))
+        ))]
     );
     assert_eq!(
-        text.reply(TextReply::Range {
-            text: "hello w".to_owned(),
-            truncated: false,
-        }),
+        text.reply(text_batches::one(text_batches::range_text("hello w"))),
         [Heard::Copied("hello w".to_owned())]
     );
     // The copy cleared the start marker: a further press has none.
@@ -1869,16 +1940,16 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
 /// w" answered.
 fn selected_from_the_marker(text: &mut Text) {
     let _ = text.command(ReviewCommand::SetStartMarker, 0);
-    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    let _ = text.word(ReviewCommand::ReviewNextWord, ("hello world\n", 6), "world");
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 0),
-        [Heard::Asked(TextOp::Select {
-            start: at(0),
-            end: at(6),
-            through: Some(through(0, 6)),
-        })]
+        [Heard::Asked(text_batches::select(
+            ANY,
+            (at(0), at(6)),
+            Some(through(0, 6))
+        ))]
     );
-    let _ = text.reply(hello_w_selected());
+    let _ = text.hello_w_selected();
 }
 
 #[test]
@@ -1894,11 +1965,11 @@ fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
     );
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 1),
-        [Heard::Asked(TextOp::ReadRange {
-            start: at(0),
-            end: at(6),
-            through: Some(through(0, 6)),
-        })]
+        [Heard::Asked(text_batches::range(
+            ANY,
+            (at(0), at(6)),
+            Some(through(0, 6))
+        ))]
     );
 }
 
@@ -1918,10 +1989,7 @@ fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
         "the press waits behind the copy"
     );
     assert_eq!(
-        text.reply(TextReply::Range {
-            text: "hello w".to_owned(),
-            truncated: false,
-        }),
+        text.reply(text_batches::one(text_batches::range_text("hello w"))),
         [
             Heard::Copied("hello w".to_owned()),
             queued(vec![message(Message::StartMarked)])
@@ -1930,11 +1998,11 @@ fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
     // The new marker, on "w", is kept: a first press selects from it.
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 0),
-        [Heard::Asked(TextOp::Select {
-            start: at(6),
-            end: at(6),
-            through: Some(through(6, 6)),
-        })]
+        [Heard::Asked(text_batches::select(
+            ANY,
+            (at(6), at(6)),
+            Some(through(6, 6))
+        ))]
     );
 }
 
@@ -1944,10 +2012,7 @@ fn a_copy_of_nothing_clears_the_start_marker_and_says_nothing() {
     selected_from_the_marker(&mut text);
     let _ = text.command(ReviewCommand::SelectThenCopy, 1);
     assert_eq!(
-        text.reply(TextReply::Range {
-            text: String::new(),
-            truncated: false,
-        }),
+        text.reply(text_batches::one(text_batches::range_text(""))),
         []
     );
     assert_eq!(
@@ -1962,7 +2027,9 @@ fn a_copy_the_text_cannot_answer_clears_the_start_marker() {
     selected_from_the_marker(&mut text);
     let _ = text.command(ReviewCommand::SelectThenCopy, 1);
     assert_eq!(
-        text.reply(TextReply::NoText),
+        text.reply(text_batches::one(text_batches::refused(
+            StepRefusal::NoText
+        ))),
         words(vec![message(Message::NotSupported)])
     );
     assert_eq!(
@@ -1996,11 +2063,11 @@ fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
     );
     assert_eq!(
         text.read(0, line("hello world\n", 100, 0)),
-        [Heard::Asked(TextOp::Select {
-            start: at(0),
-            end: at(0),
-            through: Some(through(0, 0)),
-        })]
+        [Heard::Asked(text_batches::select(
+            ANY,
+            (at(0), at(0)),
+            Some(through(0, 0))
+        ))]
     );
 }
 
@@ -2044,28 +2111,32 @@ fn select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker
     // their characters.
     let mut text = reviewing("hello world\n", 6);
     let _ = text.command(ReviewCommand::SetStartMarker, 0);
-    let _ = text.command(ReviewCommand::ReviewPreviousWord, 0);
+    let _ = text.word(
+        ReviewCommand::ReviewPreviousWord,
+        ("hello world\n", 0),
+        "hello ",
+    );
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 0),
-        [Heard::Asked(TextOp::Select {
-            start: at(6),
-            end: at(0),
-            through: Some(through(6, 0)),
-        })]
+        [Heard::Asked(text_batches::select(
+            ANY,
+            (at(6), at(0)),
+            Some(through(6, 0))
+        ))]
     );
     // The text cannot be selected: said as NVDA says it, and the second
     // press copies the same range.
     assert_eq!(
-        text.reply(TextReply::Unsupported),
+        text.reply(text_batches::cannot_select()),
         words(vec![message(Message::CannotSelect)])
     );
     assert_eq!(
         text.command(ReviewCommand::SelectThenCopy, 1),
-        [Heard::Asked(TextOp::ReadRange {
-            start: at(6),
-            end: at(0),
-            through: Some(through(6, 0)),
-        })]
+        [Heard::Asked(text_batches::range(
+            ANY,
+            (at(6), at(0)),
+            Some(through(6, 0))
+        ))]
     );
 }
 
@@ -2117,18 +2188,10 @@ fn a_unit_the_text_does_not_have_is_not_supported() {
     let mut text = editing("abc\n", 0);
     let _ = text.command(ReviewCommand::ReviewNextPage, 0);
     assert_eq!(
-        text.reply(TextReply::UnsupportedUnit(TextUnit::Page)),
+        text.reply(text_batches::one(text_batches::refused(
+            StepRefusal::NoSuchUnit
+        ))),
         words(vec![message(Message::NotSupported)])
-    );
-}
-
-#[test]
-fn the_next_word_past_the_line_moves_to_the_next_line_first_word() {
-    let mut text = reviewing("last\n", 0);
-    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
-    assert_eq!(
-        text.read(1, line("  next one\n", 101, 0)),
-        words(vec![UtteranceSegment::text("next")])
     );
 }
 
@@ -2272,53 +2335,21 @@ fn start_of_line_says_the_lines_first_character() {
     );
 }
 
-/// Previous word reads the word before on the line; from the line's first
-/// word it reads the line above and lands on its last word; on the first
-/// line it says "Top" and the word again.
-#[test]
-fn previous_word_crosses_a_line_start_and_stops_at_the_top() {
-    let mut text = reviewing("big world\n", 4);
-    assert_eq!(
-        text.command(ReviewCommand::ReviewPreviousWord, 0),
-        words(vec![UtteranceSegment::text("big")])
-    );
-    assert_eq!(
-        text.command(ReviewCommand::ReviewPreviousWord, 0),
-        [Heard::Asked(line_read(
-            line_start(100),
-            Some((TextUnit::Line, -1))
-        ))]
-    );
-    let first = TextChunk {
-        first: true,
-        ..line("one two\n", 90, 0)
-    };
-    assert_eq!(
-        text.read(-1, first),
-        words(vec![UtteranceSegment::text("two")])
-    );
-    assert_eq!(
-        text.command(ReviewCommand::ReviewPreviousWord, 0),
-        words(vec![UtteranceSegment::text("one")])
-    );
-    assert_eq!(
-        text.command(ReviewCommand::ReviewPreviousWord, 0),
-        words(vec![message(Message::Top), UtteranceSegment::text("one")])
-    );
-}
-
 /// The review cursor's location is asked at the review cursor, not the
 /// caret, and said the same way.
 #[test]
 fn review_location_asks_for_the_review_cursors_place_and_says_it() {
     let mut text = reviewing("hello world\n", 0);
-    let _ = text.command(ReviewCommand::ReviewNextWord, 0);
+    let _ = text.word(ReviewCommand::ReviewNextWord, ("hello world\n", 6), "world");
     assert_eq!(
         text.command(ReviewCommand::ReportReviewLocation, 0),
-        [Heard::Asked(TextOp::Location(at(6)))]
+        [Heard::Asked(text_batches::locate(ANY, at(6)))]
     );
     assert_eq!(
-        text.reply(TextReply::Location { x: 148, y: 200 }),
+        text.reply(text_batches::located(Located {
+            screen: Some((148, 200)),
+            offset: None
+        })),
         words(vec![phrase(Phrase::Positioned { x: 148, y: 200 })])
     );
 }
@@ -2329,7 +2360,11 @@ fn review_location_asks_for_the_review_cursors_place_and_says_it() {
 fn moving_to_the_start_marker_in_the_same_text_says_its_character() {
     let mut text = reviewing("hello world\n", 6);
     let _ = text.command(ReviewCommand::SetStartMarker, 0);
-    let _ = text.command(ReviewCommand::ReviewPreviousWord, 0);
+    let _ = text.word(
+        ReviewCommand::ReviewPreviousWord,
+        ("hello world\n", 0),
+        "hello ",
+    );
     assert_eq!(
         text.command(ReviewCommand::MoveToStartMarker, 0),
         [Heard::Asked(line_read(at(6), None))]
@@ -3498,18 +3533,19 @@ fn marks_of(said: &[Said]) -> Vec<SpeechMark> {
 }
 
 /// Say-all's read ahead from `at`, after `movement`, by `unit`.
-fn read_ahead(at: TextPoint, movement: Option<(TextUnit, i32)>, unit: TextUnit) -> TextOp {
-    TextOp::ReadAhead(verbatim_model::TextReadAhead {
+fn read_ahead(at: TextPoint, movement: Option<(TextUnit, i32)>, unit: TextUnit) -> Batch {
+    text_batches::read(
+        ANY,
         at,
-        movement: movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
+        movement.map(|(unit, count)| verbatim_model::TextMovement { unit, count }),
         unit,
-        count: 20,
-    })
+        20,
+    )
 }
 
 /// The caret moved to the start of the line at `anchor`.
 fn caret_to(anchor: u64) -> Heard {
-    Heard::Asked(TextOp::MoveCaret(line_start(anchor)))
+    Heard::Asked(text_batches::move_caret(ANY, line_start(anchor)))
 }
 
 /// Say-all's first read, from the caret by sentence.
@@ -3527,7 +3563,9 @@ impl Text {
             [Heard::Display(true), by_sentence_from_caret()]
         );
         assert_eq!(
-            self.reply(TextReply::UnsupportedUnit(TextUnit::Sentence)),
+            self.reply(text_batches::one(text_batches::refused(
+                StepRefusal::NoSuchUnit
+            ))),
             [Heard::Asked(read_ahead(
                 TextPoint::Caret,
                 None,
@@ -3539,7 +3577,7 @@ impl Text {
 
     /// Answers the one request out with `chunks`, moved by none.
     fn chunks(&mut self, chunks: Vec<TextChunk>) -> Vec<Heard> {
-        self.reply(TextReply::Chunks { moved: 0, chunks })
+        self.reply(text_batches::one(text_batches::chunks(0, chunks)))
     }
 
     /// Playback reached `mark`: say-all's utterances and other effects.
@@ -3551,9 +3589,7 @@ impl Text {
     /// effect.
     fn placed(&mut self) -> Vec<Heard> {
         self.baseline += 1;
-        self.reply(TextReply::CaretPlaced {
-            baseline: TextAnchor(self.baseline),
-        })
+        self.reply(text_batches::moved(self.baseline))
     }
 
     /// The speech side's report `input`, handled at once.
@@ -3696,12 +3732,13 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(texts_of(&third), [["Three!"]]);
     assert_eq!(
         rest,
-        [Heard::Asked(TextOp::MoveCaret(TextPoint::At(
-            TextPosition {
+        [Heard::Asked(text_batches::move_caret(
+            ANY,
+            TextPoint::At(TextPosition {
                 anchor: TextAnchor(400),
                 offset: 5
-            }
-        )))]
+            })
+        ))]
     );
     assert_eq!(text.placed(), []);
     // A key's cut stops it, dropping what was waiting; a late mark is

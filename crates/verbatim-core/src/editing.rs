@@ -27,12 +27,14 @@ use std::sync::Arc;
 use verbatim_model::{
     CaretKey, CaretMotion, CaretSelection, Effect, FocusText, FocusValidity, Message, NodeId,
     NodeSnapshot, Phrase, Role, SegmentContent, SelectionChange, SelectionText, SpeechPriority,
-    State, TextAttributes, TextChunk, TextOp, TextPoint, TextRead, TextReply, TextUnit, TraceId,
-    TypingEcho, Utterance, UtteranceSegment,
+    State, TextAttributes, TextChunk, TextPoint, TextUnit, TraceId, TypingEcho, Utterance,
+    UtteranceSegment,
 };
 
 use crate::state::{CaretContext, NavigatorRead, ReviewText, SrState};
 use crate::text;
+use crate::text_request::{Span, TextAnswer, TextAsk};
+use verbatim_model::batch::StepRefusal;
 use verbatim_text::proven;
 
 /// The most bytes of a word typed so far that word echo keeps; a longer
@@ -687,7 +689,7 @@ pub(crate) fn navigator_text_start(
     trace_id: TraceId,
     node: &NodeSnapshot,
     read: NavigatorRead,
-) -> Result<Vec<Effect>, TextOp> {
+) -> Result<Vec<Effect>, TextAsk> {
     if !may_have_text(node.role) {
         return Ok(Vec::new());
     }
@@ -709,42 +711,43 @@ pub(crate) fn navigator_text_start(
         },
         None => (TextPoint::SelectionStart, TextPoint::SelectionEnd),
     };
-    Err(TextOp::ReadRange {
+    Err(TextAsk::Range(Span {
         start,
         end,
         through: None,
-    })
+    }))
 }
 
 /// The read of the navigator object's line at its caret, or its first
 /// line when it reports no caret.
-pub(crate) fn navigator_line_op() -> TextOp {
-    TextOp::Read(TextRead {
+pub(crate) fn navigator_line_read() -> TextAsk {
+    TextAsk::Read {
         at: TextPoint::Caret,
         movement: None,
         unit: TextUnit::Line,
-    })
+        count: 1,
+    }
 }
 
 /// What an answer to a navigator text read gives.
 pub(crate) enum NavigatorText {
     /// These words, and the read ends.
     Said(Vec<Effect>),
-    /// The line is to be read next ([`navigator_line_op`]).
+    /// The line is to be read next ([`navigator_line_read`]).
     ReadLine,
 }
 
-/// The answer `reply` to the read of `object`'s selected text, when
+/// The answer `answer` to the read of `object`'s selected text, when
 /// `selection`, else of its line, for `read`.
 pub(crate) fn navigator_text_answered(
     trace_id: TraceId,
     object: &NodeSnapshot,
     read: NavigatorRead,
     selection: bool,
-    reply: TextReply,
+    answer: TextAnswer,
 ) -> NavigatorText {
-    let segments = match (selection, reply) {
-        (true, TextReply::Range { text, .. }) => {
+    let segments = match (selection, answer) {
+        (true, TextAnswer::Range(text)) => {
             if verbatim_text::graphemes(&text).is_empty() {
                 return NavigatorText::ReadLine;
             }
@@ -753,8 +756,11 @@ pub(crate) fn navigator_text_answered(
             }
             selected_segments(text).unwrap_or_default()
         }
-        (true, TextReply::Unsupported) => return NavigatorText::ReadLine,
-        (false, TextReply::Read { chunk, .. }) => {
+        (true, TextAnswer::Refused(StepRefusal::Unsupported)) => return NavigatorText::ReadLine,
+        (false, TextAnswer::Read { chunks, .. }) => {
+            let Some(chunk) = chunks.into_iter().next() else {
+                return NavigatorText::Said(Vec::new());
+            };
             let grid = is_grid(object.role);
             if read != NavigatorRead::Announce {
                 return NavigatorText::Said(named_text(
@@ -766,7 +772,7 @@ pub(crate) fn navigator_text_answered(
             }
             line_segments(&chunk, grid, &mut TextAttributes::default())
         }
-        (_, TextReply::NoText | TextReply::Unsupported) => {
+        (_, TextAnswer::Refused(StepRefusal::NoText | StepRefusal::Unsupported)) => {
             if read != NavigatorRead::Announce {
                 return NavigatorText::Said(named_text(
                     trace_id,

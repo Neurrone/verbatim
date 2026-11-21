@@ -5,10 +5,11 @@
 use crate::entries::tests::found_at;
 use crate::readers::Found;
 
+use verbatim_model::batch::{Batch, StepRefusal};
 use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire};
 use verbatim_model::{
-    Effect as Said, KeySeq, ReviewCommand, Role, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextUnit, TraceId, WindowHandle,
+    Effect as Said, KeySeq, ReviewCommand, Role, TextAnchor, TextChunk, TextMovement, TextPoint,
+    TextPosition, TextUnit, TraceId, WindowHandle,
 };
 
 use crate::entries::Entry;
@@ -17,6 +18,7 @@ use crate::entries::tests::{
 };
 use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
+use crate::text_batches;
 
 /// The application's window 4 in front.
 const IN_FRONT: Foreground = Foreground {
@@ -75,11 +77,11 @@ fn read(number: u64, moved: i32, chunk: TextChunk) -> Input<Entry> {
     answer(
         OUTPOST,
         number,
-        Reply::Text(TextReply::Read { moved, chunk }),
+        text_batches::one(text_batches::chunks(moved, vec![chunk])),
     )
 }
 
-/// The request out last.
+/// The request out last, of the kinds not yet batches.
 fn asked(state: &Held) -> Wire {
     state
         .queue
@@ -89,18 +91,19 @@ fn asked(state: &Held) -> Wire {
         .expect("a request out")
 }
 
-/// The read of node 2's text `op`.
-fn text(op: TextOp) -> Wire {
-    Wire::Text { node: node(2), op }
+/// The batch out last.
+fn batch(state: &Held) -> Batch {
+    state
+        .queue
+        .batches_for_tests()
+        .last()
+        .map(|(_, batch)| batch.clone())
+        .expect("a batch out")
 }
 
-/// The line read at `at`, moved by `movement`.
-fn line_at(at: TextPoint, movement: Option<TextMovement>) -> TextOp {
-    TextOp::Read(TextRead {
-        at,
-        movement,
-        unit: TextUnit::Line,
-    })
+/// The line of node 2's text read at `at`, moved by `movement`.
+fn line_at(at: TextPoint, movement: Option<TextMovement>) -> Batch {
+    text_batches::line(node(2), at, movement)
 }
 
 /// The edit field "Body" committed, the review cursor placed on the line
@@ -116,7 +119,7 @@ fn reviewing() -> Held {
         ),
         ["send Outpost(Pid(40)) other"]
     );
-    assert_eq!(asked(&state), text(line_at(TextPoint::Caret, None)));
+    assert_eq!(batch(&state), (line_at(TextPoint::Caret, None)));
     assert_eq!(
         feed_at(&mut state, 1_100, read(3, 0, line("one two\r\n", 100, 0))),
         ["Text(\"one two\")"]
@@ -143,8 +146,8 @@ fn the_next_line_is_read_from_the_review_cursors_line_and_spoken() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        asked(&state),
-        text(line_at(
+        batch(&state),
+        (line_at(
             TextPoint::At(TextPosition::at(TextAnchor(100))),
             Some(TextMovement {
                 unit: TextUnit::Line,
@@ -177,23 +180,262 @@ fn the_next_line_at_the_bottom_says_the_edge_and_the_line() {
 /// A command that answers from the review cursor's line reads it again
 /// first, then speaks from it.
 #[test]
-fn the_current_word_reads_the_review_cursors_line_again_and_says_the_word() {
+fn the_current_character_reads_the_review_cursors_line_again_and_says_it() {
     let mut state = reviewing();
     let _ = feed_at(
         &mut state,
         2_000,
-        press(2, ReviewCommand::ReviewCurrentWord, 0),
+        press(2, ReviewCommand::ReviewCurrentCharacter, 0),
     );
     assert_eq!(
-        asked(&state),
-        text(line_at(
-            TextPoint::At(TextPosition::at(TextAnchor(100))),
-            None
-        ))
+        batch(&state),
+        (line_at(TextPoint::At(TextPosition::at(TextAnchor(100))), None))
     );
     assert_eq!(
         feed_at(&mut state, 2_100, read(4, 0, line("one two\r\n", 100, 0))),
-        ["Text(\"one\")"]
+        ["Character(\"o\")"]
+    );
+}
+
+/// Word press `number` (also its request's number) of `command` with the
+/// review cursor at anchor `from`'s byte `offset`: it asks the word row's
+/// one batch, and with `steps` answered says `said`.
+fn word_press(
+    state: &mut Held,
+    number: u64,
+    (command, from, offset): (ReviewCommand, u64, u32),
+    steps: Vec<verbatim_model::batch::StepOutcome>,
+    said: &str,
+) {
+    let _ = feed_at(state, 1_000 * number, press(number, command, 0));
+    let here = text_batches::at(from, offset);
+    let expected = match command {
+        ReviewCommand::ReviewPreviousWord => text_batches::previous_word(node(2), here),
+        ReviewCommand::ReviewNextWord => text_batches::next_word(node(2), here),
+        _ => text_batches::current_word(node(2), here),
+    };
+    assert_eq!(batch(state), expected, "{said}");
+    let reply = Reply::Steps(steps);
+    assert_eq!(
+        feed_at(state, 1_000 * number + 100, answer(OUTPOST, number, reply)),
+        [said]
+    );
+}
+
+/// Review current word reads the provider's word at the review cursor,
+/// one batch, and spells it on a second press.
+#[test]
+fn the_current_word_is_the_texts_own_word_at_the_review_cursor() {
+    let mut state = reviewing();
+    let word = || vec![text_batches::word(0, "one ", 100)];
+    word_press(
+        &mut state,
+        4,
+        (ReviewCommand::ReviewCurrentWord, 100, 0),
+        word(),
+        "Text(\"one\")",
+    );
+    let _ = feed_at(
+        &mut state,
+        5_000,
+        press(5, ReviewCommand::ReviewCurrentWord, 1),
+    );
+    assert_eq!(
+        feed_at(&mut state, 5_100, answer(OUTPOST, 5, Reply::Steps(word()))),
+        ["Text(\"o\") Text(\"n\") Text(\"e\")"]
+    );
+}
+
+/// A word press: the command and where the review cursor is (anchor and
+/// offset), the batch's answer, and what it says.
+type WordPress<'a> = (
+    (ReviewCommand, u64, u32),
+    Vec<verbatim_model::batch::StepOutcome>,
+    &'a str,
+);
+
+/// Word presses one after another, from request `first` on: each the
+/// command, where the review cursor is (anchor and offset), the batch's
+/// answer and what it says ([`word_press`]).
+fn word_presses(state: &mut Held, first: u64, presses: Vec<WordPress<'_>>) {
+    for (number, (at, steps, said)) in (first..).zip(presses) {
+        word_press(state, number, at, steps, said);
+    }
+}
+
+/// The review word rows by the provider's word, against NVDA's capture
+/// `tests/fixtures/p1-word-break.jsonl` (Notepad holding "alpha beta", a
+/// line break, "gamma"; the request list's design, section 6, "The word
+/// rows' speech"): from "gamma" previous word says the line break by its
+/// name (step 4), then "beta" and "alpha" (steps 5 and 6); next word from
+/// "alpha" says "beta", the line break and "gamma" (steps 7 to 9), and at
+/// the end "Bottom" and "gamma" (step 11). Each press is one batch from
+/// where the last one left the review cursor, the start of the word it
+/// said on the line read there; the provider's words are Notepad's, as the
+/// capture shows them. A move that went no word, or a next word that does
+/// not start after the review cursor, says the edge and the word there,
+/// and the cursor stays.
+#[test]
+fn review_words_move_by_the_providers_word_as_nvdas_capture() {
+    use text_batches::{line_at as on_line, range_text, word};
+    let mut state = committed("Body", Role::EditableText);
+    let _ = feed_at(
+        &mut state,
+        1_000,
+        press(1, ReviewCommand::ReviewCurrentLine, 0),
+    );
+    let _ = feed_at(&mut state, 1_100, read(3, 0, line("gamma", 200, 0)));
+    let (previous, next) = (
+        ReviewCommand::ReviewPreviousWord,
+        ReviewCommand::ReviewNextWord,
+    );
+    let first = "alpha beta\r";
+    let alpha = || word(0, "alpha ", 100);
+    let gamma = || word(0, "gamma", 200);
+    word_presses(
+        &mut state,
+        4,
+        vec![
+            (
+                (previous, 200, 0),
+                vec![gamma(), word(-1, "\r", 110), on_line(first, 100, 10)],
+                "Character(\"\\r\")",
+            ),
+            (
+                (previous, 100, 10),
+                vec![
+                    word(0, "\r", 110),
+                    word(-1, "beta", 106),
+                    on_line(first, 100, 6),
+                ],
+                "Text(\"beta\")",
+            ),
+            (
+                (previous, 100, 6),
+                vec![
+                    word(0, "beta", 106),
+                    word(-1, "alpha ", 100),
+                    on_line(first, 100, 0),
+                ],
+                "Text(\"alpha\")",
+            ),
+            (
+                (previous, 100, 0),
+                vec![alpha(), alpha(), on_line(first, 100, 0)],
+                "Message(Top) Text(\"alpha\")",
+            ),
+            (
+                (next, 100, 0),
+                vec![
+                    word(1, "beta", 106),
+                    range_text("alpha "),
+                    on_line(first, 100, 6),
+                ],
+                "Text(\"beta\")",
+            ),
+            (
+                (next, 100, 6),
+                vec![
+                    word(1, "\r", 110),
+                    range_text("beta"),
+                    on_line(first, 100, 10),
+                ],
+                "Character(\"\\r\")",
+            ),
+            (
+                (next, 100, 10),
+                vec![
+                    word(1, "gamma", 200),
+                    range_text("\r"),
+                    on_line("gamma", 200, 0),
+                ],
+                "Text(\"gamma\")",
+            ),
+            // The end: the provider does not move, or moves onto the text's
+            // end, landing on no word after the cursor (NVDA's issue 12808
+            // check).
+            (
+                (next, 200, 0),
+                vec![gamma(), range_text(""), on_line("gamma", 200, 0)],
+                "Message(Bottom) Text(\"gamma\")",
+            ),
+            (
+                (next, 200, 0),
+                vec![
+                    word(1, "gamma", 200),
+                    range_text(""),
+                    on_line("gamma", 200, 0),
+                ],
+                "Message(Bottom) Text(\"gamma\")",
+            ),
+        ],
+    );
+}
+
+/// The word rows in a Windows Forms text box, whose words are the edit
+/// control's (the outpost's `text/edit.rs`, a line break character a word
+/// of its own), against NVDA's capture
+/// `tests/fixtures/s10-review-words-text-box.jsonl`: from "Apple", the
+/// first word of the second row, previous word stops on the line feed and
+/// the carriage return before "Price" (steps 20 to 22), and next word at
+/// the text's end says "Bottom" and "blank" (step 26).
+#[test]
+fn review_words_in_a_text_box_stop_on_each_line_break_character() {
+    use text_batches::{line_at as on_line, range_text, word};
+    let mut state = committed("Body", Role::EditableText);
+    let _ = feed_at(
+        &mut state,
+        1_000,
+        press(1, ReviewCommand::ReviewCurrentLine, 0),
+    );
+    let _ = feed_at(
+        &mut state,
+        1_100,
+        read(3, 0, line("Apple   red 1.20\r\n", 200, 0)),
+    );
+    let previous = ReviewCommand::ReviewPreviousWord;
+    let first = "Fruit   Color   Price\r\n";
+    word_presses(
+        &mut state,
+        4,
+        vec![
+            (
+                (previous, 200, 0),
+                vec![
+                    word(0, "Apple   ", 200),
+                    word(-1, "\n", 122),
+                    on_line(first, 100, 22),
+                ],
+                "Character(\"\\n\")",
+            ),
+            (
+                (previous, 100, 22),
+                vec![
+                    word(0, "\n", 122),
+                    word(-1, "\r", 121),
+                    on_line(first, 100, 21),
+                ],
+                "Character(\"\\r\")",
+            ),
+            (
+                (previous, 100, 21),
+                vec![
+                    word(0, "\r", 121),
+                    word(-1, "Price\r\n", 116),
+                    on_line(first, 100, 16),
+                ],
+                "Text(\"Price\")",
+            ),
+        ],
+    );
+    let _ = feed_at(&mut state, 7_000, press(7, ReviewCommand::ReviewBottom, 0));
+    let _ = feed_at(&mut state, 7_100, read(7, 0, line("", 300, 0)));
+    word_press(
+        &mut state,
+        8,
+        (ReviewCommand::ReviewNextWord, 300, 0),
+        vec![word(0, "", 300), range_text(""), on_line("", 300, 0)],
+        "Message(Bottom) Message(Blank)",
     );
 }
 
@@ -252,11 +494,11 @@ fn a_lost_review_position_starts_again_at_the_caret() {
         feed_at(
             &mut state,
             2_100,
-            answer(OUTPOST, 4, Reply::Text(TextReply::AnchorLost))
+            answer(OUTPOST, 4, text_batches::one(text_batches::lost(100)))
         ),
         ["send Outpost(Pid(40)) other"]
     );
-    assert_eq!(asked(&state), text(line_at(TextPoint::Caret, None)));
+    assert_eq!(batch(&state), (line_at(TextPoint::Caret, None)));
 }
 
 /// An object with no text interface reviews its live read as flat text.
@@ -338,7 +580,11 @@ fn a_field_with_no_text_is_reviewed_as_flat_text() {
         feed_at(
             &mut state,
             1_100,
-            answer(OUTPOST, 3, Reply::Text(TextReply::NoText))
+            answer(
+                OUTPOST,
+                3,
+                text_batches::one(text_batches::refused(StepRefusal::NoText))
+            )
         ),
         ["send Outpost(Pid(40)) other"]
     );
@@ -430,25 +676,15 @@ fn a_start_marker_set_then_copied_copies_the_range_read() {
     );
     let _ = feed_at(&mut state, 3_100, read(5, 0, line("one two\r\n", 100, 0)));
     assert!(matches!(
-        asked(&state),
-        Wire::Text {
-            op: TextOp::ReadRange { .. },
-            ..
-        }
+        batch(&state).steps[0].op,
+        verbatim_model::batch::Op::ReadRange { .. }
     ));
     let effects = crate::entries::feed(
         &mut state.state,
         &mut state.runtime,
         Timed {
             at_us: 3_200,
-            input: answer(
-                OUTPOST,
-                6,
-                Reply::Text(TextReply::Range {
-                    text: "o".to_owned(),
-                    truncated: false,
-                }),
-            ),
+            input: answer(OUTPOST, 6, text_batches::one(text_batches::range_text("o"))),
         },
     )
     .unwrap();
@@ -501,11 +737,8 @@ fn a_selection_made_on_the_focused_text_is_said_and_mints_the_baseline() {
         ),
     );
     assert!(matches!(
-        asked(&state),
-        Wire::Text {
-            op: TextOp::Select { .. },
-            ..
-        }
+        batch(&state).steps[1].op,
+        verbatim_model::batch::Op::Select { .. }
     ));
     let said = feed_at(
         &mut state,
@@ -513,14 +746,14 @@ fn a_selection_made_on_the_focused_text_is_said_and_mints_the_baseline() {
         answer(
             OUTPOST,
             6,
-            Reply::Text(TextReply::SelectionPlaced {
-                changes: vec![verbatim_model::SelectionChange {
+            text_batches::selected(
+                vec![verbatim_model::SelectionChange {
                     selected: true,
                     text: "o".to_owned(),
                     characters: 1,
                 }],
-                baseline: TextAnchor(80),
-            }),
+                80,
+            ),
         ),
     );
     assert_eq!(said, ["Phrase(Selected(Character(\"o\")))"]);
@@ -540,10 +773,8 @@ fn the_review_cursors_location_is_asked_and_said() {
         press(2, ReviewCommand::ReportReviewLocation, 0),
     );
     assert_eq!(
-        asked(&state),
-        text(TextOp::Location(TextPoint::At(TextPosition::at(
-            TextAnchor(100)
-        ))))
+        batch(&state),
+        text_batches::locate(node(2), TextPoint::At(TextPosition::at(TextAnchor(100))))
     );
     assert_eq!(
         feed_at(
@@ -552,7 +783,10 @@ fn the_review_cursors_location_is_asked_and_said() {
             answer(
                 OUTPOST,
                 4,
-                Reply::Text(TextReply::Location { x: 10, y: 20 })
+                text_batches::located(verbatim_model::batch::Located {
+                    screen: Some((10, 20)),
+                    offset: None,
+                })
             )
         ),
         ["Phrase(Positioned { x: 10, y: 20 })"]

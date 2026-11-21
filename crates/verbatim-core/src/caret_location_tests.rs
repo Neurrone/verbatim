@@ -5,8 +5,9 @@
 use crate::entries::tests::found_at;
 use crate::readers::Found;
 
-use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire};
-use verbatim_model::{KeySeq, ReviewCommand, Role, TextOp, TextPoint, TextReply, TraceId};
+use verbatim_model::batch::{Located, TextOffset};
+use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply};
+use verbatim_model::{KeySeq, ReviewCommand, Role, TextPoint, TraceId};
 
 use crate::entries::Entry;
 use crate::entries::tests::{
@@ -50,8 +51,14 @@ fn press(key: u64, command: ReviewCommand) -> Input<Entry> {
 }
 
 /// The answer to request 3, the location read.
-fn located(reply: TextReply) -> Input<Entry> {
-    answer(OUTPOST, 3, Reply::Text(reply))
+fn located(reply: Reply) -> Input<Entry> {
+    answer(OUTPOST, 3, reply)
+}
+
+/// A location answered at `screen`, with its `offset` where the text
+/// counts by offsets.
+fn at(screen: Option<(i32, i32)>, offset: Option<TextOffset>) -> Reply {
+    crate::text_batches::located(Located { screen, offset })
 }
 
 #[test]
@@ -66,18 +73,11 @@ fn it_asks_for_the_carets_place_and_says_it() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Text {
-            node: node(2),
-            op: TextOp::Location(TextPoint::Caret),
-        })
+        state.queue.batch_for_tests(3),
+        Some(crate::text_batches::locate(node(2), TextPoint::Caret))
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            located(TextReply::Location { x: 108, y: 200 })
-        ),
+        feed_at(&mut state, 2_000, located(at(Some((108, 200)), None))),
         ["Phrase(Positioned { x: 108, y: 200 })"]
     );
 }
@@ -96,11 +96,13 @@ fn an_offset_measured_location_says_the_percentage_and_the_place() {
         feed_at(
             &mut state,
             2_000,
-            located(TextReply::OffsetLocation {
-                offset: 1,
-                length: 4,
-                point: Some((108, 200)),
-            })
+            located(at(
+                Some((108, 200)),
+                Some(TextOffset {
+                    offset: 1,
+                    length: 4
+                })
+            ))
         ),
         ["Phrase(OffsetPositioned { offset: 1, length: 4, point: Some((108, 200)) })"]
     );
@@ -124,11 +126,7 @@ fn a_press_behind_it_waits_for_its_answer() {
         Vec::<String>::new()
     );
     assert_eq!(
-        feed_at(
-            &mut state,
-            2_000,
-            located(TextReply::Location { x: 1, y: 2 })
-        ),
+        feed_at(&mut state, 2_000, located(at(Some((1, 2)), None))),
         [
             "Phrase(Positioned { x: 1, y: 2 })",
             "send Outpost(Pid(40)) other"

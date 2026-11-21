@@ -9,8 +9,8 @@ use verbatim_model::request::{
     NodeRead, Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire,
 };
 use verbatim_model::{
-    ActionName, Effect as Said, KeySeq, QueryKind, ReviewCommand, Role, TextOp, TextPoint,
-    TextReply, TraceId, WindowHandle,
+    ActionName, Effect as Said, KeySeq, QueryKind, ReviewCommand, Role, TextPoint, TraceId,
+    WindowHandle,
 };
 
 use crate::entries::Entry;
@@ -21,6 +21,7 @@ use crate::entries::tests::{
 use crate::event_queue::{Foreground, Input, Timed};
 use crate::keys::entry::PressEntry;
 use verbatim_model::Effect;
+use verbatim_model::batch::StepRefusal;
 use verbatim_model::request::QueueEffect;
 
 /// The application's window 4 in front.
@@ -216,37 +217,46 @@ fn a_navigation_to_an_edit_field_reads_its_text_in_place_of_its_value() {
             "send Outpost(Pid(40)) other"
         ]
     );
+    let last = |state: &Held| {
+        state
+            .queue
+            .batches_for_tests()
+            .last()
+            .map(|(_, batch)| batch.clone())
+    };
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Text {
-            node: node(8),
-            op: TextOp::ReadRange {
-                start: TextPoint::SelectionStart,
-                end: TextPoint::SelectionEnd,
-                through: None,
-            },
-        })
+        last(&state),
+        Some(crate::text_batches::range(
+            node(8),
+            (TextPoint::SelectionStart, TextPoint::SelectionEnd),
+            None
+        ))
     );
     assert_eq!(
         feed_at(
             &mut state,
             3_000,
-            answer(OUTPOST, 4, Reply::Text(TextReply::Unsupported))
+            answer(
+                OUTPOST,
+                4,
+                crate::text_batches::one(crate::text_batches::refused(StepRefusal::Unsupported))
+            )
         ),
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Text {
-            node: node(8),
-            op: crate::editing::navigator_line_op(),
-        })
+        last(&state),
+        Some(crate::text_batches::line(node(8), TextPoint::Caret, None))
     );
     assert_eq!(
         feed_at(
             &mut state,
             4_000,
-            answer(OUTPOST, 5, Reply::Text(TextReply::NoText))
+            answer(
+                OUTPOST,
+                5,
+                crate::text_batches::one(crate::text_batches::refused(StepRefusal::NoText))
+            )
         ),
         ["Value(\"one\")"]
     );
@@ -386,28 +396,12 @@ fn on_body_field() -> Held {
 
 /// A line read's answer, `text` at the caret.
 fn line_read(text: &str) -> Reply {
-    Reply::Text(TextReply::Read {
-        moved: 0,
-        chunk: verbatim_model::TextChunk {
-            unit: verbatim_model::TextUnit::Line,
-            text: text.to_owned(),
-            start: verbatim_model::TextAnchor(200),
-            offset: 0,
-            languages: Vec::new(),
-            first: false,
-            last: false,
-            truncated: false,
-            formats: Vec::new(),
-        },
-    })
+    crate::text_batches::one(crate::text_batches::line_at(text, 200, 0))
 }
 
 /// A selection read's answer, `text` selected.
 fn selected(text: &str) -> Reply {
-    Reply::Text(TextReply::Range {
-        text: text.to_owned(),
-        truncated: false,
-    })
+    crate::text_batches::one(crate::text_batches::range_text(text))
 }
 
 /// Feeds `input` at `at_us`, every effect.
@@ -783,15 +777,16 @@ fn a_navigation_to_a_protected_edit_field_reads_its_masked_selection() {
     );
     let _ = feed_at(&mut state, 2_000, navigated(3, Some(field)));
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Text {
-            node: node(8),
-            op: TextOp::ReadRange {
-                start: TextPoint::SelectionStart,
-                end: TextPoint::SelectionEnd,
-                through: None,
-            },
-        })
+        state
+            .queue
+            .batches_for_tests()
+            .last()
+            .map(|(_, batch)| batch.clone()),
+        Some(crate::text_batches::range(
+            node(8),
+            (TextPoint::SelectionStart, TextPoint::SelectionEnd),
+            None
+        ))
     );
     assert_eq!(
         feed_at(&mut state, 3_000, answer(OUTPOST, 4, selected("******"))),
