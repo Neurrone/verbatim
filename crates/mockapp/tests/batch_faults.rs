@@ -1,6 +1,6 @@
-//! The fallback rule of the request list's program builder
-//! (`target/captures-2026-11-20/build8-design/design.md`, section 5, "The
-//! fallback rule, per operation"), each failure made at a fault point in
+//! The fallback rule of the request list's program builder (the
+//! verbatim-uia-rops crate guide, "The program builder and the
+//! ordinary-calls executor"), each failure made at a fault point in
 //! `verbatim_uia_rops::batch` before the real run, against mockapp's
 //! provider: a read failing before review select's act, so that the act is
 //! made once, in the rerun; one failing after it, so that it is not made

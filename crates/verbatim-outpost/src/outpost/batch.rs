@@ -1,9 +1,8 @@
-//! Core's batches, run on the worker (the request list's design,
-//! `target/captures-2026-11-20/build8-design/design.md`, sections 3, 5 and
-//! 7): parsed once as they arrive and refused whole when they do not
-//! parse; each subject resolved once, at its first use, and every later
-//! use taking the same object; each step run in order, under its
-//! condition, by the outpost's code for its operation.
+//! Core's batches, run on the worker (the verbatim-outpost crate guide,
+//! "Core's requests"): parsed once as they arrive and refused whole when
+//! they do not parse; each subject resolved once, at its first use, and
+//! every later use taking the same object; each step run in order, under
+//! its condition, by the outpost's code for its operation.
 //!
 //! Each operation runs on the code the outpost's kinds of request run on:
 //! a node's properties with those read apart, a navigation step, the

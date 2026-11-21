@@ -1,8 +1,7 @@
 //! A run of a batch's fusable text steps on one UI Automation node, through
-//! the program builder (the request list's design,
-//! `target/captures-2026-11-20/build8-design/design.md`, section 5): the
-//! steps' points resolved against the node's anchors and the batch's
-//! earlier results, run as one segment by
+//! the program builder (the verbatim-outpost crate guide, "Text and
+//! dialog text"): the steps' points resolved against the node's anchors
+//! and the batch's earlier results, run as one segment by
 //! [`verbatim_uia_rops::batch::run_batch`], and each step's result made the
 //! model's, its points held as anchors and its chunks minted with their
 //! formatting.

@@ -1,9 +1,9 @@
-//! The request list's fusable operations on UI Automation subjects
-//! (`target/captures-2026-11-20/build8-design/design.md`, section 5): a
-//! run of consecutive steps of one batch, its subjects resolved by the
-//! outpost ([`Segment`]), run as remote programs one builder generates
-//! from the operations ([`run_batch`]), or call by call through the UI
-//! Automation adapter ([`run_calls`]).
+//! The request list's fusable operations on UI Automation subjects (the
+//! verbatim-uia-rops crate guide, "The program builder and the
+//! ordinary-calls executor"): a run of consecutive steps of one batch, its
+//! subjects resolved by the outpost ([`Segment`]), run as remote programs
+//! one builder generates from the operations ([`run_batch`]), or call by
+//! call through the UI Automation adapter ([`run_calls`]).
 //!
 //! The builder puts consecutive steps in one program, each in a try block
 //! with a status of its own, every status written "not reached" when the

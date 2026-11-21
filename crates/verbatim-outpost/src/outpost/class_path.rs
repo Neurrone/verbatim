@@ -1,5 +1,4 @@
-//! The window a class path names, the request list's `Window` subject
-//! (`target/captures-2026-11-20/build8-design/design.md`, section 3): its
+//! The window a class path names, the request list's `Window` subject: its
 //! first class a top-level window's, each later one a window inside the
 //! one before at any depth, as the taskbar's notification area and the
 //! tray overflow flyout are named for the notification area list.
