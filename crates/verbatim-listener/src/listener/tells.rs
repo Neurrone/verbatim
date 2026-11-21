@@ -438,14 +438,9 @@ fn tell_msaa(
         tracing::trace!(?kind, window, reason, "a WinEvent is not told");
         seen(None)
     };
-    let owner = reads.owner(window).1;
-    // A console window's events are served by the process of the thread
-    // that raised them.
-    let process = if console || owner == 0 {
+    let process = routed_process(&class, reads.owner(window).1, || {
         reads.process_of_thread(thread)
-    } else {
-        Some(owner)
-    };
+    });
     let Some(process) = process.map(Pid) else {
         return dropped("the process serving the window cannot be read");
     };
@@ -484,6 +479,23 @@ fn tell_msaa(
         checked: None,
     };
     seen(Some(Held::Tell(Box::new(tell))))
+}
+
+/// The process that serves a window of `class` whose owner is process
+/// `owner`, 0 for none: a console window is served by its console host,
+/// which `host` reads as the process of one of its threads, and so is a
+/// window whose owner cannot be read; any other window by its owner. A
+/// tell and Core's read of an MSAA object both route by it.
+pub(super) fn routed_process(
+    class: &str,
+    owner: u32,
+    host: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    if class == CONSOLE_WINDOW_CLASS || owner == 0 {
+        host()
+    } else {
+        Some(owner)
+    }
 }
 
 /// The executable name of `process`, read afresh, for a test.

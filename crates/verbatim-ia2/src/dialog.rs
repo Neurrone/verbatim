@@ -108,12 +108,17 @@ impl DialogObject {
             .then_some((self.hwnd, OBJID_CLIENT.0, CHILDID_SELF))
     }
 
-    /// The object's children, in order, each a window's client area where
-    /// the child is a window object; none when they cannot be read. Two
-    /// calls (`accChildCount` and `AccessibleChildren`), then for each
-    /// child object its role, and for a window object its window.
+    /// The object's first children, at most `room`, in order, each a
+    /// window's client area where the child is a window object; none when
+    /// they cannot be read, and no call at a `room` of 0. Two calls
+    /// (`accChildCount` and `AccessibleChildren`, which fetches no more
+    /// than `room`), then for each child object its role, and for a window
+    /// object its window.
     #[must_use]
-    pub fn children(&self) -> Vec<Self> {
+    pub fn children(&self, room: usize) -> Vec<Self> {
+        if room == 0 {
+            return Vec::new();
+        }
         let acc = self.acc();
         if acc.child() != CHILDID_SELF {
             return Vec::new();
@@ -122,7 +127,7 @@ impl DialogObject {
             Ok(count) if count > 0 => usize::try_from(count).unwrap_or(0),
             _ => return Vec::new(),
         };
-        let Ok(entries) = acc.children(count) else {
+        let Ok(entries) = acc.children(count.min(room)) else {
             return Vec::new();
         };
         entries

@@ -63,7 +63,7 @@ kind, and Core asks the outpost for what it reads
 A console window is one application in its console host's outpost, as
 NVDA gives it and its text area the client's app module. The listener sends each
 `WinEvent` for a `ConsoleWindowClass` window to the process of the event's
-thread, the console host (`verbatim-listener`'s `listener::routed_process`), dropping one whose
+thread, the console host (`verbatim-listener`'s `tells::routed_process`, by which Core's reads of a window's MSAA object are routed too), dropping one whose
 thread cannot be opened, so Core asks the console host's outpost of the
 window, which answers a current-focus request for it. A focus answer
 carries its application's name, read once per process and kept with the

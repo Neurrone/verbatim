@@ -52,8 +52,9 @@ pub enum Visited {
 pub trait DialogParent {
     /// What its children are.
     type Child: DialogObject;
-    /// Its children, in order; none when they cannot be read.
-    fn children(&self) -> Vec<Self::Child>;
+    /// Its first children, at most `room`, in order; none when they
+    /// cannot be read, and none fetched at a `room` of 0.
+    fn children(&self, room: usize) -> Vec<Self::Child>;
 }
 
 /// One object a dialog's text is gathered from: a descendant of the
@@ -77,8 +78,8 @@ pub trait DialogObject: DialogParent<Child = Self> + Sized {
 
 impl DialogParent for verbatim_ia2::dialog::DialogObject {
     type Child = Self;
-    fn children(&self) -> Vec<Self> {
-        Self::children(self)
+    fn children(&self, room: usize) -> Vec<Self> {
+        Self::children(self, room)
     }
 }
 
@@ -203,12 +204,12 @@ fn gather<P: DialogParent>(
     if walk.end.is_some() {
         return Ok(Vec::new());
     }
-    let mut children = parent.children();
     let room = MAX_OBJECTS.saturating_sub(walk.fetched);
-    if children.len() > room {
-        children.truncate(room);
+    if room == 0 {
         walk.end = Some(End::Cap);
+        return Ok(Vec::new());
     }
+    let children = parent.children(room);
     walk.fetched += children.len();
     let mut pieces = Vec::new();
     for (index, child) in children.iter().enumerate() {
@@ -324,15 +325,16 @@ impl<'a> UiaDialog<'a> {
 
 impl<'a> DialogParent for UiaDialog<'a> {
     type Child = UiaObject<'a>;
-    /// One call: the dialog's children with their properties cached; none
-    /// when they were read already.
-    fn children(&self) -> Vec<UiaObject<'a>> {
+    /// One call: the dialog's first children with their properties
+    /// cached, or those read already; none at a `room` of 0.
+    fn children(&self, room: usize) -> Vec<UiaObject<'a>> {
         match &self.read {
             Some(children) => children
                 .iter()
+                .take(room)
                 .map(|child| object(self.uia, self.request, child))
                 .collect(),
-            None => children_of(self.uia, self.request, &self.element),
+            None => children_of(self.uia, self.request, &self.element, room),
         }
     }
 }
@@ -346,16 +348,23 @@ pub struct UiaObject<'a> {
     parts: CachedUiaParts,
 }
 
-/// `parent`'s children, each read with `request`, in one call; none when
-/// they cannot be read.
+/// `parent`'s first children, at most `room`, each read with `request`,
+/// in one call; none when they cannot be read, and no call at a `room` of
+/// 0. UI Automation's call returns every child, so past the room the
+/// children are fetched and let go of unread.
 fn children_of<'a>(
     uia: &'a Uia,
     request: &'a Request<DialogText>,
     parent: &Live,
+    room: usize,
 ) -> Vec<UiaObject<'a>> {
+    if room == 0 {
+        return Vec::new();
+    }
     uia.children(parent, request)
         .unwrap_or_default()
         .iter()
+        .take(room)
         .map(|child| object(uia, request, child))
         .collect()
 }
@@ -376,9 +385,10 @@ fn object<'a>(
 
 impl DialogParent for UiaObject<'_> {
     type Child = Self;
-    /// One call: the element's children with their properties cached.
-    fn children(&self) -> Vec<Self> {
-        children_of(self.uia, self.request, &self.element)
+    /// One call: the element's first children with their properties
+    /// cached.
+    fn children(&self, room: usize) -> Vec<Self> {
+        children_of(self.uia, self.request, &self.element, room)
     }
 }
 
@@ -431,12 +441,15 @@ mod tests {
         value: Option<&'static str>,
         children: Vec<Fake>,
         id: Option<i32>,
+        /// The rooms its children were asked for in.
+        asked: std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
     }
 
     impl DialogParent for Fake {
         type Child = Self;
-        fn children(&self) -> Vec<Self> {
-            self.children.clone()
+        fn children(&self, room: usize) -> Vec<Self> {
+            self.asked.borrow_mut().push(room);
+            self.children.iter().take(room).cloned().collect()
         }
     }
 
@@ -575,19 +588,35 @@ mod tests {
     }
 
     /// A dialog of one object more than the cap gives the text of the
-    /// first 65,536, the text read up to the cap (Dickson, 2026-11-21).
+    /// first 65,536, the text read up to the cap (Dickson, 2026-11-21); no
+    /// parent is asked for more children than the room left, and none is
+    /// asked once the room is gone.
     #[test]
     fn a_dialog_past_the_cap_gives_the_text_read_up_to_it() {
-        let mut children = vec![object(Role::StaticText, "Line"); MAX_OBJECTS];
-        children.push(object(Role::StaticText, "Past the cap"));
+        let mut children = vec![object(Role::StaticText, "Line"); MAX_OBJECTS - 3];
+        let group = Fake {
+            role: Some(Role::Group),
+            children: vec![object(Role::StaticText, "Line"); 3],
+            ..Fake::default()
+        };
+        let after = Fake {
+            role: Some(Role::Group),
+            children: vec![object(Role::StaticText, "Past the cap")],
+            ..Fake::default()
+        };
+        children.push(group.clone());
+        children.push(after.clone());
         let crowd = dialog(children);
         assert_eq!(
             dialog_text(&crowd),
-            Some(vec!["Line"; MAX_OBJECTS].join(
+            Some(vec!["Line"; MAX_OBJECTS - 2].join(
                 "
 "
             ))
         );
+        assert_eq!(*crowd.asked.borrow(), [MAX_OBJECTS]);
+        assert_eq!(*group.asked.borrow(), [1], "the room left");
+        assert_eq!(*after.asked.borrow(), Vec::<usize>::new(), "no room left");
     }
 
     /// A tree that loops, an element met again below itself, ends the

@@ -2285,7 +2285,7 @@ fn activate_walk(
     let mut current = node_id;
     let mut first_error = None;
     let mut visited = BTreeSet::new();
-    for _ in 0..=ACTIVATION_PARENT_HOPS {
+    for hop in 0..=ACTIVATION_PARENT_HOPS {
         if let Some(identity) = walk.visited(current)
             && !visited.insert(identity)
         {
@@ -2301,6 +2301,10 @@ fn activate_walk(
                     first_error = Some(error);
                 }
             }
+        }
+        // The last parent within the cap is not read past.
+        if hop == ACTIVATION_PARENT_HOPS {
+            break;
         }
         match walk.parent(current) {
             Some(parent) => current = parent,
@@ -2407,6 +2411,8 @@ mod activation_tests {
         action: u64,
         identity: fn(u64) -> Option<Identity>,
         tried: Vec<u64>,
+        /// How many parents were read.
+        parents: u64,
     }
 
     impl ActivationWalk for Chain {
@@ -2419,6 +2425,7 @@ mod activation_tests {
             }
         }
         fn parent(&mut self, node: NodeId) -> Option<NodeId> {
+            self.parents += 1;
             Some(NodeId::new(node.number() + 1))
         }
         fn visited(&self, node: NodeId) -> Option<Identity> {
@@ -2431,6 +2438,7 @@ mod activation_tests {
             action,
             identity,
             tried: Vec::new(),
+            parents: 0,
         }
     }
 
@@ -2457,8 +2465,8 @@ mod activation_tests {
     }
 
     /// An action one parent past the cap of 1,024 is not reached: the walk
-    /// tries the node and 1,024 parents, then answers its first failure
-    /// (Dickson, 2026-11-21).
+    /// tries the node and 1,024 parents, reading no parent past them, then
+    /// answers its first failure (Dickson, 2026-11-21).
     #[test]
     fn an_action_past_the_cap_is_not_reached() {
         let hops = u64::from(ACTIVATION_PARENT_HOPS);
@@ -2469,6 +2477,7 @@ mod activation_tests {
         ));
         assert_eq!(walk.tried.last(), Some(&hops));
         assert_eq!(walk.tried.len(), usize::try_from(hops + 1).expect("small"));
+        assert_eq!(walk.parents, hops);
     }
 
     /// A parent met again, a tree that loops every three nodes, ends the
@@ -2486,12 +2495,15 @@ mod activation_tests {
         assert_eq!(walk.tried, [0, 1, 2]);
     }
 
-    /// Nodes with no identity are bounded by the cap alone.
+    /// Nodes with no identity are bounded by the cap alone: the walk
+    /// tries the node and every parent up to the cap.
     #[test]
     fn nodes_with_no_identity_are_walked_up_to_the_cap() {
-        let mut walk = chain(5, |_| None);
-        assert!(activate_walk(&mut walk, NodeId::new(0)).is_ok());
-        assert_eq!(walk.tried, (0..=5).collect::<Vec<_>>());
+        let hops = u64::from(ACTIVATION_PARENT_HOPS);
+        let mut walk = chain(hops + 1, |_| None);
+        assert!(activate_walk(&mut walk, NodeId::new(0)).is_err());
+        assert_eq!(walk.tried, (0..=hops).collect::<Vec<_>>());
+        assert_eq!(walk.parents, hops);
     }
 }
 

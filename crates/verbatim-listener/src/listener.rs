@@ -768,7 +768,14 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             kept.is_own(*listener).then(|| kept.owner(*token)).flatten()
         }
         ObjectRef::Msaa { window, .. } => {
-            Some(Pid(window_pid(isize::from(*window)))).filter(|pid| pid.0 != 0)
+            // The window's own thread stands for the thread that raised
+            // its events, which a read does not carry.
+            let window = isize::from(*window);
+            let (thread, owner) = verbatim_win32::window::window_owner(window);
+            tells::routed_process(&window_class_name(window), owner, || {
+                (thread != 0).then(|| process_of_thread(thread)).flatten()
+            })
+            .map(Pid)
         }
         ObjectRef::Node(_) => {
             answer(Outcome::Refused(Refusal::Unsupported));
