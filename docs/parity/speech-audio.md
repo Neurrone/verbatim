@@ -55,7 +55,7 @@ closing quotation mark or parenthesis, then whitespace) and holds what
 follows back to start the next utterance; ten units in a row with no
 sentence end are spoken together, and each unit's caret callback stays
 where its text starts ([Speech](../nvda/speech.md), "Say-all speaks
-without pauses"). Verbatim: **matched (unverified)**: Core splits every
+without pauses"). Verbatim: **matched**: Core splits every
 unit say-all reads with `verbatim_text::last_pause`, holds the rest back
 with its unit's mark, and speaks a sentence that runs from one line to
 the next in one utterance with the second line's index mark where its
@@ -63,20 +63,15 @@ text starts, so the caret moves to the second line when its words start
 playing and a key leaves it on the line whose words were playing. The
 same rule's cases are matched: no abbreviation list ("Dr. " ends a
 sentence), no split at a decimal point or after an ellipsis, blank units
-counted among the ten. No NVDA transcript of a sentence running across
-lines has been compared. Both eSpeak NG and OneCore speak such a
+counted among the ten. Both eSpeak NG and OneCore speak such a
 sentence in one synthesis call, the mark inside it, as NVDA's eSpeak NG
 driver does; with eSpeak NG the audio is the unmarked sentence's, sample
-for sample. Different, by design: NVDA's sentence ends are only the full
-stop, exclamation mark, and question mark, so a line of Chinese,
-Japanese, Hindi, Arabic, Urdu, Armenian, or Amharic never splits.
-Verbatim also ends a sentence at the Chinese and Japanese full-width
-marks (。！？, with no space needed after them), the Devanagari danda
-and double danda, the Arabic question mark, the Urdu full stop, the
-Armenian full stop, and the Ethiopic full stop and question mark, and
-also takes guillemets either way round, German quotation marks („ and
-“), corner brackets, and the full-width parenthesis as the one closing
-character.
+for sample. The sentence ends are NVDA's alone: a line of Chinese,
+Japanese, Hindi, Arabic, Urdu, Armenian, or Amharic never splits, and
+white space is Python's, U+001C to U+001F included. NVDA's capture of
+say-all running from "你好。再见" into the next line, "谢谢", as one
+utterance is matched
+(`crates/verbatim-text/tests/fixtures/captures/b12-say-all.jsonl`).
 
 ### Structured utterances vs flat strings
 

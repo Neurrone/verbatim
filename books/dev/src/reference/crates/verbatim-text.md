@@ -34,16 +34,13 @@ time Chinese text is segmented and kept for the life of the process.
 - `Segmenter::sentences`: sentences by Unicode's sentence rules.
 - `last_pause`: where say-all's speech without pauses splits a piece of
   text (`docs/nvda/speech.md`, "Say-all speaks without pauses"): just past
-  its last sentence end, with the whitespace after it. A sentence end is a
-  sentence-ending mark (the full stop, exclamation and question marks,
-  their full-width Chinese and Japanese forms, the Devanagari danda and
-  double danda, the Arabic question mark, the Urdu and Armenian full
-  stops, the Ethiopic full stop and question mark) after a character that
-  is neither whitespace nor such a mark, with at most one closing quotation
-  mark, guillemet, corner bracket, or parenthesis after it, then whitespace
-  or the end (none needed after a full-width mark). There is no list of
-  abbreviations, so "Dr. " ends a sentence; a decimal point and an
-  ellipsis do not.
+  its last sentence end, with the white space after it. A sentence end is
+  NVDA's: a full stop, exclamation mark or question mark after a character
+  that is neither white space nor such a mark, with at most one closing
+  quotation mark, apostrophe or parenthesis after it, then white space or
+  the end. White space includes U+001C to U+001F, as Python's `\s` does.
+  There is no list of abbreviations, so "Dr. " ends a sentence; a decimal
+  point and an ellipsis do not.
 - `is_line_break`, `lines`, and `line_at`: lines of text Core holds whole,
   such as an object's value reviewed as flat text. A carriage return and
   line feed together are one break; a carriage return alone, a line feed

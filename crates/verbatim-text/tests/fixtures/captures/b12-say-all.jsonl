@@ -1,0 +1,10 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch notepad.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\captures\\s3-notepad-output\\documents\\verbatim-e2e-b12.txt","step":0}
+{"label":"front notepad.exe \"verbatim-e2e-b12\"","step":1}
+{"kind":"event","ms":68,"step":1,"text":"cancel"}
+{"kind":"speech","ms":69,"step":1,"tag":"Normal","text":"verbatim-e 2e-b 12 dot txt - Notepad"}
+{"kind":"speech","ms":76,"step":1,"tag":"Normal","text":"Text editor  document  你好 ideographic period 再见"}
+{"label":"insert+downarrow","step":2}
+{"kind":"event","ms":4,"step":2,"text":"cancel"}
+{"kind":"speech","ms":31,"step":2,"tag":"Normal","text":"你好 ideographic period 再见  谢谢"}
+{"kind":"speech","ms":32,"step":2,"tag":"Normal","text":""}
