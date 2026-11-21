@@ -25,7 +25,27 @@ pub(crate) use super::{no_setup as setup, no_teardown as teardown};
 
 const NAME: &str = "twin-item-at-a-deleted-items-ids";
 
-const FIXTURE: &str = include_str!("../../../mockapp/tests/fixtures/list_view_twins.json");
+// The inline window fixture stays until NVDA is captured on the file's
+// stand-in (`list_view_twins.json`, a pane root), whose window speech
+// differs; the capture series is paused (build 6).
+const FIXTURE: &str = r#"{
+  "id": "root",
+  "role": "window",
+  "name": "{title}",
+  "children": [
+    {
+      "id": "clipboard",
+      "role": "list",
+      "native": "list_view",
+      "columns": [["Name", 200]],
+      "children": [
+        { "id": "first", "role": "list_item", "name": "Copy" },
+        { "id": "second", "role": "list_item", "name": "Copy" }
+      ]
+    }
+  ]
+}
+"#;
 
 pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let app = (NAME, open_msaa_mockapp(scenario, NAME, FIXTURE));

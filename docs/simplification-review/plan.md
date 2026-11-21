@@ -102,7 +102,7 @@ The session fills in a row when its build is pushed and its GitHub run is read. 
 | 3. Core: one owner per fact | pushed 2026-11-21 (684eb0c4), GitHub run read: failed only on `wpf_password`'s setup, a PowerShell-hosted window opening late, listed in `docs/flaky-tests.md` for build 6; the ARM64 job passed with the compiled Forms menu | 58b53394 to 011a14c5, then the review's fixes 946e0743 to 684eb0c4 | about 2,840 new added against about 146, mostly lines rewritten in place; about 5,135 removed against about 2,820; net about 2,295 fewer | about 2,210 new added against 160 accepted, mostly churn from renames, the new tests about 420; about 3,240 removed | none: the only record build 3 cites, REPORT.md, later builds cite | | | | |
 | 4. The readers | not started | | | | |
 | 5. Remote operations and text | not started | | | | |
-| 6. The tests and the harness | flaky list triaged (23 entries) and its fixes pushed (5713c64d and after); the measurements closed four more entries; the test console's cause named and being fixed | | | | |
+| 6. The tests and the harness | phase A pushed 2026-11-21; the capture series paused by Dickson after five compare-mode fixes followed its review (three-fix rule), the capture check off; phases B (after build 4) and C (after build 5), and compare mode's remaining fixes as their own piece, to come | 5713c64d and after (flaky list), 7d6bca51, ba69005b, 39091874, 1410e7d8; phase A 29f14ccf to the push | phase A about 2,760 added and 4,700 removed across harness, scenarios and tools, against the design's 765 added | in the above | none yet |
 | 7. The documents | not started | | | | |
 | 8. The request list closed | not started | | | | |
 | 9. The terminal rebuild | not started | | | | |
