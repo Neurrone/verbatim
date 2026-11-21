@@ -1668,7 +1668,6 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
         &FocusQuery {
             element: &window,
             known: &[],
-            previous: None,
             depth_limit: 64,
             fill: &fill,
             element_fill: &element_fill,
@@ -2566,10 +2565,6 @@ fn warm_runtime_id(element: &IUIAutomationElement) {
 /// remote program, and classically. The calls of the focus ancestry around
 /// it are those of the focus ledger above; these are the selected item's
 /// alone classically, and the whole program remotely.
-#[expect(
-    clippy::too_many_lines,
-    reason = "both containers read both ways, with the cache requests the program takes"
-)]
 fn uia_selected_children_cost_exactly() {
     let title = common::unique_title("mockapp-counts-uia-selection");
     let mut app = common::spawn_visible("combo_box.json", "uia", &title);
@@ -2640,7 +2635,6 @@ fn uia_selected_children_cost_exactly() {
                 &FocusQuery {
                     element: &input,
                     known: &[],
-                    previous: None,
                     depth_limit: 64,
                     fill: &ancestors,
                     element_fill: &element_fill,
@@ -4366,7 +4360,6 @@ fn a_cells_table_costs_exactly() {
                 &FocusQuery {
                     element: &input,
                     known: &[],
-                    previous: None,
                     depth_limit: 64,
                     fill: &ancestors,
                     element_fill: &element_fill,

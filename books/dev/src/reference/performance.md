@@ -2091,14 +2091,13 @@ instructions, so only programs under half the limit can be counted.
 Pinned exactly in `crates/mockapp/tests/instruction_limit.rs`, worst case
 first, the share of the limit in brackets:
 
-- The focus ancestry: 3,078 (31 percent) for a list sixty groups deep,
+- The focus ancestry: 3,072 (31 percent) for a list sixty groups deep,
   every ancestor returned under the depth limit of 64, with the selected
-  item, whose read in a try block costs 3; 2,243 at a depth limit of 30;
-  1,278 for a list whose group is known. A deeper tree adds about a dozen
+  item, whose read in a try block costs 3; 2,237 at a depth limit of 30;
+  1,276 for a list whose group is known. A deeper tree adds about a dozen
   a level beyond the depth limit.
-- The listener's refreshed read 3,109 at the worst case; the outpost's
-  path walk 1,219 down sixty-two levels, 233 down one, and 218 to an
-  element not found.
+- The outpost's path walk 1,219 down sixty-two levels, 233 down one, and
+  218 to an element not found.
 - The navigation step: 967 (10 percent) sixty-two levels below its window,
   235 right under it, about 12 a level.
 - The tree dump: 4,635 (46 percent) for a run reading its sixty children

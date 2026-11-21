@@ -763,7 +763,7 @@ About 2,500 to 3,700 product lines removed (REPORT's estimate, the upper end wit
 ### Done when
 
 - One dispatcher: `grep -n "if !remote {"` in `crates/verbatim-uia-rops/src` shows `choose` and the named exceptions only.
-- `Uia::ancestors` and `Uia::neighbor` are gone; `FocusQuery` has no `previous`.
+- `Uia::neighbor` is gone and one chain loop remains (`Uia::ancestors` is kept: the twin lacks four of its outputs and would add calls to two callers that are not focuses; Claude, 2026-11-21); `FocusQuery` has no `previous`.
 - The fallback count is written into the build's report, with the twins' outcome that follows from it.
 - `review_offset` and `StartMarker::Flat` are gone and flat review goes through the text path; Backspace says the provider's unit at every offset; both match their captures.
 - `call_counts.rs` holds no hit tuple and `performance.md` names no hit figure (the ledger wording itself waits for the process revision).

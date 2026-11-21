@@ -775,7 +775,12 @@ fn a_title_bar_is_stepped_from_by_the_classic_calls() {
             matches!(path, Path::Classic),
             next.neighbor.map(|neighbor| neighbor.read().name),
         ),
-        (Role::TitleBar, Some(true), true, Some(Some("Group One".to_owned()))),
+        (
+            Role::TitleBar,
+            Some(true),
+            true,
+            Some(Some("Group One".to_owned()))
+        ),
         "{path:?}"
     );
     app.quit();

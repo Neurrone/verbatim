@@ -21,12 +21,12 @@ use verbatim_model::{
 use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
-    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, NodeGates, Request,
-    Shape, Uia,
+    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates,
+    Request, Shape, Uia,
 };
 use verbatim_uia_rops::{
     FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
-    navigation_step,
+    navigation_step, navigation_step_classic,
 };
 
 use crate::dialog_text::{Visited as Identity, is_dialog};
@@ -942,7 +942,6 @@ fn uia_remote_enrichment(
     let query = FocusQuery {
         element: &input,
         known: &known,
-        previous: None,
         depth_limit: MAX_ANCESTOR_HOPS,
         fill: &fill,
         element_fill: &element_fill,
@@ -2014,18 +2013,48 @@ fn uia_step(
     if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
         return Ok(step);
     }
+    let direction = direction_of(kind)
+        .ok_or_else(|| ReadError::Failed(format!("{kind:?} is not a navigation step")))?;
     let (uia, nodes, element) = uia_node(context, client, node_id)?;
-    let from_window = verbatim_uia::nearest_window_handle(element.live().element());
-    let neighbor = uia
-        .neighbor(element.live(), &nodes, context.nodes(), kind)
-        .map_err(|error| {
-            if verbatim_uia::element_is_gone(&error) {
-                ReadError::Gone
-            } else {
-                ReadError::Failed(format!("UIA navigation failed: {error}"))
-            }
-        })?;
-    Ok((neighbor, from_window))
+    let fill = Fill::new(&nodes);
+    let query = StepQuery {
+        element: &element.narrow::<Kept>(),
+        direction,
+        fill: &fill,
+    };
+    let step = navigation_step_classic(uia, &query).map_err(|error| {
+        if error
+            .hresult()
+            .is_some_and(|code| verbatim_uia::element_is_gone(&windows::core::Error::from(code)))
+        {
+            ReadError::Gone
+        } else {
+            ReadError::Failed(format!("UIA navigation failed: {error}"))
+        }
+    })?;
+    Ok(stepped(context, step))
+}
+
+/// A navigation query's direction, `None` for a query that is not a step.
+fn direction_of(kind: QueryKind) -> Option<NavigationDirection> {
+    match kind {
+        QueryKind::Parent => Some(NavigationDirection::Parent),
+        QueryKind::NextSibling => Some(NavigationDirection::NextSibling),
+        QueryKind::PreviousSibling => Some(NavigationDirection::PreviousSibling),
+        QueryKind::FirstChild => Some(NavigationDirection::FirstChild),
+        _ => None,
+    }
+}
+
+/// A step's neighbor as a snapshot with its table, and the window it was
+/// taken from.
+fn stepped(context: &RequestContext<'_>, step: verbatim_uia_rops::Step) -> Stepped {
+    let neighbor = step.neighbor.map(|neighbor| {
+        let mut neighbor = neighbor.snapshot(context.nodes());
+        neighbor.details.set_table(step.neighbor_table);
+        neighbor
+    });
+    (neighbor, step.window)
 }
 
 /// One object-navigation step: the neighbor, or `None` for a genuine tree
@@ -2107,12 +2136,8 @@ fn uia_remote_step(
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Option<Stepped>, ReadError> {
-    let direction = match kind {
-        QueryKind::Parent => NavigationDirection::Parent,
-        QueryKind::NextSibling => NavigationDirection::NextSibling,
-        QueryKind::PreviousSibling => NavigationDirection::PreviousSibling,
-        QueryKind::FirstChild => NavigationDirection::FirstChild,
-        _ => return Ok(None),
+    let Some(direction) = direction_of(kind) else {
+        return Ok(None);
     };
     let Some(element) = context
         .store
@@ -2152,12 +2177,7 @@ fn uia_remote_step(
             context.read_classically(top_level_of(hwnd));
         }
     }
-    let neighbor = step.neighbor.map(|neighbor| {
-        let mut neighbor = neighbor.snapshot(context.nodes());
-        neighbor.details.set_table(step.neighbor_table);
-        neighbor
-    });
-    Ok(Some((neighbor, step.window)))
+    Ok(Some(stepped(context, step)))
 }
 
 /// `neighbor` through the backend its window uses, as NVDA corrects the API

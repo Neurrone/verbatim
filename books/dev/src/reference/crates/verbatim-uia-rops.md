@@ -166,23 +166,18 @@ element's raw-view ancestors and what a focus report needs besides. A
   and `element_fill`, the element's and its value's selected item's, which adds
   the node's place since each is read alone (decision 9 of
   `books/dev/src/explanation/design/uia-shapes.md`);
-- `previous`, the element the caller holds under the same runtime id,
-  whose `HasKeyboardFocus` is read live first, because an application can
-  give a dead element's runtime id to a new one (File Explorer does), and
-  `require_focus`, for a live read of the element's `HasKeyboardFocus`
-  after it (NVDA's check that a focus event is not stale), which stops the
-  walk when false and lets it go on when the read fails, by UIA's timeout
-  or any other error, a gone element's among them, as NVDA's
-  `shouldAllowUIAFocusEvent` answers true on a COM error; a failed read of
-  `previous` answers it gone, so the focus is no repeat: NVDA's order, so a focus only being lost cannot read as
-  a new element under its runtime id
+- `require_focus`, for a live read of the element's `HasKeyboardFocus`
+  (NVDA's check that a focus event is not stale), which stops the walk
+  when false and lets it go on when the read fails, by UIA's timeout or
+  any other error, a gone element's among them, as NVDA's
+  `shouldAllowUIAFocusEvent` answers true on a COM error
   ([ADR 0001: Focus](../adr/0001-focus.md), "The listener's checks, ported
-  from NVDA's focus handler"). Both reads are in the remote
-  program's one round trip, and are the classic walk's first two calls;
-- `refresh`, for the focused element's own cache filled afresh in the
-  same round trip, so the focus listener reports its value, states, and
-  details without a second call;
-- for the classic walk only, `before_call`, told each call's name as it begins so
+  from NVDA's focus handler"). The read is the remote program's first, and
+  the classic walk's first call;
+- for the classic walk only, `refresh`, for the focused element's own
+  cache filled afresh, so the focus listener, the one caller that sets it,
+  reports its value, states, and details as they are when the focus is
+  read; `before_call`, told each call's name as it begins so
   the caller can time it; `nearest_window` and `value_available`,
   answers the caller already has, each saving a call; and `plain`, which
   says, by local calls, whether a window is a ghost's or a hung
@@ -192,7 +187,7 @@ element's raw-view ancestors and what a focus report needs besides. A
   window as a plain window. The remote program cannot judge a window
   between its steps; a caller with such a window above the focus runs the
   classic walk instead. And `progress`, told each fact as the walk reads
-  it (`Progress`: the previous element's keyboard focus, the element read
+  it (`Progress`: the element read
   afresh, the value's selected item, and each ancestor kept), so a caller keeps
   what was read should a later call fail. Nothing of the query's ends the
   classic walk early: each call waits for the provider, up to UIA's
@@ -232,12 +227,8 @@ the element does not have the focus, and otherwise an `Ancestry`:
   selection.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one (NVDA's `getNearestWindowHandle`).
-- `previous_focused`: what was read of `previous`, a
-  `verbatim_model::EarlierElement`: focused, not focused, or gone when its
-  read failed other than by time (the remote program's run failing on its
-  import, or the classic read failing), `None` when the query named
-  none.
-- `element`: with `refresh`, the focused element's fresh cache.
+- `element`: with `refresh`, the classic walk's fresh cache of the
+  focused element.
 - `legacy_state`: for a menu item, its legacy MSAA state bits, read by
   the remote program, `Some(None)` when unsupported; always `None` from
   the classic walk, whose caller makes one live read. A menu item that no
@@ -246,7 +237,9 @@ the element does not have the focus, and otherwise an `Ancestry`:
 - `element_table`: the table of the element, when it is a cell read with
   the theme's cell coordinates, a step of the program (`read_table`) and
   one call of the classic walk. `FocusQuery::is_cell` says whether the element is a cell
-  when the caller's cache knows, so the program grows only for one.
+  when the caller's cache knows, so the program grows only for one; the
+  program reads no table without it, and the classic walk takes it from
+  the element read afresh.
 
 Only reaching the top ends a walk as known. In the classic view a
 top-level window's parent is the desktop root, so the classic walk stops
@@ -263,11 +256,8 @@ read inside the provider can leave the handle out (`books/dev/src/reference/uia-
 the one its cached `NativeWindowHandle` reports. A provider whose
 `Navigate` fails reaches the client as no parent.
 
-The remote program reads `HasKeyboardFocus` and halts when it is false,
-then reads the previous element's. UIA fails a whole run before its first
-instruction when an imported element is gone, so `focus_ancestry` runs
-the program once more without a gone `previous` and answers it as not
-focused. For a looping selector or a combo box the program reads
+The remote program reads `HasKeyboardFocus` and halts when it is false.
+For a looping selector or a combo box the program reads
 `Selection2FirstSelectedItem` (`SelectionPattern2`), else the `Selection`
 property; for a combo box it asks `IsValuePatternAvailable` first, all
 inside a try block whose catch leaves the selected item out. Then
@@ -300,9 +290,8 @@ gives it) is `Remote`, `Classic`, or `Fallback(error)`, so the caller can
 log the program's error and stop trying for a window whose import
 failed. A program that timed out or whose element is gone is not answered
 classically, which would wait on a stalled application a second time:
-its error is returned. In the classic walk a read of `previous` that
-times out answers it gone, a keyboard focus read that times out lets the
-focus through, and a hop that times out ends the walk at a failed step
+its error is returned. In the classic walk a keyboard focus read that
+times out lets the focus through, and a hop that times out ends the walk at a failed step
 (`Ancestry::failed_hop`), so a walk that hit the timeout is never
 reported as a short but complete ancestry; a selected item that times
 out or is gone is left out and the walk goes on. It fails only when the

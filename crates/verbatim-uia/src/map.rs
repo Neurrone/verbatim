@@ -157,7 +157,16 @@ const LEGACY_STATE_CHECKED: i32 = 0x10;
 /// item and for nothing else.
 #[must_use]
 pub fn wants_legacy_checked_state(role: Role, states: StateSet) -> bool {
-    role == Role::MenuItem && !states.contains(State::Checkable)
+    may_hold_legacy_checked_state(role) && !states.contains(State::Checkable)
+}
+
+/// Whether a node of `role` is of the one kind whose checked state may be
+/// only in its legacy MSAA state, a menu item, before its patterns are
+/// known ([`wants_legacy_checked_state`] adds that no pattern makes it
+/// checkable).
+#[must_use]
+pub fn may_hold_legacy_checked_state(role: Role) -> bool {
+    role == Role::MenuItem
 }
 
 /// Whether a node's value is the name of its first selected item, as NVDA
@@ -169,10 +178,17 @@ pub fn wants_legacy_checked_state(role: Role, states: StateSet) -> bool {
 /// its UIA class name, and `value_available` whether it has the pattern.
 #[must_use]
 pub fn value_from_selection(role: Role, class_name: Option<&str>, value_available: bool) -> bool {
-    !value_available
-        && (role == Role::ComboBox
-            || (role == Role::List
-                && class_name.is_some_and(|class| class.contains("LoopingSelector"))))
+    !value_available && selection_may_be_value(role, class_name)
+}
+
+/// Whether a node's first selected item may be its value, by its role and
+/// UIA class name alone, before its `Value` pattern is known: a combo
+/// box's, or a looping selector's ([`value_from_selection`] adds that the
+/// node has no `Value` pattern).
+#[must_use]
+pub fn selection_may_be_value(role: Role, class_name: Option<&str>) -> bool {
+    role == Role::ComboBox
+        || (role == Role::List && class_name.is_some_and(|class| class.contains("LoopingSelector")))
 }
 
 /// Adds checkable and checked to `states` when the legacy MSAA state bits

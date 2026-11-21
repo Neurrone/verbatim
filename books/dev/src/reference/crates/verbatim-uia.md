@@ -127,13 +127,6 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   (`timed_out`) or found the container or item gone (`element_is_gone`)
   is an error, never "nothing selected". `selected_node(container,
   request, registry)` reads the item as a `Node` snapshot.
-- `neighbor(element, request, registry, kind)`: one raw-view tree-walker
-  step (parent, next or previous sibling, first child, named by a
-  navigation `QueryKind` from `verbatim-model`), the neighbor as a `Node`
-  snapshot, `Ok(None)` for none. A step that fails because the element is
-  gone is an error; any other failure reads as no neighbor, as NVDA's
-  tree-walker failures do. The tree is the full, unfiltered one, matching
-  NVDA with simple review mode off.
 - `activate`: NVDA's activation ladder, `Invoke`, then `Toggle`, then
   `SelectionItem`'s select, answering `ActionName::Invoke` for an Invoke
   and no name otherwise; each pattern fetched live, since activation is
@@ -187,7 +180,9 @@ when set, is told of each ancestor stepped to, reported or not, by its
 runtime id and its own window, unless it is the root of a window read
 through the other API: the raw view's chain, by which the outpost finds
 an element again from a window down its runtime ids. `ancestors_from`
-and `ancestor_chain_from_parts` tell it the same way.
+and `ancestor_chain_from_parts` tell it the same way: both run one loop
+over the ancestors already read, each with its own way of taking one,
+and make no call.
 
 The walk never steps across the process boundary
 (`books/dev/src/explanation/design/listener-without-connections.md`, section 3): before each

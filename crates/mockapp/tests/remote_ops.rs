@@ -164,7 +164,6 @@ fn query<'a>(
     FocusQuery {
         element,
         known,
-        previous: None,
         depth_limit: 50,
         fill,
         element_fill: fill,
@@ -282,10 +281,6 @@ fn both_agree(uia: &Uia, query: &FocusQuery<'_>) -> Ancestry {
         "the depth limit"
     );
     assert_eq!(remote.window, classic.window, "the nearest window");
-    assert_eq!(
-        remote.previous_focused, classic.previous_focused,
-        "the previous element's focus"
-    );
     assert!(
         remote.window.is_some(),
         "every fixture element has a window"
@@ -336,28 +331,19 @@ fn a_deep_chain_reads_the_same_both_ways() {
 /// which the program leaves out of its cache, reads as a valid entry, as
 /// UI Automation reads "not supported", and its read makes no failed
 /// cached read: the program's absent record answers it
-/// (`books/dev/src/explanation/design/uia-shapes.md`, section 7, decision 3). The focus and
-/// every ancestor, none of which mockapp gives the property.
+/// (`books/dev/src/explanation/design/uia-shapes.md`, section 7, decision 3). Every
+/// ancestor, none of which mockapp gives the property.
 fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
     let mut fixture = Fixture::start("mockapp-rops-absent");
     let deep = fixture.focus("deep", "Deep button");
-    let refreshed = FocusQuery {
-        refresh: true,
-        nearest_window: None,
-        before_call: None,
-        ..query(&deep, &[], &fixture.fill)
-    };
-    let ancestry = focused(focus_ancestry_remote(&fixture.uia, &refreshed), "remote");
-    let element = ancestry
-        .element
-        .expect("the focus's own cache, filled afresh");
+    let ancestry = focused(
+        focus_ancestry_remote(&fixture.uia, &query(&deep, &[], &fixture.fill)),
+        "remote",
+    );
     let _ = verbatim_uia::calls::take_failed_reads();
-    let reads: Vec<Ancestor> = std::iter::once(&element)
-        .chain(&ancestry.ancestors)
-        .map(Cached::read)
-        .collect();
+    let reads: Vec<Ancestor> = ancestry.ancestors.iter().map(Cached::read).collect();
     assert_eq!(verbatim_uia::calls::take_failed_reads(), 0);
-    assert_eq!(reads.len(), 6, "the focus and its five ancestors");
+    assert_eq!(reads.len(), 5, "the focus's five ancestors");
     for read in &reads {
         let node = &read.node;
         assert_eq!(node.states.data_valid, None, "{:?}", node.name);

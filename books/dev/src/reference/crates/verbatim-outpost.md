@@ -119,7 +119,8 @@ not step from a window's own window object into a parent window it reads
 as plain (`read::reads_as_plain`) and does not read a parent an
 `accParent` named in one, and a focus route through one is not followed
 (`Context::focus_route`). The accepted exception is object navigation's
-raw-view step (`Uia::neighbor`), which reads such a neighbor through UIA
+raw-view step (`verbatim_uia_rops::navigation_step_classic` when the
+program is not run), which reads such a neighbor through UIA
 before `read::corrected_backend` switches it to MSAA.
 
 Where a walk ends below the desktop, the chain goes on from a window

@@ -250,8 +250,7 @@ fn the_instruction_limit_is_measured() {
 /// fixture's nesting is bounded by its JSON parser's), every ancestor up to
 /// the window walked under the depth limit the outpost uses (64), against
 /// 64 known ancestors none of which it meets, with the list's selected item
-/// and a held element's focus read;
-/// the same walk stopped by a depth limit of 30 and walking on to the
+/// read; the same walk stopped by a depth limit of 30 and walking on to the
 /// window; and the list whose group is known, which stops the walk at once
 /// but for the window, still sixty-one levels up (mockapp's elements below
 /// its window have none of their own, where an application's controls
@@ -264,14 +263,12 @@ fn focus_and_navigation_execute_exactly() {
     // mockapp acknowledges the command once it has taken effect.
     fixture.app.send("focus fruits");
     let list = fixture.find_input("Fruits");
-    let previous = fixture.find("Banana");
     let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
     let fill = fixture.ancestors();
     let focus = fixture.focus();
     let query = FocusQuery {
         element: &list,
         known: &known,
-        previous: Some(&previous),
         depth_limit: 64,
         fill: &fill,
         element_fill: &focus,
@@ -304,7 +301,6 @@ fn focus_and_navigation_execute_exactly() {
     let typical = counted(|| {
         let typical = FocusQuery {
             known: &near,
-            previous: None,
             ..query
         };
         assert_eq!(ancestry(&typical), (1, false));
@@ -328,61 +324,29 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [3078, 2243, 1278, 967, 235],
+        [3072, 2237, 1276, 967, 235],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
 }
 
-/// The focus listener's read of a focus, and the outpost's walk to its own
-/// copy of an element by its path (stage A step 6). The read: the worst
-/// case of `focus_and_navigation_execute_exactly`, with the focus's own
-/// cache filled afresh in the same run, as the listener reads every focus.
-/// The walk: from mockapp's window down sixty nested groups and the list
+/// The outpost's walk to its own copy of an element by its path (stage A
+/// step 6): from mockapp's window down sixty nested groups and the list
 /// to its second item, the deepest path in mockapp, each level's first
 /// child the one wanted but for the item; one level down; and a path whose
 /// first runtime id no child has, which ends the walk at once.
-fn reads_and_paths_execute_exactly() {
+fn paths_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("deep.json", "mockapp-instructions-path");
     fixture.app.send("focus fruits");
     let list = fixture.find_input("Fruits");
-    let previous = fixture.find("Banana");
-    let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
-    let fill = fixture.ancestors();
-    let focus = fixture.focus();
-    let query = FocusQuery {
-        element: &list,
-        known: &known,
-        previous: Some(&previous),
-        depth_limit: 64,
-        fill: &fill,
-        element_fill: &focus,
-        require_focus: true,
-        refresh: true,
-        nearest_window: None,
-        before_call: None,
-        value_available: None,
-        is_cell: None,
-        plain: None,
-        progress: None,
-    };
-    let read = counted(|| {
-        let answer = focus_ancestry_remote(&fixture.uia, &query).expect("the program runs");
-        let FocusAncestry::Focused(ancestry) = answer else {
-            panic!("not focused");
-        };
-        assert!(
-            ancestry.element.is_some(),
-            "the focus's own cache, refreshed"
-        );
-    });
+    let second = fixture.find("Banana");
 
     let mut path: Vec<Vec<i32>> = (1..=60)
         .map(|group| runtime_id(&fixture.find(&format!("Group {group}"))))
         .collect();
     path.push(list.runtime_id());
-    path.push(runtime_id(&previous));
+    path.push(runtime_id(&second));
     let root = Live::new(fixture.root.clone());
     let nodes = fixture.nodes();
     let walk = |path: &[Vec<i32>]| {
@@ -402,11 +366,11 @@ fn reads_and_paths_execute_exactly() {
     fixture.app.quit();
 
     assert_eq!(
-        [read, deepest, near, missing],
-        [3109, 1219, 233, 218],
-        "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
+        [deepest, near, missing],
+        [1219, 233, 218],
+        "a path down sixty-two levels, down one, and to nothing"
     );
-    assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
+    assert!(deepest < LIMIT / 2);
 }
 
 /// A selection inside the list a search box controls
@@ -1158,10 +1122,7 @@ fn main() {
             "focus_and_navigation_execute_exactly",
             focus_and_navigation_execute_exactly,
         ),
-        (
-            "reads_and_paths_execute_exactly",
-            reads_and_paths_execute_exactly,
-        ),
+        ("paths_execute_exactly", paths_execute_exactly),
         (
             "controlled_selections_execute_exactly",
             controlled_selections_execute_exactly,

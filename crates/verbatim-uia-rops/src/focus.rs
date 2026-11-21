@@ -4,21 +4,20 @@
 //! the one function callers use, which picks between them.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_ComboBoxControlTypeId, UIA_E_ELEMENTNOTAVAILABLE,
-    UIA_GridItemContainingGridPropertyId, UIA_HasKeyboardFocusPropertyId,
+    IUIAutomationElement, UIA_GridItemContainingGridPropertyId, UIA_HasKeyboardFocusPropertyId,
     UIA_IsGridItemPatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
-    UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
-    UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-    UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionSelectionPropertyId,
+    UIA_LegacyIAccessibleStatePropertyId, UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_Selection2FirstSelectedItemPropertyId,
+    UIA_SelectionSelectionPropertyId,
 };
 
 pub use verbatim_uia::runtime_id_key;
 use verbatim_uia::{
     Absent, Ancestor, Cached, Direction, ElementExt, Fill, FocusInput, LEFT_OUT_WHEN_UNSUPPORTED,
-    Shape, Uia, containing_grid,
+    Shape, Uia, containing_grid, map,
 };
 
-use verbatim_model::{EarlierElement, TableId};
+use verbatim_model::{Role, TableId};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
@@ -38,14 +37,6 @@ pub struct FocusQuery<'a> {
     /// focus's ancestors): the walk stops at the first ancestor that has
     /// one.
     pub known: &'a [Vec<i32>],
-    /// The element the caller already holds under the focused element's
-    /// runtime id, when it holds one: whether it still has the keyboard
-    /// focus is read live too ([`Ancestry::previous_focused`]). An
-    /// application can give a dead element's runtime id to a new one, and
-    /// an element the caller holds that no longer has the focus, or cannot
-    /// be read, by UIA's timeout or any other error, is not the focused
-    /// element whatever its id says.
-    pub previous: Option<&'a IUIAutomationElement>,
     /// The most ancestors to return.
     pub depth_limit: u32,
     /// How each ancestor's cache is filled: as an [`Ancestor`], with the
@@ -64,11 +55,12 @@ pub struct FocusQuery<'a> {
     /// error (`NVDAObjects/UIA/__init__.py` 1632 to 1637). False reads the
     /// ancestry whatever the element's focus.
     pub require_focus: bool,
-    /// Whether the element's own cache is filled afresh by
-    /// [`FocusQuery::fill`] in the same round trip
-    /// ([`Ancestry::element`]): its value, states, and details as they are
-    /// when the focus is read, which the focus listener reports a focus
-    /// with, as NVDA reads those afresh when it handles a focus event.
+    /// Whether the classic walk fills the element's own cache afresh by
+    /// [`FocusQuery::element_fill`] ([`Ancestry::element`]): its value,
+    /// states, and details as they are when the focus is read, which the
+    /// focus listener reports a focus with, as NVDA reads those afresh when
+    /// it handles a focus event. The remote program does not read this:
+    /// the listener, the one caller that sets it, reads the classic way.
     pub refresh: bool,
     /// The element's nearest window, its own or its nearest ancestor's,
     /// when the caller has already found it, as the focus listener has for
@@ -105,9 +97,8 @@ pub struct FocusQuery<'a> {
     /// Whether the element is a grid's cell, when the caller's cache of it
     /// says: its table is then read only for a cell
     /// ([`Ancestry::element_table`]). `None` has the classic walk take it
-    /// from the element read afresh, and the program ask it inside the
-    /// provider, with [`FocusQuery::refresh`]; without that, no table is
-    /// read.
+    /// from the element read afresh, with [`FocusQuery::refresh`]; without
+    /// that, and always in the remote program, no table is read.
     pub is_cell: Option<bool>,
     /// Told what the classic walk reads as it reads it ([`Progress`]), so
     /// a caller keeps what was read should a later call of the walk fail.
@@ -120,9 +111,6 @@ pub struct FocusQuery<'a> {
 /// once each, in the order the walk reads them.
 #[derive(Clone, Copy)]
 pub enum Progress<'a> {
-    /// Whether [`FocusQuery::previous`] has the keyboard focus, read live
-    /// ([`Ancestry::previous_focused`]).
-    PreviousFocused(EarlierElement),
     /// The element with its cache filled afresh ([`Ancestry::element`]),
     /// and its table ([`Ancestry::element_table`]).
     Element(&'a Cached<Ancestor>, Option<TableId>),
@@ -192,16 +180,8 @@ pub struct Ancestry {
     /// ancestor walk stopped when it has to. `None` when nothing up to the
     /// top has one, or the classic walk's step failed first.
     pub window: Option<isize>,
-    /// Whether [`FocusQuery::previous`] has the keyboard focus, read live:
-    /// focused, not focused, or gone when its read failed, by UIA's timeout
-    /// or any other error, as NVDA catches its duplicate check's error and
-    /// handles the event (`UIAHandler/__init__.py` 902 to 917) (in a remote
-    /// program, when the element's import failed the
-    /// run; one whose read answers no boolean there counts as not
-    /// focused); `None` when the query gave no previous element.
-    pub previous_focused: Option<EarlierElement>,
-    /// With [`FocusQuery::refresh`], the element itself with its cache
-    /// filled afresh; `None` without it.
+    /// With [`FocusQuery::refresh`], from the classic walk, the element
+    /// itself with its cache filled afresh; `None` otherwise.
     pub element: Option<Cached<Ancestor>>,
     /// For a menu item, by its cached control type, its legacy MSAA state
     /// bits (`LegacyIAccessibleState`), read by the remote program in its
@@ -261,10 +241,7 @@ impl Path {
 /// The focus ancestry, the one function call sites use: the remote program
 /// when `remote` is true, falling back to the classic walk for this call
 /// when remote operations are unavailable or the program fails, and the
-/// classic walk alone when `remote` is false. A run that fails because an
-/// element is gone, when the query holds a previous element, is run once
-/// more without it, and the previous element answered as gone when that
-/// run succeeds. Says which path answered, and
+/// classic walk alone when `remote` is false. Says which path answered, and
 /// for a fallback, why, so the caller can stop trying the remote program
 /// for a window whose import failed.
 ///
@@ -294,54 +271,28 @@ pub fn focus_ancestry(
         Ok(answer) => return Ok((answer, Path::Remote)),
         Err(error) => error,
     };
-    // UIA fails a whole run, before its first instruction, when an element
-    // it imports is gone (verified against mockapp: `ExecutionFailure`,
-    // `UIA_E_ELEMENTNOTAVAILABLE`, no failing instruction), so the program
-    // cannot catch the held element's read itself. Run again without it: if
-    // that succeeds, the held element was the one gone, and has no focus.
-    if query.previous.is_some() && is_element_gone(&error) {
-        let without = FocusQuery {
-            previous: None,
-            ..*query
-        };
-        if let Ok(answer) = focus_ancestry_remote(uia, &without) {
-            let answer = match answer {
-                FocusAncestry::Focused(ancestry) => FocusAncestry::Focused(Ancestry {
-                    previous_focused: Some(EarlierElement::Gone),
-                    ..ancestry
-                }),
-                FocusAncestry::NotFocused => FocusAncestry::NotFocused,
-            };
-            return Ok((answer, Path::Remote));
-        }
-    }
     if gone_or_timed_out(&error) {
         return Err(error);
     }
     focus_ancestry_classic(uia, query).map(|answer| (answer, Path::Fallback(error)))
 }
 
-/// Whether a run failed because an element it imported is gone.
-fn is_element_gone(error: &Error) -> bool {
-    error
-        .hresult()
-        .is_some_and(|code| code.0.cast_unsigned() == UIA_E_ELEMENTNOTAVAILABLE)
+/// The focused element's role, by its cached control type.
+fn role_of(element: &FocusInput) -> Role {
+    element
+        .control_type
+        .map_or(Role::Unknown, map::role_from_control_type)
 }
 
 /// Whether the focused element's selected child may be its value
-/// (`verbatim_uia::map::value_from_selection`), by its cached control type
-/// and class: a combo box's, when it has no `Value` pattern, which is asked
-/// of the element where the selection is read, and a looping selector's.
-/// A list's selected item is otherwise never read with its focus, as it is
+/// ([`map::selection_may_be_value`]), by its cached control type and
+/// class: a combo box's, when it has no `Value` pattern, which is asked of
+/// the element where the selection is read, and a looping selector's. A
+/// list's selected item is otherwise never read with its focus, as it is
 /// not spoken (Dickson, 2026-11-17). Every shape the query's element is
 /// read as holds both, so neither is read live.
 fn wants_selected_child(element: &FocusInput) -> bool {
-    element.control_type == Some(UIA_ComboBoxControlTypeId.0)
-        || (element.control_type == Some(UIA_ListControlTypeId.0)
-            && element
-                .class_name
-                .as_deref()
-                .is_some_and(|class| class.contains("LoopingSelector")))
+    map::selection_may_be_value(role_of(element), element.class_name.as_deref())
 }
 
 /// Whether the classic walk reads the focused element's selected child
@@ -356,19 +307,24 @@ fn reads_selected_child(
     (live, fresh, cached): (&verbatim_uia::Live, Option<&Cached<Ancestor>>, Option<bool>),
     before_call: &dyn Fn(&'static str),
 ) -> windows::core::Result<bool> {
-    if element.control_type != Some(UIA_ComboBoxControlTypeId.0) {
+    let role = role_of(element);
+    if role != Role::ComboBox {
         return Ok(wants_selected_child(element));
     }
-    if let Some(value_available) = cached {
-        return Ok(!value_available);
-    }
-    if let Some(fresh) = fresh {
-        return Ok(!fresh.read().node.states.value_available);
-    }
-    before_call("the combo box's Value pattern");
-    Ok(!live
-        .element()
-        .current_bool(UIA_IsValuePatternAvailablePropertyId)?)
+    let value_available = if let Some(value_available) = cached {
+        value_available
+    } else if let Some(fresh) = fresh {
+        fresh.read().node.states.value_available
+    } else {
+        before_call("the combo box's Value pattern");
+        live.element()
+            .current_bool(UIA_IsValuePatternAvailablePropertyId)?
+    };
+    Ok(map::value_from_selection(
+        role,
+        element.class_name.as_deref(),
+        value_available,
+    ))
 }
 
 /// A read of the selected child as optional: one that timed out or found
@@ -387,9 +343,9 @@ fn optional<T>(read: windows::core::Result<Option<T>>) -> Result<Option<T>, Erro
 
 /// Whether the focused element's legacy MSAA state is read with it, by its
 /// cached control type: a menu item, the one kind of element whose checked
-/// state may be only there (`verbatim_uia::map::wants_legacy_checked_state`).
+/// state may be only there ([`map::may_hold_legacy_checked_state`]).
 fn wants_legacy_state(element: &FocusInput) -> bool {
-    element.control_type == Some(UIA_MenuItemControlTypeId.0)
+    map::may_hold_legacy_checked_state(role_of(element))
 }
 
 /// A native window handle, `None` for 0, an element that is not a window.
@@ -461,16 +417,15 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
-/// reads the previous element's `HasKeyboardFocus` live
-/// (`FocusQuery::previous`), then the element's, and stops if that is
-/// false, in NVDA's order, so a focus only being lost cannot read as a new
-/// element under its runtime id (`books/dev/src/reference/adr/0001-focus.md`, "The listener's
-/// checks, ported from NVDA's focus handler"), then, with
-/// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
-/// for a menu item, reads its legacy MSAA state
-/// ([`Ancestry::legacy_state`]), then, for a cell, reads its table
-/// ([`Ancestry::element_table`]), then reads a list's or tab control's
-/// selected child, or a combo box's when it has no `Value` pattern, then walks
+/// reads the element's `HasKeyboardFocus` live and, with
+/// [`FocusQuery::require_focus`], stops if that is false, as NVDA's focus
+/// handler does (`books/dev/src/reference/adr/0001-focus.md`, "The listener's
+/// checks, ported from NVDA's focus handler"), then, for a menu item, reads
+/// its legacy MSAA state
+/// ([`Ancestry::legacy_state`]), then, for a cell its caller's cache says
+/// it is, reads its table ([`Ancestry::element_table`]), then reads a
+/// looping selector's selected child, or a combo box's when it has no
+/// `Value` pattern (`verbatim_uia::map::value_from_selection`), then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
@@ -497,21 +452,6 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let mut b = Builder::new();
     let element = b.import_element(query.element.live().element());
 
-    // The element held under the same runtime id: its own live focus, read
-    // first, as NVDA reads its last queued focus's before the sender's. A
-    // held element that is gone fails the whole run before it starts
-    // ([`focus_ancestry`] runs it again without it).
-    let previous_focused = b.new_bool(false);
-    let previous_focused = b.add_to_results(previous_focused);
-    if let Some(previous) = query.previous {
-        let previous = b.import_element(previous);
-        let has = b.property(previous, UIA_HasKeyboardFocusPropertyId.0);
-        let is_bool = b.is(TypeTest::Bool, has);
-        b.if_(is_bool, |b| {
-            b.set(previous_focused, has.assume::<kind::Bool>());
-        });
-    }
-
     let focused = b.property(element, UIA_HasKeyboardFocusPropertyId.0);
     let focused = b.add_to_results(focused.assume::<kind::Bool>());
     if query.require_focus {
@@ -520,20 +460,10 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
 
     let cache = RemoteCache::new(&mut b, query.fill);
-    // The element's own requests, with its place, made only when the
-    // element or its selected child is read, so no other program grows.
-    let reads_alone = query.refresh || wants_selected_child(&input);
-    let element_cache = reads_alone.then(|| RemoteCache::new(&mut b, query.element_fill));
-
-    // The element's own cache, filled afresh: its register is the element
-    // read back, with its absent record.
-    let element_absent = b.new_int(0);
-    let element_absent = b.add_to_results(element_absent);
-    if let (true, Some(element_cache)) = (query.refresh, &element_cache) {
-        let absent = element_cache.populate(&mut b, element);
-        b.set(element_absent, absent);
-        b.add_to_results(element);
-    }
+    // The selected child's requests, with its place, made only when it is
+    // read, so no other program grows.
+    let element_cache =
+        wants_selected_child(&input).then(|| RemoteCache::new(&mut b, query.element_fill));
 
     // A menu item's legacy MSAA state, ignoring its default, so an element
     // without the LegacyIAccessible pattern answers "not supported". Its
@@ -557,14 +487,14 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     });
 
     let reads_table = reads_cell(query.element_fill);
-    let element_table = (reads_table && query.is_cell.unwrap_or(query.refresh))
-        .then(|| read_table(&mut b, element));
+    let element_table =
+        (reads_table && query.is_cell == Some(true)).then(|| read_table(&mut b, element));
 
     let selected = b.new_null_element();
     let selected = b.add_to_results(selected);
     let selected_absent = b.new_int(0);
     let selected_absent = b.add_to_results(selected_absent);
-    if let (true, Some(cache)) = (wants_selected_child(&input), &element_cache) {
+    if let Some(cache) = &element_cache {
         let read_selected = |b: &mut Builder| {
             // `SelectionPattern2`'s first selected item, ignoring its default,
             // so a provider without the pattern answers "not supported".
@@ -612,7 +542,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         // read without it (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the
         // focus ancestry"). Its registers are set only once it is
         // filled.
-        let is_combo_box = input.control_type == Some(UIA_ComboBoxControlTypeId.0);
+        let is_combo_box = role_of(&input) == Role::ComboBox;
         b.try_catch(
             |b| {
                 if is_combo_box {
@@ -719,17 +649,23 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         return Ok(FocusAncestry::NotFocused);
     }
     let absents = outcome.get(absents)?;
-    let ancestors: Vec<Cached<Ancestor>> = outcome
+    let operand = ancestors.id();
+    // The program appends each ancestor and its absent record together, so
+    // anything else is a defect of the program, answered as one.
+    let ancestors = outcome
         .get(ancestors)?
         .into_iter()
         .zip(absents)
-        .filter_map(|(value, absent)| match (value, absent) {
+        .map(|pair| match pair {
             (Value::Element(element), Value::Int(absent)) => {
-                Some(query.fill.claim(element, absent_record(absent)))
+                Ok(query.fill.claim(element, absent_record(absent)))
             }
-            _ => None,
+            _ => Err(Error::ResultType {
+                operand,
+                error: windows::core::Error::from(windows::Win32::Foundation::E_UNEXPECTED),
+            }),
         })
-        .collect();
+        .collect::<Result<Vec<Cached<Ancestor>>, Error>>()?;
     let window = outcome.get(window)?;
     let met_known = usize::try_from(outcome.get(met_known)?).ok();
     let depth_limited = outcome.get(depth_limited)?;
@@ -763,19 +699,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         plain_window: None,
         selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
-        previous_focused: match query.previous {
-            Some(_) => Some(if outcome.get(previous_focused)? {
-                EarlierElement::Focused
-            } else {
-                EarlierElement::NotFocused
-            }),
-            None => None,
-        },
-        element: if query.refresh {
-            claimed(outcome.get(element)?, outcome.get(element_absent)?)
-        } else {
-            None
-        },
+        element: None,
         legacy_state: match legacy {
             Some((state, supported)) => {
                 Some(outcome.get(supported)?.then_some(outcome.get(state)?))
@@ -945,10 +869,9 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 }
 
 /// The focus ancestry the classic way, the focus listener's read and the
-/// outposts' fallback: the previous element's live `HasKeyboardFocus`
-/// read, then the element's with [`FocusQuery::require_focus`], which stops
-/// the walk when false and lets it go on when the read fails, in NVDA's
-/// order
+/// outposts' fallback: the element's live `HasKeyboardFocus` read with
+/// [`FocusQuery::require_focus`], which stops the walk when false and lets
+/// it go on when the read fails, as NVDA's focus handler does
 /// (`books/dev/src/reference/adr/0001-focus.md`, "The listener's checks, ported from NVDA's focus
 /// handler"); the element's
 /// own cache filled afresh with [`FocusQuery::refresh`]
@@ -997,21 +920,6 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let input = query.element.read();
     let live = query.element.live();
     let before_call = |call| tell(query.before_call, call);
-    // The earlier element's keyboard focus first, then the element's, as
-    // NVDA reads its last queued focus's before the sender's. A failed read,
-    // by UIA's timeout or any other error, is an element that cannot be
-    // the focus whatever its runtime id says, so the focus is no repeat,
-    // as NVDA catches the error of its duplicate check and handles the
-    // event (`UIAHandler/__init__.py` 902 to 917).
-    let previous_focused = match query.previous.map(|previous| {
-        before_call("the previous focus's keyboard focus");
-        previous.has_keyboard_focus()
-    }) {
-        None => None,
-        Some(Ok(true)) => Some(EarlierElement::Focused),
-        Some(Ok(false)) => Some(EarlierElement::NotFocused),
-        Some(Err(_)) => Some(EarlierElement::Gone),
-    };
     // The sender's own: only a read that answers false drops the focus. A
     // read that fails, by UIA's timeout or any other error, a gone
     // element's among them, lets it through to the walk, as NVDA's
@@ -1028,9 +936,6 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             progress(read);
         }
     };
-    if let Some(focused) = previous_focused {
-        progress(Progress::PreviousFocused(focused));
-    }
     let request = query.fill.request();
     let element_request = query.element_fill.request();
     let element = if query.refresh {
@@ -1086,7 +991,6 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         plain_window: None,
         selected_child,
         window: own_window(input.hwnd).or(query.nearest_window),
-        previous_focused,
         element,
         legacy_state: None,
         element_table,

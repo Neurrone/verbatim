@@ -7,6 +7,16 @@
 //! takes the step with a tree walker built with the cache, one call each.
 //! [`navigation_step`] is the one function callers use.
 //!
+//! A recorded decision, made twice: object navigation matches NVDA with
+//! its simple review mode off, so every element the raw view exposes is
+//! navigable, exactly the tree NVDA's own `baseTreeWalker` (also the raw
+//! view walker) exposes. An intermediate revision projected NVDA's
+//! simple-review filtering here instead; the user baselines against NVDA
+//! with the setting off, where full-tree navigation is the correct
+//! behaviour, so the projection was removed. Spoken focus ancestry is a
+//! different matter: NVDA filters it by `isPresentableFocusAncestor`
+//! regardless of the review-mode setting.
+//!
 //! A program's walk ends at the process's top-level window, whose parent
 //! and siblings it reports as none, where a tree walker goes on to the
 //! desktop and other applications' windows; so a caller takes a step from
@@ -148,7 +158,9 @@ pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step,
 /// window (`verbatim_uia::nearest_window_handle`, one call), then one raw
 /// view tree walker step built with the cache (one call). A step that
 /// fails because the element is gone is an error; any other failure reads
-/// as no neighbor, as `Uia::neighbor` reads it.
+/// as no neighbor, as NVDA's tree-walker failures do, and so does the null
+/// element `windows` reports for a genuine edge. The outpost takes a step
+/// this way whenever it does not run the program.
 ///
 /// # Errors
 ///

@@ -23,7 +23,7 @@ use windows::Win32::UI::Accessibility::{
 
 use windows::core::Interface;
 
-use verbatim_model::{CallKind, NodeSnapshot, QueryKind};
+use verbatim_model::{CallKind, NodeSnapshot};
 
 use crate::calls::count;
 use crate::com::init_mta;
@@ -792,22 +792,9 @@ impl Uia {
         registry: &dyn Interning,
         stops: &AncestorStops<'_>,
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
-        let mut chain = Vec::new();
-        for parent in parents {
-            match take_shaped_ancestor(parent, registry, stops, &mut chain) {
-                Taken::Continue => {}
-                Taken::Crossed(hwnd) => {
-                    chain.reverse();
-                    return (chain, Some(hwnd), AncestorWalk::Complete);
-                }
-                Taken::Known(id) => {
-                    chain.reverse();
-                    return (chain, None, AncestorWalk::MetKnown(id));
-                }
-            }
-        }
-        chain.reverse();
-        (chain, None, AncestorWalk::Complete)
+        chain_of(parents, |parent, chain| {
+            take_shaped_ancestor(parent, registry, stops, chain)
+        })
     }
 
     /// The same result as [`Uia::ancestors_from`], from ancestors
@@ -824,22 +811,9 @@ impl Uia {
         registry: &dyn Interning,
         stops: &AncestorStops<'_>,
     ) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
-        let mut chain = Vec::new();
-        for parent in parents {
-            match take_ancestor_parts(parent, registry, stops, &mut chain) {
-                Taken::Continue => {}
-                Taken::Crossed(hwnd) => {
-                    chain.reverse();
-                    return (chain, Some(hwnd), AncestorWalk::Complete);
-                }
-                Taken::Known(id) => {
-                    chain.reverse();
-                    return (chain, None, AncestorWalk::MetKnown(id));
-                }
-            }
-        }
-        chain.reverse();
-        (chain, None, AncestorWalk::Complete)
+        chain_of(parents, |parent, chain| {
+            take_ancestor_parts(parent, registry, stops, chain)
+        })
     }
 
     /// The first selected child of a selection container, read as a
@@ -916,58 +890,6 @@ impl Uia {
         unanswered_is_error(Live::new(first).refresh(request))
     }
 
-    /// Navigates one step from `element` in `direction`, the neighbour read
-    /// as a [`Node`] filled by `request`, through the raw-view tree
-    /// walker's `*BuildCache` methods: a single cross-process round trip,
-    /// and deliberately the full, unfiltered tree.
-    ///
-    /// A recorded decision, made twice: object navigation matches NVDA
-    /// with its simple review mode off, so every element the raw view
-    /// exposes is navigable, exactly the tree NVDA's own `baseTreeWalker`
-    /// (also the raw view walker) exposes. An intermediate revision
-    /// projected NVDA's simple-review filtering here instead; the user
-    /// baselines against NVDA with the setting off, where full-tree
-    /// navigation is the correct behavior, so the projection was removed.
-    /// Spoken focus ancestry is a different matter: NVDA filters it by
-    /// `isPresentableFocusAncestor` regardless of the review-mode setting,
-    /// and [`Uia::ancestors`] mirrors that.
-    ///
-    /// Returns `Ok(None)` for a genuine "no such neighbor" (a root's
-    /// parent, a last child's next sibling), a first-class outcome distinct
-    /// from an error. Cross-process; the outpost's worker only, guarded by
-    /// the caller's deadline.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the tree walker cannot be created, or the
-    /// step's error when it says the element is gone
-    /// ([`element_is_gone`](crate::element_is_gone)).
-    pub fn neighbor(
-        &self,
-        element: &Live,
-        request: &Request<Node>,
-        registry: &dyn Interning,
-        direction: QueryKind,
-    ) -> windows::core::Result<Option<NodeSnapshot>> {
-        let walker = self.raw_view_walker()?;
-        let direction = match direction {
-            QueryKind::Parent => Direction::Parent,
-            QueryKind::NextSibling => Direction::NextSibling,
-            QueryKind::PreviousSibling => Direction::PreviousSibling,
-            QueryKind::FirstChild => Direction::FirstChild,
-            // Not a navigation direction.
-            _ => return Err(windows::core::Error::from(E_INVALIDARG)),
-        };
-        match element.walk(&walker, direction, request) {
-            Ok(neighbor) => Ok(Some(neighbor.snapshot_in_table(registry))),
-            // A dead element is reported as such; any other failure reads as
-            // no neighbor, as NVDA's tree-walker failures do, and so does the
-            // null element `windows` reports for a genuine edge.
-            Err(error) if crate::element_is_gone(&error) => Err(error),
-            Err(_) => Ok(None),
-        }
-    }
-
     /// Activates `element`: tries `Invoke`, then `Toggle`, then selecting it
     /// (`SelectionItem`), in that order, NVDA's default action for a UIA
     /// element. Answers the action's name as NVDA names it: "invoke" for
@@ -1035,12 +957,41 @@ enum Taken {
     Known(verbatim_model::NodeId),
 }
 
+/// The chain of ancestors already read, `parents`, nearest first, each
+/// taken by `take` ([`take_shaped_ancestor`] or [`take_ancestor_parts`]):
+/// the walk ends at a window read through the other API, at a known
+/// ancestor, or with the last parent; the chain is returned outermost
+/// first. No call is made.
+fn chain_of<T>(
+    parents: &[T],
+    mut take: impl FnMut(&T, &mut Vec<NodeSnapshot>) -> Taken,
+) -> (Vec<NodeSnapshot>, Option<isize>, AncestorWalk) {
+    let mut chain = Vec::new();
+    let mut ending = (None, AncestorWalk::Complete);
+    for parent in parents {
+        match take(parent, &mut chain) {
+            Taken::Continue => {}
+            Taken::Crossed(hwnd) => {
+                ending = (Some(hwnd), AncestorWalk::Complete);
+                break;
+            }
+            Taken::Known(id) => {
+                ending = (None, AncestorWalk::MetKnown(id));
+                break;
+            }
+        }
+    }
+    chain.reverse();
+    (chain, ending.0, ending.1)
+}
+
 /// One ancestor of a walk, nearest first, read as an [`Ancestor`]: the
 /// stop at a window read through the other API, then the report, filtered,
 /// and the stop at a known ancestor. Non-presentable ancestors are crossed
 /// but never reported, NVDA's `isPresentableFocusAncestor`, which filters
 /// spoken focus context regardless of its review-mode setting (object
-/// navigation, by contrast, sees the full tree; see [`Uia::neighbor`]); a
+/// navigation, by contrast, sees the full tree, the recorded decision in
+/// `verbatim-uia-rops`' navigation step); a
 /// UIA element is content only when UIA counts it both a control and
 /// content, as NVDA requires. The layout judgment reads the ancestor's
 /// description whatever the theme, while the snapshot reported carries the
@@ -1323,7 +1274,8 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
 /// Used only to filter *spoken focus ancestry* (see
 /// [`is_presentable_focus_ancestor`]); object navigation deliberately sees
 /// the full tree, matching NVDA with its simple review mode off (the
-/// recorded decision on [`Uia::neighbor`]). `description` is the node's
+/// recorded decision in `verbatim-uia-rops`' navigation step).
+/// `description` is the node's
 /// description whatever the theme, as NVDA's judgment reads it whatever
 /// its setting (decision 4 of `books/dev/src/explanation/design/uia-shapes.md`).
 fn is_layout(snapshot: &NodeSnapshot, description: Option<&str>) -> bool {

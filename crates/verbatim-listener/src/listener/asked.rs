@@ -438,9 +438,6 @@ struct Walked {
 impl Walked {
     fn take_in(&mut self, read: Progress<'_>) {
         match read {
-            // No earlier element is named: the check read the kept
-            // elements' keyboard focus.
-            Progress::PreviousFocused(_) => {}
             Progress::Element(fresh, table) => {
                 let mut read = Read::of(fresh);
                 read.parts.details.set_table(table);
@@ -679,7 +676,6 @@ fn walk(
                 let query = FocusQuery {
                     element: &input,
                     known,
-                    previous: None,
                     depth_limit: MAX_ANCESTORS,
                     fill: &fill,
                     element_fill: &element_fill,
