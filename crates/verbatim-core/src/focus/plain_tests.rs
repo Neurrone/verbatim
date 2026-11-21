@@ -1162,3 +1162,167 @@ fn the_retake_with_no_window_in_front_plays_the_sound_and_watches() {
     );
     assert!(watched(&mut state));
 }
+
+/// The plain reader holding the ghost of hungwin, generation 1.
+fn plain_reader() -> super::PlainReader {
+    let mut reader = super::PlainReader::default();
+    reader.hold(
+        GHOST,
+        super::PlainKind::Ghost {
+            stands_for: HUNGWIN,
+            name: "hungwin (Not Responding)".to_owned(),
+            unavailable: false,
+        },
+        (APP, 41),
+    );
+    reader
+}
+
+/// A batch of `ops`, each with no condition.
+fn plain_batch(ops: Vec<verbatim_model::batch::Op>) -> verbatim_model::request::Question {
+    verbatim_model::request::Question::Batch(verbatim_model::batch::Batch {
+        steps: ops
+            .into_iter()
+            .map(|op| verbatim_model::batch::Step { op, when: None })
+            .collect(),
+        placement: verbatim_model::batch::Placement::Queue,
+        spare: None,
+    })
+}
+
+/// The plain reader answers a batch on its node at once from the
+/// ghost's facts, as NVDA's plain `Window` answers: the read and a test
+/// on its result from its name and role, no text, no action, and its
+/// place among the nodes Core names by its node.
+#[test]
+fn the_plain_reader_answers_each_operation_from_the_ghosts_facts() {
+    use verbatim_model::batch::{
+        Done, Op, Place, Point, StepOutcome, StepRefusal, Subject, Tested,
+    };
+    use verbatim_model::matcher::Matcher;
+    let node = plain_node(1);
+    let reader = plain_reader();
+    let window = NodeWindow {
+        handle: GHOST,
+        top_level: GHOST,
+        root_owner: GHOST,
+        process: APP,
+        thread: 41,
+        desktop: false,
+    };
+    let answered = super::answer(
+        &reader,
+        &plain_batch(vec![
+            Op::Read {
+                subject: Subject::Node(node),
+                set: vec![PropertyId::Name],
+            },
+            Op::Test {
+                subject: Subject::Result(Place(0)),
+                matcher: Matcher::Is(PropertyId::Role, PropertyValue::Role(Role::Window)),
+            },
+            Op::ReadText {
+                subject: Subject::Node(node),
+                at: Point::At(verbatim_model::TextPoint::Caret),
+                movement: None,
+                unit: verbatim_model::TextUnit::Line,
+                count: 1,
+                details: verbatim_model::TextDetails::NONE,
+            },
+            Op::IsOneOf {
+                subject: Subject::Node(node),
+                equal: Some(plain_node(7)),
+                at_address: vec![node],
+            },
+        ]),
+    );
+    let name = PropertyValues(vec![PropertyAnswer {
+        id: PropertyId::Name,
+        value: Some(PropertyValue::Text("hungwin (Not Responding)".to_owned())),
+    }]);
+    let role = PropertyValues(vec![PropertyAnswer {
+        id: PropertyId::Role,
+        value: Some(PropertyValue::Role(Role::Window)),
+    }]);
+    assert_eq!(
+        answered,
+        Some(WireOutcome::Result(Reply::Steps(vec![
+            StepOutcome::Done(Done::Read(NodeRead {
+                node: Some(node),
+                window,
+                values: name,
+            })),
+            StepOutcome::Done(Done::Test(Tested {
+                matched: true,
+                node: NodeRead {
+                    node: Some(node),
+                    window,
+                    values: role,
+                },
+            })),
+            StepOutcome::Refused(StepRefusal::NoText),
+            StepOutcome::Done(Done::IsOneOf(Some(1))),
+        ])))
+    );
+    let acted = super::answer(
+        &reader,
+        &plain_batch(vec![
+            Op::Activate {
+                subject: Subject::Node(node),
+            },
+            Op::Related {
+                subject: Subject::Node(node),
+                relation: verbatim_model::batch::Relation::FirstChild,
+                set: Vec::new(),
+            },
+        ]),
+    );
+    assert_eq!(
+        acted,
+        Some(WireOutcome::Result(Reply::Steps(vec![
+            StepOutcome::Refused(StepRefusal::Unsupported),
+            StepOutcome::Done(Done::Related(Vec::new())),
+        ])))
+    );
+}
+
+/// A batch on a plain node of a generation no longer held is not there;
+/// one asking an operation the plain reader does not run is refused whole;
+/// one naming no plain node is a reader process's.
+#[test]
+fn the_plain_reader_refuses_an_old_generation_and_an_operation_it_does_not_run() {
+    use verbatim_model::batch::{Malformed, Op, OpKind, Place, Subject};
+    let reader = plain_reader();
+    let read = |node| Op::Read {
+        subject: Subject::Node(node),
+        set: vec![PropertyId::Name],
+    };
+    assert_eq!(
+        super::answer(&reader, &plain_batch(vec![read(plain_node(0))])),
+        Some(WireOutcome::NotThere)
+    );
+    assert_eq!(
+        super::answer(
+            &reader,
+            &plain_batch(vec![
+                read(plain_node(1)),
+                Op::Ancestors {
+                    subject: Subject::Result(Place(0)),
+                    until: Vec::new(),
+                    depth: 4,
+                    set: Vec::new(),
+                },
+            ])
+        ),
+        Some(WireOutcome::Refused(Refusal::Malformed(
+            Malformed::NotRun {
+                step: Place(1),
+                op: OpKind::Ancestors,
+            }
+        )))
+    );
+    assert_eq!(
+        super::answer(&reader, &plain_batch(vec![read(NodeId::new(5))])),
+        None
+    );
+}

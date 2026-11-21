@@ -1137,3 +1137,54 @@ fn a_batch_and_its_outcomes_travel_as_json_and_back() {
         outcomes
     );
 }
+
+/// A step runs only when every step whose result it takes is done and
+/// its condition holds; an item past its list's end names no node.
+#[test]
+fn a_step_taking_a_result_not_done_is_skipped_and_an_item_past_the_end_names_none() {
+    let read_node = NodeRead {
+        node: Some(node(4)),
+        window: NodeWindow {
+            handle: WindowHandle(5),
+            top_level: WindowHandle(5),
+            root_owner: WindowHandle(5),
+            process: Pid(9),
+            thread: 1,
+            desktop: false,
+        },
+        values: crate::property::PropertyValues::default(),
+    };
+    let earlier = [
+        StepOutcome::Done(Done::Related(vec![read_node.clone()])),
+        StepOutcome::Failed,
+    ];
+    let on = |subject| step(read(subject));
+    assert_eq!(
+        on(Subject::Item {
+            of: Place(0),
+            index: 0
+        })
+        .gate(&earlier),
+        Ok(Gate::Run)
+    );
+    assert_eq!(on(Subject::Result(Place(1))).gate(&earlier), Ok(Gate::Skip));
+    let unless_found = when(read(Subject::Node(node(9))), 1, Check::Found, true);
+    assert_eq!(unless_found.gate(&earlier), Ok(Gate::Run));
+    assert_eq!(
+        Subject::Item {
+            of: Place(0),
+            index: 0
+        }
+        .earlier_nodes(&earlier),
+        Some(vec![&read_node])
+    );
+    assert_eq!(
+        Subject::Item {
+            of: Place(0),
+            index: 1
+        }
+        .earlier_nodes(&earlier),
+        Some(Vec::new())
+    );
+    assert_eq!(Subject::Node(node(4)).earlier_nodes(&earlier), None);
+}

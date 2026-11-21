@@ -32,6 +32,10 @@
 //! next plain commit replaces it.
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::batch::{
+    Batch, Descended, Done, Gate, KindMismatch, Missing, Op, ReaderKind, StepOutcome, StepRefusal,
+    Subject, Tested, parse,
+};
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
@@ -316,19 +320,7 @@ fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
 pub(crate) fn answer(reader: &PlainReader, request: &Question) -> Option<WireOutcome> {
     let request = match request {
         Question::Legacy(request) => request,
-        // A batch naming a plain node is refused until the plain reader
-        // answers operations from its facts, the readers' step of the
-        // request list's build.
-        Question::Batch(batch) => {
-            let plain = batch.steps.iter().any(|step| {
-                matches!(
-                    step.op.subject(),
-                    Some(verbatim_model::batch::Subject::Node(node))
-                        if matches!(node.issuer(), Issuer::Plain(_))
-                )
-            });
-            return plain.then_some(WireOutcome::Refused(Refusal::Unsupported));
-        }
+        Question::Batch(batch) => return answer_batch(reader, batch),
     };
     let (node, asked) = subject(request)?;
     let Issuer::Plain(_) = node.issuer() else {
@@ -338,6 +330,129 @@ pub(crate) fn answer(reader: &PlainReader, request: &Question) -> Option<WireOut
         Some(object) if object.node() == node => object.answer(asked),
         Some(_) | None => WireOutcome::NotThere,
     })
+}
+
+/// The plain reader's answer to `batch` when a step names a plain node,
+/// every operation answered at once from `reader`'s facts as NVDA's plain
+/// `Window` answers it (the design's section 7): a read and a test from
+/// its facts, no relation, ancestor or descendant reached, its place
+/// among the nodes Core names by its node, a `Follow` applied, no text,
+/// and no action. A batch naming a plain node of a generation no longer
+/// held is not there; one that does not parse is refused whole. `None`
+/// for a batch naming no plain node, which a reader process answers.
+fn answer_batch(reader: &PlainReader, batch: &Batch) -> Option<WireOutcome> {
+    let plain = batch
+        .steps
+        .iter()
+        .find_map(|step| match step.op.subject() {
+            Some(Subject::Node(node)) if matches!(node.issuer(), Issuer::Plain(_)) => Some(*node),
+            _ => None,
+        })?;
+    let parsed = match parse(batch.clone(), ReaderKind::Plain) {
+        Ok(parsed) => parsed,
+        Err(malformed) => return Some(WireOutcome::Refused(Refusal::Malformed(malformed))),
+    };
+    let Some(object) = reader
+        .object
+        .as_ref()
+        .filter(|object| object.node() == plain)
+    else {
+        return Some(WireOutcome::NotThere);
+    };
+    let mut outcomes = Vec::with_capacity(parsed.steps().len());
+    for step in parsed.steps() {
+        let outcome = match step.gate(&outcomes) {
+            Ok(Gate::Run) => object.step(&step.op, &outcomes),
+            Ok(Gate::Skip) => StepOutcome::Skipped,
+            // Every result here is of its own operation's kind and the
+            // parse checked each condition's kind, so this cannot arise;
+            // the step is answered failed, which Core judges.
+            Err(KindMismatch) => StepOutcome::Failed,
+        };
+        outcomes.push(outcome);
+    }
+    Some(WireOutcome::Result(Reply::Steps(outcomes)))
+}
+
+impl PlainObject {
+    /// Its node as a result carries it, with its properties of `set`.
+    fn node_read(&self, set: &[PropertyId]) -> NodeRead {
+        NodeRead {
+            node: Some(self.node()),
+            window: self.node_window(),
+            values: self.values(set),
+        }
+    }
+
+    /// One operation's outcome on it, the outcomes of the steps before
+    /// in `earlier`. A subject is the plain node or an earlier result
+    /// naming it; another node is not there.
+    fn step(&self, op: &Op, earlier: &[StepOutcome]) -> StepOutcome {
+        let named = match op.subject() {
+            Some(Subject::Node(node)) => *node == self.node(),
+            Some(subject) => subject.earlier_nodes(earlier).is_some_and(|nodes| {
+                !nodes.is_empty() && nodes.iter().all(|read| read.node == Some(self.node()))
+            }),
+            None => true,
+        };
+        if !named {
+            return StepOutcome::NotThere(match op.subject() {
+                Some(Subject::Node(node)) => Missing::Node(*node),
+                _ => Missing::Object,
+            });
+        }
+        StepOutcome::Done(match op {
+            Op::Read { set, .. } => Done::Read(self.node_read(set)),
+            Op::Test { matcher, .. } => {
+                let mut read = Vec::new();
+                let matched = matcher
+                    .evaluate::<std::convert::Infallible>(&mut |id| {
+                        read.push(id);
+                        Ok(self.values(&[id]).0.pop().and_then(|answer| answer.value))
+                    })
+                    .unwrap_or_else(|never| match never {});
+                Done::Test(Tested {
+                    matched,
+                    node: self.node_read(&read),
+                })
+            }
+            // No children are reached; its parent and siblings are not
+            // read by Core, so those moves meet the edge (a recorded
+            // limit).
+            Op::Related { .. } => Done::Related(Vec::new()),
+            Op::Descendants { .. } => Done::Descendants(Descended {
+                nodes: Vec::new(),
+                complete: true,
+            }),
+            Op::IsOneOf {
+                equal, at_address, ..
+            } => Done::IsOneOf(
+                equal
+                    .iter()
+                    .chain(at_address)
+                    .position(|node| *node == self.node())
+                    .and_then(|place| u32::try_from(place).ok()),
+            ),
+            // A plain window raises nothing to follow.
+            Op::Follow(_) => Done::Follow,
+            // NVDA's `doAction` raises on a plain window, and the script
+            // says "No action" (`NVDAObjects/__init__.py` 612 to 616).
+            Op::Activate { .. } => return StepOutcome::Refused(StepRefusal::Unsupported),
+            // No caret and no text pattern: Core reviews its flat text.
+            Op::Caret { .. }
+            | Op::ReadText { .. }
+            | Op::ReadRange { .. }
+            | Op::CompareSelection { .. }
+            | Op::Select { .. }
+            | Op::Locate { .. }
+            | Op::MoveBySentence { .. }
+            | Op::WaitForCaret { .. } => return StepOutcome::Refused(StepRefusal::NoText),
+            // Not run by the plain reader, whose parse refuses both.
+            Op::Ancestors { .. } | Op::FocusRead { .. } => {
+                return StepOutcome::Refused(StepRefusal::Unsupported);
+            }
+        })
+    }
 }
 
 /// Which read of the focus Core made itself the shell answered with what

@@ -138,6 +138,36 @@ pub enum Subject {
     },
 }
 
+impl Subject {
+    /// The nodes this subject names among the outcomes `earlier`, when it
+    /// names an earlier result: every node of [`Subject::Result`], the one
+    /// of [`Subject::Item`], none for an item past its list's end or a
+    /// step not done. `None` for a subject that names no earlier result.
+    #[must_use]
+    pub fn earlier_nodes<'a>(&self, earlier: &'a [StepOutcome]) -> Option<Vec<&'a NodeRead>> {
+        let done = |place: &Place| match earlier.get(place.index()) {
+            Some(StepOutcome::Done(done)) => done.nodes(),
+            _ => Vec::new(),
+        };
+        match self {
+            Self::Result(place) => Some(done(place)),
+            Self::Item { of, index } => Some(
+                usize::try_from(*index)
+                    .ok()
+                    .and_then(|index| done(of).get(index).copied())
+                    .into_iter()
+                    .collect(),
+            ),
+            Self::Node(_)
+            | Self::Kept { .. }
+            | Self::Msaa { .. }
+            | Self::Route(_)
+            | Self::Window { .. }
+            | Self::Focus => None,
+        }
+    }
+}
+
 /// Which point of an earlier operation's result a [`Point::Of`] names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PointOf {
@@ -648,6 +678,72 @@ pub struct Step {
     pub when: Option<Condition>,
 }
 
+impl Step {
+    /// Every earlier step whose result it takes, as a subject, a point or
+    /// a selection: each must be done for it to run.
+    #[must_use]
+    pub fn references(&self) -> Vec<Place> {
+        let point = |point: &Point| match point {
+            Point::Of(place, _) => Some(*place),
+            Point::At(_) => None,
+        };
+        let mut places: Vec<Option<Place>> = match self.op.subject() {
+            Some(Subject::Result(place) | Subject::Item { of: place, .. }) => vec![Some(*place)],
+            _ => Vec::new(),
+        };
+        match &self.op {
+            Op::ReadText { at, .. } | Op::Locate { at, .. } => places.push(point(at)),
+            Op::ReadRange {
+                start,
+                end,
+                through,
+                ..
+            }
+            | Op::Select {
+                start,
+                end,
+                through,
+                ..
+            } => {
+                places.extend([point(start), point(end)]);
+                if let Some(through) = through {
+                    places.extend([point(&through.start), point(&through.end)]);
+                }
+            }
+            Op::CompareSelection { before, after, .. } => {
+                places.push(Some(*after));
+                if let Before::SelectionOf(place) = before {
+                    places.push(Some(*place));
+                }
+            }
+            _ => {}
+        }
+        places.into_iter().flatten().collect()
+    }
+
+    /// Whether it runs, given the outcomes of the steps before it: every
+    /// step it takes a result from is done, and its condition holds (the
+    /// design's condition table).
+    ///
+    /// # Errors
+    ///
+    /// [`KindMismatch`] when its condition names a result with no answer
+    /// to the check, a defect of the executor's; a step naming one not
+    /// yet run, which the parse rules out, is skipped.
+    pub fn gate(&self, earlier: &[StepOutcome]) -> Result<Gate, KindMismatch> {
+        let done = |place: Place| matches!(earlier.get(place.index()), Some(StepOutcome::Done(_)));
+        if !self.references().into_iter().all(done) {
+            return Ok(Gate::Skip);
+        }
+        match &self.when {
+            None => Ok(Gate::Run),
+            Some(condition) => earlier
+                .get(condition.on.index())
+                .map_or(Ok(Gate::Skip), |named| condition.gate(named)),
+        }
+    }
+}
+
 /// Where a reader takes a batch among its requests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Placement {
@@ -923,6 +1019,32 @@ impl Done {
             Self::Locate(_) => OpKind::Locate,
             Self::MoveBySentence(_) => OpKind::MoveBySentence,
             Self::WaitForCaret(_) => OpKind::WaitForCaret,
+        }
+    }
+
+    /// The nodes it answered, in order: one for a node's result, the list
+    /// for a list's, none for a result that names no node. A later step
+    /// names them by [`Subject::Result`] and [`Subject::Item`].
+    #[must_use]
+    pub fn nodes(&self) -> Vec<&NodeRead> {
+        match self {
+            Self::Read(node) => vec![node],
+            Self::Test(tested) => vec![&tested.node],
+            Self::FocusRead(focus) => vec![&focus.focus.read],
+            Self::Related(nodes) => nodes.iter().collect(),
+            Self::Ancestors(ancestry) => ancestry.ancestors.iter().collect(),
+            Self::Descendants(descended) => descended.nodes.iter().map(|each| &each.node).collect(),
+            Self::IsOneOf(_)
+            | Self::Activate(_)
+            | Self::Follow
+            | Self::Caret(_)
+            | Self::ReadText(_)
+            | Self::ReadRange(_)
+            | Self::CompareSelection(_)
+            | Self::Select(_)
+            | Self::Locate(_)
+            | Self::MoveBySentence(_)
+            | Self::WaitForCaret(_) => Vec::new(),
         }
     }
 

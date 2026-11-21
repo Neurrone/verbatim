@@ -70,7 +70,7 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{Answer, Ask, ObjectRef, Outcome, Refusal, Request};
+use verbatim_model::request::{Answer, Ask, ObjectRef, Outcome, Question, Refusal, Request};
 use verbatim_model::tell::{Event, Payload};
 use verbatim_model::{Percent, Pid, StateSet};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
@@ -753,13 +753,19 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             detail: String::new(),
         });
     };
-    // A batch is refused unread until the listener runs batches, from the
-    // readers' step of the request list's build.
-    let Some(Request::ReadObject(read)) = ask.request.legacy() else {
+    // A request is routed by the object it reads: a kind of request's,
+    // or a batch's first step's subject, which every later step's kept
+    // element shares (`asked::batch_object`).
+    let object = match &ask.request {
+        Question::Legacy(Request::ReadObject(read)) => Some(read.object.clone()),
+        Question::Legacy(_) => None,
+        Question::Batch(batch) => asked::batch_object(batch),
+    };
+    let Some(object) = object else {
         answer(Outcome::Refused(Refusal::Unsupported));
         return;
     };
-    let pid = match &read.object {
+    let pid = match &object {
         ObjectRef::Kept { listener, token } => {
             kept.is_own(*listener).then(|| kept.owner(*token)).flatten()
         }
@@ -1803,6 +1809,118 @@ mod tests {
                 (3, Outcome::Refused(Refusal::Unsupported)),
                 (4, Outcome::NotThere)
             ]
+        );
+        assert_eq!(parts.stop(), []);
+    }
+
+    /// A batch reading an MSAA object at its own address runs on the
+    /// reading thread of its window's process, each step by the set it
+    /// asks of the five the listener reads, an address with nothing there
+    /// answering its step not there; a batch asking a property beyond the
+    /// five, or an operation the listener does not run, is refused whole
+    /// with none of it run.
+    #[test]
+    fn a_batch_reads_an_msaa_object_at_its_address_and_one_it_cannot_run_is_refused_whole() {
+        use verbatim_model::batch::{
+            Batch, Done, Malformed, Missing, Op, OpKind, Place, Placement, Step, StepOutcome,
+            Subject,
+        };
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let parts = listening_reading(|_| Readability::Readable, &asked, bar_at_the_desktop);
+        let client = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
+        let window = windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0;
+        let at = |object| Subject::Msaa {
+            ids: verbatim_model::request::MsaaIds {
+                window: desktop_handle(),
+                object,
+                child: 0,
+            },
+            redirect: false,
+        };
+        let read = |object, set: &[PropertyId]| Step {
+            op: Op::Read {
+                subject: at(object),
+                set: set.to_vec(),
+            },
+            when: None,
+        };
+        let batch = |number, steps| {
+            ask(
+                (&parts.readers, &parts.kept),
+                Box::new(Ask {
+                    number: RequestNumber(number),
+                    window: desktop_handle(),
+                    verdict: verbatim_model::request::WindowVerdict::Msaa,
+                    request: Batch {
+                        steps,
+                        placement: Placement::Queue,
+                        spare: None,
+                    }
+                    .into(),
+                }),
+            );
+        };
+        let outcome = |message| match message {
+            ListenerToCore::Answer(answer) => answer.outcome,
+            other => panic!("an answer: {other:?}"),
+        };
+        let bar = [PropertyId::Role, PropertyId::Value];
+        batch(
+            1,
+            vec![
+                read(client, &[PropertyId::Name]),
+                read(client, &bar),
+                read(window, &[PropertyId::Name]),
+            ],
+        );
+        let read_back = |set: &[PropertyId]| {
+            StepOutcome::Done(Done::Read(NodeRead {
+                node: None,
+                window: verbatim_win32::window_facts::node_window(
+                    &tells::SystemReads,
+                    desktop_window(),
+                ),
+                values: bar_at_the_desktop(desktop_window(), client, 0, set)
+                    .expect("the bar's values"),
+            }))
+        };
+        assert_eq!(
+            outcome(parts.next()),
+            Outcome::Result(Reply::Steps(vec![
+                read_back(&[PropertyId::Name]),
+                read_back(&bar),
+                StepOutcome::NotThere(Missing::Object),
+            ]))
+        );
+        batch(
+            2,
+            vec![
+                read(client, &[PropertyId::Name]),
+                read(client, &[PropertyId::Description]),
+            ],
+        );
+        assert_eq!(
+            outcome(parts.next()),
+            Outcome::Refused(Refusal::Malformed(Malformed::NotRun {
+                step: Place(1),
+                op: OpKind::Read,
+            }))
+        );
+        batch(
+            3,
+            vec![Step {
+                op: Op::Activate {
+                    subject: at(client),
+                },
+                when: None,
+            }],
+        );
+        assert_eq!(
+            outcome(parts.next()),
+            Outcome::Refused(Refusal::Malformed(Malformed::NotRun {
+                step: Place(0),
+                op: OpKind::Activate,
+            }))
         );
         assert_eq!(parts.stop(), []);
     }
