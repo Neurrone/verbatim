@@ -17,13 +17,14 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{Follow, FollowGroup, Followed, Reply, Request as Wire};
+use verbatim_model::request::{FollowGroup, Followed, Reply};
 use verbatim_model::{NodeSnapshot, OutpostId, Pid, Role, WindowHandle};
 
 use super::versions::{Kept, ReadBy};
+use crate::batch::{Answers, Builder, Got, On, Ref, Sent, kind};
 use crate::entries::Entries;
 use crate::event_queue::pairs;
-use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Reader, Request, RequestWindow};
+use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Reader, RequestWindow};
 
 /// The class of a console host's window, whose terminal is followed
 /// without its text and caret events.
@@ -58,8 +59,8 @@ pub(crate) struct FollowRequest {
     pub(crate) process: Pid,
     /// The window it names for the hang check.
     pub(crate) window: RequestWindow,
-    /// The request.
-    pub(crate) follow: Follow,
+    /// The node followed; `None` removes every registration.
+    pub(crate) follow: Option<Followed>,
 }
 
 impl FollowRequest {
@@ -68,32 +69,37 @@ impl FollowRequest {
     pub(crate) fn own(self) -> CoreRequest {
         CoreRequest {
             token: None,
-            reader: self.reader(),
+            reader: Reader::Outpost(self.process),
             window: self.window,
-            request: self.wire(),
+            request: batch(self.follow.as_ref()).question(),
             due_after_us: OTHER_DUE_US,
         }
     }
 }
 
-impl Request for FollowRequest {
-    type Reply = ();
+/// The brand of a `Follow`'s batch, named for its one site, [`batch`]:
+/// its batches are sent outside the queue or held on Core's want list,
+/// and a terminal's answer is parsed at a later step (the request list's
+/// design, section 4).
+pub(crate) enum FollowBatch {}
 
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.process)
-    }
+/// A `Follow` batch's one step.
+const FOLLOWED: Ref<FollowBatch, kind::Follow> = Ref::named(0);
 
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
+/// The one-step batch that follows `node` with its event group and extra
+/// object, or nothing.
+pub(crate) fn batch(node: Option<&Followed>) -> Sent<FollowBatch> {
+    let mut batch = Builder::<FollowBatch>::named();
+    let _ = batch
+        .follow(node.map(|followed| (On::from(followed.node), followed.group, followed.extra)));
+    batch.finish()
+}
 
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Follow(self.follow.clone()))
-    }
-
-    fn decode(&self, reply: Reply) -> Option<()> {
-        matches!(reply, Reply::Followed).then_some(())
-    }
+/// Whether `reply`, the answer to the `Follow` of `node`, says the node is
+/// not there; `None` for a reply that does not parse against the batch.
+pub(crate) fn not_there(node: Option<&Followed>, reply: Reply) -> Option<bool> {
+    let answers = Answers::parse(&batch(node), reply)?;
+    Some(matches!(answers.get(FOLLOWED), Got::NotThere(_)))
 }
 
 /// The UI Automation class of Word's document, the one focus outside a
@@ -164,16 +170,14 @@ impl Follows {
             .map(|(process, left)| FollowRequest {
                 process,
                 window: left.window,
-                follow: Follow { node: None },
+                follow: None,
             })
             .collect();
         if let Some((process, named)) = named {
             requests.push(FollowRequest {
                 process,
                 window: named.window,
-                follow: Follow {
-                    node: Some(named.followed.clone()),
-                },
+                follow: Some(named.followed.clone()),
             });
             self.named.insert(process, named);
         }
@@ -188,14 +192,12 @@ impl Follows {
             Some(named) => FollowRequest {
                 process,
                 window: named.window,
-                follow: Follow {
-                    node: Some(named.followed.clone()),
-                },
+                follow: Some(named.followed.clone()),
             },
             None => FollowRequest {
                 process,
                 window,
-                follow: Follow { node: None },
+                follow: None,
             },
         }
     }
@@ -217,7 +219,7 @@ impl Follows {
             requests.push(FollowRequest {
                 process,
                 window: named.window,
-                follow: Follow { node: None },
+                follow: None,
             });
             false
         });
@@ -243,7 +245,9 @@ impl Follows {
 pub(crate) fn send(cx: &mut Cx<Entries>, requests: Vec<FollowRequest>) {
     let due_us = cx.due_in(OTHER_DUE_US);
     for request in requests {
-        cx.send(&request, due_us);
+        let asked =
+            batch(request.follow.as_ref()).of(Reader::Outpost(request.process), request.window);
+        cx.send(&asked, due_us);
     }
 }
 

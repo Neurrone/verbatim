@@ -249,7 +249,9 @@ mod tests {
     fn followed() -> OutpostToCore {
         OutpostToCore::Answer(Answer {
             number: RequestNumber(1),
-            outcome: Outcome::Result(Reply::Followed),
+            outcome: Outcome::Result(Reply::Steps(vec![
+                verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Follow),
+            ])),
             probes: Vec::new(),
             detail: String::new(),
         })

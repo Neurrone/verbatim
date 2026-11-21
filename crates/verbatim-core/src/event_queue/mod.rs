@@ -44,8 +44,6 @@ pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Input, Timed};
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
 pub(crate) use request::{Outcome, Refused, Request};
-#[cfg(test)]
-pub(crate) use table::legacy_for_tests;
 pub(crate) use table::{Asker, Live};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to

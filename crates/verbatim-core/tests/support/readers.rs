@@ -48,6 +48,9 @@ pub enum Found {
     /// A selection's item read by its route, and whether the committed
     /// focus controls it: `None` for a controller-for read that failed.
     Item(NodeRead, Option<bool>),
+    /// The object an event names, or a node, read as this: none of the
+    /// nodes Core names, and with no descendants.
+    Object(NodeRead),
 }
 
 /// No window, for a read whose window nothing judges.
@@ -162,6 +165,11 @@ fn answer_step(op: &Op, found: &Found) -> StepOutcome {
                 values: only(&read.focus.read.values, set),
                 ..read.focus.read.clone()
             })),
+            Found::Object(read) => StepOutcome::Done(Done::Read(NodeRead {
+                node: None,
+                values: only(&read.values, set),
+                ..read.clone()
+            })),
             Found::Unfocused | Found::Same | Found::Focused => {
                 StepOutcome::Done(Done::Read(NodeRead {
                     node: None,
@@ -177,6 +185,14 @@ fn answer_step(op: &Op, found: &Found) -> StepOutcome {
                 ..element.clone()
             })),
             Found::Item(item, _) => StepOutcome::Done(Done::Read(item.clone())),
+            Found::Object(read) => StepOutcome::Done(Done::Read(NodeRead {
+                values: only(&read.values, set),
+                ..read.clone()
+            })),
+            _ => gone,
+        },
+        Op::IsOneOf { .. } => match found {
+            Found::Object(_) => StepOutcome::Done(Done::IsOneOf(None)),
             _ => gone,
         },
         Op::Ancestors { set, .. } => match found {
@@ -198,6 +214,14 @@ fn answer_step(op: &Op, found: &Found) -> StepOutcome {
             _ => gone,
         },
         Op::Descendants { .. } => match found {
+            Found::Object(read) => StepOutcome::Done(Done::Descendants(Descended {
+                nodes: vec![Descendant {
+                    node: read.clone(),
+                    parent: None,
+                    root: 0,
+                }],
+                complete: true,
+            })),
             Found::Item(item, Some(controlled)) => {
                 StepOutcome::Done(Done::Descendants(Descended {
                     nodes: controlled
@@ -219,6 +243,8 @@ fn answer_step(op: &Op, found: &Found) -> StepOutcome {
             }
             _ => gone,
         },
+        // A registration moved, whatever was found.
+        Op::Follow(_) => StepOutcome::Done(Done::Follow),
         _ => StepOutcome::Refused(verbatim_model::batch::StepRefusal::Unsupported),
     }
 }

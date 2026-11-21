@@ -7,7 +7,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 use verbatim_model::request::{
     FocusAncestor, FocusCaret, FocusNode, FocusRead, Front, HeldIds, MsaaIds, NodeRead, NodeWindow,
-    PressAction, QueueInput, Request as Wire,
+    PressAction, QueueInput,
 };
 use verbatim_model::tell::{AcceptanceFacts, EventObject, Relation, TellWindow, WindowFacet};
 use verbatim_model::{
@@ -366,8 +366,7 @@ fn keyed(held: &mut Held, at_us: u64, reply: Found) -> Vec<(String, Option<u64>)
 fn sent(request: &Question) -> String {
     let batch = match request {
         Question::Batch(batch) => batch,
-        Question::Legacy(Wire::ReadObject(_)) => return "ReadObject".to_owned(),
-        Question::Legacy(other) => return format!("{other:?}"),
+        Question::Terminal(other) => return format!("{other:?}"),
     };
     let checks = |batch: &verbatim_model::batch::Batch| {
         if batch.steps.iter().any(|step| {

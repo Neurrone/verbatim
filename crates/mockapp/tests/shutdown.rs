@@ -32,9 +32,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 
 use verbatim_faults::Fault;
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
-use verbatim_model::request::{
-    Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request, WindowVerdict,
-};
+use verbatim_model::request::{Answer, FollowGroup, Followed, Outcome, Reply, WindowVerdict};
 use verbatim_model::{CallCounts, NodeId, TextPoint, TextUnit};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Node, Shape, Uia};
@@ -84,15 +82,16 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
     let node = focus.node();
     let followed = outpost.requested(
         hwnd,
-        Request::Follow(Follow {
-            node: Some(Followed {
-                node,
-                group: FollowGroup::Base,
-                extra: None,
-            }),
-        }),
+        common::outpost::follow(Some(Followed {
+            node,
+            group: FollowGroup::Base,
+            extra: None,
+        })),
     );
-    assert_eq!(followed.outcome, Outcome::Result(Reply::Followed));
+    assert_eq!(
+        common::outpost::only_step(followed.outcome),
+        verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Follow)
+    );
     outpost.settled();
     node
 }

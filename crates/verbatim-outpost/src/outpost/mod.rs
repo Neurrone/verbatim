@@ -43,6 +43,7 @@
 
 mod asked;
 mod batch;
+mod class_path;
 mod commit;
 mod completion;
 mod focus_path;
@@ -51,7 +52,6 @@ pub(crate) mod lock;
 mod outbound;
 mod read;
 mod shell;
-mod shell_items;
 mod store;
 pub(crate) mod text_reads;
 pub(crate) mod window;

@@ -1468,9 +1468,7 @@ fn reduce_description_changed(
 /// object", "No objects inside" (`docs/parity/review.md`, "Dead objects");
 /// the navigator stays put.
 pub(crate) fn navigation_edge(trace_id: TraceId, kind: QueryKind) -> Vec<Effect> {
-    let Some(message) = edge_message_of(kind) else {
-        return Vec::new();
-    };
+    let message = edge_message_of(kind);
     vec![Effect::Speak(
         Utterance {
             trace_id,
@@ -1486,14 +1484,13 @@ pub(crate) fn navigation_edge(trace_id: TraceId, kind: QueryKind) -> Vec<Effect>
 
 /// The edge message a navigation `QueryKind` speaks when there is no
 /// neighbor in its direction — NVDA's messages, one per command.
-pub(crate) fn edge_message_of(kind: QueryKind) -> Option<verbatim_model::Message> {
+pub(crate) fn edge_message_of(kind: QueryKind) -> verbatim_model::Message {
     use verbatim_model::Message;
     match kind {
-        QueryKind::Parent => Some(Message::NoContainingObject),
-        QueryKind::NextSibling => Some(Message::NoNextObject),
-        QueryKind::PreviousSibling => Some(Message::NoPreviousObject),
-        QueryKind::FirstChild => Some(Message::NoObjectsInside),
-        _ => None,
+        QueryKind::Parent => Message::NoContainingObject,
+        QueryKind::NextSibling => Message::NoNextObject,
+        QueryKind::PreviousSibling => Message::NoPreviousObject,
+        QueryKind::FirstChild => Message::NoObjectsInside,
     }
 }
 

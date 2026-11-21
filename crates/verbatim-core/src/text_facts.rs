@@ -5,7 +5,7 @@
 //! facts").
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{FocusCaret, Question, Request as Wire};
+use verbatim_model::request::{FocusCaret, Question, TerminalAsk};
 use verbatim_model::{EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextProvider};
 
 use crate::focus::versions::{Focus, Kept, ReadBy};
@@ -175,24 +175,20 @@ pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
 pub(crate) fn named_by(request: &Question) -> Vec<(NodeId, Vec<TextAnchor>)> {
     match request {
         Question::Batch(batch) => batch.anchors(),
-        Question::Legacy(request) => legacy_named_by(request).into_iter().collect(),
+        Question::Terminal(ask) => vec![terminal_named_by(ask)],
     }
 }
 
-/// The node a kind of request not yet converted to a batch is about, and
-/// every text anchor it names.
-fn legacy_named_by(request: &Wire) -> Option<(NodeId, Vec<TextAnchor>)> {
-    let Wire::Text { node, op } = request else {
-        return None;
-    };
-    let anchors = match op {
+/// The terminal's node a terminal's text operation is about, and every
+/// text anchor it names.
+fn terminal_named_by(ask: &TerminalAsk) -> (NodeId, Vec<TextAnchor>) {
+    let anchors = match &ask.op {
         TextOp::ReadTerminal(read) => read.start.into_iter().collect(),
         TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
             vec![*start]
         }
-        _ => Vec::new(),
     };
-    Some((*node, anchors))
+    (ask.node, anchors)
 }
 
 #[cfg(test)]

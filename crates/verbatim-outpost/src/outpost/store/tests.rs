@@ -39,7 +39,11 @@ fn focus(nodes: &[NodeId]) -> OutpostToCore {
     };
     OutpostToCore::Answer(Answer {
         number: RequestNumber(1),
-        outcome: Outcome::Result(Reply::Children(nodes.iter().copied().map(read).collect())),
+        outcome: Outcome::Result(Reply::Steps(vec![
+            verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Related(
+                nodes.iter().copied().map(read).collect(),
+            )),
+        ])),
         probes: Vec::new(),
         detail: String::new(),
     })

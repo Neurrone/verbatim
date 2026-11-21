@@ -10,7 +10,7 @@ use crate::readers::Found;
 use verbatim_model::batch::{Batch, Missing, Op, StepOutcome, StepRefusal, Waited};
 use verbatim_model::request::{
     CancelReason, CaretBinding, Outcome as WireOutcome, Press, PressAction, QueueEffect,
-    QueueInput, Reply, Request as Wire,
+    QueueInput, Reply,
 };
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 
@@ -242,9 +242,7 @@ fn read_effect(step: &mut Step, effect: Effect) {
                     verbatim_model::request::Question::Batch(batch) => {
                         crate::entries::tests::batch_kind(batch)
                     }
-                    verbatim_model::request::Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
-                    verbatim_model::request::Question::Legacy(Wire::Follow(_)) => "Follow",
-                    verbatim_model::request::Question::Legacy(_) => "other",
+                    verbatim_model::request::Question::Terminal(_) => "other",
                 }),
             }
         }

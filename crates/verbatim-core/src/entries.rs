@@ -742,8 +742,8 @@ impl Logic for Entries {
         (now_us, _): (u64, Option<Foreground>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
-        if crate::progress::ended(facts, token) {
-            said.extend(crate::progress::answered(facts, outcome));
+        if let Some(bar) = crate::progress::ended(facts, token) {
+            said.extend(crate::progress::answered(facts, bar, outcome));
             return Vec::new();
         }
         let trace = facts.queue_trace.0;

@@ -4,12 +4,13 @@
 //! controls" in `docs/nvda/events.md`).
 //!
 //! An item selected through mockapp's `select` command raises a real
-//! `ElementSelected` event; `verbatim_uia_rops::controlled_selection`, the
-//! check the outpost makes on such an event, must find it from the search
+//! `ElementSelected` event; the controller-for relation and the walk of
+//! what it names (`verbatim_uia_rops::batch`), the check the outpost makes
+//! on such an event, must find it from the search
 //! box, one level down, inside a group of the list, or the controlled
 //! element itself, and must find nothing for an item outside the controlled
 //! list or from an element that controls nothing. It answers each in one
-//! remote operation, and the classic calls behind the same signature answer
+//! remote operation, and the ordinary calls answer
 //! the same. The focused element is passed in rather than read from the
 //! keyboard focus, so the test runs headless.
 //!
@@ -41,7 +42,6 @@ use verbatim_uia::{
     Agile, Cached, Fill, ListenerEvent, ListenerSelection, Live, Node, Part, Registration, Shape,
     Subscription, Uia,
 };
-use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -83,15 +83,76 @@ fn controlled(
         &uia.request::<Node>(Node::all_on())
             .expect("a cache request"),
     );
-    let query = ControlledQuery {
-        focused,
-        selected,
-        fill: &fill,
+    let run = |remote| {
+        use verbatim_uia_rops::batch::{
+            Descend, Found, Fused, Input, Judged, Object, Ran, Segment, run_batch,
+        };
+        let judge = |node: &Cached<Node>| Judged {
+            matched: node.runtime_id() == selected,
+            pruned: false,
+        };
+        let answer = run_batch(&Segment {
+            uia,
+            steps: vec![
+                Fused {
+                    place: verbatim_model::batch::Place(0),
+                    when: None,
+                    input: Input::Related {
+                        subject: Object::Held {
+                            element: focused,
+                            window: 0,
+                        },
+                        relation: verbatim_model::batch::Relation::ControllerFor,
+                        fill: &fill,
+                    },
+                    calls_only: false,
+                },
+                Fused {
+                    place: verbatim_model::batch::Place(1),
+                    when: Some(verbatim_model::batch::Condition {
+                        on: verbatim_model::batch::Place(0),
+                        check: verbatim_model::batch::Check::Found,
+                        negated: false,
+                    }),
+                    input: Input::Descendants {
+                        subject: Object::Result(verbatim_model::batch::Place(0)),
+                        walk: Descend {
+                            depth: 64,
+                            view: verbatim_model::batch::View::Raw,
+                            include_subject: true,
+                            prunes: false,
+                            limit: 1,
+                            nodes: 4_096,
+                            fill: &fill,
+                            judge: &judge,
+                        },
+                    },
+                    calls_only: false,
+                },
+            ],
+            remote,
+            window: None,
+        });
+        let mut steps = answer.steps.into_iter();
+        let controlled: Vec<Vec<i32>> = match steps.next() {
+            Some(Ran::Done(Found::Related(related))) => {
+                related.nodes.iter().map(Cached::runtime_id).collect()
+            }
+            other => panic!("the controller-for relation answered {other:?}"),
+        };
+        let found = match steps.next() {
+            Some(Ran::Done(Found::Descendants(found))) => found
+                .nodes
+                .into_iter()
+                .next()
+                .map(|descendant| descendant.node),
+            Some(Ran::Unrun(_)) => None,
+            other => panic!("the walk answered {other:?}"),
+        };
+        (controlled, found)
     };
     let _ = verbatim_win32::calls::take();
-    let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
-    let (remote_ids, remote) = (remote.controlled, remote.selected);
-    assert!(matches!(path, Path::Remote), "answered by {}", path.name());
+    let (remote_ids, remote) = run(true);
     assert_eq!(
         verbatim_win32::calls::take(),
         CallCounts {
@@ -102,12 +163,11 @@ fn controlled(
         },
         "one remote operation"
     );
-    let (classic, _) = controlled_selection(uia, &query, false).expect("the classic calls");
+    let (classic_ids, classic) = run(false);
     assert_eq!(
-        remote_ids, classic.controlled,
+        remote_ids, classic_ids,
         "both ways name the same controlled elements"
     );
-    let classic = classic.selected;
     let answer = |found: Option<Cached<Node>>| {
         found.map(|element| (element.read().name, element.runtime_id()))
     };

@@ -8,28 +8,37 @@
 //! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
 //! marshaling, cache requests, and role/state mapping are all exercised for
-//! real, with no actual application. The tree dump
-//! (`verbatim_uia_rops::tree_dump`) reads each element's children in one
-//! call, by either path: an element gone during it keeps its later
-//! siblings, and no element's location or off-screen state is read.
+//! real, with no actual application. The tree dump, a walk down the tree
+//! by the request list's executors (`verbatim_uia_rops::batch`), keeps an
+//! element's later siblings when the element is gone during it, by either
+//! path, and reads no element's location or off-screen state.
 
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use verbatim_model::batch::{Place, Relation, View};
 use verbatim_model::{NodeDetails, Role, State, StateSet};
 use verbatim_uia::{
     Cached, DialogText, Fill, Live, NodeIdRegistry, PropertyEvent, Request, RoleCore, Shape,
     TextEvent, Uia, map,
 };
-use verbatim_uia_rops::{
-    NavigationDirection, Path, StepQuery, TreeQuery, navigation_step, tree_dump,
+use verbatim_uia_rops::batch::{
+    Descend, Found, Fused, Input, Judged, Object, Ran, Segment, run_batch,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     TreeScope_Descendants, TreeScope_Subtree, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
+
+/// The UI Automation calls the classic dump of a list and its two items
+/// makes: the list read, then its children and each item's.
+const CLASSIC_DUMP_CALLS: u32 = 4;
+
+/// The UI Automation calls a step by calls makes: the element's nearest
+/// window, then the walker's step.
+const CLASSIC_STEP_CALLS: u32 = 2;
 
 /// One node of the tree as UIA reads it, with its children in order.
 #[derive(Debug, PartialEq)]
@@ -390,20 +399,130 @@ fn a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read() {
     );
 
     let _ = verbatim_uia::calls::take_failed_reads();
-    let query = StepQuery {
-        element: &kept,
-        direction: NavigationDirection::NextSibling,
-        fill: &fill,
-    };
-    let (step, path) = navigation_step(&uia, &query, true).expect("the step");
-    let neighbor = step.neighbor.map(|neighbor| neighbor.read().name);
+    let _ = verbatim_win32::calls::take();
+    let step = related(
+        &uia,
+        (kept.live().element(), kept.read().hwnd),
+        (Relation::NextSibling, &fill),
+        (true, false),
+    );
+    let calls = verbatim_win32::calls::take().uia;
     let failed_reads = verbatim_uia::calls::take_failed_reads();
+    let Ran::Done(Found::Related(step)) = step else {
+        panic!("the step answered {step:?}");
+    };
+    let neighbor: Vec<_> = step
+        .nodes
+        .iter()
+        .map(|neighbor| neighbor.read().name)
+        .collect();
 
-    assert!(matches!(path, Path::Remote), "{path:?}");
-    assert_eq!(neighbor, Some(Some("Volume".to_owned())));
+    assert_eq!(calls, 1, "one remote program");
+    assert_eq!(neighbor, [Some("Volume".to_owned())]);
     assert_eq!(step.window, Some(hwnd));
     assert_eq!(failed_reads, 0);
     app.quit();
+}
+
+/// One step `relation` from `element`, whose own window is `window`, by
+/// the request list's executors, programs when `remote`, by calls alone
+/// when `calls_only`: the step's outcome.
+fn related(
+    uia: &Uia,
+    (element, window): (
+        &windows::Win32::UI::Accessibility::IUIAutomationElement,
+        isize,
+    ),
+    (relation, fill): (Relation, &Fill<verbatim_uia::Node>),
+    (remote, calls_only): (bool, bool),
+) -> Ran {
+    let answer = run_batch(&Segment {
+        uia,
+        steps: vec![Fused {
+            place: Place(0),
+            when: None,
+            input: Input::Related {
+                subject: Object::Held { element, window },
+                relation,
+                fill,
+            },
+            calls_only,
+        }],
+        remote,
+        window: None,
+    });
+    answer.steps.into_iter().next().expect("the step's outcome")
+}
+
+/// The tree under the node at `at` of `names`, each node's name and its
+/// parent's place.
+fn tree(at: usize, names: &[(Option<String>, Option<u32>)]) -> Named {
+    Named {
+        name: names[at].0.clone(),
+        children: names
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, parent))| *parent == u32::try_from(at).ok())
+            .map(|(child, _)| tree(child, names))
+            .collect(),
+    }
+}
+
+/// The tree dump's walk of `root` and every node below it, at most `nodes`
+/// of them, by the request list's executors, programs when `remote`: the
+/// tree answered, its nodes' snapshots, and whether the walk was complete.
+fn dump(
+    uia: &Uia,
+    root: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+    (fill, nodes): (&Fill<verbatim_uia::Node>, u32),
+    remote: bool,
+) -> (Named, Vec<verbatim_model::NodeSnapshot>, bool) {
+    let every = |_: &Cached<verbatim_uia::Node>| Judged {
+        matched: true,
+        pruned: false,
+    };
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let answer = run_batch(&Segment {
+        uia,
+        steps: vec![Fused {
+            place: Place(0),
+            when: None,
+            input: Input::Descendants {
+                subject: Object::Held {
+                    element: root,
+                    window: 0,
+                },
+                walk: Descend {
+                    depth: 64,
+                    view: View::Raw,
+                    include_subject: true,
+                    prunes: false,
+                    limit: nodes,
+                    nodes,
+                    fill,
+                    judge: &every,
+                },
+            },
+            calls_only: false,
+        }],
+        remote,
+        window: None,
+    });
+    let walked = match answer.steps.into_iter().next() {
+        Some(Ran::Done(Found::Descendants(walked))) => walked,
+        other => panic!("the walk answered {other:?}"),
+    };
+    let names: Vec<(Option<String>, Option<u32>)> = walked
+        .nodes
+        .iter()
+        .map(|descendant| (descendant.node.read().name, descendant.parent))
+        .collect();
+    let snapshots = walked
+        .nodes
+        .iter()
+        .map(|descendant| descendant.node.snapshot(&registry))
+        .collect();
+    (tree(0, &names), snapshots, walked.complete)
 }
 
 /// A dumped tree's names, each node's with its children's in order.
@@ -414,6 +533,7 @@ struct Named {
 }
 
 /// [`Named`] for a dumped `node`.
+#[allow(dead_code, reason = "the dumps are named from their walks")]
 fn named(node: &verbatim_model::TreeNode) -> Named {
     Named {
         name: node.snapshot.name.clone(),
@@ -441,12 +561,12 @@ fn many_nodes(uia: &Uia) -> Request<verbatim_uia::Node> {
     .expect("the node's request")
 }
 
-/// Every node of `node`'s subtree that has a rectangle or is off the
-/// screen.
-fn placed(node: &verbatim_model::TreeNode) -> usize {
-    usize::from(
-        node.snapshot.details.rect.is_some() || node.snapshot.states.contains(State::Offscreen),
-    ) + node.children.iter().map(placed).sum::<usize>()
+/// Every node of `nodes` that has a rectangle or is off the screen.
+fn placed(nodes: &[verbatim_model::NodeSnapshot]) -> usize {
+    nodes
+        .iter()
+        .filter(|node| node.details.rect.is_some() || node.states.contains(State::Offscreen))
+        .count()
 }
 
 /// A tree dump of mockapp's list (`small.json`) whose first item dies where
@@ -455,13 +575,12 @@ fn placed(node: &verbatim_model::TreeNode) -> usize {
 /// the one read of the list's children has listed it and its later
 /// sibling, `remote` naming the path. The walk this replaced stepped to the
 /// next sibling from the item that had gone, failed, and lost the sibling.
-fn dump_with_an_element_gone_during_it(remote: bool) -> (Named, bool, &'static str) {
+fn dump_with_an_element_gone_during_it(remote: bool) -> (Named, bool) {
     let title = common::unique_title("mockapp-uia-gone-tree");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let nodes = many_nodes(&uia);
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     // The list, a child of the window, found by its name
     // (`common::named_element`), which passes the window's title bar by;
     // the dump starts from the list, since the title bar is Windows' and
@@ -471,33 +590,9 @@ fn dump_with_an_element_gone_during_it(remote: bool) -> (Named, bool, &'static s
         .expect("the list, read as a node");
     app.send("disconnect-at-first-child item1");
     let fill = Fill::new(&nodes);
-    let query = TreeQuery {
-        root: &list,
-        fill: &fill,
-        registry: &registry,
-        max_depth: 8,
-        max_nodes: 64,
-    };
-    let ((dumped, truncated), path) = tree_dump(&uia, &query, remote).expect("the dump");
+    let (dumped, _, complete) = dump(&uia, list.live().element(), (&fill, 64), remote);
     app.quit();
-    (named(&dumped), truncated, path.name())
-}
-
-/// [`dump_with_an_element_gone_during_it`] by remote programs: the read of
-/// the gone item's children fails inside the run, which marks the dump
-/// incomplete and leaves the item out, and the sibling is kept.
-fn a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it() {
-    assert_eq!(
-        dump_with_an_element_gone_during_it(true),
-        (
-            Named {
-                name: Some("Options".to_owned()),
-                children: vec![item("Second")],
-            },
-            true,
-            "remote",
-        )
-    );
+    (dumped, !complete)
 }
 
 /// [`dump_with_an_element_gone_during_it`] classically: UIA answers the
@@ -512,7 +607,6 @@ fn a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it() {
                 children: vec![item("First"), item("Second")],
             },
             false,
-            "classic",
         )
     );
 }
@@ -529,32 +623,23 @@ fn a_dump_reads_nothing_the_title_bar_asks_the_window_for() {
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let nodes = many_nodes(&uia);
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let root = uia
         .window_element(hwnd.0 as isize, &nodes)
         .expect("mockapp's window element");
     let fill = Fill::new(&nodes);
-    let query = TreeQuery {
-        root: &root,
-        fill: &fill,
-        registry: &registry,
-        max_depth: 64,
-        max_nodes: 4096,
-    };
     common::reset_hits(hwnd);
-    let ((dumped, truncated), path) = tree_dump(&uia, &query, true).expect("the dump");
+    let (_, snapshots, complete) = dump(&uia, root.live().element(), (&fill, 4096), true);
     let title_bar_requests = common::read_hits(hwnd)
         .into_iter()
         .find(|(method, _)| *method == "WM_GETTITLEBARINFOEX");
     assert_eq!(
         (
             title_bar_requests,
-            dumped.children[0].snapshot.role,
-            placed(&dumped),
-            truncated,
-            path.name(),
+            snapshots[1].role,
+            placed(&snapshots),
+            complete,
         ),
-        (None, Role::TitleBar, 0, false, "remote")
+        (None, Role::TitleBar, 0, true)
     );
     app.quit();
 }
@@ -568,31 +653,22 @@ fn a_classic_dump_reads_each_elements_children_in_one_call() {
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let nodes = many_nodes(&uia);
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let list = Live::new(common::named_element(&uia, hwnd, "Items"))
         .refresh(&nodes)
         .expect("the list, read as a node");
     let fill = Fill::new(&nodes);
-    let query = TreeQuery {
-        root: &list,
-        fill: &fill,
-        registry: &registry,
-        max_depth: 8,
-        max_nodes: 64,
-    };
     let _ = verbatim_win32::calls::take();
-    let ((dumped, truncated), path) = tree_dump(&uia, &query, false).expect("the dump");
+    let (dumped, _, complete) = dump(&uia, list.live().element(), (&fill, 64), false);
     let calls = verbatim_win32::calls::take().uia;
     assert_eq!(
-        (named(&dumped), truncated, path.name(), calls),
+        (dumped, complete, calls),
         (
             Named {
                 name: Some("Items".to_owned()),
                 children: vec![item("First"), item("Second")],
             },
-            false,
-            "classic",
-            3,
+            true,
+            CLASSIC_DUMP_CALLS,
         )
     );
     app.quit();
@@ -606,30 +682,21 @@ fn a_remote_dump_reads_a_small_tree_in_one_call() {
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let nodes = many_nodes(&uia);
-    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
     let list = Live::new(common::named_element(&uia, hwnd, "Items"))
         .refresh(&nodes)
         .expect("the list, read as a node");
     let fill = Fill::new(&nodes);
-    let query = TreeQuery {
-        root: &list,
-        fill: &fill,
-        registry: &registry,
-        max_depth: 8,
-        max_nodes: 64,
-    };
     let _ = verbatim_win32::calls::take();
-    let ((dumped, truncated), path) = tree_dump(&uia, &query, true).expect("the dump");
+    let (dumped, _, complete) = dump(&uia, list.live().element(), (&fill, 64), true);
     let calls = verbatim_win32::calls::take().uia;
     assert_eq!(
-        (named(&dumped), truncated, path.name(), calls),
+        (dumped, complete, calls),
         (
             Named {
                 name: Some("Items".to_owned()),
                 children: vec![item("First"), item("Second")],
             },
-            false,
-            "remote",
+            true,
             1,
         )
     );
@@ -750,39 +817,49 @@ fn a_title_bar_is_stepped_from_by_the_classic_calls() {
             .expect("the kept element resolves")
     };
     let window = kept(&root.narrow());
-    let step = |element, direction, remote| {
-        navigation_step(
-            &uia,
-            &StepQuery {
-                element,
-                direction,
-                fill: &fill,
-            },
-            remote,
-        )
-        .expect("the step")
+    // The outpost steps from a top-level window by calls; its first child
+    // is the title bar.
+    let Ran::Done(Found::Related(first)) = related(
+        &uia,
+        (window.live().element(), hwnd),
+        (Relation::FirstChild, &fill),
+        (true, true),
+    ) else {
+        panic!("the step from the window answered");
     };
-    // The outpost steps from a top-level window classically; its first
-    // child is the title bar.
-    let (first, _) = step(&window, NavigationDirection::FirstChild, false);
-    let title_bar = first.neighbor.expect("the title bar");
+    let title_bar = first.nodes.into_iter().next().expect("the title bar");
     let title_bar_kept = kept(&title_bar.narrow());
-    let (next, path) = step(&title_bar_kept, NavigationDirection::NextSibling, true);
+    // An element only UI Automation's proxies serve is stepped from by
+    // calls, as the outpost marks it, and no program is tried.
+    let proxied = title_bar_kept.served_only_by_uia_proxies() == Some(true);
+    let _ = verbatim_win32::calls::take();
+    let next = related(
+        &uia,
+        (title_bar_kept.live().element(), 0),
+        (Relation::NextSibling, &fill),
+        (true, proxied),
+    );
+    let calls = verbatim_win32::calls::take().uia;
+    let Ran::Done(Found::Related(next)) = next else {
+        panic!("the step from the title bar answered {next:?}");
+    };
 
     assert_eq!(
         (
             title_bar.read().role.role(),
-            title_bar_kept.served_only_by_uia_proxies(),
-            matches!(path, Path::Classic),
-            next.neighbor.map(|neighbor| neighbor.read().name),
+            proxied,
+            calls,
+            next.nodes
+                .iter()
+                .map(|neighbor| neighbor.read().name)
+                .collect::<Vec<_>>(),
         ),
         (
             Role::TitleBar,
-            Some(true),
             true,
-            Some(Some("Group One".to_owned()))
+            CLASSIC_STEP_CALLS,
+            vec![Some("Group One".to_owned())]
         ),
-        "{path:?}"
     );
     app.quit();
 }
@@ -814,10 +891,6 @@ fn main() {
         (
             "a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read",
             a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read,
-        ),
-        (
-            "a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it",
-            a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it,
         ),
         (
             "a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it",

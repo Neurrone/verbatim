@@ -5,12 +5,9 @@ use crate::entries::tests::found_at;
 use crate::readers::Found;
 
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{
-    NodeRead, Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire,
-};
+use verbatim_model::request::{NodeRead, Outcome as WireOutcome, Press, PressAction, Reply};
 use verbatim_model::{
-    ActionName, Effect as Said, KeySeq, QueryKind, ReviewCommand, Role, TextPoint, TraceId,
-    WindowHandle,
+    ActionName, Effect as Said, KeySeq, ReviewCommand, Role, TextPoint, TraceId, WindowHandle,
 };
 
 use crate::entries::Entry;
@@ -67,7 +64,7 @@ fn reached(number: u64, window: u64, name: &str, role: Role) -> NodeRead {
 
 /// The answer to request `number`, a navigation reaching `read`.
 fn navigated(number: u64, read: Option<NodeRead>) -> Input<Entry> {
-    answer(OUTPOST, number, Reply::Navigated(read))
+    answer(OUTPOST, number, crate::entries::tests::related(read))
 }
 
 #[test]
@@ -78,10 +75,10 @@ fn a_navigation_moves_the_navigator_and_announces_the_node_reached() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Navigate {
-            node: node(2),
-            direction: QueryKind::Parent,
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Related {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
+            relation: verbatim_model::batch::Relation::Parent,
             set: crate::report_focus::ANNOUNCED_SET.to_vec(),
         })
     );
@@ -160,10 +157,10 @@ fn a_second_navigation_runs_from_where_the_first_moved_the_navigator() {
         ]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Navigate {
-            node: node(7),
-            direction: QueryKind::Parent,
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Related {
+            subject: verbatim_model::batch::Subject::Node(node(7)),
+            relation: verbatim_model::batch::Relation::Parent,
             set: crate::report_focus::ANNOUNCED_SET.to_vec(),
         })
     );
@@ -266,17 +263,17 @@ fn a_navigation_to_an_edit_field_reads_its_text_in_place_of_its_value() {
 fn an_activation_says_its_action_activate_or_no_action() {
     for (outcome, said) in [
         (
-            WireOutcome::Result(Reply::Activated(Some(ActionName::Named(
+            WireOutcome::Result(crate::entries::tests::activated(Some(ActionName::Named(
                 "press".to_owned(),
             )))),
             vec!["Text(\"press\")"],
         ),
         (
-            WireOutcome::Result(Reply::Activated(Some(ActionName::Invoke))),
+            WireOutcome::Result(crate::entries::tests::activated(Some(ActionName::Invoke))),
             vec!["Message(Invoke)"],
         ),
         (
-            WireOutcome::Result(Reply::Activated(None)),
+            WireOutcome::Result(crate::entries::tests::activated(None)),
             vec!["Message(Activate)"],
         ),
         (WireOutcome::NotThere, vec!["Message(NoAction)"]),
@@ -288,8 +285,10 @@ fn an_activation_says_its_action_activate_or_no_action() {
             ["send Outpost(Pid(40)) other"]
         );
         assert_eq!(
-            state.queue.table_for_tests().last(),
-            Some(&Wire::Activate { node: node(2) })
+            crate::entries::tests::last_op(&state).as_ref(),
+            Some(&verbatim_model::batch::Op::Activate {
+                subject: verbatim_model::batch::Subject::Node(node(2)),
+            })
         );
         assert_eq!(
             feed_at(&mut state, 2_000, answer_outcome(OUTPOST, 3, outcome)),
@@ -306,7 +305,11 @@ fn reporting_the_object_reads_it_live_then_announces_spells_and_copies() {
         feed_at(
             &mut state,
             2_000,
-            answer(OUTPOST, 3, Reply::Properties(values("Okay", Role::Button)))
+            answer(
+                OUTPOST,
+                3,
+                crate::entries::tests::properties(values("Okay", Role::Button))
+            )
         ),
         ["Label(\"Okay\") Role(Button)"]
     );
@@ -315,7 +318,11 @@ fn reporting_the_object_reads_it_live_then_announces_spells_and_copies() {
         feed_at(
             &mut state,
             4_000,
-            answer(OUTPOST, 4, Reply::Properties(values("Ok", Role::Button)))
+            answer(
+                OUTPOST,
+                4,
+                crate::entries::tests::properties(values("Ok", Role::Button))
+            )
         ),
         ["SpelledCapital(\"O\") Text(\"k\")"]
     );
@@ -325,7 +332,11 @@ fn reporting_the_object_reads_it_live_then_announces_spells_and_copies() {
         &mut state.runtime,
         Timed {
             at_us: 6_000,
-            input: answer(OUTPOST, 5, Reply::Properties(values("Ok", Role::Button))),
+            input: answer(
+                OUTPOST,
+                5,
+                crate::entries::tests::properties(values("Ok", Role::Button)),
+            ),
         },
     )
     .unwrap();
@@ -558,16 +569,16 @@ fn the_navigator_follows_a_focus_retaken_silently_from_a_replacement_outpost() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Activate {
-            node: anew(node(2))
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Activate {
+            subject: verbatim_model::batch::Subject::Node(anew(node(2))),
         })
     );
 }
 
 /// The combo box "Name" with the value "Ann".
 fn combo() -> Reply {
-    Reply::Properties(with(
+    crate::entries::tests::properties(with(
         values("Name", Role::ComboBox),
         PropertyId::Value,
         PropertyValue::Text("Ann".to_owned()),
@@ -621,7 +632,7 @@ fn reporting_the_object_speaks_its_focused_selected_and_read_only_states() {
             answer(
                 OUTPOST,
                 3,
-                Reply::Properties(with(
+                crate::entries::tests::properties(with(
                     values("alpha.txt", Role::ListItem),
                     PropertyId::States,
                     PropertyValue::States(states)
@@ -645,7 +656,7 @@ fn reporting_the_object_speaks_its_role_and_navigating_to_it_does_not() {
             answer(
                 OUTPOST,
                 3,
-                Reply::Properties(values("alpha.txt", Role::ListItem))
+                crate::entries::tests::properties(values("alpha.txt", Role::ListItem))
             )
         ),
         ["Label(\"alpha.txt\") Role(ListItem)"]
@@ -699,7 +710,7 @@ fn reporting_a_table_says_its_counts_and_forgets_the_table() {
             answer(
                 OUTPOST,
                 5,
-                Reply::Properties(with(
+                crate::entries::tests::properties(with(
                     values("Grid", Role::List),
                     PropertyId::TableCounts,
                     PropertyValue::TableCounts(verbatim_model::TableCounts {
@@ -747,7 +758,7 @@ fn the_desktop_window_is_named_by_core_and_keeps_its_name_when_reported() {
             answer(
                 OUTPOST,
                 4,
-                Reply::Properties(values("Program Manager", Role::Pane))
+                crate::entries::tests::properties(values("Program Manager", Role::Pane))
             )
         ),
         ["Message(Desktop) Role(Window)"]
@@ -831,7 +842,7 @@ fn reporting_body(repeat: u8) -> Held {
             answer(
                 OUTPOST,
                 6,
-                Reply::Properties(values("Body", Role::EditableText))
+                crate::entries::tests::properties(values("Body", Role::EditableText))
             )
         )
         .last()
@@ -1019,9 +1030,9 @@ fn a_focus_behind_a_navigation_and_a_report_is_executed_after_them() {
         ]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Properties {
-            node: node(7),
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(7)),
             set: crate::report_focus::ANNOUNCED_SET.to_vec(),
         })
     );
@@ -1032,7 +1043,7 @@ fn a_focus_behind_a_navigation_and_a_report_is_executed_after_them() {
             answer(
                 OUTPOST,
                 4,
-                Reply::Properties(values("Buttons", Role::Group))
+                crate::entries::tests::properties(values("Buttons", Role::Group))
             )
         ),
         ["Label(\"Buttons\") Role(Group)", "send Listener ReadObject"]

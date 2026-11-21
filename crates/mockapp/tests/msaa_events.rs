@@ -23,7 +23,7 @@ mod harness;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::{MsaaIds, Outcome, Reply, Request};
+use verbatim_model::request::MsaaIds;
 use verbatim_model::{Earcon, QueryKind, Role, SegmentContent, State, WindowHandle};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
@@ -758,14 +758,12 @@ fn a_parent_window_object_is_still_reached_by_navigation() {
     let parent = |node| {
         let answer = outpost.requested(
             apply,
-            Request::Navigate {
-                node,
-                direction: QueryKind::Parent,
-                set: common::outpost::focus_set(),
-            },
+            common::outpost::navigation(node, QueryKind::Parent, common::outpost::focus_set()),
         );
-        match answer.outcome {
-            Outcome::Result(Reply::Navigated(Some(read))) => read,
+        match common::outpost::only_step(answer.outcome) {
+            verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Related(
+                mut reached,
+            )) if reached.len() == 1 => reached.remove(0),
             other => panic!("the step answered {other:?}"),
         }
     };

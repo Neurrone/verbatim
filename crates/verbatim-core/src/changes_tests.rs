@@ -4,14 +4,13 @@
 
 use crate::entries::tests::found_at;
 use crate::readers::Found;
+use verbatim_model::NodeId;
+use verbatim_model::batch::{Done, Op, StepOutcome};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
-use verbatim_model::request::{
-    NodeRead, ObjectRead, Outcome as WireOutcome, RelationFound, RelationQuery, Reply,
-    Request as Wire,
-};
+use verbatim_model::request::{NodeRead, Outcome as WireOutcome, Reply};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{Role, State, StateSet, WindowHandle};
 
@@ -56,17 +55,17 @@ fn msaa_change(kind: EventKind, window: u64) -> Event {
     }
 }
 
-fn read(relation: RelationFound, values: PropertyValues) -> Reply {
-    Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: Some(node(7)),
+/// The answer to an MSAA change's batch: the object is the node at
+/// `place` among those named, its properties `values`.
+fn read(place: u32, values: PropertyValues) -> Reply {
+    Reply::Steps(vec![
+        StepOutcome::Done(Done::IsOneOf(Some(place))),
+        StepOutcome::Done(Done::Read(NodeRead {
+            node: None,
             window: win(5),
             values,
-        },
-        relation: Some(relation),
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    }))
+        })),
+    ])
 }
 
 fn one(id: PropertyId, value: PropertyValue) -> PropertyValues {
@@ -76,15 +75,19 @@ fn one(id: PropertyId, value: PropertyValue) -> PropertyValues {
     }])
 }
 
-/// The relation query of the change read out.
-fn asked(state: &Held) -> Option<RelationQuery> {
+/// The nodes the change read out asks the object to be, the focus first.
+fn asked(state: &Held) -> Option<Vec<NodeId>> {
     state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .find_map(|request| match request {
-            Wire::ReadObject(read) => read.relation,
-            _ => None,
+        .find_map(|(_, batch)| {
+            batch.steps.iter().find_map(|step| match &step.op {
+                Op::IsOneOf {
+                    equal, at_address, ..
+                } => Some(equal.iter().chain(at_address).copied().collect()),
+                _ => None,
+            })
         })
 }
 
@@ -99,7 +102,7 @@ fn a_name_change_on_the_focus_is_asked_of_its_outpost_and_spoken() {
         ),
         ["send Outpost(Pid(40)) ReadObject"]
     );
-    assert_eq!(asked(&state), Some(RelationQuery::OneOf(vec![node(2)])));
+    assert_eq!(asked(&state), Some(vec![node(2)]));
     assert_eq!(
         feed_at(
             &mut state,
@@ -108,7 +111,7 @@ fn a_name_change_on_the_focus_is_asked_of_its_outpost_and_spoken() {
                 OUTPOST,
                 4,
                 read(
-                    RelationFound::Is(0),
+                    0,
                     one(PropertyId::Name, PropertyValue::Text("Save".to_owned()))
                 )
             )
@@ -182,10 +185,7 @@ fn a_state_change_names_the_focus_and_its_ancestors_and_speaks_on_an_ancestor() 
         4_000,
         entry(msaa_change(EventKind::SelectionAdd, 5)),
     );
-    assert_eq!(
-        asked(&state),
-        Some(RelationQuery::OneOf(vec![node(2), node(1)]))
-    );
+    assert_eq!(asked(&state), Some(vec![node(2), node(1)]));
     let mut states = StateSet::default();
     states.insert(State::Disabled);
     assert_eq!(
@@ -195,10 +195,7 @@ fn a_state_change_names_the_focus_and_its_ancestors_and_speaks_on_an_ancestor() 
             answer(
                 OUTPOST,
                 4,
-                read(
-                    RelationFound::Is(0),
-                    one(PropertyId::States, PropertyValue::States(states))
-                )
+                read(0, one(PropertyId::States, PropertyValue::States(states)))
             )
         ),
         ["State(Disabled)"]
@@ -232,26 +229,24 @@ fn a_state_change_read_without_its_states_answered_is_refused() {
             4_000,
             entry(msaa_change(EventKind::StateChange, 5)),
         );
-        let answered = answer(OUTPOST, number, read(RelationFound::Is(0), values));
+        let answered = answer(OUTPOST, number, read(0, values));
         assert_eq!(feed_at(&mut state, 5_000, answered), said);
     }
 }
 
+/// A plain selection asks whether its item is the focus or an ancestor,
+/// with no controller-for relation, since an MSAA object controls
+/// nothing; an item that is none of them is read no further and says
+/// nothing (the request list's design, section 6).
 #[test]
-fn a_plain_selection_of_an_item_the_focus_controls_is_spoken_as_a_focus() {
+fn a_plain_selection_of_an_item_neither_the_focus_nor_an_ancestor_says_nothing() {
     let mut state = committed();
     feed_at(
         &mut state,
         4_000,
         entry(msaa_change(EventKind::Selection, 9)),
     );
-    assert_eq!(
-        asked(&state),
-        Some(RelationQuery::Selection {
-            focus: node(2),
-            nodes: vec![node(2), node(1)],
-        })
-    );
+    assert_eq!(asked(&state), Some(vec![node(2), node(1)]));
     assert_eq!(
         feed_at(
             &mut state,
@@ -259,10 +254,13 @@ fn a_plain_selection_of_an_item_the_focus_controls_is_spoken_as_a_focus() {
             answer(
                 OUTPOST,
                 4,
-                read(RelationFound::Controlled, values("Paris", Role::ListItem))
+                Reply::Steps(vec![
+                    StepOutcome::Done(Done::IsOneOf(None)),
+                    StepOutcome::Skipped,
+                ])
             )
         ),
-        ["Label(\"Paris\")"]
+        NOTHING
     );
     assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
 }
@@ -309,13 +307,19 @@ fn followed_change(property: PropertyId, value: Option<PropertyValue>) -> Event 
     }
 }
 
-/// The properties of a node the request out asks, by set.
-fn asked_properties(state: &Held) -> Option<Wire> {
+/// The read of a node's properties the request out asks, by set.
+fn asked_properties(state: &Held) -> Option<Op> {
     state
         .queue
-        .table_for_tests()
+        .batches_for_tests()
         .into_iter()
-        .find(|request| matches!(request, Wire::Properties { .. }))
+        .find_map(|(_, batch)| {
+            batch
+                .steps
+                .iter()
+                .find(|step| matches!(step.op, Op::Read { .. }))
+                .map(|step| step.op.clone())
+        })
 }
 
 #[test]
@@ -364,8 +368,8 @@ fn a_followed_help_text_change_reads_the_focus_s_description_and_speaks_it() {
     );
     assert_eq!(
         asked_properties(&state),
-        Some(Wire::Properties {
-            node: node(2),
+        Some(Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: vec![PropertyId::Description],
         })
     );
@@ -376,7 +380,7 @@ fn a_followed_help_text_change_reads_the_focus_s_description_and_speaks_it() {
             answer(
                 OUTPOST,
                 4,
-                Reply::Properties(one(
+                crate::entries::tests::properties(one(
                     PropertyId::Description,
                     PropertyValue::Text("Type to search".to_owned())
                 ))
@@ -431,8 +435,8 @@ fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
         );
         assert_eq!(
             asked_properties(&state),
-            Some(Wire::Properties {
-                node: node(2),
+            Some(Op::Read {
+                subject: verbatim_model::batch::Subject::Node(node(2)),
                 set: vec![PropertyId::Suggestions],
             })
         );
@@ -444,7 +448,7 @@ fn a_followed_controller_for_change_reads_whether_suggestions_are_open() {
                 input: answer(
                     OUTPOST,
                     4,
-                    Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                    crate::entries::tests::properties(PropertyValues(vec![PropertyAnswer {
                         id: PropertyId::Suggestions,
                         value: open.map(PropertyValue::Flag),
                     }])),
@@ -610,7 +614,7 @@ fn named(state: &mut Held, number: u64, name: &str) -> Vec<String> {
             OUTPOST,
             number,
             read(
-                RelationFound::Is(0),
+                0,
                 one(PropertyId::Name, PropertyValue::Text(name.to_owned())),
             ),
         ),
@@ -632,7 +636,11 @@ fn a_name_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
         feed_at(
             &mut state,
             5_000,
-            answer(OUTPOST, 4, Reply::Properties(values("Save", Role::Button)))
+            answer(
+                OUTPOST,
+                4,
+                crate::entries::tests::properties(values("Save", Role::Button))
+            )
         ),
         ["Label(\"Save\") Role(Button)"]
     );
@@ -653,7 +661,11 @@ fn a_name_change_the_report_of_the_focus_spoke_is_silent() {
         feed_at(
             &mut state,
             5_000,
-            answer(OUTPOST, 4, Reply::Properties(values("Save", Role::Button)))
+            answer(
+                OUTPOST,
+                4,
+                crate::entries::tests::properties(values("Save", Role::Button))
+            )
         ),
         ["Label(\"Save\") Role(Button)"]
     );
@@ -693,7 +705,7 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
         answer(
             OUTPOST,
             4,
-            Reply::Navigated(Some(NodeRead {
+            crate::entries::tests::related(Some(NodeRead {
                 node: Some(node(1)),
                 window: win(4),
                 values: values("Editor", Role::Window),
@@ -712,7 +724,7 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
             answer(
                 OUTPOST,
                 5,
-                Reply::Navigated(Some(NodeRead {
+                crate::entries::tests::related(Some(NodeRead {
                     node: Some(node(2)),
                     window: win(5),
                     values: values("Save", Role::Button),
@@ -730,7 +742,11 @@ fn a_name_change_a_report_of_a_fetched_copy_of_the_focus_spoke_is_spoken() {
         feed_at(
             &mut state,
             4_500,
-            answer(OUTPOST, 6, Reply::Properties(values("Save", Role::Button)))
+            answer(
+                OUTPOST,
+                6,
+                crate::entries::tests::properties(values("Save", Role::Button))
+            )
         ),
         ["Label(\"Save\") Role(Button)"]
     );
@@ -758,7 +774,7 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
         feed_at(
             &mut state,
             5_000,
-            answer(OUTPOST, 4, Reply::Properties(check_box))
+            answer(OUTPOST, 4, crate::entries::tests::properties(check_box))
         ),
         ["Label(\"OK\") Role(CheckBox) State(Checked)"]
     );
@@ -777,59 +793,11 @@ fn a_state_change_the_report_of_the_object_on_the_focus_spoke_is_silent() {
             answer(
                 OUTPOST,
                 5,
-                read(
-                    RelationFound::Is(0),
-                    one(PropertyId::States, PropertyValue::States(checked))
-                )
+                read(0, one(PropertyId::States, PropertyValue::States(checked)))
             )
         ),
         NOTHING
     );
-}
-
-/// A result selected in the list the focus controls is spoken as a focus
-/// and moves the navigator to it; the focus stays.
-#[test]
-fn a_controlled_selection_moves_the_navigator_to_the_item() {
-    let mut state = committed();
-    feed_at(
-        &mut state,
-        4_000,
-        entry(msaa_change(EventKind::Selection, 9)),
-    );
-    let mut item = values("Paris", Role::ListItem);
-    let mut selected = StateSet::default();
-    selected.insert(State::Selected);
-    item.0.push(PropertyAnswer {
-        id: PropertyId::States,
-        value: Some(PropertyValue::States(selected)),
-    });
-    feed_at(
-        &mut state,
-        5_000,
-        answer(OUTPOST, 4, read(RelationFound::Controlled, item.clone())),
-    );
-    let _ = feed_at(
-        &mut state,
-        6_000,
-        press(1, verbatim_model::ReviewCommand::ReportObject),
-    );
-    assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Properties {
-            node: node(7),
-            set: crate::report_focus::ANNOUNCED_SET.to_vec(),
-        })
-    );
-    assert_eq!(
-        feed_at(
-            &mut state,
-            7_000,
-            answer(OUTPOST, 5, Reply::Properties(item))
-        ),
-        ["Label(\"Paris\") Role(ListItem) State(Selected)"]
-    );
-    assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
 }
 
 /// The facts of a window outside the foreground window, which acceptance
@@ -842,10 +810,6 @@ fn background_facts() -> verbatim_model::tell::AcceptanceFacts {
     facts
 }
 
-/// A followed name change, and one the listener told, each of a window
-/// acceptance refuses, say nothing, as NVDA's property-change handler
-/// drops an event `shouldAcceptEvent` refuses; the same change of an
-/// accepted window is spoken (above).
 #[test]
 fn a_uia_property_change_of_a_window_acceptance_refuses_says_nothing() {
     for followed in [true, false] {

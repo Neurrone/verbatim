@@ -428,6 +428,12 @@ enum Object {
 /// earlier step's node.
 pub struct On<B>(Object, PhantomData<fn() -> B>);
 
+impl<B> Clone for On<B> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+
 impl<B> From<NodeId> for On<B> {
     fn from(node: NodeId) -> Self {
         Self::given(Subject::Node(node))
@@ -1149,6 +1155,55 @@ pub enum Got<'a, T> {
     /// Not run: its condition did not hold, a step it names was not done,
     /// or the shell answered the batch unsent with what is in front (Claude, 2026-11-21).
     Skipped,
+}
+
+/// One step's outcome, owned, as a function that asked for one result
+/// acts on it: the result, its object not there, or neither (refused,
+/// failed or skipped).
+#[derive(Debug)]
+pub(crate) enum Single<T> {
+    /// The result.
+    Done(T),
+    /// What the step names is not there.
+    NotThere,
+    /// Refused, failed or skipped.
+    Unanswered,
+}
+
+impl<T: Clone> Got<'_, T> {
+    /// The outcome, owned.
+    pub(crate) fn owned(self) -> Single<T> {
+        match self {
+            Self::Done(done) => Single::Done(done.clone()),
+            Self::NotThere(_) => Single::NotThere,
+            Self::Refused(_) | Self::Failed | Self::Skipped => Single::Unanswered,
+        }
+    }
+}
+
+/// The outcome of a request for one step's result as the outcome of the
+/// result itself: a step whose object is not there is not there, and one
+/// refused, failed or skipped ended the request unanswered.
+pub(crate) fn flat<T>(
+    outcome: crate::event_queue::Outcome<Single<T>>,
+) -> crate::event_queue::Outcome<T> {
+    use crate::event_queue::Outcome;
+    match outcome.split() {
+        Ok(Single::Done(done)) => Outcome::Result(done),
+        Ok(Single::NotThere) => Outcome::NotThere,
+        Ok(Single::Unanswered) => Outcome::ReaderEnded,
+        Err(other) => other,
+    }
+}
+
+impl<B: 'static> Asked<B> {
+    /// The batch asked for the one result of `handle`'s step.
+    pub(crate) fn one<K: Kind + 'static>(self, handle: Ref<B, K>) -> Judged<B, Single<K::Out>>
+    where
+        K::Out: Clone + fmt::Debug,
+    {
+        self.judged(move |answers| Some(answers.get(handle).owned()))
+    }
 }
 
 impl<B> Answers<B> {

@@ -7,14 +7,12 @@ use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FindScope, FocusNode, FocusRead, Follow, FollowGroup, Followed, Front, GhostFront, NodeRead,
-    NodeWindow, ObjectRead, ObjectRef, Outcome as WireOutcome, OutsideOutcome, Press, PressAction,
-    Purpose, QueueEffect, QueueInput, ReadObject, Refusal, RelationFound, RelationQuery, Reply,
-    Request as Wire,
+    FocusNode, FocusRead, FollowGroup, Front, GhostFront, NodeRead, NodeWindow,
+    Outcome as WireOutcome, Press, PressAction, QueueEffect, QueueInput, Refusal, Reply,
 };
 use verbatim_model::{
-    Effect as Said, KeySeq, NodeId, OutpostId, Pid, QueryKind, ReviewCommand, Role, SegmentContent,
-    State, StateSet, TraceId, WindowHandle,
+    Effect as Said, KeySeq, NodeId, OutpostId, Pid, ReviewCommand, Role, SegmentContent, State,
+    StateSet, TraceId, WindowHandle,
 };
 
 use crate::entries::tests::{
@@ -462,159 +460,108 @@ fn asked_set() -> Vec<PropertyId> {
     ]
 }
 
-/// The disabled plain object's answer to [`asked_set`]: its name, the role
-/// window, the unavailable state, and no value.
-fn disabled_values() -> PropertyValues {
-    let mut disabled = StateSet::default();
-    disabled.insert(State::Disabled);
-    PropertyValues(vec![
-        PropertyAnswer {
-            id: PropertyId::Name,
-            value: Some(PropertyValue::Text("hungwin (Not Responding)".to_owned())),
-        },
-        PropertyAnswer {
-            id: PropertyId::Role,
-            value: Some(PropertyValue::Role(Role::Window)),
-        },
-        PropertyAnswer {
-            id: PropertyId::States,
-            value: Some(PropertyValue::States(disabled)),
-        },
-        PropertyAnswer {
-            id: PropertyId::Value,
-            value: None,
-        },
-    ])
-}
-
-/// The plain reader's answer to each kind of request on the plain node
-/// but the generic read: what NVDA's plain `Window` gives. A node of an
-/// outpost, and a request that names no node, are not the plain reader's.
+/// The plain reader's answer to each operation not run by the batch
+/// tests below, on the plain node, as NVDA's plain `Window` gives it: no
+/// object one step away in any direction, no descendant found or child
+/// walked, a `Follow` applied with nothing to follow, and a terminal's
+/// text operation finding no text. A batch naming a node of an outpost,
+/// or no node, is not the plain reader's.
 #[test]
-fn the_plain_reader_answers_each_kind_as_a_plain_window() {
-    let state = disabled_plain();
-    let answer = |request: Wire| {
-        super::answer(
-            &state.state.plain,
-            &verbatim_model::request::Question::from(request),
-        )
+fn the_plain_reader_answers_each_operation_as_a_plain_window() {
+    use verbatim_model::batch::{
+        Descended, Done, FollowTarget, Op, Relation, StepOutcome, Subject, View, Walk,
     };
+    use verbatim_model::matcher::Matcher;
+    let state = disabled_plain();
+    let answer = |request| super::answer(&state.state.plain, &request);
     let node = plain_node(1);
-    assert_eq!(
-        answer(Wire::Properties {
-            node,
-            set: asked_set()
-        }),
-        Some(WireOutcome::Result(Reply::Properties(disabled_values())))
-    );
-    for direction in [
-        QueryKind::Parent,
-        QueryKind::NextSibling,
-        QueryKind::PreviousSibling,
-        QueryKind::FirstChild,
-    ] {
-        assert_eq!(
-            answer(Wire::Navigate {
-                node,
-                direction,
-                set: asked_set()
-            }),
-            Some(WireOutcome::Result(Reply::Navigated(None)))
-        );
-    }
-    assert_eq!(
-        answer(Wire::Find {
-            node,
-            scope: FindScope::Descendants,
-            property: PropertyId::Role,
-            value: PropertyValue::Role(Role::Button),
+    let related = |relation| Op::Related {
+        subject: Subject::Node(node),
+        relation,
+        set: asked_set(),
+    };
+    let walk = |depth, matcher, limit| Op::Descendants {
+        subject: Subject::Node(node),
+        walk: Box::new(Walk {
+            depth,
+            view: View::Raw,
+            matcher,
+            prune: None,
+            include_subject: false,
+            limit,
+            nodes: 1000,
             set: asked_set(),
         }),
-        Some(WireOutcome::Result(Reply::Found(None)))
+    };
+    let none_walked = || {
+        StepOutcome::Done(Done::Descendants(Descended {
+            nodes: Vec::new(),
+            complete: true,
+        }))
+    };
+    assert_eq!(
+        answer(plain_batch(vec![
+            related(Relation::Parent),
+            related(Relation::NextSibling),
+            related(Relation::PreviousSibling),
+            related(Relation::FirstChild),
+        ])),
+        Some(WireOutcome::Result(Reply::Steps(vec![
+            StepOutcome::Done(
+                Done::Related(Vec::new())
+            );
+            4
+        ])))
+    );
+    let find = Matcher::Is(PropertyId::Role, PropertyValue::Role(Role::Button));
+    assert_eq!(
+        answer(plain_batch(vec![
+            walk(64, Some(find), 1),
+            walk(1, None, 1000),
+            Op::Follow(Some(FollowTarget {
+                subject: Subject::Node(node),
+                group: FollowGroup::Base,
+                extra: None,
+            })),
+        ])),
+        Some(WireOutcome::Result(Reply::Steps(vec![
+            none_walked(),
+            none_walked(),
+            StepOutcome::Done(Done::Follow),
+        ])))
     );
     assert_eq!(
-        answer(Wire::Children {
-            node,
-            set: asked_set()
-        }),
-        Some(WireOutcome::Result(Reply::Children(Vec::new())))
-    );
-    assert_eq!(
-        answer(Wire::Text {
-            node,
-            op: verbatim_model::TextOp::TerminalHistory {
-                above: 0,
-                whole: true,
-                start: verbatim_model::TextAnchor(1),
-                height: 1,
-            },
-        }),
+        answer(verbatim_model::request::Question::Terminal(
+            verbatim_model::request::TerminalAsk {
+                node,
+                op: verbatim_model::TextOp::TerminalHistory {
+                    above: 0,
+                    whole: true,
+                    start: verbatim_model::TextAnchor(1),
+                    height: 1,
+                },
+            }
+        )),
         Some(WireOutcome::Result(Reply::Text(
             verbatim_model::TextReply::NoText
         )))
     );
     assert_eq!(
-        answer(Wire::Activate { node }),
-        Some(WireOutcome::Refused(Refusal::Unsupported))
-    );
-    assert_eq!(
-        answer(Wire::Follow(Follow {
-            node: Some(Followed {
-                node,
-                group: FollowGroup::Base,
-                extra: None,
-            }),
-        })),
-        Some(WireOutcome::Result(Reply::Followed))
-    );
-    assert_eq!(
-        answer(Wire::Activate {
-            node: NodeId::in_outpost(OutpostId(3), 1)
-        }),
+        answer(plain_batch(vec![Op::Activate {
+            subject: Subject::Node(NodeId::in_outpost(OutpostId(3), 1)),
+        }])),
         None
     );
-    assert_eq!(answer(Wire::DumpTree { locations: false }), None);
-}
-
-/// The plain reader's answer to the generic read of the plain node: its
-/// properties in its ghost's window, one of the nodes a relation names
-/// when it is among them, and no descendants or ancestors.
-#[test]
-fn the_plain_reader_answers_the_generic_read_as_a_plain_window() {
-    let state = disabled_plain();
-    let node = plain_node(1);
-    let read = Wire::ReadObject(ReadObject {
-        object: ObjectRef::Node(node),
-        set: asked_set(),
-        relation: Some(RelationQuery::OneOf(vec![
-            NodeId::in_outpost(OutpostId(3), 1),
-            node,
-        ])),
-        descendants: true,
-        purpose: Purpose::Other,
-    });
     assert_eq!(
-        super::answer(
-            &state.state.plain,
-            &verbatim_model::request::Question::from(read)
-        ),
-        Some(WireOutcome::Result(Reply::Object(Box::new(ObjectRead {
-            object: NodeRead {
-                node: Some(node),
-                window: NodeWindow {
-                    handle: GHOST,
-                    top_level: GHOST,
-                    root_owner: GHOST,
-                    process: APP,
-                    thread: 41,
-                    desktop: false,
-                },
-                values: disabled_values(),
+        answer(plain_batch(vec![Op::Read {
+            subject: Subject::Window {
+                which: verbatim_model::batch::WindowOf::Handle(GHOST),
+                backend: verbatim_model::Backend::Uia,
+                visible: false,
             },
-            relation: Some(RelationFound::Is(1)),
-            descendants: Vec::new(),
-            ancestors: Vec::new(),
-        }))))
+            set: asked_set(),
+        }])),
+        None
     );
 }
 
@@ -641,14 +588,11 @@ fn a_request_on_an_older_plain_node_is_not_there() {
         ),
         [PLAIN_SPOKEN]
     );
-    let older = Wire::Activate {
-        node: plain_node(1),
-    };
+    let older = plain_batch(vec![verbatim_model::batch::Op::Activate {
+        subject: verbatim_model::batch::Subject::Node(plain_node(1)),
+    }]);
     assert_eq!(
-        super::answer(
-            &state.state.plain,
-            &verbatim_model::request::Question::from(older)
-        ),
+        super::answer(&state.state.plain, &older),
         Some(WireOutcome::NotThere)
     );
 }
@@ -706,16 +650,20 @@ fn the_ghost_destroyed_under_the_plain_focus_says_window_invisible() {
         route(&mut state, 160_000, &destroyed(GHOST)),
         [Said::Queue(QueueEffect::WakeAt(Some(551_000)))]
     );
-    assert_eq!(
-        super::answer(
-            &state.state.plain,
-            &verbatim_model::request::Question::from(Wire::Properties {
-                node: plain_node(1),
-                set: asked_set(),
-            })
-        ),
-        Some(WireOutcome::Result(Reply::Properties(destroyed_values())))
-    );
+    let read = plain_batch(vec![verbatim_model::batch::Op::Read {
+        subject: verbatim_model::batch::Subject::Node(plain_node(1)),
+        set: asked_set(),
+    }]);
+    let Some(WireOutcome::Result(Reply::Steps(steps))) = super::answer(&state.state.plain, &read)
+    else {
+        panic!("the plain reader answers its node's read");
+    };
+    let [verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Read(read))] =
+        steps.as_slice()
+    else {
+        panic!("one read: {steps:?}");
+    };
+    assert_eq!(read.values, destroyed_values());
     assert_eq!(
         effects(&mut state, 200_000, press(1, ReviewCommand::ReportFocus, 0)),
         ["Role(Window) State(Invisible)"]
@@ -764,13 +712,11 @@ fn another_windows_destroy_leaves_the_ghost_and_the_next_commit_replaces_the_dea
         ),
         [PLAIN_SPOKEN]
     );
+    let older = plain_batch(vec![verbatim_model::batch::Op::Activate {
+        subject: verbatim_model::batch::Subject::Node(plain_node(1)),
+    }]);
     assert_eq!(
-        super::answer(
-            &state.state.plain,
-            &verbatim_model::request::Question::from(Wire::Activate {
-                node: plain_node(1),
-            })
-        ),
+        super::answer(&state.state.plain, &older),
         Some(WireOutcome::NotThere)
     );
     assert_eq!(
@@ -902,11 +848,10 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
                 asker: Asker(5),
                 reader: Reader::Outpost(APP),
                 window,
-                request: Wire::Properties {
-                    node: plain_node(1),
+                request: plain_batch(vec![verbatim_model::batch::Op::Read {
+                    subject: verbatim_model::batch::Subject::Node(plain_node(1)),
                     set: vec![PropertyId::Role],
-                }
-                .into(),
+                }]),
                 due_after_us: 11_000_000,
             },
         },
@@ -916,12 +861,23 @@ fn a_request_from_outside_the_queue_on_the_plain_node_is_answered_with_nothing_s
         effects,
         [Effect::Queue(QueueEffect::Answered {
             asker: 5,
-            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues(vec![
-                PropertyAnswer {
-                    id: PropertyId::Role,
-                    value: Some(PropertyValue::Role(Role::Window)),
-                }
-            ]))),
+            outcome: WireOutcome::Result(crate::entries::tests::one(
+                verbatim_model::batch::Done::Read(NodeRead {
+                    node: Some(plain_node(1)),
+                    window: NodeWindow {
+                        handle: GHOST,
+                        top_level: GHOST,
+                        root_owner: GHOST,
+                        process: APP,
+                        thread: 41,
+                        desktop: false,
+                    },
+                    values: PropertyValues(vec![PropertyAnswer {
+                        id: PropertyId::Role,
+                        value: Some(PropertyValue::Role(Role::Window)),
+                    }]),
+                })
+            )),
         })]
     );
 }

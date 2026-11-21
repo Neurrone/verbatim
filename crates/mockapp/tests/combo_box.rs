@@ -326,33 +326,31 @@ fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
     assert_eq!(value.as_deref(), Some("Large"));
     let answer = outpost.requested(
         hwnd,
-        verbatim_model::request::Request::Properties {
+        common::outpost::read(
             node,
-            set: vec![
+            vec![
                 PropertyId::HasValuePattern,
                 PropertyId::WindowClass,
                 PropertyId::ComboBoxList,
             ],
-        },
+        ),
     );
     assert_eq!(
-        answer.outcome,
-        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Properties(
-            verbatim_model::property::PropertyValues(vec![
-                verbatim_model::property::PropertyAnswer {
-                    id: PropertyId::HasValuePattern,
-                    value: Some(PropertyValue::Flag(true)),
-                },
-                verbatim_model::property::PropertyAnswer {
-                    id: PropertyId::WindowClass,
-                    value: Some(PropertyValue::Text("VerbatimMockAppWindow".to_owned())),
-                },
-                verbatim_model::property::PropertyAnswer {
-                    id: PropertyId::ComboBoxList,
-                    value: None,
-                },
-            ])
-        ))
+        common::outpost::values_read(answer.outcome),
+        verbatim_model::property::PropertyValues(vec![
+            verbatim_model::property::PropertyAnswer {
+                id: PropertyId::HasValuePattern,
+                value: Some(PropertyValue::Flag(true)),
+            },
+            verbatim_model::property::PropertyAnswer {
+                id: PropertyId::WindowClass,
+                value: Some(PropertyValue::Text("VerbatimMockAppWindow".to_owned())),
+            },
+            verbatim_model::property::PropertyAnswer {
+                id: PropertyId::ComboBoxList,
+                value: None,
+            },
+        ])
     );
     let mut core = CoreDriver::new(&app, outpost);
     let _ = core.uia_focus(&focused(hwnd));

@@ -21,10 +21,7 @@ use desk::{
 use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{
-    Instance, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Question, Reader,
-    RelationFound, Reply, Request as Wire,
-};
+use verbatim_model::request::{Instance, NodeRead, NodeWindow, Outcome, Probe, Question, Reader};
 use verbatim_model::tell::{Checked, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     Backend, Earcon, NodeDetails, NodeSnapshot, Role, SegmentContent, State, StateSet, TraceId,
@@ -173,7 +170,7 @@ fn sequences() -> Vec<Vec<Other>> {
 }
 
 /// The outpost's read of the alert, "Saved".
-fn alert_read() -> Outcome {
+fn alert_read() -> NodeRead {
     let values = PropertyValues(vec![
         PropertyAnswer {
             id: PropertyId::Name,
@@ -184,19 +181,22 @@ fn alert_read() -> Outcome {
             value: Some(PropertyValue::Role(Role::Alert)),
         },
     ]);
-    Outcome::Result(Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: Some(ONE.node(50)),
-            window: NodeWindow {
-                handle: alert_window(),
-                ..ONE.node_window()
-            },
-            values,
+    NodeRead {
+        node: Some(ONE.node(50)),
+        window: NodeWindow {
+            handle: alert_window(),
+            ..ONE.node_window()
         },
-        relation: Some(RelationFound::Unrelated),
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    })))
+        values,
+    }
+}
+
+/// Whether `request` is the read of the MSAA alert at object id `object`.
+fn reads_alert(request: &Question, object: i32) -> bool {
+    matches!(request, Question::Batch(batch) if batch.steps.iter().any(|step| matches!(
+        step.op.subject(),
+        Some(verbatim_model::batch::Subject::Msaa { ids, .. }) if ids.object == object
+    )))
 }
 
 /// A focus on another element, node 30, told by the listener, whose read
@@ -252,10 +252,8 @@ fn run(
         .cloned()
     {
         let outcome = match &request {
-            Question::Legacy(Wire::ReadObject(read))
-                if matches!(read.object, ObjectRef::Msaa { object: ALERT, .. }) =>
-            {
-                alert_read()
+            Question::Batch(batch) if reads_alert(&request, ALERT) => {
+                readers::outcome(batch, &Found::Object(alert_read()))
             }
             other => answer(other),
         };
@@ -334,12 +332,17 @@ fn property(property: PropertyId, (older, newer): (PropertyValue, PropertyValue)
 /// `said`.
 fn read_property(property: PropertyId, value: PropertyValue, said: &[Heard]) {
     let answer = move |request: &Question| match request {
-        Question::Legacy(Wire::Properties { .. }) => {
-            Outcome::Result(Reply::Properties(PropertyValues(vec![PropertyAnswer {
-                id: property,
-                value: Some(value.clone()),
-            }])))
-        }
+        Question::Batch(batch) if desk::kind(request) == "Properties" => readers::outcome(
+            batch,
+            &Found::Object(NodeRead {
+                node: None,
+                window: ONE.node_window(),
+                values: PropertyValues(vec![PropertyAnswer {
+                    id: property,
+                    value: Some(value.clone()),
+                }]),
+            }),
+        ),
         other => unasked(other),
     };
     let mut heard = vec![Heard::Sent(Reader::Outpost(ONE.pid), "Properties")];
@@ -417,14 +420,11 @@ fn an_alert_merged_is_the_newer_alert() {
         tell: alert(7),
     };
     let answer = |request: &Question| match request {
-        Question::Legacy(Wire::ReadObject(_)) => {
-            let Outcome::Result(Reply::Object(mut read)) = alert_read() else {
-                unreachable!("an object read");
-            };
-            read.object.node = Some(ONE.node(7));
-            read.object.values =
-                desk::values_of(&node(7, Role::Alert, "Copied twice", StateSet::new()));
-            Outcome::Result(Reply::Object(read))
+        Question::Batch(batch) if desk::kind(request) == "ReadObject" => {
+            let mut read = alert_read();
+            read.node = Some(ONE.node(7));
+            read.values = desk::values_of(&node(7, Role::Alert, "Copied twice", StateSet::new()));
+            readers::outcome(batch, &Found::Object(read))
         }
         other => unasked(other),
     };

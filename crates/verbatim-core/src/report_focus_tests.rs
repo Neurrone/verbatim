@@ -8,7 +8,7 @@ use crate::readers::Found;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, TextSummary,
 };
-use verbatim_model::request::{Press, PressAction, Reply, Request as Wire};
+use verbatim_model::request::{Press, PressAction};
 use verbatim_model::{Effect as Said, KeySeq, ReviewCommand, Role, TraceId, WindowHandle};
 
 use crate::entries::tests::{
@@ -65,7 +65,7 @@ fn field(summary: TextSummary) -> Input<Entry> {
     answer(
         OUTPOST,
         3,
-        Reply::Properties(PropertyValues(vec![
+        crate::entries::tests::properties(PropertyValues(vec![
             PropertyAnswer {
                 id: PropertyId::Name,
                 value: Some(PropertyValue::Text("Body".to_owned())),
@@ -104,9 +104,9 @@ fn it_reads_the_committed_node_live_and_speaks_it_with_its_line() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        state.queue.table_for_tests().last(),
-        Some(&Wire::Properties {
-            node: node(2),
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: super::report_set(&state),
         })
     );
@@ -302,7 +302,11 @@ fn named(name: Option<&str>, role: Role) -> Input<Entry> {
             value: Some(PropertyValue::Text(name.to_owned())),
         });
     }
-    answer(OUTPOST, 3, Reply::Properties(PropertyValues(values)))
+    answer(
+        OUTPOST,
+        3,
+        crate::entries::tests::properties(PropertyValues(values)),
+    )
 }
 
 /// A third press within the interval spells the name with each
@@ -351,7 +355,7 @@ fn it_leaves_the_navigator_where_it_is() {
     let _ = feed_at(
         &mut state,
         1_100,
-        answer(OUTPOST, 3, Reply::Navigated(Some(group))),
+        answer(OUTPOST, 3, crate::entries::tests::related(Some(group))),
     );
     let _ = feed_at(&mut state, 2_000, press(2, 0));
     assert_eq!(
@@ -361,7 +365,10 @@ fn it_leaves_the_navigator_where_it_is() {
             answer(
                 OUTPOST,
                 4,
-                Reply::Properties(crate::entries::tests::values("OK", Role::Button))
+                crate::entries::tests::properties(crate::entries::tests::values(
+                    "OK",
+                    Role::Button
+                ))
             )
         ),
         ["Label(\"OK\") Role(Button)"]

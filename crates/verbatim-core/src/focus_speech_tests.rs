@@ -530,7 +530,7 @@ fn properties_asked() -> Vec<Heard> {
 
 /// The answer to a read of one property.
 fn property(id: PropertyId, value: PropertyValue) -> verbatim_model::request::Reply {
-    verbatim_model::request::Reply::Properties(verbatim_model::property::PropertyValues(vec![
+    crate::entries::tests::properties(verbatim_model::property::PropertyValues(vec![
         verbatim_model::property::PropertyAnswer {
             id,
             value: Some(value),

@@ -17,7 +17,7 @@
 use std::time::Instant;
 
 use verbatim_model::NodeId;
-use verbatim_model::request::{Follow, FollowGroup, Outcome, Reply};
+use verbatim_model::request::{FollowGroup, Followed};
 use verbatim_uia::{Group, Scope};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
@@ -52,20 +52,31 @@ fn uia_group(group: FollowGroup) -> Group {
     }
 }
 
-/// Runs `follow` on the worker: records what it names, moves the
-/// registration on the registering thread and waits for the move. A node
-/// the outpost no longer holds an element for is answered not there, with
-/// every registration removed.
+/// How a `Follow` ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Moved {
+    /// The registration moved.
+    Done,
+    /// The node named is not held: every registration was removed.
+    NotThere,
+    /// The outpost has no registration to move.
+    Unregistered,
+}
+
+/// Runs a `Follow` of `node`, or of nothing, on the worker: records what
+/// it names, moves the registration on the registering thread and waits
+/// for the move. A node the outpost no longer holds an element for is not
+/// there, with every registration removed.
 pub(super) fn follow(
     context: &RequestContext<'_>,
     client: &mut Client,
-    follow: &Follow,
-) -> Outcome {
+    node: Option<&Followed>,
+) -> Moved {
     let Some(registration) = context.focus_events.get() else {
         tracing::debug!("Follow with no registration to move");
-        return Outcome::Ended;
+        return Moved::Unregistered;
     };
-    let named = follow.node.as_ref().and_then(|followed| {
+    let named = node.and_then(|followed| {
         let element = context.store.element_of(followed.node)?.reference();
         // The extra object, the slider a focused thumb is in, is an
         // ancestor the completion minted, whose element is found again by
@@ -84,7 +95,7 @@ pub(super) fn follow(
             },
         })
     });
-    let not_there = follow.node.is_some() && named.is_none();
+    let not_there = node.is_some() && named.is_none();
     if named
         .as_ref()
         .is_some_and(|named| named.terminal == Some(true))
@@ -109,9 +120,9 @@ pub(super) fn follow(
     registration.settle();
     log_move("Follow", moved, started);
     if not_there {
-        Outcome::NotThere
+        Moved::NotThere
     } else {
-        Outcome::Result(Reply::Followed)
+        Moved::Done
     }
 }
 

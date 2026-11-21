@@ -2,14 +2,13 @@
 //! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
 //! objects", its announcements).
 
-use verbatim_model::request::{ObjectRef, Purpose, ReadObject};
 use verbatim_model::{Backend, NodeId, SpeechPriority, ToastId};
 
 use super::{Announcement, Kept, native};
+use crate::batch::{On, Single};
 use crate::entries::{Entries, window_facts};
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use crate::focus::FOCUS_SET;
-use crate::focus::uia_focus::ListenerRead;
 use crate::state::LastToast;
 
 /// A toast's nearest window class.
@@ -39,24 +38,16 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, kept: K
     let Some(window) = announcement.window() else {
         return;
     };
-    let read = ListenerRead {
-        window,
-        read: ReadObject {
-            object: ObjectRef::Kept {
-                listener: kept.listener,
-                token: kept.token,
-            },
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        },
-    };
+    let mut batch = cx.batch(|| ());
+    let read = batch.read(
+        On::kept(kept.listener, kept.token, false),
+        &crate::details::node_set(&cx.facts(), FOCUS_SET),
+    );
+    let request = batch.finish().of(Reader::Listener, window).one(read);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(read) = cx.ask(read, due_us).await else {
+    let Outcome::Result(Single::Done(mut node)) = cx.ask(request, due_us).await else {
         return;
     };
-    let mut node = read.object;
     // The listener mints no node; a toast is announced, never followed.
     node.node = Some(NodeId::new(0));
     let Some(snapshot) = crate::focus::execute::snapshot(

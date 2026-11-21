@@ -1036,33 +1036,44 @@ fn a_uia_bar_with_no_rectangle_is_placed_at_the_origin() {
 /// read of an MSAA object at its event's address, as Core asks it at its
 /// value change: its role, value, states and place.
 fn a_classic_bar_is_read_at_its_address_with_no_outpost() {
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
     use verbatim_model::property::{PropertyId, PropertyValue};
-    use verbatim_model::request::{ObjectRef, Outcome, Purpose, ReadObject, Reply};
+    use verbatim_model::request::{MsaaIds, Outcome, Reply};
     common::init_com();
     let title = common::unique_title("mockapp-classic-bar");
     let mut app = common::spawn("progress.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     app.send("set-value bar 40");
-    let read = ReadObject {
-        object: ObjectRef::Msaa {
-            window: verbatim_model::WindowHandle(hwnd.0 as u64),
-            object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
-            child: 1,
-        },
-        set: vec![
-            PropertyId::Role,
-            PropertyId::Value,
-            PropertyId::States,
-            PropertyId::Rect,
-        ],
-        relation: None,
-        descendants: false,
-        purpose: Purpose::Other,
+    let read = Batch {
+        steps: vec![Step {
+            op: Op::Read {
+                subject: Subject::Msaa {
+                    ids: MsaaIds {
+                        window: verbatim_model::WindowHandle(hwnd.0 as u64),
+                        object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+                        child: 1,
+                    },
+                    redirect: false,
+                },
+                set: vec![
+                    PropertyId::Role,
+                    PropertyId::Value,
+                    PropertyId::States,
+                    PropertyId::Rect,
+                ],
+            },
+            when: None,
+        }],
+        placement: Placement::Queue,
+        spare: None,
     };
-    let Outcome::Result(Reply::Object(object)) = verbatim_listener::read_msaa_object(&read) else {
+    let Outcome::Result(Reply::Steps(steps)) = verbatim_listener::read_msaa_batch(&read) else {
         panic!("the bar is read");
     };
-    let values = &object.object.values;
+    let [StepOutcome::Done(Done::Read(object))] = steps.as_slice() else {
+        panic!("one read: {steps:?}");
+    };
+    let values = &object.values;
     assert_eq!(
         values
             .answer(PropertyId::Role)

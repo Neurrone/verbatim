@@ -4,8 +4,8 @@
 
 use verbatim_model::batch::{MAX_DEPTH, MAX_NODES, Relation, View, Walk};
 use verbatim_model::matcher::Matcher;
-use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
-use verbatim_model::request::{NodeRead, Reply, Request as Wire, Route, RouteEnd};
+use verbatim_model::property::{PropertyId, PropertyValue, RuntimeId};
+use verbatim_model::request::{NodeRead, Route, RouteEnd};
 use verbatim_model::{Backend, NodeId, PropertyChange, Role, State, StateSet, WindowHandle};
 
 use super::{Announcement, Kept, native, text};
@@ -13,7 +13,7 @@ use crate::batch::{Got, On};
 use crate::changes::AtArrival;
 use crate::entries::Entries;
 use crate::entries::window_facts;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::focus::FOCUS_SET;
 use crate::focus::acceptance;
 use crate::focus::execute::Known;
@@ -82,43 +82,6 @@ async fn item(
             }
         });
     cx.ask(request, due_us).await
-}
-
-/// The properties of a node by set.
-#[derive(Debug)]
-pub(crate) struct NodeProperties {
-    /// The node's window.
-    pub(crate) window: RequestWindow,
-    /// The node.
-    pub(crate) node: NodeId,
-    /// The set.
-    pub(crate) set: Vec<PropertyId>,
-}
-
-impl Request for NodeProperties {
-    type Reply = PropertyValues;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Properties {
-            node: self.node,
-            set: self.set.clone(),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
-        }
-    }
 }
 
 /// The function of a UI Automation selection entry, its element `kept` by
@@ -260,12 +223,11 @@ async fn combo_box_list(
     combo_box: &CommittedFocus,
     due_us: u64,
 ) -> Option<WindowHandle> {
-    let read = NodeProperties {
-        window: combo_box.kept.asked,
-        node: combo_box.context.snapshot.id,
-        set: vec![PropertyId::ComboBoxList],
-    };
-    let Outcome::Result(values) = cx.ask(read, due_us).await else {
+    let asked = combo_box.kept.asked;
+    let read = (asked.process, asked, combo_box.context.snapshot.id);
+    let Outcome::Result(values) =
+        crate::navigator::read_values(cx, read, &[PropertyId::ComboBoxList], due_us).await
+    else {
         return None;
     };
     match values
@@ -287,16 +249,20 @@ async fn core_window_value(
     combo_box: &CommittedFocus,
     due_us: u64,
 ) {
-    let read = NodeProperties {
-        window: combo_box.kept.asked,
-        node: combo_box.context.snapshot.id,
-        set: vec![
+    let asked = combo_box.kept.asked;
+    let read = (asked.process, asked, combo_box.context.snapshot.id);
+    let Outcome::Result(values) = crate::navigator::read_values(
+        cx,
+        read,
+        &[
             PropertyId::HasValuePattern,
             PropertyId::WindowClass,
             PropertyId::Value,
         ],
-    };
-    let Outcome::Result(values) = cx.ask(read, due_us).await else {
+        due_us,
+    )
+    .await
+    else {
         return;
     };
     let value_of = |id| values.answer(id).and_then(|answer| answer.value.as_ref());
@@ -330,12 +296,11 @@ async fn combo_box_value(
     combo_box: &CommittedFocus,
     due_us: u64,
 ) {
-    let read = NodeProperties {
-        window: combo_box.kept.asked,
-        node: combo_box.context.snapshot.id,
-        set: vec![PropertyId::Value],
-    };
-    let Outcome::Result(values) = cx.ask(read, due_us).await else {
+    let asked = combo_box.kept.asked;
+    let read = (asked.process, asked, combo_box.context.snapshot.id);
+    let Outcome::Result(values) =
+        crate::navigator::read_values(cx, read, &[PropertyId::Value], due_us).await
+    else {
         return;
     };
     let value = text(

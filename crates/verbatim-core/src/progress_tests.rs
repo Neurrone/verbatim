@@ -10,10 +10,7 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
-use verbatim_model::request::{
-    MsaaIds, NodeRead, ObjectRead, ObjectRef, Probe, QueueEffect, Reply, Request as Wire,
-    RequestNumber,
-};
+use verbatim_model::request::{MsaaIds, NodeRead, Probe, QueueEffect, Reply, RequestNumber};
 use verbatim_model::tell::{Checked, Event, EventObject, Payload, Relation, TellWindow};
 use verbatim_model::{
     Earcon, Effect, Percent, Pid, Rect, Role, SegmentContent, State, StateSet, WindowHandle,
@@ -34,17 +31,34 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
         .into_iter()
         .filter_map(|effect| match effect {
             Effect::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
-                verbatim_model::request::Question::Legacy(Wire::ReadObject(read)) => format!(
-                    "send {:?} {} ReadObject {:?} {:?}",
-                    to.reader, ask.number.0, read.object, read.set
-                ),
+                verbatim_model::request::Question::Batch(batch)
+                    if matches!(
+                        batch.steps.as_slice(),
+                        [verbatim_model::batch::Step {
+                            op: verbatim_model::batch::Op::Read {
+                                subject: verbatim_model::batch::Subject::Msaa { .. },
+                                ..
+                            },
+                            ..
+                        }]
+                    ) =>
+                {
+                    let verbatim_model::batch::Op::Read { subject, set } = &batch.steps[0].op
+                    else {
+                        unreachable!("matched as a read");
+                    };
+                    format!(
+                        "send {:?} {} ReadObject {subject:?} {set:?}",
+                        to.reader, ask.number.0
+                    )
+                }
                 verbatim_model::request::Question::Batch(batch) => format!(
                     "send {:?} {} {}",
                     to.reader,
                     ask.number.0,
                     crate::entries::tests::batch_kind(batch)
                 ),
-                verbatim_model::request::Question::Legacy(other) => {
+                verbatim_model::request::Question::Terminal(other) => {
                     format!("send {:?} {} {other:?}", to.reader, ask.number.0)
                 }
             }),
@@ -74,10 +88,9 @@ const IDS: MsaaIds = MsaaIds {
 fn bar_read(number: u64) -> String {
     format!(
         "send Listener {number} ReadObject {:?} [Role, Value, States, Rect]",
-        ObjectRef::Msaa {
-            window: IDS.window,
-            object: IDS.object,
-            child: IDS.child,
+        verbatim_model::batch::Subject::Msaa {
+            ids: IDS,
+            redirect: false,
         }
     )
 }
@@ -172,28 +185,23 @@ fn bar_answer(role: Role, value: &str, states: StateSet) -> Reply {
         id,
         value: Some(value),
     };
-    Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: win(5),
-            values: PropertyValues(vec![
-                answer(PropertyId::Role, PropertyValue::Role(role)),
-                answer(PropertyId::Value, PropertyValue::Text(value.to_owned())),
-                answer(PropertyId::States, PropertyValue::States(states)),
-                answer(
-                    PropertyId::Rect,
-                    PropertyValue::Rect(Rect {
-                        left: 0,
-                        top: 10,
-                        width: 100,
-                        height: 20,
-                    }),
-                ),
-            ]),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
+    crate::entries::tests::one(verbatim_model::batch::Done::Read(NodeRead {
+        node: None,
+        window: win(5),
+        values: PropertyValues(vec![
+            answer(PropertyId::Role, PropertyValue::Role(role)),
+            answer(PropertyId::Value, PropertyValue::Text(value.to_owned())),
+            answer(PropertyId::States, PropertyValue::States(states)),
+            answer(
+                PropertyId::Rect,
+                PropertyValue::Rect(Rect {
+                    left: 0,
+                    top: 10,
+                    width: 100,
+                    height: 20,
+                }),
+            ),
+        ]),
     }))
 }
 
@@ -677,7 +685,7 @@ fn a_flood_of_one_classic_bars_changes_keeps_one_read_out() {
             "change {change}"
         );
         assert_eq!(
-            held.state.queue.table_for_tests().len(),
+            held.state.queue.batches_for_tests().len(),
             1,
             "change {change}"
         );
@@ -710,7 +718,7 @@ fn a_flood_of_one_classic_bars_changes_keeps_one_read_out() {
         "the last change is heard"
     );
     assert!(held.state.bar_reads.is_empty());
-    assert_eq!(held.state.queue.table_for_tests(), Vec::<Wire>::new());
+    assert_eq!(held.state.queue.batches_for_tests(), Vec::new());
 }
 
 /// An ending of a bar's read, by its name, fed to the state.

@@ -34,11 +34,12 @@ mod readers;
 
 use desk::{App, Desk, LISTENER, ONE, TWO, focus_read_of, focus_tell, listener_read, runtime_of};
 use verbatim_core::{SrState, dump, replay};
+use verbatim_model::batch::{Done, StepOutcome};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    Answer, FocusRead, HeldIds, Instance, MsaaIds, NodeRead, ObjectRead, Outcome, QueueInput,
-    RelationFound, Reply, Request as Wire, RequestNumber,
+    Answer, FocusRead, HeldIds, Instance, MsaaIds, NodeRead, Outcome, QueueInput, Reply,
+    RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -307,6 +308,20 @@ fn win32_apply(desk: &mut Desk) {
                     )),
                 )
             }
+            Question::Batch(batch) if desk::kind(request) == "ReadObject" => {
+                reads += 1;
+                Outcome::Result(Reply::Steps(vec![
+                    StepOutcome::Done(Done::IsOneOf(Some(0))),
+                    StepOutcome::Done(Done::Read(NodeRead {
+                        node: None,
+                        window: ONE.node_window(),
+                        values: PropertyValues(vec![PropertyAnswer {
+                            id: PropertyId::States,
+                            value: Some(PropertyValue::States(apply_states(reads))),
+                        }]),
+                    })),
+                ]))
+            }
             Question::Batch(batch) => readers::outcome(
                 batch,
                 &Found::Read(by_ids(
@@ -314,23 +329,7 @@ fn win32_apply(desk: &mut Desk) {
                     read_only_window,
                 )),
             ),
-            Question::Legacy(Wire::ReadObject(_)) => {
-                reads += 1;
-                Outcome::Result(Reply::Object(Box::new(ObjectRead {
-                    object: NodeRead {
-                        node: Some(apply.id),
-                        window: ONE.node_window(),
-                        values: PropertyValues(vec![PropertyAnswer {
-                            id: PropertyId::States,
-                            value: Some(PropertyValue::States(apply_states(reads))),
-                        }]),
-                    },
-                    relation: Some(RelationFound::Is(0)),
-                    descendants: Vec::new(),
-                    ancestors: Vec::new(),
-                })))
-            }
-            Question::Legacy(other) => {
+            Question::Terminal(other) => {
                 panic!("a request the session does not answer: {other:?}")
             }
         }),

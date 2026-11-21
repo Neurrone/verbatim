@@ -6,9 +6,7 @@ use crate::entries::tests::found_at;
 use crate::readers::Found;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
 
-use verbatim_model::request::{
-    FocusCaret, FocusCaretRead, FocusRead, KnownAncestor, Request as Wire,
-};
+use verbatim_model::request::{FocusCaret, FocusCaretRead, FocusRead, KnownAncestor};
 use verbatim_model::tell::{ElementToken, Read};
 use verbatim_model::{
     CaretReport, NodeId, OutpostId, Pid, Role, TextAnchor, TextChunk, TextUnit, TraceId,
@@ -208,9 +206,9 @@ fn the_listeners_end_clears_its_token_and_reads_the_attended_applications_focus(
     assert!(
         !state
             .queue
-            .table_for_tests()
+            .batches_for_tests()
             .iter()
-            .any(|request| matches!(request, Wire::ReadObject(_)))
+            .any(|(_, batch)| crate::entries::tests::batch_kind(batch) == "ReadObject")
     );
     let Some(ReadBy::Uia { token, .. }) = state.versions.last.as_ref().map(|last| &last.read_by)
     else {

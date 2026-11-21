@@ -5,7 +5,9 @@
 //! (`super::super::tests`), and whole sessions through the event queue
 //! (`tests/terminal_reading.rs`, `tests/terminal_floods.rs`).
 
-use verbatim_model::request::{CancelReason, Refusal, Reply, Request as Wire};
+use verbatim_model::request::{
+    CancelReason, FollowGroup, Followed, Question, Refusal, Reply, TerminalAsk,
+};
 use verbatim_model::{NodeId, OutpostId, Pid, TerminalReadReply, TextAnchor, TextOp, TextReply};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
@@ -52,15 +54,22 @@ fn wants(state: &mut SrState) -> Vec<(Want, u64)> {
         .into_iter()
         .map(|(token, request)| {
             let want = match request {
-                Wire::Follow(_) => Want::Follow,
-                Wire::Text {
+                Question::Batch(batch)
+                    if batch
+                        .steps
+                        .iter()
+                        .all(|step| matches!(step.op, verbatim_model::batch::Op::Follow(_))) =>
+                {
+                    Want::Follow
+                }
+                Question::Terminal(TerminalAsk {
                     op: TextOp::ReadTerminal(read),
                     ..
-                } if read.output => Want::Output,
-                Wire::Text {
+                }) if read.output => Want::Output,
+                Question::Terminal(TerminalAsk {
                     op: TextOp::ReadTerminal(_),
                     ..
-                } => Want::Baseline,
+                }) => Want::Baseline,
                 other => panic!("an unexpected request: {other:?}"),
             };
             (
@@ -164,12 +173,10 @@ fn a_terminal_committed_is_followed_then_baselined() {
     let mut state = SrState::new();
     let follow = (
         window(),
-        Wire::Follow(Follow {
-            node: Some(Followed {
-                node: node(),
-                group: FollowGroup::Terminal { console: false },
-                extra: None,
-            }),
+        Some(Followed {
+            node: node(),
+            group: FollowGroup::Terminal { console: false },
+            extra: None,
         }),
     );
     committed(&mut state, Some(terminal()), vec![follow], 1_000);
@@ -372,12 +379,10 @@ fn a_refused_follow_ends_the_focused_terminal() {
     let mut state = SrState::new();
     let follow = (
         window(),
-        Wire::Follow(Follow {
-            node: Some(Followed {
-                node: node(),
-                group: FollowGroup::Terminal { console: false },
-                extra: None,
-            }),
+        Some(Followed {
+            node: node(),
+            group: FollowGroup::Terminal { console: false },
+            extra: None,
         }),
     );
     committed(&mut state, Some(terminal()), vec![follow], 1_000);
@@ -399,12 +404,10 @@ fn a_hung_follow_waits_for_the_window_then_follows_and_baselines() {
     let mut state = SrState::new();
     let follow = (
         window(),
-        Wire::Follow(Follow {
-            node: Some(Followed {
-                node: node(),
-                group: FollowGroup::Terminal { console: false },
-                extra: None,
-            }),
+        Some(Followed {
+            node: node(),
+            group: FollowGroup::Terminal { console: false },
+            extra: None,
         }),
     );
     committed(&mut state, Some(terminal()), vec![follow], 1_000);
@@ -463,12 +466,10 @@ fn followed() -> (SrState, u64, u64) {
     let mut state = SrState::new();
     let follow = (
         window(),
-        Wire::Follow(Follow {
-            node: Some(Followed {
-                node: node(),
-                group: FollowGroup::Terminal { console: false },
-                extra: None,
-            }),
+        Some(Followed {
+            node: node(),
+            group: FollowGroup::Terminal { console: false },
+            extra: None,
         }),
     );
     committed(&mut state, Some(terminal()), vec![follow], 1_000);

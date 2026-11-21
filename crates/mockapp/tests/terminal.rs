@@ -29,7 +29,7 @@ mod harness;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use verbatim_model::request::Request;
+use verbatim_model::request::TerminalAsk;
 use verbatim_model::{
     CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
     TerminalSnapshot, TextOp,
@@ -251,7 +251,7 @@ impl Driven {
         let counted = Rc::clone(&count);
         let mut act = Some(act);
         self.core.observe_sends(Some(Box::new(move |ask, outpost| {
-            let Some(Request::Text { op, .. }) = ask.request.legacy() else {
+            let Some(TerminalAsk { op, .. }) = ask.request.terminal() else {
                 return;
             };
             if !of(op) {

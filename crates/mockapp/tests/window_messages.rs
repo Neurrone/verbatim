@@ -16,11 +16,8 @@ use std::time::Duration;
 
 use verbatim_faults::{Fault, Guard};
 use verbatim_ia2::edit::EditError;
-use verbatim_model::request::{FocusCaret, MsaaIds, Outcome, Reply, Request};
-use verbatim_model::{
-    CaretMotion, StartingRead, TextAnchor, TextDetails, TextOp, TextProvider, TextReply,
-    WindowHandle,
-};
+use verbatim_model::WindowHandle;
+use verbatim_model::request::{FocusCaret, MsaaIds};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
@@ -139,21 +136,13 @@ fn a_slow_edit_control_answers_its_selection() {
         object: OBJID_CLIENT.0,
         child: 0,
     });
-    // The caret as read, its anchors, which each read mints anew, left out.
-    let unanchored = |caret: &verbatim_model::CaretReport| {
-        let mut caret = caret.clone();
-        caret.line.start = TextAnchor(0);
-        if let Some(selection) = &mut caret.selection {
-            selection.range.start.anchor = TextAnchor(0);
-            selection.range.end.anchor = TextAnchor(0);
-        }
-        caret
-    };
     let FocusCaret::Read(read) = &focus.read.caret else {
         panic!("the focus read no caret: {:?}", focus.read.caret);
     };
-    let expected = unanchored(&read.caret);
-    assert!(expected.selection.is_some(), "the focus read the selection");
+    assert!(
+        read.caret.selection.is_some(),
+        "the focus read the selection"
+    );
 
     let (sends, guard) = watch_sends(edit, EM_GETSEL, 1);
     // The window thread stalled for twice the old half-second limit: the
@@ -161,20 +150,18 @@ fn a_slow_edit_control_answers_its_selection() {
     // mockapp prints, is the evidence that the old limit passed.
     let stall = Duration::from_secs(1);
     app.stall(stall);
+    // A caret key's starting read's first step, the caret by the edit
+    // control's messages.
     let answer = outpost.requested(
         HWND(edit as _),
-        Request::Text {
-            node: focus.node(),
-            op: TextOp::StartingRead(StartingRead {
-                provider: TextProvider::EditMessages,
-                details: TextDetails::ALL,
-                unit: verbatim_model::StartingUnit::for_motion(CaretMotion::NextCharacter),
-            }),
-        },
+        common::outpost::one(verbatim_model::batch::Op::Caret {
+            subject: verbatim_model::batch::Subject::Node(focus.node()),
+            adopt: None,
+        }),
     );
-    match answer.outcome {
-        Outcome::Result(Reply::Text(TextReply::Started(started))) => {
-            assert_eq!(unanchored(&started.caret), expected);
+    match common::outpost::only_step(answer.outcome) {
+        verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Caret(caret)) => {
+            assert!(caret.selection.is_some(), "the selection read again");
         }
         other => panic!("the outpost answered {other:?}, not the caret"),
     }

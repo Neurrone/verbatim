@@ -6,7 +6,8 @@
 //! here.
 
 use verbatim_model::request::{
-    Answer, CancelReason, OutsideOutcome, Probe, ProcessFact, Question, QueueEffect, RequestNumber,
+    Answer, CancelReason, Outcome as WireOutcome, Probe, ProcessFact, Question, QueueEffect,
+    RequestNumber,
 };
 use verbatim_model::{Effect, Pid, WindowHandle};
 
@@ -457,19 +458,21 @@ impl<L: Logic> Core<L> {
                 shared.effects.extend(said);
             }
             Owner::Outside(asker) => {
+                // Core's own endings, a result that did not decode and Core
+                // no longer awaiting it, are the asker's "ended or stopped".
                 let outcome = match outcome_of(ended.ending) {
-                    Ok(reply) => OutsideOutcome::Result(reply),
+                    Ok(reply) => WireOutcome::Result(reply),
                     Err(Outcome::Result(never)) => match never {},
                     Err(Outcome::Refused(Refused::Reader(refusal))) => {
-                        OutsideOutcome::Refused(refusal)
+                        WireOutcome::Refused(refusal)
                     }
-                    Err(Outcome::Refused(Refused::Undecodable)) => OutsideOutcome::Undecodable,
-                    Err(Outcome::NotThere) => OutsideOutcome::NotThere,
-                    Err(Outcome::NotResponding) => OutsideOutcome::NotResponding,
-                    Err(Outcome::ReaderEnded) => OutsideOutcome::ReaderEnded,
-                    Err(Outcome::NoLongerAwaited(reason)) => {
-                        OutsideOutcome::NoLongerAwaited(reason)
-                    }
+                    Err(Outcome::NotThere) => WireOutcome::NotThere,
+                    Err(Outcome::NotResponding) => WireOutcome::NotResponding,
+                    Err(
+                        Outcome::ReaderEnded
+                        | Outcome::Refused(Refused::Undecodable)
+                        | Outcome::NoLongerAwaited(_),
+                    ) => WireOutcome::Ended,
                 };
                 self.shared
                     .borrow_mut()

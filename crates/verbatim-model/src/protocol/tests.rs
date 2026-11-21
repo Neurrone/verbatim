@@ -117,7 +117,9 @@ fn only_an_answer_with_a_result_and_a_tell_with_a_token_carry_nodes() {
     );
     let answer = OutpostToCore::Answer(crate::request::Answer {
         number: crate::request::RequestNumber(1),
-        outcome: crate::request::Outcome::Result(crate::request::Reply::Followed),
+        outcome: crate::request::Outcome::Result(crate::request::Reply::Steps(vec![
+            crate::batch::StepOutcome::Done(crate::batch::Done::Follow),
+        ])),
         probes: Vec::new(),
         detail: String::new(),
     });

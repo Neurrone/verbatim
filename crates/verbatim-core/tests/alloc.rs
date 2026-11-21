@@ -48,7 +48,7 @@ fn text_batch(effects: &[Effect]) -> (u64, verbatim_model::batch::Batch) {
                 verbatim_model::request::Question::Batch(batch) => {
                     Some((ask.number.0, batch.clone()))
                 }
-                verbatim_model::request::Question::Legacy(_) => None,
+                verbatim_model::request::Question::Terminal(_) => None,
             },
             _ => None,
         })
@@ -181,7 +181,7 @@ fn sent_batch(effects: &[Effect], kind: &str) -> (u64, verbatim_model::batch::Ba
                     verbatim_model::request::Question::Batch(batch) => {
                         Some((ask.number.0, batch.clone()))
                     }
-                    verbatim_model::request::Question::Legacy(_) => None,
+                    verbatim_model::request::Question::Terminal(_) => None,
                 }
             }
             _ => None,

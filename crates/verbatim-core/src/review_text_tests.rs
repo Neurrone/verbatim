@@ -6,7 +6,7 @@ use crate::entries::tests::found_at;
 use crate::readers::Found;
 
 use verbatim_model::batch::{Batch, StepRefusal};
-use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply, Request as Wire};
+use verbatim_model::request::{Outcome as WireOutcome, Press, PressAction, Reply};
 use verbatim_model::{
     Effect as Said, KeySeq, ReviewCommand, Role, TextAnchor, TextChunk, TextMovement, TextPoint,
     TextPosition, TextUnit, TraceId, WindowHandle,
@@ -79,16 +79,6 @@ fn read(number: u64, moved: i32, chunk: TextChunk) -> Input<Entry> {
         number,
         text_batches::one(text_batches::chunks(moved, vec![chunk])),
     )
-}
-
-/// The request out last, of the kinds not yet batches.
-fn asked(state: &Held) -> Wire {
-    state
-        .queue
-        .table_for_tests()
-        .last()
-        .cloned()
-        .expect("a request out")
 }
 
 /// The batch out last.
@@ -514,9 +504,9 @@ fn an_object_without_text_reviews_its_live_read_as_flat_text() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        asked(&state),
-        Wire::Properties {
-            node: node(2),
+        crate::entries::tests::last_op(&state).expect("a read out"),
+        verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: crate::report_focus::ANNOUNCED_SET.to_vec(),
         }
     );
@@ -524,7 +514,11 @@ fn an_object_without_text_reviews_its_live_read_as_flat_text() {
         feed_at(
             &mut state,
             1_100,
-            answer(OUTPOST, 3, Reply::Properties(values("Okay", Role::Button)))
+            answer(
+                OUTPOST,
+                3,
+                crate::entries::tests::properties(values("Okay", Role::Button))
+            )
         ),
         ["Text(\"Okay\")"]
     );
@@ -546,7 +540,8 @@ fn flat_text_reads_the_description_with_descriptions_off() {
         1_000,
         press(1, ReviewCommand::ReviewCurrentLine, 0),
     );
-    let Wire::Properties { set, .. } = asked(&state) else {
+    let Some(verbatim_model::batch::Op::Read { set, .. }) = crate::entries::tests::last_op(&state)
+    else {
         panic!("a live read of the object");
     };
     assert!(set.contains(&PropertyId::Description), "{set:?}");
@@ -559,7 +554,7 @@ fn flat_text_reads_the_description_with_descriptions_off() {
         feed_at(
             &mut state,
             1_100,
-            answer(OUTPOST, 3, Reply::Properties(read))
+            answer(OUTPOST, 3, crate::entries::tests::properties(read))
         ),
         ["Text(\"Inbox 3 unread\")"]
     );
@@ -589,9 +584,9 @@ fn a_field_with_no_text_is_reviewed_as_flat_text() {
         ["send Outpost(Pid(40)) other"]
     );
     assert_eq!(
-        asked(&state),
-        Wire::Properties {
-            node: node(2),
+        crate::entries::tests::last_op(&state).expect("a read out"),
+        verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: crate::report_focus::ANNOUNCED_SET.to_vec(),
         }
     );

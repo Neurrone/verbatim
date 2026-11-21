@@ -580,7 +580,11 @@ fn a_caret_read_answered_with_another_requests_reply_is_undecodable() {
     let mut held = edit_control();
     with_baseline(&mut held, system_caret(), TextProvider::EditMessages, 2);
     let _ = step(&mut held, 2_000, system_caret());
-    let answered = step(&mut held, 2_100, answer(OUTPOST, 3, Reply::Followed));
+    let answered = step(
+        &mut held,
+        2_100,
+        answer(OUTPOST, 3, crate::entries::tests::followed()),
+    );
     assert_eq!(
         answered,
         Step {
@@ -919,7 +923,7 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
                     _ => None,
                 })
             }
-            verbatim_model::request::Question::Legacy(_) => None,
+            verbatim_model::request::Question::Terminal(_) => None,
         },
         _ => None,
     })

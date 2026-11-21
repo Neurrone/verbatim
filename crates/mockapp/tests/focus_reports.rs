@@ -1693,13 +1693,16 @@ fn a_route_walk_that_finds_its_element_gone_answers_gone() {
     app.send("disconnect group2");
     let answer = outpost.requested(
         hwnd,
-        verbatim_model::request::Request::Navigate {
-            node: group,
-            direction: verbatim_model::QueryKind::FirstChild,
-            set: vec![PropertyId::Name],
-        },
+        common::outpost::navigation(
+            group,
+            verbatim_model::QueryKind::FirstChild,
+            vec![PropertyId::Name],
+        ),
     );
-    assert_eq!(answer.outcome, verbatim_model::request::Outcome::NotThere);
+    assert_eq!(
+        common::outpost::only_step(answer.outcome),
+        verbatim_model::batch::StepOutcome::NotThere(verbatim_model::batch::Missing::Node(group))
+    );
 
     drop(outpost);
     app.quit();
@@ -2927,25 +2930,19 @@ fn report_focus_reads_the_text_summary() {
     let reported = outpost.uia_focus_answer(&client.focused());
     let node = reported.read.focus.read.node.expect("the focus's node");
     let summary = |outpost: &OutpostUnderTest| {
-        outpost
+        let outcome = outpost
             .requested(
                 hwnd,
-                verbatim_model::request::Request::Properties {
-                    node,
-                    set: vec![PropertyId::TextSummary],
-                },
+                common::outpost::read(node, vec![PropertyId::TextSummary]),
             )
-            .outcome
+            .outcome;
+        common::outpost::values_read(outcome)
     };
     let answered = |summary: TextSummary| {
-        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Properties(
-            verbatim_model::property::PropertyValues(vec![
-                verbatim_model::property::PropertyAnswer {
-                    id: PropertyId::TextSummary,
-                    value: Some(PropertyValue::TextSummary(summary)),
-                },
-            ]),
-        ))
+        verbatim_model::property::PropertyValues(vec![verbatim_model::property::PropertyAnswer {
+            id: PropertyId::TextSummary,
+            value: Some(PropertyValue::TextSummary(summary)),
+        }])
     };
     assert_eq!(
         summary(&outpost),

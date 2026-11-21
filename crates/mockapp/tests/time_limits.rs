@@ -24,19 +24,18 @@ mod common;
 mod harness;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+
 use std::sync::mpsc;
 use std::time::Instant;
 
 use verbatim_faults::Fault;
 use verbatim_uia::{
-    ElementExt as _, Fill, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
-    Subscription, UIA_TRANSACTION_TIMEOUT, Uia,
+    ElementExt as _, Fill, Node, Part, PropertyEvent, Registration, Scope, Shape, Subscription,
+    UIA_TRANSACTION_TIMEOUT, Uia,
 };
-use verbatim_uia_rops::{TreeQuery, tree_dump_classic};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_E_TIMEOUT, UIA_NamePropertyId,
+    TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -228,7 +227,6 @@ fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
     let nodes = uia
         .request::<Node>(Node::all_on())
         .expect("a cache request");
-    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
     // The list, a child of the window, found and walked before the hold, so
     // the held call is the held walk's first step. It is found by a search
     // of the window's children, not by a walk of the window's tree, which
@@ -245,29 +243,60 @@ fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
         .expect("the search")
         .expect("the window's list");
     let fill = Fill::new(&nodes);
-    let query = TreeQuery {
-        root: &list,
-        fill: &fill,
-        registry: &registry,
-        max_depth: 8,
-        max_nodes: 64,
+    let every = |_: &verbatim_uia::Cached<verbatim_uia::Node>| verbatim_uia_rops::batch::Judged {
+        matched: true,
+        pruned: false,
     };
-    let (unheld, _) = tree_dump_classic(&uia, &query).expect("the list's tree");
-    assert_eq!(unheld.children.len(), 2, "the list's two items, unheld");
+    // The tree dump's walk of the list by calls, as a walk the program
+    // builder cannot run is read.
+    let walk = || {
+        use verbatim_uia_rops::batch::{Descend, Fused, Input, Object, Segment, run_batch};
+        let answer = run_batch(&Segment {
+            uia: &uia,
+            steps: vec![Fused {
+                place: verbatim_model::batch::Place(0),
+                when: None,
+                input: Input::Descendants {
+                    subject: Object::Held {
+                        element: list.live().element(),
+                        window: 0,
+                    },
+                    walk: Descend {
+                        depth: 8,
+                        view: verbatim_model::batch::View::Raw,
+                        include_subject: false,
+                        prunes: false,
+                        limit: 64,
+                        nodes: 64,
+                        fill: &fill,
+                        judge: &every,
+                    },
+                },
+                calls_only: true,
+            }],
+            remote: false,
+            window: None,
+        });
+        answer.steps.into_iter().next().expect("the walk's outcome")
+    };
+    let verbatim_uia_rops::batch::Ran::Done(verbatim_uia_rops::batch::Found::Descendants(unheld)) =
+        walk()
+    else {
+        panic!("the list's tree");
+    };
+    assert_eq!(unheld.nodes.len(), 2, "the list's two items, unheld");
 
     app.hold();
-    let walked = tree_dump_classic(&uia, &query);
+    let walked = walk();
     let held = app.held();
     app.release();
     assert_eq!(
         held, "FragmentRoot",
         "the read of the list's children was held"
     );
-    let error = walked.expect_err("the held dump failed");
-    assert_eq!(
-        error.hresult(),
-        Some(windows::core::HRESULT(UIA_E_TIMEOUT.cast_signed())),
-        "the dump ended by UIA's timeout: {error}"
+    assert!(
+        matches!(walked, verbatim_uia_rops::batch::Ran::TimedOut),
+        "the walk ended by UIA's timeout: {walked:?}"
     );
     app.quit();
 }

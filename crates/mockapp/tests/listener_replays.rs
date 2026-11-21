@@ -40,7 +40,7 @@ use std::path::PathBuf;
 use verbatim_core::{ListenerView, Runtime, View as HeldView, ViewSend, read_dump, reduce};
 use verbatim_listener_logic::kept::{ListenerKept, Reported, Start, View, focus_kind};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{ObjectRef, ProcessFact, QueueEffect, QueueInput, Reader, Request};
+use verbatim_model::request::{ProcessFact, QueueEffect, QueueInput, Reader};
 use verbatim_model::tell::{ElementToken, EventObject, Read};
 use verbatim_model::{Effect, Input, Message, Pid, Role, SegmentContent, State};
 use verbatim_process::held_slot::HeldSlot;
@@ -221,13 +221,7 @@ fn replay(name: &str) -> Replayed {
                                 _ => None,
                             }
                         }
-                        verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
-                            match read.object {
-                                ObjectRef::Kept { token, .. } => Some((token, false)),
-                                _ => None,
-                            }
-                        }
-                        verbatim_model::request::Question::Legacy(_) => None,
+                        verbatim_model::request::Question::Terminal(_) => None,
                     };
                     if let Some((token, keep)) = kept {
                         listener.pending.push((

@@ -477,21 +477,17 @@ pub fn focus_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<Foc
 /// address with no redirect: NVDA builds a menu start's object from its
 /// event alone (`IAccessibleHandler/__init__.py` 942 to 973), its redirect
 /// to `accFocus` being only for a focus event's (741 to 757), so a popup
-/// whose item already has the focus is the popup. Its role is read for a
-/// child id 0, as [`focus_candidate`] reads it. `None` if the object
-/// cannot be acquired. Blocking; worker only.
+/// whose item already has the focus is the popup. Nothing of it is read
+/// until a read asks, as an object a change or a show names is read only
+/// for what its event names. `None` if the object cannot be acquired.
+/// Blocking; worker only.
 #[must_use]
 pub fn menu_start_candidate(hwnd: isize, id_object: i32, id_child: i32) -> Option<FocusCandidate> {
     let acc = Accessible::from_event(hwnd, id_object, id_child)?;
-    let role = if id_child == CHILDID_SELF {
-        Prefetched::Read(acc.role())
-    } else {
-        Prefetched::Unread
-    };
     Some(FocusCandidate {
         acc,
         key: (hwnd, id_object, id_child),
-        role,
+        role: Prefetched::Unread,
         state: Prefetched::Unread,
         position: None,
     })
@@ -681,6 +677,14 @@ impl FocusCandidate {
                 text(value)
             }
             _ => self.object().property(id, role, registry),
+        }
+    }
+
+    /// Keeps the role word `object`, made by [`Self::object`], read since,
+    /// so that no later read of the candidate reads it again.
+    pub fn keep_role_of(&mut self, object: &EventObject) {
+        if let Prefetched::Read(_) = object.role {
+            self.role = object.role;
         }
     }
 
@@ -1362,11 +1366,6 @@ pub fn navigate(
         QueryKind::NextSibling => NavigateDirection::NextSibling,
         QueryKind::PreviousSibling => NavigateDirection::PreviousSibling,
         QueryKind::FirstChild => NavigateDirection::FirstChild,
-        _ => {
-            return Err(AcquireError::Failed(
-                "not a navigation direction".to_owned(),
-            ));
-        }
     };
     let (hwnd, id_object, id_child) = registry.key_of(node).ok_or(AcquireError::Gone)?;
     // A window-root object (a windowed control's window face, keyed under

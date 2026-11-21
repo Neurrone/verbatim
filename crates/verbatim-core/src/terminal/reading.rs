@@ -18,9 +18,7 @@
 //! (Dickson, 2026-11-16).
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{
-    CancelReason, Follow, FollowGroup, Followed, Reply, Request as Wire,
-};
+use verbatim_model::request::{CancelReason, FollowGroup, Followed, Question, Reply, TerminalAsk};
 use verbatim_model::{
     Effect, NodeId, Role, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextFailure,
     TextOp, TextReply, TextUnit, TraceId,
@@ -162,36 +160,49 @@ fn token(state: &mut SrState) -> u64 {
 
 /// Wants `request` of the outpost of `window`'s application, naming
 /// `window`, awaited under `token` or by nothing.
-fn want(state: &mut SrState, token: Option<u64>, window: RequestWindow, request: Wire) {
+fn want(state: &mut SrState, token: Option<u64>, window: RequestWindow, request: TerminalAsk) {
     state.wants.want(
         token,
         (Reader::Outpost(window.process), window),
-        request.into(),
+        Question::Terminal(request),
     );
 }
 
-/// The `Follow` request naming `terminal`.
-fn follow_request(terminal: &Terminal) -> Wire {
-    Wire::Follow(Follow {
-        node: Some(Followed {
-            node: terminal.node,
-            group: FollowGroup::Terminal {
-                console: terminal.console,
-            },
-            extra: None,
-        }),
-    })
+/// The node a `Follow` naming `terminal` follows.
+fn followed(terminal: &Terminal) -> Followed {
+    Followed {
+        node: terminal.node,
+        group: FollowGroup::Terminal {
+            console: terminal.console,
+        },
+        extra: None,
+    }
+}
+
+/// Wants the `Follow` of `node`, or of nothing, of the outpost of
+/// `window`'s application, awaited under `token` or by nothing.
+fn want_followed(
+    state: &mut SrState,
+    token: Option<u64>,
+    window: RequestWindow,
+    node: Option<&Followed>,
+) {
+    state.wants.want(
+        token,
+        (Reader::Outpost(window.process), window),
+        crate::focus::follow::batch(node).question(),
+    );
 }
 
 /// Wants a `Follow` naming `terminal`, sent once more after its due time
 /// when `resent`.
 fn want_follow(state: &mut SrState, terminal: &Terminal, resent: bool) -> FollowOut {
     let token = token(state);
-    want(
+    want_followed(
         state,
         Some(token),
         terminal.window,
-        follow_request(terminal),
+        Some(&followed(terminal)),
     );
     FollowOut { token, resent }
 }
@@ -253,7 +264,7 @@ fn want_output(
         state,
         Some(token),
         terminal.window,
-        Wire::Text {
+        TerminalAsk {
             node: terminal.node,
             op: TextOp::ReadTerminal(read),
         },
@@ -278,7 +289,7 @@ fn want_baseline(state: &mut SrState, terminal: &Terminal, now_us: u64) -> u64 {
         state,
         Some(token),
         terminal.window,
-        Wire::Text {
+        TerminalAsk {
             node: terminal.node,
             op: TextOp::ReadTerminal(read),
         },
@@ -294,7 +305,7 @@ fn want_baseline(state: &mut SrState, terminal: &Terminal, now_us: u64) -> u64 {
 pub(crate) fn committed(
     state: &mut SrState,
     to: Option<Terminal>,
-    follows: Vec<(RequestWindow, Wire)>,
+    follows: Vec<(RequestWindow, Option<Followed>)>,
     now_us: u64,
 ) {
     let from = focused(state);
@@ -305,18 +316,17 @@ pub(crate) fn committed(
         model.blurred();
     }
     let Some(terminal) = to else {
-        for (window, request) in follows {
-            want(state, None, window, request);
+        for (window, node) in follows {
+            want_followed(state, None, window, node.as_ref());
         }
         state.terminal_focus.focused = FocusedTerminal::None;
         return;
     };
     let mut follow = None;
-    for (window, request) in follows {
-        let names_it = matches!(
-            &request,
-            Wire::Follow(Follow { node: Some(followed) }) if followed.node == terminal.node
-        );
+    for (window, node) in follows {
+        let names_it = node
+            .as_ref()
+            .is_some_and(|followed| followed.node == terminal.node);
         let token = names_it.then(|| token(state));
         if let Some(token) = token {
             follow = Some(FollowOut {
@@ -324,7 +334,7 @@ pub(crate) fn committed(
                 resent: false,
             });
         }
-        want(state, token, window, request);
+        want_followed(state, token, window, node.as_ref());
     }
     if let Some(model) = terminal_model::model_mut(state, terminal.node) {
         model.focused(now_us / 1_000);
@@ -669,8 +679,18 @@ fn follow_ended(
 ) {
     let focused = state.terminal_focus.focused;
     let resent = follow.is_some_and(|follow| follow.resent);
+    // The terminal's node gone is not there, as the whole `Follow` would
+    // be: it ends Core's model of the terminal.
+    let gone = match outcome {
+        Outcome::Result(reply) => {
+            crate::focus::follow::not_there(Some(&followed(terminal)), reply.clone())
+                .unwrap_or(false)
+        }
+        _ => false,
+    };
     let next = match outcome {
         Outcome::Refused(_) | Outcome::NotThere => FocusedTerminal::None,
+        Outcome::Result(_) if gone => FocusedTerminal::None,
         Outcome::NoLongerAwaited(CancelReason::DueTime) if !resent => {
             let follow = Some(want_follow(state, terminal, true));
             match focused {
@@ -1129,7 +1149,7 @@ impl Request for EntryRead {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Text {
+        Question::Terminal(TerminalAsk {
             node: self.terminal.node,
             op: TextOp::ReadTerminal(self.read),
         })

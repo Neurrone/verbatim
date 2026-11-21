@@ -385,7 +385,6 @@ pub enum NotificationProcessing {
 /// What to fetch: one object-navigation step from a node to a neighbor
 /// (roadmap M3). Later milestones add text ranges and subtree queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum QueryKind {
     /// The node's parent.
     Parent,

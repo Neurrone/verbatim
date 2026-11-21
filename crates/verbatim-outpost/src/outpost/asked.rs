@@ -1,36 +1,26 @@
 //! Core's requests, answered on the worker
 //! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-//! build", "The focus answers" and Table 14): each request is one program,
-//! answered once with one of the five outcomes. The reads are the ones the
-//! outpost has always made; what they read is answered by the request's
+//! build", "The focus answers" and Table 14), each answered once with one
+//! of the five outcomes: a batch (`super::batch`), or one of the
+//! terminal's three text operations. What a read reads is answered by its
 //! property set, each node with its nearest window's facts, read from
-//! Windows with no call into the application.
-//!
-//! - The shared list: a node's properties, one navigation step, a find, a
-//!   node's children, a text request and an activation; and, from outside
-//!   the event queue, the control plane's tree dump and the taskbar's two
-//!   reads for the notification area list.
-//! - The generic read of the object an event names, for an MSAA object at
-//!   an event's address or a node the outpost holds: its properties and
-//!   its relation to nodes Core names.
-//! - The focus reads a batch's `FocusRead` makes (`super::batch`): an MSAA
-//!   candidate's full read and the application's current focus.
+//! Windows with no call into the application. The reads a batch's steps
+//! share are here: a node's properties with those read apart, its
+//! children, the ancestors' nearest windows, and the focus reads a
+//! batch's `FocusRead` makes, an MSAA candidate's full read and the
+//! application's current focus.
 //!
 //! A request whose window has no verdict in force has the window probed
 //! first, and the answer carries the probe.
 
 #![forbid(unsafe_code)]
 
-use std::ops::ControlFlow;
-
 use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, FindScope, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds,
-    KnownAncestor, MsaaIds, NodeRead, NodeWindow, ObjectRead, ObjectRef, Outcome, Probe, Purpose,
-    Question, ReadObject, Refusal, RelationFound, RelationQuery, Reply, Request, RouteEnd,
-    WindowVerdict,
+    Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds,
+    NodeRead, NodeWindow, Outcome, Probe, Question, Reply, RouteEnd, WindowVerdict,
 };
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
@@ -42,9 +32,8 @@ use super::read::{self, Client, ReadError};
 use super::text_reads;
 use super::window::{hwnd_of, window_handle};
 
-/// How many children a request reads of one node at most, and how many
-/// nodes a find of descendants visits: a bound on a request into a list
-/// with no end, as an application can give.
+/// How many children a read reads of one node at most: a bound on a read
+/// into a list with no end, as an application can give.
 const MAX_NODES: usize = 1000;
 
 /// The answer to `ask`, read on the worker.
@@ -60,82 +49,14 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     context
         .given_verdict
         .set(given.map(|uia| (hwnd_of(ask.window), uia)));
-    // A request that carries "probe first" and whose handling consults no
-    // verdict of its own still answers its window's probe, so that Core
-    // records the verdict rather than count the probe timed out.
-    let request = match &ask.request {
-        Question::Legacy(request) => request,
-        Question::Batch(batch) => {
-            let outcome = super::batch::answer(context, client, ask, batch, &mut probes);
-            return Answer {
-                number: ask.number,
-                outcome,
-                probes,
-                detail: String::new(),
-            };
-        }
-    };
-    if !consults_verdict(request) {
-        let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
-    }
-    let outcome = match request {
-        Request::ReadObject(read) => read_object(context, client, ask, read, &mut probes),
-        Request::Properties { node, set } => match properties(context, client, *node, set) {
-            Ok(values) => Outcome::Result(Reply::Properties(values)),
-            Err(error) => failed(&error),
-        },
-        Request::Navigate {
-            node,
-            direction,
-            set,
-        } => match read::navigate(context, client, *node, *direction) {
-            Ok(reached) => Outcome::Result(Reply::Navigated(
-                reached.map(|reached| node_read(context, &reached, None, set)),
-            )),
-            Err(error) => failed(&error),
-        },
-        Request::Find {
-            node,
-            scope,
-            property,
-            value,
-            set,
-        } => match find(context, client, *node, *scope, (*property, value)) {
-            Ok(found) => Outcome::Result(Reply::Found(
-                found.map(|found| node_read(context, &found, None, set)),
-            )),
-            Err(error) => failed(&error),
-        },
-        Request::Children { node, set } => match children(context, client, *node) {
-            Ok(children) => Outcome::Result(Reply::Children(
-                children
-                    .iter()
-                    .map(|child| node_read(context, child, None, set))
-                    .collect(),
-            )),
-            Err(error) => failed(&error),
-        },
-        Request::Text { node, op } => terminal(context, client, *node, op),
-        Request::Activate { node } => match read::activate(context, client, *node) {
-            Ok(action) => Outcome::Result(Reply::Activated(action)),
-            Err(error) => failed(&error),
-        },
-        Request::Follow(follow) => super::followed::follow(context, client, follow),
-        Request::DumpTree { locations } => match read::dump_tree(context, client, *locations) {
-            Ok(dumped) => Outcome::Result(Reply::Tree(Box::new(dumped))),
-            Err(error) => failed(&error),
-        },
-        Request::ShellItems { kind } => {
-            match super::shell_items::shell_items(context, client, *kind) {
-                Ok(items) => Outcome::Result(Reply::ShellItems(items)),
-                Err(error) => failed(&error),
-            }
-        }
-        Request::ShellItemPosition { kind, item } => {
-            match super::shell_items::shell_item_position(context, client, (*kind, item)) {
-                Ok(found) => Outcome::Result(Reply::ShellItemPosition(found)),
-                Err(error) => failed(&error),
-            }
+    let outcome = match &ask.request {
+        Question::Batch(batch) => super::batch::answer(context, client, ask, batch, &mut probes),
+        Question::Terminal(terminal_ask) => {
+            // A terminal's read consults no verdict of its own, but still
+            // answers its window's probe, so that Core records the verdict
+            // rather than count the probe timed out.
+            let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
+            terminal(context, client, terminal_ask.node, &terminal_ask.op)
         }
     };
     Answer {
@@ -146,27 +67,13 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     }
 }
 
-/// The node details `request`'s reads fetch: those its property set names
-/// ([`NodeDetailSet::named_by`]); every detail for the control plane's tree
-/// dump, which records them all; none for a request that reads no node's
+/// The node details `request`'s reads fetch: those its batch's property
+/// sets name; none for a terminal's text operation, which reads no node's
 /// properties.
 pub(super) fn node_details(request: &Question) -> NodeDetailSet {
-    let request = match request {
-        Question::Legacy(request) => request,
-        Question::Batch(batch) => return super::batch::node_details(batch),
-    };
     match request {
-        Request::ReadObject(ReadObject { set, .. })
-        | Request::Properties { set, .. }
-        | Request::Navigate { set, .. }
-        | Request::Find { set, .. }
-        | Request::Children { set, .. } => NodeDetailSet::named_by(set),
-        Request::DumpTree { .. } => NodeDetailSet::ALL,
-        Request::Text { .. }
-        | Request::Activate { .. }
-        | Request::Follow(_)
-        | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. } => NodeDetailSet::NONE,
+        Question::Batch(batch) => super::batch::node_details(batch),
+        Question::Terminal(_) => NodeDetailSet::NONE,
     }
 }
 
@@ -197,35 +104,10 @@ fn terminal(
             rows,
             start,
         } => text_reads::terminal_find(context, uia, node, *start, (needle, *from, *rows)),
-        _ => TextReply::Unsupported,
     };
     match reply {
         TextReply::Gone => Outcome::NotThere,
         reply => Outcome::Result(Reply::Text(reply)),
-    }
-}
-
-/// Whether `request`'s handling consults its window's verdict itself,
-/// probing when it carries "probe first": a read of an MSAA object.
-fn consults_verdict(request: &Request) -> bool {
-    matches!(
-        request,
-        Request::ReadObject(ReadObject {
-            object: ObjectRef::Msaa { .. },
-            ..
-        })
-    )
-}
-
-/// The outcome of a read that failed: not there for a node gone, else
-/// ended, its reason logged.
-fn failed(error: &ReadError) -> Outcome {
-    match error {
-        ReadError::Gone => Outcome::NotThere,
-        ReadError::Failed(reason) => {
-            tracing::debug!(reason, "a request's read failed");
-            Outcome::Ended
-        }
     }
 }
 
@@ -551,18 +433,6 @@ pub(super) fn snapshot_of(id: NodeId, backend: Backend, values: &PropertyValues)
     }
 }
 
-/// Whether `node`'s property `property` has `value`.
-fn has_value(
-    context: &RequestContext<'_>,
-    node: &NodeSnapshot,
-    (property, value): (PropertyId, &PropertyValue),
-) -> bool {
-    values(context, node, &[property])
-        .answer(property)
-        .and_then(|answer| answer.value.as_ref())
-        .is_some_and(|found| found == value)
-}
-
 /// `node`'s children, in order, at most [`MAX_NODES`].
 pub(super) fn children(
     context: &RequestContext<'_>,
@@ -586,323 +456,6 @@ pub(super) fn children(
     Ok(children)
 }
 
-/// The first of `node`'s children, or descendants depth first, whose
-/// property has the value, visiting at most [`MAX_NODES`].
-fn find(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node: NodeId,
-    scope: FindScope,
-    wanted: (PropertyId, &PropertyValue),
-) -> Result<Option<NodeSnapshot>, ReadError> {
-    depth_first(
-        context,
-        client,
-        (node, scope == FindScope::Descendants),
-        |child| {
-            if has_value(context, &child, wanted) {
-                ControlFlow::Break(child)
-            } else {
-                ControlFlow::Continue(())
-            }
-        },
-    )
-}
-
-/// Walks the subtree below `node` depth first, in document order, handing
-/// each node to `visit` until it answers with the node to return, through
-/// `node`'s children alone unless `descend`, and through no more than
-/// [`MAX_NODES`] nodes. A child gone has no children.
-///
-/// # Errors
-///
-/// A failed read of a node's children, but a child gone.
-fn depth_first(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (node, descend): (NodeId, bool),
-    mut visit: impl FnMut(NodeSnapshot) -> ControlFlow<NodeSnapshot>,
-) -> Result<Option<NodeSnapshot>, ReadError> {
-    let mut visited = 0usize;
-    let mut stack = vec![children(context, client, node)?.into_iter()];
-    while let Some(level) = stack.last_mut() {
-        let Some(child) = level.next() else {
-            stack.pop();
-            continue;
-        };
-        visited = visited.saturating_add(1);
-        let id = child.id;
-        if let ControlFlow::Break(found) = visit(child) {
-            return Ok(Some(found));
-        }
-        if visited >= MAX_NODES {
-            break;
-        }
-        if descend {
-            let below = match children(context, client, id) {
-                Ok(below) => below,
-                Err(ReadError::Gone) => Vec::new(),
-                Err(error) => return Err(error),
-            };
-            stack.push(below.into_iter());
-        }
-    }
-    Ok(None)
-}
-
-/// The generic read of the object an event names.
-fn read_object(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    ask: &Ask,
-    read: &ReadObject,
-    probes: &mut Vec<Probe>,
-) -> Outcome {
-    let (snapshot, relation, nearest) = match &read.object {
-        // The listener's.
-        ObjectRef::Kept { .. } => return Outcome::Refused(Refusal::Unsupported),
-        ObjectRef::Node(node) => {
-            let relation = match &read.relation {
-                None => None,
-                Some(RelationQuery::OneOf(nodes)) => Some(one_of(*node, nodes)),
-                Some(RelationQuery::ControlledBy(focus)) => {
-                    match controlled_by(context, client, *focus, *node) {
-                        Ok(found) => Some(found),
-                        Err(RelationUnread) => return Outcome::NotThere,
-                    }
-                }
-                Some(RelationQuery::Selection { focus, nodes }) => {
-                    match controlled_by(context, client, *focus, *node) {
-                        Ok(RelationFound::Unrelated) => Some(one_of(*node, nodes)),
-                        Ok(found) => Some(found),
-                        Err(RelationUnread) => return Outcome::NotThere,
-                    }
-                }
-            };
-            match read::read_node(context, client, *node) {
-                Ok(snapshot) => (snapshot, relation, None),
-                Err(error) => return failed(&error),
-            }
-        }
-        ObjectRef::Msaa {
-            window,
-            object,
-            child,
-        } => {
-            let hwnd = hwnd_of(*window);
-            match verdict(context, hwnd, ask.verdict, probes) {
-                Some(false) => {}
-                Some(true) => return Outcome::Refused(Refusal::ReadThroughUia),
-                None => return Outcome::NotThere,
-            }
-            let Some(mut object) = verbatim_ia2::acquire::event_object(hwnd, *object, *child)
-            else {
-                return Outcome::NotThere;
-            };
-            // An MSAA object controls nothing: a selection's relation is
-            // its place among the nodes, as NVDA compares an MSAA selection
-            // with the focus's ancestors. The first node, the committed
-            // focus, is met by NVDA's equality, as NVDA directs an event to
-            // the focus object it equals; every other only at the address
-            // it was reported at, as NVDA meets an ancestor again only in
-            // its table of live objects by address and its gate asks
-            // whether the object is that very ancestor
-            // (`docs/parity/focus-announcement.md`, "An ancestor is
-            // recognized by the address it was reported at").
-            let relation = match &read.relation {
-                None => None,
-                Some(RelationQuery::ControlledBy(_)) => Some(RelationFound::Unrelated),
-                Some(RelationQuery::OneOf(nodes) | RelationQuery::Selection { nodes, .. }) => Some(
-                    nodes
-                        .iter()
-                        .enumerate()
-                        .position(|(place, &node)| {
-                            if place == 0 {
-                                object.is_equal_to(node, context.nodes())
-                            } else {
-                                object.which_of(&[node], context.nodes()) == Some(node)
-                            }
-                        })
-                        .and_then(|place| u32::try_from(place).ok())
-                        .map_or(RelationFound::Unrelated, RelationFound::Is),
-                ),
-            };
-            if read.purpose == Purpose::Change {
-                return changed(context, &mut object, hwnd, read, relation);
-            }
-            let snapshot = object.read(context.nodes(), verbatim_ia2::acquire::Purpose::Announce);
-            (snapshot, relation, Some(hwnd))
-        }
-    };
-    let descendants = if read.descendants {
-        match descendants(context, client, snapshot.id) {
-            Ok(descendants) => descendants,
-            Err(error) => return failed(&error),
-        }
-    } else {
-        Vec::new()
-    };
-    let nearest = nearest.or_else(|| known_nearest(context, &snapshot));
-    Outcome::Result(Reply::Object(Box::new(ObjectRead {
-        object: node_read(context, &snapshot, nearest, &read.set),
-        relation,
-        descendants: descendants
-            .iter()
-            .map(|descendant| node_read(context, descendant, nearest, &read.set))
-            .collect(),
-        ancestors: Vec::new(),
-    })))
-}
-
-/// The answer to a change read of the MSAA object `object` in `hwnd`,
-/// whose relation to the nodes Core named is `relation`: not there when
-/// it is none of them, read no further; else the properties of its set
-/// alone, each read as a full read gives it, as NVDA reads only the
-/// property its event names (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Changes on objects").
-fn changed(
-    context: &RequestContext<'_>,
-    object: &mut verbatim_ia2::acquire::EventObject,
-    hwnd: isize,
-    read: &ReadObject,
-    relation: Option<RelationFound>,
-) -> Outcome {
-    let Some(place) = (match (&read.relation, relation) {
-        (
-            Some(RelationQuery::OneOf(nodes) | RelationQuery::Selection { nodes, .. }),
-            Some(RelationFound::Is(place)),
-        ) => usize::try_from(place)
-            .ok()
-            .and_then(|place| nodes.get(place).copied()),
-        _ => None,
-    }) else {
-        return Outcome::NotThere;
-    };
-    let nodes = context.nodes();
-    let role = object.role();
-    let text = |text: Option<String>| text.map(PropertyValue::Text);
-    let values = read
-        .set
-        .iter()
-        .map(|&id| PropertyAnswer {
-            id,
-            value: match id {
-                PropertyId::Name => text(object.name(role, nodes)),
-                PropertyId::Value => text(object.value(role)),
-                PropertyId::Description => text(object.description(role, nodes)),
-                PropertyId::Role => Some(PropertyValue::Role(role)),
-                PropertyId::States => Some(PropertyValue::States(object.states(role))),
-                _ => None,
-            },
-        })
-        .collect();
-    Outcome::Result(Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: Some(place),
-            window: node_window(hwnd),
-            values: PropertyValues(values),
-        },
-        relation,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    })))
-}
-
-/// `node`'s descendants, depth first in document order, NVDA's
-/// `recursiveDescendants`, at most [`MAX_NODES`]; a child gone as it was
-/// read is left out with what is below it.
-fn descendants(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node: NodeId,
-) -> Result<Vec<NodeSnapshot>, ReadError> {
-    let mut found = Vec::new();
-    depth_first(context, client, (node, true), |child| {
-        found.push(child);
-        ControlFlow::Continue(())
-    })?;
-    Ok(found)
-}
-
-/// Whether `object` is, or is inside, an element the committed focus
-/// `focus` names in its `ControllerFor` relation, read live, as NVDA's
-/// `event_selection` reads `focus.controllerFor` at the selection
-/// (`NVDAObjects/__init__.py` 1314 to 1330). A focus or an object that is
-/// not a UI Automation node, or a focus whose element the outpost no
-/// longer holds, controls nothing, as NVDA's object of either backend
-/// equals no object of the other and a dead focus names no relation. A
-/// relation that cannot be read is [`RelationUnread`], which the read
-/// answers as not there, as NVDA's COM error ends the whole selection
-/// event (its `_get_controllerFor` catches only `KeyError`).
-pub(super) fn controlled_by(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    focus: NodeId,
-    object: NodeId,
-) -> Result<RelationFound, RelationUnread> {
-    let (Some(runtime_id), Some(focused)) = (
-        context.store.runtime_id_of(object),
-        context
-            .store
-            .element_of(focus)
-            .and_then(|agile| agile.resolve().ok()),
-    ) else {
-        return Ok(RelationFound::Unrelated);
-    };
-    let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
-        return Ok(RelationFound::Unrelated);
-    };
-    let fill = verbatim_uia::Fill::new(&nodes);
-    let query = verbatim_uia_rops::ControlledQuery {
-        focused: focused.live().element(),
-        selected: &runtime_id,
-        fill: &fill,
-    };
-    let window = known_nearest_of(context, focus);
-    let remote = context.tries_remote(window);
-    let found =
-        verbatim_uia_rops::controlled_selection(uia, &query, remote).map(|(answer, path)| {
-            if let verbatim_uia_rops::Path::Fallback(error) = &path {
-                super::remote_fell_back("controlled selection", window, error);
-            }
-            if let (
-                verbatim_uia_rops::Path::Fallback(verbatim_uia_rops::Error::Import(_)),
-                Some(hwnd),
-            ) = (&path, window)
-            {
-                context.read_classically(verbatim_win32::window::top_level_of(hwnd));
-            }
-            answer
-        });
-    relation_of(found, &runtime_id)
-}
-
-/// The controller-for relation's read could not be made: the read it is
-/// part of answers not there.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct RelationUnread;
-
-/// What the read of the focus's controller-for relation found of the
-/// object of `runtime_id`.
-fn relation_of(
-    found: Result<verbatim_uia_rops::Controlled, verbatim_uia_rops::Error>,
-    runtime_id: &[i32],
-) -> Result<RelationFound, RelationUnread> {
-    let answer = found.map_err(|error| {
-        tracing::debug!(%error, "the focus's controller-for relation could not be read");
-        RelationUnread
-    })?;
-    Ok(match answer.selected {
-        None => RelationFound::Unrelated,
-        // The relation's elements are listed up to the one it was found
-        // in: the last is the object itself when it is one of them.
-        Some(_) if answer.controlled.last() == Some(&verbatim_uia::runtime_id_key(runtime_id)) => {
-            RelationFound::Controlled
-        }
-        Some(_) => RelationFound::InsideControlled,
-    })
-}
-
 /// The nearest window of node `node` known without a call, by its id.
 pub(super) fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Option<isize> {
     context
@@ -915,15 +468,6 @@ pub(super) fn known_nearest_of(context: &RequestContext<'_>, node: NodeId) -> Op
             _ => None,
         })
         .filter(|&hwnd| hwnd != 0)
-}
-
-/// `node`'s place among `nodes`, by its id.
-pub(super) fn one_of(node: NodeId, nodes: &[NodeId]) -> RelationFound {
-    nodes
-        .iter()
-        .position(|&each| each == node)
-        .and_then(|place| u32::try_from(place).ok())
-        .map_or(RelationFound::Unrelated, RelationFound::Is)
 }
 
 /// `ancestors`, nearest first, as an answer carries them, each with its
@@ -1266,36 +810,5 @@ pub(super) fn ancestors_end(end: &RouteEnd) -> super::read::AncestorsEnd {
         RouteEnd::Known(_) | RouteEnd::ProcessBoundary | RouteEnd::Root => AncestorsEnd::Top,
         RouteEnd::ContinueFrom(window) => AncestorsEnd::ContinueFrom(hwnd_of(*window)),
         RouteEnd::PlainFrom(window) => AncestorsEnd::PlainFrom(hwnd_of(*window)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use verbatim_model::request::RelationFound;
-    use windows::Win32::Foundation::E_FAIL;
-
-    use super::{RelationUnread, relation_of};
-
-    /// A controller-for read that fails, as one timing out does, answers
-    /// the read not there, so Core says nothing for that selection, as
-    /// NVDA's COM error from `focus.controllerFor` ends the whole
-    /// `event_selection`. Source-derived, approved by Dickson on
-    /// 2026-11-21 (`nvda/source/NVDAObjects/__init__.py` 1314 to 1340;
-    /// `nvda/source/NVDAObjects/UIA/__init__.py` 2465 to 2482).
-    #[test]
-    fn a_failed_controller_for_read_is_unread() {
-        let failed = Err(verbatim_uia_rops::Error::Execute(E_FAIL.into()));
-        assert_eq!(relation_of(failed, &[42, 7]), Err(RelationUnread));
-    }
-
-    /// A read that finds the object in nothing the focus controls is
-    /// unrelated.
-    #[test]
-    fn a_read_finding_nothing_is_unrelated() {
-        let found = Ok(verbatim_uia_rops::Controlled {
-            selected: None,
-            controlled: Vec::new(),
-        });
-        assert_eq!(relation_of(found, &[42, 7]), Ok(RelationFound::Unrelated));
     }
 }

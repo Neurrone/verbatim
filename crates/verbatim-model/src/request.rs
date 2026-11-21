@@ -7,9 +7,8 @@
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
 //! features and the extension surface: a batch of operations from one
 //! closed list ([`crate::batch`]). A new command adds no kind of request.
-//! The kinds of request of the shared list before it ([`Request`]) are
-//! carried beside it until each is converted to a batch
-//! ([`Question::Legacy`]).
+//! The terminal's three text operations are carried beside it until the
+//! terminal's rebuild converts them ([`Question::Terminal`]).
 
 use std::fmt;
 
@@ -17,10 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::{Batch, Malformed, Placement, StepOutcome};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
-use crate::tell::ElementToken;
-use crate::{
-    ActionName, CaretReport, NodeId, Pid, QueryKind, TextAnchor, TextOp, TextReply, WindowHandle,
-};
+use crate::{CaretReport, NodeId, Pid, TextAnchor, TextOp, TextReply, WindowHandle};
 
 /// A reader Core asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -77,22 +73,23 @@ pub struct Ask {
     pub request: Question,
 }
 
-/// What a request asks: a batch, or one of the kinds of request each later
-/// step of the request list's build converts to a batch and deletes.
+/// What a request asks: a batch, or one of the terminal's three text
+/// operations, which the terminal's rebuild converts to batches.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Question {
     /// A batch of operations.
     Batch(Batch),
-    /// A kind of request not yet converted to a batch; the last of them,
-    /// the terminal's three text operations, go with the terminal's
-    /// rebuild.
-    Legacy(Request),
+    /// A read, history read or search of a terminal's text.
+    Terminal(TerminalAsk),
 }
 
-impl From<Request> for Question {
-    fn from(request: Request) -> Self {
-        Self::Legacy(request)
-    }
+/// One of the terminal's text operations on its node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalAsk {
+    /// The terminal's node.
+    pub node: NodeId,
+    /// What to read.
+    pub op: TextOp,
 }
 
 impl From<Batch> for Question {
@@ -102,22 +99,29 @@ impl From<Batch> for Question {
 }
 
 impl Question {
-    /// The kind of request it is, `None` for a batch.
+    /// The terminal's operation it is, `None` for a batch.
     #[must_use]
-    pub const fn legacy(&self) -> Option<&Request> {
+    pub const fn terminal(&self) -> Option<&TerminalAsk> {
         match self {
-            Self::Legacy(request) => Some(request),
+            Self::Terminal(ask) => Some(ask),
             Self::Batch(_) => None,
         }
     }
 
     /// Whether Core asks it from outside the event queue
-    /// ([`Request::outside_the_queue`], [`Placement::Outside`]).
+    /// ([`Placement::Outside`]): a batch placed there, or a terminal's
+    /// read for its output
+    /// (`docs/design/readers-tell-core-asks-build3.md`), which a reader's
+    /// worker makes after every request of the queue's waiting with it.
     #[must_use]
     pub fn outside_the_queue(&self) -> bool {
         match self {
             Self::Batch(batch) => batch.placement == Placement::Outside,
-            Self::Legacy(request) => request.outside_the_queue(),
+            Self::Terminal(TerminalAsk {
+                op: TextOp::ReadTerminal(read),
+                ..
+            }) => read.output,
+            Self::Terminal(_) => false,
         }
     }
 }
@@ -151,32 +155,6 @@ pub struct Probe {
     pub began_us: u64,
 }
 
-/// The object a read names.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ObjectRef {
-    /// A UI Automation element the listener kept for a tell: its token,
-    /// and the generation of the listener that minted it, since each
-    /// listener mints its tokens from 1. A listener answers "not there"
-    /// for a token of any other generation.
-    Kept {
-        /// The listener's generation.
-        listener: u64,
-        /// The element's token.
-        token: ElementToken,
-    },
-    /// An MSAA object, by the ids its event named.
-    Msaa {
-        /// The window.
-        window: WindowHandle,
-        /// The object id.
-        object: i32,
-        /// The child id.
-        child: i32,
-    },
-    /// A node an outpost holds.
-    Node(NodeId),
-}
-
 /// An ancestor Core already knows, at which a walk up the ancestor chain
 /// stops: one of the committed focus's ancestors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,166 +165,6 @@ pub enum KnownAncestor {
     Window(WindowHandle),
     /// A node of the answering outpost generation.
     Node(NodeId),
-}
-
-/// What a read finds out of the object's relation to nodes Core names.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RelationQuery {
-    /// Whether the object is one of these nodes: the committed focus first,
-    /// met by NVDA's equality, then its ancestors, each met only at the
-    /// address it was reported at, as NVDA meets an ancestor
-    /// (`docs/parity/focus-announcement.md`).
-    OneOf(Vec<NodeId>),
-    /// Whether the object is, or is inside, an object the focus controls,
-    /// read live from the focus's controller-for relation.
-    ControlledBy(NodeId),
-    /// A selected item: whether it is, or is inside, an object the focus
-    /// controls, read live as [`RelationQuery::ControlledBy`] reads it;
-    /// failing that, whether it is one of these nodes, as
-    /// [`RelationQuery::OneOf`] tells.
-    Selection {
-        /// The committed focus.
-        focus: NodeId,
-        /// The nodes, in the order [`RelationFound::Is`] counts them.
-        nodes: Vec<NodeId>,
-    },
-}
-
-/// The object's relation, as a read found it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RelationFound {
-    /// It is the node at this place in [`RelationQuery::OneOf`]'s list.
-    Is(u32),
-    /// It is an object the focus controls.
-    Controlled,
-    /// It is inside an object the focus controls.
-    InsideControlled,
-    /// None of these.
-    Unrelated,
-}
-
-/// Why a read of an event's object is made.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Purpose {
-    /// A change of a property of one of the nodes its relation names
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-    /// objects"): an object that is none of them answers not there, read
-    /// no further, and one that is reads the set's properties alone, as
-    /// NVDA reads only the property its event names.
-    Change,
-    /// Any other read.
-    Other,
-}
-
-/// The generic read: the properties of the object an event names, by
-/// property set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadObject {
-    /// The object.
-    pub object: ObjectRef,
-    /// The properties to read: a set fixed at compile time
-    /// ([`crate::property::PropertySet::PROPERTIES`]).
-    pub set: Vec<PropertyId>,
-    /// Its relation to nodes Core names, when asked.
-    pub relation: Option<RelationQuery>,
-    /// Whether its descendants are read too, as an alert's are.
-    pub descendants: bool,
-    /// Why it is read.
-    pub purpose: Purpose,
-}
-
-/// How far a find looks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FindScope {
-    /// The node's children.
-    Children,
-    /// The node's descendants.
-    Descendants,
-}
-
-/// One request of the shared list.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Request {
-    /// The generic read of the object an event names.
-    ReadObject(ReadObject),
-    /// The properties of a node, by set.
-    Properties {
-        /// The node.
-        node: NodeId,
-        /// The set.
-        set: Vec<PropertyId>,
-    },
-    /// One navigation step from a node.
-    Navigate {
-        /// The node.
-        node: NodeId,
-        /// Which way.
-        direction: QueryKind,
-        /// The properties of the node reached.
-        set: Vec<PropertyId>,
-    },
-    /// The first child or descendant of a node with a property's value.
-    Find {
-        /// The node.
-        node: NodeId,
-        /// How far to look.
-        scope: FindScope,
-        /// The property matched.
-        property: PropertyId,
-        /// The value it must have.
-        value: PropertyValue,
-        /// The properties of the node found.
-        set: Vec<PropertyId>,
-    },
-    /// A node's children.
-    Children {
-        /// The node.
-        node: NodeId,
-        /// The properties of each child.
-        set: Vec<PropertyId>,
-    },
-    /// A read or move in a node's text.
-    Text {
-        /// The node.
-        node: NodeId,
-        /// What to do.
-        op: TextOp,
-    },
-    /// Activate a node: its default action.
-    Activate {
-        /// The node.
-        node: NodeId,
-    },
-    /// Follow the committed focus's node for its changes, or nothing.
-    Follow(Follow),
-    /// The application's tree from its top-level window, capped at a
-    /// depth of 64 and 4096 nodes, for the control plane: a request from
-    /// outside the event queue, naming the target's main window.
-    DumpTree {
-        /// Whether each element's location and whether it is off the
-        /// screen are read ([`crate::protocol::DumpedTree::locations`]).
-        locations: bool,
-    },
-    /// The shell's tray icons or taskbar buttons, for the notification
-    /// area list dialog, read within the taskbar's own process
-    /// (`books/dev/src/explanation/design/listener-without-connections.md`,
-    /// decision 9): a request from outside the event queue, naming
-    /// `Shell_TrayWnd`.
-    ShellItems {
-        /// Which shell surface.
-        kind: crate::ShellItemKind,
-    },
-    /// Where one item [`Request::ShellItems`] listed may be on the screen
-    /// now, for a click on it: the surface walked again and the position
-    /// read of every button whose runtime id or name is the item's. Which
-    /// of them is clicked, if any, the dialog decides. A request from
-    /// outside the event queue, naming `Shell_TrayWnd`.
-    ShellItemPosition {
-        /// Which shell surface the item was listed from.
-        kind: crate::ShellItemKind,
-        /// The item chosen.
-        item: crate::ShellItem,
-    },
 }
 
 /// The events a followed node's registration takes.
@@ -378,16 +196,6 @@ pub struct Followed {
     /// An extra object followed for its value changes alone: the focus's
     /// parent when it is a slider that focuses its thumb.
     pub extra: Option<NodeId>,
-}
-
-/// Core's request that the committed focus's outpost follow its node, or
-/// nothing (`docs/design/readers-tell-core-asks-build1.md`, Table 10). It
-/// is answered with one of the five outcomes; a newer `Follow` replaces it,
-/// which answers it "ended or stopped".
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Follow {
-    /// The node followed; `None` removes every registration.
-    pub node: Option<Followed>,
 }
 
 /// The nearest window of a node an answer read, with the facts a request
@@ -427,17 +235,65 @@ pub struct NodeRead {
     pub values: PropertyValues,
 }
 
-/// The answer to [`ReadObject`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObjectRead {
-    /// The object.
-    pub object: NodeRead,
-    /// Its relation, when asked.
-    pub relation: Option<RelationFound>,
-    /// Its descendants, when asked.
-    pub descendants: Vec<NodeRead>,
-    /// Its ancestors, nearest first, when its relation asked for them.
-    pub ancestors: Vec<NodeRead>,
+impl NodeRead {
+    /// The snapshot its values describe, read through `backend`; `None`
+    /// when the reader minted no node for it.
+    #[must_use]
+    pub fn snapshot(&self, backend: crate::Backend) -> Option<crate::NodeSnapshot> {
+        let value = |id| {
+            self.values
+                .answer(id)
+                .and_then(|answer| answer.value.as_ref())
+        };
+        let text = |id| match value(id) {
+            Some(PropertyValue::Text(text)) => Some(text.clone()),
+            _ => None,
+        };
+        let count = |id| match value(id) {
+            Some(PropertyValue::Count(count)) => Some(*count),
+            _ => None,
+        };
+        Some(crate::NodeSnapshot {
+            id: self.node?,
+            backend,
+            role: match value(PropertyId::Role) {
+                Some(PropertyValue::Role(role)) => *role,
+                _ => crate::Role::Unknown,
+            },
+            name: text(PropertyId::Name),
+            value: text(PropertyId::Value),
+            states: match value(PropertyId::States) {
+                Some(PropertyValue::States(states)) => *states,
+                _ => crate::StateSet::default(),
+            },
+            details: crate::NodeDetails {
+                description: text(PropertyId::Description),
+                keyboard_shortcut: text(PropertyId::KeyboardShortcut),
+                position_in_set: count(PropertyId::PositionInSet),
+                set_size: count(PropertyId::SetSize),
+                level: count(PropertyId::Level),
+                rect: match value(PropertyId::Rect) {
+                    Some(PropertyValue::Rect(rect)) => Some(*rect),
+                    _ => None,
+                },
+                class_name: text(PropertyId::ClassName),
+                cell: match value(PropertyId::Cell) {
+                    Some(PropertyValue::Cell(cell)) => Some(*cell),
+                    _ => None,
+                },
+                table_counts: match value(PropertyId::TableCounts) {
+                    Some(PropertyValue::TableCounts(counts)) => Some(*counts),
+                    _ => None,
+                },
+                window: match value(PropertyId::NativeWindow) {
+                    Some(PropertyValue::Window(window)) if window.0 != 0 => Some(*window),
+                    _ => None,
+                },
+                desktop_window: self.window.desktop,
+                ..crate::NodeDetails::default()
+            },
+        })
+    }
 }
 
 /// One element of a route: a UI Automation element as the listener read
@@ -630,34 +486,9 @@ pub struct FocusCaretRead {
 /// A result: the first of the five outcomes, by request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
-    /// The answer to [`Request::ReadObject`].
-    Object(Box<ObjectRead>),
-    /// The answer to [`Request::Properties`].
-    Properties(PropertyValues),
-    /// The answer to [`Request::Navigate`]: the node reached, `None` at a
-    /// genuine edge of the tree.
-    Navigated(Option<NodeRead>),
-    /// The answer to [`Request::Find`]: the node found, `None` when none
-    /// matches.
-    Found(Option<NodeRead>),
-    /// The answer to [`Request::Children`].
-    Children(Vec<NodeRead>),
-    /// The answer to [`Request::Text`].
+    /// A terminal's text operation's reply.
     Text(TextReply),
-    /// The answer to [`Request::Activate`]: the action's name, when it has
-    /// one.
-    Activated(Option<ActionName>),
-    /// The answer to [`Request::Follow`]: applied, with no read.
-    Followed,
-    /// The answer to [`Request::DumpTree`].
-    Tree(Box<crate::protocol::DumpedTree>),
-    /// The answer to [`Request::ShellItems`], in the shell's order.
-    ShellItems(Vec<crate::ShellItem>),
-    /// The answer to [`Request::ShellItemPosition`]: the buttons that may
-    /// be the item.
-    ShellItemPosition(crate::ShellCandidates),
-    /// The answer to a batch ([`Question::Batch`]): one outcome per step,
-    /// in order. Once the old kinds are gone a result is this alone.
+    /// A batch's: one outcome per step, in order.
     Steps(Vec<StepOutcome>),
 }
 
@@ -718,75 +549,9 @@ impl Ask {
         fn unstamp(node: &mut NodeId) {
             *node = node.unstamped();
         }
-        let request = match &mut self.request {
-            Question::Batch(batch) => {
-                batch.visit_nodes(&mut unstamp);
-                return;
-            }
-            Question::Legacy(request) => request,
-        };
-        match request {
-            Request::ReadObject(read) => {
-                if let ObjectRef::Node(node) = &mut read.object {
-                    unstamp(node);
-                }
-                match &mut read.relation {
-                    Some(RelationQuery::OneOf(nodes)) => nodes.iter_mut().for_each(unstamp),
-                    Some(RelationQuery::ControlledBy(node)) => unstamp(node),
-                    Some(RelationQuery::Selection { focus, nodes }) => {
-                        unstamp(focus);
-                        nodes.iter_mut().for_each(unstamp);
-                    }
-                    None => {}
-                }
-            }
-            Request::Properties { node, .. }
-            | Request::Navigate { node, .. }
-            | Request::Find { node, .. }
-            | Request::Children { node, .. }
-            | Request::Text { node, .. }
-            | Request::Activate { node } => unstamp(node),
-            Request::Follow(follow) => {
-                if let Some(followed) = &mut follow.node {
-                    unstamp(&mut followed.node);
-                    if let Some(extra) = &mut followed.extra {
-                        unstamp(extra);
-                    }
-                }
-            }
-            Request::DumpTree { .. }
-            | Request::ShellItems { .. }
-            | Request::ShellItemPosition { .. } => {}
-        }
-    }
-}
-
-impl Request {
-    /// Whether Core asks it from outside the event queue, which a reader's
-    /// worker makes after every request of the queue's waiting with it
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core"
-    /// and Table 14): a tree dump, the taskbar list's two reads, and a
-    /// terminal's reads for its output
-    /// (`docs/design/readers-tell-core-asks-build3.md`). `Follow` and a
-    /// terminal's baseline are the queue's, as are every other request.
-    #[must_use]
-    pub fn outside_the_queue(&self) -> bool {
-        match self {
-            Request::DumpTree { .. }
-            | Request::ShellItems { .. }
-            | Request::ShellItemPosition { .. } => true,
-            Request::Text {
-                op: crate::TextOp::ReadTerminal(read),
-                ..
-            } => read.output,
-            Request::ReadObject(_)
-            | Request::Properties { .. }
-            | Request::Navigate { .. }
-            | Request::Find { .. }
-            | Request::Children { .. }
-            | Request::Text { .. }
-            | Request::Activate { .. }
-            | Request::Follow(_) => false,
+        match &mut self.request {
+            Question::Batch(batch) => batch.visit_nodes(&mut unstamp),
+            Question::Terminal(ask) => unstamp(&mut ask.node),
         }
     }
 }
@@ -820,47 +585,8 @@ impl Answer {
         nodes: &mut dyn FnMut(&mut NodeId),
         anchors: &mut dyn FnMut(&mut TextAnchor),
     ) {
-        fn read(read: &mut NodeRead, visit: &mut dyn FnMut(&mut NodeId)) {
-            if let Some(node) = &mut read.node {
-                visit(node);
-            }
-        }
-        fn tree(node: &mut crate::TreeNode, visit: &mut dyn FnMut(&mut NodeId)) {
-            visit(&mut node.snapshot.id);
-            for child in &mut node.children {
-                tree(child, visit);
-            }
-        }
-        let Outcome::Result(reply) = &mut self.outcome else {
-            return;
-        };
-        match reply {
-            Reply::Object(object) => {
-                read(&mut object.object, nodes);
-                for node in object
-                    .descendants
-                    .iter_mut()
-                    .chain(object.ancestors.iter_mut())
-                {
-                    read(node, nodes);
-                }
-            }
-            Reply::Navigated(Some(node)) | Reply::Found(Some(node)) => read(node, nodes),
-            Reply::Children(children) => {
-                for child in children {
-                    read(child, nodes);
-                }
-            }
-            Reply::Tree(dumped) => tree(&mut dumped.root, nodes),
-            Reply::Steps(outcomes) => crate::batch::visit_outcomes(outcomes, nodes, anchors),
-            Reply::Navigated(None)
-            | Reply::Found(None)
-            | Reply::Properties(_)
-            | Reply::Text(_)
-            | Reply::Activated(_)
-            | Reply::Followed
-            | Reply::ShellItems(_)
-            | Reply::ShellItemPosition(_) => {}
+        if let Outcome::Result(Reply::Steps(outcomes)) = &mut self.outcome {
+            crate::batch::visit_outcomes(outcomes, nodes, anchors);
         }
     }
 }
@@ -1355,28 +1081,6 @@ pub struct CaretBinding {
     pub formatting: crate::TextAttributes,
 }
 
-/// How a request from outside the event queue ended, as its asker learns:
-/// the five outcomes, a result that did not decode, or Core no longer
-/// awaiting it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OutsideOutcome {
-    /// A result.
-    Result(Reply),
-    /// Refused by the reader, with its reason.
-    Refused(Refusal),
-    /// A result that did not decode as the request's reply: a malformed
-    /// answer.
-    Undecodable,
-    /// The object is not there.
-    NotThere,
-    /// Not responding.
-    NotResponding,
-    /// The reader ended or stopped.
-    ReaderEnded,
-    /// Core no longer awaits it, for this reason.
-    NoLongerAwaited(CancelReason),
-}
-
 /// What Core's event queue asks of the shell.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueEffect {
@@ -1400,8 +1104,9 @@ pub enum QueueEffect {
     Answered {
         /// The token the shell keeps the asker's responder under.
         asker: u64,
-        /// How it ended.
-        outcome: OutsideOutcome,
+        /// How it ended: the reader's answer, or ended or stopped when
+        /// Core no longer awaits it.
+        outcome: Outcome,
     },
     /// Check these windows for a hang ([`QueueInput::HangCheck`]).
     CheckHung(Vec<WindowHandle>),
@@ -1483,14 +1188,22 @@ mod tests {
 
     #[test]
     fn an_answer_names_and_stamps_every_node_it_carries() {
+        use crate::batch::{Descendant, Descended, Done, StepOutcome};
         let mut answer = Answer {
             number: RequestNumber(1),
-            outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
-                object: node_read(1),
-                relation: None,
-                descendants: vec![node_read(2)],
-                ancestors: vec![node_read(3)],
-            }))),
+            outcome: Outcome::Result(Reply::Steps(vec![
+                StepOutcome::Done(Done::Read(node_read(1))),
+                StepOutcome::Done(Done::Descendants(Descended {
+                    nodes: [2, 3]
+                        .map(|number| Descendant {
+                            node: node_read(number),
+                            parent: None,
+                            root: 0,
+                        })
+                        .to_vec(),
+                    complete: true,
+                })),
+            ])),
             probes: Vec::new(),
             detail: String::new(),
         };
@@ -1517,45 +1230,37 @@ mod tests {
     }
 
     #[test]
-    fn a_generic_read_and_its_answer_travel_as_json_and_back() {
+    fn a_batch_and_its_answer_travel_as_json_and_back() {
+        use crate::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
         let ask = Ask {
             number: RequestNumber(7),
             window: WindowHandle(5),
             verdict: WindowVerdict::ProbeFirst,
-            request: Request::ReadObject(ReadObject {
-                object: ObjectRef::Kept {
-                    listener: 1,
-                    token: ElementToken(3),
-                },
-                set: vec![PropertyId::Name, PropertyId::Role],
-                relation: Some(RelationQuery::OneOf(vec![NodeId::new(4)])),
-                descendants: false,
-                purpose: Purpose::Other,
-            })
+            request: Batch {
+                steps: vec![Step {
+                    op: Op::Read {
+                        subject: Subject::Kept {
+                            listener: 1,
+                            token: crate::tell::ElementToken(3),
+                            keep: false,
+                        },
+                        set: vec![PropertyId::Name, PropertyId::Role],
+                    },
+                    when: None,
+                }],
+                placement: Placement::Queue,
+                spare: None,
+            }
             .into(),
         };
         let json = serde_json::to_string(&ask).unwrap();
         assert_eq!(serde_json::from_str::<Ask>(&json).unwrap(), ask);
 
+        let mut read = node_read(1);
+        read.node = None;
         let answer = Answer {
             number: RequestNumber(7),
-            outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
-                object: NodeRead {
-                    node: None,
-                    window: NodeWindow {
-                        handle: WindowHandle(5),
-                        top_level: WindowHandle(5),
-                        root_owner: WindowHandle(5),
-                        process: Pid(1),
-                        thread: 2,
-                        desktop: false,
-                    },
-                    values: PropertyValues::default(),
-                },
-                relation: Some(RelationFound::Unrelated),
-                descendants: Vec::new(),
-                ancestors: Vec::new(),
-            }))),
+            outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::Read(read))])),
             probes: Vec::new(),
             detail: String::new(),
         };

@@ -12,8 +12,8 @@ use verbatim_model::batch::{
 };
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{
-    Answer, Ask, Cancel, CancelReason, Outcome as WireOutcome, Refusal, Reply, Request as Wire,
-    RequestNumber, WindowVerdict,
+    Answer, Ask, Cancel, CancelReason, Outcome as WireOutcome, Refusal, Reply, RequestNumber,
+    WindowVerdict,
 };
 use verbatim_model::{NodeId, Pid, WindowHandle};
 
@@ -31,7 +31,7 @@ use super::{
 use crate::focus::backend::BackendCache;
 use verbatim_model::Backend;
 use verbatim_model::Effect;
-use verbatim_model::request::{OutsideOutcome, QueueEffect};
+use verbatim_model::request::QueueEffect;
 
 /// The application of the tests' window.
 const APP: Pid = Pid(1);
@@ -130,14 +130,11 @@ impl Request for ReadName {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(wire())
+        wire()
     }
 
     fn decode(&self, reply: Reply) -> Option<PropertyValues> {
-        match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
-        }
+        values_of(reply)
     }
 }
 
@@ -157,30 +154,50 @@ impl Request for ReadPlain {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(plain_wire())
+        plain_wire()
     }
 
     fn decode(&self, reply: Reply) -> Option<PropertyValues> {
-        match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
-        }
+        values_of(reply)
     }
+}
+
+/// A one-step read of `node`'s name, as the tests' requests ask.
+fn read_of(node: NodeId) -> verbatim_model::request::Question {
+    verbatim_model::batch::Batch {
+        steps: vec![verbatim_model::batch::Step {
+            op: verbatim_model::batch::Op::Read {
+                subject: verbatim_model::batch::Subject::Node(node),
+                set: vec![PropertyId::Name],
+            },
+            when: None,
+        }],
+        placement: verbatim_model::batch::Placement::Queue,
+        spare: None,
+    }
+    .into()
 }
 
 /// The read of the plain node as it begins.
-fn plain_wire() -> Wire {
-    Wire::Properties {
-        node: NodeId::plain(1, 1),
-        set: vec![PropertyId::Name],
-    }
+fn plain_wire() -> verbatim_model::request::Question {
+    read_of(NodeId::plain(1, 1))
 }
 
 /// The read as it is sent.
-fn wire() -> Wire {
-    Wire::Properties {
-        node: NodeId::new(1),
-        set: vec![PropertyId::Name],
+fn wire() -> verbatim_model::request::Question {
+    read_of(NodeId::new(1))
+}
+
+/// The values a one-step read's answer holds.
+fn values_of(reply: Reply) -> Option<PropertyValues> {
+    match reply {
+        Reply::Steps(steps) => match steps.as_slice() {
+            [verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Read(read))] => {
+                Some(read.values.clone())
+            }
+            _ => None,
+        },
+        Reply::Text(_) => None,
     }
 }
 
@@ -302,7 +319,7 @@ impl Logic for Test {
 
     /// The plain node's read is answered with a result.
     fn plain_answer(_: &u32, request: &verbatim_model::request::Question) -> Option<WireOutcome> {
-        (request.legacy() == Some(&plain_wire())).then(result)
+        (*request == plain_wire()).then(result)
     }
 
     fn place(_: &u32, _: &Entry) -> Place {
@@ -350,7 +367,7 @@ fn send(number: u64) -> Effect {
             number: RequestNumber(number),
             window: WINDOW.handle,
             verdict: WindowVerdict::Msaa,
-            request: wire().into(),
+            request: wire(),
         },
     })
 }
@@ -381,7 +398,7 @@ fn answer(from: Instance, number: u64, outcome: WireOutcome) -> Input<Entry> {
 
 /// A result.
 fn result() -> WireOutcome {
-    WireOutcome::Result(Reply::Properties(PropertyValues::default()))
+    WireOutcome::Result(crate::entries::tests::properties(PropertyValues::default()))
 }
 
 /// What the tests' entry says of a result.
@@ -406,7 +423,7 @@ fn ask_outside() -> Input<Entry> {
         asker: ASKER,
         reader: OUTPOST.reader,
         window: WINDOW,
-        request: wire().into(),
+        request: wire(),
         due_after_us: OTHER_DUE_US,
     }
 }
@@ -579,7 +596,7 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
                 number: RequestNumber(1),
                 window: WINDOW.handle,
                 verdict: WindowVerdict::Msaa,
-                request: wire().into(),
+                request: wire(),
             },
         })]
     );
@@ -853,7 +870,7 @@ fn a_request_outside_the_queue_found_hung_by_the_shell_is_answered_not_respondin
             Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
             Effect::Queue(QueueEffect::Answered {
                 asker: ASKER.0,
-                outcome: OutsideOutcome::NotResponding
+                outcome: WireOutcome::NotResponding
             })
         ]
     );
@@ -870,7 +887,7 @@ fn a_waiting_request_outside_the_queue_past_its_due_time_answers_its_asker_unsen
         feed(&mut core, 1_000 + OTHER_DUE_US, Input::Tick),
         [Effect::Queue(QueueEffect::Answered {
             asker: ASKER.0,
-            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime)
+            outcome: WireOutcome::Ended
         })]
     );
     assert_eq!(ready_at(&mut core, OTHER_DUE_US + 2_000, OUTPOST), []);
@@ -897,7 +914,7 @@ fn a_waiting_request_outside_the_queue_waits_for_the_next_reader_when_one_fails(
                 number: RequestNumber(1),
                 window: WINDOW.handle,
                 verdict: WindowVerdict::Msaa,
-                request: wire().into(),
+                request: wire(),
             },
         })]
     );
@@ -925,7 +942,7 @@ fn a_waiting_request_outside_the_queue_withdrawn_is_dropped_unsent() {
         feed(&mut core, 2_000, Input::WithdrawOutside(ASKER)),
         [Effect::Queue(QueueEffect::Answered {
             asker: ASKER.0,
-            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn)
+            outcome: WireOutcome::Ended
         })]
     );
     assert_eq!(ready_at(&mut core, 3_000, OUTPOST), []);
@@ -948,7 +965,7 @@ fn a_request_outside_the_queue_found_hung_is_cancelled_with_the_sound_and_answer
             Effect::PlayEarcon(verbatim_model::Earcon::AppNotResponding),
             Effect::Queue(QueueEffect::Answered {
                 asker: ASKER.0,
-                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Hung)
+                outcome: WireOutcome::Ended
             })
         ]
     );
@@ -963,7 +980,7 @@ fn a_request_outside_the_queue_past_its_due_time_is_cancelled_and_answered() {
             cancel(1, CancelReason::DueTime),
             Effect::Queue(QueueEffect::Answered {
                 asker: ASKER.0,
-                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime)
+                outcome: WireOutcome::Ended
             })
         ]
     );
@@ -976,7 +993,9 @@ fn a_request_outside_the_queue_passes_its_answer_to_its_asker() {
         feed(&mut core, 2_000, answer(OUTPOST, 1, result())),
         [Effect::Queue(QueueEffect::Answered {
             asker: ASKER.0,
-            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default()))
+            outcome: WireOutcome::Result(crate::entries::tests::properties(
+                PropertyValues::default()
+            ))
         })]
     );
 }
@@ -989,7 +1008,7 @@ fn a_request_outside_the_queue_answers_reader_ended_to_its_asker() {
         [
             Effect::Queue(QueueEffect::Answered {
                 asker: ASKER.0,
-                outcome: OutsideOutcome::ReaderEnded
+                outcome: WireOutcome::Ended
             }),
             Effect::Queue(QueueEffect::StartOutpost(APP))
         ]
@@ -1004,7 +1023,9 @@ fn a_request_outside_the_queue_out_is_untouched_by_the_foreground() {
         feed(&mut core, 3_000, answer(OUTPOST, 1, result())),
         [Effect::Queue(QueueEffect::Answered {
             asker: ASKER.0,
-            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default()))
+            outcome: WireOutcome::Result(crate::entries::tests::properties(
+                PropertyValues::default()
+            ))
         })]
     );
 }
@@ -1018,7 +1039,7 @@ fn a_request_outside_the_queue_out_withdrawn_is_cancelled() {
             cancel(1, CancelReason::Withdrawn),
             Effect::Queue(QueueEffect::Answered {
                 asker: ASKER.0,
-                outcome: OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn)
+                outcome: WireOutcome::Ended
             })
         ]
     );
@@ -1455,7 +1476,7 @@ fn a_result_that_does_not_decode_is_refused_undecodable_and_keeps_the_reader() {
         feed(
             &mut core,
             2_000,
-            answer(OUTPOST, 1, WireOutcome::Result(Reply::Children(Vec::new())))
+            answer(OUTPOST, 1, WireOutcome::Result(Reply::Steps(Vec::new())))
         ),
         [
             Effect::Queue(QueueEffect::Undecodable(RequestNumber(1))),
@@ -1605,7 +1626,9 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
             "window: RequestWindow { handle: WindowHandle(11), top_level: WindowHandle(10), ",
             "root_owner: WindowHandle(10), process: Pid(1), thread: 3, by_class: Some(Msaa) }, ",
             "due_us: 11002000, ",
-            "request: Legacy(Properties { node: NodeId { issuer: Outpost(OutpostId(0)), number: 1 }, set: [Name] }), ",
+            "request: Batch(Batch { steps: [Step { op: Read { subject: Node(NodeId { ",
+            "issuer: Outpost(OutpostId(0)), number: 1 }), set: [Name] }, when: None }], ",
+            "placement: Queue, spare: None }), ",
             "owner: Queue, stage: Out { to: Instance { reader: Outpost(Pid(1)), generation: 1 }, ",
             "probing: None } }}, ",
             "late: {RequestNumber(1): Instance { reader: Outpost(Pid(1)), generation: 1 }}, ",
@@ -1642,7 +1665,7 @@ impl Request for ReadProbed {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(wire())
+        wire()
     }
 
     fn decode(&self, reply: Reply) -> Option<PropertyValues> {
@@ -1725,7 +1748,7 @@ fn send_probed(number: u64, verdict: WindowVerdict) -> Effect {
             number: RequestNumber(number),
             window: PROBED.handle,
             verdict,
-            request: wire().into(),
+            request: wire(),
         },
     })
 }
@@ -1981,13 +2004,15 @@ fn a_plain_read_from_outside_the_queue_is_answered_at_once() {
                 asker: ASKER,
                 reader: Reader::Outpost(Pid(9)),
                 window: WINDOW,
-                request: plain_wire().into(),
+                request: plain_wire(),
                 due_after_us: OTHER_DUE_US,
             }
         ),
         [Effect::Queue(QueueEffect::Answered {
             asker: ASKER.0,
-            outcome: OutsideOutcome::Result(Reply::Properties(PropertyValues::default())),
+            outcome: WireOutcome::Result(crate::entries::tests::properties(
+                PropertyValues::default()
+            )),
         })]
     );
     assert!(core.shared.borrow().state.queue.idle());

@@ -9,8 +9,7 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, NodeRead,
-    Outcome as WireOutcome, Question, Refusal, Reply, Request as Wire, RequestNumber, Route,
-    RouteEnd,
+    Outcome as WireOutcome, Question, Refusal, Reply, RequestNumber, Route, RouteEnd,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Payload, Read, Relation, WindowFacet,
@@ -399,16 +398,15 @@ pub(crate) fn uia_focus_read(
 pub(crate) fn kind(ask: &Ask) -> &'static str {
     match &ask.request {
         Question::Batch(batch) => batch_kind(batch),
-        Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
-        Question::Legacy(Wire::Follow(_)) => "Follow",
-        Question::Legacy(_) => "other",
+        Question::Terminal(_) => "other",
     }
 }
 
 /// What a batch reads, as the tests name it: a candidate's read, a read of
 /// the current focus (with its focused state as a fact for the check after
-/// a menu end), the listener's read of a kept element, and the outpost's
-/// read of the route that walk made.
+/// a menu end), an MSAA object's read for a change or an alert, the
+/// listener's read of a kept element, and the outpost's read of the route
+/// that walk made.
 pub(crate) fn batch_kind(batch: &Batch) -> &'static str {
     let subjects: Vec<&Subject> = batch
         .steps
@@ -419,6 +417,32 @@ pub(crate) fn batch_kind(batch: &Batch) -> &'static str {
         "CurrentFocus with the focused state as a fact"
     } else if batch.reads_focus_first() {
         "CurrentFocus"
+    } else if batch.steps.iter().any(|step| {
+        matches!(
+            step.op,
+            Op::IsOneOf { .. }
+                | Op::Descendants {
+                    subject: Subject::Msaa { .. },
+                    ..
+                }
+        )
+    }) {
+        "ReadObject"
+    } else if let [
+        verbatim_model::batch::Step {
+            op:
+                Op::Read {
+                    subject: Subject::Msaa { .. },
+                    set,
+                },
+            ..
+        },
+    ] = batch.steps.as_slice()
+        && !(set.is_empty() || set.as_slice() == [PropertyId::Role])
+    {
+        // A show's or the desktop name's read of its MSAA object, where a
+        // menu start's reads its role and a foreground's nothing.
+        "ReadObject"
     } else if subjects
         .iter()
         .any(|subject| matches!(subject, Subject::Msaa { .. }))
@@ -480,6 +504,47 @@ pub(crate) fn found_sent(
 ) -> (Vec<u64>, Vec<String>) {
     let input = found(held, from, number, reader_found);
     sent_at(held, at_us, input)
+}
+
+/// A batch's answer of one step done with `done`.
+pub(crate) fn one(done: verbatim_model::batch::Done) -> Reply {
+    Reply::Steps(vec![verbatim_model::batch::StepOutcome::Done(done)])
+}
+
+/// A one-step batch's answer: `values` read.
+pub(crate) fn properties(values: PropertyValues) -> Reply {
+    one(verbatim_model::batch::Done::Read(NodeRead {
+        node: None,
+        window: crate::readers::no_window(),
+        values,
+    }))
+}
+
+/// A one-step batch's answer: `reached` one step away, or nothing at an
+/// edge.
+pub(crate) fn related(reached: Option<NodeRead>) -> Reply {
+    one(verbatim_model::batch::Done::Related(
+        reached.into_iter().collect(),
+    ))
+}
+
+/// A one-step batch's answer: activated with `action`.
+pub(crate) fn activated(action: Option<verbatim_model::ActionName>) -> Reply {
+    one(verbatim_model::batch::Done::Activate(action))
+}
+
+/// A one-step batch's answer: followed.
+pub(crate) fn followed() -> Reply {
+    one(verbatim_model::batch::Done::Follow)
+}
+
+/// The one operation of the newest batch waiting or out.
+pub(crate) fn last_op(held: &Held) -> Option<Op> {
+    let (_, batch) = held.queue.batches_for_tests().pop()?;
+    let [step] = batch.steps.as_slice() else {
+        panic!("a one-step batch: {batch:?}");
+    };
+    Some(step.op.clone())
 }
 
 pub(crate) fn answer(from: Instance, number: u64, reply: Reply) -> Input<Entry> {
@@ -583,14 +648,17 @@ fn a_uia_focus_is_read_in_two_requests_and_executed() {
     assert_eq!(state.queue.front_for_tests(), None);
     // Only the commit's `Follow` is out, outside the queue.
     assert_eq!(
-        state.queue.table_for_tests(),
-        [Wire::Follow(verbatim_model::request::Follow {
-            node: Some(verbatim_model::request::Followed {
-                node: node(2),
-                group: verbatim_model::request::FollowGroup::Base,
-                extra: None,
-            }),
-        })]
+        state
+            .queue
+            .batches_for_tests()
+            .into_iter()
+            .map(|(_, batch)| batch.steps[0].op.clone())
+            .collect::<Vec<_>>(),
+        [Op::Follow(Some(verbatim_model::batch::FollowTarget {
+            subject: Subject::Node(node(2)),
+            group: verbatim_model::request::FollowGroup::Base,
+            extra: None,
+        }))]
     );
 }
 
@@ -656,7 +724,7 @@ fn sent_completion(
                     } => Some((*route, known)),
                     _ => None,
                 }),
-                Question::Legacy(_) => None,
+                Question::Terminal(_) => None,
             },
             _ => None,
         })
@@ -1658,16 +1726,33 @@ const EXPLORER: Instance = Instance {
     generation: 9,
 };
 
-/// The notification area list's read of the tray's items, asked under
-/// `asker`, naming `Shell_TrayWnd`.
+/// A read from outside the queue of the taskbar's own object, as the
+/// notification area list's reads are batches outside it, naming
+/// `Shell_TrayWnd`.
+fn taskbar_batch() -> Batch {
+    Batch {
+        steps: vec![verbatim_model::batch::Step {
+            op: Op::Read {
+                subject: Subject::Window {
+                    which: verbatim_model::batch::WindowOf::Handle(WindowHandle(90)),
+                    backend: verbatim_model::Backend::Uia,
+                    visible: false,
+                },
+                set: vec![PropertyId::Name],
+            },
+            when: None,
+        }],
+        placement: verbatim_model::batch::Placement::Outside,
+        spare: None,
+    }
+}
+
+/// [`taskbar_batch`] asked under `asker`.
 fn taskbar_read(asker: u64) -> verbatim_model::request::QueueInput {
     verbatim_model::request::QueueInput::AskOutside {
         asker,
         window: taskbar(),
-        request: Wire::ShellItems {
-            kind: verbatim_model::ShellItemKind::SystemTray,
-        }
-        .into(),
+        request: taskbar_batch().into(),
     }
 }
 
@@ -1696,12 +1781,9 @@ fn taskbar_read_out() -> Held {
 /// process, and its answer goes to its asker by its token.
 #[test]
 fn a_request_from_outside_the_queue_is_sent_to_its_windows_outpost_and_answered_to_its_asker() {
-    use verbatim_model::request::{OutsideOutcome, QueueEffect, QueueInput};
+    use verbatim_model::request::{QueueEffect, QueueInput};
     let mut held = taskbar_read_out();
-    let reply = Reply::ShellItems(vec![verbatim_model::ShellItem {
-        name: "Clock".to_owned(),
-        runtime_id: vec![42, 1],
-    }]);
+    let reply = Reply::Steps(vec![verbatim_model::batch::StepOutcome::Failed]);
     assert_eq!(
         shell_feeds(
             &mut held,
@@ -1718,7 +1800,7 @@ fn a_request_from_outside_the_queue_is_sent_to_its_windows_outpost_and_answered_
         ),
         [Said::Queue(QueueEffect::Answered {
             asker: 5,
-            outcome: OutsideOutcome::Result(reply),
+            outcome: WireOutcome::Result(reply),
         })]
     );
 }
@@ -1751,16 +1833,14 @@ fn a_request_from_outside_the_queue_is_not_stopped_by_a_foreground_change() {
         )),
         "{effects:?}"
     );
-    assert!(held.queue.table_for_tests().contains(&Wire::ShellItems {
-        kind: verbatim_model::ShellItemKind::SystemTray,
-    }));
+    assert_eq!(held.queue.batch_for_tests(1), Some(taskbar_batch()));
 }
 
 /// A request from outside the queue keeps the queue's due time: 11
 /// seconds after it was asked Core stops waiting and answers its asker.
 #[test]
 fn a_request_from_outside_the_queue_past_its_due_time_is_cancelled_and_answered() {
-    use verbatim_model::request::{Cancel, CancelReason, OutsideOutcome, QueueEffect, QueueInput};
+    use verbatim_model::request::{Cancel, CancelReason, QueueEffect, QueueInput};
     let mut held = taskbar_read_out();
     let due_us = 2_000 + crate::event_queue::OTHER_DUE_US;
     let effects = shell_feeds(&mut held, due_us, QueueInput::Due);
@@ -1777,7 +1857,7 @@ fn a_request_from_outside_the_queue_past_its_due_time_is_cancelled_and_answered(
     assert!(
         effects.contains(&Said::Queue(QueueEffect::Answered {
             asker: 5,
-            outcome: OutsideOutcome::NoLongerAwaited(CancelReason::DueTime),
+            outcome: WireOutcome::Ended,
         })),
         "{effects:?}"
     );

@@ -19,8 +19,8 @@ use verbatim_core::{SrState, reduce};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FocusRead, ForegroundReport, HeldIds, MsaaIds, NodeRead, ObjectRead, Outcome, Press,
-    PressAction, QueueInput, Reader, Reply, RequestNumber,
+    FocusRead, ForegroundReport, HeldIds, MsaaIds, NodeRead, Outcome, Press, PressAction,
+    QueueInput, Reader, RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -834,20 +834,15 @@ fn desktop_named(desk: &mut Desk, name: &str) {
         desk.tell(LISTENER, tell),
         [Heard::Sent(Reader::Listener, "ReadObject")]
     );
-    let read = ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: ONE.node_window(),
-            values: PropertyValues(vec![verbatim_model::property::PropertyAnswer {
-                id: PropertyId::Name,
-                value: Some(PropertyValue::Text(name.to_owned())),
-            }]),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
+    let read = NodeRead {
+        node: None,
+        window: ONE.node_window(),
+        values: PropertyValues(vec![verbatim_model::property::PropertyAnswer {
+            id: PropertyId::Name,
+            value: Some(PropertyValue::Text(name.to_owned())),
+        }]),
     };
-    assert_eq!(desk.reply(Reply::Object(Box::new(read))), []);
+    assert_eq!(desk.reply_object(read), []);
 }
 
 /// The virtual desktop's name is kept until the next focus, which says it

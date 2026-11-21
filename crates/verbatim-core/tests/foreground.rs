@@ -19,7 +19,7 @@ use verbatim_model::property::{PropertyValues, RuntimeId};
 use verbatim_model::request::Question;
 use verbatim_model::request::{
     FocusAncestor, FocusCaret, FocusNode, FocusRead, ForegroundReport, HeldIds, MsaaIds, NodeRead,
-    NodeWindow, Outcome, QueueInput, Reader, Reply, Request as Wire,
+    NodeWindow, QueueInput, Reader,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -401,12 +401,12 @@ fn answered(desk: &mut Desk, heard: Vec<Heard>, reply: &dyn Fn(&Question) -> Fou
     let mut pending = std::mem::take(&mut desk.sent);
     while !pending.is_empty() {
         let (number, to, request) = pending.remove(0);
-        heard.extend(match &request {
-            Question::Legacy(Wire::Follow(_)) => {
-                desk.answer(to, number, Outcome::Result(Reply::Followed))
-            }
-            other => desk.found(to, number, &reply(other)),
-        });
+        // A `Follow` is applied whatever was found.
+        let found = match desk::kind(&request) {
+            "Follow" => Found::Unfocused,
+            _ => reply(&request),
+        };
+        heard.extend(desk.found(to, number, &found));
         pending.append(&mut desk.sent);
     }
     heard

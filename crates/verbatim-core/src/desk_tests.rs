@@ -11,7 +11,7 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     FocusAncestor, FocusCaret, FocusNode, FocusRead, NodeRead, NodeWindow, Question, Reply,
-    Request as Wire, WindowVerdict,
+    WindowVerdict,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -205,12 +205,22 @@ pub(crate) fn focus_heard(
 
 fn kind(request: &Question) -> &'static str {
     match request {
+        Question::Batch(batch)
+            if matches!(
+                batch.steps.as_slice(),
+                [verbatim_model::batch::Step {
+                    op: verbatim_model::batch::Op::Read {
+                        subject: verbatim_model::batch::Subject::Node(_),
+                        ..
+                    },
+                    ..
+                }]
+            ) =>
+        {
+            "Properties"
+        }
         Question::Batch(batch) => crate::entries::tests::batch_kind(batch),
-        Question::Legacy(Wire::ReadObject(_)) => "ReadObject",
-        Question::Legacy(Wire::Follow(_)) => "Follow",
-        Question::Legacy(Wire::Properties { .. }) => "Properties",
-        Question::Legacy(Wire::Text { .. }) => "Text",
-        Question::Legacy(_) => "other",
+        Question::Terminal(_) => "Text",
     }
 }
 
@@ -675,13 +685,24 @@ impl Desk {
                 panic!("one request out: {asked:?}");
             };
             let reply = match request {
-                Question::Legacy(Wire::Properties { .. }) => {
-                    Reply::Properties(values_of(navigator))
+                Question::Batch(batch)
+                    if matches!(
+                        batch.steps.as_slice(),
+                        [verbatim_model::batch::Step {
+                            op: verbatim_model::batch::Op::Read {
+                                subject: verbatim_model::batch::Subject::Node(_),
+                                ..
+                            },
+                            ..
+                        }]
+                    ) =>
+                {
+                    crate::entries::tests::properties(values_of(navigator))
                 }
-                Question::Legacy(Wire::Text { .. }) => {
-                    Reply::Text(verbatim_model::TextReply::NoText)
+                Question::Terminal(_) => Reply::Text(verbatim_model::TextReply::NoText),
+                other @ Question::Batch(_) => {
+                    panic!("a review read these tests do not answer: {other:?}")
                 }
-                other => panic!("a review read these tests do not answer: {other:?}"),
             };
             heard = self.reply(reply);
         }

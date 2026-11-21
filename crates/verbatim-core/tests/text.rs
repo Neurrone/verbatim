@@ -17,7 +17,7 @@ use verbatim_model::batch::{Batch, Op, Waited};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::request::{
     FocusCaret, FocusCaretRead, FocusRead, Instance, Outcome, Press, PressAction, QueueEffect,
-    QueueInput, Reply, Request as Wire,
+    QueueInput, Reply,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{AcceptanceFacts, Event, EventObject, Payload, Relation, TellWindow};
@@ -311,7 +311,14 @@ impl Text {
                 continue;
             }
             if let Effect::Queue(QueueEffect::Send { to, ask }) = &effect
-                && !matches!(ask.request.legacy(), Some(Wire::Follow(_)))
+                && !matches!(
+                    &ask.request,
+                    verbatim_model::request::Question::Batch(batch)
+                        if batch
+                            .steps
+                            .iter()
+                            .all(|step| matches!(step.op, verbatim_model::batch::Op::Follow(_)))
+                )
             {
                 self.out.push((ask.number.0, *to, ask.request.clone()));
             }
@@ -387,9 +394,15 @@ impl Text {
     /// Answers the one request out, a live read of `snapshot`'s
     /// properties, with its values.
     fn properties(&mut self, snapshot: &NodeSnapshot) -> Vec<Heard> {
-        self.outcome(Outcome::Result(Reply::Properties(desk::values_of(
-            snapshot,
-        ))))
+        self.outcome(Outcome::Result(Reply::Steps(vec![
+            verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Read(
+                verbatim_model::request::NodeRead {
+                    node: None,
+                    window: desk::ONE.node_window(),
+                    values: desk::values_of(snapshot),
+                },
+            )),
+        ])))
     }
 
     /// Answers the one text request out with `reply`.

@@ -39,8 +39,7 @@ use verbatim_model::batch::{
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
     DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
-    ObjectRead, ObjectRef, Outcome as WireOutcome, Question, Refusal, RelationFound, RelationQuery,
-    Reply, Request as Wire,
+    Outcome as WireOutcome, Question, Refusal, Reply,
 };
 use verbatim_model::{
     Issuer, NodeId, Pid, Role, State, StateSet, TextReply, WindowFacts, WindowHandle,
@@ -158,55 +157,6 @@ impl PlainObject {
                 .collect(),
         )
     }
-
-    /// Its answer to `asked`, as NVDA's plain `Window` gives it.
-    fn answer(&self, asked: Asked<'_>) -> WireOutcome {
-        match asked {
-            Asked::Properties(set) => WireOutcome::Result(Reply::Properties(self.values(set))),
-            // No children are reached; its parent and siblings, the
-            // desktop and the neighbouring top-level windows, are not read
-            // by Core, so those moves meet the edge (a recorded limit).
-            Asked::Navigate => WireOutcome::Result(Reply::Navigated(None)),
-            Asked::Find => WireOutcome::Result(Reply::Found(None)),
-            Asked::Children => WireOutcome::Result(Reply::Children(Vec::new())),
-            // No caret and no text pattern: Core reviews its flat text,
-            // its name, as NVDA's `NVDAObjectTextInfo` reads `basicText`.
-            Asked::Text => WireOutcome::Result(Reply::Text(TextReply::NoText)),
-            // NVDA's `doAction` raises on a plain window, and the script
-            // says "No action" (`NVDAObjects/__init__.py` 612 to 616;
-            // `globalCommands.py` 1862 to 1903).
-            Asked::Activate => WireOutcome::Refused(Refusal::Unsupported),
-            // A plain window raises nothing to follow.
-            Asked::Follow => WireOutcome::Result(Reply::Followed),
-            Asked::Object { set, relation } => {
-                WireOutcome::Result(Reply::Object(Box::new(ObjectRead {
-                    object: NodeRead {
-                        node: Some(self.node()),
-                        window: self.node_window(),
-                        values: self.values(set),
-                    },
-                    relation: relation.map(|query| self.relation(query)),
-                    descendants: Vec::new(),
-                    ancestors: Vec::new(),
-                })))
-            }
-        }
-    }
-
-    /// Its relation to the nodes `query` names: it is one of them when
-    /// its node is among them; it controls nothing and nothing controls
-    /// it.
-    fn relation(&self, query: &RelationQuery) -> RelationFound {
-        let nodes = match query {
-            RelationQuery::OneOf(nodes) | RelationQuery::Selection { nodes, .. } => nodes,
-            RelationQuery::ControlledBy(_) => return RelationFound::Unrelated,
-        };
-        nodes
-            .iter()
-            .position(|node| *node == self.node())
-            .and_then(|place| u32::try_from(place).ok())
-            .map_or(RelationFound::Unrelated, RelationFound::Is)
-    }
 }
 
 /// Core's plain reader: the plain object it holds, one at a time, and the
@@ -253,74 +203,23 @@ impl PlainReader {
     }
 }
 
-/// A request the plain reader answers, as its kind asks.
-#[derive(Clone, Copy, Debug)]
-enum Asked<'a> {
-    /// Properties, by set.
-    Properties(&'a [PropertyId]),
-    /// One navigation step.
-    Navigate,
-    /// A find among its children or descendants.
-    Find,
-    /// Its children.
-    Children,
-    /// A read or move in its text.
-    Text,
-    /// Its default action.
-    Activate,
-    /// A `Follow` naming it.
-    Follow,
-    /// The generic read of it, by set, with its relation when asked.
-    Object {
-        set: &'a [PropertyId],
-        relation: Option<&'a RelationQuery>,
-    },
-}
-
-/// The node `request` is read on, with what it asks of it; `None` for a
-/// kind that names no node a reader holds. Every kind is classed here, so
-/// a new kind does not build until the plain reader answers it.
-fn subject(request: &Wire) -> Option<(NodeId, Asked<'_>)> {
-    match request {
-        Wire::Properties { node, set } => Some((*node, Asked::Properties(set))),
-        Wire::Navigate { node, .. } => Some((*node, Asked::Navigate)),
-        Wire::Find { node, .. } => Some((*node, Asked::Find)),
-        Wire::Children { node, .. } => Some((*node, Asked::Children)),
-        Wire::Text { node, .. } => Some((*node, Asked::Text)),
-        Wire::Activate { node } => Some((*node, Asked::Activate)),
-        Wire::Follow(follow) => follow
-            .node
-            .as_ref()
-            .map(|followed| (followed.node, Asked::Follow)),
-        Wire::ReadObject(read) => match &read.object {
-            ObjectRef::Node(node) => Some((
-                *node,
-                Asked::Object {
-                    set: &read.set,
-                    relation: read.relation.as_ref(),
-                },
-            )),
-            ObjectRef::Kept { .. } | ObjectRef::Msaa { .. } => None,
-        },
-        Wire::DumpTree { .. } | Wire::ShellItems { .. } | Wire::ShellItemPosition { .. } => None,
-    }
-}
-
 /// The plain reader's answer to `request` when it names a plain node,
 /// given at once from `reader`'s facts: "not there" for a node of a
 /// generation no longer held. `None` for a request a reader process
-/// answers.
+/// answers. A terminal's text operation on the plain node finds no text,
+/// as NVDA's plain `Window` has none.
 pub(crate) fn answer(reader: &PlainReader, request: &Question) -> Option<WireOutcome> {
-    let request = match request {
-        Question::Legacy(request) => request,
+    let node = match request {
         Question::Batch(batch) => return answer_batch(reader, batch),
+        Question::Terminal(ask) => ask.node,
     };
-    let (node, asked) = subject(request)?;
     let Issuer::Plain(_) = node.issuer() else {
         return None;
     };
     Some(match &reader.object {
-        Some(object) if object.node() == node => object.answer(asked),
+        Some(object) if object.node() == node => {
+            WireOutcome::Result(Reply::Text(TextReply::NoText))
+        }
         Some(_) | None => WireOutcome::NotThere,
     })
 }

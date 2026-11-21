@@ -47,8 +47,8 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{
-    Answer, Ask, ForegroundReport, Instance, ObjectRef, ProcessFact, QueueEffect, QueueInput,
-    Reader, Request, RequestNumber,
+    Answer, Ask, ForegroundReport, Instance, ProcessFact, QueueEffect, QueueInput, Reader,
+    RequestNumber,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload};
@@ -1024,6 +1024,14 @@ impl CoreDriver {
             detail: String::new(),
         };
         let (listener, token, keep) = match &ask.request {
+            verbatim_model::request::Question::Batch(batch)
+                if matches!(
+                    batch.steps.first().and_then(|step| step.op.subject()),
+                    Some(verbatim_model::batch::Subject::Msaa { .. })
+                ) =>
+            {
+                return answered(verbatim_listener::read_msaa_batch(batch));
+            }
             verbatim_model::request::Question::Batch(batch) => {
                 let Some(verbatim_model::batch::Subject::Kept {
                     listener,
@@ -1038,13 +1046,7 @@ impl CoreDriver {
                 };
                 (*listener, *token, *keep)
             }
-            verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
-                let ObjectRef::Kept { listener, token } = read.object else {
-                    return answered(verbatim_listener::read_msaa_object(read));
-                };
-                (listener, token, false)
-            }
-            verbatim_model::request::Question::Legacy(_) => panic!(
+            verbatim_model::request::Question::Terminal(_) => panic!(
                 "Core asked the listener {:?}, which it reads no other way",
                 ask.request
             ),
@@ -1068,15 +1070,7 @@ impl CoreDriver {
             verbatim_model::request::Question::Batch(batch) => {
                 verbatim_listener::read_object((&self.uia, &readability), &element, nearest, batch)
             }
-            verbatim_model::request::Question::Legacy(Request::ReadObject(read)) => {
-                verbatim_listener::read_kept_object(
-                    (&self.uia, &readability),
-                    &element,
-                    nearest,
-                    read,
-                )
-            }
-            verbatim_model::request::Question::Legacy(other) => {
+            verbatim_model::request::Question::Terminal(other) => {
                 panic!("the listener reads no {other:?}")
             }
         };

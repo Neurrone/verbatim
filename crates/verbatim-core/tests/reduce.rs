@@ -18,8 +18,8 @@ use verbatim_core::{ReducerRecorder, Runtime, SrState, replay};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds, ObjectRead, Outcome,
-    ProcessFact, QueueInput, Reader, Reply, Request as Wire,
+    FocusRead, ForegroundReport, HeldIds, Instance, KnownAncestor, MsaaIds, Outcome, ProcessFact,
+    QueueInput, Reader, Reply,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, Relation, TellWindow,
@@ -356,15 +356,12 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
             desk.tell(LISTENER, tell),
             [Heard::Sent(Reader::Outpost(ONE.pid), "ReadObject")]
         );
-        desk.reply(Reply::Object(Box::new(ObjectRead {
-            relation: Some(verbatim_model::request::RelationFound::Is(0)),
-            ..listener_object(
-                ONE,
-                item.id,
-                PropertyId::States,
-                PropertyValue::States(states),
-            )
-        })))
+        desk.reply(change_of_focus(listener_object(
+            ONE,
+            item.id,
+            PropertyId::States,
+            PropertyValue::States(states),
+        )))
     };
     let expanded = focusable.with(State::Selected).with(State::Expanded);
     assert_eq!(
@@ -372,10 +369,14 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
         [Heard::Sent(Reader::Outpost(ONE.pid), "Properties")]
     );
     assert_eq!(
-        desk.reply(Reply::Properties(PropertyValues(vec![PropertyAnswer {
-            id: PropertyId::ChildCount,
-            value: Some(PropertyValue::Count(52)),
-        }]))),
+        desk.reply_object(verbatim_model::request::NodeRead {
+            node: None,
+            window: ONE.node_window(),
+            values: PropertyValues(vec![PropertyAnswer {
+                id: PropertyId::ChildCount,
+                value: Some(PropertyValue::Count(52)),
+            }]),
+        }),
         vec![
             queued(vec![state(State::Expanded)]),
             queued(vec![UtteranceSegment::new(SegmentContent::Phrase(
@@ -397,20 +398,31 @@ fn expanding_a_tree_view_item_says_how_many_items_it_holds() {
 
 /// An outpost's read of node `node` in `app`'s window, answering `id` as
 /// `value`.
-fn listener_object(app: App, node: NodeId, id: PropertyId, value: PropertyValue) -> ObjectRead {
-    ObjectRead {
-        object: verbatim_model::request::NodeRead {
-            node: Some(node),
-            window: app.node_window(),
-            values: PropertyValues(vec![PropertyAnswer {
-                id,
-                value: Some(value),
-            }]),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
+fn listener_object(
+    app: App,
+    node: NodeId,
+    id: PropertyId,
+    value: PropertyValue,
+) -> verbatim_model::request::NodeRead {
+    verbatim_model::request::NodeRead {
+        node: Some(node),
+        window: app.node_window(),
+        values: PropertyValues(vec![PropertyAnswer {
+            id,
+            value: Some(value),
+        }]),
     }
+}
+
+/// An MSAA change's answer: its object is the committed focus, read as
+/// `read`.
+fn change_of_focus(read: verbatim_model::request::NodeRead) -> Reply {
+    Reply::Steps(vec![
+        verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::IsOneOf(Some(0))),
+        verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Read(
+            verbatim_model::request::NodeRead { node: None, ..read },
+        )),
+    ])
 }
 
 /// A short session through Core's event queue: the listener started and
@@ -1553,12 +1565,11 @@ fn a_replacement_numbering_afresh_after_many_ids_is_heard_at_once() {
         );
         let _ = desk.focus(ONE, &control, &[]);
         // The outpost answers each commit's `Follow`, as a live one does.
-        let [(follow, to, verbatim_model::request::Question::Legacy(Wire::Follow(_)))] =
-            desk.sent[..]
-        else {
+        let [(follow, to, ref request)] = desk.sent[..] else {
             panic!("one Follow sent: {:?}", desk.sent);
         };
-        let _ = desk.answer(to, follow, Outcome::Result(Reply::Followed));
+        assert_eq!(desk::kind(request), "Follow");
+        let _ = desk.found(to, follow, &Found::Unfocused);
     }
     let next = ONE.replaced();
     let slider = node(
@@ -1918,6 +1929,14 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
 fn windows_toast(desk: &mut Desk, id: u64, at_us: u64) -> Vec<Heard> {
     let mut facts = TWO.facts();
     "Windows.UI.Core.CoreWindow".clone_into(&mut facts.window.class);
+    let toast = node(
+        TWO,
+        9,
+        Role::Window,
+        Some("Download complete"),
+        None,
+        StateSet::new(),
+    );
     let tell = Event {
         kind: EventKind::UiaWindowOpened,
         at_us,
@@ -1935,24 +1954,11 @@ fn windows_toast(desk: &mut Desk, id: u64, at_us: u64) -> Vec<Heard> {
         return heard;
     }
     assert_eq!(heard, [Heard::Sent(Reader::Listener, "ReadObject")]);
-    let toast = node(
-        TWO,
-        9,
-        Role::Window,
-        Some("Download complete"),
-        None,
-        StateSet::new(),
-    );
-    desk.reply(Reply::Object(Box::new(ObjectRead {
-        object: verbatim_model::request::NodeRead {
-            node: None,
-            window: TWO.node_window(),
-            values: desk::values_of(&toast),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    })))
+    desk.reply_object(verbatim_model::request::NodeRead {
+        node: None,
+        window: TWO.node_window(),
+        values: desk::values_of(&toast),
+    })
 }
 
 /// The toast's speech, queued, as a toast is spoken.
@@ -2032,18 +2038,18 @@ fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
         states(&[State::Selectable, State::Selected]),
     );
     assert_eq!(
-        desk.answer(
+        desk.found(
             to,
             completion,
-            Outcome::Result(Reply::Object(Box::new(ObjectRead {
-                relation: None,
-                ..listener_object(
+            &Found::Item(
+                listener_object(
                     ONE,
                     result.id,
                     PropertyId::Name,
                     PropertyValue::Text("Notepad, App".to_owned())
-                )
-            })))
+                ),
+                Some(false)
+            ),
         ),
         []
     );
@@ -2317,7 +2323,7 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
                 _ => None,
             })
             .expect("a full read"),
-        verbatim_model::request::Question::Legacy(other) => panic!("a batch: {other:?}"),
+        verbatim_model::request::Question::Terminal(other) => panic!("a batch: {other:?}"),
     };
     let met = known
         .iter()
@@ -2697,7 +2703,14 @@ fn review(
             return heard;
         };
         let reply = match request {
-            "Properties" => Reply::Properties(desk::values_of(navigator)),
+            "Properties" => {
+                heard = desk.reply_object(verbatim_model::request::NodeRead {
+                    node: None,
+                    window: ONE.node_window(),
+                    values: desk::values_of(navigator),
+                });
+                continue;
+            }
             "Text" => Reply::Text(verbatim_model::TextReply::NoText),
             other => panic!("a review read these tests do not answer: {other}"),
         };
@@ -3412,15 +3425,12 @@ fn an_msaa_button_disabled_as_the_focus_leaves_it_says_unavailable_then_the_new_
     let read = desk.answer(
         ONE.instance(),
         change_read,
-        Outcome::Result(Reply::Object(Box::new(ObjectRead {
-            relation: Some(verbatim_model::request::RelationFound::Is(0)),
-            ..listener_object(
-                ONE,
-                apply.id,
-                PropertyId::States,
-                PropertyValue::States(states(&[State::Focusable, State::Disabled])),
-            )
-        }))),
+        Outcome::Result(change_of_focus(listener_object(
+            ONE,
+            apply.id,
+            PropertyId::States,
+            PropertyValue::States(states(&[State::Focusable, State::Disabled])),
+        ))),
     );
     let Some((run, to, "Candidate")) = one_sent(&desk) else {
         panic!("the run of focuses asked: {:?}", desk.sent);

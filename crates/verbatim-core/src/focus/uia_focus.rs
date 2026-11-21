@@ -10,8 +10,7 @@ use std::iter;
 use verbatim_model::batch::{AncestorsEnd, Ancestry, MAX_DEPTH, WindowOf};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    FocusRead, KnownAncestor, NodeRead, NodeWindow, ObjectRead, ReadObject, Reply, Request as Wire,
-    Route, RouteEnd, RouteStep,
+    FocusRead, KnownAncestor, NodeRead, NodeWindow, Route, RouteEnd, RouteStep,
 };
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{Backend, State};
@@ -24,40 +23,7 @@ use super::validity::{self, How, Subject, Validity};
 use super::versions::ReadBy;
 use crate::batch::{Got, On};
 use crate::entries::{Entries, UiaFocus, request_window};
-use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, Request, RequestWindow};
-
-/// The listener's read of an object by a kind of request: a toast's, a
-/// show's and the desktop name's.
-#[derive(Debug)]
-pub(crate) struct ListenerRead {
-    /// The element's nearest window.
-    pub(crate) window: RequestWindow,
-    /// The read.
-    pub(crate) read: ReadObject,
-}
-
-impl Request for ListenerRead {
-    type Reply = Box<ObjectRead>;
-
-    fn reader(&self) -> Reader {
-        Reader::Listener
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::ReadObject(self.read.clone()))
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Object(read) => Some(read),
-            _ => None,
-        }
-    }
-}
+use crate::event_queue::{Cx, FOCUS_DUE_US, Outcome, Reader, RequestWindow};
 
 /// What the listener read of a kept element and its ancestors, as a route
 /// the application's outpost finds its own copy by.

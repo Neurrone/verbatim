@@ -1737,7 +1737,7 @@ impl ReducerThread<'_> {
             // what is in front, which Core judges; every other request is
             // answered "not responding".
             let in_front = match &ask.request {
-                verbatim_model::request::Question::Legacy(_) => false,
+                verbatim_model::request::Question::Terminal(_) => false,
                 verbatim_model::request::Question::Batch(batch) => batch.reads_focus_first(),
             };
             let refused = if in_front {
@@ -1797,14 +1797,22 @@ impl ReducerThread<'_> {
             let _ = reply.try_send(Err(format!("pid {pid} has no top-level window")));
             return;
         };
-        let asker = self.outside.begin(Asker::DumpTree { ticket, reply });
+        let window = verbatim_win32::window_facts::node_window(
+            &verbatim_win32::window_facts::SystemReads,
+            main,
+        );
+        let sent = verbatim_core::outside::dump(window.handle, locations);
+        let request = sent.question();
+        let asker = self.outside.begin(Asker::DumpTree {
+            ticket,
+            sent,
+            locations,
+            reply,
+        });
         self.queue(QueueInput::AskOutside {
             asker,
-            window: verbatim_win32::window_facts::node_window(
-                &verbatim_win32::window_facts::SystemReads,
-                main,
-            ),
-            request: verbatim_model::request::Request::DumpTree { locations }.into(),
+            window,
+            request,
         });
     }
 
@@ -1827,14 +1835,16 @@ impl ReducerThread<'_> {
             return;
         };
         let (asker, request) = match ask {
-            verbatim_gui::ShellAsk::Items(deliver) => (
-                Asker::ShellItems { deliver },
-                verbatim_model::request::Request::ShellItems { kind },
-            ),
-            verbatim_gui::ShellAsk::Position(item, deliver) => (
-                Asker::ShellItemPosition { deliver },
-                verbatim_model::request::Request::ShellItemPosition { kind, item },
-            ),
+            verbatim_gui::ShellAsk::Items(deliver) => {
+                let sent = verbatim_core::outside::shell(kind, None);
+                let request = sent.question();
+                (Asker::ShellItems { sent, deliver }, request)
+            }
+            verbatim_gui::ShellAsk::Position(item, deliver) => {
+                let sent = verbatim_core::outside::shell(kind, Some(&item));
+                let request = sent.question();
+                (Asker::ShellItemPosition { sent, deliver }, request)
+            }
         };
         let asker = self.outside.begin(asker);
         self.queue(QueueInput::AskOutside {
@@ -1843,7 +1853,7 @@ impl ReducerThread<'_> {
                 &verbatim_win32::window_facts::SystemReads,
                 taskbar,
             ),
-            request: request.into(),
+            request,
         });
     }
 

@@ -372,11 +372,6 @@ impl<E, F> Queue<E, F> {
         self.waiting.len()
     }
 
-    /// The requests waiting or out, as sent.
-    pub(crate) fn table_for_tests(&self) -> Vec<verbatim_model::request::Request> {
-        self.table.requests_for_tests()
-    }
-
     /// The batch request `number` is, while it waits or is out.
     pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
         self.table.batch_for_tests(number)

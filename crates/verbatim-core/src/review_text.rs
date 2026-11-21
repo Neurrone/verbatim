@@ -231,15 +231,18 @@ async fn run_next(
                 };
                 // The description is read whatever the theme reports, as
                 // NVDA's basic text has it.
-                let request = crate::navigator::Properties {
-                    window,
-                    node: object.id,
-                    set: crate::details::description_kept(
-                        &cx.facts(),
-                        &crate::report_focus::ANNOUNCED_SET,
-                    ),
-                };
-                match cx.ask(request, due_us).await {
+                let set = crate::details::description_kept(
+                    &cx.facts(),
+                    &crate::report_focus::ANNOUNCED_SET,
+                );
+                match crate::navigator::read_values(
+                    &mut cx,
+                    (window.process, window, object.id),
+                    &set,
+                    due_us,
+                )
+                .await
+                {
                     Outcome::Result(values) => {
                         let read = verbatim_model::request::NodeRead {
                             node: Some(object.id),

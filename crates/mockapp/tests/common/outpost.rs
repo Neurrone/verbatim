@@ -53,11 +53,12 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use verbatim_model::batch::{Batch, Done, Op, Placement, Relation, Step, StepOutcome, Subject};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::protocol::{CoreToOutpost, OutpostToCore};
 use verbatim_model::request::{
-    Answer, FocusNode, FocusRead, KnownAncestor, MsaaIds, NodeRead, NodeWindow, Outcome, Reply,
-    Request, RequestNumber, WindowVerdict,
+    Answer, FocusNode, FocusRead, KnownAncestor, MsaaIds, NodeRead, NodeWindow, Outcome, Question,
+    Reply, RequestNumber, WindowVerdict,
 };
 use verbatim_model::{CallCounts, NodeId, Pid, QueryKind, Role, StateSet, WindowHandle};
 use verbatim_outpost::{Heard, Outpost};
@@ -749,7 +750,7 @@ impl OutpostUnderTest {
 
     /// Sends `request` about `window` and returns its answer, the next
     /// message the outpost writes.
-    pub fn requested(&self, window: HWND, request: Request) -> Answer {
+    pub fn requested(&self, window: HWND, request: impl Into<Question>) -> Answer {
         let number = self.request(window, request);
         self.answer(number)
     }
@@ -1285,27 +1286,20 @@ impl OutpostUnderTest {
         let number = self.request_with(
             window,
             WindowVerdict::Uia,
-            Request::Navigate {
-                node,
-                direction,
-                set: focus_set(),
-            },
+            navigation(node, direction, focus_set()),
         );
-        match self.answer_with_calls(number) {
-            (
-                Answer {
-                    outcome: Outcome::Result(Reply::Navigated(Some(read))),
-                    ..
-                },
-                calls,
-            ) => (read, calls),
-            (other, _) => panic!("the step answered {:?}, not a node", other.outcome),
+        let (answer, calls) = self.answer_with_calls(number);
+        match only_step(answer.outcome) {
+            StepOutcome::Done(Done::Related(mut reached)) if reached.len() == 1 => {
+                (reached.remove(0), calls)
+            }
+            other => panic!("the step answered {other:?}, not a node"),
         }
     }
 
     /// The outcome of Core's `request` about a node in `window`, with the
     /// window's verdict in force since its focus, and the calls it made.
-    pub fn asked(&self, window: HWND, request: Request) -> (Outcome, CallCounts) {
+    pub fn asked(&self, window: HWND, request: impl Into<Question>) -> (Outcome, CallCounts) {
         let number = self.request_with(window, WindowVerdict::Uia, request);
         let (answer, calls) = self.answer_with_calls(number);
         (answer.outcome, calls)
@@ -1316,6 +1310,82 @@ impl OutpostUnderTest {
     pub fn read_focus_as(&self, element: &IUIAutomationElement) {
         *self.focus.lock().unwrap_or_else(PoisonError::into_inner) =
             Some(AgileReference::new(element).expect("an agile reference"));
+    }
+}
+
+/// Core's batch of `op` alone.
+pub fn one(op: Op) -> Batch {
+    Batch {
+        steps: vec![Step { op, when: None }],
+        placement: Placement::Queue,
+        spare: None,
+    }
+}
+
+/// Core's read of `node`'s properties of `set`.
+pub fn read(node: NodeId, set: Vec<PropertyId>) -> Batch {
+    one(Op::Read {
+        subject: Subject::Node(node),
+        set,
+    })
+}
+
+/// Core's one navigation step from `node`, `direction`, reading `set` of
+/// the node reached.
+pub fn navigation(node: NodeId, direction: QueryKind, set: Vec<PropertyId>) -> Batch {
+    one(Op::Related {
+        subject: Subject::Node(node),
+        relation: match direction {
+            QueryKind::Parent => Relation::Parent,
+            QueryKind::NextSibling => Relation::NextSibling,
+            QueryKind::PreviousSibling => Relation::PreviousSibling,
+            QueryKind::FirstChild => Relation::FirstChild,
+        },
+        set,
+    })
+}
+
+/// Core's activation of `node`.
+pub fn activate(node: NodeId) -> Batch {
+    one(Op::Activate {
+        subject: Subject::Node(node),
+    })
+}
+
+/// Core's `Follow` of `followed`, or of nothing.
+pub fn follow(followed: Option<verbatim_model::request::Followed>) -> Batch {
+    one(Op::Follow(followed.map(|followed| {
+        verbatim_model::batch::FollowTarget {
+            subject: Subject::Node(followed.node),
+            group: followed.group,
+            extra: followed.extra,
+        }
+    })))
+}
+
+/// The one step's outcome of `outcome`, a one-step batch's answer.
+///
+/// # Panics
+///
+/// When the answer is not one step's.
+pub fn only_step(outcome: Outcome) -> StepOutcome {
+    match outcome {
+        Outcome::Result(Reply::Steps(steps)) if steps.len() == 1 => {
+            steps.into_iter().next().expect("one step")
+        }
+        other => panic!("the batch answered {other:?}, not one step"),
+    }
+}
+
+/// The values of a one-step read's answer, `outcome`.
+///
+/// # Panics
+///
+/// When the step did not read the node.
+pub fn values_read(outcome: Outcome) -> PropertyValues {
+    match only_step(outcome) {
+        StepOutcome::Done(Done::Read(read)) => read.values,
+        other => panic!("the read answered {other:?}, not the node"),
     }
 }
 

@@ -36,11 +36,13 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::property::PropertySet;
 use verbatim_model::property::{RuntimeId, props};
-use verbatim_model::request::{MsaaIds, ObjectRef, Purpose, ReadObject, Reply, Request as Wire};
+use verbatim_model::request::{MsaaIds, Reply};
 use verbatim_model::tell::{Event, Payload, Relation};
 use verbatim_model::{Effect, Percent, Role, State};
 
+use crate::batch::{Answers, Builder, Got, On, Ref, Sent, kind};
 use crate::changes::MsaaChange;
 use crate::entries::{Entries, request_window, window_facts};
 use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
@@ -156,6 +158,22 @@ impl BarRead {
     }
 }
 
+/// The brand of a bar's read on Core's want list, named for its one call
+/// site, [`bar_read`] (the request list's design, section 4).
+enum Bar {}
+
+/// The bar read's one step.
+const BAR_READ: Ref<Bar, kind::Read> = Ref::named(0);
+
+/// The bar read of the bar `ids` names, as its site builds it each time:
+/// for the want, and for parsing its answer at a later step. The
+/// listener reads the object at its event's address, with no redirect.
+fn bar_read(ids: MsaaIds) -> Sent<Bar> {
+    let mut read = Builder::<Bar>::named();
+    let _ = read.read(On::msaa(ids, false), BarAnswer::PROPERTIES);
+    read.finish()
+}
+
 /// Wants a read of the bar `ids` names, in `window`, under a new token,
 /// and records it as out.
 fn read(facts: &mut SrState, ids: MsaaIds, window: RequestWindow) {
@@ -163,21 +181,10 @@ fn read(facts: &mut SrState, ids: MsaaIds, window: RequestWindow) {
     facts
         .bar_reads
         .insert(key(&ids), BarRead::Reading { token });
-    let read = ReadObject {
-        object: ObjectRef::Msaa {
-            window: ids.window,
-            object: ids.object,
-            child: ids.child,
-        },
-        set: <BarAnswer as verbatim_model::property::PropertySet>::PROPERTIES.to_vec(),
-        relation: None,
-        descendants: false,
-        purpose: Purpose::Other,
-    };
     facts.wants.want(
         Some(token),
         (Reader::Listener, window),
-        Wire::ReadObject(read).into(),
+        bar_read(ids).question(),
     );
 }
 
@@ -215,36 +222,44 @@ pub(crate) fn msaa_changed(cx: &mut Cx<Entries>, change: &MsaaChange) {
     cx.send_wanted();
 }
 
-/// Whether `token` is a bar read's, as its ending arrives: the bar's read
-/// out ends, and a bar changed since it was sent is read again.
-pub(crate) fn ended(facts: &mut SrState, token: u64) -> bool {
-    let Some((&bar, &out)) = facts.bar_reads.iter().find(|(_, out)| out.token() == token) else {
-        return false;
-    };
+/// The bar whose read `token` is, as its ending arrives: the bar's read
+/// out ends, and a bar changed since it was sent is read again. `None`
+/// for a token no bar's read is.
+pub(crate) fn ended(facts: &mut SrState, token: u64) -> Option<MsaaIds> {
+    let (&bar, &out) = facts
+        .bar_reads
+        .iter()
+        .find(|(_, out)| out.token() == token)?;
     facts.bar_reads.remove(&bar);
+    let (window_handle, object, child) = bar;
+    let ids = MsaaIds {
+        window: verbatim_model::WindowHandle(window_handle),
+        object,
+        child,
+    };
     if let BarRead::ReadingNewer { window, .. } = out {
-        let (window_handle, object, child) = bar;
-        let ids = MsaaIds {
-            window: verbatim_model::WindowHandle(window_handle),
-            object,
-            child,
-        };
         read(facts, ids, window);
     }
-    true
+    Some(ids)
 }
 
-/// A bar read ended with `outcome`: the tone of a progress bar on screen
-/// whose value is a number, at the centre of its rectangle, (0, 0) when it
-/// reports none, as NVDA places one; nothing for anything else.
-pub(crate) fn answered(facts: &mut SrState, outcome: Outcome<Reply>) -> Vec<Effect> {
-    let Outcome::Result(Reply::Object(read)) = outcome else {
+/// The read of the bar `ids` names ended with `outcome`: the tone of a
+/// progress bar on screen whose value is a number, at the centre of its
+/// rectangle, (0, 0) when it reports none, as NVDA places one; nothing for
+/// anything else.
+pub(crate) fn answered(facts: &mut SrState, ids: MsaaIds, outcome: Outcome<Reply>) -> Vec<Effect> {
+    let Outcome::Result(reply) = outcome else {
         return Vec::new();
     };
     // An answer other than the set asked is the reader's fault, which says
     // nothing, as an undecodable answer to the queue's request does.
-    let Ok(bar) = <BarAnswer as verbatim_model::property::PropertySet>::parse(read.object.values)
-    else {
+    let Some(answers) = Answers::parse(&bar_read(ids), reply) else {
+        return Vec::new();
+    };
+    let Got::Done(read) = answers.get(BAR_READ) else {
+        return Vec::new();
+    };
+    let Ok(bar) = BarAnswer::parse(read.values.clone()) else {
         return Vec::new();
     };
     let states = bar.states.unwrap_or_default();

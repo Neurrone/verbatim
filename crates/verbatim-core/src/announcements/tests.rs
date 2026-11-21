@@ -4,11 +4,12 @@
 
 use crate::entries::tests::found_at;
 use crate::readers::Found;
+use verbatim_model::batch::{Descendant, Descended, Done, StepOutcome};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
-use verbatim_model::request::{NodeRead, ObjectRead, Outcome as WireOutcome, RelationFound, Reply};
+use verbatim_model::request::{NodeRead, Outcome as WireOutcome, Reply};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     NotificationKind, NotificationProcessing, Pid, Role, SpeechPriority, State, StateSet,
@@ -99,23 +100,47 @@ fn with(mut values: PropertyValues, id: PropertyId, value: PropertyValue) -> Pro
     values
 }
 
-/// An object read: node 7 in window 5, with `values`, `relation` and
-/// `descendants`.
-fn object(
-    values: PropertyValues,
-    relation: Option<RelationFound>,
-    descendants: Vec<NodeRead>,
-) -> Reply {
-    Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: Some(node(7)),
-            window: win(5),
-            values,
-        },
-        relation,
-        descendants,
-        ancestors: Vec::new(),
-    }))
+/// An object read: node 7 in window 5, with `values`.
+fn read_of(values: PropertyValues) -> NodeRead {
+    NodeRead {
+        node: Some(node(7)),
+        window: win(5),
+        values,
+    }
+}
+
+/// A show's answer: its object read with `values`.
+fn shown(values: PropertyValues) -> Reply {
+    Reply::Steps(vec![StepOutcome::Done(Done::Read(NodeRead {
+        node: None,
+        ..read_of(values)
+    }))])
+}
+
+/// Which of the focus's line an alert is, when the line was asked.
+#[derive(Clone, Copy)]
+enum Line {
+    /// Its place, or none of them.
+    Is(Option<u32>),
+}
+
+/// An alert's answer: which of the focus's line it is, `line`, and the
+/// walk of the alert read with `values` and its `descendants`.
+fn alert(values: PropertyValues, line: Line, descendants: Vec<NodeRead>) -> Reply {
+    let walked = StepOutcome::Done(Done::Descendants(Descended {
+        nodes: std::iter::once(read_of(values))
+            .chain(descendants)
+            .enumerate()
+            .map(|(at, node)| Descendant {
+                node,
+                parent: (at > 0).then_some(0),
+                root: 0,
+            })
+            .collect(),
+        complete: true,
+    }));
+    let Line::Is(place) = line;
+    Reply::Steps(vec![StepOutcome::Done(Done::IsOneOf(place)), walked])
 }
 
 #[test]
@@ -281,22 +306,9 @@ fn a_toast_is_read_by_the_listener_and_announced_and_its_repeat_within_a_second_
         feed_at(&mut state, 4_000, entry(toast())),
         ["send Listener ReadObject"]
     );
-    let read = ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: win(5),
-            values: values("Download complete", Role::Pane),
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    };
+    let read = shown(values("Download complete", Role::Pane));
     assert_eq!(
-        feed_at(
-            &mut state,
-            5_000,
-            answer(LISTENER, 4, Reply::Object(Box::new(read)))
-        ),
+        feed_at(&mut state, 5_000, answer(LISTENER, 4, read)),
         ["Label(\"Download complete\")"]
     );
     let repeat = Event {
@@ -598,7 +610,7 @@ fn a_selected_item_whose_relation_cannot_be_read_says_nothing() {
 /// The committed focus's `HasValuePattern`, `WindowClass` and `Value`,
 /// as its outpost answers them.
 fn value_facts(has_value: bool, class: &str, value: &str) -> Reply {
-    Reply::Properties(PropertyValues(vec![
+    crate::entries::tests::properties(PropertyValues(vec![
         PropertyAnswer {
             id: PropertyId::HasValuePattern,
             value: Some(PropertyValue::Flag(has_value)),
@@ -615,8 +627,8 @@ fn value_facts(has_value: bool, class: &str, value: &str) -> Reply {
 }
 
 /// The request out last, by its wire form.
-fn last_asked(state: &Held) -> Option<verbatim_model::request::Request> {
-    state.queue.table_for_tests().last().cloned()
+fn last_asked(state: &Held) -> Option<verbatim_model::batch::Op> {
+    crate::entries::tests::last_op(state)
 }
 
 #[test]
@@ -631,8 +643,8 @@ fn a_selected_list_item_whose_parent_is_the_focus_asks_its_value_facts_and_says_
     );
     assert_eq!(
         last_asked(&state),
-        Some(verbatim_model::request::Request::Properties {
-            node: node(2),
+        Some(verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: vec![
                 PropertyId::HasValuePattern,
                 PropertyId::WindowClass,
@@ -725,7 +737,7 @@ fn combo_list_selected() -> Event {
 }
 
 fn combo_box_list(list: Option<u64>) -> Reply {
-    Reply::Properties(PropertyValues(vec![PropertyAnswer {
+    crate::entries::tests::properties(PropertyValues(vec![PropertyAnswer {
         id: PropertyId::ComboBoxList,
         value: list.map(|list| PropertyValue::Window(WindowHandle(list))),
     }]))
@@ -740,8 +752,8 @@ fn a_list_item_selected_in_a_windows_forms_combo_boxs_list_speaks_the_combo_boxs
     );
     assert_eq!(
         last_asked(&state),
-        Some(verbatim_model::request::Request::Properties {
-            node: node(2),
+        Some(verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: vec![PropertyId::ComboBoxList],
         })
     );
@@ -765,8 +777,8 @@ fn a_list_item_selected_in_a_windows_forms_combo_boxs_list_speaks_the_combo_boxs
     );
     assert_eq!(
         last_asked(&state),
-        Some(verbatim_model::request::Request::Properties {
-            node: node(2),
+        Some(verbatim_model::batch::Op::Read {
+            subject: verbatim_model::batch::Subject::Node(node(2)),
             set: vec![PropertyId::Value],
         })
     );
@@ -777,7 +789,7 @@ fn a_list_item_selected_in_a_windows_forms_combo_boxs_list_speaks_the_combo_boxs
             answer(
                 OUTPOST,
                 7,
-                Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                crate::entries::tests::properties(PropertyValues(vec![PropertyAnswer {
                     id: PropertyId::Value,
                     value: Some(PropertyValue::Text("Ten".to_owned())),
                 }]))
@@ -834,7 +846,7 @@ fn an_item_of_the_focused_combo_box_without_the_value_pattern_reads_and_speaks_i
             answer(
                 OUTPOST,
                 6,
-                Reply::Properties(PropertyValues(vec![PropertyAnswer {
+                crate::entries::tests::properties(PropertyValues(vec![PropertyAnswer {
                     id: PropertyId::Value,
                     value: Some(PropertyValue::Text("Ten".to_owned())),
                 }]))
@@ -919,9 +931,9 @@ fn an_alert_is_read_with_its_descendants_and_spoken_with_those_nvda_speaks() {
             answer(
                 OUTPOST,
                 4,
-                object(
+                alert(
                     alert_values(Role::Alert),
-                    Some(RelationFound::Unrelated),
+                    Line::Is(None),
                     vec![button, text]
                 )
             )
@@ -944,11 +956,7 @@ fn an_alert_among_the_focus_ancestors_or_of_another_role_is_dropped() {
             answer(
                 OUTPOST,
                 4,
-                object(
-                    alert_values(Role::Alert),
-                    Some(RelationFound::Is(1)),
-                    Vec::new()
-                )
+                alert(alert_values(Role::Alert), Line::Is(Some(1)), Vec::new())
             )
         ),
         NOTHING
@@ -961,11 +969,7 @@ fn an_alert_among_the_focus_ancestors_or_of_another_role_is_dropped() {
             answer(
                 OUTPOST,
                 5,
-                object(
-                    alert_values(Role::Pane),
-                    Some(RelationFound::Unrelated),
-                    Vec::new()
-                )
+                alert(alert_values(Role::Pane), Line::Is(None), Vec::new())
             )
         ),
         NOTHING
@@ -1037,11 +1041,7 @@ fn a_help_balloon_shown_is_spoken_and_a_tooltip_is_not() {
         feed_at(
             &mut state,
             5_000,
-            answer(
-                OUTPOST,
-                4,
-                object(values("Updates", Role::HelpBalloon), None, Vec::new())
-            )
+            answer(OUTPOST, 4, shown(values("Updates", Role::HelpBalloon)))
         ),
         ["Label(\"Updates\") Role(HelpBalloon)"]
     );
@@ -1054,11 +1054,7 @@ fn a_help_balloon_shown_is_spoken_and_a_tooltip_is_not() {
         feed_at(
             &mut state,
             7_000,
-            answer(
-                OUTPOST,
-                5,
-                object(values("Close", Role::ToolTip), None, Vec::new())
-            )
+            answer(OUTPOST, 5, shown(values("Close", Role::ToolTip)))
         ),
         NOTHING
     );

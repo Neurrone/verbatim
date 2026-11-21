@@ -10,15 +10,15 @@
 //! in the queue. Each press waits its turn, so two presses give two
 //! announcements, and a press ahead of a focus reads the old focus.
 
-use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues, TextSummary};
-use verbatim_model::request::{FocusNode, NodeRead, Reply, Request as Wire};
+use verbatim_model::property::{PropertyId, PropertyValue, TextSummary};
+use verbatim_model::request::{FocusNode, NodeRead};
 use verbatim_model::{
     Backend, Effect, Message, NodeId, NodeSnapshot, Phrase, Pid, SegmentContent, SelectionText,
     SpeechPriority, TraceId, Utterance, UtteranceSegment,
 };
 
 use crate::entries::Entries;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, RequestWindow};
 use crate::focus::versions::Committed;
 use crate::{editing, review_text, text};
 
@@ -50,40 +50,9 @@ fn report_set(state: &crate::state::SrState) -> Vec<PropertyId> {
     set
 }
 
-/// The read of the committed focus's node, of its application's outpost.
-#[derive(Debug)]
-struct FocusProperties {
-    process: Pid,
-    window: RequestWindow,
-    node: NodeId,
-    set: Vec<PropertyId>,
-}
-
-impl Request for FocusProperties {
-    type Reply = PropertyValues;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Properties {
-            node: self.node,
-            set: self.set.clone(),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
-        }
-    }
-}
+/// The read of the committed focus's node: its application's outpost,
+/// the window named, the node and the set.
+type FocusProperties = (Pid, RequestWindow, NodeId, Vec<PropertyId>);
 
 /// What a press finds committed.
 enum Target {
@@ -104,12 +73,12 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
         match &facts.versions.committed {
             Committed::Nothing => Target::Nothing,
             Committed::Read(focus) => Target::Read(
-                FocusProperties {
-                    process: focus.context.source,
-                    window: focus.kept.asked,
-                    node: focus.context.snapshot.id,
-                    set: report_set(&facts),
-                },
+                (
+                    focus.context.source,
+                    focus.kept.asked,
+                    focus.context.snapshot.id,
+                    report_set(&facts),
+                ),
                 focus.kept.read_by.backend(),
             ),
             Committed::Ended(_) | Committed::Own => Target::Unread,
@@ -126,9 +95,12 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
         Target::Unread => return,
         Target::Read(request, backend) => (request, backend),
     };
-    let (node, window) = (request.node, request.window.node_window());
+    let (process, asked, node, set) = request;
+    let window = asked.node_window();
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(values) = cx.ask(request, due_us).await else {
+    let Outcome::Result(values) =
+        crate::navigator::read_values(&mut cx, (process, asked, node), &set, due_us).await
+    else {
         return;
     };
     let summary = match values

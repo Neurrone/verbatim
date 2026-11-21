@@ -29,7 +29,7 @@ pub(super) const ELEMENTS_PER_RUN: usize = 64;
 /// children executes.
 pub(super) fn run_cost(walk: &Descend<'_>, starts: u32, room: u32) -> u32 {
     let (setup, each) = RemoteCache::costs(walk.fill);
-    let start = 12 + if walk.include_subject { each } else { 0 };
+    let start = 12 + if walk.include_subject { each + 1 } else { 0 };
     // Each element of the queue costs its check and its last step, each
     // child its read: the queue holds the starts and every child.
     40 + setup + starts * start + (starts + room) * 24 + room * (20 + each)
@@ -123,6 +123,10 @@ impl<'w, 'a> Walk<'w, 'a> {
                 match self.program_run() {
                     Ok(false) => continue,
                     Ok(true) => {}
+                    // An element the walk reached gone inside the run: the
+                    // calls go on from what waits, as they meet a gone
+                    // child, with no remote failure to log.
+                    Err(error) if is_gone(&error) => reads = Reads::Calls,
                     Err(error) if crate::caret::gone_or_timed_out(&error) => return Err(error),
                     Err(error) => {
                         super::remote_fell_back("descendants", None, &error);
@@ -449,7 +453,11 @@ pub(super) fn emit_run(
         |b| {
             let absent = if fill_starts {
                 let start = b.array_get_at(queue, index).assume::<kind::Element>();
-                cache.populate(b, start)
+                let absent = cache.populate(b, start);
+                // The element filled is a new one: the queue holds it in
+                // place of the start as imported.
+                b.array_set_at(queue, index, start);
+                absent
             } else {
                 none
             };
@@ -528,4 +536,11 @@ pub(super) fn emit_run(
         overflowed,
         filled_starts: fill_starts,
     }
+}
+
+/// Whether `error` is an element's provider answering that it is gone.
+fn is_gone(error: &Error) -> bool {
+    error
+        .hresult()
+        .is_some_and(|code| verbatim_uia::element_is_gone(&windows::core::Error::from(code)))
 }

@@ -22,12 +22,11 @@ use verbatim_model::{Role, State};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
-    Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
+    Ancestor, Cached, ElementExt, Fill, FocusInput, ListenerEvent, Live, Node, Shape, Uia,
 };
 use verbatim_uia_rops::{
-    Ancestry, Error, FailedHop, FocusAncestry, FocusAncestryFn, FocusQuery, NavigationDirection,
-    Status, StepQuery, focus_ancestry, focus_ancestry_classic, focus_ancestry_remote,
-    navigation_step_classic, navigation_step_remote,
+    Ancestry, Error, FailedHop, FocusAncestry, FocusAncestryFn, FocusQuery, Status, focus_ancestry,
+    focus_ancestry_classic, focus_ancestry_remote,
 };
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
 use windows::Win32::System::Threading::WaitForSingleObject;
@@ -495,49 +494,82 @@ fn a_navigation_step_reads_the_same_both_ways() {
     for (from, direction, expected) in [
         (
             "Deep button",
-            NavigationDirection::Parent,
+            verbatim_model::batch::Relation::Parent,
             Some("Inner group"),
         ),
         (
             "Deep button",
-            NavigationDirection::NextSibling,
+            verbatim_model::batch::Relation::NextSibling,
             Some("Notes"),
         ),
         (
             "Notes",
-            NavigationDirection::PreviousSibling,
+            verbatim_model::batch::Relation::PreviousSibling,
             Some("Deep button"),
         ),
         (
             "Inner group",
-            NavigationDirection::FirstChild,
+            verbatim_model::batch::Relation::FirstChild,
             Some("Deep button"),
         ),
-        ("Remember", NavigationDirection::NextSibling, None),
+        (
+            "Remember",
+            verbatim_model::batch::Relation::NextSibling,
+            None,
+        ),
     ] {
-        let element = fixture.find_node(from).narrow::<Kept>();
-        let query = StepQuery {
-            element: &element,
-            direction,
-            fill: &nodes,
-        };
-        let remote = navigation_step_remote(&fixture.uia, &query).expect("the remote program runs");
-        let classic = navigation_step_classic(&fixture.uia, &query).expect("the classic step runs");
+        let element = fixture.find_node(from);
+        let element = (element.live().element(), element.read().role.hwnd);
+        let remote = related_step(&fixture.uia, element, (direction, &nodes), true);
+        let classic = related_step(&fixture.uia, element, (direction, &nodes), false);
         let label = format!("{direction:?} from {from}");
         assert_eq!(remote.window, Some(fixture.hwnd), "{label}");
         assert_eq!(classic.window, Some(fixture.hwnd), "{label}");
-        let view = |step: &verbatim_uia_rops::Step| step.neighbor.as_ref().map(node_view);
+        let view = |step: &verbatim_uia_rops::batch::Related| step.nodes.first().map(node_view);
         assert_eq!(view(&remote), view(&classic), "{label}");
         assert_eq!(
             remote
-                .neighbor
-                .as_ref()
+                .nodes
+                .first()
                 .and_then(|neighbor| neighbor.read().name),
             expected.map(str::to_owned),
             "{label}"
         );
     }
     fixture.app.quit();
+}
+
+/// One step `relation` from `element`, whose own window is `window`, filled
+/// as `fill` asks, run by programs when `remote`, else by calls.
+fn related_step(
+    uia: &verbatim_uia::Uia,
+    (element, window): (
+        &windows::Win32::UI::Accessibility::IUIAutomationElement,
+        isize,
+    ),
+    (relation, fill): (verbatim_model::batch::Relation, &Fill<Node>),
+    remote: bool,
+) -> verbatim_uia_rops::batch::Related {
+    use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment, run_batch};
+    let answer = run_batch(&Segment {
+        uia,
+        steps: vec![Fused {
+            place: verbatim_model::batch::Place(0),
+            when: None,
+            input: Input::Related {
+                subject: Object::Held { element, window },
+                relation,
+                fill,
+            },
+            calls_only: false,
+        }],
+        remote,
+        window: None,
+    });
+    match answer.steps.into_iter().next() {
+        Some(Ran::Done(Found::Related(related))) => related,
+        other => panic!("the step answered {other:?}"),
+    }
 }
 
 /// A UIA error constant as the HRESULT it is.
@@ -1658,21 +1690,18 @@ fn a_cells_table_is_read_alike_by_the_program_and_the_classic_way() {
     );
 
     // A neighbour's table, each way.
-    let from: Cached<verbatim_uia::Kept> = fixture.find_node("First").narrow();
+    let from = fixture.find_node("First");
     let nodes = Fill::new(
         &fixture
             .uia
             .request::<Node>(Node::all_on())
             .expect("the node's cache request"),
     );
-    let step = StepQuery {
-        element: &from,
-        direction: NavigationDirection::NextSibling,
-        fill: &nodes,
-    };
-    let remote = navigation_step_remote(&fixture.uia, &step).expect("the program");
-    let classic = navigation_step_classic(&fixture.uia, &step).expect("the classic step");
-    assert_eq!(remote.neighbor_table, Some(first_table));
-    assert_eq!(classic.neighbor_table, Some(first_table));
+    let from = (from.live().element(), from.read().role.hwnd);
+    let next = (verbatim_model::batch::Relation::NextSibling, &nodes);
+    let remote = related_step(&fixture.uia, from, next, true);
+    let classic = related_step(&fixture.uia, from, next, false);
+    assert_eq!(remote.table, Some(first_table));
+    assert_eq!(classic.table, Some(first_table));
     fixture.app.quit();
 }

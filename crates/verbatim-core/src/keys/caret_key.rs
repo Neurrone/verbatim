@@ -8,7 +8,7 @@
 //! entry.
 
 use verbatim_model::batch::{CaretWait, EffectTest, Op, OpKind, StepRefusal, Waited};
-use verbatim_model::request::{CancelReason, CaretBinding, Question, Request as Wire};
+use verbatim_model::request::{CancelReason, CaretBinding, Question, TerminalAsk};
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReport, KeySeq, NodeId, SentenceMoved, TextAnchor, TextChunk,
     TextDetails, TextMovement, TextOp, TextProvider, TextUnit, TraceId, UtteranceSegment,
@@ -128,11 +128,11 @@ fn first_is(question: &Question, kind: OpKind) -> bool {
 /// release or was dropped at a switch away from the user's desktop.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
     let starting = match request {
-        Question::Legacy(Wire::Text { op, .. }) => match op {
+        Question::Terminal(TerminalAsk { op, .. }) => match op {
             TextOp::ReadTerminal(read) => read.starting.is_some(),
             _ => false,
         },
-        question => first_is(question, OpKind::Caret),
+        question @ Question::Batch(_) => first_is(question, OpKind::Caret),
     };
     starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
@@ -258,13 +258,13 @@ impl TerminalStage {
             return Some(Self::Watching { bound_at_us });
         }
         match request {
-            Question::Legacy(Wire::Text { op, .. }) => match op {
+            Question::Terminal(TerminalAsk { op, .. }) => match op {
                 TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
                 TextOp::ReadTerminal(_) => Some(Self::Final),
                 _ => None,
             },
             question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
-            _ => None,
+            Question::Batch(_) => None,
         }
     }
 

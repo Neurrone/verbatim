@@ -7,9 +7,7 @@
 //! `Follow` naming nothing (Table 10, column E,
 //! 2026-11-19).
 
-use verbatim_model::request::{
-    Follow, Outcome as WireOutcome, QueueEffect, QueueInput, Reply, Request as Wire,
-};
+use verbatim_model::request::{Outcome as WireOutcome, QueueEffect, QueueInput};
 use verbatim_model::{
     Backend, Effect as Said, NodeDetails, NodeId, NodeSnapshot, OutpostId, Pid, Role, StateSet,
     TraceId, WindowHandle,
@@ -61,10 +59,10 @@ fn read(effects: &[Said]) -> Vec<String> {
             }
             Said::Queue(QueueEffect::Send { to, ask }) => {
                 format!(
-                    "send {:?} {} {:?}",
+                    "send {:?} {} {}",
                     to.reader,
                     ask.number.0,
-                    crate::event_queue::legacy_for_tests(&ask.request)
+                    asked(&ask.request)
                 )
             }
             other => format!("{other:?}"),
@@ -78,11 +76,22 @@ fn sent_destroy(window: WindowHandle) -> String {
     format!("destroyed {window:?} to Outpost({APP:?}) {GENERATION}")
 }
 
+/// The operations `question` asks, as a test reads them.
+fn asked(question: &verbatim_model::request::Question) -> String {
+    match question {
+        verbatim_model::request::Question::Batch(batch) => format!(
+            "{:?}",
+            batch.steps.iter().map(|step| &step.op).collect::<Vec<_>>()
+        ),
+        verbatim_model::request::Question::Terminal(ask) => format!("{ask:?}"),
+    }
+}
+
 /// The `Follow` naming nothing, request `number`, as a test reads it.
 fn follows_nothing(number: u64) -> String {
     format!(
         "send Outpost({APP:?}) {number} {:?}",
-        Wire::Follow(Follow { node: None })
+        [verbatim_model::batch::Op::Follow(None)]
     )
 }
 
@@ -254,7 +263,10 @@ fn the_followed_nodes_window_destroyed_after_its_generation_ended_sends_nothing(
 /// Table 1 reads only for the `Follow` a commit sent.
 #[test]
 fn the_follow_naming_nothing_answered_changes_no_terminal_state() {
-    for outcome in [WireOutcome::NotThere, WireOutcome::Result(Reply::Followed)] {
+    for outcome in [
+        WireOutcome::NotThere,
+        WireOutcome::Result(crate::entries::tests::followed()),
+    ] {
         let mut state = terminal_followed();
         let before = state.state.terminal_focus.focused;
         assert_eq!(

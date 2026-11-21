@@ -2,14 +2,14 @@
 //! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
 //! objects", its announcements).
 
-use verbatim_model::request::{FocusNode, ObjectRef, Purpose, ReadObject};
+use verbatim_model::request::FocusNode;
 use verbatim_model::{Backend, Role, SpeechPriority};
 
 use super::Announcement;
-use crate::changes::ChangeRead;
+use crate::batch::{On, Single};
 use crate::entries::{Entries, window_facts};
 use crate::event_queue::RequestWindow;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use crate::focus::FOCUS_SET;
 use crate::focus::acceptance;
 use verbatim_model::request::MsaaIds;
@@ -30,28 +30,25 @@ pub(crate) async fn run(
     {
         return;
     }
-    let request = ChangeRead {
-        process: window.process,
-        window,
-        read: ReadObject {
-            object: ObjectRef::Msaa {
-                window: ids.window,
-                object: ids.object,
-                child: ids.child,
-            },
-            set: crate::details::node_set(&cx.facts(), FOCUS_SET),
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        },
-    };
+    let mut batch = cx.batch(|| ());
+    let read = batch.read(
+        On::msaa(ids, false),
+        &crate::details::node_set(&cx.facts(), FOCUS_SET),
+    );
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(window.process), window)
+        .one(read);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
+    let Outcome::Result(Single::Done(mut read)) = cx.ask(request, due_us).await else {
         return;
     };
+    // An MSAA object's read mints no node; a show is announced, never
+    // followed.
+    read.node = Some(verbatim_model::NodeId::new(0));
     let Some(node) = crate::focus::execute::snapshot(
         &FocusNode {
-            read: read.object,
+            read,
             runtime_id: None,
         },
         Backend::Msaa,

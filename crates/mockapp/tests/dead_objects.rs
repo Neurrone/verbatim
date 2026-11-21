@@ -10,7 +10,7 @@ mod common;
 mod harness;
 
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{Outcome, Reply, Request};
+use verbatim_model::request::{Outcome, Reply};
 use verbatim_model::{CallCounts, NodeId, QueryKind, Role, TextPoint, TextUnit};
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
@@ -25,25 +25,24 @@ fn read_node(
     window: HWND,
     node_id: NodeId,
 ) -> (Option<String>, CallCounts) {
-    let (outcome, calls) = outpost.asked(
-        window,
-        Request::Properties {
-            node: node_id,
-            set: focus_set(),
-        },
-    );
-    let Outcome::Result(Reply::Properties(values)) = outcome else {
-        panic!("the outpost answered {outcome:?}, not the node");
-    };
+    let (outcome, calls) = outpost.asked(window, common::outpost::read(node_id, focus_set()));
+    let values = common::outpost::values_read(outcome);
     outpost.settled();
     (name_in(&values).map(str::to_owned), calls)
 }
 
-/// Asks `request` about a node of `window`, which must answer that it is
-/// not there.
-fn not_there(outpost: &OutpostUnderTest, window: HWND, request: Request) {
+/// Asks `request`, one step on `node` of `window`, which must answer
+/// that the node is not there.
+fn not_there(
+    outpost: &OutpostUnderTest,
+    window: HWND,
+    (node, request): (NodeId, verbatim_model::batch::Batch),
+) {
     let (outcome, _) = outpost.asked(window, request);
-    assert_eq!(outcome, Outcome::NotThere);
+    assert_eq!(
+        common::outpost::only_step(outcome),
+        verbatim_model::batch::StepOutcome::NotThere(verbatim_model::batch::Missing::Node(node))
+    );
     outpost.settled();
 }
 
@@ -85,20 +84,16 @@ fn a_dead_element_answers_gone_and_its_parent_is_its_windows_parent() {
         not_there(
             &outpost,
             hwnd,
-            Request::Navigate {
-                node: group,
-                direction,
-                set: focus_set(),
-            },
+            (
+                group,
+                common::outpost::navigation(group, direction, focus_set()),
+            ),
         );
     }
     not_there(
         &outpost,
         hwnd,
-        Request::Properties {
-            node: group,
-            set: focus_set(),
-        },
+        (group, common::outpost::read(group, focus_set())),
     );
 
     let (parent, _) = outpost.navigate(hwnd, group, QueryKind::Parent);

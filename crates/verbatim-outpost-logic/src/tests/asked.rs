@@ -4,9 +4,9 @@
 //! once, and is cancelled as its reason says.
 
 use verbatim_model::WindowHandle;
+use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
 use verbatim_model::request::{
-    Answer, Ask, Cancel, CancelReason, Outcome, Reply, Request as CoreRequest, RequestNumber,
-    WindowVerdict,
+    Answer, Ask, Cancel, CancelReason, Outcome, Reply, RequestNumber, WindowVerdict,
 };
 
 use super::*;
@@ -43,7 +43,7 @@ fn cancel(number: u64, reason: CancelReason) -> Input {
 fn result(number: u64) -> Answer {
     Answer {
         number: RequestNumber(number),
-        outcome: Outcome::Result(Reply::Followed),
+        outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::Follow)])),
         probes: Vec::new(),
         detail: String::new(),
     }
@@ -275,8 +275,17 @@ fn follow(number: u64, window: u64) -> Input {
         number: RequestNumber(number),
         window: WindowHandle(window),
         verdict: WindowVerdict::Uia,
-        request: CoreRequest::Follow(verbatim_model::request::Follow { node: None }).into(),
+        request: one(Op::Follow(None)).into(),
     }))
+}
+
+/// A batch of `op` alone.
+fn one(op: Op) -> Batch {
+    Batch {
+        steps: vec![Step { op, when: None }],
+        placement: Placement::Queue,
+        spare: None,
+    }
 }
 
 /// A `Follow` sent while an older one is queued replaces it, which is
@@ -320,14 +329,11 @@ fn current_focus() -> verbatim_model::batch::Batch {
     }
 }
 
-/// A read of `object`.
-fn read_object(object: verbatim_model::request::ObjectRef) -> CoreRequest {
-    CoreRequest::ReadObject(verbatim_model::request::ReadObject {
-        object,
+/// A read of `subject`.
+fn read_object(subject: Subject) -> Batch {
+    one(Op::Read {
+        subject,
         set: Vec::new(),
-        relation: None,
-        descendants: false,
-        purpose: verbatim_model::request::Purpose::Other,
     })
 }
 
@@ -379,20 +385,17 @@ fn a_destroyed_window_answers_the_reads_its_ids_name_and_forgets_it_before_the_r
     for (number, request) in [
         (2, current_focus().into()),
         (3, current_focus().into()),
-        (
-            4,
-            CoreRequest::Follow(verbatim_model::request::Follow { node: None }).into(),
-        ),
-        (
-            5,
-            read_object(verbatim_model::request::ObjectRef::Node(node)).into(),
-        ),
+        (4, one(Op::Follow(None)).into()),
+        (5, read_object(Subject::Node(node)).into()),
         (
             6,
-            read_object(verbatim_model::request::ObjectRef::Msaa {
-                window: WindowHandle(7),
-                object: -4,
-                child: 0,
+            read_object(Subject::Msaa {
+                ids: verbatim_model::request::MsaaIds {
+                    window: WindowHandle(7),
+                    object: -4,
+                    child: 0,
+                },
+                redirect: false,
             })
             .into(),
         ),

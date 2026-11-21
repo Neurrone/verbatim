@@ -8,12 +8,12 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
+use verbatim_model::property::{PropertyId, PropertyValue};
 use verbatim_model::request::{FocusCaret, FocusNode, FocusRead, KnownAncestor};
 use verbatim_model::tell::{AcceptanceFacts, Event, Relation};
 use verbatim_model::{
-    Backend, EarlierElement, Effect, FocusText, NodeDetails, NodeSnapshot, ObjectKey, Pid, Role,
-    StateSet, TraceId, WindowFacts, WindowHandle,
+    Backend, EarlierElement, Effect, FocusText, NodeSnapshot, ObjectKey, Pid, Role, TraceId,
+    WindowFacts, WindowHandle,
 };
 
 use super::versions::{Kept, LineEntry, Place, ReadBy};
@@ -88,74 +88,11 @@ impl Known {
     }
 }
 
-fn value(values: &PropertyValues, id: PropertyId) -> Option<&PropertyValue> {
-    values.answer(id).and_then(|answer| answer.value.as_ref())
-}
-
-fn text(values: &PropertyValues, id: PropertyId) -> Option<String> {
-    match value(values, id) {
-        Some(PropertyValue::Text(text)) => Some(text.clone()),
-        _ => None,
-    }
-}
-
-fn count(values: &PropertyValues, id: PropertyId) -> Option<u32> {
-    match value(values, id) {
-        Some(PropertyValue::Count(count)) => Some(*count),
-        _ => None,
-    }
-}
-
-/// A node's own window, for a window object.
-fn own_window(values: &PropertyValues) -> Option<WindowHandle> {
-    match value(values, PropertyId::NativeWindow) {
-        Some(PropertyValue::Window(window)) if window.0 != 0 => Some(*window),
-        _ => None,
-    }
-}
-
 /// The snapshot today's announcement code speaks of `node`, read through
 /// `backend`; `None` when the reader minted no node for it, a reader's
 /// fault.
 pub(crate) fn snapshot(node: &FocusNode, backend: Backend) -> Option<NodeSnapshot> {
-    let values = &node.read.values;
-    Some(NodeSnapshot {
-        id: node.read.node?,
-        backend,
-        role: match value(values, PropertyId::Role) {
-            Some(PropertyValue::Role(role)) => *role,
-            _ => Role::Unknown,
-        },
-        name: text(values, PropertyId::Name),
-        value: text(values, PropertyId::Value),
-        states: match value(values, PropertyId::States) {
-            Some(PropertyValue::States(states)) => *states,
-            _ => StateSet::default(),
-        },
-        details: NodeDetails {
-            description: text(values, PropertyId::Description),
-            keyboard_shortcut: text(values, PropertyId::KeyboardShortcut),
-            position_in_set: count(values, PropertyId::PositionInSet),
-            set_size: count(values, PropertyId::SetSize),
-            level: count(values, PropertyId::Level),
-            rect: match value(values, PropertyId::Rect) {
-                Some(PropertyValue::Rect(rect)) => Some(*rect),
-                _ => None,
-            },
-            class_name: text(values, PropertyId::ClassName),
-            cell: match value(values, PropertyId::Cell) {
-                Some(PropertyValue::Cell(cell)) => Some(*cell),
-                _ => None,
-            },
-            table_counts: match value(values, PropertyId::TableCounts) {
-                Some(PropertyValue::TableCounts(counts)) => Some(*counts),
-                _ => None,
-            },
-            window: own_window(values),
-            desktop_window: node.read.window.desktop,
-            ..NodeDetails::default()
-        },
-    })
+    node.read.snapshot(backend)
 }
 
 /// The backend that read `node` in an answer read through `backend`: an
@@ -587,7 +524,7 @@ fn commit(
     ready: &Ready,
 ) -> (
     Option<crate::terminal::reading::Terminal>,
-    Vec<(RequestWindow, verbatim_model::request::Request)>,
+    Vec<(RequestWindow, Option<verbatim_model::request::Followed>)>,
 ) {
     let (kept, node) = (&ready.kept, &ready.report.node);
     let parent = ready.report.ancestors.last().map(|parent| &parent.snapshot);
@@ -606,12 +543,7 @@ fn commit(
         .flatten();
     let follows = follows
         .into_iter()
-        .map(|follow| {
-            (
-                follow.window,
-                verbatim_model::request::Request::Follow(follow.follow),
-            )
-        })
+        .map(|follow| (follow.window, follow.follow))
         .collect();
     (terminal, follows)
 }

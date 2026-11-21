@@ -1437,7 +1437,7 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
     use verbatim_model::request::{
-        Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply, Request as Wire,
+        Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply,
     };
     let mut state = terminal();
     // A review command pressed, its fresh read of the terminal answered
@@ -1472,7 +1472,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         assert!(
             matches!(
                 ask.request,
-                verbatim_model::request::Question::Legacy(Wire::Text {
+                verbatim_model::request::Question::Terminal(verbatim_model::request::TerminalAsk {
                     op: TextOp::ReadTerminal(_),
                     ..
                 })

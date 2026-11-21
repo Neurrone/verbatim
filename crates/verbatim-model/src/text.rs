@@ -714,9 +714,9 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// One operation Core asks an outpost to perform on a node's text.
+/// One of the terminal's text operations Core asks its outpost
+/// ([`crate::request::Question::Terminal`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum TextOp {
     /// Read the history above the start the next read takes: from `above`
     /// rows above it to the document's end, or the whole document when

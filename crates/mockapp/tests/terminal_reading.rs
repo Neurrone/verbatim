@@ -35,7 +35,9 @@ use verbatim_ia2::WinEventKind;
 use verbatim_model::batch::Waited;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{Answer, Follow, FollowGroup, Followed, Outcome, Reply, Request};
+use verbatim_model::request::{
+    Answer, FollowGroup, Followed, Outcome, Question, Reply, TerminalAsk,
+};
 use verbatim_model::tell::{EventObject, Payload};
 use verbatim_model::{
     CallCounts, CaretReport, NodeId, TerminalRead, TerminalReadReply, TerminalScope,
@@ -119,10 +121,10 @@ impl Terminal {
     fn read_with_calls(&self, read: TerminalRead) -> (TerminalReadReply, CallCounts) {
         let number = self.outpost.request(
             self.hwnd,
-            Request::Text {
+            Question::Terminal(TerminalAsk {
                 node: self.node,
                 op: TextOp::ReadTerminal(read),
-            },
+            }),
         );
         match self.outpost.answer_with_calls(number) {
             (
@@ -146,10 +148,10 @@ impl Terminal {
     fn text(&self, op: TextOp) -> TextReply {
         let number = self.outpost.request(
             self.hwnd,
-            Request::Text {
+            Question::Terminal(TerminalAsk {
                 node: self.node,
                 op,
-            },
+            }),
         );
         match self.outpost.answer(number).outcome {
             Outcome::Result(Reply::Text(reply)) => reply,
@@ -200,17 +202,15 @@ fn start_with(name: &str, fixture: &str, id: &str, console: bool) -> Terminal {
     let node = outpost.uia_focus_answer(&focused(hwnd)).node();
     let follow = outpost.request(
         hwnd,
-        Request::Follow(Follow {
-            node: Some(Followed {
-                node,
-                group: FollowGroup::Terminal { console },
-                extra: None,
-            }),
-        }),
+        common::outpost::follow(Some(Followed {
+            node,
+            group: FollowGroup::Terminal { console },
+            extra: None,
+        })),
     );
     assert_eq!(
-        outpost.answer(follow).outcome,
-        Outcome::Result(Reply::Followed)
+        common::outpost::only_step(outpost.answer(follow).outcome),
+        verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Follow)
     );
     let mut terminal = Terminal {
         app,

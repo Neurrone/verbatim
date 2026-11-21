@@ -1917,13 +1917,7 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
         ),
     ] {
         common::reset_hits(hwnd);
-        let number = outpost.request_with(
-            hwnd,
-            verdict,
-            verbatim_model::request::Request::Follow(verbatim_model::request::Follow {
-                node: None,
-            }),
-        );
+        let number = outpost.request_with(hwnd, verdict, common::outpost::follow(None));
         let answer = outpost.answer(number);
         assert_eq!(
             answer
@@ -2355,8 +2349,8 @@ fn uia_navigation_steps_cost_exactly() {
             vec![vec![label("Settings"), SegmentContent::Role(Role::Group)]]
         )
     );
-    ratchet.check("UIA next sibling, classically", &cost, calls(3, 0, 0), 0);
-    ratchet.check("UIA parent, classically", &parent_cost, calls(3, 0, 0), 0);
+    ratchet.check("UIA next sibling, classically", &cost, calls(2, 0, 0), 0);
+    ratchet.check("UIA parent, classically", &parent_cost, calls(2, 0, 0), 0);
 
     ratchet.finish();
 }
@@ -2418,24 +2412,21 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
     for (operation, request, expected_calls) in [
         (
             "UIA next sibling of a node gone",
-            verbatim_model::request::Request::Navigate {
+            common::outpost::navigation(
                 node,
-                direction: QueryKind::NextSibling,
-                set: vec![verbatim_model::property::PropertyId::Name],
-            },
+                QueryKind::NextSibling,
+                vec![verbatim_model::property::PropertyId::Name],
+            ),
             connected(2, 0, 0),
         ),
         (
             "UIA properties of a node gone",
-            verbatim_model::request::Request::Properties {
-                node,
-                set: vec![verbatim_model::property::PropertyId::Name],
-            },
+            common::outpost::read(node, vec![verbatim_model::property::PropertyId::Name]),
             connected(2, 0, 0),
         ),
         (
             "UIA activation of a node gone",
-            verbatim_model::request::Request::Activate { node },
+            common::outpost::activate(node),
             connected(2, 0, 0),
         ),
     ] {
@@ -2443,8 +2434,10 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
         let number = outpost.request_with(hwnd, WindowVerdict::Uia, request);
         let (answer, calls_made) = outpost.answer_with_calls(number);
         assert_eq!(
-            answer.outcome,
-            verbatim_model::request::Outcome::NotThere,
+            common::outpost::only_step(answer.outcome.clone()),
+            verbatim_model::batch::StepOutcome::NotThere(verbatim_model::batch::Missing::Node(
+                node
+            )),
             "{operation}"
         );
         let cost = Cost {

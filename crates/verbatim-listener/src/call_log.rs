@@ -99,25 +99,6 @@ pub fn read_object(
     )
 }
 
-/// The listener's answer to Core's generic read `read` of `element`, the
-/// element a UI Automation event named, as [`read_object`] reads it. For
-/// a test that stands in for the listener, holding the element itself.
-#[must_use]
-pub fn read_kept_object(
-    (uia, readability): (&Uia, &WindowReadabilityReader),
-    element: &Cached<ListenerEvent>,
-    (pid, nearest): (verbatim_model::Pid, isize),
-    read: &verbatim_model::request::ReadObject,
-) -> verbatim_model::request::Outcome {
-    crate::listener::asked::object_on_element(
-        (uia, readability),
-        element,
-        (pid, nearest),
-        read,
-        &CallLog::default(),
-    )
-}
-
 /// [`read_object`], telling `observer` the name of each call the read is
 /// about to make, before it makes it, so a test can change the
 /// application's windows between two of them.

@@ -5,7 +5,7 @@ use crate::readers::Found;
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
-use verbatim_model::request::{Follow, QueueEffect, QueueInput, Request as Wire, SessionLock};
+use verbatim_model::request::{Followed, QueueEffect, QueueInput, SessionLock};
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{Effect as Said, SegmentContent, TraceId, WindowHandle};
 
@@ -81,7 +81,23 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
     .filter_map(|said| match said {
         Said::StopSpeech => Some("cut".to_owned()),
         Said::Queue(QueueEffect::Send { to, ask }) => Some(match &ask.request {
-            verbatim_model::request::Question::Legacy(Wire::Follow(Follow { node })) => {
+            verbatim_model::request::Question::Batch(batch)
+                if batch
+                    .steps
+                    .iter()
+                    .all(|step| matches!(step.op, verbatim_model::batch::Op::Follow(_))) =>
+            {
+                let node = batch.steps.iter().find_map(|step| match &step.op {
+                    verbatim_model::batch::Op::Follow(Some(target)) => match target.subject {
+                        verbatim_model::batch::Subject::Node(node) => Some(Followed {
+                            node,
+                            group: target.group,
+                            extra: target.extra,
+                        }),
+                        _ => None,
+                    },
+                    _ => None,
+                });
                 format!("send {:?} Follow {node:?}", to.reader)
             }
             verbatim_model::request::Question::Batch(batch) if batch.reads_focus_first() => {

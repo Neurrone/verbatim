@@ -1,137 +1,13 @@
-//! One object-navigation step (roadmap M3, `books/dev/src/reference/crates/verbatim-outpost.md`):
-//! the neighbor of an element in the raw view, with Verbatim's cached
-//! property set, and the element's nearest window, which the outpost needs
-//! to correct the neighbor's backend. A remote program takes the step and
-//! finds the window in one round trip; the classic implementation behind
-//! the same signature finds the window (`NormalizeElementBuildCache`) and
-//! takes the step with a tree walker built with the cache, one call each.
-//! [`navigation_step`] is the one function callers use.
-//!
-//! A recorded decision, made twice: object navigation matches NVDA with
-//! its simple review mode off, so every element the raw view exposes is
-//! navigable, exactly the tree NVDA's own `baseTreeWalker` (also the raw
-//! view walker) exposes. An intermediate revision projected NVDA's
-//! simple-review filtering here instead; the user baselines against NVDA
-//! with the setting off, where full-tree navigation is the correct
-//! behaviour, so the projection was removed. Spoken focus ancestry is a
-//! different matter: NVDA filters it by `isPresentableFocusAncestor`
-//! regardless of the review-mode setting.
-//!
-//! A program's walk ends at the process's top-level window, whose parent
-//! and siblings it reports as none, where a tree walker goes on to the
-//! desktop and other applications' windows; so a caller takes a step from
-//! a top-level window classically.
+//! The nearest window of an element inside a program: its own native
+//! window, else each raw-view ancestor's, as
+//! `verbatim_uia::nearest_window_handle` finds it, which a step through
+//! the tree reports so the outpost can correct the neighbor's backend.
 
 use windows::Win32::UI::Accessibility::UIA_NativeWindowHandlePropertyId;
 
-use verbatim_model::TableId;
-use verbatim_uia::{Cached, Direction, Fill, Kept, Node, Uia};
-
 use crate::builder::{Builder, Reg, kind};
-use crate::caret::gone_or_timed_out;
-use crate::error::Error;
-use crate::focus::{Path, RemoteCache, absent_record, read_table, reads_cell, table_answered};
 use crate::instruction::TypeTest;
 use crate::opcode::NavigationDirection;
-
-/// What [`navigation_step`] and its two implementations are asked.
-#[derive(Clone, Copy)]
-pub struct StepQuery<'a> {
-    /// The element to step from, the node registry's kept element, read
-    /// as the `Kept` shape for its native window handle.
-    pub element: &'a Cached<Kept>,
-    /// Which neighbor: parent, next or previous sibling, or first child.
-    pub direction: NavigationDirection,
-    /// How the neighbor's cache is filled: as a [`Node`].
-    pub fill: &'a Fill<Node>,
-}
-
-/// The answer to a [`StepQuery`].
-#[derive(Debug)]
-pub struct Step {
-    /// The neighbor, filled by the query's fill; `None` at a tree edge.
-    pub neighbor: Option<Cached<Node>>,
-    /// The table of the neighbor, when it is a cell read with the theme's
-    /// cell coordinates; `None` also when it names no grid or the read
-    /// failed.
-    pub neighbor_table: Option<TableId>,
-    /// The native window handle of the element, or of its nearest raw-view
-    /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
-    /// finds it; `None` when none has one.
-    pub window: Option<isize>,
-}
-
-/// The signature both implementations share.
-pub type NavigationStepFn = fn(&Uia, &StepQuery<'_>) -> Result<Step, Error>;
-
-/// One navigation step, the one function call sites use: the remote
-/// program when `remote` is true, falling back to the classic calls for
-/// this call when it fails (except for an element whose provider has gone
-/// or did not answer in time, which they would meet too), and the classic
-/// calls alone when `remote` is false or the element, fetched by a walk, is
-/// served only by UIA's proxies inside this process, such as a window's
-/// title bar, which no remote operation can import
-/// ([`Cached::served_only_by_uia_proxies`]; an element fetched any other
-/// way carries no description and is tried remotely, a guess that can
-/// cost only a failed import).
-///
-/// # Errors
-///
-/// The classic implementation's [`Error`] when it ran and failed, or the
-/// program's when the provider has gone or did not answer in time.
-pub fn navigation_step(
-    uia: &Uia,
-    query: &StepQuery<'_>,
-    remote: bool,
-) -> Result<(Step, Path), Error> {
-    if !remote || query.element.served_only_by_uia_proxies() == Some(true) {
-        return navigation_step_classic(uia, query).map(|step| (step, Path::Classic));
-    }
-    match navigation_step_remote(uia, query) {
-        Ok(step) => Ok((step, Path::Remote)),
-        Err(error) if gone_or_timed_out(&error) => Err(error),
-        Err(error) => navigation_step_classic(uia, query).map(|step| (step, Path::Fallback(error))),
-    }
-}
-
-/// The step in one round trip: the element's own window from its cache,
-/// else each raw-view ancestor's `NativeWindowHandle` until one has one,
-/// then `Navigate` in the query's direction and the neighbor's cache filled
-/// inside the provider, with its table when it is a cell.
-///
-/// `uia` is unused; it is in the signature so that this and
-/// [`navigation_step_classic`] are interchangeable ([`NavigationStepFn`]).
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
-pub fn navigation_step_remote(_uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
-    let mut b = Builder::new();
-    let element = b.import_element(query.element.live().element());
-    let window = emit_nearest_window(&mut b, element, query.element.read().hwnd);
-    let cache = RemoteCache::new(&mut b, query.fill);
-    let neighbor = b.navigate(element, query.direction);
-    let neighbor = b.add_to_results(neighbor);
-    let neighbor_absent = b.new_int(0);
-    let neighbor_absent = b.add_to_results(neighbor_absent);
-    let found = b.is_null(neighbor);
-    let found = b.not(found);
-    b.if_(found, |b| {
-        let absent = cache.populate(b, neighbor);
-        b.set(neighbor_absent, absent);
-    });
-    let table = reads_cell(query.fill).then(|| read_table(&mut b, neighbor));
-    let outcome = b.finish().execute()?;
-    let window = outcome.get(window)?;
-    let absent = absent_record(outcome.get(neighbor_absent)?);
-    Ok(Step {
-        neighbor: outcome
-            .get(neighbor)?
-            .map(|neighbor| query.fill.claim(neighbor, absent)),
-        neighbor_table: table_answered(&outcome, table)?,
-        window: (window != 0).then_some(window as isize),
-    })
-}
 
 /// Emits the nearest window of `element`, whose own window is `own`, 0
 /// for none: `own`, else each raw-view ancestor's `NativeWindowHandle`
@@ -163,47 +39,4 @@ pub(crate) fn emit_nearest_window(
         );
     }
     window
-}
-
-/// The step the classic way, the fallback and the reference: the nearest
-/// window (`verbatim_uia::nearest_window_handle`, one call), then one raw
-/// view tree walker step built with the cache (one call). A step that
-/// fails because the element is gone is an error; any other failure reads
-/// as no neighbor, as NVDA's tree-walker failures do, and so does the null
-/// element `windows` reports for a genuine edge. The outpost takes a step
-/// this way whenever it does not run the program.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when the cache request or walker cannot be made, or the
-/// element is gone.
-pub fn navigation_step_classic(uia: &Uia, query: &StepQuery<'_>) -> Result<Step, Error> {
-    let window = verbatim_uia::nearest_window_handle(query.element.live().element());
-    let walker = uia.raw_view_walker()?;
-    let direction = match query.direction {
-        NavigationDirection::Parent => Direction::Parent,
-        NavigationDirection::NextSibling => Direction::NextSibling,
-        NavigationDirection::PreviousSibling => Direction::PreviousSibling,
-        NavigationDirection::FirstChild => Direction::FirstChild,
-        NavigationDirection::LastChild => {
-            return Err(Error::Uia(windows::core::Error::from(
-                windows::Win32::Foundation::E_INVALIDARG,
-            )));
-        }
-    };
-    let neighbor = query
-        .element
-        .live()
-        .walk(&walker, direction, query.fill.request());
-    let neighbor = match neighbor {
-        Ok(neighbor) => Some(neighbor),
-        Err(error) if verbatim_uia::element_is_gone(&error) => return Err(Error::Uia(error)),
-        Err(_) => None,
-    };
-    let neighbor_table = neighbor.as_ref().and_then(Cached::table);
-    Ok(Step {
-        neighbor,
-        neighbor_table,
-        window,
-    })
 }

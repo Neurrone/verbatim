@@ -80,17 +80,10 @@ impl Wants {
     /// The requests wanted, taken, each with its token and what it asks,
     /// for the tests.
     #[cfg(test)]
-    pub(crate) fn take_for_tests(
-        &mut self,
-    ) -> Vec<(Option<u64>, verbatim_model::request::Request)> {
+    pub(crate) fn take_for_tests(&mut self) -> Vec<(Option<u64>, Question)> {
         std::mem::take(&mut self.wanted)
             .into_iter()
-            .map(|wanted| {
-                (
-                    wanted.token,
-                    crate::event_queue::legacy_for_tests(&wanted.request),
-                )
-            })
+            .map(|wanted| (wanted.token, wanted.request))
             .collect()
     }
 }

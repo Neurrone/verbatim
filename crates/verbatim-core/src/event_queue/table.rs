@@ -151,17 +151,6 @@ pub(crate) enum Order {
     Cancel(Instance, verbatim_model::request::Cancel),
 }
 
-/// `question` as one of the kinds of request not yet converted to a
-/// batch, for the tests that state today's requests; a batch fails the
-/// test, since no feature asks one until the conversions begin.
-#[cfg(test)]
-pub(crate) fn legacy_for_tests(question: &Question) -> verbatim_model::request::Request {
-    match question {
-        Question::Legacy(request) => request.clone(),
-        Question::Batch(batch) => panic!("a batch where a kind of request was expected: {batch:?}"),
-    }
-}
-
 /// The request table, the recovery set and the half-second round.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Table {
@@ -184,24 +173,12 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    /// The requests waiting or out, as sent.
-    #[cfg(test)]
-    pub(crate) fn requests_for_tests(&self) -> Vec<verbatim_model::request::Request> {
-        self.live
-            .values()
-            .filter_map(|live| match &live.request {
-                Question::Legacy(request) => Some(request.clone()),
-                Question::Batch(_) => None,
-            })
-            .collect()
-    }
-
     /// The batch request `number` is, while it waits or is out.
     #[cfg(test)]
     pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
         match &self.live.get(&RequestNumber(number))?.request {
             Question::Batch(batch) => Some(batch.clone()),
-            Question::Legacy(_) => None,
+            Question::Terminal(_) => None,
         }
     }
 
@@ -212,7 +189,7 @@ impl Table {
             .iter()
             .filter_map(|(number, live)| match &live.request {
                 Question::Batch(batch) => Some((number.0, batch.clone())),
-                Question::Legacy(_) => None,
+                Question::Terminal(_) => None,
             })
             .collect()
     }

@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 
 use verbatim_model::batch::{Batch, StepOutcome};
-use verbatim_model::request::{Reply, Request as Wire};
+use verbatim_model::request::{Reply, TerminalAsk};
 use verbatim_model::{
     Effect, Message, NodeId, TextAnchor, TextFailure, TextOp, TextPoint, TextReply, TraceId,
     UtteranceSegment,
@@ -49,7 +49,7 @@ impl Request for FollowUp {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Text {
+        verbatim_model::request::Question::Terminal(TerminalAsk {
             node: self.node,
             op: self.op.clone(),
         })
@@ -371,6 +371,6 @@ mod tests {
                 "{failure:?}"
             );
         }
-        assert_eq!(follow_up.decode(Reply::Followed), None);
+        assert_eq!(follow_up.decode(Reply::Steps(Vec::new())), None);
     }
 }

@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
-use verbatim_model::request::{MsaaIds, Outcome, Reply, Request, WindowVerdict};
+use verbatim_model::request::{MsaaIds, Outcome, WindowVerdict};
 use verbatim_model::{CallCounts, NodeId, QueryKind, Role, ShellItem, ShellItemKind, WindowHandle};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
@@ -238,18 +238,14 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
     let outpost = OutpostUnderTest::new(&app);
 
     app.hold();
-    let number = outpost.request_with(
-        window,
-        WindowVerdict::Uia,
-        Request::ShellItems {
-            kind: ShellItemKind::Taskbar,
-        },
-    );
+    let asked = verbatim_core::outside::shell(ShellItemKind::Taskbar, None);
+    let number = outpost.request_with(window, WindowVerdict::Uia, asked.question());
     app.held();
     outpost.pass_time(Duration::from_secs(3));
     app.release();
     let names = match outpost.answer(number).outcome {
-        Outcome::Result(Reply::ShellItems(items)) => items
+        Outcome::Result(reply) => verbatim_core::outside::items(&asked, reply)
+            .expect("the taskbar's whole list")
             .into_iter()
             .map(|ShellItem { name, .. }| name)
             .collect::<Vec<_>>(),
@@ -264,9 +260,9 @@ fn a_slow_shell_items_walk_answers_the_whole_list() {
 /// The taskbar's items, asked as Core asks them of the outpost of a
 /// mockapp window of the taskbar's class, its verdict in force, while
 /// mockapp's window thread is stalled past UIA's connection timeout, which
-/// ends the window's lookup with UIA's timeout error: the request fails
-/// whole, answered "ended or stopped", rather than answering the buttons
-/// read by then, none, as the list. The stall's end, which mockapp prints, is the
+/// ends the window's lookup with UIA's timeout error: the window is not
+/// there and the list fails whole, rather than answering the buttons read
+/// by then, none, as the list. The stall's end, which mockapp prints, is the
 /// evidence that the timeout passed; it is one and a half times the
 /// timeout, under the five seconds after which Windows judges the window
 /// hung.
@@ -279,15 +275,13 @@ fn a_shell_items_walk_whose_lookup_times_out_fails_whole() {
 
     let stall = verbatim_uia::UIA_CONNECTION_TIMEOUT * 3 / 2;
     app.stall(stall);
-    let number = outpost.request_with(
-        window,
-        WindowVerdict::Uia,
-        Request::ShellItems {
-            kind: ShellItemKind::Taskbar,
-        },
-    );
+    let asked = verbatim_core::outside::shell(ShellItemKind::Taskbar, None);
+    let number = outpost.request_with(window, WindowVerdict::Uia, asked.question());
     app.stall_ended(stall);
-    assert_eq!(outpost.answer(number).outcome, Outcome::Ended);
+    let Outcome::Result(reply) = outpost.answer(number).outcome else {
+        panic!("the batch is answered");
+    };
+    assert_eq!(verbatim_core::outside::items(&asked, reply), None);
     outpost.settled();
     drop(outpost);
     app.quit();

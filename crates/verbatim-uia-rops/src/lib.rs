@@ -28,17 +28,12 @@
 //!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
 //!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
 //!   and another unit at it, the formatting of the text to be spoken, and
-//!   how the selection changed; for a batch's text steps, [`batch`]'s
-//!   program builder and ordinary-calls executor; for object navigation,
-//!   [`navigation_step`]: the neighbor and the nearest window; for a
-//!   selection inside an element the focus controls,
-//!   [`controlled_selection`]; and, for the outpost finding its own copy
-//!   of an element the focus listener read, [`element_by_path`]: the
-//!   element reached from one the caller has by the runtime ids below it;
-//!   for a focus's completion, [`focus_states`]: the focus's states, read
-//!   once its event registration is in, with the children of the dialogs
-//!   it enters; and, for the control plane's tree dump, [`tree_dump`]: an element's
-//!   subtree, each element's children read in one call.
+//!   how the selection changed; for the outpost finding its own copy of
+//!   an element the focus listener read, [`element_by_path`]: the element
+//!   reached from one the caller has by the runtime ids below it; and for
+//!   a focus's completion, [`focus_states`]: the focus's states, read once
+//!   its event registration is in, with the children of the dialogs it
+//!   enters.
 //! - The request list's executors ([`batch`]): a run of a batch's
 //!   fusable steps as programs one builder generates from the operations,
 //!   with the fallback rule's reruns, or call by call.
@@ -50,7 +45,6 @@
 pub mod batch;
 mod builder;
 mod caret;
-mod controlled;
 mod error;
 mod focus;
 mod focus_states;
@@ -63,7 +57,6 @@ mod terminal_colours;
 mod terminal_find;
 mod terminal_snapshot;
 mod text;
-mod tree;
 mod watch;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
@@ -72,10 +65,6 @@ pub use caret::{
     CaretQuery, CaretReadFn, FormatSpan, MAX_COMPARED_TEXT, MAX_RUNS, RangeEnd, Run, RunAttributes,
     SelectionTextChange, TextAttribute, UnitRead, caret_read, caret_read_classic,
     caret_read_remote,
-};
-pub use controlled::{
-    Controlled, ControlledQuery, ControlledSelectionFn, controlled_selection,
-    controlled_selection_classic, controlled_selection_remote,
 };
 pub use error::{Error, Failure};
 pub use focus::{
@@ -87,10 +76,6 @@ pub use focus_states::{
     focus_states_classic, focus_states_remote,
 };
 pub use instruction::{Instruction, OperandId, TypeTest};
-pub use navigate::{
-    NavigationStepFn, Step, StepQuery, navigation_step, navigation_step_classic,
-    navigation_step_remote,
-};
 pub use opcode::{
     Comparison, NavigationDirection, Opcode, PointProperty, RectProperty, Status, pattern_method,
     pattern_related_object_method,
@@ -109,7 +94,4 @@ pub use terminal_snapshot::{
     terminal_snapshot_remote,
 };
 pub use text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
-pub use tree::{
-    CHILDREN_PER_RUN, TreeDumpFn, TreeQuery, tree_dump, tree_dump_classic, tree_dump_remote,
-};
 pub use watch::{WatchAnswer, WatchQuery, watch_check_classic};

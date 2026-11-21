@@ -13,9 +13,12 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::Sender;
+use verbatim_core::batch::Sent;
 use verbatim_model::TreeNode;
 use verbatim_model::protocol::Responder;
-use verbatim_model::request::{OutsideOutcome, Reply};
+use verbatim_model::request::Outcome;
+
+use verbatim_core::outside::{self, Dump, Shell};
 
 /// The answer a tree-dump request waits for: the walked tree and whether the
 /// walk was truncated, or a reason it failed.
@@ -43,6 +46,10 @@ pub(crate) enum Asker {
     DumpTree {
         /// The requester's name for the dump.
         ticket: DumpTicket,
+        /// The batch asked, its answer parsed against it.
+        sent: Sent<Dump>,
+        /// Whether each node's location is read.
+        locations: bool,
         /// Where the answer goes.
         reply: Sender<DumpTreeResult>,
     },
@@ -50,6 +57,8 @@ pub(crate) enum Asker {
     /// whose outcome goes to `deliver`: the items, or `None` for any
     /// failure.
     ShellItems {
+        /// The batch asked, its answer parsed against it.
+        sent: Sent<Shell>,
         /// Where the outcome goes.
         deliver: Responder<Vec<verbatim_gui::ShellItem>>,
     },
@@ -57,6 +66,8 @@ pub(crate) enum Asker {
     /// outcome goes to `deliver`: the buttons that may be it, or `None` for
     /// any failure.
     ShellItemPosition {
+        /// The batch asked, its answer parsed against it.
+        sent: Sent<Shell>,
         /// Where the outcome goes.
         deliver: Responder<verbatim_model::ShellCandidates>,
     },
@@ -97,55 +108,65 @@ impl Outside {
     }
 }
 
-/// A short description of an outcome other than the reply wanted, for logs
-/// and control-plane errors.
-fn describe(outcome: &OutsideOutcome) -> String {
+/// A short description of an outcome other than a result, for logs and
+/// control-plane errors.
+fn describe(outcome: &Outcome) -> String {
     match outcome {
-        OutsideOutcome::Result(_) => "the request returned an unexpected answer".to_owned(),
-        OutsideOutcome::Refused(refusal) => format!("the reader refused the request: {refusal:?}"),
-        OutsideOutcome::Undecodable => "the answer did not decode".to_owned(),
-        OutsideOutcome::NotThere => "the object is not there".to_owned(),
-        OutsideOutcome::NotResponding => "the application is not responding".to_owned(),
-        OutsideOutcome::ReaderEnded => "its outpost ended or the read failed".to_owned(),
-        OutsideOutcome::NoLongerAwaited(reason) => {
-            format!("Core no longer awaited it: {reason:?}")
-        }
+        Outcome::Result(_) => "the request returned an answer that did not parse".to_owned(),
+        Outcome::Refused(refusal) => format!("the reader refused the request: {refusal:?}"),
+        Outcome::NotThere => "the object is not there".to_owned(),
+        Outcome::NotResponding => "the application is not responding".to_owned(),
+        Outcome::Ended => "its outpost ended, the read failed or Core stopped waiting".to_owned(),
     }
 }
 
-/// Hands one outcome to its asker: a dialog or the control plane. Nothing
-/// re-enters the reducer.
-pub(crate) fn deliver(asker: Asker, outcome: OutsideOutcome) {
-    match (asker, outcome) {
-        (Asker::DumpTree { reply, .. }, OutsideOutcome::Result(Reply::Tree(dumped))) => {
+/// Hands one outcome to its asker: a dialog or the control plane, its
+/// result parsed against the batch the asker holds. Nothing re-enters the
+/// reducer.
+pub(crate) fn deliver(asker: Asker, outcome: Outcome) {
+    match asker {
+        Asker::DumpTree {
+            sent,
+            locations,
+            reply,
+            ..
+        } => {
+            let dumped = match outcome {
+                Outcome::Result(answer) => outside::dumped(&sent, answer, locations),
+                other => Err(describe(&other)),
+            };
             // The requester may have timed out and dropped its receiver.
-            let _ = reply.try_send(Ok((dumped.root, dumped.truncated)));
+            let _ = reply.try_send(dumped.map(|dumped| (dumped.root, dumped.truncated)));
         }
-        (Asker::DumpTree { reply, .. }, other) => {
-            let _ = reply.try_send(Err(describe(&other)));
+        Asker::ShellItems { sent, deliver } => {
+            let items = match outcome {
+                Outcome::Result(answer) => outside::items(&sent, answer)
+                    .ok_or_else(|| "the shell walk could not read every item".to_owned()),
+                other => Err(describe(&other)),
+            };
+            match items {
+                Ok(items) => deliver.answer(items),
+                Err(reason) => {
+                    tracing::warn!(reason, "the shell's items were not listed");
+                    // Dropped unanswered: the dialog is handed nothing.
+                    drop(deliver);
+                }
+            }
         }
-        (Asker::ShellItems { deliver }, OutsideOutcome::Result(Reply::ShellItems(items))) => {
-            deliver.answer(items);
-        }
-        (
-            Asker::ShellItemPosition { deliver },
-            OutsideOutcome::Result(Reply::ShellItemPosition(found)),
-        ) => deliver.answer(found),
-        (Asker::ShellItems { deliver }, other) => {
-            tracing::warn!(
-                reason = describe(&other),
-                "the shell's items were not listed"
-            );
-            // Dropped unanswered: the dialog is handed nothing.
-            drop(deliver);
-        }
-        (Asker::ShellItemPosition { deliver }, other) => {
-            tracing::warn!(
-                reason = describe(&other),
-                "the shell item's position was not read"
-            );
-            // Dropped unanswered: the dialog is handed nothing.
-            drop(deliver);
+        Asker::ShellItemPosition { sent, deliver } => {
+            let found = match outcome {
+                Outcome::Result(answer) => outside::candidates(&sent, answer)
+                    .ok_or_else(|| "the taskbar's window could not be walked".to_owned()),
+                other => Err(describe(&other)),
+            };
+            match found {
+                Ok(found) => deliver.answer(found),
+                Err(reason) => {
+                    tracing::warn!(reason, "the shell item's position was not read");
+                    // Dropped unanswered: the dialog is handed nothing.
+                    drop(deliver);
+                }
+            }
         }
     }
 }
@@ -153,15 +174,17 @@ pub(crate) fn deliver(asker: Asker, outcome: OutsideOutcome) {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use verbatim_model::protocol::DumpedTree;
-    use verbatim_model::request::CancelReason;
-    use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
+    use verbatim_model::ShellItemKind;
+    use verbatim_model::batch::{Descendant, Descended, Done, Missing, StepOutcome};
+    use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
+    use verbatim_model::request::{NodeRead, NodeWindow, Reply};
+    use verbatim_model::{NodeId, Pid, Role, WindowHandle};
 
     use super::*;
 
     /// Answers the request asked under `token` of `outside` with
     /// `outcome`, as the reducer thread does at `QueueEffect::Answered`.
-    fn answer(outside: &mut Outside, token: u64, outcome: OutsideOutcome) {
+    fn answer(outside: &mut Outside, token: u64, outcome: Outcome) {
         if let Some(asker) = outside.answered(token) {
             deliver(asker, outcome);
         }
@@ -170,39 +193,73 @@ mod tests {
     fn dump(reply: Sender<DumpTreeResult>) -> Asker {
         Asker::DumpTree {
             ticket: DumpTicket::mint(),
+            sent: outside::dump(WindowHandle(5), false),
+            locations: false,
             reply,
         }
     }
 
-    fn node(role: Role, name: &str) -> NodeSnapshot {
-        NodeSnapshot {
-            id: NodeId::new(1),
-            backend: Backend::Uia,
-            role,
-            name: Some(name.to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        }
+    /// One walk's outcome: the buttons named, the first the root.
+    fn walked(names: &[&str]) -> StepOutcome {
+        let window = NodeWindow {
+            handle: WindowHandle(5),
+            top_level: WindowHandle(5),
+            root_owner: WindowHandle(5),
+            process: Pid(9),
+            thread: 1,
+            desktop: false,
+        };
+        StepOutcome::Done(Done::Descendants(Descended {
+            nodes: names
+                .iter()
+                .enumerate()
+                .map(|(place, name)| Descendant {
+                    node: NodeRead {
+                        node: Some(NodeId::new(1 + u64::try_from(place).expect("small"))),
+                        window,
+                        values: PropertyValues(vec![
+                            PropertyAnswer {
+                                id: PropertyId::Name,
+                                value: Some(PropertyValue::Text((*name).to_owned())),
+                            },
+                            PropertyAnswer {
+                                id: PropertyId::Role,
+                                value: Some(PropertyValue::Role(Role::Button)),
+                            },
+                        ]),
+                    },
+                    parent: (place > 0).then_some(0),
+                    root: 0,
+                })
+                .collect(),
+            complete: true,
+        }))
     }
 
     /// A shell items outcome reaches the dialog, and a request whose
-    /// outpost ended, answered "reader ended", gives it nothing.
+    /// outpost ended gives it nothing.
     #[test]
     fn a_shell_items_answer_reaches_the_dialog_and_an_ended_outpost_gives_none() {
         let outcomes = std::sync::Arc::default();
         let mut outside = Outside::default();
         let answered = outside.begin(shell_items(&outcomes));
         let ended = outside.begin(shell_items(&outcomes));
-        answer(
-            &mut outside,
-            answered,
-            OutsideOutcome::Result(Reply::ShellItems(Vec::new())),
-        );
-        answer(&mut outside, ended, OutsideOutcome::ReaderEnded);
+        let reply = Reply::Steps(vec![
+            walked(&["Volume"]),
+            StepOutcome::NotThere(Missing::Object),
+            StepOutcome::NotThere(Missing::Object),
+        ]);
+        answer(&mut outside, answered, Outcome::Result(reply));
+        answer(&mut outside, ended, Outcome::Ended);
         assert_eq!(
             *outcomes.lock().expect("outcomes"),
-            vec![Some(Vec::new()), None]
+            vec![
+                Some(vec![verbatim_gui::ShellItem {
+                    name: "Volume".to_owned(),
+                    runtime_id: Vec::new(),
+                }]),
+                None
+            ]
         );
     }
 
@@ -212,6 +269,7 @@ mod tests {
     ) -> Asker {
         let kept = std::sync::Arc::clone(outcomes);
         Asker::ShellItems {
+            sent: outside::shell(ShellItemKind::SystemTray, None),
             deliver: Responder::new(move |items| kept.lock().expect("outcomes").push(items)),
         }
     }
@@ -222,9 +280,14 @@ mod tests {
             std::sync::Mutex<Vec<Option<verbatim_model::ShellCandidates>>>,
         > = std::sync::Arc::default();
         let mut outside = Outside::default();
+        let chosen = verbatim_model::ShellItem {
+            name: "Clock".to_owned(),
+            runtime_id: Vec::new(),
+        };
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
             let kept = std::sync::Arc::clone(outcomes);
             Asker::ShellItemPosition {
+                sent: outside::shell(ShellItemKind::Taskbar, Some(&chosen)),
                 deliver: Responder::new(move |position| {
                     kept.lock().expect("outcomes").push(position);
                 }),
@@ -232,28 +295,17 @@ mod tests {
         };
         let found = verbatim_model::ShellCandidates {
             candidates: vec![verbatim_model::ShellCandidate {
-                item: verbatim_model::ShellItem {
-                    name: "Clock".to_owned(),
-                    runtime_id: vec![42, 1],
-                },
+                item: chosen.clone(),
                 offscreen: false,
-                rect: Some(verbatim_model::Rect {
-                    left: 1162,
-                    top: 752,
-                    width: 24,
-                    height: 48,
-                }),
+                rect: None,
             }],
             complete: true,
         };
         let answered = outside.begin(asker(&outcomes));
         let failed = outside.begin(asker(&outcomes));
-        answer(
-            &mut outside,
-            answered,
-            OutsideOutcome::Result(Reply::ShellItemPosition(found.clone())),
-        );
-        answer(&mut outside, failed, OutsideOutcome::NotResponding);
+        let reply = Reply::Steps(vec![walked(&["Clock"])]);
+        answer(&mut outside, answered, Outcome::Result(reply));
+        answer(&mut outside, failed, Outcome::NotResponding);
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
         assert!(outside.answered(answered).is_none(), "answered once");
     }
@@ -269,26 +321,11 @@ mod tests {
         let new = outside.begin(dump(new_tx));
 
         // The old request's late answer arrives first.
-        answer(
-            &mut outside,
-            old,
-            OutsideOutcome::NoLongerAwaited(CancelReason::Withdrawn),
-        );
+        answer(&mut outside, old, Outcome::Ended);
         assert!(new_rx.try_recv().is_err(), "the newer request is untouched");
 
-        let tree = DumpedTree {
-            root: TreeNode {
-                snapshot: node(Role::Window, "new"),
-                children: Vec::new(),
-            },
-            truncated: false,
-            locations: false,
-        };
-        answer(
-            &mut outside,
-            new,
-            OutsideOutcome::Result(Reply::Tree(Box::new(tree))),
-        );
+        let reply = Reply::Steps(vec![walked(&["new"])]);
+        answer(&mut outside, new, Outcome::Result(reply));
         let (root, _) = new_rx.try_recv().expect("answered").expect("a tree");
         assert_eq!(root.snapshot.name.as_deref(), Some("new"));
     }
@@ -299,7 +336,12 @@ mod tests {
         let mut outside = Outside::default();
         let (reply, _answer) = bounded(1);
         let ticket = DumpTicket::mint();
-        let token = outside.begin(Asker::DumpTree { ticket, reply });
+        let token = outside.begin(Asker::DumpTree {
+            ticket,
+            sent: outside::dump(WindowHandle(5), false),
+            locations: false,
+            reply,
+        });
         assert_eq!(outside.dump(ticket), Some(token));
         assert_eq!(outside.dump(DumpTicket::mint()), None);
     }

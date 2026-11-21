@@ -31,16 +31,14 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::property::{PropertyId, PropertyValue, RuntimeId};
-use verbatim_model::request::{
-    FocusNode, MsaaIds, NodeRead, ObjectRead, ObjectRef, Purpose, Question, ReadObject,
-    RelationFound, RelationQuery, Reply, Request as Wire,
-};
+use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
+use verbatim_model::request::{FocusNode, MsaaIds, NodeRead, Question};
 use verbatim_model::tell::{Event, Payload};
 use verbatim_model::{Backend, NodeId, OutpostId, PropertyChange, Role, State, StateSet, TraceId};
 
+use crate::batch::{Got, On};
 use crate::entries::{Entries, window_facts};
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::focus::acceptance::{self, Acceptance};
 use crate::focus::backend::{Judged, Judgement};
 use crate::focus::versions::{Focus, ReadBy};
@@ -246,81 +244,49 @@ fn candidates(focus: &Focus, changed: Option<Changed>) -> Vec<NodeId> {
         .collect()
 }
 
-/// The generic read of an MSAA change's object, asked of the outpost that
-/// holds the committed focus's nodes.
+/// What an MSAA change's outpost found of its object: which of the nodes
+/// Core named it is, and the properties read of it then.
 #[derive(Debug)]
-pub(crate) struct ChangeRead {
-    /// The application whose outpost holds the nodes.
-    pub(crate) process: verbatim_model::Pid,
-    /// The event's window.
-    pub(crate) window: RequestWindow,
-    /// The read.
-    pub(crate) read: ReadObject,
+struct ChangeFound {
+    /// Its place among the nodes.
+    place: u32,
+    /// The properties read.
+    values: PropertyValues,
 }
 
-impl Request for ChangeRead {
-    type Reply = Box<ObjectRead>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Legacy(Wire::ReadObject(self.read.clone()))
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Object(read) => Some(read),
-            _ => None,
-        }
-    }
-}
-
-/// How many children a node holds, read as one property
-/// ([`PropertyId::ChildCount`]), with no read of a child.
-#[derive(Debug)]
-struct ChildCountRead {
-    process: verbatim_model::Pid,
-    window: RequestWindow,
-    node: NodeId,
-}
-
-impl Request for ChildCountRead {
-    type Reply = Option<u32>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Legacy(Wire::Properties {
-            node: self.node,
-            set: vec![PropertyId::ChildCount],
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Properties(values) => Some(
-                match values
-                    .answer(PropertyId::ChildCount)
-                    .and_then(|answer| answer.value.as_ref())
-                {
-                    Some(PropertyValue::Count(count)) => Some(*count),
-                    _ => None,
-                },
-            ),
-            _ => None,
-        }
+/// Asks the outpost of `process`, naming `window`, which of `nodes` the
+/// MSAA object at `ids` is, the committed focus first, met by NVDA's
+/// equality, its ancestors only at their addresses; and, when it is one,
+/// its properties of `set`, each read alone, as NVDA reads only the
+/// property its event names (the request list's design, section 6). An
+/// object that is none of them is read no further.
+async fn change_read(
+    cx: &mut Cx<Entries>,
+    (process, window, ids): (verbatim_model::Pid, RequestWindow, MsaaIds),
+    (nodes, set): (&[NodeId], &[PropertyId]),
+    due_us: u64,
+) -> Option<ChangeFound> {
+    let (&equal, at_address) = nodes.split_first()?;
+    let mut batch = cx.batch(|| ());
+    let object = On::msaa(ids, false);
+    let place = batch.is_one_of(object.clone(), Some(equal), at_address.to_vec());
+    batch.when(place.found());
+    let read = batch.read(object, set);
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(process), window)
+        .judged(move |answers| {
+            Some(match (answers.get(place), answers.get(read)) {
+                (Got::Done(Some(place)), Got::Done(read)) => Some(ChangeFound {
+                    place: *place,
+                    values: read.values.clone(),
+                }),
+                _ => None,
+            })
+        });
+    match cx.ask(request, due_us).await {
+        Outcome::Result(found) => found,
+        _ => None,
     }
 }
 
@@ -420,7 +386,7 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     let Some(focus) = held(&cx.facts(), generation) else {
         return;
     };
-    let (kept, focus_node) = (&focus.kept, focus.context.snapshot.id);
+    let kept = &focus.kept;
     let trace_id = change.tell.trace_id;
     let changed = Changed::of(change.tell.kind);
     // A change outside the windows of the committed focus and its
@@ -433,80 +399,52 @@ pub(crate) async fn msaa(mut cx: Cx<Entries>, change: MsaaChange) {
     // An MSAA object controls nothing, so a plain selection's item is
     // only ever one of the nodes, whose states alone are judged; neither
     // read goes further for an object that is none of them.
-    let (set, relation) = match changed {
-        Some(changed) => (
-            vec![changed.property()],
-            RelationQuery::OneOf(nodes.clone()),
-        ),
-        None => (
-            vec![PropertyId::States],
-            RelationQuery::Selection {
-                focus: focus_node,
-                nodes: nodes.clone(),
-            },
-        ),
-    };
-    let request = ChangeRead {
-        process,
-        window: change.window,
-        read: ReadObject {
-            object: ObjectRef::Msaa {
-                window: change.ids.window,
-                object: change.ids.object,
-                child: change.ids.child,
-            },
-            set,
-            relation: Some(relation),
-            descendants: false,
-            purpose: Purpose::Change,
-        },
-    };
+    let changed = changed.unwrap_or(Changed::States);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(read) = cx.ask(request, due_us).await else {
+    let Some(found) = change_read(
+        &mut cx,
+        (process, change.window, change.ids),
+        (&nodes, &[changed.property()]),
+        due_us,
+    )
+    .await
+    else {
         return;
     };
-    match (changed, read.relation) {
-        (_, Some(RelationFound::Is(place))) => {
-            let Some(node) = usize::try_from(place)
-                .ok()
-                .and_then(|place| nodes.get(place))
-                .copied()
-            else {
-                return;
-            };
-            let changed = changed.unwrap_or(Changed::States);
-            // The property asked must be answered, if only with no value:
-            // a read without its answer is a reader's fault, refused
-            // rather than taken as the property having no value.
-            let Some(answer) = read.object.values.answer(changed.property()) else {
-                return;
-            };
-            let Some(property) = changed.change(answer.value.as_ref()) else {
-                return;
-            };
-            let child_count = match &property {
-                PropertyChange::States(states)
-                    if newly_expanded_tree_item(&cx.facts(), node, *states) =>
+    let Some(node) = usize::try_from(found.place)
+        .ok()
+        .and_then(|place| nodes.get(place))
+        .copied()
+    else {
+        return;
+    };
+    // The property asked must be answered, if only with no value: a read
+    // without its answer is a reader's fault, refused rather than taken as
+    // the property having no value.
+    let Some(answer) = found.values.answer(changed.property()) else {
+        return;
+    };
+    let Some(property) = changed.change(answer.value.as_ref()) else {
+        return;
+    };
+    let child_count = match &property {
+        PropertyChange::States(states) if newly_expanded_tree_item(&cx.facts(), node, *states) => {
+            let read = (process, change.window, node);
+            let set = [PropertyId::ChildCount];
+            match crate::navigator::read_values(&mut cx, read, &set, due_us).await {
+                Outcome::Result(values) => match values
+                    .answer(PropertyId::ChildCount)
+                    .and_then(|answer| answer.value.as_ref())
                 {
-                    let request = ChildCountRead {
-                        process,
-                        window: change.window,
-                        node,
-                    };
-                    match cx.ask(request, due_us).await {
-                        Outcome::Result(count) => count,
-                        _ => None,
-                    }
-                }
+                    Some(PropertyValue::Count(count)) => Some(*count),
+                    _ => None,
+                },
                 _ => None,
-            };
-            speak_change(&mut cx, trace_id, node, &property, child_count);
+            }
         }
-        (None, Some(RelationFound::Controlled | RelationFound::InsideControlled)) => {
-            controlled_selection(&mut cx, trace_id, focus_node, (read.object, Backend::Msaa));
-        }
-        _ => {}
-    }
+        _ => None,
+    };
+    speak_change(&mut cx, trace_id, node, &property, child_count);
 }
 
 /// A plain selection's item, `item`, is an object the committed focus
@@ -698,13 +636,11 @@ pub(crate) async fn uia_entry(mut cx: Cx<Entries>, change: UiaChange) {
     if asked == PropertyId::Description && change.at_arrival == AtArrival::OffLine {
         return;
     }
-    let read = crate::announcements::selection::NodeProperties {
-        window: focus.kept.asked,
-        node,
-        set: vec![asked],
-    };
+    let read = (focus.kept.asked.process, focus.kept.asked, node);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(values) = cx.ask(read, due_us).await else {
+    let Outcome::Result(values) =
+        crate::navigator::read_values(&mut cx, read, &[asked], due_us).await
+    else {
         return;
     };
     let value = values

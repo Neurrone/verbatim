@@ -20,8 +20,7 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, FocusAncestor, FocusCaret, FocusNode, FocusRead, Instance, KnownAncestor, NodeRead,
-    NodeWindow, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply, Request as Wire,
-    RequestNumber, Route,
+    NodeWindow, Outcome, ProcessFact, QueueEffect, QueueInput, Reader, Reply, RequestNumber, Route,
 };
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -233,11 +232,7 @@ pub fn focus_heard(
 /// read of a kept element, the outpost's read of a route.
 pub fn kind(request: &Question) -> &'static str {
     let batch = match request {
-        Question::Legacy(Wire::ReadObject(_)) => return "ReadObject",
-        Question::Legacy(Wire::Follow(_)) => return "Follow",
-        Question::Legacy(Wire::Properties { .. }) => return "Properties",
-        Question::Legacy(Wire::Text { .. }) => return "Text",
-        Question::Legacy(_) => return "other",
+        Question::Terminal(_) => return "Text",
         Question::Batch(batch) => batch,
     };
     // A caret key's or a caret tell's batch: its first step a text
@@ -255,8 +250,47 @@ pub fn kind(request: &Question) -> &'static str {
             .filter_map(|step| step.op.subject())
             .any(subject)
     };
+    if let [
+        verbatim_model::batch::Step {
+            op:
+                Op::Read {
+                    subject: Subject::Node(_),
+                    ..
+                },
+            ..
+        },
+    ] = batch.steps.as_slice()
+    {
+        return "Properties";
+    }
     if batch.reads_focus_first() {
         "CurrentFocus"
+    } else if batch.steps.iter().any(|step| {
+        matches!(
+            step.op,
+            Op::IsOneOf { .. }
+                | Op::Descendants {
+                    subject: Subject::Msaa { .. },
+                    ..
+                }
+        )
+    }) {
+        "ReadObject"
+    } else if let [
+        verbatim_model::batch::Step {
+            op:
+                Op::Read {
+                    subject: Subject::Msaa { .. },
+                    set,
+                },
+            ..
+        },
+    ] = batch.steps.as_slice()
+        && !(set.is_empty() || set.as_slice() == [verbatim_model::property::PropertyId::Role])
+    {
+        // A show's or the desktop name's read of its MSAA object, where a
+        // menu start's reads its role and a foreground's nothing.
+        "ReadObject"
     } else if names(|subject| matches!(subject, Subject::Msaa { .. })) {
         "Candidate"
     } else if names(|subject| matches!(subject, Subject::Kept { .. })) {
@@ -699,6 +733,12 @@ impl Desk {
         self.reply_outcome(Outcome::Result(reply))
     }
 
+    /// Answers the one request out, a batch, as its reader does having
+    /// found `found`.
+    pub fn reply_object(&mut self, read: NodeRead) -> Vec<Heard> {
+        self.reply_found(&Found::Object(read))
+    }
+
     /// Answers request `number`, a batch sent to `from`, as its reader does
     /// having found `found`.
     pub fn found(&mut self, from: Instance, number: u64, found: &Found) -> Vec<Heard> {
@@ -838,10 +878,12 @@ impl Desk {
     }
 }
 
-/// `question` as one of the kinds of request not yet converted to a
-/// batch: these tests state today's requests, and a batch fails them.
-pub fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+/// `question` as a terminal's text operation: these tests state the
+/// terminal's requests, and a batch fails them.
+pub fn terminal(
+    question: &verbatim_model::request::Question,
+) -> &verbatim_model::request::TerminalAsk {
     question
-        .legacy()
-        .expect("a kind of request, where no feature asks a batch yet")
+        .terminal()
+        .expect("a terminal's text operation, where a batch was asked")
 }

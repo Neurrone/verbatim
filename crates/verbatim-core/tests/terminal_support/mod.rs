@@ -21,7 +21,7 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
     NodeRead, NodeWindow, Outcome, Press, PressAction, QueueEffect, QueueInput, Reader, Refusal,
-    Reply, Request as Wire,
+    Reply, TerminalAsk,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -771,9 +771,9 @@ impl Session {
             self.reply(&ask, outcome);
             return;
         }
-        let outcome = match legacy(&ask.request) {
-            Wire::Follow(_) => Outcome::Result(Reply::Followed),
-            Wire::Text { op, .. } => match op {
+        let TerminalAsk { op, .. } = terminal(&ask.request);
+        let outcome = {
+            match op {
                 TextOp::ReadTerminal(read) => {
                     if self.hold_whole && read.scope == TerminalScope::Whole {
                         self.held = Some(ask);
@@ -819,9 +819,7 @@ impl Session {
                         )))
                     }
                 }
-                other => panic!("an unexpected text request: {other:?}"),
-            },
-            other => panic!("an unexpected request: {other:?}"),
+            }
         };
         self.reply(&ask, outcome);
     }
@@ -901,10 +899,10 @@ impl Session {
     /// Answers the whole read held back.
     pub fn answer_held(&mut self) {
         let ask = self.held.take().expect("a whole read held back");
-        let Wire::Text {
+        let TerminalAsk {
             op: TextOp::ReadTerminal(read),
             ..
-        } = legacy(&ask.request)
+        } = terminal(&ask.request)
         else {
             panic!("a read held back");
         };
@@ -926,7 +924,8 @@ impl Session {
             self.requests.push(Asked::Watch);
             return;
         }
-        let verbatim_model::request::Question::Legacy(Wire::Text { op, .. }) = &ask.request else {
+        let verbatim_model::request::Question::Terminal(TerminalAsk { op, .. }) = &ask.request
+        else {
             return;
         };
         let asked = match op {
@@ -951,7 +950,6 @@ impl Session {
                 from: *from,
                 rows: *rows,
             },
-            _ => return,
         };
         self.requests.push(asked);
     }
@@ -1133,10 +1131,10 @@ impl Session {
     }
 }
 
-/// `question` as one of the kinds of request not yet converted to a
-/// batch: these tests state today's requests, and a batch fails them.
-fn legacy(question: &verbatim_model::request::Question) -> &Wire {
+/// `question` as a terminal's text operation: these tests state the
+/// terminal's requests, and a batch is answered before it.
+fn terminal(question: &verbatim_model::request::Question) -> &TerminalAsk {
     question
-        .legacy()
-        .expect("a kind of request, where no feature asks a batch yet")
+        .terminal()
+        .expect("a terminal's text operation, where a batch was asked")
 }

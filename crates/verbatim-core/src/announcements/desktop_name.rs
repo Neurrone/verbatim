@@ -3,12 +3,11 @@
 //! objects", its announcements).
 
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::{ObjectRef, Purpose, ReadObject};
 
 use super::Announcement;
+use crate::batch::{On, Single};
 use crate::entries::Entries;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome};
-use crate::focus::uia_focus::ListenerRead;
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader};
 use verbatim_model::request::MsaaIds;
 
 /// How long after its read a name no focus said is said alone.
@@ -19,26 +18,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, announcement: Announcement, ids: Ms
     let Some(window) = announcement.window() else {
         return;
     };
-    let read = ListenerRead {
-        window,
-        read: ReadObject {
-            object: ObjectRef::Msaa {
-                window: ids.window,
-                object: ids.object,
-                child: ids.child,
-            },
-            set: vec![PropertyId::Name],
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        },
-    };
+    let mut batch = cx.batch(|| ());
+    let read = batch.read(On::msaa(ids, false), &[PropertyId::Name]);
+    let request = batch.finish().of(Reader::Listener, window).one(read);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(read) = cx.ask(read, due_us).await else {
+    let Outcome::Result(Single::Done(read)) = cx.ask(request, due_us).await else {
         return;
     };
     let Some(PropertyValue::Text(name)) = read
-        .object
         .values
         .answer(PropertyId::Name)
         .and_then(|answer| answer.value.clone())

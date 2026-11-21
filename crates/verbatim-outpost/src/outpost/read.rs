@@ -21,34 +21,24 @@ use verbatim_model::{
 use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
-    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates,
-    Request, Shape, Uia,
+    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, Request, Shape, Uia,
 };
-use verbatim_uia_rops::{
-    FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
-    navigation_step, navigation_step_classic,
-};
+use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use crate::dialog_text::{Visited as Identity, is_dialog};
 
 use crate::gates;
-use verbatim_model::protocol::{DumpedTree, UiaSnapshotFact};
+use verbatim_model::protocol::UiaSnapshotFact;
 use verbatim_model::request::KnownAncestor;
 use verbatim_win32::window::window_class_name;
 
-use super::window::{main_window_of, window_style, window_text};
+use super::window::{window_style, window_text};
 use super::{Context, RequestContext};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
 use verbatim_win32::provider::served_by;
 use verbatim_win32::window::{
     desktop_window, parent, top_level_of, window_belongs_to_hidden_frame, window_exists,
 };
-
-/// Depth cap for a tree dump (the root is depth 0).
-const MAX_DUMP_DEPTH: u32 = 64;
-
-/// Node-count cap for a tree dump.
-const MAX_DUMP_NODES: usize = 4096;
 
 /// Cap on the ancestors read for a node.
 pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
@@ -228,12 +218,13 @@ pub(super) fn window_node(
     hwnd: isize,
     backend: Backend,
 ) -> Option<NodeSnapshot> {
-    // The window's element is the connection to it.
+    // The window's element is the connection to it, read through UI
+    // Automation whatever serves it, since Core named the backend.
     if backend == Backend::Uia {
         let (uia, nodes) = client
             .uia_with(context, RequestContext::node_request)
             .ok()?;
-        let element = uia.window_element(hwnd, &nodes).ok()?;
+        let element = uia.any_window_element(hwnd, &nodes).ok()?;
         Some(element.snapshot(context.nodes()))
     } else {
         // The client area, as NVDA reads a foreground window: a focus event
@@ -2024,58 +2015,110 @@ fn window_object(
 }
 
 /// One object-navigation step from a UIA node: the neighbor, or `None` for
-/// a genuine tree edge, and the node's nearest window.
+/// a genuine tree edge, and the node's nearest window. The step is taken
+/// from the element the registry keeps, without first refreshing it; when
+/// that element is gone, or the registry keeps none, from the element the
+/// focus's route finds, or the node is gone ([`resolve_uia_element`]).
 fn uia_step(
     context: &RequestContext<'_>,
     client: &mut Client,
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Stepped, ReadError> {
-    if let Some(step) = uia_remote_step(context, client, node_id, kind)? {
-        return Ok(step);
-    }
-    let direction = direction_of(kind)
-        .ok_or_else(|| ReadError::Failed(format!("{kind:?} is not a navigation step")))?;
-    let (uia, nodes, element) = uia_node(context, client, node_id)?;
-    let fill = Fill::new(&nodes);
-    let query = StepQuery {
-        element: &element.narrow::<Kept>(),
-        direction,
-        fill: &fill,
-    };
-    let step = navigation_step_classic(uia, &query).map_err(|error| {
-        if error
-            .hresult()
-            .is_some_and(|code| verbatim_uia::element_is_gone(&windows::core::Error::from(code)))
-        {
-            ReadError::Gone
-        } else {
-            ReadError::Failed(format!("UIA navigation failed: {error}"))
+    if let Some(element) = context
+        .store
+        .element_of(node_id)
+        .and_then(|agile| agile.resolve().ok())
+    {
+        let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
+        let from = (
+            element.live().element(),
+            element.read().hwnd,
+            element.served_only_by_uia_proxies() == Some(true),
+        );
+        if let Some(stepped) = related_step(context, uia, &nodes, (from, kind))? {
+            return Ok(stepped);
         }
-    })?;
-    Ok(stepped(context, step))
-}
-
-/// A navigation query's direction, `None` for a query that is not a step.
-fn direction_of(kind: QueryKind) -> Option<NavigationDirection> {
-    match kind {
-        QueryKind::Parent => Some(NavigationDirection::Parent),
-        QueryKind::NextSibling => Some(NavigationDirection::NextSibling),
-        QueryKind::PreviousSibling => Some(NavigationDirection::PreviousSibling),
-        QueryKind::FirstChild => Some(NavigationDirection::FirstChild),
-        _ => None,
+        context.store.evict_element(node_id);
     }
+    let (uia, nodes, element) = uia_node(context, client, node_id)?;
+    let from = (
+        element.live().element(),
+        element.read().role.hwnd,
+        element.served_only_by_uia_proxies() == Some(true),
+    );
+    related_step(context, uia, &nodes, (from, kind))?.ok_or(ReadError::Gone)
 }
 
-/// A step's neighbor as a snapshot with its table, and the window it was
-/// taken from.
-fn stepped(context: &RequestContext<'_>, step: verbatim_uia_rops::Step) -> Stepped {
-    let neighbor = step.neighbor.map(|neighbor| {
+/// One navigation step `kind` through the program builder
+/// (`verbatim_uia_rops::batch`, `Related`) from `element`, whose own
+/// window is `own`, 0 for none, each node reached filled as `nodes` asks:
+/// `None` when the element is gone. A step from a top-level window, whose
+/// relations a program's walk does not reach, or from an element only UI
+/// Automation's proxies inside this process serve (`proxied`), which no
+/// program can import, is taken by calls.
+fn related_step(
+    context: &RequestContext<'_>,
+    uia: &Uia,
+    nodes: &Request<Node>,
+    ((element, own, proxied), kind): (
+        (
+            &windows::Win32::UI::Accessibility::IUIAutomationElement,
+            isize,
+            bool,
+        ),
+        QueryKind,
+    ),
+) -> Result<Option<Stepped>, ReadError> {
+    use verbatim_model::batch::{Place, Relation};
+    use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment};
+    let relation = match kind {
+        QueryKind::Parent => Relation::Parent,
+        QueryKind::NextSibling => Relation::NextSibling,
+        QueryKind::PreviousSibling => Relation::PreviousSibling,
+        QueryKind::FirstChild => Relation::FirstChild,
+    };
+    let window = (own != 0).then_some(own);
+    let fill = Fill::new(nodes);
+    let segment = Segment {
+        uia,
+        steps: vec![Fused {
+            place: Place(0),
+            when: None,
+            input: Input::Related {
+                subject: Object::Held {
+                    element,
+                    window: own,
+                },
+                relation,
+                fill: &fill,
+            },
+            calls_only: proxied || (own != 0 && top_level_of(own) == own),
+        }],
+        remote: context.tries_remote(window),
+        window,
+    };
+    let answer = verbatim_uia_rops::batch::run_batch(&segment);
+    let related = match answer.steps.into_iter().next() {
+        Some(Ran::Done(Found::Related(related))) => related,
+        Some(Ran::Gone) => return Ok(None),
+        other => {
+            return Err(ReadError::Failed(format!(
+                "UIA navigation failed: {other:?}"
+            )));
+        }
+    };
+    if answer.read_classically
+        && let Some(hwnd) = related.window.or(window)
+    {
+        context.read_classically(top_level_of(hwnd));
+    }
+    let neighbor = related.nodes.into_iter().next().map(|neighbor| {
         let mut neighbor = neighbor.snapshot(context.nodes());
-        neighbor.details.set_table(step.neighbor_table);
+        neighbor.details.set_table(related.table);
         neighbor
     });
-    (neighbor, step.window)
+    Ok(Some((neighbor, related.window)))
 }
 
 /// One object-navigation step: the neighbor, or `None` for a genuine tree
@@ -2139,67 +2182,6 @@ fn step(
 /// A navigation step's neighbor, `None` at a tree edge, and the nearest
 /// window of the node it was taken from.
 type Stepped = (Option<NodeSnapshot>, Option<isize>);
-
-/// One navigation step from a UIA node in one round trip, the neighbor and
-/// the node's nearest window read inside the application's provider
-/// ([`verbatim_uia_rops::navigation_step`]), from the element the registry
-/// keeps, without first refreshing it: the program fails at once when the
-/// element is gone. `None`, having made no call, when the step is taken
-/// the classic way instead: remote operations are off or failed to import
-/// for the node's window, the registry keeps no live element, the node is
-/// a top-level window (a program's walk ends there, while the step from it
-/// reaches the desktop or another application's window), or the element is
-/// gone, which the classic way answers from the focus's route or as gone
-/// ([`resolve_uia_element`]).
-fn uia_remote_step(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-    kind: QueryKind,
-) -> Result<Option<Stepped>, ReadError> {
-    let Some(direction) = direction_of(kind) else {
-        return Ok(None);
-    };
-    let Some(element) = context
-        .store
-        .element_of(node_id)
-        .and_then(|agile| agile.resolve().ok())
-    else {
-        return Ok(None);
-    };
-    let own = element.read().hwnd;
-    let window = (own != 0).then_some(own);
-    if !context.tries_remote(window) || (own != 0 && top_level_of(own) == own) {
-        return Ok(None);
-    }
-    let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
-    let fill = Fill::new(&nodes);
-    let query = StepQuery {
-        element: &element,
-        direction,
-        fill: &fill,
-    };
-    let (step, path) = match navigation_step(uia, &query, true) {
-        Ok(answer) => answer,
-        Err(error)
-            if error.hresult().is_some_and(|code| {
-                verbatim_uia::element_is_gone(&windows::core::Error::from(code))
-            }) =>
-        {
-            // Found by the focus's route, or gone, the classic way.
-            context.store.evict_element(node_id);
-            return Ok(None);
-        }
-        Err(error) => return Err(ReadError::Failed(format!("UIA navigation failed: {error}"))),
-    };
-    if let Path::Fallback(error) = &path {
-        super::remote_fell_back("navigation step", window.or(step.window), error);
-        if let (verbatim_uia_rops::Error::Import(_), Some(hwnd)) = (error, step.window) {
-            context.read_classically(top_level_of(hwnd));
-        }
-    }
-    Ok(Some(stepped(context, step)))
-}
 
 /// `neighbor` through the backend its window uses, as NVDA corrects the API
 /// of an object reached by navigation (`correctAPIForRelation`): an MSAA
@@ -2366,75 +2348,6 @@ fn activate_one(
             .map_err(|error| ReadError::Failed(format!("UIA activation failed: {error}")));
     }
     verbatim_ia2::acquire::activate(node_id, context.nodes()).map_err(ReadError::from)
-}
-
-/// The application's tree from its top-level window, each element's
-/// location and whether it is off the screen read only with `locations`:
-/// a read of many elements leaves both out, since for some elements, a
-/// top-level window's title bar and its buttons among them, UIA asks the
-/// application's UI thread for them (`verbatim_uia::Place`), and the dump
-/// says it did not read them ([`DumpedTree::locations`]). Over UIA each
-/// element's children are read in one call, by remote programs where the
-/// window allows them ([`verbatim_uia_rops::tree_dump`]).
-pub(super) fn dump_tree(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    locations: bool,
-) -> Result<DumpedTree, ReadError> {
-    let hwnd = main_window_of(context.target_pid()).ok_or_else(|| {
-        ReadError::Failed("the target application has no top-level window".to_owned())
-    })?;
-    if window_uses_uia(context, hwnd) {
-        let uia = client
-            .uia()
-            .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
-        let gates = NodeGates {
-            place: locations.then_some(()),
-            ..gates::many_node_gates(context.node_details())
-        };
-        let nodes = uia
-            .request::<Node>(gates)
-            .map_err(|error| ReadError::Failed(format!("UIA cache request failed: {error}")))?;
-        let element = uia.window_element(hwnd, &nodes).map_err(|error| {
-            ReadError::Failed(format!(
-                "could not fetch the top-level UIA element: {error}"
-            ))
-        })?;
-        let fill = Fill::new(&nodes);
-        let query = verbatim_uia_rops::TreeQuery {
-            root: &element,
-            fill: &fill,
-            registry: context.nodes(),
-            max_depth: MAX_DUMP_DEPTH,
-            max_nodes: MAX_DUMP_NODES,
-        };
-        let remote = context.tries_remote(Some(hwnd));
-        let ((root, truncated), path) = verbatim_uia_rops::tree_dump(uia, &query, remote)
-            .map_err(|error| ReadError::Failed(format!("UIA tree walk failed: {error}")))?;
-        if let Path::Fallback(error) = &path {
-            super::remote_fell_back("tree dump", Some(hwnd), error);
-            if let verbatim_uia_rops::Error::Import(_) = error {
-                context.read_classically(hwnd);
-            }
-        }
-        Ok(DumpedTree {
-            root,
-            truncated,
-            locations,
-        })
-    } else {
-        let (root, truncated) = verbatim_ia2::acquire::walk_tree(
-            hwnd,
-            context.nodes(),
-            (MAX_DUMP_DEPTH, MAX_DUMP_NODES),
-            locations,
-        )?;
-        Ok(DumpedTree {
-            root,
-            truncated,
-            locations,
-        })
-    }
 }
 
 #[cfg(test)]

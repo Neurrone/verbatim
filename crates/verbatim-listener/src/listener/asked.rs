@@ -26,8 +26,7 @@ use verbatim_model::property::{
     Number, PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
 };
 use verbatim_model::request::{
-    Answer, Ask, KnownAncestor, NodeRead, ObjectRead, ObjectRef, Outcome, Question, ReadObject,
-    Refusal, Reply, Request, RequestNumber,
+    Answer, Ask, KnownAncestor, NodeRead, Outcome, Question, Refusal, Reply, RequestNumber,
 };
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{Pid, WindowHandle};
@@ -107,47 +106,13 @@ impl UiaReading {
         });
     }
 
-    /// Runs request `ask` of `pid`'s on `thread`.
+    /// Runs request `ask` of `pid`'s on `thread`: a batch; a terminal's
+    /// text operation is the outpost's.
     fn request(&self, thread: &mut ReadingThread, ask: &Ask) -> (Outcome, Option<KeptRead>) {
-        let read = match &ask.request {
-            Question::Legacy(Request::ReadObject(read)) => read,
-            Question::Legacy(_) => return (Outcome::Refused(Refusal::Unsupported), None),
-            Question::Batch(batch) => return self.batch(thread, ask, batch),
-        };
-        match &read.object {
-            ObjectRef::Kept { token, .. } => {
-                self.read_kept(thread, (*token, ask.number), ask.window, read)
-            }
-            ObjectRef::Msaa {
-                window,
-                object,
-                child,
-            } => (
-                read_msaa(self.read_at_event, (*window, *object, *child), read),
-                None,
-            ),
-            ObjectRef::Node(_) => (Outcome::Refused(Refusal::Unsupported), None),
+        match &ask.request {
+            Question::Batch(batch) => self.batch(thread, ask, batch),
+            Question::Terminal(_) => (Outcome::Refused(Refusal::Unsupported), None),
         }
-    }
-
-    /// The read of the kept element `token`, whose nearest window Core
-    /// names, `window`, by its event's name: no relation, descendants or
-    /// walk, which no generic read asks of the listener.
-    fn read_kept(
-        &self,
-        thread: &ReadingThread,
-        (token, number): (ElementToken, RequestNumber),
-        window: WindowHandle,
-        read: &ReadObject,
-    ) -> (Outcome, Option<KeptRead>) {
-        let Some(reading) = ElementAsk::of_read(read) else {
-            return (Outcome::Refused(Refusal::Unsupported), None);
-        };
-        let (outcome, kept) = self.read_kept_to(thread, (token, number, false), window, &reading);
-        (
-            outcome.map_or_else(|outcome| outcome, ElementRead::answer),
-            kept,
-        )
     }
 
     /// The kept element `token` read as `reading` asks, kept as read after
@@ -247,6 +212,19 @@ fn kept_of(steps: &[Step]) -> Result<Option<(ElementToken, bool)>, ()> {
     Ok(first)
 }
 
+/// The listener's answer to `batch` on MSAA objects at their events'
+/// addresses, as a reading thread makes it, through
+/// [`verbatim_ia2::acquire::read_at_event`]: parsed, and refused whole
+/// when it does not parse. Public so that a test standing in for the
+/// listener reads mockapp's objects as the listener reads them.
+#[must_use]
+pub fn read_msaa_batch(batch: &Batch) -> Outcome {
+    match parse(batch.clone(), ReaderKind::Listener) {
+        Ok(parsed) => run_steps(verbatim_ia2::acquire::read_at_event, parsed.steps(), None),
+        Err(malformed) => Outcome::Refused(Refusal::Malformed(malformed)),
+    }
+}
+
 /// `steps` run in order, each under its condition, on what the kept
 /// element's one read answered, `whole`, or at an MSAA object's address
 /// through `read_at_event`. `Descendants` and `IsOneOf`, which no batch
@@ -318,6 +296,10 @@ fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ElementRead>) ->
             },
             _,
         ) => {
+            // Anything more than its set is the outpost's.
+            if set.iter().any(|id| !MSAA_SET.contains(id)) {
+                return StepOutcome::Refused(StepRefusal::Unsupported);
+            }
             let hwnd = isize::from(ids.window);
             match read_at_event(hwnd, ids.object, ids.child, set) {
                 Some(values) => StepOutcome::Done(Done::Read(NodeRead {
@@ -353,22 +335,24 @@ fn batch_step(read_at_event: MsaaReads, op: &Op, whole: Option<&ElementRead>) ->
     }
 }
 
-/// The object a batch is routed by: its first step's subject, a kept
+/// The object a batch is routed by: its first step's subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Routed {
+    /// An element a listener kept: its generation and token.
+    Kept(u64, ElementToken),
+    /// An MSAA object at its event's address, in this window.
+    Msaa(WindowHandle),
+}
+
+/// The object `batch` is routed by: its first step's subject, a kept
 /// element or an MSAA object at its event's address; `None` for any
 /// other, which the listener refuses.
-pub(super) fn batch_object(batch: &Batch) -> Option<ObjectRef> {
+pub(super) fn batch_object(batch: &Batch) -> Option<Routed> {
     match batch.steps.first()?.op.subject()? {
         Subject::Kept {
             listener, token, ..
-        } => Some(ObjectRef::Kept {
-            listener: *listener,
-            token: *token,
-        }),
-        Subject::Msaa { ids, .. } => Some(ObjectRef::Msaa {
-            window: ids.window,
-            object: ids.object,
-            child: ids.child,
-        }),
+        } => Some(Routed::Kept(*listener, *token)),
+        Subject::Msaa { ids, .. } => Some(Routed::Msaa(ids.window)),
         _ => None,
     }
 }
@@ -472,57 +456,6 @@ const MSAA_SET: [PropertyId; 5] = [
     PropertyId::States,
     PropertyId::Rect,
 ];
-
-/// The read of an MSAA object at an event's address `read` names, as a
-/// reading thread makes it for Core's request ([`read_msaa`], through
-/// [`verbatim_ia2::acquire::read_at_event`]); a read of any other object is
-/// refused. Public so that a test standing in for the listener reads
-/// mockapp's objects as the listener reads them.
-#[must_use]
-pub fn read_msaa_object(read: &ReadObject) -> Outcome {
-    match read.object {
-        ObjectRef::Msaa {
-            window,
-            object,
-            child,
-        } => read_msaa(
-            verbatim_ia2::acquire::read_at_event,
-            (window, object, child),
-            read,
-        ),
-        ObjectRef::Kept { .. } | ObjectRef::Node(_) => Outcome::Refused(Refusal::Unsupported),
-    }
-}
-
-/// The read of an MSAA object at an event's address, through `reads`: of
-/// the properties [`MSAA_SET`] holds, with no relation, walk or
-/// descendants; any other read is refused.
-fn read_msaa(
-    reads: MsaaReads,
-    (window, object, child): (WindowHandle, i32, i32),
-    read: &ReadObject,
-) -> Outcome {
-    if read.set.iter().any(|id| !MSAA_SET.contains(id))
-        || read.relation.is_some()
-        || read.descendants
-    {
-        return Outcome::Refused(Refusal::Unsupported);
-    }
-    let hwnd = isize::from(window);
-    let Some(values) = reads(hwnd, object, child, &read.set) else {
-        return Outcome::NotThere;
-    };
-    Outcome::Result(Reply::Object(Box::new(ObjectRead {
-        object: NodeRead {
-            node: None,
-            window: node_window(&SystemReads, hwnd),
-            values,
-        },
-        relation: None,
-        descendants: Vec::new(),
-        ancestors: Vec::new(),
-    })))
-}
 
 /// One element a read read: its parts and what the properties beyond them
 /// are read from.
@@ -689,25 +622,9 @@ pub(crate) struct ElementAsk {
     /// Its ancestors up to the first of these Core knows, at most this
     /// many; `None` for the element alone.
     walk: Option<(Vec<KnownAncestor>, u32)>,
-    /// Whether its name is the one read afresh, as a batch's is; else its
-    /// event's cache's, as NVDA's object for the event reads it. Core
-    /// chooses the cached name where it speaks that one (Claude,
-    /// 2026-11-21, the request list's design, section 6).
-    fresh_name: bool,
 }
 
 impl ElementAsk {
-    /// What the generic read `read` reads of its kept element: its set
-    /// alone, by its event's name; `None` for a relation or descendants,
-    /// which no generic read asks of the listener.
-    fn of_read(read: &ReadObject) -> Option<Self> {
-        (read.relation.is_none() && !read.descendants).then(|| Self {
-            set: read.set.clone(),
-            walk: None,
-            fresh_name: false,
-        })
-    }
-
     /// What a batch's `steps` read of their kept element: the union of the
     /// sets of its `Read` and `Ancestors` steps, its ancestors when a step
     /// asks for them, the name read afresh.
@@ -727,11 +644,7 @@ impl ElementAsk {
                 walk = Some((until.clone(), *depth));
             }
         }
-        Self {
-            set,
-            walk,
-            fresh_name: true,
-        }
+        Self { set, walk }
     }
 }
 
@@ -744,35 +657,6 @@ pub(crate) struct ElementRead {
     ancestors: Vec<NodeRead>,
     /// Where the walk ended; `None` for the element alone.
     end: Option<AncestorsEnd>,
-}
-
-impl ElementRead {
-    /// The element alone as the answer to a generic read.
-    fn answer(self) -> Outcome {
-        Outcome::Result(Reply::Object(Box::new(ObjectRead {
-            object: self.object,
-            relation: None,
-            descendants: Vec::new(),
-            ancestors: Vec::new(),
-        })))
-    }
-}
-
-/// The generic read `read` of `element`, a kept element of `pid`'s whose
-/// nearest window Core names, `nearest`, as a reading thread makes it,
-/// each call told to `calls`. For a test that stands in for the listener.
-pub(crate) fn object_on_element(
-    (uia, readability): (&Uia, &WindowReadabilityReader),
-    element: &Cached<ListenerEvent>,
-    (pid, nearest): (Pid, isize),
-    read: &ReadObject,
-    calls: &CallLog,
-) -> Outcome {
-    let Some(reading) = ElementAsk::of_read(read) else {
-        return Outcome::Refused(Refusal::Unsupported);
-    };
-    read_element((uia, readability), element, (pid, nearest), &reading, calls)
-        .map_or_else(|outcome| outcome, ElementRead::answer)
 }
 
 /// Reads `sender`, a kept element of `pid`'s whose nearest window is
@@ -805,7 +689,7 @@ pub(crate) fn read_element(
         (reading.walk.as_ref().map(|(_, depth)| *depth), &known),
         calls,
     );
-    let mut element = element_read(&fields, sender, &mut walked, reading.fresh_name);
+    let mut element = element_read(&fields, sender, &mut walked);
     if reading.set.contains(&PropertyId::States)
         && wants_legacy_checked_state(element.parts.role, element.parts.states)
     {
@@ -994,17 +878,16 @@ fn walk(
     (ended, walked.into_inner())
 }
 
-/// The element as a read answers it: its class from its event's cache,
-/// and its name too, as NVDA's object for the event reads them, unless
-/// `fresh_name` asks the name read afresh, as a selection's item is said
-/// by it (Dickson, 2026-10-20); its role, value, states and details as
-/// read afresh, or from the event's cache when they were not; and a value
-/// taken from its first selected item's name when that is its value.
+/// The element as a read answers it: its class from its event's cache, as
+/// NVDA's object for the event reads it; its name, role, value, states and
+/// details as read afresh, or from the event's cache when they were not,
+/// Core choosing the cached name where it speaks that one (the request
+/// list's design, section 6); and a value taken from its first selected
+/// item's name when that is its value.
 fn element_read(
     fields: &ListenerEvent,
     sender: &Cached<ListenerEvent>,
     walked: &mut Walked,
-    fresh_name: bool,
 ) -> Read {
     let event = fields.parts(sender.runtime_id());
     let (mut read, from_selection) = walked.fresh.take().unwrap_or_else(|| {
@@ -1021,12 +904,6 @@ fn element_read(
             false,
         )
     });
-    // The fresh read's name came in the same cache request as its role and
-    // position, so a selection's costs no call; with no fresh read, the
-    // parts are the event's, its name included.
-    if !fresh_name {
-        read.parts.name.clone_from(&event.name);
-    }
     read.parts
         .details
         .class_name

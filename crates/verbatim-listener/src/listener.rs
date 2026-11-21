@@ -70,7 +70,7 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_ia2::{LISTENER_SUBSCRIPTIONS, WinEvent, WinEventKind};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::request::{Answer, Ask, ObjectRef, Outcome, Question, Refusal, Request};
+use verbatim_model::request::{Answer, Ask, Outcome, Question, Refusal};
 use verbatim_model::tell::{Event, Payload};
 use verbatim_model::{Percent, Pid, StateSet};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
@@ -753,35 +753,31 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             detail: String::new(),
         });
     };
-    // A request is routed by the object it reads: a kind of request's,
-    // or a batch's first step's subject, which every later step's kept
-    // element shares (`asked::batch_object`).
+    // A request is routed by the object it reads, a batch's first step's
+    // subject, which every later step's kept element shares
+    // (`asked::batch_object`); a terminal's text operation is the
+    // outpost's.
     let object = match &ask.request {
-        Question::Legacy(Request::ReadObject(read)) => Some(read.object.clone()),
-        Question::Legacy(_) => None,
         Question::Batch(batch) => asked::batch_object(batch),
+        Question::Terminal(_) => None,
     };
     let Some(object) = object else {
         answer(Outcome::Refused(Refusal::Unsupported));
         return;
     };
-    let pid = match &object {
-        ObjectRef::Kept { listener, token } => {
-            kept.is_own(*listener).then(|| kept.owner(*token)).flatten()
+    let pid = match object {
+        asked::Routed::Kept(listener, token) => {
+            kept.is_own(listener).then(|| kept.owner(token)).flatten()
         }
-        ObjectRef::Msaa { window, .. } => {
+        asked::Routed::Msaa(window) => {
             // The window's own thread stands for the thread that raised
             // its events, which a read does not carry.
-            let window = isize::from(*window);
+            let window = isize::from(window);
             let (thread, owner) = verbatim_win32::window::window_owner(window);
             tells::routed_process(&window_class_name(window), owner, || {
                 (thread != 0).then(|| process_of_thread(thread)).flatten()
             })
             .map(Pid)
-        }
-        ObjectRef::Node(_) => {
-            answer(Outcome::Refused(Refusal::Unsupported));
-            return;
         }
     };
     let Some(pid) = pid else {
@@ -1467,10 +1463,9 @@ mod tests {
 
     use super::*;
     use verbatim_model::WindowHandle;
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
     use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, RuntimeId};
-    use verbatim_model::request::{
-        NodeRead, ObjectRead, Purpose, ReadObject, Reply, RequestNumber,
-    };
+    use verbatim_model::request::{NodeRead, Reply, RequestNumber};
     use verbatim_model::tell::{ElementToken, EventObject, TellWindow};
     use verbatim_process::message::read_message;
     use verbatim_win32::window::Readability;
@@ -1677,14 +1672,30 @@ mod tests {
         }
     }
 
-    /// Core's generic read of `object`, the request `number`, naming
-    /// `window`.
-    fn read_of(number: u64, window: WindowHandle, read: ReadObject) -> Box<Ask> {
+    /// Core's one-step read of `subject` by `set`, the request `number`,
+    /// naming `window`.
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "the reading threads take boxed asks"
+    )]
+    fn read_of(
+        number: u64,
+        window: WindowHandle,
+        (subject, set): (Subject, Vec<PropertyId>),
+    ) -> Box<Ask> {
         Box::new(Ask {
             number: RequestNumber(number),
             window,
             verdict: verbatim_model::request::WindowVerdict::Uia,
-            request: Request::ReadObject(read).into(),
+            request: Batch {
+                steps: vec![Step {
+                    op: Op::Read { subject, set },
+                    when: None,
+                }],
+                placement: Placement::Queue,
+                spare: None,
+            }
+            .into(),
         })
     }
 
@@ -1725,89 +1736,6 @@ mod tests {
                     .collect(),
             )
         })
-    }
-
-    /// An MSAA object at its own address is read for Core's request on the
-    /// reading thread of its window's process, csrss's for the desktop
-    /// window, by the set asked of the five the listener reads, and
-    /// answered with the window's facts: the desktop's name, as the virtual
-    /// desktop's is read, and a classic bar's role, value, states and
-    /// place, as its value change's read asks; a set beyond the five is
-    /// refused, and an address with nothing there answered not there.
-    #[test]
-    fn an_msaa_object_is_read_for_cores_request_by_the_set_asked() {
-        let asked = Arc::new(Mutex::new(Vec::new()));
-        let parts = listening_reading(|_| Readability::Readable, &asked, bar_at_the_desktop);
-        let read_of_set = |object, set| ReadObject {
-            object: ObjectRef::Msaa {
-                window: desktop_handle(),
-                object,
-                child: 0,
-            },
-            set,
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        };
-        let client = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
-        let request = |number, read| {
-            ask(
-                (&parts.readers, &parts.kept),
-                read_of(number, desktop_handle(), read),
-            );
-        };
-        let answered = |number, set: &[PropertyId]| {
-            ListenerToCore::Answer(Answer {
-                number: RequestNumber(number),
-                outcome: Outcome::Result(Reply::Object(Box::new(ObjectRead {
-                    object: NodeRead {
-                        node: None,
-                        window: verbatim_win32::window_facts::node_window(
-                            &tells::SystemReads,
-                            desktop_window(),
-                        ),
-                        values: bar_at_the_desktop(desktop_window(), client, 0, set)
-                            .expect("the bar's values"),
-                    },
-                    relation: None,
-                    descendants: Vec::new(),
-                    ancestors: Vec::new(),
-                }))),
-                probes: Vec::new(),
-                detail: String::new(),
-            })
-        };
-        request(1, read_of_set(client, vec![PropertyId::Name]));
-        assert_eq!(parts.next(), answered(1, &[PropertyId::Name]));
-        let bar = [
-            PropertyId::Role,
-            PropertyId::Value,
-            PropertyId::States,
-            PropertyId::Rect,
-        ];
-        request(2, read_of_set(client, bar.to_vec()));
-        assert_eq!(parts.next(), answered(2, &bar));
-        request(
-            3,
-            read_of_set(client, vec![PropertyId::Name, PropertyId::Description]),
-        );
-        let window = windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0;
-        request(4, read_of_set(window, vec![PropertyId::Name]));
-        let outcomes: Vec<(u64, Outcome)> = [parts.next(), parts.next()]
-            .into_iter()
-            .map(|message| match message {
-                ListenerToCore::Answer(answer) => (answer.number.0, answer.outcome),
-                other => panic!("an answer: {other:?}"),
-            })
-            .collect();
-        assert_eq!(
-            outcomes,
-            [
-                (3, Outcome::Refused(Refusal::Unsupported)),
-                (4, Outcome::NotThere)
-            ]
-        );
-        assert_eq!(parts.stop(), []);
     }
 
     /// A batch reading an MSAA object at its own address runs on the
@@ -1918,21 +1846,16 @@ mod tests {
     fn a_request_on_nothing_the_listener_holds_is_answered_at_once() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let parts = listening(|_| Readability::Readable, &asked);
-        let read = |object| ReadObject {
-            object,
-            set: vec![PropertyId::Name],
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        };
+        let read = |subject| (subject, vec![PropertyId::Name]);
         ask(
             (&parts.readers, &parts.kept),
             read_of(
                 1,
                 desktop_handle(),
-                read(ObjectRef::Kept {
+                read(Subject::Kept {
                     listener: 1,
                     token: ElementToken(9),
+                    keep: false,
                 }),
             ),
         );
@@ -1941,7 +1864,7 @@ mod tests {
             read_of(
                 2,
                 desktop_handle(),
-                read(ObjectRef::Node(verbatim_model::NodeId::new(1))),
+                read(Subject::Node(verbatim_model::NodeId::new(1))),
             ),
         );
         let outcomes: Vec<(u64, Outcome)> = parts
@@ -2167,12 +2090,15 @@ mod tests {
             (Vec::new(), 40),
         );
         assert_eq!(parts.kept.owner(token), Some(pid));
-        let read = |listener| ReadObject {
-            object: ObjectRef::Kept { listener, token },
-            set: vec![PropertyId::Name],
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
+        let read = |listener| {
+            (
+                Subject::Kept {
+                    listener,
+                    token,
+                    keep: false,
+                },
+                vec![PropertyId::Name],
+            )
         };
         ask(
             (&parts.readers, &parts.kept),
@@ -2223,13 +2149,14 @@ mod tests {
             PropertyId::Process,
             PropertyId::RuntimeId,
         ];
-        let read = ReadObject {
-            object: ObjectRef::Kept { listener: 1, token },
-            set: set.clone(),
-            relation: None,
-            descendants: false,
-            purpose: Purpose::Other,
-        };
+        let read = (
+            Subject::Kept {
+                listener: 1,
+                token,
+                keep: false,
+            },
+            set.clone(),
+        );
         for number in [1, 2] {
             ask(
                 (&parts.readers, &parts.kept),
@@ -2262,13 +2189,16 @@ mod tests {
         let ListenerToCore::Answer(first) = parts.next() else {
             panic!("an answer");
         };
-        let Outcome::Result(Reply::Object(object)) = first.outcome else {
+        let Outcome::Result(Reply::Steps(steps)) = first.outcome else {
             panic!("a result: {:?}", first.outcome);
         };
+        let [StepOutcome::Done(Done::Read(object))] = steps.as_slice() else {
+            panic!("one read: {steps:?}");
+        };
         assert_eq!(first.number, RequestNumber(1));
-        assert_eq!(object.object.values, expected);
+        assert_eq!(object.values, expected);
         assert_eq!(
-            object.object.window,
+            object.window,
             verbatim_win32::window_facts::node_window(&tells::SystemReads, desktop_window())
         );
         assert_eq!(

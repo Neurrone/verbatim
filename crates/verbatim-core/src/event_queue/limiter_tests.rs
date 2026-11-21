@@ -6,9 +6,7 @@
 
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyId, PropertyValues};
-use verbatim_model::request::{
-    Answer, Outcome as WireOutcome, Reply, Request as Wire, RequestNumber,
-};
+use verbatim_model::request::{Answer, Outcome as WireOutcome, Reply, RequestNumber};
 use verbatim_model::{Effect, NodeId, Pid, WindowHandle};
 
 use super::driver::{Core, Cx};
@@ -92,16 +90,31 @@ impl Request for HoldRead {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Properties {
-            node: NodeId::new(1),
-            set: vec![PropertyId::Name],
-        })
+        verbatim_model::batch::Batch {
+            steps: vec![verbatim_model::batch::Step {
+                op: verbatim_model::batch::Op::Read {
+                    subject: verbatim_model::batch::Subject::Node(NodeId::new(1)),
+                    set: vec![PropertyId::Name],
+                },
+                when: None,
+            }],
+            placement: verbatim_model::batch::Placement::Queue,
+            spare: None,
+        }
+        .into()
     }
 
     fn decode(&self, reply: Reply) -> Option<PropertyValues> {
         match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
+            Reply::Steps(steps) => match steps.as_slice() {
+                [
+                    verbatim_model::batch::StepOutcome::Done(verbatim_model::batch::Done::Read(
+                        read,
+                    )),
+                ] => Some(read.values.clone()),
+                _ => None,
+            },
+            Reply::Text(_) => None,
         }
     }
 }
@@ -286,7 +299,9 @@ fn said_after(exempt: Option<i32>, entries: Vec<Entry>) -> Vec<String> {
         from: OUTPOST,
         answer: Answer {
             number: RequestNumber(1),
-            outcome: WireOutcome::Result(Reply::Properties(PropertyValues::default())),
+            outcome: WireOutcome::Result(crate::entries::tests::properties(
+                PropertyValues::default(),
+            )),
             probes: Vec::new(),
             detail: String::new(),
         },
@@ -678,7 +693,9 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
             from: OUTPOST,
             answer: Answer {
                 number: RequestNumber(1),
-                outcome: WireOutcome::Result(Reply::Properties(PropertyValues::default())),
+                outcome: WireOutcome::Result(crate::entries::tests::properties(
+                    PropertyValues::default(),
+                )),
                 probes: Vec::new(),
                 detail: String::new(),
             },

@@ -28,51 +28,29 @@ use std::collections::VecDeque;
 
 use verbatim_model::WindowHandle;
 use verbatim_model::batch::{Op, Subject};
-use verbatim_model::request::{
-    Answer, Ask, Cancel, ObjectRef, Outcome, Question, Request, RequestNumber,
-};
+use verbatim_model::request::{Answer, Ask, Cancel, Outcome, Question, RequestNumber};
 
-/// The window of the MSAA ids `request`'s subject is named by, for the
-/// kinds that name one: a read of an object by its ids and a run's
-/// candidate, and a batch with a step on an MSAA object. Every kind is
-/// classed, so a new one is classed where it is added.
+/// The window of the MSAA ids `request`'s subject is named by: a batch
+/// with a step on an MSAA object. A terminal's text operation names none.
 fn ids_window(request: &Question) -> Option<WindowHandle> {
-    let request = match request {
-        Question::Legacy(request) => request,
-        Question::Batch(batch) => {
-            return batch.steps.iter().find_map(|step| match step.op.subject() {
-                Some(Subject::Msaa { ids, .. }) => Some(ids.window),
-                _ => None,
-            });
-        }
-    };
     match request {
-        Request::ReadObject(read) => match read.object {
-            ObjectRef::Msaa { window, .. } => Some(window),
-            ObjectRef::Kept { .. } | ObjectRef::Node(_) => None,
-        },
-        Request::Properties { .. }
-        | Request::Navigate { .. }
-        | Request::Find { .. }
-        | Request::Children { .. }
-        | Request::Text { .. }
-        | Request::Activate { .. }
-        | Request::Follow(_)
-        | Request::DumpTree { .. }
-        | Request::ShellItems { .. }
-        | Request::ShellItemPosition { .. } => None,
+        Question::Batch(batch) => batch.steps.iter().find_map(|step| match step.op.subject() {
+            Some(Subject::Msaa { ids, .. }) => Some(ids.window),
+            _ => None,
+        }),
+        Question::Terminal(_) => None,
     }
 }
 
-/// Whether `request` only moves the outpost's registration: a `Follow`,
-/// or a batch of `Follow` steps alone, which names the whole registration.
+/// Whether `request` only moves the outpost's registration: a batch of
+/// `Follow` steps alone, which names the whole registration.
 fn is_follow(request: &Question) -> bool {
     match request {
-        Question::Legacy(request) => matches!(request, Request::Follow(_)),
         Question::Batch(batch) => batch
             .steps
             .iter()
             .all(|step| matches!(step.op, Op::Follow(_))),
+        Question::Terminal(_) => false,
     }
 }
 
@@ -195,29 +173,50 @@ fn ended(number: RequestNumber, detail: &str) -> Answer {
 
 #[cfg(test)]
 mod tests {
-    use verbatim_model::request::{CancelReason, Follow, WindowVerdict};
+    use verbatim_model::batch::{Batch, Placement, Step};
+    use verbatim_model::request::{CancelReason, WindowVerdict};
 
     use super::*;
 
+    /// A one-step batch of `op`, placed `placement`.
+    fn one(op: Op, placement: Placement) -> Question {
+        Batch {
+            steps: vec![Step { op, when: None }],
+            placement,
+            spare: None,
+        }
+        .into()
+    }
+
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "the table queues boxed asks"
+    )]
     fn ask(number: u64) -> Box<Ask> {
         Box::new(Ask {
             number: RequestNumber(number),
             window: WindowHandle(1),
             verdict: WindowVerdict::Msaa,
-            request: Request::Properties {
-                node: verbatim_model::NodeId::new(1),
-                set: Vec::new(),
-            }
-            .into(),
+            request: one(
+                Op::Read {
+                    subject: Subject::Node(verbatim_model::NodeId::new(1)),
+                    set: Vec::new(),
+                },
+                Placement::Queue,
+            ),
         })
     }
 
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "the table queues boxed asks"
+    )]
     fn follow(number: u64, window: u64) -> Box<Ask> {
         Box::new(Ask {
             number: RequestNumber(number),
             window: WindowHandle(window),
             verdict: WindowVerdict::Uia,
-            request: Request::Follow(Follow { node: None }).into(),
+            request: one(Op::Follow(None), Placement::Queue),
         })
     }
 
@@ -225,12 +224,26 @@ mod tests {
         asks.queued.iter().map(|ask| ask.number.0).collect()
     }
 
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "the table queues boxed asks"
+    )]
     fn outside(number: u64) -> Box<Ask> {
         Box::new(Ask {
             number: RequestNumber(number),
             window: WindowHandle(1),
             verdict: WindowVerdict::Uia,
-            request: Request::DumpTree { locations: false }.into(),
+            request: one(
+                Op::Read {
+                    subject: Subject::Window {
+                        which: verbatim_model::batch::WindowOf::Handle(WindowHandle(1)),
+                        backend: verbatim_model::Backend::Uia,
+                        visible: false,
+                    },
+                    set: Vec::new(),
+                },
+                Placement::Outside,
+            ),
         })
     }
 
@@ -279,18 +292,12 @@ mod tests {
     /// when that object's window is destroyed, and any other batch stays.
     #[test]
     fn a_follow_batch_replaces_a_queued_follow_and_an_msaa_batch_goes_with_its_window() {
-        use verbatim_model::batch::{Batch, Op, Placement, Step, Subject};
         let batch = |number, op| {
             Box::new(Ask {
                 number: RequestNumber(number),
                 window: WindowHandle(1),
                 verdict: WindowVerdict::Msaa,
-                request: Batch {
-                    steps: vec![Step { op, when: None }],
-                    placement: Placement::Queue,
-                    spare: None,
-                }
-                .into(),
+                request: one(op, Placement::Queue),
             })
         };
         let read = |subject| Op::Read {

@@ -1,6 +1,6 @@
 //! `Follow` at each commit: Table 10's rows against its columns A to F.
 
-use verbatim_model::request::{Follow, FollowGroup, Followed};
+use verbatim_model::request::{FollowGroup, Followed};
 use verbatim_model::{
     Backend, NodeDetails, NodeId, NodeSnapshot, OutpostId, Pid, Role, StateSet, WindowHandle,
 };
@@ -44,13 +44,11 @@ fn naming(process: Pid, node: NodeId, group: FollowGroup) -> FollowRequest {
     FollowRequest {
         process,
         window: committed(10).kept.asked,
-        follow: Follow {
-            node: Some(Followed {
-                node,
-                group,
-                extra: None,
-            }),
-        },
+        follow: Some(Followed {
+            node,
+            group,
+            extra: None,
+        }),
     }
 }
 
@@ -58,7 +56,7 @@ fn nothing(process: Pid) -> FollowRequest {
     FollowRequest {
         process,
         window: committed(10).kept.asked,
-        follow: Follow { node: None },
+        follow: None,
     }
 }
 
@@ -223,7 +221,7 @@ fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
     let sent = follows.committed(Some((&focus.kept, &thumb, Some(&slider))), false);
     assert_eq!(
         sent.first()
-            .and_then(|request| request.follow.node.as_ref())
+            .and_then(|request| request.follow.as_ref())
             .and_then(|followed| followed.extra),
         Some(slider.id)
     );
@@ -232,7 +230,7 @@ fn a_slider_that_focuses_its_thumb_is_followed_as_the_extra_object() {
     let sent = follows.committed(Some((&focus.kept, &thumb, Some(&plain))), false);
     assert_eq!(
         sent.first()
-            .and_then(|request| request.follow.node.as_ref())
+            .and_then(|request| request.follow.as_ref())
             .and_then(|followed| followed.extra),
         None
     );

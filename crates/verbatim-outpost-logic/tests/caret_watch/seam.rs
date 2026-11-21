@@ -33,7 +33,7 @@ use verbatim_model::request::{
     Answer, Ask, CaretBinding, FocusAncestor, FocusCaret, FocusCaretRead, FocusNode, FocusRead,
     ForegroundReport, HeldIds, Instance, MsaaIds, NodeRead, NodeWindow, Outcome,
     Press as WirePress, PressAction, Probe, ProcessFact, Question, QueueEffect, QueueInput, Reader,
-    Reply, Request as Wire, WindowVerdict,
+    Reply, WindowVerdict,
 };
 
 #[path = "../../../verbatim-core/tests/support/readers.rs"]
@@ -507,6 +507,15 @@ impl Seam {
                 .values()
                 .next()
                 .map_or(0, |&key| self.read_us[key]),
+            // A `Follow` moves a registration and reads nothing.
+            Question::Batch(batch)
+                if batch
+                    .steps
+                    .iter()
+                    .all(|step| matches!(step.op, verbatim_model::batch::Op::Follow(_))) =>
+            {
+                0
+            }
             Question::Batch(batch) if !batch.reads_focus_first() => self.focus_us.1,
             _ => 0,
         }
@@ -637,10 +646,7 @@ impl Seam {
             };
             return reply;
         }
-        match legacy(&ask.request) {
-            Wire::Follow(_) => Reply::Followed,
-            other => panic!("the stand-in answers no request {other:?}"),
-        }
+        panic!("the stand-in answers no request {:?}", ask.request)
     }
 
     /// What wait `program`'s check answers, read from `app`: `None` for a
@@ -1087,14 +1093,6 @@ fn heard(parts: &[SegmentContent]) -> Heard {
         ] => Heard::Focus(name.clone()),
         other => Heard::Other(format!("{other:?}")),
     }
-}
-
-/// `question` as one of the kinds of request not yet converted to a
-/// batch: this seam states today's requests, and a batch fails it.
-fn legacy(question: &verbatim_model::request::Question) -> &Wire {
-    question
-        .legacy()
-        .expect("a kind of request, where no feature asks a batch yet")
 }
 
 /// Whether `batch` is a caret key's starting batch: its first step the

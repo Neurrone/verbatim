@@ -20,16 +20,13 @@ mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
-    Ancestor, Cached, DialogText, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry,
-    Shape, Uia,
+    Ancestor, Cached, DialogText, Fill, FocusInput, Live, Node, NodeGates, Shape, Uia,
 };
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
-    FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
-    RangeEnd, SnapshotQuery, StatesQuery, Status, StepQuery, TextAttribute, TextFrom, TreeQuery,
-    caret_read_remote, controlled_selection_remote, counting, element_by_path_remote,
-    focus_ancestry_remote, focus_states_remote, navigation_step_remote, terminal_snapshot_remote,
-    tree_dump_remote,
+    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
+    FormatSpan, Movement, PathQuery, Position, RangeEnd, SnapshotQuery, StatesQuery, Status,
+    TextAttribute, TextFrom, caret_read_remote, counting, element_by_path_remote,
+    focus_ancestry_remote, focus_states_remote, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -81,12 +78,6 @@ impl Fixture {
         self.find_node(name).narrow()
     }
 
-    /// The element named `name`, read as the node registry keeps it, as the
-    /// navigation step query reads it.
-    fn find_kept(&self, name: &str) -> Cached<Kept> {
-        self.find_node(name).narrow()
-    }
-
     /// The element named `name`, filled as a node.
     fn find_node(&self, name: &str) -> Cached<Node> {
         let request = self
@@ -125,22 +116,6 @@ impl Fixture {
                         ..Node::all_on()
                     },
                     ..Ancestor::all_on()
-                })
-                .expect("a cache request"),
-        )
-    }
-
-    /// The fill of a node read among many, as the tree dump reads one
-    /// without its locations: every detail but its place and its cell.
-    fn many_nodes(&self) -> Fill<Node> {
-        Fill::new(
-            &self
-                .uia
-                .request::<Node>(NodeGates {
-                    place: None,
-                    cell: None,
-                    counts: None,
-                    ..Node::all_on()
                 })
                 .expect("a cache request"),
         )
@@ -310,29 +285,14 @@ fn focus_and_navigation_execute_exactly() {
         };
         assert_eq!(ancestry(&typical), (1, false));
     });
-
-    let nodes = fixture.nodes();
-    let step = |element: &Cached<Kept>, direction| {
-        let query = StepQuery {
-            element,
-            direction,
-            fill: &nodes,
-        };
-        let step = navigation_step_remote(&fixture.uia, &query).expect("the program runs");
-        assert_eq!(step.window, Some(fixture.hwnd.0 as isize));
-    };
-    let item = fixture.find_kept("Apple");
-    let far = counted(|| step(&item, NavigationDirection::Parent));
-    let outer = fixture.find_kept("Group 1");
-    let near_step = counted(|| step(&outer, NavigationDirection::FirstChild));
     fixture.app.quit();
 
     assert_eq!(
-        [worst, limited, typical, far, near_step],
-        [3072, 2237, 1276, 967, 235],
-        "focus ancestry worst, at depth limit 30, typical; navigation far and near"
+        [worst, limited, typical],
+        [3072, 2237, 1276],
+        "focus ancestry worst, at depth limit 30, typical"
     );
-    assert!(worst < LIMIT / 2 && far < LIMIT / 2);
+    assert!(worst < LIMIT / 2);
 }
 
 /// The outpost's walk to its own copy of an element by its path (stage A
@@ -376,44 +336,6 @@ fn paths_execute_exactly() {
         "a path down sixty-two levels, down one, and to nothing"
     );
     assert!(deepest < LIMIT / 2);
-}
-
-/// A selection inside the list a search box controls
-/// (`tests/fixtures/controller.json`), found inside a group of the list,
-/// found as the list's second child, and not found, every element of the
-/// list walked and then the list's selection, empty, read: the program
-/// walks the controlled list depth first, so its count grows with the
-/// elements it passes before the selected one.
-fn controlled_selections_execute_exactly() {
-    common::init_com();
-    let fixture = Fixture::start("controller.json", "mockapp-instructions-controlled");
-    let search = fixture.find("Search box");
-    let selected = |name: &str| runtime_id(&fixture.find(name));
-    let nodes = fixture.nodes();
-    let run = |selected: &[i32]| {
-        let query = ControlledQuery {
-            focused: &search,
-            selected,
-            fill: &nodes,
-        };
-        controlled_selection_remote(&fixture.uia, &query)
-            .expect("the program runs")
-            .selected
-            .is_some()
-    };
-    let grouped = selected("Display settings");
-    let deep = counted(|| assert!(run(&grouped)));
-    let second = selected("Sound settings");
-    let near = counted(|| assert!(run(&second)));
-    let outside = selected("Elsewhere");
-    let missing = counted(|| assert!(!run(&outside)));
-    fixture.app.quit();
-
-    assert_eq!(
-        [deep, near, missing],
-        [255, 287, 291],
-        "controlled selection inside a group, second child, not found"
-    );
 }
 
 /// A caret read of the line at the caret with every attribute, the
@@ -766,68 +688,6 @@ fn terminal_colours_execute_exactly() {
     assert!(worst.iter().flatten().all(|&count| count < LIMIT / 2));
 }
 
-/// The tree dump's runs, each reading the children of the elements it
-/// starts from and those it finds, breadth first, up to
-/// `verbatim_uia_rops::CHILDREN_PER_RUN` (60) children: from `deep.json`'s
-/// window, the worst case, a run that reads sixty elements' children, one
-/// each, down the sixty-two nested groups, and a second run for the rest;
-/// and from `wide.json`'s window, whose list of a hundred items is more
-/// than a run holds, a first run that stops inside the list, which is then
-/// read classically, and runs that read the items' children, none, sixteen
-/// elements at a time. A run starting from sixteen such elements that each
-/// lead down such a chain would add their sixteen reads, about 590
-/// instructions, to the worst case, still under half the limit.
-fn tree_dumps_execute_exactly() {
-    common::init_com();
-    let runs = |name: &str, prefix: &str| {
-        let fixture = Fixture::start(name, prefix);
-        let nodes = fixture.many_nodes();
-        let registry =
-            NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-        let root = Live::new(fixture.root.clone())
-            .refresh(nodes.request())
-            .expect("the window, read as a node");
-        let query = TreeQuery {
-            root: &root,
-            fill: &nodes,
-            registry: &registry,
-            max_depth: 64,
-            max_nodes: 4096,
-        };
-        counting::start();
-        let (_, truncated) = tree_dump_remote(&fixture.uia, &query).expect("the dump");
-        let counts = counting::stop();
-        assert!(!truncated, "{name}: the whole tree");
-        fixture.app.quit();
-        counts
-    };
-    let deep = runs("deep.json", "mockapp-instructions-deep-dump");
-    let wide = runs("wide.json", "mockapp-instructions-wide-dump");
-    assert_eq!(
-        (deep.clone(), wide.clone()),
-        (
-            vec![Some(4635), Some(876)],
-            vec![
-                Some(3083),
-                Some(719),
-                Some(645),
-                Some(645),
-                Some(645),
-                Some(645),
-                Some(645),
-                Some(413)
-            ]
-        ),
-        "the deep window's runs; the wide window's"
-    );
-    assert!(
-        deep.iter()
-            .chain(&wide)
-            .flatten()
-            .all(|&count| count < LIMIT / 2)
-    );
-}
-
 /// A caret wait's poll (`docs/design/readers-tell-core-asks-build1.md`,
 /// "The watch"; the request list's design, section 5, `WaitForCaret`):
 /// one program, the check followed by the batch's later reads, the caret
@@ -1162,7 +1022,7 @@ fn batch_object_shapes_execute_exactly() {
             vec![205],
             // The list's hundred items fill no run alone, and are read by
             // a call between the first program and the second.
-            vec![2457, 2121, 1281],
+            vec![2458, 2121, 1281],
             vec![2266, 2240, 2178, 1402],
         ],
         "navigation, a read, the controlled selection, the tree dump"
@@ -1193,10 +1053,6 @@ fn main() {
             focus_and_navigation_execute_exactly,
         ),
         ("paths_execute_exactly", paths_execute_exactly),
-        (
-            "controlled_selections_execute_exactly",
-            controlled_selections_execute_exactly,
-        ),
         ("caret_reads_execute_exactly", caret_reads_execute_exactly),
         (
             "densely_mixed_formatting_executes_exactly",
@@ -1218,7 +1074,6 @@ fn main() {
             "terminal_colours_execute_exactly",
             terminal_colours_execute_exactly,
         ),
-        ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
         ("wait_polls_execute_exactly", wait_polls_execute_exactly),
         ("focus_states_execute_exactly", focus_states_execute_exactly),
         (

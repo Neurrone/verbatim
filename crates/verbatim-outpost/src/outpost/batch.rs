@@ -28,8 +28,7 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues,
 };
 use verbatim_model::request::{
-    Ask, Follow, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal,
-    Reply, Route,
+    Ask, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
 };
 use verbatim_model::{
     Backend, NodeId, NodeSnapshot, QueryKind, TextAnchor, TextPoint, TextPosition, TextReply,
@@ -155,6 +154,33 @@ fn after_wait(
     };
     let later = program.batch.steps.get(1..).unwrap_or_default();
     run.steps(later)
+}
+
+/// What a walk down the tree has answered and visited so far, over its
+/// starts.
+struct Walked {
+    /// The nodes answered.
+    found: Vec<Descendant>,
+    /// The nodes the children walk visited and the program builder's
+    /// answered, which counts no visits of its own: what is left of the
+    /// node cap for a later start.
+    visited: usize,
+    /// Whether no cap or failed read cut it.
+    complete: bool,
+}
+
+/// Whether `node`, read, is answered by `walk`, and whether its subtree is
+/// left out.
+fn judged(context: &RequestContext<'_>, node: &NodeSnapshot, walk: &Walk) -> (bool, bool) {
+    let holds = |matcher: &verbatim_model::matcher::Matcher| {
+        let Ok(holds) =
+            matcher.evaluate::<std::convert::Infallible>(&mut |id| Ok(value_of(context, node, id)));
+        holds
+    };
+    (
+        walk.matcher.as_ref().is_none_or(holds),
+        walk.prune.as_ref().is_some_and(holds),
+    )
 }
 
 /// An object a subject names, resolved once per batch.
@@ -361,7 +387,7 @@ impl Run<'_, '_> {
             WindowOf::TopLevelOf(window) => {
                 Some(verbatim_win32::window::top_level_of(hwnd_of(*window)))
             }
-            WindowOf::ClassPath(classes) => super::shell_items::class_path_window(classes),
+            WindowOf::ClassPath(classes) => super::class_path::class_path_window(classes),
             WindowOf::Focused => self
                 .focus_window()
                 .ok()
@@ -806,104 +832,257 @@ impl Run<'_, '_> {
         })))
     }
 
-    /// `Descendants`: each start's subtree in tree order by the children
-    /// walk, each node judged by the matcher and the pruning, the walk
-    /// stopped at its limit and its node cap.
+    /// `Descendants`: each start's subtree in tree order, each node judged
+    /// by the matcher and the pruning, the walk stopped at its limit and
+    /// its node cap: a UI Automation start's through the program builder,
+    /// which walks the control view by calls; any other's by the children
+    /// walk. A window's start is its own object, and an MSAA object's is
+    /// read as an object an event names.
     fn descendants(&mut self, subject: &Subject, walk: &Walk) -> Stepped {
-        let starts: Vec<NodeId> = match subject.earlier_nodes(&self.outcomes) {
-            Some(nodes) => nodes.iter().filter_map(|read| read.node).collect(),
-            None => match self.node(subject)? {
-                Ok(node) => vec![node],
-                Err(outcome) => return Ok(outcome),
-            },
-        };
-        let context = self.context;
-        let limit = usize::try_from(walk.limit).unwrap_or(usize::MAX);
-        let cap = usize::try_from(walk.nodes).unwrap_or(usize::MAX);
-        let judge = |node: &NodeSnapshot| {
-            let holds = |matcher: &verbatim_model::matcher::Matcher| {
-                let Ok(holds) = matcher.evaluate::<std::convert::Infallible>(&mut |id| {
-                    Ok(value_of(context, node, id))
-                });
-                holds
+        let starts: Vec<(NodeId, Option<NodeSnapshot>)> =
+            match subject.earlier_nodes(&self.outcomes) {
+                Some(nodes) => nodes
+                    .iter()
+                    .filter_map(|read| read.node)
+                    .map(|node| (node, None))
+                    .collect(),
+                None => match self.start_of(subject)? {
+                    Ok(start) => vec![start],
+                    Err(outcome) => return Ok(outcome),
+                },
             };
-            (
-                walk.matcher.as_ref().is_none_or(holds),
-                walk.prune.as_ref().is_some_and(holds),
-            )
+        let mut walked = Walked {
+            found: Vec::new(),
+            visited: 0,
+            complete: true,
         };
-        let mut found: Vec<Descendant> = Vec::new();
-        let mut visited = 0usize;
-        let mut complete = true;
-        'starts: for (root, start) in starts.into_iter().enumerate() {
+        for (root, (start, snapshot)) in starts.into_iter().enumerate() {
             let root = u32::try_from(root).unwrap_or(u32::MAX);
-            let mut parent = None;
-            if walk.include_subject {
-                let snapshot = match read::read_node(context, self.client, start) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => return Ok(failed(&error, start)),
-                };
-                let (matched, pruned) = judge(&snapshot);
-                if pruned {
-                    continue;
-                }
-                if matched {
-                    parent = Some(u32::try_from(found.len()).unwrap_or(u32::MAX));
-                    found.push(Descendant {
-                        node: asked::node_read(context, &snapshot, None, &walk.set),
-                        parent: None,
-                        root,
-                    });
-                }
-            }
-            // Each level's children with the depth below the start and the
-            // place of the nearest answered ancestor.
-            let mut stack = vec![(start, 0u32, parent)];
-            while let Some((node, depth, parent)) = stack.pop() {
-                if depth >= walk.depth {
-                    continue;
-                }
-                let children = match asked::children(context, self.client, node) {
-                    Ok(children) => children,
-                    Err(ReadError::Gone) => continue,
-                    Err(_) => {
-                        complete = false;
-                        continue;
-                    }
-                };
-                let mut below = Vec::new();
-                for child in children {
-                    visited += 1;
-                    if visited > cap {
-                        complete = false;
-                        break 'starts;
-                    }
-                    let (matched, pruned) = judge(&child);
-                    if pruned {
-                        continue;
-                    }
-                    let mut own = parent;
-                    if matched {
-                        own = Some(u32::try_from(found.len()).unwrap_or(u32::MAX));
-                        found.push(Descendant {
-                            node: asked::node_read(context, &child, None, &walk.set),
-                            parent,
-                            root,
-                        });
-                        if found.len() >= limit {
-                            break 'starts;
-                        }
-                    }
-                    below.push((child.id, depth + 1, own));
-                }
-                // Depth first in tree order: the first child's subtree next.
-                stack.extend(below.into_iter().rev());
+            let ended = if self.context.store.runtime_id_of(start).is_some() {
+                self.descend_uia(start, root, walk, &mut walked)?
+            } else {
+                self.descend_by_children(start, snapshot, root, walk, &mut walked)
+            };
+            match ended {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(outcome) => return Ok(*outcome),
             }
         }
         Ok(StepOutcome::Done(Done::Descendants(Descended {
-            nodes: found,
-            complete,
+            nodes: walked.found,
+            complete: walked.complete,
         })))
+    }
+
+    /// The node a walk down the tree starts from, as `subject` names it,
+    /// with its snapshot when resolving it read one.
+    fn start_of(
+        &mut self,
+        subject: &Subject,
+    ) -> Result<Result<(NodeId, Option<NodeSnapshot>), StepOutcome>, Outcome> {
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(Err(outcome)),
+        };
+        let context = self.context;
+        let read = match &self.held[place].1 {
+            Ok(Held::Node(node)) => return Ok(Ok((*node, None))),
+            Ok(Held::Window(hwnd, backend)) => {
+                read::window_node(context, self.client, *hwnd, *backend)
+            }
+            Ok(Held::Msaa(Some(candidate))) => Some(
+                candidate
+                    .object()
+                    .read(context.nodes(), verbatim_ia2::acquire::Purpose::Announce),
+            ),
+            Ok(Held::Msaa(None) | Held::Focus(..) | Held::Route(_)) | Err(_) => {
+                return Ok(Err(StepOutcome::Refused(StepRefusal::Unsupported)));
+            }
+        };
+        Ok(match read {
+            Some(snapshot) => Ok((snapshot.id, Some(snapshot))),
+            None => Err(StepOutcome::NotThere(Missing::Object)),
+        })
+    }
+
+    /// Walks the UI Automation node `start`, the walk's start at `root`,
+    /// through the program builder, into `walked`: `Ok(true)` when the
+    /// walk met its limit or its node cap.
+    fn descend_uia(
+        &mut self,
+        start: NodeId,
+        root: u32,
+        walk: &Walk,
+        walked: &mut Walked,
+    ) -> Result<Result<bool, Box<StepOutcome>>, Outcome> {
+        use verbatim_uia_rops::batch::{
+            Descend, Found, Fused, Input, Judged, Object, Ran, Segment,
+        };
+        let context = self.context;
+        let Some(element) = context
+            .store
+            .element_of(start)
+            .and_then(|agile| agile.resolve().ok())
+        else {
+            return Ok(Err(Box::new(StepOutcome::NotThere(Missing::Node(start)))));
+        };
+        let Ok((uia, nodes)) = self.client.uia_with(context, RequestContext::node_request) else {
+            return Ok(Err(Box::new(StepOutcome::Failed)));
+        };
+        let fill = verbatim_uia::Fill::new(&nodes);
+        let judge = |node: &verbatim_uia::Cached<verbatim_uia::Node>| {
+            let (matched, pruned) = judged(context, &node.snapshot(context.nodes()), walk);
+            Judged { matched, pruned }
+        };
+        let window = asked::known_nearest_of(context, start);
+        let left =
+            |cap: u32, used: usize| cap.saturating_sub(u32::try_from(used).unwrap_or(u32::MAX));
+        let segment = Segment {
+            uia,
+            steps: vec![Fused {
+                place: verbatim_model::batch::Place(0),
+                when: None,
+                input: Input::Descendants {
+                    subject: Object::Held {
+                        element: element.live().element(),
+                        window: read::kept_own_window(context, start).unwrap_or(0),
+                    },
+                    walk: Descend {
+                        depth: walk.depth,
+                        view: walk.view,
+                        include_subject: walk.include_subject,
+                        prunes: walk.prune.is_some(),
+                        limit: left(walk.limit, walked.found.len()),
+                        nodes: left(walk.nodes, walked.visited),
+                        fill: &fill,
+                        judge: &judge,
+                    },
+                },
+                calls_only: false,
+            }],
+            remote: context.tries_remote(window),
+            window,
+        };
+        let answer = verbatim_uia_rops::batch::run_batch(&segment);
+        if answer.read_classically
+            && let Some(window) = window
+        {
+            context.read_classically(verbatim_win32::window::top_level_of(window));
+        }
+        let descendants = match answer.steps.into_iter().next() {
+            Some(Ran::Done(Found::Descendants(descendants))) => descendants,
+            Some(Ran::Gone) => {
+                return Ok(Err(Box::new(StepOutcome::NotThere(Missing::Node(start)))));
+            }
+            Some(Ran::TimedOut) => return Err(Outcome::NotResponding),
+            _ => return Ok(Err(Box::new(StepOutcome::Failed))),
+        };
+        let offset = u32::try_from(walked.found.len()).unwrap_or(u32::MAX);
+        walked.visited = walked.visited.saturating_add(descendants.nodes.len());
+        walked.complete &= descendants.complete;
+        for descendant in descendants.nodes {
+            walked.found.push(Descendant {
+                node: asked::node_read(
+                    context,
+                    &descendant.node.snapshot(context.nodes()),
+                    None,
+                    &walk.set,
+                ),
+                parent: descendant
+                    .parent
+                    .map(|parent| parent.saturating_add(offset)),
+                root,
+            });
+        }
+        Ok(Ok(!descendants.complete
+            || walked.found.len()
+                >= usize::try_from(walk.limit).unwrap_or(usize::MAX)))
+    }
+
+    /// Walks `start`, the walk's start at `root`, its snapshot `snapshot`
+    /// when resolving it read one, by the children walk, into `walked`:
+    /// `Ok(true)` when the walk met its limit or its node cap.
+    fn descend_by_children(
+        &mut self,
+        start: NodeId,
+        snapshot: Option<NodeSnapshot>,
+        root: u32,
+        walk: &Walk,
+        walked: &mut Walked,
+    ) -> Result<bool, Box<StepOutcome>> {
+        let context = self.context;
+        let limit = usize::try_from(walk.limit).unwrap_or(usize::MAX);
+        let cap = usize::try_from(walk.nodes).unwrap_or(usize::MAX);
+        let mut parent = None;
+        if walk.include_subject {
+            let snapshot = match snapshot {
+                Some(snapshot) => snapshot,
+                None => match read::read_node(context, self.client, start) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return Err(Box::new(failed(&error, start))),
+                },
+            };
+            let (matched, pruned) = judged(context, &snapshot, walk);
+            if pruned {
+                return Ok(false);
+            }
+            if matched {
+                parent = Some(u32::try_from(walked.found.len()).unwrap_or(u32::MAX));
+                walked.found.push(Descendant {
+                    node: asked::node_read(context, &snapshot, None, &walk.set),
+                    parent: None,
+                    root,
+                });
+                if walked.found.len() >= limit {
+                    return Ok(true);
+                }
+            }
+        }
+        // Each level's children with the depth below the start and the
+        // place of the nearest answered ancestor.
+        let mut stack = vec![(start, 0u32, parent)];
+        while let Some((node, depth, parent)) = stack.pop() {
+            if depth >= walk.depth {
+                continue;
+            }
+            let children = match asked::children(context, self.client, node) {
+                Ok(children) => children,
+                Err(ReadError::Gone) => continue,
+                Err(_) => {
+                    walked.complete = false;
+                    continue;
+                }
+            };
+            let mut below = Vec::new();
+            for child in children {
+                walked.visited += 1;
+                if walked.visited > cap {
+                    walked.complete = false;
+                    return Ok(true);
+                }
+                let (matched, pruned) = judged(context, &child, walk);
+                if pruned {
+                    continue;
+                }
+                let mut own = parent;
+                if matched {
+                    own = Some(u32::try_from(walked.found.len()).unwrap_or(u32::MAX));
+                    walked.found.push(Descendant {
+                        node: asked::node_read(context, &child, None, &walk.set),
+                        parent,
+                        root,
+                    });
+                    if walked.found.len() >= limit {
+                        return Ok(true);
+                    }
+                }
+                below.push((child.id, depth + 1, own));
+            }
+            // Depth first in tree order: the first child's subtree next.
+            stack.extend(below.into_iter().rev());
+        }
+        Ok(false)
     }
 
     /// `IsOneOf`: the equal node met by NVDA's equality, the nodes at an
@@ -927,13 +1106,16 @@ impl Run<'_, '_> {
             Ok(Held::Node(node)) => nodes.iter().position(|each| each == node),
             Ok(Held::Msaa(Some(candidate))) => {
                 let mut object = candidate.object();
-                nodes.iter().enumerate().position(|(place, &node)| {
+                let found = nodes.iter().enumerate().position(|(place, &node)| {
                     if place == 0 && equal.is_some() {
                         object.is_equal_to(node, context.nodes())
                     } else {
                         object.which_of(&[node], context.nodes()) == Some(node)
                     }
-                })
+                });
+                // The role the equality read serves the reads after it.
+                candidate.keep_role_of(&object);
+                found
             }
             Ok(Held::Msaa(None) | Held::Window(..) | Held::Focus(..) | Held::Route(_)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
@@ -959,12 +1141,12 @@ impl Run<'_, '_> {
         };
         let named = node.as_ref().map(|followed| followed.node);
         Ok(
-            match super::followed::follow(self.context, self.client, &Follow { node }) {
-                Outcome::Result(_) => StepOutcome::Done(Done::Follow),
-                Outcome::NotThere => {
+            match super::followed::follow(self.context, self.client, node.as_ref()) {
+                super::followed::Moved::Done => StepOutcome::Done(Done::Follow),
+                super::followed::Moved::NotThere => {
                     StepOutcome::NotThere(named.map_or(Missing::Object, Missing::Node))
                 }
-                _ => StepOutcome::Failed,
+                super::followed::Moved::Unregistered => StepOutcome::Failed,
             },
         )
     }

@@ -12,16 +12,18 @@
 //! there found. An object with neither, the focus executed and no longer
 //! the committed focus's node, is read by no command.
 
+use verbatim_model::batch::Relation;
 use verbatim_model::property::{PropertyId, PropertyValues};
-use verbatim_model::request::{FocusNode, NodeRead, Reply, Request as Wire};
+use verbatim_model::request::{FocusNode, NodeRead};
 use verbatim_model::{
-    ActionName, Effect, Message, NodeId, NodeSnapshot, QueryKind, SegmentContent, TraceId,
+    Effect, Message, NodeId, NodeSnapshot, Pid, QueryKind, SegmentContent, TraceId,
     UtteranceSegment,
 };
 
+use crate::batch::{Single, flat};
 use crate::editing::{self, NavigatorText};
 use crate::entries::Entries;
-use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
 use crate::state::{Navigator, NavigatorRead, SrState};
@@ -61,106 +63,23 @@ pub(crate) fn found(state: &SrState) -> Found {
     }
 }
 
-/// One navigation step from a node, with the properties of the node
-/// reached.
-#[derive(Debug)]
-struct Navigate {
-    window: RequestWindow,
-    node: NodeId,
-    direction: QueryKind,
-    /// The properties of the node reached, chosen from the settings.
-    set: Vec<PropertyId>,
-}
-
-impl Request for Navigate {
-    type Reply = Option<NodeRead>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Navigate {
-            node: self.node,
-            direction: self.direction,
-            set: self.set.clone(),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Navigated(read) => Some(read),
-            _ => None,
-        }
-    }
-}
-
-/// A node's default action.
-#[derive(Debug)]
-struct Activate {
-    window: RequestWindow,
-    node: NodeId,
-}
-
-impl Request for Activate {
-    type Reply = Option<ActionName>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Activate { node: self.node })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Activated(action) => Some(action),
-            _ => None,
-        }
-    }
-}
-
-/// A node's properties, read live.
-#[derive(Debug)]
-pub(crate) struct Properties {
-    pub(crate) window: RequestWindow,
-    pub(crate) node: NodeId,
-    /// The properties, chosen from the settings.
-    pub(crate) set: Vec<PropertyId>,
-}
-
-impl Request for Properties {
-    type Reply = PropertyValues;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Legacy(Wire::Properties {
-            node: self.node,
-            set: self.set.clone(),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        match reply {
-            Reply::Properties(values) => Some(values),
-            _ => None,
-        }
+/// The values of `set` of node `node`, read live by the outpost of
+/// `process`, naming `window`, under `due_us`.
+pub(crate) async fn read_values(
+    cx: &mut Cx<Entries>,
+    (process, window, node): (Pid, RequestWindow, NodeId),
+    set: &[PropertyId],
+    due_us: u64,
+) -> Outcome<PropertyValues> {
+    let mut batch = cx.batch(|| ());
+    let read = batch.read(node, set);
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(process), window)
+        .one(read);
+    match flat(cx.ask(request, due_us).await).split() {
+        Ok(read) => Outcome::Result(read.values),
+        Err(other) => other,
     }
 }
 
@@ -249,15 +168,25 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
         Found::Unread => return,
         Found::On(on) => on,
     };
-    let request = Navigate {
-        window: on.window,
-        node: on.object.id,
-        direction: kind,
-        set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
+    let relation = match kind {
+        QueryKind::Parent => Relation::Parent,
+        QueryKind::FirstChild => Relation::FirstChild,
+        QueryKind::NextSibling => Relation::NextSibling,
+        QueryKind::PreviousSibling => Relation::PreviousSibling,
     };
+    let set = crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET);
+    let mut batch = cx.batch(|| ());
+    let reached = batch.related(on.object.id, relation, &set);
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(on.window.process), on.window)
+        .one(reached);
     let due_us = cx.due_in(OTHER_DUE_US);
     match cx.ask(request, due_us).await {
-        Outcome::Result(Some(read)) => {
+        Outcome::Result(Single::Done(reached)) if !reached.is_empty() => {
+            let Some(read) = reached.into_iter().next() else {
+                return;
+            };
             let window = RequestWindow::of_node(&read.window);
             let Some(reached) = snapshot(read, &on.object) else {
                 return;
@@ -267,7 +196,7 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
         }
         // A tree edge or a node not there: the navigator stays put and the
         // edge is said.
-        Outcome::Result(None) | Outcome::NotThere => {
+        Outcome::Result(Single::Done(_) | Single::NotThere) | Outcome::NotThere => {
             emit_all(&mut cx, reduce::navigation_edge(trace_id, kind));
         }
         // No answer: the navigator stays where it is, and nothing is known
@@ -287,12 +216,14 @@ pub(crate) async fn activate(mut cx: Cx<Entries>, trace_id: TraceId) {
         Found::Unread => return,
         Found::On(on) => on,
     };
-    let request = Activate {
-        window: on.window,
-        node: on.object.id,
-    };
+    let mut batch = cx.batch(|| ());
+    let activated = batch.activate(on.object.id);
+    let request = batch
+        .finish()
+        .of(Reader::Outpost(on.window.process), on.window)
+        .one(activated);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let said = match cx.ask(request, due_us).await {
+    let said = match flat(cx.ask(request, due_us).await) {
         Outcome::Result(action) => reduce::activation_completed(trace_id, true, action.as_ref()),
         Outcome::NotResponding | Outcome::NoLongerAwaited(_) => return,
         Outcome::Refused(_) | Outcome::NotThere | Outcome::ReaderEnded => {
@@ -313,13 +244,16 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
         Found::Unread => return,
         Found::On(on) => on,
     };
-    let request = Properties {
-        window: on.window,
-        node: on.object.id,
-        set: crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET),
-    };
+    let set = crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET);
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Outcome::Result(values) = cx.ask(request, due_us).await else {
+    let Outcome::Result(values) = read_values(
+        &mut cx,
+        (on.window.process, on.window, on.object.id),
+        &set,
+        due_us,
+    )
+    .await
+    else {
         return;
     };
     let read = NodeRead {

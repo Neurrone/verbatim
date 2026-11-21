@@ -140,7 +140,7 @@ fn a_reply_of_an_old_kind_is_no_batchs_answer() {
     let mut read = batch(|| ());
     let _ = read.caret(node(), None);
     let sent = read.finish();
-    assert!(Answers::parse(&sent, Reply::Followed).is_none());
+    assert!(Answers::parse(&sent, crate::entries::tests::followed()).is_none());
 }
 
 /// The brand a bar's read on Core's want list takes, named for its one
