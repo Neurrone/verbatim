@@ -709,8 +709,14 @@ Each file's module comment says exactly what it asserts; in outline:
   or judged first, and counted. The outpost's reads that speech does not
   show (where a selection starts, a baseline Verbatim's own selection or
   move minted) are asked through the request driver.
-  `CoreDriver::raise_at_once` tells a burst of `WinEvent`s through the
-  listener's limiter before any answer is heard.
+  `CoreDriver::raise_together` tells a burst of `WinEvent`s through the
+  listener's own merge of waiting tells (`written_together`) before any
+  answer is heard. The driver makes every tell with the listener's own
+  code: a UI Automation event's capture, check and tell assembly
+  (`CheckEvent`, `check_event`, `CheckEvent::into_tell`,
+  `Pending::finish`) and an MSAA event's tell with its local drops
+  (`msaa_tell`), with the test's foreground in the window reads and Core's
+  test time as the clock.
 - `text.rs` drives `verbatim-outpost`'s text module over `text.json` on
   both stacks: lines, words, and characters; movement stopping at the
   empty last line; UIA's missing sentence unit and the edit control's

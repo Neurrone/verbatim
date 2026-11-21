@@ -463,7 +463,11 @@ by Core on entering the window: one acquisition; `progress`, an
   `Nudger` (`Nudger::hook`), installs its one set when asked, behind every
   nudge sent before and returning once the hooks are in (an outpost asks
   when `Follow` first names a console's terminal). `EventHandlers` are made
-  on the thread: the `WinEvent` callback and an optional nudge handler.
+  on the thread: the `WinEvent` callback, an optional nudge handler and
+  an optional timer handler, which the thread calls for each `WM_TIMER`
+  of its one thread timer (`ThreadTimer`, `SetTimer` with no window, set
+  and stopped only on the thread, a stale `WM_TIMER` left by `KillTimer`
+  included), as the focus listener ends its foreground hold.
   A window object's show of the window in front is kept as a show,
   whatever its class, for a set that hears shows (`shown_in_front`, one
   `GetForegroundWindow`), and delivered on its client object, as every

@@ -812,6 +812,45 @@ mod tests {
         );
     }
 
+    /// A UI Automation tell placed while an MSAA foreground is held is sent
+    /// at once, ahead of the held foreground, which still awaits its
+    /// window (the hold holds MSAA events only, Dickson, 2026-11-17).
+    #[test]
+    fn a_uia_tell_passes_a_held_foreground_and_is_sent_at_once() {
+        let window = OwnWindow::new();
+        let (tells, sender, mut reader) = tells();
+        let foreground_event = event(
+            WinEventKind::Foreground,
+            EVENT_SYSTEM_FOREGROUND,
+            window.0,
+            OBJID_CLIENT.0,
+        );
+        tell(&tells, &name_of, foreground_event, (1, foreground()));
+        let name_change = event(
+            WinEventKind::NameChange,
+            EVENT_OBJECT_NAMECHANGE,
+            window.0,
+            OBJID_CLIENT.0,
+        );
+        let Seen::Other {
+            item: Some(passing),
+            ..
+        } = tell_win_event(&name_of, name_change, (2, None), &SystemReads)
+        else {
+            panic!("a told name change");
+        };
+        tells.pass_hold(passing);
+        foreground_in_front(&tells);
+        let order: Vec<String> = sent_all(&sender, &mut reader)
+            .into_iter()
+            .map(|message| match message {
+                ListenerToCore::Tell(tell) => format!("{:?} {}", tell.kind, tell.at_us),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(order, ["NameChange 2", "Foreground 1"]);
+    }
+
     /// The recorded pointer change, a name change on the desktop window of
     /// object `OBJID_CURSOR` and child 0, is not told, and the desktop's
     /// own name change after it, a virtual desktop's, is.

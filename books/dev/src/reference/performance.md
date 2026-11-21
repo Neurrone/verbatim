@@ -336,7 +336,7 @@ application"): the classic walk of the element at full depth, about 6 to
 Each `EVENT_OBJECT_VALUECHANGE` wakes the listener's WinEvent thread
 once, a typed character in a classic edit control included, as NVDA's one
 hook does, for local calls only: each fact of the event's windows read
-once for the event, and the window in front, the active window and the
+where it is needed, and the window in front, the active window and the
 relations to them read when each is judged. A value change costs what a
 tooltip's show costs, the hook's class read included and a hang test
 counted as its calls (`a_flood_events_window_facts_are_read_once` counts

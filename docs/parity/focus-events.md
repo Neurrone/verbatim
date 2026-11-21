@@ -349,10 +349,10 @@ yet the one `GetForegroundWindow` names, the listener holds every MSAA
 tell behind it, in order, until it is,
 or for 20 ms, two of NVDA's cycles, a newer foreground event restarting
 the hold for its own window; it then reads each held tell's foreground
-facts and sends them in order (`verbatim_listener_logic::tell`,
-`FOREGROUND_HOLD_US`; its
-`a_held_foreground_is_sent_before_the_focus_that_finds_its_window_in_front`
-and `the_hold_ends_at_twenty_milliseconds_whatever_the_foreground`). So
+facts and sends them in order (`verbatim_listener_logic::foreground`'s
+`Pending`, `FOREGROUND_HOLD_US`; its
+`a_foreground_event_for_a_window_not_in_front_is_sent_when_a_later_event_finds_it_in_front`
+and `the_timer_early_is_set_again_and_at_the_end_releases_what_was_held`). So
 a new window's MSAA focus raised while `GetForegroundWindow` still names
 the old window is accepted against the new one (Dickson, 2026-11-15). A
 UI Automation tell is never held: it is sent at once, its foreground
@@ -364,14 +364,17 @@ window is refused as unrelated (Dickson, 2026-11-17;
 foreground tell goes before the focus that releases it, and the
 listener's report that its window came to the foreground goes before
 both, since Core judges the tell against its foreground record: the
-listener's watch of the window in front and its hold judge each event on
-one read of `GetForegroundWindow`, and the watch reports the pending
-window on any event that finds it in front (`verbatim-listener`'s
+pending foreground is one record, stepped only on the listener's
+`WinEvent` thread, by an event or by the hold's timer, each step judged
+on one read of `GetForegroundWindow`, and the window a step finds in
+front is reported before the tells it releases (`verbatim-listener`'s
 `a_foreground_found_in_front_by_any_event_is_reported_before_the_tells_it_releases`).
-A hold that ends by its timer with the window in front sends the
-foreground tell before the watch has reported it, so Core refuses it: a
-limit until the hold and the watch keep the pending window in one
-place.
+A hold that ends by its timer with the window in front reports it, then
+sends the held tells, so Core accepts the foreground tell, as NVDA
+processes the event at its deferred pump once `GetForegroundWindow`
+names the window (`verbatim-listener-logic`'s
+`the_timer_with_the_window_in_front_reports_it_before_the_tells_it_releases`,
+an expectation from NVDA's source approved by Dickson on 2026-11-21).
 
 - MSAA, in NVDA's order: the listener drops an event whose window has a
   ghost window standing in for it or belongs to an application the

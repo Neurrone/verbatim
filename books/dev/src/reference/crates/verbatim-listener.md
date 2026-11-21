@@ -58,11 +58,10 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   a focus read releases its element as it ends; a focus read's element is
   kept, read, unless the last view rules it out; a request cancelled for
   the foreground lets the kept reference of the element it reads go.
-  Every element a view lets go is released on its application's check
-  thread while one runs (`CheckJob::Release`), which checked it and has a
-  UI Automation client, else as a job on its reading thread; at the
-  application's exit, on its reading thread; never under a lock or on a
-  callback thread, since a release can call into the application.
+  Every element a view or the application's exit lets go is released as
+  a job on its application's reading thread, which has a UI Automation
+  client; never under a lock or on a callback thread, since a release can
+  call into the application.
 - Requests (`listener::asked`). Core's `CoreToListener::Request` is the
   generic read of the object an event names (`Request::ReadObject`); any
   other request, a relation, or descendants are refused unsupported, and a
@@ -179,8 +178,9 @@ section 6.3).
   and waits on the lane that keeps order and never merges. A tell carries
   the event's object, its raising thread, the process that serves the
   window (a console window's the process of that thread), that
-  process's executable name, read once per process held open
-  (`Applications`), the input desktop's openness for a switch, and
+  process's executable name, read once per process held open, in the
+  listener's one record under the check threads' lock (`Applications`),
+  the input desktop's openness for a switch, and
   acceptance's window facts, the window's own read as the event arrives
   and the foreground's as the tell is placed; a UI Automation focus, menu
   opening, element selected or window opened has all of them read by its
@@ -189,8 +189,12 @@ section 6.3).
   barrier's answer, is placed under one lock (`Tells`); an MSAA tell and
   the idle barrier's answer wait behind a foreground event whose window
   `GetForegroundWindow` does not yet name until it names it or 20 ms
-  pass, on a threadpool timer armed only while the hold keeps tells, and
-  a UI Automation tell is sent at once (`Tells::pass_hold`). A menu's or the switcher's end, a desktop switch
+  pass (`verbatim_listener_logic::foreground::Pending`), on a thread
+  timer of the `WinEvent` thread armed only while the hold keeps tells
+  (`verbatim_ia2::event_thread::ThreadTimer`), and a UI Automation tell
+  is sent at once (`Tells::pass_hold`). Only the `WinEvent` thread steps
+  the pending foreground, on an event or the timer; the idle barrier's
+  answer, placed from another thread, releases nothing. A menu's or the switcher's end, a desktop switch
   and the desktop window's name change are tells like any other; their
   delays are Core's. Through one `Registration`, the focus handler
   (`Subscription::Focus`) then element selected, menu opened,
@@ -205,20 +209,22 @@ section 6.3).
   whether a console host window, integrity level by
   `verbatim_win32::integrity::process_integrity`), none replacing another,
   and once its hooks are in, the window then in front
-  (`NUDGE_FOREGROUND_START`). An event whose window is not in front is
-  kept as the watch's pending window and sent with the observation of a
-  later event that finds it in front, unless a newer
-  foreground event replaces it (`foreground::ForegroundWatch`). Each
-  `WinEvent` feeds the watch before its tell is placed (`on_win_event`),
-  so the report that a window came to the foreground reaches Core before
-  the tells it decides, the foreground event's own and those the hold
-  releases with it; the watch and the hold judge the event on one read
-  of the window in front (`Tells::front`). The facts of the event's
-  windows are read once for the event (`EventWindows`, over
-  `verbatim_win32::window_facts::ReadOnce`), its window's class not at
-  all when the hook's filter read it, and shared by the watch and the tell; every read of the path goes
-  through it (`EventReads`). The foreground's part of a tell's facts is
-  read live under the tells' lock as the tell is placed. The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
+  (`Nudge::ForegroundStart`). An event whose window is not in front is
+  the pending foreground, reported with the observation of a later event
+  that finds it in front, or with its own when the hold's timer finds
+  it, unless a newer foreground event replaces it. Each `WinEvent` steps
+  the pending foreground with its tell under the tells' lock
+  (`on_win_event`), and the window a step finds in front is reported
+  before the tells that step releases, so Core takes it as the
+  foreground before it judges them; the watch
+  (`foreground::ForegroundWatch`) then hears of it, which unhooks the
+  consoles' events, on the `WinEvent` thread. The step judges the event
+  on one read of the window in front (`Tells::front`). Each fact of the
+  event's windows is read where it is needed, its window's class not at
+  all when the hook's filter read it; every read of the path goes
+  through the event's reads (`EventReads`). The foreground's part of a
+  tell's facts is read live under the tells' lock as the tell is placed.
+  The console's events stay unhooked (`verbatim_ia2::suspend_kinds`) unless
   it starts with a console window in front, until one of that window's
   events names its thread.
 - It handles `Ping`, `ApplicationExited` (which ends the application's
@@ -234,6 +240,13 @@ section 6.3).
   has said `Ready` is held until `Ready` is sent and goes behind it, so a
   barrier that follows the listener's restart passes only once its UIA
   subscriptions are installed.
+- `listener::CheckEvent` (its `new` and `into_tell`), `listener::cached_of`,
+  `listener::check_event`, `listener::Pending::finish`,
+  `listener::msaa_tell` and `listener::written_together` are the check
+  thread's capture, cached properties, check and tell assembly, the MSAA
+  tell with its local drops, and the writer's merge of waiting tells,
+  with the window reads and the clock as parameters, public so mockapp's
+  driver runs the listener's own code.
 - `listener::capture` and `listener::capture_selection` are what the
   notification and element-selected callbacks capture of their event's
   element, and `listener::bar_of` what the progress callback makes of a

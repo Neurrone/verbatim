@@ -42,47 +42,62 @@ Public API:
   waiter runs once every job queued before it is no longer waiting or
   running; abandoned threads do not count.
 - `foreground` — what the listener learns of each window that came to
-  the foreground, for Core: `ForegroundWatch` takes the window in front at
-  the start (`start`), each foreground event with whether its window was
-  in front as it was handled (`foreground`), any other event while a window
-  not in front waits (`event_seen`, with `has_pending`), and each console
-  event (`console_event`), and answers a `Step`: the window to report, with
-  when it was observed, and whether to hook or unhook the console's
-  events. A window not in front at its event is kept, replacing any kept
-  before, until a later event finds it in front or a newer foreground
-  event replaces it; none sent replaces another.
+  the foreground, for Core. `ForegroundWatch` takes the window in front at
+  the start (`start`), says whether it has started (`started`), hears of
+  each window reported (`sent`), which ends any wait for a console's
+  thread, and takes each console event (`console_event`), answering a
+  `Step`: the window to report, with when it was observed, and whether to
+  hook or unhook the console's events. `Pending` is the one pending
+  foreground, under the lock every tell is placed under: `Clear`,
+  `Holding` the MSAA items placed behind a foreground event whose window
+  `GetForegroundWindow` does not name until it does or
+  `FOREGROUND_HOLD_US` (20 ms) pass, or `Awaiting` that window once its
+  hold is over. Only the `WinEvent` thread steps it (`step`, given a
+  `Seen`: a foreground event, the shell's foreground, any other event,
+  or the hold's timer), and each step answers `Placed`: the window found
+  in front to report, before what it releases, in order, and how the
+  hold's one timer changes; a newer foreground event replaces the pending
+  one and counts its time again, a dropped foreground's window is still
+  awaited, the shell's foreground holds nothing, and a stale `WM_TIMER`
+  with no hold does nothing. Before the watch's start nothing is
+  reported. An item placed from another thread, the idle barrier's
+  answer, is held behind a hold in force and releases nothing
+  (`place_behind`); a UI Automation tell passes it by, sent at once. None
+  sent replaces another.
 
 - `check` — the calls a UI Automation event's check makes at delivery on
   its application's check thread, NVDA's handler for its kind in its
-  order, as one pure step function: `Check::next` names the next `Call`
-  (the walk to the nearest window, the window's classes, the probe,
-  each kept element's keyboard focus, the window's acceptance facts, the
-  previous sibling, the parent's automation id, the element's keyboard
-  focus) and the thread records each answer. `Handler::of` maps a
-  kind to its handler: a focus or menu opening makes every call, a walk
-  that finds no window ending it; an
-  element selected, a window opened and a property change walk and probe,
-  then read the acceptance facts, where NVDA's handler judges acceptance;
-  a notification walks alone, a failed walk telling no window. The probe
+  order, as one straight-line function, `check`, over the `CheckCalls`
+  the thread answers on the event's element: the walk to the nearest
+  window, the window's classes, the probe, each kept element's keyboard
+  focus, the window's acceptance facts, the previous sibling, the
+  parent's automation id, the element's keyboard focus, each named to a
+  test's observer as a `Call` before it is made. `CheckFacts` holds what
+  the check is made of, from the event's kind and cache, the switcher's
+  item read by `reading_parent`. `Handler::of` maps a kind to its
+  handler: a focus or menu opening makes every call, a walk that finds no
+  window ending it; an element selected, a window opened, a property
+  change and a progress bar's change walk and probe, then read the
+  acceptance facts, where NVDA's handler judges acceptance; a
+  notification walks alone, a failed walk telling no window. The probe
   the tell carries, and the record keeps, is the raw probe's answer with
   NVDA's checks after it (`listener_provider`, judged with the classes
-  `Check::classed` recorded): a list view's provider counts only from
-  Windows Forms. A window on one of NVDA's lists is not probed, nor one whose probe in the thread's
-  `ProbeRecord` began within `PROBE_RECORD_US` (half a second), the record
-  keeping whether a provider answered: the record only spares a probe
-  call, since Core recorded the same probe from the earlier tell. A window
-  read through MSAA, by a list, the probe or the record, does not end the
-  check: Core's backend cache is the one owner of a window's verdict and
-  judges NVDA's native-element test, so the keyboard-focus reads are made
-  whatever was found. A nameless
-  `NetUITWMenuItem` menu item has its previous sibling read, and with
-  none, or none read, its keyboard focus is not, as NVDA's placeholder
-  allows its focus. A focus whose cache names a list item of
-  `SWITCHER_ITEM_CLASS` (`ListViewItem`), the task switcher's item, has
-  its raw-view parent's automation id read with one call
-  (`Check::reading_parent`), before its keyboard focus. `Check::finish`
-  answers what the walk found (`Walked`), the `Checked` the tell carries,
-  and the parent's automation id, which the tell carries among its cached
+  read): a list view's provider counts only from Windows Forms. A window
+  on one of NVDA's lists is not probed, nor one whose probe in the
+  thread's `ProbeRecord` began within `PROBE_RECORD_US` (half a second),
+  the record keeping whether a provider answered: the record only spares
+  a probe call, since Core recorded the same probe from the earlier tell.
+  A window read through MSAA, by a list, the probe or the record, does
+  not end the check: Core's backend cache is the one owner of a window's
+  verdict and judges NVDA's native-element test, so the keyboard-focus
+  reads are made whatever was found. A nameless `NetUITWMenuItem` menu
+  item has its previous sibling read, and with none, or none read, its
+  keyboard focus is not, as NVDA's placeholder allows its focus. A focus
+  whose cache names a list item of `SWITCHER_ITEM_CLASS` (`ListViewItem`),
+  the task switcher's item, has its raw-view parent's automation id read
+  with one call, before its keyboard focus. `check` answers `Found`: what
+  the walk found (`Walked`), the `Checked` the tell carries, and the
+  parent's automation id, which the tell carries among its cached
   properties (`PropertyId::ParentAutomationId`).
 - `check_threads` — the check threads' records (`CheckThreads`), one per
   application, keyed by its process id, under the listener's one lock:
@@ -91,9 +106,7 @@ Public API:
   wait, or exit by removing its record once idle for `IDLE_US`
   (30 seconds); `checked` says whether its tell is placed, only while the
   record is its own; `ended` drops an ended application's queue untold;
-  `stop` drops every queue; `push_to_running` queues a release on a
-  thread whose record lives, starting none, and hands it back otherwise;
-  and `when_idle` holds the idle barrier's waiter until every event pushed
+  `stop` drops every queue; and `when_idle` holds the idle barrier's waiter until every event pushed
   before it is told or dropped.
 - `kept` — one application's kept elements (`KeptElements`, Table 6 of
   the build design): told, with whether its event was a focus or a menu
@@ -131,24 +144,14 @@ Public API:
   for the kinds NVDA's `winEventToNVDAEvent` tests, so a window's
   destruction, the end of a menu, a popup menu or the task switcher, the
   system caret and the desktop switch are told from a hung window and
-  Core's shell refuses its request there; and
-  `ForegroundHold`, which keeps every MSAA item placed behind a foreground
-  event whose window `GetForegroundWindow` does not name until it does or
-  `FOREGROUND_HOLD_US` (20 ms) pass, a newer foreground awaiting its own
-  window and counting its time again, a dropped foreground's window still
-  awaited, and answers what to send, in order, and how its one timer
-  changes; a UI Automation tell passes it (`ForegroundHold::passing`),
-  sent at once, never held.
+  Core's shell refuses its request there.
 
 `cargo xtask ci` reads `schedule.rs` by the pure rule
 (`xtask/src/ownership.rs`).
 
 Tests: each module's unit tests; the schedule's, one per rule and per
 cell of Table 9, a replay of calls with exact effects
-(`crates/verbatim-listener-logic/src/schedule/tests.rs`). The foreground
-watch is tested by every sequence of up to six steps against its rules
-(`crates/verbatim-listener-logic/src/foreground.rs`): nothing before the
-start, an event in front reported at once, one not in front reported
-only as the newest, once, with the observation of the event that found
-it, and a console's thread named only while the consoles' events are
-hooked. Its exact cases are hand-written examples.
+(`crates/verbatim-listener-logic/src/schedule/tests.rs`). The pending
+foreground has one test per cell of its table that changes, the timer
+releasing with the window in front among them, its expectation taken
+from NVDA's deferral (`crates/verbatim-listener-logic/src/foreground.rs`).
