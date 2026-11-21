@@ -1507,8 +1507,6 @@ fn a_failed_focus_read_clears_cores_caret_baseline() {
             formats: Vec::new(),
         }),
         selection: None,
-        line_break: None,
-        read_at_us: 0,
     });
     feed_at(&mut state, 4_000, entry(uia_tell(2, Vec::new())));
     assert_eq!(

@@ -612,7 +612,6 @@ fn a_caret_move_say_all_made_is_cores_caret() {
     let _ = step(&mut state, 1_310, text_answer(number, placed(1_300)));
     let caret = state.focus_caret(node(2)).expect("Core holds the caret");
     assert_eq!(caret.line.start, TextAnchor(100));
-    assert_eq!(caret.read_at_us, 1_300);
     // The move minted the next selection baseline (Table 17, column F).
     assert_eq!(
         crate::text_facts::held(&state.state),

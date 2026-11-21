@@ -1,0 +1,25 @@
+NVDA alpha-58022,732d1ce2 in session 2
+{"label":"launch notepad.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\captures\\s3-notepad-output\\documents\\verbatim-e2e-b10.txt","step":0}
+{"label":"front notepad.exe \"verbatim-e2e-b10\"","step":1}
+{"kind":"event","ms":182,"step":1,"text":"cancel"}
+{"kind":"speech","ms":183,"step":1,"tag":"Normal","text":"verbatim-e 2e-b 10 dot txt - Notepad"}
+{"kind":"speech","ms":190,"step":1,"tag":"Normal","text":"Text editor  document  alpha"}
+{"label":"control+end","step":2}
+{"kind":"event","ms":5,"step":2,"text":"cancel"}
+{"kind":"speech","ms":28,"step":2,"tag":"Normal","text":"beta"}
+{"label":"home","step":3}
+{"kind":"event","ms":3,"step":3,"text":"cancel"}
+{"kind":"speech","ms":13,"step":3,"tag":"Normal","text":"b"}
+{"label":"launch without the foreground right explorer.exe C:\\Users\\Dickson\\AppData\\Local\\Temp\\claude\\c40fa9024444163f\\990789da-d197-48da-b8ce-ec282be48107\\scratchpad\\captures\\s3-notepad-output\\verbatim-e2e-b10-elsewhere","step":4}
+{"label":"front explorer.exe \"verbatim-e2e-b10-elsewhere\"","step":5}
+{"kind":"event","ms":54,"step":5,"text":"cancel"}
+{"kind":"speech","ms":55,"step":5,"tag":"Normal","text":"verbatim-e 2e-b 10-elsewhere - File Explorer"}
+{"label":"front notepad.exe \"verbatim-e2e-b10\"","step":6}
+{"kind":"event","ms":122,"step":6,"text":"cancel"}
+{"kind":"speech","ms":123,"step":6,"tag":"Normal","text":"verbatim-e 2e-b 10 dot txt - Notepad"}
+{"kind":"speech","ms":302,"step":6,"tag":"Normal","text":"Text editor  document  beta"}
+{"label":"backspace","step":7}
+{"kind":"event","ms":4,"step":7,"text":"cancel"}
+{"kind":"speech","ms":28,"step":7,"tag":"Normal","text":"carriage return"}
+{"label":"control+z","step":8}
+{"kind":"event","ms":13,"step":8,"text":"cancel"}

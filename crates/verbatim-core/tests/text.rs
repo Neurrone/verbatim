@@ -601,7 +601,8 @@ fn unit_at(line: &TextChunk, unit: TextUnit) -> TextChunk {
 /// outpost's starting read reads it for a Backspace
 /// (`verbatim_model::StartingUnit::BeforeCaret`): the character, or the
 /// word with the spaces after it, as [`unit_at`] finds them; empty at the
-/// line's start.
+/// line's start, so Backspace there, where the provider gives the line
+/// break before the caret, is tested in `caret_key_tests.rs`.
 fn unit_before(caret: &CaretReport, unit: TextUnit) -> TextChunk {
     let line = &caret.line;
     let at = caret
@@ -1112,54 +1113,6 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     );
 }
 
-#[test]
-fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
-    // Windows 11 Notepad's text breaks lines with a carriage return.
-    let mut text = editing("def\r", 0);
-    assert_eq!(
-        text.moved(CaretMotion::Backspace, line("abcdef\r", 99, 3), None),
-        words(vec![character("\r")])
-    );
-
-    // With Control too, as Notepad deletes the break before a line's start.
-    let mut text = editing("def\r", 0);
-    assert_eq!(
-        text.moved(CaretMotion::BackspaceWord, line("abcdef\r", 99, 3), None),
-        words(vec![character("\r")])
-    );
-
-    // A standard edit control's carriage return and line feed are spoken
-    // as the line feed. On the text's last line, which has no break, the
-    // break is the one the text was last seen to use.
-    let mut text = editing("abc\r\n", 1);
-    assert_eq!(
-        text.selection(caret_on(line("def", 101, 0), None), None),
-        []
-    );
-    assert_eq!(
-        text.moved(CaretMotion::Backspace, line("abcdef", 100, 3), None),
-        words(vec![character("\n")])
-    );
-
-    // On the text's first line there is no break to delete.
-    let mut text = Text::new();
-    let first = TextChunk {
-        first: true,
-        ..line("abc\r\n", 100, 0)
-    };
-    let _ = text.focus(
-        &node(FIELD, Role::EditableText, StateSet::new()),
-        caret_read(caret_on(first, None), None, 1),
-    );
-    let read = WatchedRead {
-        caret: caret_on(line("abc\r\n", 100, 0), None),
-        unit: unit(TextUnit::Character, "a", 101),
-    };
-    assert_eq!(
-        text.watched(CaretMotion::Backspace, Watched::Bound(read)),
-        []
-    );
-}
 
 #[test]
 fn delete_compares_the_character_and_speaks_the_new_one() {

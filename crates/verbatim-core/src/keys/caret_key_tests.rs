@@ -485,18 +485,25 @@ fn backspace_says_what_it_deleted_from_its_starting_read() {
     }
 }
 
-/// Windows 11 Notepad's text breaks lines with a carriage return, which
-/// Backspace at a line's start deletes, with or without Control; a
-/// standard edit control's carriage return and line feed are spoken as the
-/// line feed.
+/// Backspace at a line's start says the provider's unit before the caret,
+/// the line break, with or without Control: Windows 11 Notepad's carriage
+/// return, and a standard edit control's carriage return and line feed
+/// spoken as the line feed (`editableText.py` 299 to 318). The caret's own
+/// line need not show a break, as on the text's last line: NVDA's capture
+/// `tests/fixtures/b10-backspace.jsonl`, step 7, says "carriage return" in
+/// Notepad on "beta", the focus landing there before any break was read.
+/// At the document's start the provider moves nothing, the unit is empty,
+/// and nothing is said.
 #[test]
-fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
-    for (motion, text, said) in [
-        (CaretMotion::Backspace, "def\r", character("\r")),
-        (CaretMotion::BackspaceWord, "def\r", character("\r")),
-        (CaretMotion::Backspace, "def\r\n", character("\n")),
+fn backspace_at_a_lines_start_says_the_providers_unit() {
+    for (motion, text, before, said) in [
+        (CaretMotion::Backspace, "def\r", "\r", vec![character("\r")]),
+        (CaretMotion::BackspaceWord, "def\r", "\r", vec![character("\r")]),
+        (CaretMotion::Backspace, "def\r\n", "\r\n", vec![character("\n")]),
+        (CaretMotion::Backspace, "beta", "\r", vec![character("\r")]),
+        (CaretMotion::Backspace, "abc", "", Vec::new()),
     ] {
-        let mut held = watching(motion, line(text, 7, 0), unit(motion.unit(), "d", 8));
+        let mut held = watching(motion, line(text, 7, 0), unit(motion.unit(), before, 8));
         let ended = step(
             &mut held,
             20_000,
@@ -508,7 +515,7 @@ fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
                 )),
             ),
         );
-        assert_eq!(ended.said, [said], "{motion:?} {text:?}");
+        assert_eq!(ended.said, said, "{motion:?} {text:?}");
     }
 }
 

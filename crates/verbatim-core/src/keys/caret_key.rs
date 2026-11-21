@@ -912,11 +912,10 @@ async fn sentence(
     if marked(cx, press) {
         return;
     }
-    let read_at_us = cx.now_us();
     {
         let mut facts = cx.facts_mut();
         facts.typed_word.clear();
-        editing::caret_placed(&mut facts, binding.node, line, read_at_us);
+        editing::caret_placed(&mut facts, binding.node, line);
     }
     say(cx, press, words);
 }

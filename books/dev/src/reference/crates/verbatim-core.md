@@ -1242,9 +1242,8 @@ key's starting read, judging the key's effect by `had_effect`, until its
 bound, and ends with its final read (`Watched`, `WatchedRead`).
 
 Each focus object holds one caret (`FocusContext::caret`). Core takes
-every report as the newest caret by when its read began
-(`CaretReport::read_at_us`), so a key's answer and an ordinary report
-need no comparison of arrival. A later key marked before an answer's read
+each report in arrival order, the order the event queue answers its
+entries' requests in. A later key marked before an answer's read
 began leaves that answer's words unsaid, and the caret and the selection
 changes are still taken. A bound answer with any later key says nothing.
 
@@ -1260,8 +1259,9 @@ The answer updates the caret and speaks, queued:
   around the character before the caret, or before a selection's start,
   which the starting read read (`StartingUnit::BeforeCaret`), spoken as a
   character when it is one and as text otherwise, as NVDA's Backspace
-  scripts speak it; at a line's start the line break, of the kind last
-  seen; over a selection, then the selection's change.
+  scripts speak it; at a line's start the provider's unit is the line
+  break before it, and at the document's start it is empty and nothing is
+  said; over a selection, then the selection's change.
 - Delete and Control+Delete: the character or word now at the caret.
 - Enter in a text field other than a terminal (`CaretMotion::NewLine`):
   when the caret moved, the new line's text from its start up to the

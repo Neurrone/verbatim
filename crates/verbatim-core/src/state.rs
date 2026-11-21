@@ -197,15 +197,6 @@ pub(crate) struct ReviewPosition {
 pub(crate) struct CaretContext {
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<CaretSelection>,
-    /// The line break last seen ending a line of the node's text, such as
-    /// a carriage return in Windows 11 Notepad or a carriage return and line
-    /// feed in a standard edit control: what a Backspace at the start of a
-    /// line deletes, since a text uses one kind of line break throughout,
-    /// when the caret's own line has none (the last line).
-    pub(crate) line_break: Option<String>,
-    /// When the read this caret came from began, in microseconds: an older
-    /// report arriving later does not replace it.
-    pub(crate) read_at_us: u64,
 }
 
 impl CaretContext {

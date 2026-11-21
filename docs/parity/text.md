@@ -316,13 +316,15 @@ keys](../../books/dev/src/explanation/design/key-holding.md); Core's
 Control+Delete say the unit now at the caret.
 
 - A backspace over a line break, with or without Control, names the
-  kind of break the text was last seen to use, which is what NVDA reads,
-  since a text uses one kind throughout, and says nothing when Core has
-  seen no line break in it yet: "line feed" in the text box and
-  "carriage return" in Notepad, at a later line's start with a selection
-  there or none (`selection_keys` scenarios; NVDA's Control+Backspace
-  with no selection was captured in Notepad only, where the classic edit
-  control's Control+Backspace inserts a DEL character instead).
+  provider's unit before the caret, the break, as NVDA does: "line feed"
+  in the text box and "carriage return" in Notepad, at a later line's
+  start with a selection there or none (`selection_keys` scenarios;
+  NVDA's Control+Backspace with no selection was captured in Notepad
+  only, where the classic edit control's Control+Backspace inserts a DEL
+  character instead). Verbatim: **matched**, also where the focus
+  landed on the last line before any break was read, as NVDA's capture
+  `crates/verbatim-core/tests/fixtures/b10-backspace.jsonl` step 7 says
+  "carriage return" (`backspace_at_a_lines_start_says_the_providers_unit`).
 - In a terminal, Backspace and Control+Backspace say what NVDA says
   ("o" and "tw" after `echo one two`, both terminals).
 

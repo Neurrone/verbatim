@@ -111,44 +111,34 @@ pub(crate) fn selects(key: CaretKey) -> bool {
 /// before the caret, which the starting read read
 /// ([`verbatim_model::StartingUnit::BeforeCaret`]): the character, or for
 /// Control+Backspace the whole word, as NVDA's Backspace scripts say it
-/// (`docs/parity/text.md`, "What Backspace and Delete say"). At the
-/// start of a line other than a terminal's, a Backspace, with or without
-/// Control, deletes the line break before it, the kind of break the text
-/// uses, `line_break` ([`CaretContext::line_break`]), which NVDA names
-/// (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
-/// character"). In a terminal it is the character before the caret, or
-/// the text from the start of the word before it up to it. `None` when
-/// that is not known, and for other keys.
+/// (`docs/parity/text.md`, "What Backspace and Delete say"), at every
+/// offset: at the start of a line the provider's unit is the line break
+/// before it, which NVDA names (`editableText.py` 299 to 318), and at the
+/// document's start the provider moves nothing and the unit is empty. In
+/// a terminal it is the character before the caret, or the text from the
+/// start of the word before it up to it. `None` when that is not known,
+/// and for other keys.
 fn deleted_text(
     (line, offset): (&TextChunk, u32),
-    (unit, line_break): (&TextChunk, Option<&str>),
+    unit: &TextChunk,
     motion: CaretMotion,
     grid: bool,
 ) -> Option<String> {
+    if !grid && motion.deletes_back() {
+        return Some(unit.text.clone()).filter(|deleted| !deleted.is_empty());
+    }
     let content = text::line_content(&line.text, grid);
     let offset = text::boundary(content, text::byte_offset(offset));
-    if !grid && motion.deletes_back() {
-        return if offset > 0 {
-            Some(unit.text.clone()).filter(|deleted| !deleted.is_empty())
-        } else if line.first {
-            None
-        } else {
-            line_break.map(str::to_owned)
-        };
-    }
     match motion {
-        CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
-            Some(range) => Some(proven::text_in(content, range).to_owned()),
-            None if !grid && !line.first => line_break.map(str::to_owned),
-            None => None,
-        },
+        CaretMotion::Backspace => text::previous_grapheme(content, offset)
+            .map(|range| proven::text_in(content, range).to_owned()),
         CaretMotion::BackspaceWord => {
             let words = text::words(content, line.language_at(0));
-            match words.iter().rev().find(|range| range.start < offset) {
-                Some(word) => Some(proven::text_in(content, word.start..offset).to_owned()),
-                None if offset == 0 && !grid && !line.first => line_break.map(str::to_owned),
-                None => None,
-            }
+            words
+                .iter()
+                .rev()
+                .find(|range| range.start < offset)
+                .map(|word| proven::text_in(content, word.start..offset).to_owned())
         }
         _ => None,
     }
@@ -175,10 +165,6 @@ pub(crate) fn before_of_caret(
         .focus()
         .map(|focus| &focus.context)
         .is_some_and(|focus| focus.snapshot.id == node && is_grid(focus.snapshot.role));
-    let line_break = state
-        .focus_caret(node)
-        .and_then(|caret| caret.line_break.as_deref())
-        .or_else(|| text::line_break(&line.text));
     let removed = motion.deletes_back().then_some(()).and_then(|()| {
         let start = selection_start(line, caret.selection.as_ref());
         let (start_line, offset) = match start {
@@ -186,7 +172,7 @@ pub(crate) fn before_of_caret(
             Some(None) => return None,
             None => (line, line.offset),
         };
-        deleted_text((start_line, offset), (unit, line_break), motion, grid)
+        deleted_text((start_line, offset), unit, motion, grid)
     });
     // Backspace's words if the focus moves first start from the selection's
     // start, NVDA's caret.
@@ -547,38 +533,6 @@ fn selection_text(change: &SelectionChange) -> SelectionText {
     }
 }
 
-/// Takes a caret report of `node` as the focus's caret when it is newest,
-/// by the time its read began, and moves the review cursor to it when the
-/// review cursor follows the caret and the navigator is on that node (to
-/// read the caret afresh, as the review cursor does at
-/// [`ReviewText::Caret`]). A report read before the caret Core holds, such
-/// as a key's answer read before a caret event that reached Core first,
-/// is only looked at for the kind of line break the text uses: the caret
-/// stays the newest known, and the review cursor stays with it.
-pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
-    if state
-        .versions
-        .live()
-        .is_none_or(|focus| focus.context.snapshot.id != node)
-    {
-        return;
-    }
-    let read_at_us = caret.read_at_us;
-    if let Some(known) = state
-        .versions
-        .focus_mut()
-        .map(|focus| &mut focus.context)
-        .and_then(|focus| focus.caret.as_mut())
-        .filter(|known| known.read_at_us > read_at_us)
-    {
-        // The older report still shows the kind of line break the text uses.
-        if known.line_break.is_none() {
-            known.line_break = text::line_break(&caret.line.text).map(str::to_owned);
-        }
-        return;
-    }
-    take_caret(state, node, caret);
-}
 
 /// Takes `caret`, read of the focus `node`, as Core's caret, and moves the
 /// review cursor to it when the review cursor follows the caret and the
@@ -587,6 +541,23 @@ pub(crate) fn update_caret(state: &mut SrState, node: NodeId, caret: verbatim_mo
 /// time and an abandoned worker's commits are refused
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 pub(crate) fn take_caret(state: &mut SrState, node: NodeId, caret: verbatim_model::CaretReport) {
+    place_caret(state, node, caret.line, caret.selection);
+}
+
+/// Takes a caret Core itself moved `node`'s caret to, `line` with the caret
+/// at its offset and nothing selected, as the focus's caret, in arrival
+/// order ([`take_caret`]).
+pub(crate) fn caret_placed(state: &mut SrState, node: NodeId, line: TextChunk) {
+    place_caret(state, node, line, None);
+}
+
+/// [`take_caret`]'s work, from the caret's `line` and `selection`.
+fn place_caret(
+    state: &mut SrState,
+    node: NodeId,
+    line: TextChunk,
+    selection: Option<verbatim_model::CaretSelection>,
+) {
     if state
         .versions
         .live()
@@ -598,31 +569,10 @@ pub(crate) fn take_caret(state: &mut SrState, node: NodeId, caret: verbatim_mode
     let Some(focus) = state.versions.focus_mut().map(|focus| &mut focus.context) else {
         return;
     };
-    let line = Arc::new(caret.line);
-    let line_break = text::line_break(&line.text)
-        .map(str::to_owned)
-        .or_else(|| focus.caret.take().and_then(|caret| caret.line_break));
     focus.caret = Some(CaretContext {
-        line,
-        selection: caret.selection,
-        line_break,
-        read_at_us: caret.read_at_us,
+        line: Arc::new(line),
+        selection,
     });
-}
-
-/// Takes a caret Core itself moved `node`'s caret to, `line` with the caret
-/// at its offset and nothing selected, as the focus's caret, in arrival
-/// order ([`take_caret`]).
-pub(crate) fn caret_placed(state: &mut SrState, node: NodeId, line: TextChunk, read_at_us: u64) {
-    take_caret(
-        state,
-        node,
-        verbatim_model::CaretReport {
-            line,
-            selection: None,
-            read_at_us,
-        },
-    );
 }
 
 /// Puts the review cursor at the caret of `node` when it follows the caret
@@ -691,7 +641,7 @@ pub(crate) fn focus_text(
 /// focus reported again by a replacement outpost.
 pub(crate) fn keep_focus_caret(state: &mut SrState, node: NodeId, text: Option<&FocusText>) {
     if let Some(FocusText::Caret { caret, .. }) = text {
-        update_caret(state, node, caret.clone());
+        take_caret(state, node, caret.clone());
     }
 }
 

@@ -796,7 +796,7 @@ pub(crate) fn take(
     }
     model.at_document_start = read.at_document_start;
     if let Some(caret) = &snapshot.caret {
-        crate::editing::update_caret(state, node, caret.clone());
+        crate::editing::take_caret(state, node, caret.clone());
     }
     Taken {
         speech: Some(speech_of(step)),
