@@ -1,6 +1,6 @@
 # Experiment: a replacement outpost's lookup beside its predecessor's operation
 
-This experiment serves `docs/design/cross-process-calls-study.md`. When an outpost fails while its application is still running, the supervisor retires it on a thread of its own, letting the call in progress finish for up to `SHUTDOWN_LIMIT` (21 seconds), and gives the application its next outpost at once for a first failure (`Owner::outpost_failed`, `crates/verbatim-outpost/src/supervisor/owner.rs`, lines 1290 and 1291). An outpost that piled up abandoned workers fails that way, and its abandoned workers are still in calls into the application. The question: while the old outpost's remote operation waits in a busy application, what does the new outpost's first lookup by handle get?
+This experiment is evidence for ADR 0005 (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). When an outpost fails while its application is still running, the supervisor retires it on a thread of its own, letting the call in progress finish for up to `SHUTDOWN_LIMIT` (21 seconds), and gives the application its next outpost at once for a first failure (`Owner::outpost_failed`, `crates/verbatim-outpost/src/supervisor/owner.rs`, lines 1290 and 1291). An outpost that piled up abandoned workers fails that way, and its abandoned workers are still in calls into the application. The question: while the old outpost's remote operation waits in a busy application, what does the new outpost's first lookup by handle get?
 
 ## Setup
 

@@ -18,7 +18,8 @@
 //! re-reads resolve the cached element directly. A node whose element is
 //! not kept is not searched for by runtime id, since a `FindFirst` search
 //! has no index behind it and enters any child window another process
-//! serves (`docs/design/cross-process-calls-study.md`, instance 3); the
+//! serves (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+//! "A node whose element is gone"); the
 //! outpost finds it only by the focus's route, or answers it gone.
 //!
 //! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),

@@ -203,7 +203,7 @@ are replaced with their own backoff.
 
 Only an application's own outpost sends it a remote operation or makes a
 new UIA connection to its windows by a call of Verbatim's, with the
-exceptions `docs/design/cross-process-calls-study.md` lists: UIA's client
+exceptions [ADR 0005](../adr/0005-calls-that-reach-another-application.md) states in its limits: UIA's client
 side's connections to a parent across the boundary, and the focus-read and
 walk-up races (`books/dev/src/explanation/design/listener-without-connections.md`, section 2),
 so no lock is needed around them. No node is searched for by runtime id:

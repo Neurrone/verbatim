@@ -2540,7 +2540,8 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
 /// NVDA's focused-state test of an MSAA focus walks up the object's
 /// parents (`shouldAllowIAccessibleFocusEvent`); above the process
 /// boundary it goes on by plain windows, with no call into the other
-/// process (`docs/design/cross-process-calls-study.md`, instance 6): a
+/// process (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+/// "Reading above the process boundary"): a
 /// mockapp MSAA dialog (`save_as.json`), whose client area answers its
 /// window object as its parent (`client-identity`), made the child of
 /// another mockapp's window whose thread is then stalled, has a focus on a
@@ -2680,8 +2681,9 @@ fn a_parent_step_into_another_process_is_not_read_further() {
 /// `accFocus` names whatever object it names when it is called, so the
 /// MSAA focus-now read checks the window of the object it names as served
 /// by the outpost's application before reading it, and answers no focused
-/// control for another process's (`docs/design/cross-process-calls-study.md`,
-/// instance 8): a mockapp MSAA window whose own `accFocus` answers the
+/// control for another process's
+/// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+/// "Checking where a call landed"): a mockapp MSAA window whose own `accFocus` answers the
 /// client area of a second mockapp's window (`acc-focus-window`), acquired
 /// by the first mockapp, whose wrapper `WindowFromAccessibleObject` finds
 /// the second window from. The second window counts only that
@@ -2897,7 +2899,8 @@ fn uia_navigation_steps_cost_exactly() {
 /// of its properties and activation, after the route's walk alone: no
 /// `FindFirst` over the application's windows by its runtime id, which
 /// would enter any child window another process serves
-/// (`docs/design/cross-process-calls-study.md`, decision 3). The node is a
+/// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+/// "A node whose element is gone"). The node is a
 /// focus on the button `First`, which has no window of its own, completed
 /// from the listener's read with its route cut to the element alone and
 /// going on from its window's parent, as a walk up that failed below the

@@ -574,7 +574,8 @@ impl FocusCandidate {
     /// whatever it names when it is called, the parent window is checked
     /// again after the step, and one reparented under a plain window
     /// meanwhile has its parent not read
-    /// (`docs/design/cross-process-calls-study.md`, instance 6).
+    /// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+    /// "Checking where a call landed").
     pub fn has_focused_state(
         &mut self,
         max_hops: u32,
@@ -1629,8 +1630,8 @@ pub fn activate(
 /// is called, so the window of the object it names is checked with `serves`
 /// before anything else is read of it: an object of a window the caller's
 /// application does not serve answers `None`, no focused control, and is
-/// read no further (`docs/design/cross-process-calls-study.md`, instance
-/// 8). Blocking; worker only.
+/// read no further (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`,
+/// "Checking where a call landed"). Blocking; worker only.
 #[must_use]
 pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<FocusedObject> {
     let (acc, node_hwnd, at_address) =

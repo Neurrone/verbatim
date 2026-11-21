@@ -1,5 +1,6 @@
 //! Experiments of the cross-process calls study (2026-10-29), not tests:
-//! `docs/design/cross-process-calls-study.md`. One scratch program, kept in
+//! the evidence for ADR 0005
+//! (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). One scratch program, kept in
 //! `experiments/cross-process-calls-study-program/` and not built by the
 //! workspace. `XP_EXP` names the experiment; `XP_ROLE=helper` runs this
 //! binary as a helper UIA client process driven over its stdin. Every

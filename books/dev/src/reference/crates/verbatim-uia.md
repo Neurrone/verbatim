@@ -98,7 +98,7 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   `parent`'s children only. No search of a whole subtree by runtime id is
   offered but the controlled-element search's, since one enters any child
   window another process serves
-  (`docs/design/cross-process-calls-study.md`, instance 3). The runtime id
+  ([ADR 0005](../adr/0005-calls-that-reach-another-application.md), "A node whose element is gone"). The runtime id
   condition's `VARIANT` is built by `InitVariantFromInt32Array`, so no raw
   array is handled; `windows`'s `VARIANT` clears its array on drop. A
   search that finds nothing is `Ok(None)`, and so is one that passed over

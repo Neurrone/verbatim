@@ -1,6 +1,6 @@
 # Experiment: the runtime-id search enters another process's child window
 
-This experiment serves `docs/design/cross-process-calls-study.md`. When an outpost needs a UIA node whose kept element is gone and which is not on the focus listener's last chain, `resolve_uia_element` (`crates/verbatim-outpost/src/outpost/read.rs`) searches each of its application's top-level windows for the node's runtime id: `Uia::window_live` on the window, then `Uia::find_by_runtime_id`, a `FindFirstBuildCache` over the window's subtree. The question: when the window has a child window that another process serves, as a WebView2 host or the Settings frame has, does the search go into it, and what happens when that process is busy?
+This experiment is evidence for ADR 0005 (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). When an outpost needs a UIA node whose kept element is gone and which is not on the focus listener's last chain, `resolve_uia_element` (`crates/verbatim-outpost/src/outpost/read.rs`) searches each of its application's top-level windows for the node's runtime id: `Uia::window_live` on the window, then `Uia::find_by_runtime_id`, a `FindFirstBuildCache` over the window's subtree. The question: when the window has a child window that another process serves, as a WebView2 host or the Settings frame has, does the search go into it, and what happens when that process is busy?
 
 ## Setup
 

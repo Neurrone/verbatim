@@ -1,6 +1,6 @@
 # Experiment: a walk up whose window changes after its check
 
-This experiment serves `docs/design/cross-process-calls-study.md`. The classic walk up a focus's ancestors, the listener's read (`verbatim_uia_rops::focus_ancestry_classic`) and the outpost's (`Uia::ancestors`), checks before each step whether the current window's parent, or a top-level window's visible owner, is served by another process (`verbatim_uia::parent_across_process_boundary`, local calls), and only then steps (`GetParentElementBuildCache`). The question: when the window hierarchy changes between the check and the step, does the step go into the other process, and what does that cost?
+This experiment is evidence for ADR 0005 (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). The classic walk up a focus's ancestors, the listener's read (`verbatim_uia_rops::focus_ancestry_classic`) and the outpost's (`Uia::ancestors`), checks before each step whether the current window's parent, or a top-level window's visible owner, is served by another process (`verbatim_uia::parent_across_process_boundary`, local calls), and only then steps (`GetParentElementBuildCache`). The question: when the window hierarchy changes between the check and the step, does the step go into the other process, and what does that cost?
 
 ## Setup
 

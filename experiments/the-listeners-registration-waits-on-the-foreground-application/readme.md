@@ -1,6 +1,6 @@
 # Experiment: the listener's registration waits on the foreground application
 
-This experiment serves `docs/design/cross-process-calls-study.md`. At its start the focus listener makes its desktop-wide UIA registration (`install_desktop_subscriptions`, `crates/verbatim-outpost/src/listener.rs`), on the process's registering thread (`crates/verbatim-uia/src/subscribe.rs`): the desktop's root fetched, `AddFocusChangedEventHandler`, then the event handler group on the root. Only after it returns does the listener install its `WinEvent` hooks and say `Ready`. The architecture says the listener's registration threads make no cross-process call. The question: does the registration wait on an application, and which?
+This experiment is evidence for ADR 0005 (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). At its start the focus listener makes its desktop-wide UIA registration (`install_desktop_subscriptions`, `crates/verbatim-outpost/src/listener.rs`), on the process's registering thread (`crates/verbatim-uia/src/subscribe.rs`): the desktop's root fetched, `AddFocusChangedEventHandler`, then the event handler group on the root. Only after it returns does the listener install its `WinEvent` hooks and say `Ready`. The architecture says the listener's registration threads make no cross-process call. The question: does the registration wait on an application, and which?
 
 ## Setup
 

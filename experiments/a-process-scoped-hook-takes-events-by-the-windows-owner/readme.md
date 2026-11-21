@@ -1,6 +1,6 @@
 # Experiment: a process-scoped hook takes events by the window's owner
 
-This experiment serves `docs/design/cross-process-calls-study.md`. An outpost's `WinEvent` hook is scoped to its application's process id (`EventThread::hook`, `crates/verbatim-outpost/src/event_thread.rs`), and its worker acts on the window an event names with no check of who serves that window. The review of 2026-10-29 asked what happens when the application raises an event naming another process's window with `NotifyWinEvent`. Two questions: which process-scoped hook receives such an event, and what an outpost does with an event naming another process's window.
+This experiment is evidence for ADR 0005 (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`). An outpost's `WinEvent` hook is scoped to its application's process id (`EventThread::hook`, `crates/verbatim-outpost/src/event_thread.rs`), and its worker acts on the window an event names with no check of who serves that window. The review of 2026-10-29 asked what happens when the application raises an event naming another process's window with `NotifyWinEvent`. Two questions: which process-scoped hook receives such an event, and what an outpost does with an event naming another process's window.
 
 ## Setup
 
