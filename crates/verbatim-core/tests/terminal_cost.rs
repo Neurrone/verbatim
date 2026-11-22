@@ -34,14 +34,17 @@ use std::time::{Duration, Instant};
 
 use desk::{Desk, ONE, focus_read_of};
 use verbatim_core::reduce;
-use verbatim_model::batch::{Done, Op, StepOutcome};
+use verbatim_core::terminal_window::{
+    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, outcomes_making,
+};
+use verbatim_model::batch::{Batch, Op, Point};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::request::{Answer, Outcome, Question, QueueInput, Reply, RequestNumber};
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Input, MarkPlace, MarkSearch, NodeDetails, NodeSnapshot, Role, StateSet, TerminalText,
-    TerminalWindow, TextAnchor, TraceId, WindowAsk,
+    Backend, Input, NodeDetails, NodeSnapshot, Role, StateSet, TerminalText, TextAnchor, TextPoint,
+    TraceId,
 };
 use verbatim_term_sim::conformance::history;
 use verbatim_term_sim::{Flavor, Query, Terminal};
@@ -198,17 +201,52 @@ impl Simulated {
     }
 }
 
+/// What Core names to the window read `batch` holds, read back from its
+/// steps: a move up from the text's end twice the height, the moves from
+/// the marks, and the search and the colours when asked.
+fn ask_of(batch: &Batch) -> Option<WindowAsk> {
+    let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
+    if !matches!(ops.first(), Some(Op::Visible { .. })) {
+        return None;
+    }
+    let height = match ops.get(3) {
+        Some(Op::Move {
+            at: Point::At(TextPoint::End),
+            movement,
+            ..
+        }) => movement.count.unsigned_abs() / 2,
+        _ => 0,
+    };
+    let mut marks = ops.iter().filter_map(|op| match op {
+        Op::Move {
+            at: Point::At(TextPoint::At(position)),
+            ..
+        } => Some(EndMark {
+            anchor: position.anchor,
+            line: String::new(),
+            line_above: 0,
+        }),
+        _ => None,
+    });
+    let end = marks.next();
+    let aside = marks.next();
+    let find = ops.iter().any(|op| matches!(op, Op::FindText { .. }));
+    Some(WindowAsk {
+        end: end.map(|mark| CurrentMark { mark, find }),
+        aside,
+        height,
+        opening: 0,
+        colours: ops.iter().any(|op| matches!(op, Op::ReadColours { .. })),
+    })
+}
+
 /// The window read Core asked for last, by its request's number.
 fn window_ask(desk: &Desk) -> Option<(u64, WindowAsk)> {
     desk.sent
         .iter()
         .rev()
         .find_map(|(number, _, question)| match question {
-            Question::Batch(batch) => batch.steps.iter().find_map(|step| match &step.op {
-                Op::TerminalRead { ask, .. } => Some((*number, (**ask).clone())),
-                _ => None,
-            }),
-            Question::Terminal(_) => None,
+            Question::Batch(batch) => ask_of(batch).map(|ask| (*number, ask)),
         })
 }
 
@@ -232,15 +270,13 @@ fn changed(at_us: u64) -> Event {
     }
 }
 
-/// The input answering request `number` with `window`.
-fn answer_of(number: u64, window: TerminalWindow) -> QueueInput {
+/// The input answering request `number`, asked as `ask`, with `window`.
+fn answer_of(number: u64, (ask, window): (&WindowAsk, TerminalWindow)) -> QueueInput {
     QueueInput::Answer {
         from: ONE.instance(),
         answer: Answer {
             number: RequestNumber(number),
-            outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::TerminalRead(
-                Box::new(window),
-            ))])),
+            outcome: Outcome::Result(Reply::Steps(outcomes_making(&window, ask))),
             probes: Vec::new(),
             detail: String::new(),
         },
@@ -272,7 +308,7 @@ fn measure(flavor: Flavor, case: &Case) -> Measured {
     let (number, ask) = window_ask(&desk)
         .unwrap_or_else(|| panic!("Core asks for the terminal's baseline: {:?}", desk.asked));
     let baseline = simulated.read(&ask);
-    let _ = desk.step(answer_of(number, baseline));
+    let _ = desk.step(answer_of(number, (&ask, baseline)));
     match case.output {
         Output::Lines(count) => simulated.lines(count),
         Output::ClearAndReprint(count) => {
@@ -293,7 +329,7 @@ fn measure(flavor: Flavor, case: &Case) -> Measured {
     let input = Input::Queue {
         trace_id: TraceId::from_raw(9),
         at_us: desk.at_us + 1_000,
-        input: answer_of(number, simulated.read(&ask)),
+        input: answer_of(number, (&ask, simulated.read(&ask))),
     };
     let frame = serde_json::to_string(&input).expect("an input encodes");
     let mut reducer = Vec::with_capacity(RUNS);

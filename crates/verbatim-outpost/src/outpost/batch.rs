@@ -1106,12 +1106,6 @@ impl Run<'_, '_> {
             Op::MoveBySentence { from, forward, .. } => {
                 verbatim_ia2::text::TextStep::Sentence(*from, *forward)
             }
-            Op::TerminalRead { ask, .. } => {
-                let Some(uia) = self.client.uia() else {
-                    return Ok(StepOutcome::Refused(StepRefusal::NoText));
-                };
-                return Ok(text_reads::terminal_window_step(context, uia, node, ask));
-            }
             Op::Visible { .. }
             | Op::Move { .. }
             | Op::FindText { .. }
@@ -1247,9 +1241,5 @@ fn text_refused(reply: &TextReply, node: NodeId) -> StepOutcome {
         TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
         TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
         TextReply::Unanswered => StepOutcome::Failed,
-        other => {
-            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
-            StepOutcome::Failed
-        }
     }
 }

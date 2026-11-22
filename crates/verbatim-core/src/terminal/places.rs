@@ -15,8 +15,10 @@
 
 use std::collections::VecDeque;
 
+use crate::terminal_window::{
+    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk,
+};
 use serde::{Deserialize, Serialize};
-use verbatim_model::{CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk};
 use verbatim_text::terminal_window::Window;
 
 use crate::terminal::pacing::{Skipped, Waiting};

@@ -1,16 +1,12 @@
-//! A terminal's window read (`verbatim_model::batch::Op::TerminalRead`,
-//! `verbatim-outpost`'s `terminal::window` on `verbatim-uia-rops`'s
-//! `terminal_read`) against mockapp's UIA text provider, whose `set-text`
-//! command rewrites the terminal's text as a terminal's buffer changes,
-//! every row padded to the width and ended by a carriage return and line
-//! feed, and whose `screen` command puts only the text's last rows on
-//! screen. Each read is taken by the remote program and by the classic
-//! calls, which must answer alike, and each answer is pinned whole. Each
-//! read is also asked as the request list's generic steps
-//! (`verbatim_core::terminal_window`), through a real outpost with remote
-//! operations on and one with them off, the window Core makes of their
-//! outcomes answering every field the read's does: the differential of the
-//! generic steps against the terminal read.
+//! A terminal's window read, the request list's generic steps
+//! (`verbatim_core::terminal_window`), against mockapp's UIA text provider,
+//! whose `set-text` command rewrites the terminal's text as a terminal's
+//! buffer changes, every row padded to the width and ended by a carriage
+//! return and line feed, and whose `screen` command puts only the text's
+//! last rows on screen. Each read runs through a real outpost with remote
+//! operations on and one with them off, which must answer alike, the
+//! remote read one program and the colours one more, and the window Core
+//! makes of the outcomes is pinned whole.
 //!
 //! What is checked: a first read from the screen's top; a read after
 //! output, from two screens above the document's end, counting the rows
@@ -22,7 +18,7 @@
 //! the line above the window found, a line in the window not sought, and a
 //! line nowhere missed; and the search run twice with the history trimmed
 //! between, which leaves its second search Windows Terminal's nowhere
-//! range, answered with no remote operation falling back.
+//! range, missed by the search's calls.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -30,24 +26,17 @@ mod harness;
 
 use common::outpost::OutpostUnderTest;
 
-use std::sync::{Arc, Mutex};
-
 use verbatim_core::batch::Builder;
-use verbatim_core::terminal_window::{add_steps, window_of};
+use verbatim_core::terminal_window::{
+    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, add_steps, window_of,
+};
 use verbatim_model::batch::{Done, Op, Placement, Step, StepOutcome, Subject};
 use verbatim_model::request::{Outcome, Question, Reply, WindowVerdict};
-use verbatim_model::{
-    CurrentMark, EndMark, MarkPlace, MarkSearch, NodeId, TerminalColourRun, TerminalText,
-    TerminalWindow, TextAnchor, TextDetails, WindowAsk,
-};
-use verbatim_outpost::terminal::{WindowAnswer, WindowRead, window};
+use verbatim_model::{NodeId, TerminalColourRun, TerminalText, TextAnchor, TextDetails};
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
-use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
-};
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 
 /// The terminal's width in cells.
 const WIDTH: usize = 12;
@@ -94,19 +83,14 @@ fn unpadded(rows: &[&str]) -> TerminalText {
 struct Terminal {
     app: common::MockApp,
     hwnd: HWND,
-    uia: Uia,
-    element: IUIAutomationElement,
-    pattern: IUIAutomationTextPattern,
     outposts: Vec<(OutpostUnderTest, NodeId)>,
 }
 
 /// The brand of the generic steps' batches.
 enum WindowSteps {}
 
-/// The end a read found: the range the terminal read holds, and the anchor
-/// each outpost holds for the generic steps' read.
+/// The end a read found: the anchor each outpost holds for it.
 struct Ends {
-    range: IUIAutomationTextRange,
     anchors: Vec<TextAnchor>,
 }
 
@@ -169,7 +153,6 @@ impl Terminal {
         let hwnd = common::find_window(&title);
         let uia = Uia::new().expect("a UIA client");
         let element = common::named_element(&uia, hwnd, "Terminal");
-        let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
         common::apply(&mut app, hwnd, &format!("screen term {screen}"));
         app.send("set-focus term");
         let outposts = [true, false]
@@ -179,9 +162,6 @@ impl Terminal {
         Self {
             app,
             hwnd,
-            uia,
-            element,
-            pattern,
             outposts,
         }
     }
@@ -189,24 +169,6 @@ impl Terminal {
     fn show(&mut self, rows: &[String]) {
         let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
         show(&mut self.app, self.hwnd, &rows);
-    }
-
-    /// The read `ask` names, by the remote program when `remote`.
-    fn read(&self, ask: &WindowRead<'_>, remote: bool) -> WindowAnswer {
-        let caret = CaretLineQuery {
-            element: &self.element,
-            pattern: &self.pattern,
-            max_text: 4096,
-            since: None,
-        };
-        window(
-            &self.uia,
-            (&self.element, &self.pattern),
-            caret,
-            ask,
-            (remote, None),
-        )
-        .expect("the window is read")
     }
 
     /// The read `asked` names, by the generic steps through outpost
@@ -239,9 +201,7 @@ impl Terminal {
             )
         });
         add_steps(&mut steps, *node, &ask, colours);
-        let Question::Batch(batch) = steps.finish().question() else {
-            panic!("a batch")
-        };
+        let Question::Batch(batch) = steps.finish().question();
         let (answer, calls) = outpost.batch(self.hwnd, WindowVerdict::Uia, batch);
         // By remote operations, a read with no search is one program, and
         // the colours one more: no step fell back to calls.
@@ -259,46 +219,25 @@ impl Terminal {
             .unwrap_or_else(|unread| panic!("the window, not {unread:?} of {outcomes:#?}"))
     }
 
-    /// The read `asked` names both ways, which must answer alike, and by
-    /// the generic steps through both outposts, which must answer as the
-    /// read does: the answer's fields, and the ends found.
+    /// The read `asked` names through both outposts, which must answer
+    /// alike: the fields of the window Core makes, and the ends found.
     fn both(&self, asked: &Asked<'_>) -> (Fields, Ends) {
-        let ask = WindowRead {
-            end: asked
-                .end
-                .map(|(ends, line, find)| (&ends.range, line, find)),
-            aside: asked.aside.map(|ends| &ends.range),
-            height: asked.height,
-            opening: 2,
-            colours: asked.colours,
-        };
-        let remote = self.read(&ask, true);
-        let classic = self.read(&ask, false);
-        let fields = Fields::from(&remote);
-        assert_eq!(fields, Fields::from(&classic), "remote and classic differ");
-        let mut anchors = Vec::new();
-        for (which, label) in ["remote", "calls"].into_iter().enumerate() {
-            let window = self.generic(which, asked);
-            assert_eq!(
-                Fields::of_window(&window),
-                fields,
-                "the generic steps by {label} differ from the terminal read"
-            );
-            anchors.push(window.end);
-        }
+        let remote = self.generic(0, asked);
+        let calls = self.generic(1, asked);
+        let fields = Fields::of_window(&remote);
+        assert_eq!(fields, Fields::of_window(&calls), "remote and calls differ");
         (
             fields,
             Ends {
-                range: remote.end,
-                anchors,
+                anchors: vec![remote.end, calls.end],
             },
         )
     }
 }
 
-/// The fields a test checks of a read, both paths' alike: all but its
-/// ranges, its times and the caret's range, of which the caret's line and
-/// the caret's place in it are kept.
+/// The fields a test checks of a window, both outposts' alike: all but its
+/// anchors and its times, the caret's line, without its padding, and the
+/// caret's place in it kept.
 #[derive(Debug, PartialEq, Eq)]
 struct Fields {
     rows: TerminalText,
@@ -315,36 +254,6 @@ struct Fields {
     found: MarkSearch,
     colours: Option<Vec<Vec<TerminalColourRun>>>,
     caret: Option<(String, usize)>,
-}
-
-impl From<&WindowAnswer> for Fields {
-    fn from(answer: &WindowAnswer) -> Self {
-        assert!(
-            answer.began_us <= answer.ended_us,
-            "the read ends after it begins"
-        );
-        Self {
-            rows: answer.rows.clone(),
-            above: answer.above,
-            screen_top: answer.screen_top,
-            screen_rows: answer.screen_rows,
-            width: answer.width,
-            screen_at_start: answer.screen_at_start,
-            caret_rows_to_end: answer.caret_rows_to_end,
-            first_row: answer.first_row.clone(),
-            document_rows: answer.document_rows,
-            end_place: answer.end_place.clone(),
-            aside_place: answer.aside_place.clone(),
-            found: answer.found,
-            colours: answer.colours.clone(),
-            caret: answer.caret.as_ref().map(|caret| {
-                (
-                    String::from_utf16_lossy(&caret.line.text),
-                    caret.line.offset,
-                )
-            }),
-        }
-    }
 }
 
 impl Fields {
@@ -604,70 +513,33 @@ fn the_search_for_a_marks_line_answers_both_kinds_of_miss_both_ways() {
     terminal.app.quit();
 }
 
-/// The targets of the log lines a run wrote.
-#[derive(Default)]
-struct Targets(Mutex<Vec<String>>);
-
-impl tracing::Subscriber for Targets {
-    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        let target = event.metadata().target();
-        if target.starts_with("verbatim::") {
-            self.0.lock().expect("the log").push(target.to_owned());
-        }
-    }
-    fn enter(&self, _: &tracing::span::Id) {}
-    fn exit(&self, _: &tracing::span::Id) {}
-}
-
-/// The search run by the remote read's caller twice, the history trimmed
-/// between so that the command's line is gone: the second search answers
-/// Windows Terminal's nowhere range, whose calls would end a remote
-/// operation, and is missed by the classic calls, with no fallback logged.
-fn a_search_after_the_history_is_trimmed_falls_back_nowhere() {
+/// The search for a mark's line run twice, the history trimmed between so
+/// that the command's line is gone: the second search answers Windows
+/// Terminal's nowhere range, whose calls would end a remote operation, and
+/// is missed by the search's calls, which `FindText` alone makes.
+fn a_search_after_the_history_is_trimmed_is_missed_by_calls() {
     let mut terminal = Terminal::start(
         "terminal_find_misses_answer_a_range.json",
         "mockapp-window-trimmed",
         3,
     );
     terminal.show(&command_rows(1));
-    let end = terminal
-        .read(
-            &WindowRead {
-                end: None,
-                aside: None,
-                height: 3,
-                opening: 2,
-                colours: false,
-            },
-            true,
-        )
-        .end;
-    let targets = Arc::new(Targets::default());
-    let search = |terminal: &Terminal, end: &IUIAutomationTextRange| {
-        let ask = WindowRead {
+    let (_, end) = terminal.both(&plain(3));
+    let search = |terminal: &Terminal, end: &Ends| {
+        terminal.both(&Asked {
             end: Some((end, "cmd 1", true)),
             aside: None,
             height: 3,
-            opening: 2,
             colours: false,
-        };
-        tracing::subscriber::with_default(Arc::clone(&targets), || terminal.read(&ask, true))
+        })
     };
-    let first = search(&terminal, &end);
+    let (first, first_end) = search(&terminal, &end);
     assert_eq!(first.found, MarkSearch::Found(11));
     let mut trimmed = command_rows(3);
     trimmed.remove(0);
     terminal.show(&trimmed);
     common::reset_hits(terminal.hwnd);
-    let second = search(&terminal, &first.end);
+    let (second, _) = search(&terminal, &first_end);
     assert_eq!(second.found, MarkSearch::Missed);
     let faults = common::read_hits(terminal.hwnd)
         .into_iter()
@@ -675,11 +547,6 @@ fn a_search_after_the_history_is_trimmed_falls_back_nowhere() {
         .unwrap_or(0);
     terminal.app.quit();
     assert!(faults > 0, "the second search met the nowhere range");
-    assert_eq!(
-        *targets.0.lock().expect("the log"),
-        Vec::<String>::new(),
-        "nothing fell back"
-    );
 }
 
 /// Runs this file's tests through the UIA test runner (`common/harness.rs`).
@@ -698,8 +565,8 @@ fn main() {
             the_search_for_a_marks_line_answers_both_kinds_of_miss_both_ways,
         ),
         (
-            "a_search_after_the_history_is_trimmed_falls_back_nowhere",
-            a_search_after_the_history_is_trimmed_falls_back_nowhere,
+            "a_search_after_the_history_is_trimmed_is_missed_by_calls",
+            a_search_after_the_history_is_trimmed_is_missed_by_calls,
         ),
     ]);
 }

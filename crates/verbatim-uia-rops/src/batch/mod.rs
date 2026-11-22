@@ -414,6 +414,21 @@ pub struct UnitsRead {
     pub learning: Attributes,
 }
 
+/// How a `ReadText` reads, as `resolver` makes it of the step's unit,
+/// count and details: a trimmed read, whose chunk answers no languages,
+/// reads none.
+fn read_of(
+    resolver: &dyn Resolve,
+    read: (Option<TextMovement>, verbatim_model::TextUnit, u16),
+    (details, trim): (TextDetails, bool),
+) -> Result<UnitsRead, Ran> {
+    let read = resolver.units(read, details)?;
+    Ok(UnitsRead {
+        culture: read.culture && !trim,
+        ..read
+    })
+}
+
 /// The most UTF-16 code units of one unit's text, or of a caret wait's
 /// line or word, read: one past a chunk's limit, so a longer one is known
 /// cut.
@@ -963,7 +978,7 @@ fn kind_name(op: &Op) -> &'static str {
         Op::Move { .. } => "move",
         Op::FindText { .. } => "find text",
         Op::ReadColours { .. } => "read colours",
-        _ => "not fusable",
+        Op::FocusRead { .. } => "not fusable",
     }
 }
 

@@ -127,7 +127,7 @@ fn first_is(question: &Question, kind: OpKind) -> bool {
 /// `request`: its starting read, once its stroke went by its 150 ms
 /// release or was dropped at a switch away from the user's desktop.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
-    let starting = first_is(request, OpKind::Caret) || first_is(request, OpKind::TerminalRead);
+    let starting = first_is(request, OpKind::Caret) || first_is(request, OpKind::Visible);
     starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
 
@@ -207,9 +207,9 @@ impl CaretStage {
             question if first_is(question, OpKind::Caret) => Some(Self::Starting {
                 deletes_back: press.key.motion.deletes_back(),
             }),
-            // A terminal's starting read, the window's, keeps nothing to
-            // say what a key deleted.
-            question if first_is(question, OpKind::TerminalRead) => Some(Self::Starting {
+            // A terminal's starting read, the window's, whose first step is
+            // the visible range, keeps nothing to say what a key deleted.
+            question if first_is(question, OpKind::Visible) => Some(Self::Starting {
                 deletes_back: false,
             }),
             question if first_is(question, OpKind::MoveBySentence) => Some(Self::Sentence),
@@ -236,9 +236,7 @@ impl CaretStage {
 /// When the bound of `request`'s wait passes, when its first step is a
 /// caret wait.
 fn wait_bound(request: &Question) -> Option<u64> {
-    let Question::Batch(batch) = request else {
-        return None;
-    };
+    let Question::Batch(batch) = request;
     match &batch.steps.first()?.op {
         Op::WaitForCaret { wait, .. } => {
             Some(wait.passed_at_us.saturating_add(u64::from(wait.bound_us)))

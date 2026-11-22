@@ -181,9 +181,7 @@ struct Step {
 /// caret key's confirmation; "full if focused" for its test of the focused
 /// state before its full read; "full" otherwise.
 pub(crate) fn depth_of(question: &verbatim_model::request::Question) -> &'static str {
-    let verbatim_model::request::Question::Batch(batch) = question else {
-        return "not a batch";
-    };
+    let verbatim_model::request::Question::Batch(batch) = question;
     if crate::focus::msaa_run::is_confirmation(question) {
         "facts"
     } else if batch.steps.iter().any(|step| {
@@ -238,12 +236,9 @@ fn read_effect(step: &mut Step, effect: Effect) {
                     ASKED.with(|asked| asked.borrow_mut().insert(ask.number.0, batch.clone()));
                     step.text.push((ask.number.0, node, batch));
                 }
-                other => step.other.push(match &other {
-                    verbatim_model::request::Question::Batch(batch) => {
-                        crate::entries::tests::batch_kind(batch)
-                    }
-                    verbatim_model::request::Question::Terminal(_) => "other",
-                }),
+                verbatim_model::request::Question::Batch(batch) => {
+                    step.other.push(crate::entries::tests::batch_kind(&batch));
+                }
             }
         }
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {

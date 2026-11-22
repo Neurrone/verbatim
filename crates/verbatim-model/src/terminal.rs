@@ -153,38 +153,6 @@ pub struct TerminalColourRun {
     pub background: u32,
 }
 
-/// A row a terminal's search found ([`crate::TextReply::TerminalFound`]):
-/// where it is, in rows above where the next read starts (negative below
-/// it), and the text read from it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalMatch {
-    /// Rows above the start.
-    pub above: i32,
-    /// The text of the rows read from it, padding and line breaks as the
-    /// terminal gave them.
-    pub text: String,
-}
-
-/// Which read Core asks a terminal's outpost for at once
-/// ([`crate::TextOp::TerminalReadNow`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TerminalScope {
-    /// A read as any other, whatever the on-demand state, before a review
-    /// command, which Core answers from its memory once the read is
-    /// aligned.
-    Fresh,
-    /// The whole document, from its start, which the reading rules ask
-    /// for after a lost read ("A lost read").
-    Whole,
-    /// A first read again, counted up from the document's end by `height`
-    /// rows with as many rows above, so that it holds its history block
-    /// ("The read").
-    HistoryBlock {
-        /// The screen's height the first read found.
-        height: u32,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

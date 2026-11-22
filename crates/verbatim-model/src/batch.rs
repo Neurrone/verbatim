@@ -1,5 +1,5 @@
 //! The request list: every request Core sends a reader is a batch of at
-//! most sixteen operations from one closed list of twenty-two, sent together
+//! most sixteen operations from one closed list of twenty-one, sent together
 //! and answered together (ADR 0003, "Properties, event kinds and
 //! requests": "A new command adds no kind of request").
 //!
@@ -31,8 +31,8 @@ use crate::property::PropertyId;
 use crate::request::{FocusRead, FollowGroup, KnownAncestor, MsaaIds, NodeRead, Route};
 use crate::tell::ElementToken;
 use crate::{
-    ActionName, Backend, EditSelection, NodeId, SelectionDifference, SentenceMoved, TerminalWindow,
-    TextAnchor, TextChunk, TextDetails, TextMovement, TextPoint, TextUnit, WindowAsk, WindowHandle,
+    ActionName, Backend, EditSelection, NodeId, SelectionDifference, SentenceMoved, TextAnchor,
+    TextChunk, TextDetails, TextMovement, TextPoint, TextUnit, WindowHandle,
 };
 
 pub use parse::{Bound, LISTENER_MSAA_SET, Malformed, Parsed, ReaderKind, parse};
@@ -564,17 +564,9 @@ pub enum Op {
         /// How many cells a row holds.
         width: u32,
     },
-    /// A terminal's window read: the outpost's terminal read, with every
-    /// rule it holds, as one operation ([`TerminalWindow`]).
-    TerminalRead {
-        /// The terminal.
-        subject: Subject,
-        /// What Core names to it.
-        ask: Box<WindowAsk>,
-    },
 }
 
-/// The twenty-two operations, by name: each one's result kind.
+/// The twenty-one operations, by name: each one's result kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpKind {
     /// [`Op::Read`].
@@ -619,8 +611,6 @@ pub enum OpKind {
     FindText,
     /// [`Op::ReadColours`].
     ReadColours,
-    /// [`Op::TerminalRead`].
-    TerminalRead,
 }
 
 impl OpKind {
@@ -642,7 +632,6 @@ impl OpKind {
                 | Self::Move
                 | Self::FindText
                 | Self::ReadColours
-                | Self::TerminalRead
         )
     }
 
@@ -693,7 +682,6 @@ impl Op {
             Self::Move { .. } => OpKind::Move,
             Self::FindText { .. } => OpKind::FindText,
             Self::ReadColours { .. } => OpKind::ReadColours,
-            Self::TerminalRead { .. } => OpKind::TerminalRead,
         }
     }
 
@@ -721,8 +709,7 @@ impl Op {
             | Self::Visible { subject }
             | Self::Move { subject, .. }
             | Self::FindText { subject, .. }
-            | Self::ReadColours { subject, .. }
-            | Self::TerminalRead { subject, .. } => Some(subject),
+            | Self::ReadColours { subject, .. } => Some(subject),
             Self::Follow(target) => target.as_ref().map(|target| &target.subject),
         }
     }
@@ -1184,8 +1171,6 @@ pub enum Done {
     FindText(Vec<FoundText>),
     /// [`Op::ReadColours`]'s: each row's runs, from the first.
     ReadColours(Vec<Vec<crate::TerminalColourRun>>),
-    /// [`Op::TerminalRead`]'s.
-    TerminalRead(Box<TerminalWindow>),
 }
 
 impl Done {
@@ -1214,7 +1199,6 @@ impl Done {
             Self::Move(_) => OpKind::Move,
             Self::FindText(_) => OpKind::FindText,
             Self::ReadColours(_) => OpKind::ReadColours,
-            Self::TerminalRead(_) => OpKind::TerminalRead,
         }
     }
 
@@ -1244,8 +1228,7 @@ impl Done {
             | Self::Visible(_)
             | Self::Move(_)
             | Self::FindText(_)
-            | Self::ReadColours(_)
-            | Self::TerminalRead(_) => Vec::new(),
+            | Self::ReadColours(_) => Vec::new(),
         }
     }
 
@@ -1280,8 +1263,7 @@ impl Done {
             | Self::MoveBySentence(_)
             | Self::Visible(_)
             | Self::FindText(_)
-            | Self::ReadColours(_)
-            | Self::TerminalRead(_) => None,
+            | Self::ReadColours(_) => None,
         }
     }
 }

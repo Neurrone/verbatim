@@ -757,9 +757,10 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 unit,
                 count,
                 details,
+                trim,
                 ..
             } => {
-                let read = resolver.units((*movement, *unit, *count), *details)?;
+                let read = super::read_of(resolver, (*movement, *unit, *count), (*details, *trim))?;
                 let element = self.text(subject)?;
                 (
                     Low::ReadText(element, self.point(at, index)?, read_key(&read)),

@@ -19,16 +19,14 @@ use verbatim_model::property::{
 };
 use verbatim_model::request::{
     Answer, Ask, FocusAncestor, FocusCaret, FocusNode, FocusRead, HeldIds, KnownAncestor, MsaaIds,
-    NodeRead, NodeWindow, Outcome, Probe, Question, Reply, RouteEnd, WindowVerdict,
+    NodeRead, NodeWindow, Probe, Question, RouteEnd, WindowVerdict,
 };
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextOp,
-    TextReply,
+    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet,
 };
 
 use super::RequestContext;
 use super::read::{self, Client, ReadError};
-use super::text_reads;
 use super::window::{hwnd_of, window_handle};
 
 /// How many children a read reads of one node at most: a bound on a read
@@ -50,13 +48,6 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         .set(given.map(|uia| (hwnd_of(ask.window), uia)));
     let outcome = match &ask.request {
         Question::Batch(batch) => super::batch::answer(context, client, ask, batch, &mut probes),
-        Question::Terminal(terminal_ask) => {
-            // A terminal's read consults no verdict of its own, but still
-            // answers its window's probe, so that Core records the verdict
-            // rather than count the probe timed out.
-            let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
-            terminal(context, client, terminal_ask.node, &terminal_ask.op)
-        }
     };
     Answer {
         number: ask.number,
@@ -67,46 +58,10 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
 }
 
 /// The node details `request`'s reads fetch: those its batch's property
-/// sets name; none for a terminal's text operation, which reads no node's
-/// properties.
+/// sets name.
 pub(super) fn node_details(request: &Question) -> NodeDetailSet {
     match request {
         Question::Batch(batch) => super::batch::node_details(batch),
-        Question::Terminal(_) => NodeDetailSet::NONE,
-    }
-}
-
-/// A terminal's read, history read or search Core asks
-/// (`docs/design/readers-tell-core-asks-build3.md`): a terminal that is
-/// gone answers "not there", which ends Core's model of it, and any other
-/// read that brings nothing answers its reply, which Core takes as failed.
-fn terminal(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node: NodeId,
-    op: &TextOp,
-) -> Outcome {
-    let Some(uia) = client.uia() else {
-        return Outcome::Result(Reply::Text(TextReply::Unanswered));
-    };
-    let reply = match op {
-        TextOp::ReadTerminal(read) => text_reads::terminal_read(context, uia, node, read),
-        TextOp::TerminalHistory {
-            above,
-            whole,
-            start,
-            height,
-        } => text_reads::terminal_history(context, uia, node, (*start, *above, *whole, *height)),
-        TextOp::TerminalFind {
-            needle,
-            from,
-            rows,
-            start,
-        } => text_reads::terminal_find(context, uia, node, *start, (needle, *from, *rows)),
-    };
-    match reply {
-        TextReply::Gone => Outcome::NotThere,
-        reply => Outcome::Result(Reply::Text(reply)),
     }
 }
 

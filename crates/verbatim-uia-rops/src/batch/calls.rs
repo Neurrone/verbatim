@@ -115,10 +115,11 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             unit,
             count,
             details,
+            trim,
             ..
         } => {
             let text = resolver.text(subject)?;
-            let read = resolver.units((*movement, *unit, *count), *details)?;
+            let read = super::read_of(resolver, (*movement, *unit, *count), (*details, *trim))?;
             let from = point(state, index, text, at)?;
             let answer = classic_units(
                 text,

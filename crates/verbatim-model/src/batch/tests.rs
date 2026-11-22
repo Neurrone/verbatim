@@ -559,6 +559,7 @@ fn refused(steps: Vec<Step>, reader: ReaderKind, refusal: Malformed) {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one case per bound")]
 fn a_batch_breaking_a_bound_is_refused_whole() {
     let outpost = ReaderKind::Outpost;
     let bound = |step, bound| Malformed::Bound {
@@ -692,6 +693,7 @@ fn a_batch_breaking_a_bound_is_refused_whole() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one case per kind of reference")]
 fn a_reference_names_an_earlier_step_of_a_kind_it_can_take() {
     let outpost = ReaderKind::Outpost;
     let node12 = || Subject::Node(node(12));
@@ -1169,60 +1171,30 @@ fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
         })),
         StepOutcome::NotThere(Missing::Node(node(9))),
         StepOutcome::NotThere(Missing::Anchor(TextAnchor(13))),
-        done(Done::TerminalRead(Box::new(terminal_window(14)))),
+        done(Done::Visible(VisibleText {
+            start: TextAnchor(14),
+            end: TextAnchor(15),
+            at_text_start: true,
+            text: String::new(),
+            padded: Vec::new(),
+        })),
+        done(Done::Move(Moved {
+            moved: 1,
+            from: TextAnchor(16),
+            to: TextAnchor(17),
+        })),
     ]
 }
 
-/// A terminal's window read whose caret's line starts at anchor `first`,
-/// its caret point the next and its end mark the one after.
-fn terminal_window(first: u64) -> crate::TerminalWindow {
-    crate::TerminalWindow {
-        rows: crate::TerminalText::unpadded("ready>"),
-        above: 1,
-        screen_top: 1,
-        screen_rows: 1,
-        width: 6,
-        screen_at_start: true,
-        caret: Some(crate::WindowCaret {
-            report: CaretReport {
-                line: chunk(first),
-                selection: None,
-            },
-            point: TextAnchor(first + 1),
-        }),
-        caret_rows_to_end: Some(1),
-        end: TextAnchor(first + 2),
-        first_row: crate::TerminalText::unpadded("ready>"),
-        document_rows: 1,
-        end_place: None,
-        aside_place: None,
-        found: crate::MarkSearch::NotAsked,
-        colours: None,
-        began_us: 0,
-        ended_us: 0,
-    }
-}
-
-/// A terminal's window read of `subject` naming end marks `end` and
-/// `aside`.
-fn terminal_read(subject: Subject, (end, aside): (Option<u64>, Option<u64>)) -> Op {
-    let mark = |anchor| crate::EndMark {
-        anchor: TextAnchor(anchor),
-        line: "ready>".into(),
-        line_above: 0,
-    };
-    Op::TerminalRead {
+/// A move of `subject`'s text from the anchor `from` by a line.
+fn moved_from(subject: Subject, from: u64) -> Op {
+    Op::Move {
         subject,
-        ask: Box::new(crate::WindowAsk {
-            end: end.map(|anchor| crate::CurrentMark {
-                mark: mark(anchor),
-                find: false,
-            }),
-            aside: aside.map(mark),
-            height: 30,
-            opening: 30,
-            colours: false,
-        }),
+        at: Point::At(TextPoint::At(crate::TextPosition::at(TextAnchor(from)))),
+        movement: TextMovement {
+            unit: TextUnit::Line,
+            count: 1,
+        },
     }
 }
 
@@ -1238,7 +1210,7 @@ fn the_outcome_walk_meets_every_node_and_anchor_and_an_answer_stamps_them() {
         },
     );
     assert_eq!(nodes, (1..=9).collect::<Vec<_>>());
-    assert_eq!(anchors, (1..=16).collect::<Vec<_>>());
+    assert_eq!(anchors, (1..=17).collect::<Vec<_>>());
 
     let mut answer = Answer {
         number: RequestNumber(1),
@@ -1248,7 +1220,7 @@ fn the_outcome_walk_meets_every_node_and_anchor_and_an_answer_stamps_them() {
     };
     assert_eq!(
         answer.named().1,
-        (1..=16).map(TextAnchor).collect::<Vec<_>>()
+        (1..=17).map(TextAnchor).collect::<Vec<_>>()
     );
     answer.assign_outpost(OutpostId(3));
     let (stamped, _) = answer.named();
@@ -1304,9 +1276,7 @@ fn the_batch_walk_meets_every_node_it_names_and_unstamps_them() {
     sent.visit_nodes(&mut |node| met.push(node.number()));
     assert_eq!(met, (1..=9).collect::<Vec<_>>());
     ask.unstamp();
-    let crate::request::Question::Batch(mut unstamped) = ask.request else {
-        panic!("a batch stays a batch");
-    };
+    let crate::request::Question::Batch(mut unstamped) = ask.request;
     unstamped.visit_nodes(&mut |node| assert_eq!(node.outpost(), Some(OutpostId::UNASSIGNED)));
 }
 
@@ -1360,40 +1330,48 @@ fn a_batch_names_every_anchor_of_its_points_baselines_and_starting_points() {
         details: TextDetails::NONE,
     })]);
     assert_eq!(sentence.anchors(), [(node(12), vec![TextAnchor(41)])]);
-    let terminal = batch(vec![step(terminal_read(
-        Subject::Node(node(12)),
-        (Some(42), Some(43)),
-    ))]);
+    let terminal = batch(vec![
+        step(moved_from(Subject::Node(node(12)), 42)),
+        step(moved_from(Subject::Node(node(12)), 43)),
+    ]);
     assert_eq!(
         terminal.anchors(),
-        [(node(12), vec![TextAnchor(42), TextAnchor(43)])]
+        [
+            (node(12), vec![TextAnchor(42)]),
+            (node(12), vec![TextAnchor(43)])
+        ]
     );
 }
 
-/// A terminal's window read runs only in an outpost, and names its end
-/// marks only on a node.
+/// A terminal's operations run only in an outpost, and a move names its
+/// held point only on a node.
 #[test]
-fn a_terminal_read_runs_in_an_outpost_and_names_its_marks_on_a_node() {
-    let read = |subject, marks| vec![step(terminal_read(subject, marks))];
+fn a_terminals_operations_run_in_an_outpost_and_name_anchors_on_a_node() {
+    let node12 = || Subject::Node(node(12));
     assert!(
         parse(
-            batch(read(Subject::Node(node(12)), (Some(1), None))),
+            batch(vec![step(moved_from(node12(), 1))]),
             ReaderKind::Outpost
         )
         .is_ok()
     );
-    refused(
-        read(Subject::Node(node(12)), (None, None)),
-        ReaderKind::Plain,
-        Malformed::NotRun {
-            step: Place(0),
-            op: OpKind::TerminalRead,
-        },
-    );
+    for (op, kind) in [
+        (Op::Visible { subject: node12() }, OpKind::Visible),
+        (moved_from(node12(), 1), OpKind::Move),
+    ] {
+        refused(
+            vec![step(op)],
+            ReaderKind::Plain,
+            Malformed::NotRun {
+                step: Place(0),
+                op: kind,
+            },
+        );
+    }
     refused(
         vec![
-            step(self::read(Subject::Node(node(12)))),
-            step(terminal_read(Subject::Result(Place(0)), (None, Some(1)))),
+            step(self::read(node12())),
+            step(moved_from(Subject::Result(Place(0)), 1)),
         ],
         ReaderKind::Outpost,
         Malformed::AnchorWithoutNode(Place(1)),

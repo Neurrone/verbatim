@@ -162,8 +162,6 @@ pub mod kind {
         MoveBySentence => SentenceMoved, MoveBySentence;
         /// A caret wait's.
         WaitForCaret => Waited, WaitForCaret;
-        /// A terminal's window read's.
-        TerminalRead => Box<verbatim_model::TerminalWindow>, TerminalRead;
         /// The visible range's.
         Visible => verbatim_model::batch::VisibleText, Visible;
         /// A move's.
@@ -1099,18 +1097,6 @@ impl<B> Builder<B> {
         }))
     }
 
-    /// Reads terminal `node`'s window as `ask` names it.
-    pub fn terminal_read(
-        &mut self,
-        node: NodeId,
-        ask: verbatim_model::WindowAsk,
-    ) -> Ref<B, kind::TerminalRead> {
-        self.push(Some(Op::TerminalRead {
-            subject: Subject::Node(node),
-            ask: Box::new(ask),
-        }))
-    }
-
     /// Waits for a key's effect on the caret in `node`'s text.
     pub fn wait_for_caret(
         &mut self,
@@ -1378,9 +1364,7 @@ impl<B> Answers<B> {
     /// of its step's kind; `None` for any other reply, a malformed answer.
     #[must_use]
     pub fn parse(sent: &Sent<B>, reply: Reply) -> Option<Self> {
-        let Reply::Steps(outcomes) = reply else {
-            return None;
-        };
+        let Reply::Steps(outcomes) = reply;
         let fits = outcomes.len() == sent.batch.steps.len()
             && sent
                 .batch
@@ -1400,6 +1384,16 @@ impl<B> Answers<B> {
             numbering: sent.numbering.clone(),
             brand: PhantomData,
         })
+    }
+
+    /// Every step's outcome, in order; `None` when the shell answered the
+    /// batch unsent.
+    #[must_use]
+    pub fn outcomes(&self) -> Option<&[StepOutcome]> {
+        match &self.answered {
+            Answered::Steps(outcomes) => Some(outcomes),
+            Answered::InFront(_) => None,
+        }
     }
 
     /// What the shell read in front, when it answered the batch unsent.

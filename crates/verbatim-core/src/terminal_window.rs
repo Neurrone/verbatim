@@ -30,11 +30,11 @@
 //! The search and the colours come last, each only when asked, so the
 //! outcomes say which ran by their kinds.
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::batch::{Done, FoundText, StepOutcome};
 use verbatim_model::{
-    CurrentMark, EndMark, MarkPlace, MarkSearch, NodeId, TerminalColourRun, TerminalText,
-    TerminalWindow, TextDetails, TextMovement, TextPoint, TextPosition, TextUnit, WindowAsk,
-    WindowCaret,
+    CaretReport, NodeId, TerminalColourRun, TerminalText, TextAnchor, TextDetails, TextMovement,
+    TextPoint, TextPosition, TextUnit,
 };
 
 use crate::batch::{Answers, Builder, Got, Ref, Search, kind};
@@ -45,6 +45,138 @@ const FAR: i32 = 1_000_000;
 /// How many `FindText` calls the search for a mark's line makes at most,
 /// as the outpost's search always made.
 const MARK_SEARCH_CALLS: u8 = 100;
+
+/// An end mark Core names: a held range at an earlier read's document
+/// end, with the text of the last line with text at or above it and that
+/// line's distance in rows above the mark, by which a read finds the line
+/// again once the history rotated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EndMark {
+    /// The held range at the earlier read's document end.
+    pub anchor: TextAnchor,
+    /// The last line with text at or above the mark, without its padding.
+    pub line: String,
+    /// How many rows that line lies above the mark.
+    pub line_above: u32,
+}
+
+/// The current end mark, and whether the read searches for its line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentMark {
+    /// The mark.
+    pub mark: EndMark,
+    /// Whether the read searches for the mark's line when the window it
+    /// read lacks it ([`MarkSearch`]): Core asks only on a read its pacing
+    /// held once an earlier read showed the history rotated.
+    pub find: bool,
+}
+
+/// What Core names to a window read ([`add_steps`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowAsk {
+    /// The current end mark, none for a first read.
+    pub end: Option<CurrentMark>,
+    /// The end mark kept aside while a full-screen program's screen is up.
+    pub aside: Option<EndMark>,
+    /// The screen's height in rows as the last read found it, 0 at first:
+    /// the window starts twice that many rows above the document's end,
+    /// or at the screen's top when it is 0.
+    pub height: u32,
+    /// "Lines spoken in full": past a mark with more rows written after it
+    /// than this and the window together, the read gives this many rows
+    /// after the mark ([`MarkPlace::Rows::opening`]).
+    pub opening: u32,
+    /// Whether to read the colours of every screen row, as Core does for
+    /// each read in a key's window.
+    pub colours: bool,
+}
+
+/// What a mark showed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarkPlace {
+    /// The mark lies past the document's end or the provider would not
+    /// compare it: the text shrank under a clear, or the mark is on the
+    /// other screen.
+    Refused,
+    /// The rows written past the mark.
+    Rows {
+        /// How many rows lie from the mark to the document's end.
+        written: u32,
+        /// The first "Lines spoken in full" rows after the mark, when more
+        /// rows follow it than those and the window together.
+        opening: Option<TerminalText>,
+    },
+}
+
+/// The search for the current mark's line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarkSearch {
+    /// Core did not ask for it.
+    NotAsked,
+    /// The window read holds the line, so nothing was searched.
+    InWindow,
+    /// The nearest row starting with the line's text, this many rows above
+    /// the document's end.
+    Found(u32),
+    /// No row starting with it was found.
+    Missed,
+}
+
+/// The caret a window read found, as a caret report, with the point held
+/// at it: a caret key's starting point.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowCaret {
+    /// The caret and its line.
+    pub report: CaretReport,
+    /// The point held at the caret.
+    pub point: TextAnchor,
+}
+
+/// The window Core makes of a window read's outcomes ([`window_of`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalWindow {
+    /// The rows from two screens above the document's end to its end, read
+    /// in one call, without their padding.
+    pub rows: TerminalText,
+    /// How many rows the window starts above the document's end.
+    pub above: u32,
+    /// How many rows the screen's top lies above the document's end; the
+    /// screen's last rows may lie past the end, blank.
+    pub screen_top: u32,
+    /// The screen's height in rows.
+    pub screen_rows: u32,
+    /// The screen's width in cells: a line longer than it wraps over
+    /// several rows, which `above`, `screen_top` and the marks count.
+    pub width: u32,
+    /// Whether the screen starts at the document's start.
+    pub screen_at_start: bool,
+    /// The caret, when the provider reports one.
+    pub caret: Option<WindowCaret>,
+    /// How many rows the caret's row and those below it hold, to the
+    /// document's end, when the provider reports a caret: a blank caret
+    /// row is told from the blank rows around it only by its place.
+    pub caret_rows_to_end: Option<u32>,
+    /// The new end mark, held at the document's end.
+    pub end: TextAnchor,
+    /// The document's first row, without its padding.
+    pub first_row: TerminalText,
+    /// How many rows lie from the document's end to its start.
+    pub document_rows: u32,
+    /// What the current mark showed, when Core named one.
+    pub end_place: Option<MarkPlace>,
+    /// What the aside mark showed, when Core named one.
+    pub aside_place: Option<MarkPlace>,
+    /// The search for the current mark's line.
+    pub found: MarkSearch,
+    /// When Core asked for colours, each screen row's runs from the
+    /// screen's top, a wrapped line's rows each its own; the rows stop at
+    /// the document's end.
+    pub colours: Option<Vec<Vec<TerminalColourRun>>>,
+    /// When the read began, in microseconds on the run's shared clock.
+    pub began_us: u64,
+    /// When the read's calls ended, before its text was converted.
+    pub ended_us: u64,
+}
 
 /// Why a window read made no window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,7 +433,7 @@ pub fn window_of(
                 StepOutcome::Done(Done::FindText(matches)),
                 Some(CurrentMark {
                     mark: EndMark { line, .. },
-                    find: true,
+                    ..
                 }),
             ) => found = searched(&rows_read, line, matches),
             (StepOutcome::Done(Done::ReadColours(rows)), _) => colours = Some(rows.clone()),
@@ -409,4 +541,147 @@ pub fn matches_of<B>(answers: &Answers<B>, steps: &SearchSteps<B>) -> Option<Vec
             })
             .collect(),
     )
+}
+
+/// The outcomes a window read's steps, added for `ask`, answer to make
+/// `window` ([`window_of`]): what a test or a measurement of Core's reading
+/// answers Core's read with, in place of an outpost.
+#[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one outcome per step, in the steps' order"
+)]
+pub fn outcomes_making(window: &TerminalWindow, ask: &WindowAsk) -> Vec<StepOutcome> {
+    use verbatim_model::batch::{CaretAt, Chunks, Moved, RangeText, StepRefusal, VisibleText};
+    let held = TextAnchor(0);
+    let moved = |moved: i32, from: TextAnchor| {
+        StepOutcome::Done(Done::Move(Moved {
+            moved,
+            from,
+            to: held,
+        }))
+    };
+    let negative = |rows: u32| i32::try_from(rows).map_or(i32::MIN, i32::wrapping_neg);
+    let chunk = |text: &str| verbatim_model::TextChunk {
+        unit: TextUnit::Line,
+        text: text.to_owned(),
+        start: held,
+        offset: 0,
+        languages: Vec::new(),
+        first: false,
+        last: false,
+        truncated: false,
+        formats: Vec::new(),
+    };
+    let trimmed = |text: &TerminalText| {
+        StepOutcome::Done(Done::ReadText(Chunks {
+            moved: 0,
+            chunks: vec![chunk(&text.text)],
+            padded: Some(text.lengths.clone()),
+        }))
+    };
+    let mut outcomes = vec![
+        StepOutcome::Done(Done::Visible(VisibleText {
+            start: held,
+            end: held,
+            at_text_start: window.screen_at_start,
+            text: String::new(),
+            padded: vec![(window.screen_rows, window.width)],
+        })),
+        trimmed(&TerminalText {
+            text: String::new(),
+            lengths: vec![(1, window.width)],
+        }),
+        moved(i32::try_from(window.screen_top).unwrap_or(i32::MAX), held),
+    ];
+    if ask.height > 0 {
+        outcomes.push(moved(negative(window.above), held));
+    }
+    outcomes.extend([
+        StepOutcome::Done(Done::ReadRange(RangeText {
+            text: window.rows.text.clone(),
+            truncated: false,
+            padded: Some(window.rows.lengths.clone()),
+        })),
+        moved(negative(window.document_rows), window.end),
+        trimmed(&window.first_row),
+    ]);
+    let caret = window.caret.as_ref();
+    outcomes.extend([
+        StepOutcome::Done(Done::Caret(CaretAt {
+            caret: held,
+            selection: None,
+            held: caret.map_or(held, |caret| caret.point),
+            offsets: None,
+        })),
+        StepOutcome::Done(Done::ReadText(Chunks {
+            moved: 0,
+            chunks: vec![caret.map_or_else(|| chunk(""), |caret| caret.report.line.clone())],
+            padded: None,
+        })),
+        moved(
+            i32::try_from(window.caret_rows_to_end.unwrap_or(0)).unwrap_or(i32::MAX),
+            held,
+        ),
+    ]);
+    for (named, place) in [
+        (ask.end.is_some(), &window.end_place),
+        (ask.aside.is_some(), &window.aside_place),
+    ] {
+        if !named {
+            continue;
+        }
+        match place {
+            Some(MarkPlace::Rows { written, opening }) => outcomes.extend([
+                moved(i32::try_from(*written).unwrap_or(i32::MAX), held),
+                trimmed(&opening.clone().unwrap_or_default()),
+            ]),
+            Some(MarkPlace::Refused) | None => outcomes.extend([
+                StepOutcome::Refused(StepRefusal::OutsideText),
+                StepOutcome::Skipped,
+            ]),
+        }
+    }
+    match window.found {
+        MarkSearch::NotAsked => {}
+        MarkSearch::InWindow | MarkSearch::Missed => {
+            outcomes.push(StepOutcome::Done(Done::FindText(Vec::new())));
+        }
+        MarkSearch::Found(to_end) => {
+            outcomes.push(StepOutcome::Done(Done::FindText(vec![FoundText {
+                to_end,
+                text: String::new(),
+            }])));
+        }
+    }
+    if let Some(rows) = &window.colours {
+        outcomes.push(StepOutcome::Done(Done::ReadColours(rows.clone())));
+    }
+    outcomes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The screen's width is its top line's padded length, its line break
+    /// left out, and the screen fills each line's rows at that width, at
+    /// least one, the empty line after a last line break no line.
+    #[test]
+    fn the_screen_fills_each_lines_rows_at_its_top_lines_width() {
+        let width = |text: &str| {
+            let read = TerminalText::unpadded(text);
+            read.lengths.first().map_or(0, |&(_, length)| length)
+        };
+        assert_eq!(width("abcd\r\n"), 4);
+        assert_eq!(width("abcd"), 4);
+        let rows = |text: &str, width| {
+            let read = TerminalText::unpadded(text);
+            screen_rows(&read.text, &read.lengths, width)
+        };
+        assert_eq!(rows("abcd\r\nefghijkl\r\nij", 4), 4);
+        assert_eq!(rows("abcdefgh", 4), 2);
+        assert_eq!(rows("ab  \r\n", 4), 1);
+        assert_eq!(rows("abcd", 0), 0);
+    }
 }

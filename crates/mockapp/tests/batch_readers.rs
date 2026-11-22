@@ -233,11 +233,11 @@ fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refu
     let (refused, calls) = outpost.batch(
         hwnd,
         WindowVerdict::Msaa,
-        batch(vec![read(node.clone()); 5]),
+        batch(vec![read(node.clone()); 17]),
     );
     assert_eq!(
         refused.outcome,
-        Outcome::Refused(Refusal::Malformed(Malformed::TooLong(5)))
+        Outcome::Refused(Refusal::Malformed(Malformed::TooLong(17)))
     );
     assert_eq!(calls.total(), 0, "none of it run");
     drop(outpost);

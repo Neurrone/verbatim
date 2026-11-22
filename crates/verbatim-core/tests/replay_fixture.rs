@@ -99,7 +99,7 @@ impl Script {
             .iter()
             .find_map(|(asked, question)| match question {
                 Question::Batch(batch) if *asked == number => Some(batch.clone()),
-                _ => None,
+                Question::Batch(_) => None,
             })
             .expect("a batch asked");
         QueueInput::Answer {

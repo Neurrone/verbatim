@@ -26,9 +26,9 @@ A read is one remote operation returning the text from one screen above the top 
 
 The memory, the alignment and the rules run in Core, in the reducer (Dickson, 2026-10-24). Core's state holds each terminal's rules behind an `Arc`, serialized with the state, so a flight recorder's dump replays a terminal session (Dickson, 2026-10-26). A read crosses to Core without the spaces that pad its lines, each line's padded length kept, and whole by itself, naming nothing of an earlier read (Dickson, 2026-10-25). The outpost makes the accessibility calls only: it reads what Core asks for and sends the text back. Keys reach the rules from the keyboard hook through Core, in the order they reached the program, so there is one caret and one record of keys, Core's.
 
-The outpost keeps the provider range where the next read starts, the screen's size as Core last told it, the latest end of a key's window that takes the colours, the merging of change signals and the reading-on-demand state machine (so a flood does not wake Core per line), and the noted caret. Every read it takes crosses to Core, those that say nothing included, since only Core can judge a read; it drops only a live read identical to the last one sent in every field but its times and caret report, and never a read that waited for Core's speech queue or the first after the focus arrives (Dickson, 2026-10-26).
+The outpost keeps nothing of a terminal but the anchors its answers hold: Core asks every read as the request list's generic steps, which the outpost answers with its executors' arms, and makes the window of their outcomes itself.
 
-The diff and the reading rules are in `crates/verbatim-text/src/terminal_window.rs`, run by Core's watch in `crates/verbatim-core/src/terminal.rs`; the flood policy is in `crates/verbatim-core/src/terminal/pacing.rs`, the places in `crates/verbatim-core/src/terminal/places.rs`, and the outpost's reads in `crates/verbatim-outpost/src/terminal.rs`.
+The diff and the reading rules are in `crates/verbatim-text/src/terminal_window.rs`, run by Core's watch in `crates/verbatim-core/src/terminal.rs`; the flood policy is in `crates/verbatim-core/src/terminal/pacing.rs`, the places in `crates/verbatim-core/src/terminal/places.rs`, and the window read's steps and the command search's in `crates/verbatim-core/src/terminal_window.rs`.
 
 ## The rules
 

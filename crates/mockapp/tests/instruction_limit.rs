@@ -24,14 +24,14 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::batch::{Answer, Found, Ran, run_batch};
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, Comparison, Error, FocusAncestry, FocusQuery, PathQuery,
-    SnapshotQuery, StatesQuery, Status, TextAttribute, counting, element_by_path_remote,
-    focus_ancestry_remote, focus_states_remote, terminal_read_remote, terminal_snapshot_remote,
+    Attributes, Builder, Comparison, Error, FocusAncestry, FocusQuery, PathQuery, StatesQuery,
+    Status, TextAttribute, counting, element_by_path_remote, focus_ancestry_remote,
+    focus_states_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, IUIAutomationTextRange, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -521,176 +521,118 @@ fn range_selections_execute_exactly() {
     assert!(press.iter().all(|&count| count < LIMIT / 2));
 }
 
-/// A terminal's snapshot: a first read, and a read from where it said to
-/// start with the caret read in the same program, each taking four rows
-/// above its start (the history's block), as the outpost reads a focused
-/// terminal on each change of its text. The program has no loop of
-/// its own, so a long text costs the same instructions as a short one.
-fn terminal_snapshots_execute_exactly() {
-    common::init_com();
-    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
-    let terminal = fixture.find("Terminal");
-    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
-    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
-    let lines = numbered(80);
-    common::apply(
-        &mut fixture.app,
-        fixture.hwnd,
-        &format!(r"set-text term {lines}ready> ls\na\nb"),
-    );
-    let first_query = SnapshotQuery {
-        element: &terminal,
-        pattern: &pattern,
-        start: None,
-        screen_rows: 0,
-        whole: false,
-        above: 4,
-        caret: None,
-        colours: None,
-    };
-    let mut start = None;
-    let first = counted(|| {
-        let snapshot =
-            terminal_snapshot_remote(&fixture.uia, &first_query).expect("the program runs");
-        start = snapshot.next_start;
+/// Brands the window read's batches.
+enum WindowSteps {}
+
+/// The steps of Core's window read of mockapp's terminal `text` as `ask`
+/// names it, its marks the positions `marks` holds, with `colours`, as a
+/// shape the executor runs here.
+fn window_shape<'t>(
+    text: &'t batch::Text,
+    (height, marks): (u32, &[&IUIAutomationTextRange]),
+    colours: Option<(u32, u32)>,
+) -> batch::Shape<'t> {
+    use verbatim_core::terminal_window::{CurrentMark, EndMark, WindowAsk, add_steps};
+    let mut shape = batch::Shape::of(Some(text));
+    let mut held = marks.iter().map(|mark| {
+        let point = shape.point(&batch::held(mark, Endpoint::Start, true));
+        let verbatim_model::batch::Point::At(verbatim_model::TextPoint::At(position)) = point
+        else {
+            unreachable!("a held position")
+        };
+        EndMark {
+            anchor: position.anchor,
+            line: String::new(),
+            line_above: 0,
+        }
     });
-    let start = start.expect("where the next read starts");
-    let started_query = SnapshotQuery {
-        start: Some(&start),
-        screen_rows: 30,
-        caret: Some(CaretLineQuery {
-            element: &terminal,
-            pattern: &pattern,
-            max_text: 4096,
-            since: None,
-        }),
-        ..first_query
+    let ask = WindowAsk {
+        end: held.next().map(|mark| CurrentMark { mark, find: false }),
+        aside: held.next(),
+        height,
+        opening: 30,
+        colours: colours.is_some(),
     };
-    let started = counted(|| {
-        let snapshot =
-            terminal_snapshot_remote(&fixture.uia, &started_query).expect("the program runs");
-        assert!(snapshot.from_start);
-    });
-    fixture.app.quit();
-    assert_eq!(
-        [first, started],
-        [50, 90],
-        "terminal snapshot first and started"
-    );
-    assert!(started < LIMIT / 2);
+    let mut steps = verbatim_core::batch::Builder::<WindowSteps>::named();
+    add_steps(&mut steps, verbatim_model::NodeId::new(1), &ask, colours);
+    let verbatim_model::request::Question::Batch(sent) = steps.finish().question();
+    shape.steps = sent.steps;
+    shape.culture = false;
+    shape
 }
 
-/// A terminal's window read (`TerminalRead`): a first read naming no mark,
-/// and its cap, a read naming both end marks with more rows written past
-/// each than the opening rows and the window hold, so that each mark's
-/// opening rows are read too, with the caret. The program has no loop of
-/// its own, so a long text costs the same instructions as a short one.
+/// A terminal's window read, the request list's generic steps: a first
+/// read naming no mark, and its cap, a read naming both end marks with
+/// more rows written past each than the opening rows and the window hold,
+/// with the caret, each one program. No step loops, so a long text costs
+/// the same instructions as a short one. The hand-written window program
+/// they replace executed 78 and 128.
 fn terminal_window_reads_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-window");
-    let terminal = fixture.find("Terminal");
-    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let text = batch::Text::of(fixture.find("Terminal"));
     common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
     common::apply(
         &mut fixture.app,
         fixture.hwnd,
-        &format!(
-            r"set-text term {}ready>
-",
-            numbered(10)
-        ),
+        &format!(r"set-text term {}ready>\n", numbered(10)),
     );
-    let caret = CaretLineQuery {
-        element: &terminal,
-        pattern: &pattern,
-        max_text: 4096,
-        since: None,
-    };
-    let first_query = verbatim_uia_rops::ReadQuery {
-        element: &terminal,
-        pattern: &pattern,
-        height: 0,
-        marks: [None, None],
-        opening: 30,
-        caret,
-    };
+    let first_shape = window_shape(&text, (0, &[]), None);
     let mut end = None;
-    let first = counted(|| {
-        let window = terminal_read_remote(&fixture.uia, &first_query).expect("the program runs");
-        end = window.end;
+    let first = each_counted(|| {
+        let answer = run_batch(&first_shape.segment(&fixture.uia));
+        end = answer.steps.into_iter().nth(4).and_then(|ran| match ran {
+            Ran::Done(Found::Move(moved)) => Some(moved.from),
+            _ => None,
+        });
     });
     let end = end.expect("the document's end");
     common::apply(
         &mut fixture.app,
         fixture.hwnd,
-        &format!(
-            r"set-text term {}ready>
-",
-            numbered(200)
-        ),
+        &format!(r"set-text term {}ready>\n", numbered(200)),
     );
-    let capped_query = verbatim_uia_rops::ReadQuery {
-        height: 30,
-        marks: [Some(&end), Some(&end)],
-        ..first_query
-    };
-    let capped = counted(|| {
-        let window = terminal_read_remote(&fixture.uia, &capped_query).expect("the program runs");
-        assert!(
-            window.marks.iter().all(|mark| matches!(
-                mark,
-                Some(verbatim_uia_rops::MarkRows::Rows {
-                    opening: Some(_),
-                    ..
-                })
-            )),
-            "{:?}",
-            window.marks
-        );
+    let capped_shape = window_shape(&text, (30, &[&end, &end]), None);
+    let capped = each_counted(|| {
+        let _ = run_batch(&capped_shape.segment(&fixture.uia));
     });
     fixture.app.quit();
+    assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [78, 128],
+        [vec![229], vec![351]],
         "terminal window first and capped"
     );
-    assert!(capped < LIMIT / 2);
 }
 
-/// A terminal's colours, read with its snapshot on a 120 by 30 screen: in
-/// the worst case, every cell's colours differing from its neighbours'
-/// (`terminal-checkered.json`), each program reads rows while a worst row
-/// still fits its budget and the next goes on from there; a plain screen
-/// is read in the snapshot's own program.
+/// A terminal's colours, `ReadColours` after a window read on a 120 by 30
+/// screen: in the worst case, every cell's colours differing from its
+/// neighbours' (`terminal-checkered.json`), each colour program reads rows
+/// while a worst row still fits its budget and the next goes on from
+/// there; a plain screen's colours are one program.
 fn terminal_colours_execute_exactly() {
     common::init_com();
     let screen = vec!["x".repeat(120); 30].join(r"\n");
     let read = |fixture: &str, prefix: &str| {
         let mut fixture = Fixture::start(fixture, prefix);
-        let terminal = fixture.find("Terminal");
-        let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+        let text = batch::Text::of(fixture.find("Terminal"));
         common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
         common::apply(
             &mut fixture.app,
             fixture.hwnd,
             &format!("set-text term {screen}"),
         );
-        let query = SnapshotQuery {
-            element: &terminal,
-            pattern: &pattern,
-            start: None,
-            screen_rows: 0,
-            whole: false,
-            above: 0,
-            caret: None,
-            colours: Some(120),
-        };
-        counting::start();
-        let snapshot = terminal_snapshot_remote(&fixture.uia, &query).expect("the programs run");
-        let counts = counting::stop();
+        let shape = window_shape(&text, (0, &[]), Some((30, 120)));
+        let mut colours = None;
+        let counts = each_counted(|| {
+            let answer = run_batch(&shape.segment(&fixture.uia));
+            colours = answer.steps.into_iter().last().and_then(|ran| match ran {
+                Ran::Done(Found::Colours(rows)) => Some(rows),
+                _ => None,
+            });
+        });
         fixture.app.quit();
-        let colours = snapshot.colours.expect("the colours");
-        let runs: Vec<usize> = colours.iter().map(Vec::len).collect();
+        let runs: Vec<usize> = colours.expect("the colours").iter().map(Vec::len).collect();
         (counts, runs)
     };
     let (worst, worst_runs) = read(
@@ -701,15 +643,22 @@ fn terminal_colours_execute_exactly() {
         "terminal-plain-colours.json",
         "mockapp-instructions-colours-plain",
     );
-    assert_eq!(worst_runs, vec![120; 30], "every cell its own run");
-    assert_eq!(plain_runs, vec![1; 30], "every row one run");
+    // Thirty rows from the screen's top, which stop at the document's end
+    // after twenty-nine, as mockapp counts the empty end of the text as the
+    // screen's last row.
+    assert_eq!(worst_runs, vec![120; 29], "every cell its own run");
+    assert_eq!(plain_runs, vec![1; 29], "every row one run");
     assert_eq!(
         worst,
-        [4151, 4099, 4099, 4099, 4099, 4097].map(Some),
-        "the worst case's programs"
+        vec![229, 4106, 4099, 4099, 4099, 4099, 3285],
+        "the window read's program, then the worst case's colour programs"
     );
-    assert_eq!(plain, [Some(1349)], "a plain screen's program");
-    assert!(worst.iter().flatten().all(|&count| count < LIMIT / 2));
+    assert_eq!(
+        plain,
+        vec![229, 1262],
+        "the window read's program, then a plain screen's"
+    );
+    assert!(worst.iter().all(|&count| count < LIMIT / 2));
 }
 
 /// A caret wait's poll (`docs/design/readers-tell-core-asks-build1.md`,
@@ -1035,10 +984,6 @@ fn main() {
         (
             "range_selections_execute_exactly",
             range_selections_execute_exactly,
-        ),
-        (
-            "terminal_snapshots_execute_exactly",
-            terminal_snapshots_execute_exactly,
         ),
         (
             "terminal_window_reads_execute_exactly",

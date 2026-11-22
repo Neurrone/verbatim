@@ -41,9 +41,7 @@ use verbatim_model::request::{
     DesktopFront, FocusCaret, FocusNode, FocusRead, Front, GhostFront, NodeRead, NodeWindow,
     Outcome as WireOutcome, Question, Refusal, Reply,
 };
-use verbatim_model::{
-    Issuer, NodeId, Pid, Role, State, StateSet, TextReply, WindowFacts, WindowHandle,
-};
+use verbatim_model::{Issuer, NodeId, Pid, Role, State, StateSet, WindowFacts, WindowHandle};
 
 use super::execute::{Executed, Known, Origin, execute};
 use super::versions::ReadBy;
@@ -206,22 +204,11 @@ impl PlainReader {
 /// The plain reader's answer to `request` when it names a plain node,
 /// given at once from `reader`'s facts: "not there" for a node of a
 /// generation no longer held. `None` for a request a reader process
-/// answers. A terminal's text operation on the plain node finds no text,
-/// as NVDA's plain `Window` has none.
+/// answers.
 pub(crate) fn answer(reader: &PlainReader, request: &Question) -> Option<WireOutcome> {
-    let node = match request {
-        Question::Batch(batch) => return answer_batch(reader, batch),
-        Question::Terminal(ask) => ask.node,
-    };
-    let Issuer::Plain(_) = node.issuer() else {
-        return None;
-    };
-    Some(match &reader.object {
-        Some(object) if object.node() == node => {
-            WireOutcome::Result(Reply::Text(TextReply::NoText))
-        }
-        Some(_) | None => WireOutcome::NotThere,
-    })
+    match request {
+        Question::Batch(batch) => answer_batch(reader, batch),
+    }
 }
 
 /// The plain reader's answer to `batch` when a step names a plain node,
@@ -342,7 +329,6 @@ impl PlainObject {
             // Not run by the plain reader, whose parse refuses them.
             Op::Ancestors { .. }
             | Op::FocusRead { .. }
-            | Op::TerminalRead { .. }
             | Op::Visible { .. }
             | Op::Move { .. }
             | Op::FindText { .. }

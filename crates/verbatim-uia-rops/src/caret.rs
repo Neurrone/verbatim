@@ -18,12 +18,12 @@
 
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit,
-    TextUnit_Character, TextUnit_Format, TextUnit_Line, TextUnit_Word,
-    UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId, UIA_BulletStyleAttributeId,
-    UIA_FontNameAttributeId, UIA_FontSizeAttributeId, UIA_FontWeightAttributeId,
-    UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId, UIA_LinkAttributeId,
-    UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID, UIA_UnderlineStyleAttributeId,
+    IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit, TextUnit_Character,
+    TextUnit_Format, TextUnit_Word, UIA_AnnotationTypesAttributeId, UIA_BackgroundColorAttributeId,
+    UIA_BulletStyleAttributeId, UIA_FontNameAttributeId, UIA_FontSizeAttributeId,
+    UIA_FontWeightAttributeId, UIA_ForegroundColorAttributeId, UIA_IsItalicAttributeId,
+    UIA_LinkAttributeId, UIA_StrikethroughStyleAttributeId, UIA_TEXTATTRIBUTE_ID,
+    UIA_UnderlineStyleAttributeId,
 };
 
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
@@ -255,153 +255,6 @@ pub struct Run {
     pub length: usize,
     /// Its attributes.
     pub attributes: RunAttributes,
-}
-
-/// The caret and its line ([`CaretLineQuery`]).
-#[derive(Debug)]
-pub struct CaretAnswer {
-    /// A range whose start is the caret.
-    pub caret: IUIAutomationTextRange,
-    /// Whether `caret` is known to be collapsed.
-    pub collapsed: bool,
-    /// The selection, when text is selected.
-    pub selection: Option<IUIAutomationTextRange>,
-    /// Whether the caret is not where [`CaretLineQuery::since`] says;
-    /// false without one.
-    pub moved: bool,
-    /// The caret's line.
-    pub line: UnitRead,
-}
-
-/// The caret and its line alone, read as part of another program (a
-/// terminal's snapshot, [`crate::SnapshotQuery::caret`]) or, classically,
-/// after it, with no selection to compare and no formatting.
-#[derive(Clone, Copy)]
-pub struct CaretLineQuery<'a> {
-    /// The element with the text.
-    pub element: &'a IUIAutomationElement,
-    /// Its text pattern, which the classic implementation reads.
-    pub pattern: &'a IUIAutomationTextPattern,
-    /// The most UTF-16 code units of text read for the line.
-    pub max_text: i32,
-    /// Where the caret was known to be, to say whether it moved
-    /// ([`CaretAnswer::moved`]), compared in the same round trip.
-    pub since: Option<RangeEnd<'a>>,
-}
-
-/// The registers of a caret and its line emitted into another program.
-#[derive(Clone, Copy)]
-pub(crate) struct CaretLineRegisters {
-    caret: CaretRegisters,
-    line: UnitRegisters,
-    /// Whether the caret moved, with a `since` to compare with.
-    moved: Option<Reg<kind::Bool>>,
-}
-
-impl CaretLineRegisters {
-    /// The answer.
-    pub(crate) fn read(&self, outcome: &Outcome) -> Result<CaretAnswer, Error> {
-        let caret = outcome
-            .get(self.caret.caret)?
-            .ok_or(Error::MissingResult(self.caret.caret.id()))?;
-        let selection = if outcome.get(self.caret.has_selection)? {
-            outcome.get(self.caret.selection)?
-        } else {
-            None
-        };
-        Ok(CaretAnswer {
-            caret,
-            collapsed: outcome.get(self.caret.collapsed)?,
-            selection,
-            moved: match self.moved {
-                Some(moved) => outcome.get(moved)?,
-                None => false,
-            },
-            line: self.line.read(outcome)?,
-        })
-    }
-}
-
-/// Emits the caret and its line into `b`, from `element`, the query's element as the program imported it,
-/// with `pattern`, its text pattern as the program already has it, and, to
-/// say whether the caret moved, `since`, the query's `since` range as the
-/// program imported it. A `since` the provider will not compare with the
-/// caret lies on a terminal's other screen, beyond the screen it now
-/// shows, so the caret moved (both terminals answer `E_FAIL` for a range
-/// on the main screen below the alternate screen's height, measured
-/// 2026-10-25).
-pub(crate) fn emit_caret_line(
-    b: &mut Builder,
-    query: &CaretLineQuery<'_>,
-    (pattern, since): (Reg<kind::TextPattern>, Option<Reg<kind::TextRange>>),
-) -> CaretLineRegisters {
-    let c = Constants {
-        start: b.int(endpoint_number(Endpoint::Start)),
-        end: b.int(endpoint_number(Endpoint::End)),
-        zero: b.int(0),
-        one: b.int(1),
-        max_text: b.int(query.max_text),
-    };
-    let caret = emit_caret(b, &c, pattern);
-    let point = c.collapsed(b, caret.caret);
-    let moved = query.since.zip(since).map(|(since, known)| {
-        let endpoint = b.int(endpoint_number(since.endpoint));
-        let differs = b.new_bool(true);
-        let differs = b.add_to_results(differs);
-        b.try_catch(
-            |b| {
-                let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
-                let differ = b.not_equal(order, c.zero);
-                b.set(differs, differ);
-            },
-            |_, _| {},
-        );
-        differs
-    });
-    let line_unit = b.int(TextUnit_Line.0);
-    let line = c.unit_at(b, point, line_unit);
-    CaretLineRegisters { caret, line, moved }
-}
-
-/// The caret and its line the classic way, and whether the caret moved as [`emit_caret_line`] says it: a
-/// `since` the provider will not compare with lies on the other screen.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when a call fails.
-pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
-    let mut answer = caret_line_read_classic(query)?;
-    if let Some(since) = query.since {
-        let point = if answer.collapsed {
-            answer.caret.clone()
-        } else {
-            collapsed(&answer.caret)?
-        };
-        answer.moved = point
-            .compare_endpoints(Endpoint::Start, since.range, since.endpoint)
-            .ok()
-            .is_none_or(|order| order != 0);
-    }
-    Ok(answer)
-}
-
-/// The caret and its line the classic way, with no `since` compared.
-fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
-    let (caret, collapsed_caret, selection) = classic_caret(query.pattern)?;
-    // A collapsed caret is its own point; the program copies it either way,
-    // which costs nothing there.
-    let point = if collapsed_caret {
-        caret.clone()
-    } else {
-        collapsed(&caret)?
-    };
-    Ok(CaretAnswer {
-        line: unit_at(&point, TextUnit_Line, query.max_text)?,
-        caret,
-        collapsed: collapsed_caret,
-        selection,
-        moved: false,
-    })
 }
 
 /// Whether a run failed because the provider's process has gone or did not
@@ -972,7 +825,6 @@ pub(crate) fn read_changes(
 #[derive(Clone, Copy)]
 pub(crate) struct CaretRegisters {
     pub(crate) caret: Reg<kind::TextRange>,
-    pub(crate) collapsed: Reg<kind::Bool>,
     pub(crate) has_selection: Reg<kind::Bool>,
     pub(crate) selection: Reg<kind::TextRange>,
 }
@@ -1004,6 +856,8 @@ pub(crate) fn emit_caret_with(
     }
     let caret = b.new_null().assume::<kind::TextRange>();
     let caret = kept(b, caret, results);
+    // Whether the caret is collapsed, among the results as every caret
+    // program has kept it, so that its instructions stay those pinned.
     let collapsed = b.new_bool(false);
     let collapsed = kept(b, collapsed, results);
     let has_selection = b.new_bool(false);
@@ -1043,7 +897,6 @@ pub(crate) fn emit_caret_with(
     );
     CaretRegisters {
         caret,
-        collapsed,
         has_selection,
         selection,
     }

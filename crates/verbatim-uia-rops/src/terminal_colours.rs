@@ -88,41 +88,6 @@ fn chunks(width: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// A row's width in cells, from its text as the provider expands a
-/// position to a line: its characters without its line break. Taken from
-/// the screen's top row, since a screen whose every row is written to its
-/// last column reads in the console host as one line, every row marked as
-/// wrapping onto the next, so the narrowest line of the screen's text can
-/// be the whole screen (measured 2026-10-24).
-#[must_use]
-pub fn row_width(row: &[u16]) -> usize {
-    let text = String::from_utf16_lossy(row);
-    let text = text.strip_suffix('\n').unwrap_or(&text);
-    text.strip_suffix('\r').unwrap_or(text).chars().count()
-}
-
-/// How many rows the screen's text fills at `width` cells a row: each line
-/// as many as its padded length takes, at least one.
-#[must_use]
-pub fn screen_height(screen: &[u16], width: usize) -> usize {
-    if width == 0 {
-        return 0;
-    }
-    let text = String::from_utf16_lossy(screen);
-    let text = text.strip_suffix('\n').unwrap_or(&text);
-    let text = text.strip_suffix('\r').unwrap_or(text);
-    text.split('\n')
-        .map(|line| {
-            line.strip_suffix('\r')
-                .unwrap_or(line)
-                .chars()
-                .count()
-                .div_ceil(width)
-                .max(1)
-        })
-        .sum()
-}
-
 /// Adds a cell, or a stretch of one colour, to a row's runs, joining it to
 /// the last run when their colours agree.
 fn push(runs: &mut Vec<ColourRun>, column: usize, length: usize, colours: (u32, u32)) {
@@ -496,51 +461,6 @@ fn emit_loop(
     done
 }
 
-/// Emits, into a program that has the screen and the document, where the
-/// colour read's rows start and stop, both collapsed and both asked for
-/// with the results: the screen's top, and the earlier of the document's
-/// end and the screen's; and the screen's top row's text, for the width.
-pub(crate) fn emit_bounds(
-    b: &mut Builder,
-    screen: Reg<kind::TextRange>,
-    document: Reg<kind::TextRange>,
-) -> (Reg<kind::TextRange>, Reg<kind::TextRange>, Reg<kind::Str>) {
-    let start = b.int(0);
-    let end = b.int(1);
-    let zero = b.int(0);
-    let top = b.text_range_clone(screen);
-    b.text_range_move_endpoint_by_range(top, end, top, start);
-    let top = b.add_to_results(top);
-    let line = b.int(TextUnit_Line.0);
-    let all = b.int(-1);
-    let top_row = b.text_range_clone(top);
-    b.text_range_expand_to_enclosing_unit(top_row, line);
-    let top_row = b.text_range_get_text(top_row, all);
-    let top_row = b.add_to_results(top_row);
-    let limit = b.text_range_clone(document);
-    b.text_range_move_endpoint_by_range(limit, start, limit, end);
-    let which = b.text_range_compare_endpoints(document, end, screen, end);
-    let screen_first = b.compare(which, zero, Comparison::GreaterThan);
-    b.if_(screen_first, |b| {
-        b.text_range_move_endpoint_by_range(limit, start, screen, end);
-        b.text_range_move_endpoint_by_range(limit, end, screen, end);
-    });
-    let limit = b.add_to_results(limit);
-    (top, limit, top_row)
-}
-
-/// Emits the read of the rows from `top` to `limit` (from
-/// [`emit_bounds`]), `width` cells each, as far as one program's budget
-/// goes.
-pub(crate) fn emit_colours(
-    b: &mut Builder,
-    (top, limit): (Reg<kind::TextRange>, Reg<kind::TextRange>),
-    width: usize,
-) -> ColourRegisters {
-    let row = b.text_range_clone(top);
-    emit_rows(b, row, limit, width)
-}
-
 thread_local! {
     /// The colour programs that go on from a row, one for each width.
     static GO_ON: ProgramCache<usize, ColourRegisters> = ProgramCache::default();
@@ -660,30 +580,6 @@ fn check_classic(
     Ok((uniform, last.unwrap_or((NOT_A_NUMBER, NOT_A_NUMBER))))
 }
 
-/// The colour read the classic way, the same steps as the programs, each a
-/// cross-process call: rows from the screen's top to the earlier of the
-/// document's end and the screen's, as wide as the screen's top row, at
-/// most as many as `screen_text` fills.
-pub(crate) fn colours_classic_read(
-    screen: &IUIAutomationTextRange,
-    document: &IUIAutomationTextRange,
-    screen_text: &[u16],
-) -> Result<Vec<Vec<ColourRun>>, Error> {
-    let row = screen.clone_range()?;
-    row.move_endpoint_to(Endpoint::End, &row, Endpoint::Start)?;
-    let top_row = row.clone_range()?;
-    top_row.expand(TextUnit_Line)?;
-    let width = row_width(&top_row.text(-1)?);
-    let height = screen_height(screen_text, width);
-    let limit = document.clone_range()?;
-    limit.move_endpoint_to(Endpoint::Start, &limit, Endpoint::End)?;
-    if document.compare_endpoints(Endpoint::End, screen, Endpoint::End)? > 0 {
-        limit.move_endpoint_to(Endpoint::Start, screen, Endpoint::End)?;
-        limit.move_endpoint_to(Endpoint::End, screen, Endpoint::End)?;
-    }
-    classic_rows(&row, &limit, width, height)
-}
-
 /// The colours of the rows from `row`, collapsed at a row's start, to
 /// `limit`, collapsed, `width` cells each, at most `height` rows, the
 /// classic way: the same checks as the programs, each a cross-process
@@ -753,20 +649,7 @@ pub(crate) fn classic_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::{ColourRun, Value, decode, row_width, screen_height};
-
-    fn utf16(text: &str) -> Vec<u16> {
-        text.encode_utf16().collect()
-    }
-
-    #[test]
-    fn a_rows_width_leaves_out_its_line_break_and_the_screen_fills_rows_at_it() {
-        assert_eq!(row_width(&utf16("abcd\r\n")), 4);
-        assert_eq!(row_width(&utf16("abcd")), 4);
-        assert_eq!(screen_height(&utf16("abcd\r\nefghijkl\r\nij"), 4), 4);
-        assert_eq!(screen_height(&utf16("abcdefgh"), 4), 2);
-        assert_eq!(screen_height(&utf16("abcd"), 0), 0);
-    }
+    use super::{ColourRun, Value, decode};
 
     #[test]
     fn a_rows_answer_decodes_into_runs_joined_where_colours_agree() {

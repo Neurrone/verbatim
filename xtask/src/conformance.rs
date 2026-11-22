@@ -1,12 +1,12 @@
 //! `cargo xtask regenerate-terminal-conformance-expectations`: writes each
 //! stream of `verbatim-term-sim`'s conformance corpus into the real console
 //! host and the end-to-end suite's pinned Windows Terminal, reads each
-//! after every chunk with Verbatim's own read program, and saves what it
+//! after every chunk by the simulator's query, call by call ([`Read`]),
+//! with each screen row's colours read cell by cell, and saves what it
 //! answered as the expectations the simulated terminal is tested against
-//! (`books/dev/src/explanation/design/terminal-model.md`, "Testing"). Every read also takes the
-//! read program's colours, which must equal the colours read cell by cell,
-//! or the run fails. It opens terminal windows, so it runs on demand on a
-//! desktop, never in continuous integration.
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Testing"). It
+//! opens terminal windows, so it runs on demand on a desktop, never in
+//! continuous integration.
 //!
 //! The terminal runs this program's `conformance-player`, which connects
 //! back over a local socket, writes each chunk it is sent, and then sets
@@ -32,7 +32,6 @@ use verbatim_term_sim::conformance::{
 use verbatim_term_sim::{Flavor, Run};
 use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
-use verbatim_uia_rops::{Path, SnapshotQuery, terminal_snapshot};
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Globalization::CP_UTF8;
 use windows::Win32::System::Console::{
@@ -324,7 +323,7 @@ fn read_stream(
     stream: &Stream,
     flavor: Flavor,
 ) -> Result<Expectation, String> {
-    let (element, pattern) = text_element(uia, window, flavor)?;
+    let (_, pattern) = text_element(uia, window, flavor)?;
     let mut lines = BufReader::new(connection.try_clone().map_err(|error| error.to_string())?);
     let mut writer = connection;
     let mut start: Option<IUIAutomationTextRange> = None;
@@ -356,60 +355,15 @@ fn read_stream(
             return Err(format!("the player answered {reply:?}"));
         }
         wait_for_title(window, &format!("{title}#{index}"))?;
-        let query = SnapshotQuery {
-            element: &element,
-            pattern: &pattern,
-            start: start.as_ref(),
-            screen_rows,
-            whole: false,
-            // As the simulator's replay reads: from the start alone.
-            above: 0,
-            caret: None,
-            // Every read takes the colours, at the width the last read
-            // found, so the program's colour read is checked against the
-            // cell-by-cell reading below after every chunk.
-            colours: Some(size.0),
-        };
-        let (snapshot, path) =
-            terminal_snapshot(uia, &query, true).map_err(|error| error.to_string())?;
-        if let Path::Fallback(error) = path {
-            return Err(format!("the read program failed and fell back: {error}"));
-        }
-        let screen = String::from_utf16_lossy(&snapshot.screen);
+        let snapshot =
+            Read::of(&pattern, (start.as_ref(), screen_rows)).map_err(|error| error.to_string())?;
+        let screen = snapshot.screen.clone();
         screen_rows = verbatim_term_sim::screen_rows(&screen);
-        start.clone_from(&snapshot.next_start);
+        start = Some(snapshot.next_start.clone());
         let (caret_line, caret_column) = caret(&pattern).map_err(|error| error.to_string())?;
         let colours = colours(&pattern, size).map_err(|error| error.to_string())?;
-        let read: Vec<Vec<Run>> = snapshot
-            .colours
-            .unwrap_or_default()
-            .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(|run| Run {
-                        column: run.column,
-                        length: run.length,
-                        foreground: run.foreground,
-                        background: run.background,
-                    })
-                    .collect()
-            })
-            .collect();
-        if read != colours {
-            let row = read
-                .iter()
-                .zip(&colours)
-                .position(|(read, cells)| read != cells);
-            return Err(format!(
-                "after chunk {index}, the read program's colours differ from the cells': {} rows read, {} by cell; first differing row {row:?}: read {:?}, by cell {:?}",
-                read.len(),
-                colours.len(),
-                row.and_then(|row| read.get(row)),
-                row.and_then(|row| colours.get(row)),
-            ));
-        }
         answers.push(Answer {
-            text: String::from_utf16_lossy(&snapshot.text),
+            text: snapshot.text.clone(),
             screen,
             from_start: snapshot.from_start,
             shrank: snapshot.shrank,
@@ -428,6 +382,108 @@ fn read_stream(
         height: size.1,
         answers,
     })
+}
+
+/// What the simulator's query reads of a real terminal
+/// (`verbatim_term_sim::Query`), call by call: from the start the last
+/// read gave, when the text still reaches it, else from the screen's top,
+/// to the document's end.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the simulator's answer's facts, as its `Answer` holds them"
+)]
+struct Read {
+    text: String,
+    screen: String,
+    from_start: bool,
+    shrank: bool,
+    at_document_start: bool,
+    alternate: bool,
+    first_row: String,
+    caret_rows_to_end: u32,
+    next_start: IUIAutomationTextRange,
+}
+
+/// A copy of `range` collapsed to its start.
+fn collapsed(range: &IUIAutomationTextRange) -> windows::core::Result<IUIAutomationTextRange> {
+    let copy = range.clone_range()?;
+    copy.move_endpoint_to(Endpoint::End, &copy, Endpoint::Start)?;
+    Ok(copy)
+}
+
+impl Read {
+    /// The read from `start`, the next start the last read gave, of a
+    /// screen `screen_rows` rows high as the last read found it, 0 for a
+    /// first read.
+    fn of(
+        pattern: &IUIAutomationTextPattern,
+        (start, screen_rows): (Option<&IUIAutomationTextRange>, u32),
+    ) -> windows::core::Result<Self> {
+        let document = pattern.document_range()?;
+        let screen = pattern
+            .visible_ranges()?
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| document.clone());
+        let screen_text = String::from_utf16_lossy(&screen.text(-1)?);
+        let alternate = document.compare_endpoints(Endpoint::Start, &screen, Endpoint::Start)? == 0;
+        let next = if screen_rows > 0 {
+            let next = document.clone_range()?;
+            next.move_endpoint_to(Endpoint::Start, &document, Endpoint::End)?;
+            next.move_by(
+                TextUnit_Line,
+                -i32::try_from(screen_rows).unwrap_or(i32::MAX),
+            )?;
+            next
+        } else {
+            collapsed(&screen)?
+        };
+        let mut from = if screen_rows > 0 {
+            next.clone_range()?
+        } else {
+            collapsed(&screen)?
+        };
+        let (mut from_start, mut shrank) = (false, false);
+        if let Some(kept) = start {
+            let at = || -> windows::core::Result<(IUIAutomationTextRange, i32)> {
+                let at = collapsed(kept)?;
+                let order = at.compare_endpoints(Endpoint::Start, &next, Endpoint::Start)?;
+                Ok((at, order))
+            };
+            match at() {
+                Ok((at, order)) if order <= 0 => {
+                    from = at;
+                    from_start = true;
+                }
+                Ok(_) | Err(_) => shrank = true,
+            }
+        }
+        let read = from.clone_range()?;
+        read.move_endpoint_to(Endpoint::End, &document, Endpoint::End)?;
+        let text = String::from_utf16_lossy(&read.text(-1)?);
+        let at_document_start =
+            from.compare_endpoints(Endpoint::Start, &document, Endpoint::Start)? == 0;
+        let first = collapsed(&document)?;
+        first.expand(TextUnit_Line)?;
+        let first_row = String::from_utf16_lossy(&first.text(-1)?);
+        let caret_rows_to_end = match pattern.selection()?.into_iter().next() {
+            Some(caret) => {
+                u32::try_from(collapsed(&caret)?.move_by(TextUnit_Line, 1_000_000)?).unwrap_or(0)
+            }
+            None => 0,
+        };
+        Ok(Self {
+            text,
+            screen: screen_text,
+            from_start,
+            shrank,
+            at_document_start,
+            alternate,
+            first_row,
+            caret_rows_to_end,
+            next_start: next,
+        })
+    }
 }
 
 /// The screen's size, read from the empty terminal before the first chunk,

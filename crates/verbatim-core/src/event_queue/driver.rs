@@ -335,6 +335,13 @@ impl<E, F> Queue<E, F> {
         self.now_us
     }
 
+    /// Sets the time of the last input handled, as a test's input at
+    /// `at_us` would.
+    #[cfg(test)]
+    pub(crate) fn set_now_for_tests(&mut self, at_us: u64) {
+        self.now_us = at_us;
+    }
+
     /// Every request waiting or out, as sent: the ids each names stay held
     /// (design, "Held anchors").
     pub(crate) fn requests(&self) -> impl Iterator<Item = &Question> {

@@ -99,17 +99,9 @@ fn a_terminals_reads_take_the_edit_paths_stages() {
         bound: Some(bound(&held)),
     };
     let node = verbatim_model::NodeId::new(1);
-    let ask = verbatim_model::WindowAsk {
-        end: None,
-        aside: None,
-        height: 0,
-        opening: 30,
-        colours: false,
-    };
     let read = BatchStep {
-        op: Op::TerminalRead {
+        op: Op::Visible {
             subject: Subject::Node(node),
-            ask: Box::new(ask),
         },
         when: None,
     };

@@ -209,13 +209,21 @@ fn a_wanted_batch_is_answered_by_its_named_handles() {
     assert!(Answers::parse(&bar_read(), tested).is_none());
 }
 
-/// A terminal's window read goes out as one step naming its marks, and its
-/// answer is read by its handle.
+/// A terminal's window read goes out as the request list's steps, the
+/// mark Core names held by them, and Core makes its window of their
+/// outcomes: here the outcomes made for a window, from which Core makes
+/// the window again.
 #[test]
-fn a_terminal_read_is_one_step_read_by_its_handle() {
-    let ask = verbatim_model::WindowAsk {
-        end: Some(verbatim_model::CurrentMark {
-            mark: verbatim_model::EndMark {
+fn a_terminal_read_is_steps_whose_outcomes_make_its_window() {
+    use verbatim_model::batch::OpKind;
+
+    use crate::terminal_window::{
+        CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, add_steps,
+        outcomes_making, window_of,
+    };
+    let ask = WindowAsk {
+        end: Some(CurrentMark {
+            mark: EndMark {
                 anchor: TextAnchor(7),
                 line: "ready>".into(),
                 line_above: 0,
@@ -228,19 +236,41 @@ fn a_terminal_read_is_one_step_read_by_its_handle() {
         colours: true,
     };
     let mut read = Builder::<Bar>::named();
-    let window = read.terminal_read(node(), ask.clone());
+    add_steps(&mut read, node(), &ask, Some((30, 120)));
     let sent = read.finish();
+    let kinds: Vec<OpKind> = sent
+        .batch()
+        .steps
+        .iter()
+        .map(|step| step.op.kind())
+        .collect();
     assert_eq!(
-        sent.batch().steps,
-        [step(
-            Op::TerminalRead {
-                subject: Subject::Node(node()),
-                ask: Box::new(ask),
-            },
-            None
-        )]
+        kinds,
+        [
+            OpKind::Visible,
+            OpKind::ReadText,
+            OpKind::Move,
+            OpKind::Move,
+            OpKind::ReadRange,
+            OpKind::Move,
+            OpKind::ReadText,
+            OpKind::Caret,
+            OpKind::ReadText,
+            OpKind::Move,
+            OpKind::Move,
+            OpKind::ReadText,
+            OpKind::FindText,
+            OpKind::ReadColours,
+        ]
     );
-    let answer = Box::new(verbatim_model::TerminalWindow {
+    assert!(
+        sent.batch()
+            .anchors()
+            .iter()
+            .any(|(_, anchors)| anchors.contains(&TextAnchor(7))),
+        "the mark is held while the read is out"
+    );
+    let window = TerminalWindow {
         rows: verbatim_model::TerminalText::unpadded("ready>"),
         above: 1,
         screen_top: 1,
@@ -248,21 +278,29 @@ fn a_terminal_read_is_one_step_read_by_its_handle() {
         width: 120,
         screen_at_start: true,
         caret: None,
-        caret_rows_to_end: None,
+        caret_rows_to_end: Some(0),
         end: TextAnchor(8),
         first_row: verbatim_model::TerminalText::unpadded("ready>"),
         document_rows: 1,
-        end_place: Some(verbatim_model::MarkPlace::Rows {
+        end_place: Some(MarkPlace::Rows {
             written: 0,
             opening: None,
         }),
         aside_place: None,
-        found: verbatim_model::MarkSearch::InWindow,
+        found: MarkSearch::InWindow,
         colours: Some(vec![Vec::new()]),
-        began_us: 1,
+        began_us: 2,
         ended_us: 2,
-    });
-    let reply = Reply::Steps(vec![StepOutcome::Done(Done::TerminalRead(answer.clone()))]);
-    let answers = Answers::parse(&sent, reply).unwrap();
-    assert_eq!(answers.get(window), Got::Done(&answer));
+    };
+    let outcomes = outcomes_making(&window, &ask);
+    let answers = Answers::parse(&sent, Reply::Steps(outcomes.clone())).unwrap();
+    assert!(answers.outcomes().is_some());
+    let made = window_of(&outcomes, &ask, 2).expect("a window");
+    assert_eq!(
+        TerminalWindow {
+            caret: None,
+            ..made
+        },
+        window
+    );
 }

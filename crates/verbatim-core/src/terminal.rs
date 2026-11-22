@@ -2,7 +2,8 @@
 //! build 9's design, section 5): Core watches the terminal the committed
 //! focus is, as NVDA's monitor loop does, and decides what is said; the
 //! outpost reads the window, two screens up to the document's end, when
-//! Core asks ([`verbatim_model::batch::Op::TerminalRead`]).
+//! Core asks, by the request list's generic steps, of whose outcomes Core
+//! makes the window ([`crate::terminal_window`]).
 //!
 //! - The watch ([`Watch`]) is the record of the focused terminal's reads:
 //!   unread, its baseline out, live with the last window and its read idle
@@ -30,12 +31,11 @@ pub(crate) mod places;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::batch::{Done, StepOutcome};
+use verbatim_model::batch::StepOutcome;
 use verbatim_model::request::{CancelReason, Followed, PressAction, Reply};
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, OutpostId, SegmentContent,
-    SpeechPriority, TerminalSnapshot, TerminalText, TerminalWindow, TraceId, Utterance,
-    UtteranceSegment, WindowCaret,
+    SpeechPriority, TerminalSnapshot, TerminalText, TraceId, Utterance, UtteranceSegment,
 };
 use verbatim_text::terminal_window::{
     Caret, ColourRun, KeyKind, Read as Parsed, Reading, Unit, Window,
@@ -48,6 +48,9 @@ use crate::keys::entry::{Fence, PressEntry};
 use crate::state::SrState;
 use crate::terminal::pacing::{Pacing, Under, Voice, Waiting};
 use crate::terminal::places::TerminalPlaces;
+use crate::terminal_window::{
+    TerminalWindow, Unread, WindowAsk, WindowCaret, add_steps, window_of,
+};
 use crate::{editing, text};
 
 /// The focused terminal, as the committed focus names it: its node, the
@@ -167,38 +170,38 @@ impl Ended {
         }
     }
 
-    /// A window read step's outcome.
-    fn of_step(outcome: StepOutcome) -> Self {
-        match outcome {
-            StepOutcome::Done(Done::TerminalRead(window)) => Self::Read(window),
-            StepOutcome::NotThere(_) => Self::NotThere,
+    /// The window a read's step outcomes made, or why they made none.
+    fn of_window(window: Result<TerminalWindow, Unread>) -> Self {
+        match window {
+            Ok(window) => Self::Read(Box::new(window)),
+            Err(Unread::NotThere) => Self::NotThere,
             // A text that answers no read, as a call that failed, leaves
             // an empty baseline, as NVDA's monitor starts from empty text.
-            StepOutcome::Refused(_)
-            | StepOutcome::Failed
-            | StepOutcome::Skipped
-            | StepOutcome::Done(_) => Self::Failed,
+            Err(Unread::Failed) => Self::Failed,
         }
     }
 
-    /// A window read step's outcome as its handle reads it.
-    fn of_got(got: &Got<'_, Box<TerminalWindow>>) -> Self {
-        match got {
-            Got::Done(window) => Self::Read(Box::clone(window)),
-            Got::NotThere(_) => Self::NotThere,
-            Got::Refused(_) | Got::Failed | Got::Skipped => Self::Failed,
+    /// The window read's `outcomes`, from its first step on, as asked by
+    /// `ask`, answered at `at_us`.
+    fn of_steps(
+        outcomes: Option<&[StepOutcome]>,
+        (ask, first): (&WindowAsk, usize),
+        at_us: u64,
+    ) -> Self {
+        match outcomes.and_then(|outcomes| outcomes.get(first..)) {
+            Some(steps) => Self::of_window(window_of(steps, ask, at_us)),
+            None => Self::Failed,
         }
     }
+}
 
-    /// A Core request's reply, one window read step.
-    fn of_reply(reply: Reply) -> Self {
-        match reply {
-            Reply::Steps(steps) if steps.len() == 1 => {
-                steps.into_iter().next().map_or(Self::Failed, Self::of_step)
-            }
-            // No reader that answers the batch gives another reply.
-            _ => Self::Failed,
-        }
+/// The screen's height and width the watch's last window found, for a read
+/// that wants the colours, `colours`: none for a watch with no window yet,
+/// whose baseline judges no colours.
+fn colour_size(focus: &TerminalFocus, colours: bool) -> Option<(u32, u32)> {
+    match &focus.watch {
+        Watch::Live { old, .. } if colours => Some(old.screen_size()),
+        Watch::Live { .. } | Watch::Unread { .. } | Watch::Baselining { .. } | Watch::Gone => None,
     }
 }
 
@@ -316,7 +319,7 @@ fn in_key_window(focus: &TerminalFocus, now_us: u64) -> bool {
 
 /// The window read of `focus`'s terminal as Core names it now, `held`
 /// when the pacing held it.
-fn ask_now(state: &mut SrState, focus: &TerminalFocus, held: bool) -> verbatim_model::WindowAsk {
+fn ask_now(state: &mut SrState, focus: &TerminalFocus, held: bool) -> WindowAsk {
     let colours = in_key_window(focus, state.queue.now_us());
     let opening = u32::try_from(state.settings.full_lines()).unwrap_or(u32::MAX);
     places_mut(state, focus.terminal.node).ask(held, opening, colours)
@@ -327,7 +330,12 @@ fn ask_now(state: &mut SrState, focus: &TerminalFocus, held: bool) -> verbatim_m
 fn want_read(state: &mut SrState, focus: &TerminalFocus, held: bool) -> u64 {
     let ask = ask_now(state, focus, held);
     let mut read = Builder::<WatchRead>::named();
-    let _ = read.terminal_read(focus.terminal.node, ask);
+    add_steps(
+        &mut read,
+        focus.terminal.node,
+        &ask,
+        colour_size(focus, ask.colours),
+    );
     let token = state.wants.token();
     let window = focus.terminal.window;
     state.wants.want(
@@ -743,8 +751,16 @@ pub(crate) fn facts_answered(
     outcome: Outcome<Reply>,
     (trace, said): (TraceId, &mut Vec<Effect>),
 ) -> Vec<Entry> {
-    let ended = Ended::of(outcome, Ended::of_reply);
     with_focus(state, |state, focus| {
+        // The read's steps follow from what Core names now: the marks and
+        // the height change only when a read of the watch's is taken, so
+        // for the read the watch awaits they are those it was sent with;
+        // the search and the colours, last, say themselves by their kinds.
+        let ask = ask_now(state, focus, false);
+        let at_us = state.queue.now_us();
+        let ended = Ended::of(outcome, |reply| match reply {
+            Reply::Steps(steps) => Ended::of_steps(Some(&steps), (&ask, 0), at_us),
+        });
         if let Ended::Read(read) = &ended
             && watch_token(&focus.watch) == Some(token)
         {
@@ -781,7 +797,7 @@ fn watch_token(watch: &Watch) -> Option<u64> {
 /// Column K: a key's or command's read of terminal `node` sent under a new
 /// token, which takes over the read out, its answer stale. `None` when
 /// `node` is not the focused terminal, or its watch is gone.
-fn key_read_sent(state: &mut SrState, node: NodeId) -> Option<(u64, verbatim_model::WindowAsk)> {
+fn key_read_sent(state: &mut SrState, node: NodeId) -> Option<KeySent> {
     with_focus(state, |state, focus| {
         if focus.terminal.node != node {
             return None;
@@ -806,9 +822,24 @@ fn key_read_sent(state: &mut SrState, node: NodeId) -> Option<(u64, verbatim_mod
             },
             Watch::Gone => return None,
         };
-        Some((token, ask_now(state, focus, false)))
+        let ask = ask_now(state, focus, false);
+        let colours = colour_size(focus, ask.colours);
+        Some(KeySent {
+            token,
+            ask,
+            colours,
+        })
     })
     .flatten()
+}
+
+/// A key's or command's read as sent: its token, what Core named to it,
+/// and the screen's size its colours take, when it takes them.
+#[derive(Debug, PartialEq, Eq)]
+struct KeySent {
+    token: u64,
+    ask: WindowAsk,
+    colours: Option<(u32, u32)>,
 }
 
 /// What a key's or command's read brought.
@@ -896,12 +927,19 @@ pub(crate) async fn key_read(
     (trace, speech): (TraceId, ReadSpeech),
     due_us: u64,
 ) -> Option<KeyRead> {
-    let (token, ask) = key_read_sent(&mut cx.facts_mut(), node)?;
+    let KeySent {
+        token,
+        ask,
+        colours,
+    } = key_read_sent(&mut cx.facts_mut(), node)?;
     let mut batch = cx.batch(|| ());
-    let read = batch.terminal_read(node, ask);
+    add_steps(&mut batch, node, &ask, colours);
     let request = batch.finish().of(Reader::Outpost(window.process), window);
     let outcome = cx.ask(request, due_us).await;
-    let ended = Ended::of(outcome, |answers| Ended::of_got(&answers.get(read)));
+    let at_us = cx.facts().queue.now_us();
+    let ended = Ended::of(outcome, |answers| {
+        Ended::of_steps(answers.outcomes(), (&ask, 0), at_us)
+    });
     Some(key_read_ended(cx, token, ended, (trace, speech)))
 }
 
@@ -923,17 +961,23 @@ pub(crate) async fn key_wait(
     wait: verbatim_model::batch::CaretWait,
     (trace, due_us): (TraceId, u64),
 ) -> KeyWait {
-    let Some((token, ask)) = key_read_sent(&mut cx.facts_mut(), node) else {
+    let Some(KeySent {
+        token,
+        ask,
+        colours,
+    }) = key_read_sent(&mut cx.facts_mut(), node)
+    else {
         return KeyWait::Ended;
     };
     let mut batch = cx.batch(|| ());
     let waited = batch.wait_for_caret(node, wait);
-    let read = batch.terminal_read(node, ask);
+    add_steps(&mut batch, node, &ask, colours);
     let request = batch.finish().of(Reader::Outpost(window.process), window);
     let outcome = cx.ask(request, due_us).await;
+    let at_us = cx.facts().queue.now_us();
     let (ended, end) = match outcome.split::<std::convert::Infallible>() {
         Ok(answers) => (
-            Ended::of_got(&answers.get(read)),
+            Ended::of_steps(answers.outcomes(), (&ask, 1), at_us),
             if matches!(answers.get(waited), Got::Done(_)) {
                 KeyWait::Done
             } else {

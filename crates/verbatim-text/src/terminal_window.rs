@@ -268,6 +268,12 @@ impl Window {
         self.ended_us
     }
 
+    /// The screen's height in rows and its width in cells.
+    #[must_use]
+    pub fn screen_size(&self) -> (u32, u32) {
+        (self.screen_rows, self.width)
+    }
+
     /// Whether line `index` has a row on the screen.
     fn on_screen(&self, index: usize) -> bool {
         let Some(line) = self.lines.get(index) else {

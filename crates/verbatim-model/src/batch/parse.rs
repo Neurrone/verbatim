@@ -285,7 +285,6 @@ impl Checking<'_> {
                 op.kind(),
                 OpKind::Ancestors
                     | OpKind::FocusRead
-                    | OpKind::TerminalRead
                     | OpKind::Visible
                     | OpKind::Move
                     | OpKind::FindText
@@ -411,7 +410,6 @@ impl Checking<'_> {
                 }
             }
             Op::MoveBySentence { .. } => anchor(true),
-            Op::TerminalRead { ask, .. } => anchor(ask.end.is_some() || ask.aside.is_some()),
             Op::WaitForCaret { wait, .. } => {
                 if self.place != Place(0) {
                     return Err(Malformed::WaitNotFirst(self.place));

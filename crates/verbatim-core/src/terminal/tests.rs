@@ -4,12 +4,14 @@
 //! the speech entry's turn, playback's marks. Windows are written by hand,
 //! forty cells wide, one row a line.
 
-use verbatim_model::batch::{Done, Missing, StepOutcome, StepRefusal};
+use verbatim_model::batch::{Batch, Missing, Op, StepOutcome, StepRefusal};
 use verbatim_model::request::{CancelReason, Question, Refusal, Reply};
 use verbatim_model::{
-    CaretReport, Effect, MarkPlace, MarkSearch, Role, SegmentContent, SpeechMark, TerminalText,
-    TerminalWindow, TextAnchor, TextChunk, TextUnit, TraceId, WindowAsk, WindowCaret,
+    CaretReport, Effect, Role, SegmentContent, SpeechMark, TerminalText, TextAnchor, TextChunk,
+    TextUnit, TraceId,
 };
+
+use crate::terminal_window::{MarkPlace, MarkSearch, TerminalWindow, WindowCaret, outcomes_making};
 
 use super::*;
 use crate::event_queue::Outcome;
@@ -33,20 +35,18 @@ fn terminal() -> SrState {
     state
 }
 
-/// The tokens and asks of the window reads Core wants, taken.
-fn wanted(state: &mut SrState) -> Vec<(u64, WindowAsk)> {
+/// The tokens and batches of the window reads Core wants, taken: the
+/// batches whose first step reads the visible range.
+fn wanted(state: &mut SrState) -> Vec<(u64, Batch)> {
     state
         .wants
         .take_for_tests()
         .into_iter()
         .filter_map(|(token, question)| match question {
             Question::Batch(batch) => match batch.steps.first().map(|step| &step.op) {
-                Some(verbatim_model::batch::Op::TerminalRead { ask, .. }) => {
-                    Some((token?, (**ask).clone()))
-                }
+                Some(Op::Visible { .. }) => Some((token?, batch)),
                 _ => None,
             },
-            Question::Terminal(_) => None,
         })
         .collect()
 }
@@ -123,16 +123,44 @@ fn grown(lines: &[&str], at_ms: u64, (document_rows, written): (u32, u32)) -> Te
     )
 }
 
-/// The outcome of a read answering `window`.
-fn read_of(window: TerminalWindow) -> Outcome<Reply> {
-    Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::TerminalRead(
-        Box::new(window),
-    ))]))
+/// How a test answers a read: with a window its steps make, or with an
+/// outcome as it is.
+enum Answered {
+    Window(Box<TerminalWindow>),
+    Outcome(Outcome<Reply>),
 }
 
-/// Answers the read under `token` with `outcome`: the speech entries that
-/// join, spoken at once at their turns, and what was said.
-fn answer(state: &mut SrState, token: u64, outcome: Outcome<Reply>) -> Vec<String> {
+impl From<Outcome<Reply>> for Answered {
+    fn from(outcome: Outcome<Reply>) -> Self {
+        Self::Outcome(outcome)
+    }
+}
+
+/// A read answering `window`, its steps' outcomes made for what Core
+/// names when it answers ([`outcomes_making`]).
+fn read_of(window: TerminalWindow) -> Answered {
+    Answered::Window(Box::new(window))
+}
+
+/// `answered` as the outcome Core takes, Core's time moved to the
+/// window's when it is a window.
+fn outcome_of(state: &mut SrState, answered: impl Into<Answered>) -> Outcome<Reply> {
+    match answered.into() {
+        Answered::Outcome(outcome) => outcome,
+        Answered::Window(window) => {
+            state.queue.set_now_for_tests(window.ended_us);
+            let focus = focus_of(state).expect("a terminal read").clone();
+            let ask = ask_now(state, &focus, false);
+            Outcome::Result(Reply::Steps(outcomes_making(&window, &ask)))
+        }
+    }
+}
+
+/// Answers the read under `token` with `answered`, at the window's time
+/// when it is a window: the speech entries that join, spoken at once at
+/// their turns, and what was said.
+fn answer(state: &mut SrState, token: u64, answered: impl Into<Answered>) -> Vec<String> {
+    let outcome = outcome_of(state, answered);
     let mut said = Vec::new();
     let entries = facts_answered(state, token, outcome, (TRACE, &mut said));
     for entry in entries {
@@ -607,7 +635,7 @@ fn a_keys_read_takes_over_the_read_out_whose_answer_goes_stale() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let node = focused(&state).unwrap().node;
-    let (key, _) = key_read_sent(&mut state, node).unwrap();
+    let key = key_read_sent(&mut state, node).unwrap().token;
     assert!(matches!(read_state(&state), Read::Out { token, .. } if token == key));
     assert_eq!(
         answer(&mut state, read, read_of(grown(&["$", "x"], 20, (2, 1)))),
@@ -634,7 +662,7 @@ fn a_keys_read_in_unread_or_baselining_is_the_silent_baseline() {
             );
         }
         let node = focused(&state).unwrap().node;
-        let (key, _) = key_read_sent(&mut state, node).unwrap();
+        let key = key_read_sent(&mut state, node).unwrap().token;
         assert!(matches!(watch(&state), Watch::Baselining { token, .. } if token == key));
         let _ = answer(&mut state, token, read_of(window(&["old"], 10, (1, None))));
         assert_eq!(
@@ -668,12 +696,8 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
-        &mut state,
-        read,
-        read_of(grown(&lines, 20, (71, 70))),
-        (TRACE, &mut said),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -725,12 +749,8 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
-        &mut state,
-        read,
-        read_of(grown(&lines, 20, (71, 70))),
-        (TRACE, &mut said),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -768,16 +788,15 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(1));
     let _ = cut(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
+    let outcome = outcome_of(
         &mut state,
-        read,
         read_of(grown(
             &["Reply from ::1: time<1ms", "Reply from ::1: time<2ms"],
             1000,
             (2, 1),
         )),
-        (TRACE, &mut said),
     );
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(mut entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -796,12 +815,8 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
-        &mut state,
-        read,
-        read_of(grown(&["$", "out"], 20, (2, 1))),
-        (TRACE, &mut said),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(3));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
@@ -811,15 +826,18 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
 
 // The places, 5.6: one test a row.
 
+/// Sixty rows written past the mark, no more than the window's thirty and
+/// "Lines spoken in full"'s thirty together, so the read gives no opening
+/// rows, as a window read's steps never do past more.
 #[test]
 fn no_rotation_counts_the_rows_written_exactly() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
-    let lines = numbered("line", 71, 30);
+    let lines = numbered("line", 31, 30);
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let said = answer(&mut state, read, read_of(grown(&lines, 20, (101, 100))));
-    assert_eq!(said[0], "Phrase(SkippedLines(70))");
-    assert_eq!(said[1], "line 71");
+    let said = answer(&mut state, read, read_of(grown(&lines, 20, (61, 60))));
+    assert_eq!(said[0], "Phrase(SkippedLines(30))");
+    assert_eq!(said[1], "line 31");
 }
 
 #[test]
@@ -974,12 +992,8 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
-        &mut state,
-        read,
-        read_of(grown(&lines, 20, (35, 34))),
-        (TRACE, &mut said),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (35, 34))));
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -1015,7 +1029,7 @@ fn typing_shown_by_a_keys_final_read_joins_under_the_later_keys_fence() {
     // key 9's fence, so key 9's cut does not drop it.
     let mut state = live(&["$ "]);
     let node = focused(&state).unwrap().node;
-    let (key, _) = key_read_sent(&mut state, node).unwrap();
+    let key = key_read_sent(&mut state, node).unwrap().token;
     state.arrivals.key_joined(verbatim_model::KeySeq::new(8));
     key_passed(&mut state, (KeyKind::Typed, Some("z")), 15_000, TRACE);
     state.arrivals.key_joined(verbatim_model::KeySeq::new(9));
@@ -1053,12 +1067,8 @@ fn a_modifiers_cut_then_output_is_spoken() {
     let _ = cut(&mut state);
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
-        &mut state,
-        read,
-        read_of(grown(&["$", "out"], 20, (2, 1))),
-        (TRACE, &mut said),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(mut entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -1085,12 +1095,11 @@ fn what_was_read_is_spoken_after_the_outpost_ends() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let entries = facts_answered(
+    let outcome = outcome_of(
         &mut state,
-        read,
         read_of(grown(&["$", "a", "b", "c"], 20, (4, 3))),
-        (TRACE, &mut said),
     );
+    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -1114,7 +1123,7 @@ fn up_arrow_then_a_typed_letter_speak_once_in_their_window() {
         TRACE,
     );
     key_passed(&mut state, (KeyKind::Typed, Some("t")), 16_000, TRACE);
-    let (key, _) = key_read_sent(&mut state, node).unwrap();
+    let key = key_read_sent(&mut state, node).unwrap().token;
     let recalled = window(
         &["$ echo onet"],
         20,

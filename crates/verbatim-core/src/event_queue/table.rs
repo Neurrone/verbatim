@@ -178,7 +178,6 @@ impl Table {
     pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
         match &self.live.get(&RequestNumber(number))?.request {
             Question::Batch(batch) => Some(batch.clone()),
-            Question::Terminal(_) => None,
         }
     }
 
@@ -187,9 +186,8 @@ impl Table {
     pub(crate) fn batches_for_tests(&self) -> Vec<(u64, verbatim_model::batch::Batch)> {
         self.live
             .iter()
-            .filter_map(|(number, live)| match &live.request {
-                Question::Batch(batch) => Some((number.0, batch.clone())),
-                Question::Terminal(_) => None,
+            .map(|(number, live)| match &live.request {
+                Question::Batch(batch) => (number.0, batch.clone()),
             })
             .collect()
     }

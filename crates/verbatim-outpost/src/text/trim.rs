@@ -86,27 +86,4 @@ pub fn trimmed_offset(units: &[u16], offset: usize, trimmed: &str) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn utf16(text: &str) -> Vec<u16> {
-        text.encode_utf16().collect()
-    }
-
-    /// A point keeps its line and column, and one in a line's padding
-    /// comes back to the line's end without it.
-    #[test]
-    fn a_point_keeps_its_line_and_column_within_the_text() {
-        let units = utf16("ab   \r\nc d  \r\n");
-        let trimmed = unpadded_utf16(&units);
-        assert_eq!(trimmed.text, "ab\r\nc d\r\n");
-        assert_eq!(trimmed.lengths, vec![(2, 5), (1, 0)]);
-        assert_eq!(trimmed_offset(&units, 0, &trimmed.text), 0);
-        assert_eq!(trimmed_offset(&units, 1, &trimmed.text), 1);
-        assert_eq!(trimmed_offset(&units, 4, &trimmed.text), 2);
-        assert_eq!(trimmed_offset(&units, 7, &trimmed.text), 4);
-        assert_eq!(trimmed_offset(&units, 9, &trimmed.text), 6);
-        assert_eq!(trimmed_offset(&units, 11, &trimmed.text), 7);
-        assert_eq!(trimmed_offset(&units, 14, &trimmed.text), 9);
-    }
-}
+mod tests;
