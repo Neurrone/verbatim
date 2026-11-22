@@ -535,7 +535,8 @@ impl OpKind {
     }
 
     /// Whether a [`Check::Found`] condition can name a result of this
-    /// kind: a node, a list, a met ancestor, a place or an effect.
+    /// kind: a node, a list, a met ancestor, a place, an effect or a
+    /// selection.
     #[must_use]
     pub const fn finds(self) -> bool {
         matches!(
@@ -547,6 +548,7 @@ impl OpKind {
                 | Self::Descendants
                 | Self::IsOneOf
                 | Self::FocusRead
+                | Self::Caret
                 | Self::WaitForCaret
         )
     }
@@ -610,7 +612,9 @@ pub enum Check {
     /// A [`Op::Test`] matched.
     Matched,
     /// A node or a non-empty list was found, an ancestor Core knows met,
-    /// a place found, or an effect seen ([`OpKind::finds`]).
+    /// a place found, an effect seen, or text selected at a caret
+    /// ([`OpKind::finds`]), so a read of the selection runs only when its
+    /// ends differ (Claude, 2026-11-22).
     Found,
 }
 
@@ -1085,9 +1089,9 @@ impl Done {
             Self::Descendants(descended) => Some(!descended.nodes.is_empty()),
             Self::IsOneOf(place) => Some(place.is_some()),
             Self::WaitForCaret(waited) => Some(*waited == Waited::Effect),
+            Self::Caret(caret) => Some(caret.selection.is_some()),
             Self::Activate(_)
             | Self::Follow
-            | Self::Caret(_)
             | Self::ReadText(_)
             | Self::ReadRange(_)
             | Self::CompareSelection(_)

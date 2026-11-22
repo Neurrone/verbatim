@@ -134,6 +134,8 @@ struct RawNode {
     #[serde(default)]
     find_text_fails: bool,
     #[serde(default)]
+    empty_text_fails: bool,
+    #[serde(default)]
     find_backward_fails: bool,
     #[serde(default)]
     find_misses_answer_a_range: bool,
@@ -283,6 +285,9 @@ pub(crate) struct FixtureNode {
     /// Whether `FindText` on the text fails, as Windows Terminal's has
     /// thrown.
     pub(crate) find_text_fails: bool,
+    /// Whether `GetText` on an empty range fails, as some providers'
+    /// does.
+    pub(crate) empty_text_fails: bool,
     /// Whether `FindText` fails when it searches backward alone, so a
     /// search's failure in one direction can be told from one in both.
     pub(crate) find_backward_fails: bool,
@@ -500,6 +505,7 @@ fn convert(
         italic: raw.italic,
         italic_fails: raw.italic_fails,
         find_text_fails: raw.find_text_fails,
+        empty_text_fails: raw.empty_text_fails,
         find_backward_fails: raw.find_backward_fails,
         find_misses_answer_a_range: raw.find_misses_answer_a_range,
         lines_clamp: raw.lines_clamp,

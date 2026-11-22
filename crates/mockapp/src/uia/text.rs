@@ -36,8 +36,9 @@
 //! characters but the last (`colors_skip_last`), as both terminals do. A
 //! fixture can
 //! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
-//! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
-//! Terminal's has, or fail only when it searches backward
+//! an attribute read, its `GetText` on an empty range fail
+//! (`empty_text_fails`), as a provider that fails an empty read, its
+//! `FindText` fail (`find_text_fails`), as Windows Terminal's has, or fail only when it searches backward
 //! (`find_backward_fails`), its `FindText` answer a search that finds
 //! nothing with a range rather than null (`find_misses_answer_a_range`),
 //! as Windows Terminal's does: when the text is elsewhere in the document,
@@ -930,6 +931,9 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         let text = text_of(&self.tree, self.index);
         let end = self.end.get().min(text.len());
         let start = self.start.get().min(end);
+        if start == end && formats_of(&self.tree, self.index).empty_text_fails {
+            return Err(Error::from(E_FAIL));
+        }
         let mut slice = &text[start..end];
         if let Ok(max) = usize::try_from(maxlength) {
             slice = &slice[..slice.len().min(max)];

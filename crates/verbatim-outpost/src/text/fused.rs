@@ -341,7 +341,9 @@ impl Resolve for LineResolver<'_> {
 /// A focus's caret, its line with the formatting the source's details
 /// name, and the selection's text, read as one segment of the program
 /// builder: the request list's `Caret`, `ReadText` of the line at the
-/// caret and `ReadRange` of the selection, its steps naming `node`, with
+/// caret and `ReadRange` of the selection, the last only when text is
+/// selected, so an empty range, whose text some providers fail to give,
+/// is never read (Claude, 2026-11-22), its steps naming `node`, with
 /// where the selection starts, the caret being its start (the
 /// verbatim-outpost crate guide, "Text and dialog text"), so no caret
 /// program is written by hand (Claude, 2026-11-22).
@@ -370,12 +372,19 @@ pub fn caret_line(
             count: 1,
             details: source.details_read(),
         }),
-        step(Op::ReadRange {
-            subject,
-            start: of(PointOf::SelectionStart),
-            end: of(PointOf::SelectionEnd),
-            through: None,
-        }),
+        Step {
+            op: Op::ReadRange {
+                subject,
+                start: of(PointOf::SelectionStart),
+                end: of(PointOf::SelectionEnd),
+                through: None,
+            },
+            when: Some(Condition {
+                on: Place(0),
+                check: Check::Found,
+                negated: false,
+            }),
+        },
     ];
     let (_, learning) = source.format_reads(source.details_read());
     let answer = {
@@ -407,8 +416,14 @@ pub fn caret_line(
     let Ran::Done(Found::ReadText(mut line)) = line else {
         return Err(failed(line));
     };
-    let Ran::Done(Found::ReadRange(mut selected)) = selected else {
-        return Err(failed(selected));
+    // The selection is read exactly when the caret found one.
+    let selected = match (caret.selection.is_some(), selected) {
+        (true, Ran::Done(Found::ReadRange(mut selected))) => {
+            selected.truncate(MAX_RANGE_UNITS);
+            Some(selected)
+        }
+        (false, Ran::Unrun(Unrun::Skipped)) => None,
+        (_, selected) => return Err(failed(selected)),
     };
     source.learned(learning, line.unsupported);
     let selection = match &caret.selection {
@@ -426,7 +441,6 @@ pub fn caret_line(
     // gives before it is cut to a chunk's limit.
     let in_line = selection.as_ref().map(|_| unit.offset);
     let read = unit_text(unit)?;
-    selected.truncate(MAX_RANGE_UNITS);
     Ok(CaretRead {
         state: CaretState {
             caret: UiaPos::new(&caret.caret, Endpoint::Start, true)?,
@@ -434,7 +448,7 @@ pub fn caret_line(
         },
         line: (read.unit, read.offset),
         formats: UiaText::formats_read(line.runs, source.details_read(), None),
-        selection_text: selection.is_some().then_some(selected),
+        selection_text: selected,
         selection_start: SelectionStart {
             in_line,
             first: selection.is_some_and(|(_, first)| first),

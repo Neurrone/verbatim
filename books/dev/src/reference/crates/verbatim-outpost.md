@@ -901,7 +901,10 @@ anchors are (Table 16 of
   (`text::held`, `TextSource::caret_line`) reads through UI Automation
   one segment of the program builder (`text::fused::caret_line`): a
   `Caret`, a `ReadText` of the line at the caret with the formatting the
-  read names and no language, and a `ReadRange` of the selection, from
+  read names and no language, and a `ReadRange` of the selection, run
+  only when text is selected (a `Check::Found` on the `Caret`), so an
+  empty range, whose text some providers fail to give, is never read
+  (Claude, 2026-11-22), from
   which the selection's start in the line and whether it starts at the
   text's start are found; an edit control's, or one with no UI Automation
   client, is read by parts (Claude, 2026-11-22). Formatting travels as `FormatRun`s: bold at weight 700 or more, underline and

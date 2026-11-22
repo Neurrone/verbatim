@@ -39,7 +39,7 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held, ops};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
-use verbatim_uia_rops::batch::{Answer, Found, HeldAt, Ran, run_batch, run_calls};
+use verbatim_uia_rops::batch::{Answer, Found, HeldAt, Ran, Unrun, run_batch, run_calls};
 use verbatim_uia_rops::{Attributes, FoundPoint, RunAttributes, TextAttribute};
 use windows::Win32::Foundation::{HWND, WPARAM};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -383,10 +383,16 @@ fn caret_both(text: &batch::Text, formats: Option<(Attributes, Attributes)>) -> 
     let [
         Ran::Done(Found::Caret(caret)),
         Ran::Done(Found::ReadText(line)),
-        Ran::Done(Found::ReadRange(selected)),
+        selected,
     ] = &answer.steps[..]
     else {
         panic!("the caret, its line and the selection: {answer:?}");
+    };
+    // The selection's text is read exactly when text is selected.
+    let selected = match (caret.selection.is_some(), selected) {
+        (true, Ran::Done(Found::ReadRange(selected))) => selected,
+        (false, Ran::Unrun(Unrun::Skipped)) => &Vec::new(),
+        (_, selected) => panic!("the selection's read: {selected:?}"),
     };
     CaretSummary {
         line: (utf8(&line.units[0].text), line.units[0].offset),
@@ -529,6 +535,45 @@ fn a_failing_attribute_is_not_supported() {
             }
         )]
     );
+    app.quit();
+}
+
+/// A provider whose `GetText` fails on an empty range: a focus's caret
+/// read with nothing selected reads no selection, so it answers the line,
+/// as a program and by calls; with text selected it reads that text.
+fn an_empty_selection_is_not_read() {
+    common::init_com();
+    let title = common::unique_title("mockapp-empty-text-fails");
+    let mut app = common::spawn("empty_text_fails.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    for remote in [true, false] {
+        let mut source = uia_notes(hwnd, remote);
+        let mut store = Anchors::new(Arc::default());
+        let mut anchors = store.node(1);
+        common::apply(&mut app, hwnd, "caret doc 7");
+        let report = caret_report(&mut source, &mut anchors, 0);
+        assert_eq!(
+            (
+                report.line.text.as_str(),
+                report.line.offset,
+                report.selection
+            ),
+            (
+                "alpha beta
+",
+                7,
+                None
+            ),
+            "remote {remote}"
+        );
+        common::apply(&mut app, hwnd, "caret doc 6 10");
+        let report = caret_report(&mut source, &mut anchors, 1);
+        assert_eq!(
+            (report.line.offset, report.selection.is_some()),
+            (6, true),
+            "remote {remote}"
+        );
+    }
     app.quit();
 }
 
@@ -1613,6 +1658,10 @@ fn main() {
         (
             "a_failing_attribute_is_not_supported",
             a_failing_attribute_is_not_supported,
+        ),
+        (
+            "an_empty_selection_is_not_read",
+            an_empty_selection_is_not_read,
         ),
         (
             "a_mixed_stretch_is_read_by_words_then_characters",

@@ -1417,7 +1417,8 @@ field"); this entry is the read alone.
   the generated read's three steps (`caret_line` in the verbatim-outpost
   crate guide), with the default theme or every indication on: the caret,
   a collapsed copy of it and each of its ends compared with the text's
-  ends, the line, the selection between two points, and the line's
+  ends, the line, the selection between two points when text is
+  selected, and the line's
   formatting: a collapsed copy of the line (2), for each stretch a copy, `MoveEndpointByUnit`, a
   comparison with the line's end, its text and its attributes in one
   `GetAttributeValues` (5 each), the walk moved on after each but the
@@ -1463,9 +1464,9 @@ its probe adds 1 window message (above):
   nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
   protected or not, each with 1 connection and no window message, so the
-  minimum is met remotely; classically 53, and 59 with a selection. A UIA
+  minimum is met remotely; classically 49, and 59 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline read after it, 11 remotely and 64 classically, each with 1
+  its baseline read after it, 11 remotely and 60 classically, each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the
@@ -2117,11 +2118,13 @@ first, the share of the limit in brackets:
   hundred items, its runs about a third of the limit each. The
   controlled list is the one bound the application sets (Settings'
   search suggestions were 25).
-- The caret read: 4,446 (44 percent) for a line of 64 stretches reached by
-  walking a mixed stretch by words and characters, eleven attributes, and
-  every selection text up to 513 units; 91 for the report after a focus on
-  plain text with the default theme. Where every stretch is mixed
-  (`mixed.json`), each adds 249: 2,152 for 17 stretches and 4,144 for 33,
+- The caret read (`caret_reads_execute_exactly`): 4,466 (45 percent) for
+  a line of 64 stretches reached by walking a mixed stretch by words and
+  characters, eleven attributes, and ten characters selected; 143 for the
+  report after a focus on plain text with the default theme, nothing
+  selected, so the selection is not read. Where every stretch is mixed
+  (`mixed.json`, `densely_mixed_formatting_executes_exactly`), each adds
+  249: 2,207 for 17 stretches and 4,199 for 33,
   so 64 come to about 8,000 (80 percent), under the limit but uncountable.
   It is the one program that can come within a factor of two of the limit,
   bounded by the 64 stretches.

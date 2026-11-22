@@ -715,9 +715,38 @@ fn a_reference_names_an_earlier_step_of_a_kind_it_can_take() {
         wrong(1, 0, OpKind::Read),
     );
     refused(
-        vec![step(caret()), when(caret(), 0, Check::Found, true)],
+        vec![
+            step(from_caret_read()),
+            when(caret(), 0, Check::Found, true),
+        ],
         outpost,
-        wrong(1, 0, OpKind::Caret),
+        wrong(1, 0, OpKind::ReadText),
+    );
+}
+
+/// A caret finds a selection, so a read of it can wait on one.
+#[test]
+fn a_read_can_wait_on_a_carets_selection() {
+    let node12 = || Subject::Node(node(12));
+    assert!(
+        parse(
+            batch(vec![
+                step(caret()),
+                when(
+                    text(
+                        node12(),
+                        Point::Of(Place(0), PointOf::SelectionStart),
+                        None,
+                        TextUnit::Line
+                    ),
+                    0,
+                    Check::Found,
+                    false
+                ),
+            ]),
+            ReaderKind::Outpost
+        )
+        .is_ok()
     );
 }
 
@@ -860,7 +889,24 @@ fn a_condition_runs_its_step_as_the_named_outcome_says() {
         check,
         negated,
     };
+    let point = |anchor| HeldPoint {
+        anchor: TextAnchor(anchor),
+        edges: Edges::default(),
+    };
+    let caret = |selected: bool| {
+        StepOutcome::Done(Done::Caret(CaretAt {
+            caret: point(1),
+            selection: selected.then(|| HeldSelection {
+                start: point(1),
+                end: point(2),
+            }),
+            held: TextAnchor(3),
+            offsets: None,
+        }))
+    };
     let cases = [
+        (Check::Found, caret(true), Gate::Run, Gate::Skip),
+        (Check::Found, caret(false), Gate::Skip, Gate::Run),
         (Check::Matched, tested(true), Gate::Run, Gate::Skip),
         (Check::Matched, tested(false), Gate::Skip, Gate::Run),
         (

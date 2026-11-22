@@ -338,7 +338,8 @@ fn paths_execute_exactly() {
 }
 
 /// The focus's caret read, generated from the request list's `Caret`,
-/// `ReadText` of the line and `ReadRange` of the selection: a line of 64
+/// `ReadText` of the line and `ReadRange` of the selection when text is
+/// selected: a line of 64
 /// stretches, reached by walking one mixed stretch by words and a mixed
 /// word by characters (`italic.json`), every attribute read and learned,
 /// with ten characters selected; and, typically, a line of plain text
@@ -372,10 +373,11 @@ fn caret_reads_execute_exactly() {
     // 4378 and 91 by the focus's hand-written caret program, which this
     // generated read replaced, with the same calls (2026-11-22): the
     // generated read compares each of the caret's and the selection's ends
-    // with the text's, and reads the selection between two points.
+    // with the text's, and reads the selection between two points only when
+    // text is selected.
     assert_eq!(
         [worst, typical],
-        [4457, 158],
+        [4466, 143],
         "caret read worst and typical"
     );
 }
@@ -408,7 +410,7 @@ fn densely_mixed_formatting_executes_exactly() {
     fixture.app.quit();
     // 2152 and 4144 by the focus's hand-written caret program, which this
     // generated read replaced (2026-11-22).
-    assert_eq!([sixteen, thirty_two], [2222, 4214], "17 and 33 stretches");
+    assert_eq!([sixteen, thirty_two], [2207, 4199], "17 and 33 stretches");
     assert_eq!(eighty, 64, "80 characters, cut at 64 stretches");
     assert_eq!(calls.uia, 1, "the 80 characters' read, one program");
 }

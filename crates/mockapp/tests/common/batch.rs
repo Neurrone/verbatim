@@ -512,7 +512,8 @@ pub fn wait_poll(text: &Text, start: FoundPoint, (word, last): (bool, bool)) -> 
 }
 
 /// A focus's caret read, as the outpost runs it: the caret, its line with
-/// every attribute's formatting and no language, and the selection's text.
+/// every attribute's formatting and no language, and the selection's text
+/// when text is selected.
 pub fn focus_caret(text: &Text) -> Shape<'_> {
     let mut shape = Shape::of(Some(text));
     shape.culture = false;
@@ -524,11 +525,10 @@ pub fn focus_caret(text: &Text) -> Shape<'_> {
             (None, TextUnit::Line, 1),
             true,
         ))
-        .step(read_range(
-            of(PointOf::SelectionStart),
-            of(PointOf::SelectionEnd),
-            None,
-        ));
+        .when_found(
+            0,
+            read_range(of(PointOf::SelectionStart), of(PointOf::SelectionEnd), None),
+        );
     shape
 }
 

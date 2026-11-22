@@ -291,7 +291,9 @@ offsets are read from its implementation.
   from its neighbors', a terminal colour read's worst case
   (`terminal-checkered.json`).
 - Provider faults, each a fixture flag: `italic_fails` fails the
-  `IsItalic` read with `E_FAIL`; `find_text_fails` fails `FindText` the
+  `IsItalic` read with `E_FAIL`; `empty_text_fails` fails `GetText` on
+  an empty range the same way (`empty_text_fails.json`);
+  `find_text_fails` fails `FindText` the
   same way, as Windows Terminal's has (`terminal_find_fails.json`);
   `find_backward_fails` fails only a backward `FindText`, so a failure
   that closes one direction of a search can be told from one that ends it

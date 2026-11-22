@@ -1009,6 +1009,7 @@ impl Emit<'_> {
                     b.compare(size, none, Comparison::GreaterThan)
                 }
                 Regs::WaitCheck { reads_after, .. } => *reads_after,
+                Regs::Caret { caret, .. } => caret.has_selection,
                 _ => b.bool(true),
             };
             b.set(holds, found);

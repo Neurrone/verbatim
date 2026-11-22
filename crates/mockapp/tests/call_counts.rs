@@ -4135,7 +4135,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             text_said(false, &line),
-            first_focus(53),
+            first_focus(49),
         ),
         (
             "UIA text field focus with a selection, remotely",
@@ -4192,7 +4192,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(64),
+            first_focus(60),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);
@@ -4224,7 +4224,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "UIA text field focus with its caret, default details, classically",
         measured,
-        first_focus(53),
+        first_focus(49),
     );
 
     let title = common::unique_title("mockapp-counts-edit-focus");
@@ -4290,7 +4290,7 @@ fn text_field_focuses_cost_exactly() {
 /// read with the focus as the focus answer's selection baseline read
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"), its
 /// line
-/// "alpha beta". Remotely 4 UIA calls and the probe; classically 19, the
+/// "alpha beta". Remotely 4 UIA calls and the probe; classically 15, the
 /// walk ending at the desktop's root with no step above it.
 fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
     for (operation, remote, expected) in [
@@ -4302,7 +4302,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         (
             "UIA text field focus-now answer with its caret, classically",
             false,
-            calls(19, 0, 1),
+            calls(15, 0, 1),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-text-focus-now");

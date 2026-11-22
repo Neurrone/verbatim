@@ -399,8 +399,8 @@ impl Found {
             Self::Related(related) => Some(!related.nodes.is_empty()),
             Self::Descendants(descendants) => Some(!descendants.nodes.is_empty()),
             Self::WaitCheck(checked) => Some(checked.reads_after),
-            Self::Caret(_)
-            | Self::ReadText(_)
+            Self::Caret(caret) => Some(caret.selection.is_some()),
+            Self::ReadText(_)
             | Self::ReadRange(_)
             | Self::CompareSelection(_)
             | Self::Select
