@@ -61,12 +61,12 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
+use verbatim_ia2::text::EditText;
 use verbatim_model::property::{NodeDetail, NodeDetailSet};
 use verbatim_model::{
     CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
 use verbatim_model::{TextMovement, TextPoint, TextPosition, TextUnit, Theme};
-use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, TextSource};
 use verbatim_process::arguments::OutpostOptions;

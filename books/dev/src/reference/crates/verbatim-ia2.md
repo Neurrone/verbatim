@@ -623,7 +623,7 @@ step runs alone, by calls:
   the set names a property a snapshot holds, a tree view item's children
   by the control's messages (`tree_view_child_count`), and the rest the
   outpost holds (`Resolve::held`: its MSAA ids, whether its window is
-  shown, its window's class, its text's summary); suggestions, the
+  shown, its window's class, its text's summary, read by `text::summary`); suggestions, the
   `Value` pattern and a combo box's list, UI Automation's alone, answer
   none. An acquired object's properties are each read alone
   (`FocusCandidate::property`), its focused state over it and every
@@ -669,3 +669,21 @@ step runs alone, by calls:
   `test_focus` is a `Test` of the application's focus: that read with its
   focused state first, the matcher evaluated lazily over it, and what it
   found answered for a later `FocusRead` to take.
+- The text operations on an MSAA node are `text`'s arms (`text::step`,
+  each `TextStep` resolved by the dispatcher: `Caret`, `ReadText`,
+  `ReadRange`, `Select`, `Locate`, `CompareSelection` and
+  `MoveBySentence`), with `text::summary` for a `Read` of its text
+  summary, `text::check` for a caret wait's check and `text::focus_caret`
+  for a focus's caret, each over `verbatim_reader_rules::text`'s
+  algorithms on `text::EditText`, an edit or rich edit control's text by
+  its messages (offsets; a rich edit's word is the control's own,
+  `EM_FINDWORDBREAK`, and a plain edit's the line broken by Uniscribe
+  with NVDA's two letters appended, so a run of one punctuation mark is
+  one word; a character is Uniscribe's in every edit control, as NVDA's
+  `EditTextInfo` forces both; the plain edit control alone answers
+  `TextSource::measure`, so a `Locate` there answers the offset and
+  length, and a rich edit's the screen point, as NVDA reads a rich edit
+  through its text object model). A node has text when it is an edit
+  control's client area (`text::edit_version`); any
+  other answers no text. The outpost's `TextResolve` gives a node's ids
+  and a copy of its text facts, which it commits after the read.

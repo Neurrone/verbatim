@@ -210,7 +210,8 @@ pub(super) fn held(
             .and_then(|(hwnd, _, child)| verbatim_ia2::acquire::tree_view_child_count(hwnd, child))
             .map(PropertyValue::Count),
         PropertyId::TextSummary => {
-            super::text_reads::text_summary(context, node).map(PropertyValue::TextSummary)
+            verbatim_ia2::text::summary(&super::text_reads::EditFacts(context), node)
+                .map(PropertyValue::TextSummary)
         }
         _ => None,
     }

@@ -35,6 +35,8 @@
 //! - [`edit`] — the standard Win32 edit and rich edit controls' text,
 //!   through their window messages (milestone M4), as NVDA's
 //!   `EditTextInfo` reads them.
+//! - [`text`] — an edit control's text as a text source, and the MSAA
+//!   executor's text arms over it.
 //! - [`uniscribe`] — characters and words as Uniscribe breaks them, which
 //!   NVDA's `EditTextInfo` uses for an edit control's characters and a
 //!   plain edit control's words.
@@ -63,6 +65,7 @@ mod hook;
 pub mod list_view;
 pub mod map;
 mod registry;
+pub mod text;
 pub mod uniscribe;
 mod window;
 

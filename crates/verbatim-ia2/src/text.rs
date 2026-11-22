@@ -1,13 +1,16 @@
-//! A Win32 edit or rich edit control's text as a [`TextSource`], through
-//! [`verbatim_ia2::edit`]'s window messages, as NVDA's `EditTextInfo`
-//! reads it (`docs/nvda/editable-text-and-terminals.md`).
+//! The MSAA executor's text (the request list's design, section 5): a
+//! Win32 edit or rich edit control's text as a [`TextSource`], through
+//! [`crate::edit`]'s window messages, as NVDA's `EditTextInfo` reads it
+//! (`docs/nvda/editable-text-and-terminals.md`), and the text arms, each
+//! text operation's one implementation on an MSAA node, over
+//! `verbatim_reader_rules::text`'s algorithms.
 //!
 //! Positions are the control's UTF-16 offsets. A line is the control's
 //! line, soft-wrapped lines included, from its start to the next line's
 //! start, so a hard line break belongs to the line it ends; a paragraph is
 //! a line, as in NVDA. Words are rich edit's own (`EM_FINDWORDBREAK`, from
 //! rich edit 2.0, as NVDA finds them) or, for the plain edit control,
-//! Uniscribe's ([`verbatim_ia2::uniscribe`]), each with the white space
+//! Uniscribe's ([`crate::uniscribe`]), each with the white space
 //! after it, and a line break character a word of its own, as NVDA's
 //! `EditTextInfo` forces Uniscribe for a plain edit control's line
 //! ([`plain_word`]), so a run of one punctuation mark, such as a password
@@ -17,10 +20,246 @@
 
 use std::cmp::Ordering;
 
-use verbatim_ia2::edit::EditControl;
-use verbatim_model::TextUnit;
+use verbatim_model::batch::{
+    CaretAt, Done, Missing, SelectionCompared, StepOutcome, StepRefusal, Waited,
+};
+use verbatim_model::property::TextSummary;
+use verbatim_model::request::{FocusCaret, FocusCaretRead};
+use verbatim_model::{NodeId, TextAnchor, TextReply, TextUnit};
+use verbatim_reader_rules::text::{
+    self as rules, CallStep, CaretState, NodeText, Sentences, TextError, TextResult, TextSource,
+    Unit,
+};
+use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 
-use super::{CaretState, Sentences, TextError, TextResult, TextSource, Unit};
+use crate::edit::{EditControl, EditError};
+
+/// What the text arms need of the outpost: an MSAA node's ids, and its
+/// text facts, which the outpost's store keeps.
+pub trait TextResolve {
+    /// The window, object id and child id node `node` is kept under;
+    /// `None` for a node the outpost no longer knows.
+    fn key_of(&self, node: NodeId) -> Option<(isize, i32, i32)>;
+
+    /// Runs `read` on a copy of node `node`'s edit control text facts
+    /// holding the anchors `named`, and commits what it changed.
+    fn edit_anchors(
+        &self,
+        node: NodeId,
+        named: &[u64],
+        read: &mut dyn FnMut(&mut NodeText<'_, u32>),
+    );
+
+    /// The run's shared clock, in microseconds.
+    fn now_us(&self) -> u64;
+}
+
+/// The edit API version of an MSAA object that is an edit control's client
+/// area, `None` for any other object.
+#[must_use]
+pub fn edit_version(hwnd: isize, object: i32, child: i32) -> Option<u8> {
+    if object != OBJID_CLIENT.0 || child != crate::CHILDID_SELF {
+        return None;
+    }
+    crate::edit::edit_api_version(verbatim_model::class::normalize(
+        &verbatim_win32::window::window_class_name(hwnd),
+    ))
+}
+
+/// Runs `read` on node `node`'s text with a copy of its facts holding the
+/// anchors `named`, committing what the read changed: `Err` with the reply
+/// a node with no text, or gone, answers.
+fn on_text<T>(
+    resolver: &dyn TextResolve,
+    node: NodeId,
+    named: &[u64],
+    mut read: impl FnMut(&mut EditText, &mut NodeText<'_, u32>) -> T,
+) -> Result<T, TextReply> {
+    let (hwnd, object, child) = resolver.key_of(node).ok_or(TextReply::Gone)?;
+    let version = edit_version(hwnd, object, child).ok_or(TextReply::NoText)?;
+    let mut source = EditText::new(hwnd, version);
+    let mut found = None;
+    resolver.edit_anchors(node, named, &mut |anchors| {
+        found = Some(read(&mut source, anchors));
+    });
+    // The resolver runs the read exactly once.
+    found.ok_or(TextReply::Unanswered)
+}
+
+/// A text step on an MSAA node, its points and held reads resolved by the
+/// dispatcher.
+#[derive(Clone, Copy, Debug)]
+pub enum TextStep {
+    /// `ReadText`, `ReadRange`, `Select` or `Locate`, run call by call.
+    Calls(CallStep),
+    /// `Caret`.
+    Caret,
+    /// `CompareSelection` between two held reads.
+    Compare(TextAnchor, TextAnchor),
+    /// `MoveBySentence` from a held read, forward or back.
+    Sentence(TextAnchor, bool),
+}
+
+/// The text arms: `step` on MSAA node `node`'s text, and its outcome.
+pub fn step(step: TextStep, node: NodeId, resolver: &dyn TextResolve) -> StepOutcome {
+    match step {
+        TextStep::Calls(call) => {
+            let named: Vec<u64> = call.named().into_iter().map(|anchor| anchor.0).collect();
+            let ran = on_text(resolver, node, &named, |source, anchors| {
+                rules::by_calls(source, anchors, call)
+            });
+            match ran {
+                Ok(Ok(Err(refused))) => refused,
+                Ok(Ok(Ok(done))) => StepOutcome::Done(done),
+                Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+                Ok(Err(TextError::Failed(reason))) => {
+                    tracing::debug!(reason, "a batch's text step failed");
+                    StepOutcome::Failed
+                }
+                Err(reply) => refused(&reply, node),
+            }
+        }
+        TextStep::Caret => {
+            let read_at_us = resolver.now_us();
+            let ran = on_text(resolver, node, &[], |source, anchors| {
+                rules::ops::caret(source, anchors, read_at_us)
+            });
+            outcome(ran, node, |caret: CaretAt| Ok(Done::Caret(caret)))
+        }
+        TextStep::Compare(before, after) => {
+            let ran = on_text(resolver, node, &[before.0, after.0], |source, anchors| {
+                rules::ops::compare_selection(source, anchors, (before, after))
+            });
+            outcome(
+                ran,
+                node,
+                |compared: Result<SelectionCompared, TextAnchor>| {
+                    compared
+                        .map(Done::CompareSelection)
+                        .map_err(Missing::Anchor)
+                },
+            )
+        }
+        TextStep::Sentence(from, forward) => {
+            let ran = on_text(resolver, node, &[from.0], |source, anchors| {
+                rules::sentence::move_by_sentence(source, anchors, (from, forward), &mut || {
+                    verbatim_process::clock::now_us()
+                })
+            });
+            match ran {
+                Err(reply) => refused(&reply, node),
+                Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+                Ok(Err(TextError::Failed(reason))) => {
+                    tracing::debug!(reason, "a move by sentence failed");
+                    StepOutcome::Failed
+                }
+                Ok(Ok(Err(outcome))) => outcome,
+                Ok(Ok(Ok(moved))) => StepOutcome::Done(Done::MoveBySentence(moved)),
+            }
+        }
+    }
+}
+
+/// The outcome of a text step on `node` whose read `ran`, its result made
+/// by `done`.
+fn outcome<T>(
+    ran: Result<TextResult<T>, TextReply>,
+    node: NodeId,
+    done: impl FnOnce(T) -> Result<Done, Missing>,
+) -> StepOutcome {
+    match ran {
+        Err(reply) => refused(&reply, node),
+        Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
+        Ok(Err(TextError::Failed(reason))) => {
+            tracing::debug!(reason, "a batch's text step failed");
+            StepOutcome::Failed
+        }
+        Ok(Ok(found)) => done(found).map_or_else(StepOutcome::NotThere, StepOutcome::Done),
+    }
+}
+
+/// The outcome of a text step on `node` whose text could not be opened,
+/// `reply` saying why.
+fn refused(reply: &TextReply, node: NodeId) -> StepOutcome {
+    match reply {
+        TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
+        TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        TextReply::Unanswered => StepOutcome::Failed,
+        other => {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
+            StepOutcome::Failed
+        }
+    }
+}
+
+/// The text summary of node `node` for report focus, as NVDA's object
+/// speech reads it ([`rules::held::summary`]): `None` when it has no text
+/// or the read failed, as NVDA then speaks no text.
+#[must_use]
+pub fn summary(resolver: &dyn TextResolve, node: NodeId) -> Option<TextSummary> {
+    let read_at_us = resolver.now_us();
+    on_text(resolver, node, &[], |source, anchors| {
+        rules::held::summary(source, anchors, (None, read_at_us))
+    })
+    .ok()?
+    .ok()
+}
+
+/// One poll of a caret wait over node `node`'s text, by parts
+/// ([`rules::check::check`]): the check's end, if it ended the wait; `Err`
+/// with the reply its text's opening answered.
+///
+/// # Errors
+///
+/// The reply a node with no text, or gone, answers.
+pub fn check(
+    resolver: &dyn TextResolve,
+    node: NodeId,
+    ask: rules::check::CheckAsk<'_>,
+) -> Result<TextResult<Option<Waited>>, TextReply> {
+    on_text(
+        resolver,
+        node,
+        &[ask.wait.from.0],
+        |source, anchors| match anchors.held_read(ask.wait.from) {
+            Some(start) => rules::check::check(source, &start, ask),
+            None => Err(TextError::Gone),
+        },
+    )
+}
+
+/// A focus's caret through node `node`'s text, read by parts: the line at
+/// the caret and the selection, the next baseline held from the read,
+/// compared with nothing. A node with no text answers
+/// [`FocusCaret::NoText`], one whose read failed [`FocusCaret::NotRead`].
+#[must_use]
+pub fn focus_caret(resolver: &dyn TextResolve, node: NodeId) -> FocusCaret {
+    let read_at_us = resolver.now_us();
+    let read = on_text(resolver, node, &[], |source, anchors| {
+        rules::held::read_focus(source, anchors, (None, read_at_us))
+    });
+    match read {
+        Err(TextReply::NoText) => FocusCaret::NoText,
+        Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
+        Ok(Ok((caret, selected, baseline))) => FocusCaret::Read(Box::new(FocusCaretRead {
+            caret,
+            selected_text: selected.map(|selected| selected.text),
+            baseline,
+        })),
+    }
+}
+
+impl From<EditError> for TextError {
+    fn from(error: EditError) -> Self {
+        match error {
+            EditError::Gone => TextError::Gone,
+            EditError::Failed(reason) => TextError::Failed(reason),
+            EditError::Abandoned => {
+                TextError::Failed("the worker was abandoned; nothing was sent".to_owned())
+            }
+        }
+    }
+}
 
 /// A Win32 edit control's text.
 pub struct EditText {
@@ -39,7 +278,7 @@ struct Line {
 
 impl EditText {
     /// The edit control `hwnd`, of edit API `version`
-    /// ([`verbatim_ia2::edit::edit_api_version`]).
+    /// ([`crate::edit::edit_api_version`]).
     #[must_use]
     pub fn new(hwnd: isize, version: u8) -> Self {
         Self {
@@ -130,8 +369,7 @@ impl EditText {
         let (start, end) = if at >= text.len() {
             (text.len(), text.len())
         } else {
-            verbatim_ia2::uniscribe::character(&text, at)
-                .map_err(|error| uniscribe_failed(&error))?
+            crate::uniscribe::character(&text, at).map_err(|error| uniscribe_failed(&error))?
         };
         Ok((line.start + to_u32(start), line.start + to_u32(end)))
     }
@@ -174,7 +412,7 @@ fn uniscribe_failed(error: &windows::core::Error) -> TextError {
 /// (`EditTextInfo._getWordOffsets` in
 /// `nvda/source/NVDAObjects/window/edit.py`); otherwise the line, a null
 /// character or no-break space read as a space and two letters appended,
-/// is broken by Uniscribe ([`verbatim_ia2::uniscribe::word`]), and the
+/// is broken by Uniscribe ([`crate::uniscribe::word`]), and the
 /// word found ends at the line's end at the latest
 /// (`UniscribeWordSegmentationStrategy` in
 /// `nvda/source/textUtils/_wordSeg/wordSegStrategy.py`, which appends the
@@ -195,7 +433,7 @@ fn plain_word(text: &[u16], at: usize) -> windows::core::Result<(usize, usize)> 
         .map(|&unit| if matches!(unit, 0 | 0xA0) { 0x20 } else { unit })
         .chain("xx".encode_utf16())
         .collect();
-    let (start, end) = verbatim_ia2::uniscribe::word(&units, at)?;
+    let (start, end) = crate::uniscribe::word(&units, at)?;
     Ok((start, end.min(text.len())))
 }
 

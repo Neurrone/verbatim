@@ -85,18 +85,6 @@ pub enum EditError {
 /// What an edit control read can fail with.
 pub type EditResult<T> = Result<T, EditError>;
 
-impl From<EditError> for verbatim_reader_rules::text::TextError {
-    fn from(error: EditError) -> Self {
-        match error {
-            EditError::Gone => verbatim_reader_rules::text::TextError::Gone,
-            EditError::Failed(reason) => verbatim_reader_rules::text::TextError::Failed(reason),
-            EditError::Abandoned => verbatim_reader_rules::text::TextError::Failed(
-                "the worker was abandoned; nothing was sent".to_owned(),
-            ),
-        }
-    }
-}
-
 /// The edit API version of a window class, as NVDA numbers it, from the
 /// class name normalized by NVDA's class map: 0 for the plain edit control,
 /// 1 for rich edit 1.0, 2 for rich edit 2.0 and its combo box, 5 for rich

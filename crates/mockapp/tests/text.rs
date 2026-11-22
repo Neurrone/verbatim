@@ -28,13 +28,13 @@ use std::sync::Arc;
 use batch::{At, by, named};
 use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
+use verbatim_ia2::text::EditText;
 use verbatim_model::batch::{Chunks, Done, Located, Op, StepOutcome, StepRefusal, TextOffset};
 use verbatim_model::request::Question;
 use verbatim_model::{
     CaretReport, ReviewCommand, SegmentContent, SpeechMark, TextChunk, TextMovement, TextPoint,
     TextPosition, TextUnit,
 };
-use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
     Anchors, CallStep, InOneGo, NodeText, TextSource, by_calls, held, ops,

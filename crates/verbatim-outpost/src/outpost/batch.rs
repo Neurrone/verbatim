@@ -42,7 +42,6 @@ use super::focus::FocusNow;
 use super::read::{self, Client, ReadError};
 use super::text_reads;
 use super::window::hwnd_of;
-use crate::text::TextError;
 
 /// The node details a batch's reads fetch: those its steps' property sets
 /// name.
@@ -1086,11 +1085,8 @@ impl Run<'_, '_> {
         let context = self.context;
         let step = match op {
             Op::Caret { adopt, .. } => {
-                return Ok(text_result(
-                    text_reads::caret_step(context, node, *adopt),
-                    node,
-                    |caret| Ok(Done::Caret(caret)),
-                ));
+                text_reads::adopt_told(context, node, *adopt);
+                verbatim_ia2::text::TextStep::Caret
             }
             Op::CompareSelection { before, after, .. } => {
                 let before = match before {
@@ -1101,34 +1097,10 @@ impl Run<'_, '_> {
                 let (Some(before), Some(after)) = (before, after) else {
                     return Ok(StepOutcome::Failed);
                 };
-                return Ok(text_result(
-                    text_reads::compare_step(context, node, (before, after)),
-                    node,
-                    |compared| {
-                        compared
-                            .map(Done::CompareSelection)
-                            .map_err(Missing::Anchor)
-                    },
-                ));
+                verbatim_ia2::text::TextStep::Compare(before, after)
             }
-            Op::MoveBySentence {
-                from,
-                forward,
-                details,
-                ..
-            } => {
-                return Ok(
-                    match text_reads::sentence_step(context, node, (*from, *forward), *details) {
-                        Err(reply) => text_refused(&reply, node),
-                        Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
-                        Ok(Err(TextError::Failed(reason))) => {
-                            tracing::debug!(reason, "a move by sentence failed");
-                            StepOutcome::Failed
-                        }
-                        Ok(Ok(Err(outcome))) => outcome,
-                        Ok(Ok(Ok(moved))) => StepOutcome::Done(Done::MoveBySentence(moved)),
-                    },
-                );
+            Op::MoveBySentence { from, forward, .. } => {
+                verbatim_ia2::text::TextStep::Sentence(*from, *forward)
             }
             Op::TerminalRead { ask, .. } => {
                 let Some(uia) = self.client.uia() else {
@@ -1143,22 +1115,15 @@ impl Run<'_, '_> {
                 return Ok(StepOutcome::Failed);
             }
             op => match self.call_step(op, context.observed_now()) {
-                Some(step) => step,
+                Some(step) => verbatim_ia2::text::TextStep::Calls(step),
                 None => return Ok(StepOutcome::Failed),
             },
         };
-        let named: Vec<u64> = step.named().into_iter().map(|anchor| anchor.0).collect();
-        let ran = text_reads::by_calls(context, node, step, &named);
-        Ok(match ran {
-            Ok(Ok(Err(refused))) => refused,
-            Ok(Ok(Ok(done))) => StepOutcome::Done(done),
-            Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
-            Ok(Err(TextError::Failed(reason))) => {
-                tracing::debug!(reason, "a batch's text step failed");
-                StepOutcome::Failed
-            }
-            Err(reply) => text_refused(&reply, node),
-        })
+        Ok(verbatim_ia2::text::step(
+            step,
+            node,
+            &text_reads::EditFacts(context),
+        ))
     }
 
     /// The step a read or move by points runs as call by call, its points
@@ -1261,24 +1226,6 @@ fn failed(error: &ReadError, node: NodeId) -> StepOutcome {
             tracing::debug!(reason, "a batch step's read failed");
             StepOutcome::Failed
         }
-    }
-}
-
-/// The outcome of a text step on `node` whose read `ran`, its result made
-/// by `done`.
-fn text_result<T>(
-    ran: Result<crate::text::TextResult<T>, TextReply>,
-    node: NodeId,
-    done: impl FnOnce(T) -> Result<Done, Missing>,
-) -> StepOutcome {
-    match ran {
-        Err(reply) => text_refused(&reply, node),
-        Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
-        Ok(Err(TextError::Failed(reason))) => {
-            tracing::debug!(reason, "a batch's text step failed");
-            StepOutcome::Failed
-        }
-        Ok(Ok(found)) => done(found).map_or_else(StepOutcome::NotThere, StepOutcome::Done),
     }
 }
 

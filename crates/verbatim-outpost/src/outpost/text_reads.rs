@@ -28,21 +28,16 @@
 use std::collections::{BTreeSet, HashMap};
 
 use windows::Win32::UI::Accessibility::IUIAutomationTextPattern;
-use windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT;
 use windows::core::AgileReference;
 
-use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::request::{FocusCaret, FocusCaretRead};
 use verbatim_model::{NodeId, Role, TextDetails, TextReply};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
 use verbatim_uia_rops::Path;
 
-use crate::text::edit::EditText;
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{self, NodeTextCopy, Slot, TextError};
-use verbatim_model::class::normalize;
-use verbatim_win32::window::window_class_name;
 
 use verbatim_outpost_logic::{WatchProgram, WatchWork};
 
@@ -254,41 +249,6 @@ fn support_of(context: &RequestContext<'_>, node_id: NodeId) -> TextSupport {
     context.store.support(node_id)
 }
 
-/// A node's text, through its backend.
-enum Source {
-    Uia(UiaText),
-    Edit(EditText),
-}
-
-/// The text behind `node_id`, or the reply that ends the request: `NoText`
-/// for a node with no text interface, `Gone` for one this outpost no longer
-/// knows.
-fn source(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    details: TextDetails,
-) -> Result<Source, TextReply> {
-    if context.store.runtime_id_of(node_id).is_some() {
-        return uia_source(context, node_id, details).map(Source::Uia);
-    }
-    let Some((hwnd, object, child)) = context.store.key_of(node_id) else {
-        return Err(TextReply::Gone);
-    };
-    match edit_version(hwnd, object, child) {
-        Some(version) => Ok(Source::Edit(EditText::new(hwnd, version))),
-        None => Err(TextReply::NoText),
-    }
-}
-
-/// The edit API version of an MSAA object that is an edit control's client
-/// area, `None` for any other object.
-fn edit_version(hwnd: isize, object: i32, child: i32) -> Option<u8> {
-    if object != OBJID_CLIENT.0 || child != CHILDID_SELF {
-        return None;
-    }
-    verbatim_ia2::edit::edit_api_version(normalize(&window_class_name(hwnd)))
-}
-
 /// A UIA node's text, its patterns fetched once and kept, its reads
 /// fetching `details` beyond the text.
 fn uia_source(
@@ -409,7 +369,7 @@ pub(super) fn text_event_from(
 /// answered it has no text pattern: that answer is forgotten and the event's
 /// element kept as the node's ([`text_event_from`]). The element is let go
 /// of either way, its tell answered.
-fn adopt_told(
+pub(super) fn adopt_told(
     context: &RequestContext<'_>,
     node_id: NodeId,
     adopt: Option<verbatim_model::tell::ElementToken>,
@@ -476,44 +436,54 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
     context
         .store
         .key_of(node_id)
-        .is_some_and(|(hwnd, object, child)| edit_version(hwnd, object, child).is_some())
+        .is_some_and(|(hwnd, object, child)| {
+            verbatim_ia2::text::edit_version(hwnd, object, child).is_some()
+        })
 }
 
-/// Runs `$read` on `$node_id`'s text, through whichever source it has,
-/// fetching `$details` beyond the text,
-/// with a copy of its facts holding the anchors `$named`, committing what
-/// the read changed: `Err` with the reply a node with no text, or gone,
-/// answers.
-macro_rules! on_text {
-    ($context:expr, $node_id:expr, $details:expr, $named:expr, |$source:ident, $text:ident| $read:expr) => {{
-        let context = $context;
-        let node_id = $node_id;
-        match source(context, node_id, $details) {
-            Err(reply) => Err(reply),
-            Ok(Source::Uia(mut source)) => {
-                let mut call = uia_call(context, node_id, $named);
-                let read = {
-                    let $source = &mut source;
-                    let $text = &mut call.text();
-                    $read
-                };
-                put_uia(context, node_id, call);
-                note_read_classically(context, &mut source);
-                keep_support(context, node_id, &source);
-                Ok(read)
-            }
-            Ok(Source::Edit(mut source)) => {
-                let mut call = edit_call(context, node_id, $named);
-                let read = {
-                    let $source = &mut source;
-                    let $text = &mut call.text();
-                    $read
-                };
-                put_edit(context, node_id, call);
-                Ok(read)
-            }
-        }
-    }};
+/// Runs `read` on UI Automation node `node_id`'s text, fetching `details`
+/// beyond the text, with a copy of its facts holding the anchors `named`,
+/// committing what the read changed: `Err` with the reply a node with no
+/// text, or gone, answers.
+fn on_uia_text<T>(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    (details, named): (TextDetails, &[u64]),
+    read: impl FnOnce(&mut UiaText, &mut text::NodeText<'_, UiaPos>) -> T,
+) -> Result<T, TextReply> {
+    let mut source = uia_source(context, node_id, details)?;
+    let mut call = uia_call(context, node_id, named);
+    let read = read(&mut source, &mut call.text());
+    put_uia(context, node_id, call);
+    note_read_classically(context, &mut source);
+    keep_support(context, node_id, &source);
+    Ok(read)
+}
+
+/// An MSAA node's text facts, as the MSAA executor's text arms work on
+/// them ([`verbatim_ia2::text::TextResolve`]): a copy of the node's facts
+/// for each read, committed with the program's next commit.
+pub(super) struct EditFacts<'a, 'c>(pub(super) &'a RequestContext<'c>);
+
+impl verbatim_ia2::text::TextResolve for EditFacts<'_, '_> {
+    fn key_of(&self, node: NodeId) -> Option<(isize, i32, i32)> {
+        self.0.store.key_of(node)
+    }
+
+    fn edit_anchors(
+        &self,
+        node: NodeId,
+        named: &[u64],
+        read: &mut dyn FnMut(&mut text::NodeText<'_, u32>),
+    ) {
+        let mut call = edit_call(self.0, node, named);
+        read(&mut call.text());
+        put_edit(self.0, node, call);
+    }
+
+    fn now_us(&self) -> u64 {
+        self.0.observed_now()
+    }
 }
 
 /// The reply a text read that failed answers.
@@ -525,39 +495,6 @@ fn failed_reply(error: TextError) -> TextReply {
             TextReply::Unanswered
         }
     }
-}
-
-/// A batch's text step of `node_id` run call by call through its text's
-/// own calls ([`text::by_calls`]: an edit control's messages), its copy of
-/// the node's facts holding the anchors `named`: `Err` with the reply a
-/// node with no text, or gone, answers.
-pub(super) fn by_calls(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    step: text::CallStep,
-    named: &[u64],
-) -> Result<text::OrRefused<verbatim_model::batch::Done>, TextReply> {
-    on_text!(
-        context,
-        node_id,
-        TextDetails::NONE,
-        named,
-        |source, text| text::by_calls(source, text, step)
-    )
-}
-
-/// A batch's `Caret` of `node_id` ([`text::ops::caret`]), adopting the
-/// element of the caret tell `adopt` names, as a caret tell's read does: `Err` with the reply a node with no text, or gone, answers.
-pub(super) fn caret_step(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    adopt: Option<verbatim_model::tell::ElementToken>,
-) -> Result<text::TextResult<verbatim_model::batch::CaretAt>, TextReply> {
-    adopt_told(context, node_id, adopt);
-    let read_at_us = context.observed_now();
-    on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
-        text::ops::caret(source, text, read_at_us)
-    })
 }
 
 /// A run of a batch's fusable text steps on UI Automation node `node_id`
@@ -606,45 +543,6 @@ pub(super) fn fused_steps(
     Ok(answer.outcomes)
 }
 
-/// A batch's `MoveBySentence` of `node_id` from the starting point held
-/// under `from` ([`text::sentence::move_by_sentence`]), its reads fetching
-/// `details`: `Ok(Err)` with the step's outcome for a text with no
-/// sentences or a starting point no longer held.
-pub(super) fn sentence_step(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    (from, forward): (verbatim_model::TextAnchor, bool),
-    details: TextDetails,
-) -> Result<
-    text::TextResult<Result<verbatim_model::SentenceMoved, verbatim_model::batch::StepOutcome>>,
-    TextReply,
-> {
-    on_text!(context, node_id, details, &[from.0], |source, text| {
-        text::sentence::move_by_sentence(source, text, (from, forward), &mut || {
-            verbatim_process::clock::now_us()
-        })
-    })
-}
-
-/// A batch's `CompareSelection` of `node_id` between the held reads
-/// `before` and `after` ([`text::ops::compare_selection`]).
-pub(super) fn compare_step(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-    (before, after): (verbatim_model::TextAnchor, verbatim_model::TextAnchor),
-) -> Result<
-    text::TextResult<Result<verbatim_model::batch::SelectionCompared, verbatim_model::TextAnchor>>,
-    TextReply,
-> {
-    on_text!(
-        context,
-        node_id,
-        TextDetails::NONE,
-        &[before.0, after.0],
-        |source, text| text::ops::compare_selection(source, text, (before, after))
-    )
-}
-
 /// How a caret wait's poll ended the wait.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum WaitEnded {
@@ -661,9 +559,10 @@ pub(super) enum WaitEnded {
 /// Runs one poll of a caret wait: how it ended the wait, `None` for a
 /// check that shows no effect before the bound or whose read failed, which
 /// counts as no effect. Through UI Automation one program, the check with
-/// the batch's later reads fused after it ([`text::fused::poll`]); an edit
-/// control's text, or with no UI Automation client, the check by parts
-/// ([`text::check::check`]).
+/// the batch's later reads fused after it ([`text::fused::poll`]); with no
+/// UI Automation client, the check by parts ([`text::check::check`]); an
+/// edit control's, the MSAA executor's check
+/// ([`verbatim_ia2::text::check`]).
 pub(super) fn watch(
     context: &RequestContext<'_>,
     uia: Option<&verbatim_uia::Uia>,
@@ -672,8 +571,9 @@ pub(super) fn watch(
     let node_id = program.node;
     let wait = &program.wait;
     let WatchWork::Check { word, last } = program.work;
-    if let (Some(uia), Ok(Source::Uia(mut source))) =
-        (uia, source(context, node_id, TextDetails::NONE))
+    let is_uia = context.store.runtime_id_of(node_id).is_some();
+    if let (Some(uia), true) = (uia, is_uia)
+        && let Ok(mut source) = uia_source(context, node_id, TextDetails::NONE)
     {
         let later = program.batch.steps.get(1..).unwrap_or_default();
         let named: Vec<u64> = std::iter::once(wait.from.0)
@@ -705,20 +605,20 @@ pub(super) fn watch(
             Err(error) => watch_outcome(Ok(Err(error))),
         };
     }
-    let ran = on_text!(
-        context,
-        node_id,
-        TextDetails::NONE,
-        &[wait.from.0],
-        |source, text| {
-            match text.held_read(wait.from) {
-                Some(start) => {
-                    text::check::check(source, &start, text::check::CheckAsk { wait, word, last })
-                }
+    let ask = text::check::CheckAsk { wait, word, last };
+    let ran = if is_uia {
+        on_uia_text(
+            context,
+            node_id,
+            (TextDetails::NONE, &[wait.from.0]),
+            |source, text| match text.held_read(wait.from) {
+                Some(start) => text::check::check(source, &start, ask),
                 None => Err(TextError::Gone),
-            }
-        }
-    );
+            },
+        )
+    } else {
+        verbatim_ia2::text::check(&EditFacts(context), node_id, ask)
+    };
     watch_outcome(ran)
 }
 
@@ -744,22 +644,6 @@ fn watch_outcome(
     }
 }
 
-/// The text summary of edit control `node_id` for report focus
-/// ([`text::held::summary`]), read by its messages: `None` when it has no
-/// text or the read failed, as NVDA then speaks no text. A UI Automation
-/// node's is read by the executor's `Read` arm.
-pub(super) fn text_summary(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-) -> Option<verbatim_model::property::TextSummary> {
-    let read_at_us = context.observed_now();
-    on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
-        text::held::summary(source, text, (None, read_at_us))
-    })
-    .ok()?
-    .ok()
-}
-
 /// UI Automation node `node_id`'s text, its reads fetching `details`:
 /// `Err` with the reply a node with no text, or gone, answers.
 pub(super) fn uia_text(
@@ -775,19 +659,28 @@ pub(super) fn uia_text(
 /// selection, the next baseline held from the read, compared with nothing
 /// (Dickson, 2026-11-17). A node with no text answers
 /// [`FocusCaret::NoText`], one whose read failed [`FocusCaret::NotRead`].
+/// An edit control's is the MSAA executor's
+/// ([`verbatim_ia2::text::focus_caret`]).
 pub(super) fn focus_caret(
     context: &RequestContext<'_>,
     uia: Option<&verbatim_uia::Uia>,
     node_id: NodeId,
     details: TextDetails,
 ) -> FocusCaret {
+    if context.store.runtime_id_of(node_id).is_none() {
+        return verbatim_ia2::text::focus_caret(&EditFacts(context), node_id);
+    }
     let read_at_us = context.observed_now();
-    let read = on_text!(context, node_id, details, &[], |source, text| {
-        match text::InOneGo::in_one_go(source, uia, node_id) {
-            Ok(one_go) => text::held::read_focus(source, text, (one_go, read_at_us)),
-            Err(error) => Err(error),
-        }
-    });
+    let read =
+        on_uia_text(
+            context,
+            node_id,
+            (details, &[]),
+            |source, text| match text::InOneGo::in_one_go(source, uia, node_id) {
+                Ok(one_go) => text::held::read_focus(source, text, (one_go, read_at_us)),
+                Err(error) => Err(error),
+            },
+        );
     match read {
         Err(TextReply::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,

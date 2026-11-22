@@ -67,7 +67,8 @@ Public API:
   protocol"), here so that both executors run one implementation of it
   (Claude, 2026-11-22). `TextSource` is a backend's view of one node's
   text in UTF-16, in its own positions: the outpost's `UiaText` over a
-  text pattern, and an edit control's window messages. The algorithms
+  text pattern, and `verbatim_ia2::text::EditText` over an edit
+  control's window messages. The algorithms
   over it: `by_calls` runs one text step call by call (`CallStep`);
   `ops` a `Caret` and a `CompareSelection`; `check` a wait's check by
   parts; `sentence` a move by sentence over a source that splits by

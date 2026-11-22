@@ -518,22 +518,15 @@ and the inherited pipe handles.
 - `text` holds the outpost's text sources, public so mockapp drives
   them, and re-exports `verbatim_reader_rules::text`, the `TextSource`
   trait and the algorithms over it (the verbatim-reader-rules crate
-  guide). The sources are
+  guide). The source is
   `uia::UiaText` over a text pattern (positions are `UiaPos`; `new` takes
   the element for remote operations; `remote`, `details`, `support`, and
   `known_support` say whether caret reads try a remote operation, which
-  formatting they read, and the `TextSupport` known before and after), or
-  `edit::EditText` over an edit control's messages (offsets; a rich edit's
-  word is the control's own, `EM_FINDWORDBREAK`, and a plain edit's the
-  line broken by Uniscribe, `verbatim_ia2::uniscribe`, with NVDA's two
-  letters appended, so a run of one punctuation mark is one word; a
-  character is Uniscribe's in every edit control, as NVDA's
-  `EditTextInfo` forces both; the plain edit
-  control alone answers `TextSource::measure`, a point's offset and the
-  text's length, so a `Locate` there answers the offset and length
-  (`Located::offset`), and a rich edit's the screen point
-  (`Located::screen`), as NVDA reads a rich edit through its text object
-  model).
+  formatting they read, and the `TextSupport` known before and after). An
+  edit control's text is the MSAA executor's (`verbatim_ia2::text`, the
+  verbatim-ia2 crate guide), which the outpost's `text_reads::EditFacts`
+  gives the node's ids and a copy of its text facts, committed after
+  each read.
   `fused` runs a run of a batch's text steps on a UI Automation node as
   one segment of the program builder (`fused::run`) and a wait's poll
   (`fused::poll`); `InOneGo` gives a focus's caret read in one go
@@ -971,9 +964,10 @@ for a step whose neighbour is read through its own window's backend,
 `asked::children` for the children of a node MSAA does not list, and
 `read::activate_walk` for an activation's walk up the parents. A second
 implementation of an operation is the one a later session copies
-(Dickson, 2026-11-22). The text reads of an edit control and of a
-focus's caret still run through the outpost's text adapter
-(`outpost/text_reads.rs`), outside the executors.
+(Dickson, 2026-11-22). A focus's caret through UI Automation, and a
+caret wait's check by parts with no UI Automation client, still run
+through the outpost's text adapter (`outpost/text_reads.rs`), outside
+the executors.
 
 A batch is parsed once as it arrives and refused whole when it does not
 parse. A batch whose MSAA subject's window has a UI Automation verdict

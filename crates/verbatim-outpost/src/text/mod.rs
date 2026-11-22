@@ -1,14 +1,12 @@
 //! The outpost's text sources (milestone M4): UI Automation's
 //! `TextPattern` ([`uia::UiaText`]), read through the program builder
-//! ([`fused`]), and a Win32 edit control's window messages
-//! ([`edit::EditText`]). The [`TextSource`] trait they implement and the
-//! algorithms over it are `verbatim_reader_rules::text`'s, re-exported
-//! here.
+//! ([`fused`]). An edit control's text is the MSAA executor's
+//! (`verbatim_ia2::text`). The [`TextSource`] trait and the algorithms
+//! over it are `verbatim_reader_rules::text`'s, re-exported here.
 
 #![forbid(unsafe_code)]
 
 mod color;
-pub mod edit;
 pub mod fused;
 pub mod uia;
 
@@ -43,7 +41,7 @@ impl InOneGo for uia::UiaText {
     }
 }
 
-impl InOneGo for edit::EditText {
+impl InOneGo for verbatim_ia2::text::EditText {
     fn in_one_go(
         &mut self,
         _uia: Option<&verbatim_uia::Uia>,
