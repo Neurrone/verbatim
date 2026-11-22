@@ -7,8 +7,6 @@
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
 //! features and the extension surface: a batch of operations from one
 //! closed list ([`crate::batch`]). A new command adds no kind of request.
-//! The terminal's three text operations are carried beside it until the
-//! terminal's rebuild converts them ([`Question::Terminal`]).
 
 use std::fmt;
 

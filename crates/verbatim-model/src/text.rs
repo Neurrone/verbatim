@@ -659,7 +659,7 @@ impl TextDetails {
     };
 }
 
-/// The answer to [`TextOp::MoveBySentence`].
+/// The answer to [`crate::batch::Op::MoveBySentence`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SentenceMoved {
     /// The caret moved to this sentence, in this line.

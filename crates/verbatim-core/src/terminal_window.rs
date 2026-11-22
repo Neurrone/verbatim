@@ -303,7 +303,8 @@ fn read_text(done: &Done) -> Result<TerminalText, Unread> {
 
 /// How many rows the screen's text fills at `width` cells a row: each
 /// line as many as its padded length takes, at least one, the empty line
-/// after a last line break not a line.
+/// after a last line break not a line, and a blank last row, whose padding
+/// the trimmed text dropped, a line.
 fn screen_rows(text: &str, padded: &[(u32, u32)], width: u32) -> u32 {
     if width == 0 {
         return 0;
@@ -314,7 +315,7 @@ fn screen_rows(text: &str, padded: &[(u32, u32)], width: u32) -> u32 {
             std::iter::repeat_n(length, usize::try_from(count).unwrap_or(0))
         })
         .collect();
-    if text.ends_with("\r\n") {
+    if text.ends_with("\r\n") && lines.last() == Some(&0) {
         lines.pop();
     }
     lines
@@ -682,6 +683,7 @@ mod tests {
         assert_eq!(rows("abcd\r\nefghijkl\r\nij", 4), 4);
         assert_eq!(rows("abcdefgh", 4), 2);
         assert_eq!(rows("ab  \r\n", 4), 1);
+        assert_eq!(rows("ab  \r\n    ", 4), 2);
         assert_eq!(rows("abcd", 0), 0);
     }
 }

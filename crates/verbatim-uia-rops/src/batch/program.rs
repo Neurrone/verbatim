@@ -1096,6 +1096,8 @@ impl Emit<'_> {
                 }
                 Regs::WaitCheck { reads_after, .. } => *reads_after,
                 Regs::Caret { caret, .. } => caret.has_selection,
+                // A refused move found nothing, as its call arm answers.
+                Regs::Move { refused, .. } => b.not(*refused),
                 _ => b.bool(true),
             };
             b.set(holds, found);

@@ -99,6 +99,8 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
 /// Core's read of the line at the caret of `node`.
 fn read_line(node: NodeId) -> verbatim_model::batch::Batch {
     common::one_step(verbatim_model::batch::Op::ReadText {
+        whole: false,
+        trim: false,
         subject: verbatim_model::batch::Subject::Node(node),
         at: verbatim_model::batch::Point::At(TextPoint::Caret),
         movement: None,

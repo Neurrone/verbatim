@@ -1,8 +1,8 @@
 //! A terminal's reads (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"):
-//! the outpost reads a focused terminal and sends each read to Core as a
-//! [`TerminalSnapshot`], and Core's terminal model aligns it and applies
-//! the reading rules; Core asks for the reads it needs
-//! ([`TerminalScope`]).
+//! Core reads a focused terminal by the request list's steps and judges
+//! each read; the text a read answers ([`TerminalText`]) and a row's
+//! colours ([`TerminalColourRun`]) are the model's, and what Core read is
+//! reported to the end-to-end suite as a [`TerminalSnapshot`].
 
 use serde::{Deserialize, Serialize};
 

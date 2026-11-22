@@ -600,7 +600,7 @@ fn terminal_window_reads_execute_exactly() {
     assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [vec![229], vec![351]],
+        [vec![229], vec![353]],
         "terminal window first and capped"
     );
 }
