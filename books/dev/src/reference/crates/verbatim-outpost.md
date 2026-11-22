@@ -1002,6 +1002,14 @@ taken before any call that can block. Each step runs under its gate
   test asks, the backend a reached object is read through, and the
   children of a node MSAA does not list, by the dispatcher's navigation
   on that node's backend (`asked::children`).
+- `FocusRead`, and a `Test` of the focus, run through the executors'
+  `FocusRead` arms when `Outpost::set_focus_arms` is on, the dispatch
+  choice that lives until the switch (`outpost/focus_arms.rs`): the
+  focus window's backend picks the arm, resolved by
+  `outpost/uia_focus.rs` and by `outpost/msaa_object.rs`'s
+  `MsaaFocusRead`. Off, the outpost's own focus reads answer, as below.
+  `focus_arms_agree` (mockapp) compares the two on every fixture
+  `focus_reports` uses, with remote operations on and off.
 - `Read` of a node reads its snapshot, an acquired MSAA object's each
   property alone (`FocusCandidate::property`). Through either backend,
   those no snapshot holds are read apart: `Suggestions`

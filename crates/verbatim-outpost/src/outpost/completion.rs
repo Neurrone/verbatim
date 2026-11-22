@@ -628,3 +628,132 @@ pub(super) fn parts(ancestor: &UiaAncestorFact) -> verbatim_uia::AncestorParts {
         content: ancestor.content,
     }
 }
+
+/// What the route's read minted that the outpost keeps once the arm has
+/// the focus's ancestors ([`keep_route`]), and the path its dialogs are
+/// found by.
+pub(super) struct RouteKept {
+    /// The route as the outpost finds elements by it.
+    pub(super) path: FocusPath,
+    /// The route's window's element read to find the element.
+    window_element: Option<Cached<Node>>,
+}
+
+/// The element `route` names, found and minted for the `FocusRead` arm
+/// ([`verbatim_uia_rops::batch::focus::route`]), its registration added,
+/// with the place of the ancestor Core knows that the listener's walk met
+/// and the route's ancestors as the listener read them, as [`focus`]
+/// takes them.
+pub(super) fn route_focus(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    route: &Route,
+    known: &[KnownAncestor],
+) -> Result<(verbatim_uia_rops::batch::focus::RouteFocus, RouteKept), Unread> {
+    let Minted {
+        found,
+        window_element,
+        node: _,
+        snapshot,
+        path,
+        nearest,
+        reused,
+    } = mint(context, client, route, true).ok_or(Unread::NotThere)?;
+    let met = match &route.end {
+        RouteEnd::Known(end) => {
+            let Some(place) = known
+                .iter()
+                .position(|named| named == end)
+                .and_then(|place| u32::try_from(place).ok())
+            else {
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, "a route's end names an ancestor the completion does not");
+                return Err(Unread::Unsupported);
+            };
+            Some(place)
+        }
+        _ => None,
+    };
+    let parents = route_parents(route).iter().map(parts).collect();
+    let value_from_selection = route.read.first().is_some_and(|read| {
+        matches!(
+            read.answer(PropertyId::ValueFromSelection)
+                .and_then(|answer| answer.value.as_ref()),
+            Some(verbatim_model::property::PropertyValue::Flag(true))
+        )
+    });
+    Ok((
+        verbatim_uia_rops::batch::focus::RouteFocus {
+            found,
+            snapshot,
+            nearest,
+            reused,
+            met,
+            parents,
+            value_from_selection,
+        },
+        RouteKept {
+            path,
+            window_element,
+        },
+    ))
+}
+
+/// The route's ancestors as the listener read them, nearest first.
+fn route_parents(route: &Route) -> Vec<UiaAncestorFact> {
+    route
+        .steps
+        .iter()
+        .zip(&route.read)
+        .skip(1)
+        .map(|(step, values)| UiaAncestorFact {
+            snapshot: fact(&step.runtime_id.0, values),
+            hwnd: step.window.map_or(0, hwnd_of),
+            content: step.content,
+        })
+        .collect()
+}
+
+/// The chain above `route`'s own ancestors, outermost first, where the
+/// listener's walk met none of `known`: the dispatcher's chaining.
+///
+/// # Errors
+///
+/// [`read::FocusLost`] when the focus is lost on the chain's way.
+pub(super) fn route_chain(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    route: &Route,
+    known: &[KnownAncestor],
+) -> Result<Vec<NodeSnapshot>, read::FocusLost> {
+    let own_window = route
+        .steps
+        .first()
+        .and_then(|step| step.window)
+        .map_or(0, hwnd_of);
+    read::uia_chain_from_read(
+        context,
+        client,
+        (
+            &route_parents(route),
+            own_window,
+            Some(hwnd_of(route.window)),
+            ancestors_end(&route.end),
+        ),
+        known,
+    )
+}
+
+/// Keeps what the route's read minted, `node` and `ancestors`, as
+/// [`focus`] keeps it.
+pub(super) fn keep_route(
+    context: &RequestContext<'_>,
+    (node, ancestors): (NodeId, &[NodeSnapshot]),
+    kept: &RouteKept,
+) {
+    keep_minted(
+        context,
+        (node, ancestors),
+        &kept.path,
+        kept.window_element.as_ref(),
+    );
+}

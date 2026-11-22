@@ -692,6 +692,27 @@ impl Run<'_, '_> {
         })
     }
 
+    /// The application's focus in `hwnd`, taken already, through the
+    /// executors' `FocusRead` arms or the outpost's own focus read, as
+    /// [`super::Outpost::set_focus_arms`] chooses until the switch.
+    fn focus_now(
+        context: &RequestContext<'_>,
+        client: &mut Client,
+        hwnd: isize,
+        set: &[PropertyId],
+        read: (
+            &[KnownAncestor],
+            verbatim_model::TextDetails,
+            read::FocusDepth,
+        ),
+    ) -> FocusNow {
+        if context.focus_arms() {
+            super::focus_arms::focus_now(context, client, hwnd, set, read)
+        } else {
+            asked::focus_now(context, client, Ok(hwnd), set, read)
+        }
+    }
+
     /// `Test` of a window's own object or of the application's focus: the
     /// matcher evaluated lazily, each property read at most once when the
     /// matcher first needs it, in its order.
@@ -731,10 +752,10 @@ impl Run<'_, '_> {
                     .focus_read
                     .clone()
                     .unwrap_or_else(|| (Vec::new(), Vec::new(), verbatim_model::TextDetails::NONE));
-                let now = asked::focus_now(
+                let now = Self::focus_now(
                     context,
                     self.client,
-                    Ok(hwnd),
+                    hwnd,
                     &set,
                     (&known, details, read::FocusDepth::FullIfFocused),
                 );
@@ -1145,15 +1166,24 @@ impl Run<'_, '_> {
         let context = self.context;
         let read = match &mut self.held[place].1 {
             Ok(Held::Msaa(candidate)) => candidate.take().and_then(|candidate| {
-                asked::candidate_read(context, self.client, *candidate, (known, set, details))
+                if context.focus_arms() {
+                    super::focus_arms::candidate(
+                        context,
+                        self.client,
+                        *candidate,
+                        (known, set, details),
+                    )
+                } else {
+                    asked::candidate_read(context, self.client, *candidate, (known, set, details))
+                }
             }),
             Ok(Held::Focus(hwnd, tested)) => {
                 let hwnd = *hwnd;
                 let now = tested.take().unwrap_or_else(|| {
-                    asked::focus_now(
+                    Self::focus_now(
                         context,
                         self.client,
-                        Ok(hwnd),
+                        hwnd,
                         set,
                         (known, details, read::FocusDepth::Full),
                     )
@@ -1164,17 +1194,15 @@ impl Run<'_, '_> {
                 }
             }
             Ok(Held::Route(route)) => {
-                return Ok(
-                    match super::completion::focus(
-                        context,
-                        self.client,
-                        route,
-                        (known, set, details),
-                    ) {
-                        Ok(read) => StepOutcome::Done(Done::FocusRead(read)),
-                        Err(unread) => unread.outcome(),
-                    },
-                );
+                let read = if context.focus_arms() {
+                    super::uia_focus::route(context, self.client, route, (known, set, details))
+                } else {
+                    super::completion::focus(context, self.client, route, (known, set, details))
+                };
+                return Ok(match read {
+                    Ok(read) => StepOutcome::Done(Done::FocusRead(read)),
+                    Err(unread) => unread.outcome(),
+                });
             }
             Ok(Held::Node(_) | Held::Window(..)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));

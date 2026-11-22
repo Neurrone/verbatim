@@ -649,3 +649,15 @@ step runs alone, by calls:
   role the equality read.
 - `Activate` performs exactly the node's default action
   (`acquire::activate`); the walk up the parents is the dispatcher's.
+- `FocusRead` (`batch::focus_read`) reads an acquired candidate, or the
+  focus of the window with the keyboard focus found by `accFocus`, its
+  focused state over it and its ancestors first when the subject asks
+  (`FocusSubject::Focus { if_focused }`, answering `FocusFound::Unfocused`
+  without one); then its ancestors chained across backends and cut at
+  the first Core knows, and the text of the MSAA dialogs it enters,
+  gathered by `verbatim_reader_rules::dialog`'s rule, through the
+  outpost's `FocusResolve` for the chaining, a UI Automation dialog's
+  text, the foreground object and the answer. A candidate's dialogs are
+  read before the foreground object, the application's focus's after it.
+  Until the switch it runs only under the outpost's dispatch choice
+  (`Outpost::set_focus_arms`).

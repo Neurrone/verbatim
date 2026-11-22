@@ -11,11 +11,13 @@ use std::cell::RefCell;
 
 use verbatim_ia2::Interning;
 use verbatim_ia2::acquire::{AcquireError, ParentWindow};
-use verbatim_ia2::batch::{Found, Object, Resolve, Unrun};
+use verbatim_ia2::batch::{
+    FocusFound, FocusResolve, FocusSubject, Found, MsaaFocus, Object, Resolve, Unrun,
+};
 use verbatim_model::batch::{Done, Missing, Op, StepOutcome, StepRefusal, Tested};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::NodeRead;
-use verbatim_model::{NodeId, NodeSnapshot, QueryKind};
+use verbatim_model::request::{FocusRead, HeldIds, KnownAncestor, NodeRead};
+use verbatim_model::{NodeId, NodeSnapshot, QueryKind, TextDetails};
 
 use super::RequestContext;
 use super::asked;
@@ -206,4 +208,141 @@ pub(super) fn navigate(
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
     verbatim_ia2::batch::step(&MsaaNodes::new(context, client), node, kind).map_err(ReadError::from)
+}
+
+/// The outpost's side of a `FocusRead` through the MSAA executor's arm
+/// ([`verbatim_ia2::batch::focus_read`]): the ancestors Core knows, by
+/// `known`, and what the answer reads, by `set` and `details`.
+struct MsaaFocusRead<'a, 'c> {
+    nodes: MsaaNodes<'a, 'c>,
+    known: &'a [KnownAncestor],
+    candidates: verbatim_ia2::equality::Candidates,
+    set: &'a [PropertyId],
+    details: TextDetails,
+}
+
+impl Resolve for MsaaFocusRead<'_, '_> {
+    fn registry(&self) -> &dyn Interning {
+        self.nodes.registry()
+    }
+    fn held(&self, node: NodeId, id: PropertyId) -> Option<PropertyValue> {
+        self.nodes.held(node, id)
+    }
+    fn values(&self, node: &NodeSnapshot, set: &[PropertyId]) -> PropertyValues {
+        self.nodes.values(node, set)
+    }
+    fn hops(&self) -> u32 {
+        self.nodes.hops()
+    }
+    fn plain(&self, hwnd: isize) -> bool {
+        self.nodes.plain(hwnd)
+    }
+    fn parent_window(&self, hwnd: isize) -> ParentWindow {
+        self.nodes.parent_window(hwnd)
+    }
+    fn corrected(
+        &self,
+        from_window: Option<isize>,
+        neighbor: NodeSnapshot,
+        kind: QueryKind,
+    ) -> NodeSnapshot {
+        self.nodes.corrected(from_window, neighbor, kind)
+    }
+    fn children(&self, node: NodeId) -> Result<(Vec<NodeSnapshot>, bool), AcquireError> {
+        self.nodes.children(node)
+    }
+}
+
+impl FocusResolve for MsaaFocusRead<'_, '_> {
+    fn serves(&self, hwnd: isize) -> bool {
+        read::serves(self.nodes.context, hwnd)
+    }
+
+    fn candidates(&self) -> &verbatim_ia2::equality::Candidates {
+        &self.candidates
+    }
+
+    fn chain(&self, node: &NodeSnapshot) -> Option<Vec<NodeSnapshot>> {
+        read::msaa_enrichment(
+            self.nodes.context,
+            &mut self.nodes.client.borrow_mut(),
+            (node, self.known, Some(&self.candidates)),
+        )
+        .ok()
+    }
+
+    fn cut(&self, chain: Vec<NodeSnapshot>) -> (Vec<NodeSnapshot>, Option<u32>) {
+        asked::cut_at_known(self.nodes.context, chain, self.known)
+    }
+
+    fn keep_routes(&self, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) {
+        super::completion::keep_read_routes(
+            self.nodes.context,
+            std::iter::once(node).chain(ancestors),
+            &[],
+        );
+    }
+
+    fn wants_dialog_text(&self, node: &NodeSnapshot) -> bool {
+        read::wants_dialog_text(self.nodes.context, node)
+    }
+
+    fn other_dialog_text(&self, node: &NodeSnapshot) -> Option<String> {
+        read::dialog_text_of(
+            self.nodes.context,
+            &mut self.nodes.client.borrow_mut(),
+            node,
+            None,
+        )
+    }
+
+    fn foreground(&self, ancestors: &[NodeSnapshot]) -> Option<NodeSnapshot> {
+        read::foreground_object_among(
+            self.nodes.context,
+            &mut self.nodes.client.borrow_mut(),
+            ancestors,
+        )
+    }
+
+    fn held_ids(&self, node: &NodeSnapshot) -> Option<HeldIds> {
+        asked::held_ids(self.nodes.context, node)
+    }
+
+    fn answer(&self, focus: MsaaFocus) -> FocusRead {
+        let mut client = self.nodes.client.borrow_mut();
+        asked::focus_read(
+            (self.nodes.context, client.uia()),
+            &asked::Focus {
+                node: &focus.node,
+                ancestors: &focus.ancestors,
+                met: focus.met,
+                nearest: Some(focus.nearest),
+                msaa: focus.msaa,
+                foreground: focus.foreground.as_ref(),
+                value_from_selection: false,
+                runtime_id_reused: false,
+                details: self.details,
+            },
+            self.set,
+        )
+    }
+}
+
+/// `FocusRead` of `subject` through the MSAA executor's arm, its walk up
+/// stopping at the first of `known`, by `set`, its caret fetching
+/// `details`.
+pub(super) fn focus_read(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    subject: FocusSubject,
+    (known, set, details): (&[KnownAncestor], &[PropertyId], TextDetails),
+) -> FocusFound {
+    let resolver = MsaaFocusRead {
+        nodes: MsaaNodes::new(context, client),
+        known,
+        candidates: asked::candidates_of(known),
+        set,
+        details,
+    };
+    verbatim_ia2::batch::focus_read(subject, &resolver)
 }

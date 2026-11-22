@@ -92,7 +92,9 @@ impl From<verbatim_ia2::acquire::AcquireError> for ReadError {
 /// so it never crosses threads.
 #[derive(Default)]
 pub(super) struct Client {
-    uia: Option<Uia>,
+    /// Shared, so an executor's arm holds it while the resolver it calls
+    /// back through reads with the same client.
+    uia: Option<std::rc::Rc<Uia>>,
     failed: bool,
 }
 
@@ -101,14 +103,21 @@ impl Client {
     pub(super) fn uia(&mut self) -> Option<&Uia> {
         if self.uia.is_none() && !self.failed {
             match Uia::new() {
-                Ok(client) => self.uia = Some(client),
+                Ok(client) => self.uia = Some(std::rc::Rc::new(client)),
                 Err(error) => {
                     self.failed = true;
                     tracing::warn!(%error, "the worker could not create a UIA client");
                 }
             }
         }
-        self.uia.as_ref()
+        self.uia.as_deref()
+    }
+
+    /// The UIA client, created on first use, shared: an executor's arm
+    /// holds it while it calls back through a resolver holding `self`.
+    pub(super) fn shared_uia(&mut self) -> Option<std::rc::Rc<Uia>> {
+        self.uia()?;
+        self.uia.clone()
     }
 
     /// The UIA client and the request `request` builds for the details the
@@ -506,7 +515,7 @@ pub(super) fn uia_walk_leaves(context: &RequestContext<'_>, nearest: isize, hwnd
 /// How a chain goes on above its outermost entry
 /// (`books/dev/src/reference/adr/0001-focus.md`, "When an application's call fails").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Above {
+pub(super) enum Above {
     /// It does not: the walk reached the desktop.
     Nothing,
     /// The walk met this ancestor Core knows, the chain's outermost, where
@@ -530,7 +539,11 @@ enum Above {
 /// window of its outermost element, is below one
 /// ([`verbatim_win32::provider::parent_across_process_boundary`]), as a chain the
 /// listener or a remote program read stops there.
-fn uia_above(crossed: Option<isize>, walked: AncestorWalk, outermost: Option<isize>) -> Above {
+pub(super) fn uia_above(
+    crossed: Option<isize>,
+    walked: AncestorWalk,
+    outermost: Option<isize>,
+) -> Above {
     match (walked, crossed) {
         (AncestorWalk::MetKnown(met), _) => Above::Met(met),
         (_, Some(hwnd)) | (AncestorWalk::Failed(_, hwnd), None) => Above::From(hwnd),
@@ -550,7 +563,7 @@ fn uia_above(crossed: Option<isize>, walked: AncestorWalk, outermost: Option<isi
 /// # Errors
 ///
 /// [`FocusLost`], from [`window_onward`].
-fn complete(
+pub(super) fn complete(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     (chain, above): (Vec<NodeSnapshot>, Above),
@@ -717,7 +730,7 @@ pub(super) fn parent_window_for_focused_state(
 /// # Errors
 ///
 /// [`FocusLost`], from [`window_onward`].
-fn onward_after_failure(
+pub(super) fn onward_after_failure(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     (own, nearest): (isize, isize),
@@ -992,7 +1005,10 @@ pub(super) fn uia_chain_from_read(
 
 /// The UIA nodes of `previous`, a previous chain, by runtime id, for a
 /// walk to stop at, and their node ids, in the same order, for splicing.
-fn known_uia_nodes(context: &Context, previous: &[KnownAncestor]) -> (Vec<NodeId>, Vec<Vec<i32>>) {
+pub(super) fn known_uia_nodes(
+    context: &Context,
+    previous: &[KnownAncestor],
+) -> (Vec<NodeId>, Vec<Vec<i32>>) {
     previous
         .iter()
         .filter_map(|known| {
@@ -1224,7 +1240,7 @@ fn uia_remote_enrichment(
 /// ([`verbatim_win32::provider::raw_view_parent_window`]), below the process boundary,
 /// cannot be read: a ghost's or a hung application's
 /// ([`Context::window_unreadable`]). Local calls, a few per window.
-fn plain_window_above(context: &Context, window: isize) -> bool {
+pub(super) fn plain_window_above(context: &Context, window: isize) -> bool {
     let desktop = desktop_window();
     let mut current = window;
     for _ in 0..MAX_ANCESTOR_HOPS {
@@ -1397,7 +1413,7 @@ pub(super) fn describe_dialogs<'a>(
 /// a UIA dialog's on `client`, found by `path`, its report's listener path,
 /// when this outpost holds no element for it; `None` when it has none or
 /// cannot be read.
-fn dialog_text_of(
+pub(super) fn dialog_text_of(
     context: &RequestContext<'_>,
     client: &mut Client,
     node: &NodeSnapshot,
@@ -1676,7 +1692,7 @@ pub(super) fn checked_focus_window(context: &Context) -> Result<isize, FocusRead
 /// The focused element, read with `GetFocusedElementBuildCache` filled by
 /// `nodes` and the element's process, and taken only when that process is
 /// the one serving `hwnd`, this outpost's application.
-fn checked_focused_element(
+pub(super) fn checked_focused_element(
     context: &Context,
     (uia, nodes): (&Uia, &Request<Node>),
     hwnd: isize,

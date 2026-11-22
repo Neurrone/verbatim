@@ -77,6 +77,10 @@ name = "executors_agree"
 harness = false
 
 [[test]]
+name = "focus_arms_agree"
+harness = false
+
+[[test]]
 name = "call_counts"
 harness = false
 

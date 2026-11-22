@@ -27,6 +27,7 @@
 //! end-to-end scenario that meets one fails.
 
 mod calls;
+pub mod focus;
 mod object;
 mod program;
 mod walk;

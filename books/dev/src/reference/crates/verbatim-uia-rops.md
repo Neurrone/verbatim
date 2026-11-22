@@ -46,7 +46,24 @@ with the outpost's stops between its steps (`AncestryFrom`: a window
 read through the other API, an ancestor Core knows, the routes kept of
 each ancestor visited), which no program can judge (Claude, 2026-11-22);
 it answers the chain, the window it stopped below and how it ended, and
-the outpost chains what is above. Its input is a `Segment`: a run of
+the outpost chains what is above. `FocusRead`'s arms (`batch::focus`)
+compose the reads of a focus in a fixed order: for the application's
+focus (`focus_now`), the focused element the resolver reads with its
+process check, a menu item's legacy state, and the focus ancestry
+program (its focus check, selected item, table and ancestors, with the
+nearest window's walk-on) or, where no program runs or the element no
+longer has the keyboard focus, the dispatcher's chained walk and the
+selected item's own read; for a listener's route (`route`), the element
+the resolver finds by the route, its ancestors built from the
+listener's read with no call where its walk met one Core knows, and its
+states read again with the dialogs' children in one round trip
+(`focus_states`). Both gather the text of the dialogs the focus enters
+(`dialog::UiaDialog`); the judgements between the reads, the chaining
+above a walk's end, an MSAA dialog's text, the foreground object and the
+answer are the resolver's (`focus::FocusResolve`). They run the same
+programs as the outpost's own focus reads, so their calls and
+instructions are the same; until the switch they run only under the
+outpost's dispatch choice (`Outpost::set_focus_arms`). Its input is a `Segment`: a run of
 consecutive steps of one parsed batch, the model's own `Step`s, with the
 place of the first, the outcomes of the batch's steps before it, and a
 resolver (`Resolve`) for what the steps name that the outpost holds: the

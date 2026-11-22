@@ -568,3 +568,225 @@ fn judged(resolver: &dyn Resolve, node: &NodeSnapshot, walk: &Walk) -> (bool, bo
         walk.prune.as_ref().is_some_and(holds),
     )
 }
+
+/// What a `FocusRead` reads through MSAA.
+pub enum FocusSubject {
+    /// An object acquired at its event's ids, the focus redirect applied:
+    /// read in full.
+    Candidate(FocusCandidate),
+    /// The focus of window `hwnd`, found by following `accFocus` down from
+    /// its client. With `if_focused`, whether it or an ancestor up to the
+    /// desktop has the focused state is read first, as NVDA tests its fake
+    /// focus, and the rest is read only when one has.
+    Focus {
+        /// The window with the keyboard focus, taken already.
+        hwnd: isize,
+        /// Whether the focused state is read first.
+        if_focused: bool,
+    },
+}
+
+/// What `FocusRead`'s arm found.
+pub enum FocusFound {
+    /// The focus's answer, with its focused state when the subject asked
+    /// for it.
+    Read(Option<bool>, Box<verbatim_model::request::FocusRead>),
+    /// Neither the focus nor any ancestor has the focused state: nothing
+    /// more is read.
+    Unfocused,
+    /// No focus could be read.
+    NotThere,
+}
+
+/// The focus a `FocusRead` arm read, for the outpost to make its answer
+/// from ([`FocusResolve::answer`]).
+pub struct MsaaFocus {
+    /// The focus.
+    pub node: NodeSnapshot,
+    /// Its ancestors, nearest first, up to the first Core knows.
+    pub ancestors: Vec<NodeSnapshot>,
+    /// The place among the ancestors Core knows of the one the walk met.
+    pub met: Option<u32>,
+    /// The window it was read in.
+    pub nearest: isize,
+    /// The ids it was read at.
+    pub msaa: Option<HeldIds>,
+    /// The foreground window's own object, read when the focus met none of
+    /// the ancestors Core knows.
+    pub foreground: Option<NodeSnapshot>,
+}
+
+/// The outpost's side of a `FocusRead` through MSAA: the windows it
+/// serves, the ancestors Core knows, the chain above the focus across
+/// backends, which dialogs want their text, the other backend's reads,
+/// and the answer made from what was read.
+pub trait FocusResolve: Resolve {
+    /// Whether this outpost's application serves window `hwnd`.
+    fn serves(&self, hwnd: isize) -> bool;
+
+    /// The ancestors Core knows, for NVDA's equality.
+    fn candidates(&self) -> &crate::equality::Candidates;
+
+    /// The chain of ancestors above `node`, outermost first: the
+    /// `Ancestors` arm's walk, chained above where it ends across
+    /// backends, stopping at an ancestor Core knows; `None` when the focus
+    /// was lost on its way.
+    fn chain(&self, node: &NodeSnapshot) -> Option<Vec<NodeSnapshot>>;
+
+    /// `chain`, outermost first, cut at the first ancestor Core knows:
+    /// nearest first, with that ancestor's place among those Core knows.
+    fn cut(&self, chain: Vec<NodeSnapshot>) -> (Vec<NodeSnapshot>, Option<u32>);
+
+    /// Keeps the routes to the nodes a read of the application's focus
+    /// minted.
+    fn keep_routes(&self, node: &NodeSnapshot, ancestors: &[NodeSnapshot]);
+
+    /// Whether `node` is a dialog whose own text is gathered as its
+    /// description.
+    fn wants_dialog_text(&self, node: &NodeSnapshot) -> bool;
+
+    /// The own text of a dialog read through UI Automation, the other
+    /// backend.
+    fn other_dialog_text(&self, node: &NodeSnapshot) -> Option<String>;
+
+    /// The foreground window's own object, taken from `ancestors` when one
+    /// is it, and read through its own window's backend otherwise.
+    fn foreground(&self, ancestors: &[NodeSnapshot]) -> Option<NodeSnapshot>;
+
+    /// The MSAA ids `node` is kept under.
+    fn held_ids(&self, node: &NodeSnapshot) -> Option<HeldIds>;
+
+    /// The answer made from what the arm read: each node's properties as
+    /// Core asked, and the focus's caret.
+    fn answer(&self, focus: MsaaFocus) -> verbatim_model::request::FocusRead;
+}
+
+/// `FocusRead`'s arm through MSAA, NVDA's focus as its pump reads it: the
+/// object, its ancestors up to the first Core knows, the text of the
+/// dialogs it enters, and, when it met none of those, the foreground
+/// object. An acquired candidate's dialogs are read before the foreground
+/// object, the application's focus's after it, as each was read before
+/// the arm.
+pub fn focus_read(subject: FocusSubject, resolver: &dyn FocusResolve) -> FocusFound {
+    match subject {
+        FocusSubject::Candidate(candidate) => candidate_read(candidate, resolver),
+        FocusSubject::Focus { hwnd, if_focused } => focus_now(hwnd, if_focused, resolver),
+    }
+}
+
+/// An acquired candidate's full read.
+fn candidate_read(candidate: FocusCandidate, resolver: &dyn FocusResolve) -> FocusFound {
+    // The ids the object was reached at, after the redirect.
+    let (window, object, child) = candidate.key();
+    let event = MsaaIds {
+        window: WindowHandle(u64::from_ne_bytes(window.to_ne_bytes())),
+        object,
+        child,
+    };
+    let held_child = candidate.resolved_child();
+    let mut node = candidate.read(resolver.registry(), Some(resolver.candidates()));
+    let Some(chain) = resolver.chain(&node) else {
+        return FocusFound::NotThere;
+    };
+    let (mut ancestors, met) = resolver.cut(chain);
+    describe_dialogs(
+        resolver,
+        ancestors.iter_mut().chain(std::iter::once(&mut node)),
+    );
+    let foreground = met.is_none().then(|| resolver.foreground(&[])).flatten();
+    FocusFound::Read(
+        None,
+        Box::new(resolver.answer(MsaaFocus {
+            node,
+            ancestors,
+            met,
+            nearest: window,
+            msaa: Some(HeldIds { event, held_child }),
+            foreground,
+        })),
+    )
+}
+
+/// The application's focus in window `hwnd`.
+fn focus_now(hwnd: isize, if_focused: bool, resolver: &dyn FocusResolve) -> FocusFound {
+    let Some(mut object) = acquire::focused_object(hwnd, &|window| resolver.serves(window)) else {
+        return FocusFound::NotThere;
+    };
+    let focused = if_focused.then(|| {
+        object.has_focused_state(
+            resolver.hops(),
+            &|window| resolver.plain(window),
+            &mut |window| resolver.parent_window(window),
+        )
+    });
+    if focused == Some(false) {
+        tracing::debug!(
+            hwnd,
+            "the focused MSAA object has no focused state, nor any ancestor"
+        );
+        return FocusFound::Unfocused;
+    }
+    let mut node = object.read(resolver.registry(), Some(resolver.candidates()));
+    let Some(chain) = resolver.chain(&node) else {
+        return FocusFound::NotThere;
+    };
+    let (mut ancestors, met) = resolver.cut(chain);
+    resolver.keep_routes(&node, &ancestors);
+    let foreground = met
+        .is_none()
+        .then(|| resolver.foreground(&ancestors))
+        .flatten();
+    describe_dialogs(
+        resolver,
+        ancestors.iter_mut().chain(std::iter::once(&mut node)),
+    );
+    let msaa = resolver.held_ids(&node);
+    FocusFound::Read(
+        focused,
+        Box::new(resolver.answer(MsaaFocus {
+            node,
+            ancestors,
+            met,
+            nearest: hwnd,
+            msaa,
+            foreground,
+        })),
+    )
+}
+
+/// Gives every dialog among `nodes`, a focus's chain, that wants its own
+/// text that text as its description (`docs/nvda/object-model.md`, "A
+/// dialog's own text"), a dialog met twice read once: an MSAA dialog's
+/// gathered here, by `verbatim_reader_rules::dialog`'s rule, a UI
+/// Automation dialog's through the outpost.
+fn describe_dialogs<'a>(
+    resolver: &dyn FocusResolve,
+    nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
+) {
+    let mut read: Vec<(NodeId, Option<String>)> = Vec::new();
+    for node in nodes {
+        if !resolver.wants_dialog_text(node) {
+            continue;
+        }
+        let text = if let Some((_, text)) = read.iter().find(|(id, _)| *id == node.id) {
+            text.clone()
+        } else {
+            let started = std::time::Instant::now();
+            let text = match node.backend {
+                verbatim_model::Backend::Msaa => {
+                    crate::dialog::DialogObject::of_node(node.id, resolver.registry())
+                        .and_then(|dialog| verbatim_reader_rules::dialog::dialog_text(&dialog))
+                }
+                verbatim_model::Backend::Uia => resolver.other_dialog_text(node),
+            };
+            tracing::debug!(
+                found = text.is_some(),
+                elapsed_us = started.elapsed().as_micros(),
+                "a dialog's text gathered"
+            );
+            read.push((node.id, text.clone()));
+            text
+        };
+        node.details.description = text;
+    }
+}
