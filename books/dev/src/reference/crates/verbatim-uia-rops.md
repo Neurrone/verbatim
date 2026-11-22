@@ -24,7 +24,8 @@ operations of the list keep a remote program and a classic
 implementation of the same signature behind one entry point that
 chooses between them and answers with a `Path`: the focus ancestry, an
 element found by its path, a focus's states after its registration, the
-caret read, and a terminal's snapshot, colours and search. Every UIA
+caret read, a terminal's snapshot, colours and search, and the shared
+operation `TerminalRead`'s window read. Every UIA
 path in the outpost that makes a sequence of calls to the application
 runs through one or the other; "Where remote operations are not used"
 lists the rest.
@@ -521,6 +522,36 @@ span searched before calling it, which fails, closing that direction,
 when the hit is the not-found range (`terminal_find.rs`'s module
 documentation).
 
+### The window read
+
+`terminal_read(uia, query, remote)` (`TerminalReadFn`) is the shared
+operation `TerminalRead`'s read (`verbatim_model::TerminalWindow`). A
+`ReadQuery` names the element and pattern, the screen's height as last
+read (0 at first), up to two end marks as held ranges, "Lines spoken in
+full" as `opening`, and the caret's `CaretLineQuery`. One program, with
+no loop, answers a `Window`: the rows from twice the height above the
+document's end to its end in one `GetText` (from the screen's top when
+the height is 0), how many rows above the end the window and the
+screen's top start, the screen's text and top, whether the screen starts
+at the document's start, the document's end collapsed, its first row and
+its row count (one move by line from the end to the start), and for each
+mark a `MarkRows`: refused when it lies past the document's end or the
+provider will not compare it, otherwise the rows from it to the end, with
+the `opening` rows after it when more than those and the window follow.
+The classic implementation makes the same calls. The program executes 65
+instructions naming no mark and 115 at its cap, both marks with their
+opening rows (`instruction_limit.rs`).
+
+Two reads sit beside it, outside the program. `terminal_row_colours`
+reads the colours of chosen screen rows, counted from the screen's top,
+with the colour read's emitter and classic checks (`emit_rows`,
+`classic_rows`), since which rows changed is known only once the text
+is read. And `terminal_read_find` searches for a mark's line by the
+classic search alone (`classic_search`, taking the nearest match):
+output that trims the history between a search's calls makes a miss
+Windows Terminal's nowhere range, whose calls end a remote run, while the
+classic calls answer it as not found.
+
 ## Layer 3: the caret's emitters
 
 `caret` holds what the program builder's `Caret`, `ReadText` and
@@ -801,8 +832,10 @@ shape, a shape's program bound again, absent properties),
 `remote_ops.rs` (the focus ancestry, a navigation step, cached
 properties, a stalled and an exited provider), `call_counts.rs` (the
 calls of each read), `text.rs` (the caret read and the text steps),
-`watch_checks.rs` (a wait's polls), `terminal.rs` and
-`terminal_snapshot.rs`, `controller_for.rs`, `uia_tree.rs` and
+`watch_checks.rs` (a wait's polls), `terminal.rs`,
+`terminal_snapshot.rs` and `terminal_window.rs` (the window read, its
+marks, changed colours and the classic search against Windows Terminal's
+two kinds of miss), `controller_for.rs`, `uia_tree.rs` and
 `time_limits.rs` (the tree dump), and `instruction_limit.rs` (the
 platform's limit and every program's count, a batch's shapes at their
 caps among them), all under `crates/mockapp/tests/`. `cargo xtask

@@ -398,7 +398,19 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
 /// # Errors
 ///
 /// [`Error::Uia`] when a call before the search fails.
-pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<FindMatch>, Error> {
+pub fn terminal_find_classic(uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<FindMatch>, Error> {
+    classic_search(uia, query, FIND_MATCHES)
+}
+
+/// [`terminal_find_classic`]'s search, taking at most `limit` matches,
+/// no more than [`FIND_MATCHES`]: a terminal's window read takes the
+/// nearest alone (`crate::terminal_read`).
+pub(crate) fn classic_search(
+    _uia: &Uia,
+    query: &FindQuery<'_>,
+    limit: usize,
+) -> Result<Vec<FindMatch>, Error> {
+    let limit = limit.min(FIND_MATCHES);
     let document = query.pattern.document_range()?;
     let start = query.start.clone_range()?;
     start.move_endpoint_to(Endpoint::End, &start, Endpoint::Start)?;
@@ -440,7 +452,7 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
     let mut open = [true, true];
     let mut going_down = true;
     for _ in 0..FIND_CALLS {
-        if found.len() >= FIND_MATCHES || open == [false, false] {
+        if found.len() >= limit || open == [false, false] {
             break;
         }
         if !open[usize::from(!going_down)] {

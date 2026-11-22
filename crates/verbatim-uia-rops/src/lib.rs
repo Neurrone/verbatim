@@ -51,6 +51,7 @@ mod operation;
 mod path;
 mod terminal_colours;
 mod terminal_find;
+mod terminal_read;
 mod terminal_snapshot;
 mod text;
 mod watch;
@@ -83,6 +84,10 @@ pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, sc
 pub use terminal_find::{
     FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
     terminal_find_remote,
+};
+pub use terminal_read::{
+    MarkRows, ReadQuery, TerminalReadFn, Window, terminal_read, terminal_read_classic,
+    terminal_read_find, terminal_read_remote, terminal_row_colours,
 };
 pub use terminal_snapshot::{
     Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,

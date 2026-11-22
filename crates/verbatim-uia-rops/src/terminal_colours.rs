@@ -387,7 +387,7 @@ fn emit_row(
 /// Emits the loop over rows from `row` (collapsed at a row's start) to
 /// `limit` (collapsed), within `budget` instructions, and returns its
 /// registers. `row` is moved as the rows are read.
-fn emit_rows(
+pub(crate) fn emit_rows(
     b: &mut Builder,
     row: Reg<kind::TextRange>,
     limit: Reg<kind::TextRange>,
@@ -681,16 +681,28 @@ pub(crate) fn colours_classic_read(
         limit.move_endpoint_to(Endpoint::Start, screen, Endpoint::End)?;
         limit.move_endpoint_to(Endpoint::End, screen, Endpoint::End)?;
     }
+    classic_rows(&row, &limit, width, height)
+}
+
+/// The colours of the rows from `row`, collapsed at a row's start, to
+/// `limit`, collapsed, `width` cells each, at most `height` rows, the
+/// classic way: the same checks as the programs, each a cross-process
+/// call. `row` is moved as the rows are read.
+pub(crate) fn classic_rows(
+    row: &IUIAutomationTextRange,
+    limit: &IUIAutomationTextRange,
+    width: usize,
+    height: usize,
+) -> Result<Vec<Vec<ColourRun>>, Error> {
     let count = |cells: usize| i32::try_from(cells).unwrap_or(i32::MAX);
     let mut rows = Vec::new();
-    while rows.len() < height
-        && row.compare_endpoints(Endpoint::Start, &limit, Endpoint::Start)? < 0
+    while rows.len() < height && row.compare_endpoints(Endpoint::Start, limit, Endpoint::Start)? < 0
     {
         let mut runs = Vec::new();
         let whole = row.clone_range()?;
         let full = whole.move_endpoint_by_unit(Endpoint::End, TextUnit_Character, count(width))?
             == count(width);
-        if let (Some(colours), _) = check_classic(&row, &whole, width, full)? {
+        if let (Some(colours), _) = check_classic(row, &whole, width, full)? {
             push(&mut runs, 0, width, colours);
         } else {
             let chunks = chunks(width);
@@ -710,7 +722,7 @@ pub(crate) fn colours_classic_read(
                     )?;
                 }
                 let (uniform, last) =
-                    check_classic(&row, &chunk, column + length, full || index < last_chunk)?;
+                    check_classic(row, &chunk, column + length, full || index < last_chunk)?;
                 if let Some(colours) = uniform {
                     push(&mut runs, column, length, colours);
                     continue;

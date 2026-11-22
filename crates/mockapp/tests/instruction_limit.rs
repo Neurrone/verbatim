@@ -26,7 +26,7 @@ use verbatim_uia_rops::batch::{Answer, Found, Ran, run_batch};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, Comparison, Error, FocusAncestry, FocusQuery, PathQuery,
     SnapshotQuery, StatesQuery, Status, TextAttribute, counting, element_by_path_remote,
-    focus_ancestry_remote, focus_states_remote, terminal_snapshot_remote,
+    focus_ancestry_remote, focus_states_remote, terminal_read_remote, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -580,6 +580,83 @@ fn terminal_snapshots_execute_exactly() {
     assert!(started < LIMIT / 2);
 }
 
+/// A terminal's window read (`TerminalRead`): a first read naming no mark,
+/// and its cap, a read naming both end marks with more rows written past
+/// each than the opening rows and the window hold, so that each mark's
+/// opening rows are read too, with the caret. The program has no loop of
+/// its own, so a long text costs the same instructions as a short one.
+fn terminal_window_reads_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-window");
+    let terminal = fixture.find("Terminal");
+    let pattern = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!(
+            r"set-text term {}ready>
+",
+            numbered(10)
+        ),
+    );
+    let caret = CaretLineQuery {
+        element: &terminal,
+        pattern: &pattern,
+        max_text: 4096,
+        since: None,
+    };
+    let first_query = verbatim_uia_rops::ReadQuery {
+        element: &terminal,
+        pattern: &pattern,
+        height: 0,
+        marks: [None, None],
+        opening: 30,
+        caret,
+    };
+    let mut end = None;
+    let first = counted(|| {
+        let window = terminal_read_remote(&fixture.uia, &first_query).expect("the program runs");
+        end = window.end;
+    });
+    let end = end.expect("the document's end");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!(
+            r"set-text term {}ready>
+",
+            numbered(200)
+        ),
+    );
+    let capped_query = verbatim_uia_rops::ReadQuery {
+        height: 30,
+        marks: [Some(&end), Some(&end)],
+        ..first_query
+    };
+    let capped = counted(|| {
+        let window = terminal_read_remote(&fixture.uia, &capped_query).expect("the program runs");
+        assert!(
+            window.marks.iter().all(|mark| matches!(
+                mark,
+                Some(verbatim_uia_rops::MarkRows::Rows {
+                    opening: Some(_),
+                    ..
+                })
+            )),
+            "{:?}",
+            window.marks
+        );
+    });
+    fixture.app.quit();
+    assert_eq!(
+        [first, capped],
+        [65, 115],
+        "terminal window first and capped"
+    );
+    assert!(capped < LIMIT / 2);
+}
+
 /// A terminal's colours, read with its snapshot on a 120 by 30 screen: in
 /// the worst case, every cell's colours differing from its neighbours'
 /// (`terminal-checkered.json`), each program reads rows while a worst row
@@ -962,6 +1039,10 @@ fn main() {
         (
             "terminal_snapshots_execute_exactly",
             terminal_snapshots_execute_exactly,
+        ),
+        (
+            "terminal_window_reads_execute_exactly",
+            terminal_window_reads_execute_exactly,
         ),
         (
             "terminal_colours_execute_exactly",
