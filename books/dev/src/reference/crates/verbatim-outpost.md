@@ -515,10 +515,10 @@ and the inherited pipe handles.
 
 ### Text and dialog text
 
-- `text` is the outpost's side of the text protocol
-  (`books/dev/src/reference/crates/verbatim-model.md`, "The text protocol"), public so mockapp
-  drives it. A batch's text steps run over a `TextSource`, a backend's
-  view of one node's text in UTF-16:
+- `text` holds the outpost's text sources, public so mockapp drives
+  them, and re-exports `verbatim_reader_rules::text`, the `TextSource`
+  trait and the algorithms over it (the verbatim-reader-rules crate
+  guide). The sources are
   `uia::UiaText` over a text pattern (positions are `UiaPos`; `new` takes
   the element for remote operations; `remote`, `details`, `support`, and
   `known_support` say whether caret reads try a remote operation, which
@@ -536,22 +536,9 @@ and the inherited pipe handles.
   model).
   `fused` runs a run of a batch's text steps on a UI Automation node as
   one segment of the program builder (`fused::run`) and a wait's poll
-  (`fused::poll`); `by_calls` runs one text step call by call
-  (`CallStep`), and `ops` a `Caret` and a `CompareSelection`, through an
-  edit control's messages; `check` makes a wait's check call by call;
-  `held` reads a focus's caret read (`held::read_focus`), report focus's
-  text summary (`held::summary`) and a terminal key's starting point
-  (`held::starting_from`), the summary through an edit control's
-  messages only; `caret_report_from` reads the caret and its
-  line. `Anchors` keeps a backend's anchors by node for a reader that
-  holds them for the whole read, a test or mockapp, until
-  `forget_anchors`; `NodeText` is one node's, borrowed from it or from
-  the crate's `NodeTextCopy`, the copy a program's text call works on
-  (`position_at`, `reported_point`). Both hold the reducer's
-  `NodeAnchors` with each position a `Slot`: the source's position and
-  the key it was kept under, so a call's result names a position it was
-  given by the same key and only one it made is given a new one
-  (`NodeTextCopy::finish`); `fused::named` lists the anchors of the
+  (`fused::poll`); `InOneGo` gives a focus's caret read in one go
+  through `fused::caret_line` for UI Automation and none for an edit
+  control, which is read by parts; `fused::named` lists the anchors of the
   positions a run of steps names, which a copy must hold, from the
   batch's one list (`Batch::anchors`).
 - A dialog's own text is gathered by `verbatim_reader_rules::dialog`'s
@@ -907,7 +894,7 @@ anchors are (Table 16 of
   offsets.
 - A point is found as a `PointFrom` (caret, selection end, text end, kept
   position, or text after one, matched in the provider) and read from.
-- The caret read for a focus (`text::held`, `TextSource::caret_line`)
+- The caret read for a focus (`text::held`, `text::InOneGo`)
   and report focus's text summary (the `Read` arm's) read through UI Automation
   one segment of the program builder (`text::fused::caret_line`): a
   `Caret`, a `ReadText` of the line at the caret with the formatting the

@@ -4,7 +4,7 @@
 use std::sync::atomic::AtomicU64;
 
 use verbatim_model::batch::{Chunks, Done, Missing, RangeText, Selected, StepOutcome, StepRefusal};
-use verbatim_model::{CaretMotion, NodeId, SelectionDifference, SentenceMoved};
+use verbatim_model::{CaretMotion, SelectionDifference, SentenceMoved};
 
 use super::*;
 
@@ -256,13 +256,9 @@ fn store() -> Anchors<usize> {
 /// The caret's report, read as a focus's caret read reads it, holding a
 /// baseline.
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    held::read_focus(
-        source,
-        &mut anchors.node(1),
-        ((None, NodeId::new(1)), REPORTED_AT),
-    )
-    .expect("the fake answers")
-    .0
+    held::read_focus(source, &mut anchors.node(1), (None, REPORTED_AT))
+        .expect("the fake answers")
+        .0
 }
 
 /// A batch's `Caret` of the fake's caret and selection: the read held as
@@ -337,7 +333,7 @@ fn an_anchor_is_kept_however_many_are_minted_until_it_is_forgotten() {
     for _ in 0..100 {
         report(&mut source, &mut anchors);
     }
-    drop(anchors.forget_anchors(&std::collections::HashSet::from([first.0])));
+    drop(anchors.forget_anchors(&std::collections::BTreeSet::from([first.0])));
     let read = |anchors: &mut Anchors<usize>, source: &mut Fake, anchor| {
         let at = TextPoint::At(TextPosition { anchor, offset: 1 });
         read_one(source, &mut anchors.node(1), (at, None, TextUnit::Line))
@@ -671,12 +667,9 @@ fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
         2,
     );
     let mut anchors = store();
-    let (report, selected, baseline) = held::read_focus(
-        &mut source,
-        &mut anchors.node(1),
-        ((None, NodeId::new(1)), REPORTED_AT),
-    )
-    .expect("the fake answers");
+    let (report, selected, baseline) =
+        held::read_focus(&mut source, &mut anchors.node(1), (None, REPORTED_AT))
+            .expect("the fake answers");
     assert_eq!(selected, None);
     assert_eq!(
         report.line.text,
@@ -856,8 +849,13 @@ fn sentence_from(
     let mut source = Fake::new("One. Two.\nThree.", caret);
     let mut anchors = store();
     let at = ops::caret(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
-    let moved = sentence::move_by_sentence(&mut source, &mut anchors.node(1), (at.held, forward))
-        .expect("the fake answers");
+    let moved = sentence::move_by_sentence(
+        &mut source,
+        &mut anchors.node(1),
+        (at.held, forward),
+        &mut || REPORTED_AT,
+    )
+    .expect("the fake answers");
     (moved, source.caret)
 }
 
@@ -928,14 +926,24 @@ fn a_sentence_move_without_sentences_or_its_point_moves_nothing() {
     let mut source = Fake::new("One. Two.", 0);
     let mut anchors = store();
     assert_eq!(
-        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
+        sentence::move_by_sentence(
+            &mut source,
+            &mut anchors.node(1),
+            (TextAnchor(77), true),
+            &mut || REPORTED_AT
+        ),
         Ok(Err(verbatim_model::batch::StepOutcome::NotThere(
             verbatim_model::batch::Missing::Anchor(TextAnchor(77))
         )))
     );
     source.sentences = Sentences::Unsupported;
     assert_eq!(
-        sentence::move_by_sentence(&mut source, &mut anchors.node(1), (TextAnchor(77), true)),
+        sentence::move_by_sentence(
+            &mut source,
+            &mut anchors.node(1),
+            (TextAnchor(77), true),
+            &mut || REPORTED_AT
+        ),
         Ok(Err(verbatim_model::batch::StepOutcome::Refused(
             verbatim_model::batch::StepRefusal::NoSuchUnit
         )))

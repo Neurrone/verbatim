@@ -2,8 +2,9 @@
 //! apply before reading: NVDA's class verdict and the class name
 //! normalization it is judged on ([`class`]), the rule a dialog's own text
 //! is gathered by, over each backend's objects ([`dialog`]), a window's
-//! handle that is never 0 ([`Window`]), the console window's class, and the numbering of
-//! what a reader writes to Core ([`Numbered`]). A
+//! handle that is never 0 ([`Window`]), the console window's class, the numbering of
+//! what a reader writes to Core ([`Numbered`]), and the text protocol's
+//! algorithms over a backend's text, which both executors run ([`text`]). A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
 //! D14, "Where the rules run"). Pure: no Windows dependency, no call and
@@ -50,6 +51,7 @@
 pub mod class;
 pub mod dialog;
 pub mod numbered;
+pub mod text;
 mod window;
 
 pub use numbered::Numbered;

@@ -107,8 +107,9 @@ Public API:
   paths a UI Automation completion finds its elements by (`FocusPath`,
   `Route`); the caret key's watches (`Watches`, `WatchProgram`,
   `WatchWork`, above); each node's text facts (`TextFacts`,
-  `NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`, `ReadSelection`,
-  `TextChange`), among them the reads held behind ids Core names
+  `NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection` and
+  `ReadSelection`, re-exported from `verbatim_reader_rules::text::facts`,
+  and `TextChange`), among them the reads held behind ids Core names
   (`NodeAnchors::held`: a caret key's starting point and a selection
   baseline, numbered and released as anchors are, Table 16), which the
   outpost's object store holds and the reducer does not, since no rule of

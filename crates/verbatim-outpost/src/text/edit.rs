@@ -17,22 +17,10 @@
 
 use std::cmp::Ordering;
 
-use verbatim_ia2::edit::{EditControl, EditError};
+use verbatim_ia2::edit::EditControl;
 use verbatim_model::TextUnit;
 
 use super::{CaretState, Sentences, TextError, TextResult, TextSource, Unit};
-
-impl From<EditError> for TextError {
-    fn from(error: EditError) -> Self {
-        match error {
-            EditError::Gone => TextError::Gone,
-            EditError::Failed(reason) => TextError::Failed(reason),
-            EditError::Abandoned => {
-                TextError::Failed("the worker was abandoned; nothing was sent".to_owned())
-            }
-        }
-    }
-}
 
 /// A Win32 edit control's text.
 pub struct EditText {

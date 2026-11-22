@@ -36,7 +36,9 @@ use verbatim_model::{
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held, ops};
+use verbatim_outpost::text::{
+    Anchors, CallStep, InOneGo, NodeText, TextSource, by_calls, held, ops,
+};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{Answer, Found, HeldAt, Ran, Unrun, run_batch, run_calls};
@@ -48,13 +50,15 @@ use windows::core::w;
 
 /// The caret's report, read as a focus's caret read reads it, at
 /// `read_at_us`: through UI Automation, by the program builder.
-fn caret_report<S: TextSource>(
+fn caret_report<S: InOneGo>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
 ) -> CaretReport {
     let uia = Uia::new().expect("a UIA client");
-    let one_go = (Some(&uia), verbatim_model::NodeId::new(1));
+    let one_go = source
+        .in_one_go(Some(&uia), verbatim_model::NodeId::new(1))
+        .expect("the caret");
     held::read_focus(source, anchors, (one_go, read_at_us))
         .expect("the caret")
         .0
@@ -145,7 +149,7 @@ fn locate<S: TextSource>(
 /// Reads down the text by line from the caret at the start: each line in
 /// turn, the empty last line after the final line break, and no further.
 /// `break_text` is the line break as the backend gives it.
-fn lines_stop_at_the_end<S: TextSource>(
+fn lines_stop_at_the_end<S: InOneGo>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     break_text: &str,
@@ -281,7 +285,7 @@ const EDIT_SECOND_WORD: &str = "beta\r\n";
 /// A caret key's end read: the caret moved to 6 and the word read there,
 /// `second_word`; and then a selection of the first word read as selected
 /// from the baseline held with the caret at its start.
-fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
+fn a_caret_key_is_answered_with_what_it_did<S: InOneGo>(
     (app, hwnd): (&mut common::MockApp, HWND),
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,

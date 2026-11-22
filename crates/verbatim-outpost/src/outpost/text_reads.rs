@@ -620,7 +620,9 @@ pub(super) fn sentence_step(
     TextReply,
 > {
     on_text!(context, node_id, details, &[from.0], |source, text| {
-        text::sentence::move_by_sentence(source, text, (from, forward))
+        text::sentence::move_by_sentence(source, text, (from, forward), &mut || {
+            verbatim_process::clock::now_us()
+        })
     })
 }
 
@@ -752,7 +754,7 @@ pub(super) fn text_summary(
 ) -> Option<verbatim_model::property::TextSummary> {
     let read_at_us = context.observed_now();
     on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
-        text::held::summary(source, text, ((None, node_id), read_at_us))
+        text::held::summary(source, text, (None, read_at_us))
     })
     .ok()?
     .ok()
@@ -781,7 +783,10 @@ pub(super) fn focus_caret(
 ) -> FocusCaret {
     let read_at_us = context.observed_now();
     let read = on_text!(context, node_id, details, &[], |source, text| {
-        text::held::read_focus(source, text, ((uia, node_id), read_at_us))
+        match text::InOneGo::in_one_go(source, uia, node_id) {
+            Ok(one_go) => text::held::read_focus(source, text, (one_go, read_at_us)),
+            Err(error) => Err(error),
+        }
     });
     match read {
         Err(TextReply::NoText) => FocusCaret::NoText,

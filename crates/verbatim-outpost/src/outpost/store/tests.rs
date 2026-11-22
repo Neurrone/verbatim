@@ -116,7 +116,7 @@ fn a_text_write_for_a_released_node_is_not_made() {
     );
     let change = |node: NodeId| TextChange::Edit {
         node: node.number(),
-        part: crate::outpost::NodeAnchors::default(),
+        part: verbatim_outpost_logic::NodeAnchors::default(),
         copied: std::collections::BTreeSet::new(),
     };
     let write = |node: NodeId, anchor: u64| TextWrite::Facts {

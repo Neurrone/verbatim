@@ -32,7 +32,7 @@ use super::{
 /// How many times a check reads again when the caret moved while it read,
 /// before it counts as showing nothing: the next check, 10 ms later, reads
 /// again in any case.
-pub(crate) const TORN_READS: usize = 3;
+pub const TORN_READS: usize = 3;
 
 /// What a check is asked: the wait, whether to compare the word at the
 /// caret, and whether it is the check at the bound.
@@ -146,7 +146,8 @@ fn compare<S: TextSource>(
 /// at the caret now when it is compared, shows the key's effect by
 /// `wait`'s effect test: a check made in one program, through UI
 /// Automation (`super::fused::poll`).
-pub(crate) fn effect_of(
+#[must_use]
+pub fn effect_of(
     wait: &CaretWait,
     moved: (bool, bool),
     line: (&[u16], usize),
@@ -167,7 +168,11 @@ fn compare_texts(
 ) -> Compared {
     let (text, mapped, _) = to_utf8(line, MAX_CHUNK_BYTES, &[offset]);
     let at = mapped.first().copied().unwrap_or_default();
-    let beside_changed = beside(&text, at) != beside(&wait.line, wait.offset as usize);
+    let beside_changed = beside(&text, at)
+        != beside(
+            &wait.line,
+            usize::try_from(wait.offset).unwrap_or(usize::MAX),
+        );
     let line_changed = text != wait.line;
     let unit_changed = word.is_some_and(|word| wait.word.as_deref() != Some(word.as_str()));
     Compared {

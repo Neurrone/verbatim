@@ -106,7 +106,6 @@ use verbatim_outpost_logic as reducer;
 
 use commit::{Committed, Effects};
 use outbound::Outbound;
-pub(crate) use reducer::{Anchor, NodeAnchors, ReadSelection};
 use reducer::{Entry, Item, UiaEvent, UiaKind};
 use shell::{Mailbox, Posted, Shell};
 use verbatim_model::hung::WindowState;

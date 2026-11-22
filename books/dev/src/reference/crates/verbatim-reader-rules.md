@@ -10,7 +10,8 @@ copies (decision D14, "Where the rules run"). It is a logic crate: pure,
 in the GPL tier, with no Windows dependency, so it builds and is tested on
 Linux. It depends on `verbatim-model`, whose `class` module holds
 NVDA's class lists and the class name normalization the verdict is
-judged on, and on `tracing`.
+judged on, on `verbatim-text` for the text algorithms' character
+boundaries, and on `tracing`.
 
 Public API:
 
@@ -61,8 +62,36 @@ Public API:
   `None` for 0, and give it back for a call with `get`, so no rule judges
   a 0 as none.
 - `CONSOLE_WINDOW_CLASS` — the console host's window class.
+- `text` — a reader's side of the text protocol
+  (`books/dev/src/reference/crates/verbatim-model.md`, "The text
+  protocol"), here so that both executors run one implementation of it
+  (Claude, 2026-11-22). `TextSource` is a backend's view of one node's
+  text in UTF-16, in its own positions: the outpost's `UiaText` over a
+  text pattern, and an edit control's window messages. The algorithms
+  over it: `by_calls` runs one text step call by call (`CallStep`);
+  `ops` a `Caret` and a `CompareSelection`; `check` a wait's check by
+  parts; `sentence` a move by sentence over a source that splits by
+  paragraph, its clock read through the `now_us` its caller passes;
+  `held` a focus's caret read (`held::read_focus`), a text summary
+  (`held::summary`) and a terminal key's starting point
+  (`held::starting_from`), each taking a read UI Automation's program
+  made in one go when there is one; `caret_report_from` reports a caret
+  and line another program read. `facts` holds one node's text facts as
+  pure data (`NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`,
+  `ReadSelection`), which the outpost's reducer stores. `Anchors` keeps a
+  backend's anchors by node for a reader that holds them for the whole
+  read, a test or mockapp, until `forget_anchors`; `NodeText` is one
+  node's, borrowed from it or from a `NodeTextCopy`, the copy a
+  program's text call works on (`position_at`, `reported_point`). Both
+  hold `NodeAnchors` with each position a `Slot`: the source's position
+  and the key it was kept under, so a call's result names a position it
+  was given by the same key and only one it made is given a new one
+  (`NodeTextCopy::finish`). The module allows indexing and plain
+  arithmetic, unlike the rest of the crate, since it moved whole from
+  the outpost (Claude, 2026-11-22).
 
-Tests: the dialog text rule over scripted objects, the class normalization, the class lists pinned to their NVDA
+Tests: the dialog text rule over scripted objects, the text algorithms over an
+in-memory source, the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the class verdict `classify_with` gives
 with NVDA's lists (the good, bad and shell rules), the numbering, the
 limit per thread, and a window's handle parsed.

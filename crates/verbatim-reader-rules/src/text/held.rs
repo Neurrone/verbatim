@@ -23,27 +23,18 @@ use super::{
     report_for,
 };
 
-/// The UI Automation client a read in one go runs through, when the
-/// outpost has one, and the node read.
-pub type OneGo<'u> = (Option<&'u verbatim_uia::Uia>, verbatim_model::NodeId);
-
-/// Reads the caret, the selection and the caret's line, and reports them,
-/// replacing the node's last read: in one go where the source can
-/// ([`TextSource::caret_line`], UI Automation's program builder through
-/// the client `one_go` gives), which also finds where the selection
-/// starts in the caret's line, so Core knows what comes before the start,
-/// as a Backspace over the selection says it, and reads the selection's
-/// text and the line's formatting; else by its parts, where a selection's
+/// Reports the caret, the selection and the caret's line, replacing the
+/// node's last read: from `one_go`, the read UI Automation's program made
+/// of them in one go, which also found where the selection starts in the
+/// caret's line, so Core knows what comes before the start, as a Backspace
+/// over the selection says it, and read the selection's text and the
+/// line's formatting; else read by the source's parts, where a selection's
 /// start lies on the caret's line only when it is the caret.
 fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    ((uia, node), read_at_us): (OneGo<'_>, u64),
+    (one_go, read_at_us): (Option<CaretRead<S::Pos>>, u64),
 ) -> TextResult<CaretFound<S::Pos>> {
-    let one_go = match uia {
-        Some(uia) => source.caret_line(uia, node)?,
-        None => None,
-    };
     if let Some(read) = one_go {
         let (line, offset) = read.line;
         let report = report_for(
@@ -83,7 +74,7 @@ struct CaretFound<P> {
 
 /// A selection a batch's caret read holds: its two ends, how they were
 /// reported, and its text when read.
-pub(crate) type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection, Option<Vec<u16>>);
+pub type HeldEnds<P> = ((P, P), verbatim_model::CaretSelection, Option<Vec<u16>>);
 
 impl<P: Clone> NodeText<'_, P> {
     /// Holds the node's last read, just made, under a new id, recorded as
@@ -120,7 +111,7 @@ impl<P: Clone> NodeText<'_, P> {
     /// caret, and the selection's two ends with how they were reported and
     /// its text when a step of the batch read it. It holds no line, which a
     /// batch reads by a step of its own.
-    pub(crate) fn hold_caret(
+    pub fn hold_caret(
         &mut self,
         caret: P,
         selection: Option<HeldEnds<P>>,
@@ -158,7 +149,7 @@ impl<P: Clone> NodeText<'_, P> {
 pub fn read_focus<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read: (OneGo<'_>, u64),
+    read: (Option<CaretRead<S::Pos>>, u64),
 ) -> TextResult<(CaretReport, Option<SelectionChange>, TextAnchor)> {
     let (report, selected) = caret_and_selected(source, anchors, read)?;
     let baseline = anchors.hold_last()?;
@@ -175,7 +166,7 @@ pub fn read_focus<S: TextSource>(
 pub fn summary<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read: (OneGo<'_>, u64),
+    read: (Option<CaretRead<S::Pos>>, u64),
 ) -> TextResult<verbatim_model::property::TextSummary> {
     let (report, selected) = caret_and_selected(source, anchors, read)?;
     Ok(match selected {
@@ -189,7 +180,7 @@ pub fn summary<S: TextSource>(
 fn caret_and_selected<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read: (OneGo<'_>, u64),
+    read: (Option<CaretRead<S::Pos>>, u64),
 ) -> TextResult<(CaretReport, Option<SelectionChange>)> {
     let CaretFound {
         state,
@@ -241,7 +232,11 @@ pub fn starting_from<S: TextSource>(
 /// The baseline held after a move: the read the move kept, when it kept
 /// one (its time changed from `kept_before`), else a fresh read of the
 /// caret begun at `read_at_us`.
-pub(super) fn held_after_move<S: TextSource>(
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn held_after_move<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     kept_before: Option<u64>,

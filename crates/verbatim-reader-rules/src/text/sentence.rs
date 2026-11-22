@@ -85,7 +85,8 @@ fn last_sentence(paragraph: &TextChunk) -> Sentence {
 /// `point`, `forward` or back, and answers where it went, with the next
 /// selection baseline. A source with no sentence unit is refused no such
 /// unit, and a starting point no longer held is not there: `Ok(Err)` with
-/// the step's outcome.
+/// the step's outcome. `now_us` reads the run's shared clock, in
+/// microseconds, when a read that becomes the baseline begins.
 ///
 /// # Errors
 ///
@@ -94,6 +95,7 @@ pub fn move_by_sentence<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (point, forward): (TextAnchor, bool),
+    now_us: &mut dyn FnMut() -> u64,
 ) -> TextResult<Result<SentenceMoved, StepOutcome>> {
     if source.sentences() == Sentences::Unsupported {
         return Ok(Err(StepOutcome::Refused(StepRefusal::NoSuchUnit)));
@@ -110,7 +112,7 @@ pub fn move_by_sentence<S: TextSource>(
         sentence_before(&here.1)
     };
     if let Some(sentence) = found {
-        return move_to(source, anchors, here, sentence).map(Ok);
+        return move_to(source, anchors, (here, sentence), now_us).map(Ok);
     }
     let count = if forward { 1 } else { -1 };
     let beside = match source.move_by(&here.0.start, TextUnit::Paragraph, count)? {
@@ -120,23 +122,23 @@ pub fn move_by_sentence<S: TextSource>(
     match (beside, forward) {
         (Some(next), true) => {
             let sentence = first_sentence(&next.1);
-            move_to(source, anchors, next, sentence).map(Ok)
+            move_to(source, anchors, (next, sentence), now_us).map(Ok)
         }
         (Some(previous), false) => {
             let sentence = last_sentence(&previous.1);
-            move_to(source, anchors, previous, sentence).map(Ok)
+            move_to(source, anchors, (previous, sentence), now_us).map(Ok)
         }
         (None, true) => {
             let end = source.end()?;
             let mut line = here.1;
             line.offset = u32::try_from(line.text.len()).unwrap_or(u32::MAX);
-            let baseline = place(source, anchors, &end)?;
+            let baseline = place(source, anchors, &end, now_us)?;
             Ok(Ok(SentenceMoved::End { line, baseline }))
         }
         (None, false) => {
             let sentence = first_sentence(&here.1);
             // Nothing moved: the baseline is a fresh read of the caret.
-            let read_at_us = verbatim_process::clock::now_us();
+            let read_at_us = now_us();
             let kept = anchors.anchors.last.as_ref().map(|last| last.read_at_us);
             let baseline = held_after_move(source, anchors, kept, read_at_us)?;
             Ok(Ok(SentenceMoved::StayedAtStart {
@@ -177,8 +179,8 @@ fn paragraph_at<S: TextSource>(
 fn move_to<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    (unit, chunk): (Unit<S::Pos>, TextChunk),
-    sentence: Sentence,
+    ((unit, chunk), sentence): ((Unit<S::Pos>, TextChunk), Sentence),
+    now_us: &mut dyn FnMut() -> u64,
 ) -> TextResult<SentenceMoved> {
     let prefix: Vec<u16> = chunk
         .text
@@ -187,7 +189,7 @@ fn move_to<S: TextSource>(
         .encode_utf16()
         .collect();
     let target = source.advance(&unit.start, &prefix)?;
-    let baseline = place(source, anchors, &target)?;
+    let baseline = place(source, anchors, &target, now_us)?;
     let line = TextChunk {
         offset: u32::try_from(sentence.offset).unwrap_or(u32::MAX),
         ..chunk
@@ -204,8 +206,9 @@ fn place<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     target: &S::Pos,
+    now_us: &mut dyn FnMut() -> u64,
 ) -> TextResult<TextAnchor> {
-    let read_at_us = verbatim_process::clock::now_us();
+    let read_at_us = now_us();
     let kept_before = anchors.anchors.last.as_ref().map(|last| last.read_at_us);
     if !source.select(target, target)? {
         return Err(super::TextError::Failed(

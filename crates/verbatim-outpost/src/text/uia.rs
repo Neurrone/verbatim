@@ -622,14 +622,6 @@ impl TextSource for UiaText {
     fn sentences(&self) -> Sentences {
         Sentences::Unsupported
     }
-
-    fn caret_line(
-        &mut self,
-        uia: &verbatim_uia::Uia,
-        node: verbatim_model::NodeId,
-    ) -> TextResult<Option<CaretRead<UiaPos>>> {
-        super::fused::caret_line(uia, (node, self)).map(Some)
-    }
 }
 
 /// A unit the caret read returned, as a [`Unit`] and the caret's offset in
