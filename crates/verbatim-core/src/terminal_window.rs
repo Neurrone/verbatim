@@ -98,8 +98,8 @@ pub struct WindowAsk {
     /// or at the screen's top when it is 0.
     pub height: u32,
     /// "Lines spoken in full": each mark's read gives this many rows after
-    /// the mark's own ([`MarkPlace::Rows`]), the opening group of a read
-    /// past more rows than these and the window together.
+    /// the mark's own ([`MarkPlace::Rows`]), the opening group a read past
+    /// more rows than its window speaks before them.
     pub opening: u32,
     /// Whether to read the colours of every screen row, as Core does for
     /// each read in a key's window.

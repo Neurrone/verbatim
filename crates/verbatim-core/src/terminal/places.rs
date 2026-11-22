@@ -120,8 +120,9 @@ impl TerminalPlaces {
 
     /// Takes the read `read`, parsed as `window`, whose diff kept a line of
     /// the last (`shares_line`) and said `said` lines of output, a read past
-    /// more than `opening` ("Lines spoken in full") rows and its window
-    /// speaking that many first: the count of rows written past its mark
+    /// more rows than its window speaking the rows above it first, at most
+    /// `opening` ("Lines spoken in full") of them: the count of rows written
+    /// past its mark
     /// judged (the table of 5.6), every place moved by the rows added, the
     /// end mark replaced, and the aside mark set or used.
     pub(crate) fn took(
@@ -158,19 +159,14 @@ impl TerminalPlaces {
         let (written, added, past) = match (place, counted) {
             (None, _) => (None, None, None),
             (Some(MarkPlace::Rows { .. }), Some(counted)) => {
-                // Past more rows than the window and the opening group
-                // together, the opening group is spoken first.
-                let long = u64::from(counted.written)
-                    > u64::from(window_rows).saturating_add(u64::from(opening));
-                let opening: Vec<String> = if long {
-                    counted
-                        .rows
-                        .into_iter()
-                        .take(usize::try_from(opening).unwrap_or(usize::MAX))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+                // The rows above the window are spoken first, the opening
+                // group's worth of them at most (F1).
+                let before = counted.written.saturating_sub(window_rows).min(opening);
+                let opening: Vec<String> = counted
+                    .rows
+                    .into_iter()
+                    .take(usize::try_from(before).unwrap_or(usize::MAX))
+                    .collect();
                 let skipped = counted
                     .written
                     .saturating_sub(window_rows)

@@ -1081,6 +1081,33 @@ fn a_marks_row_filled_since_is_the_first_row_written_past_it() {
     assert_eq!(entry.output, expected);
 }
 
+/// Twenty-four rows written past the mark above the window, fewer than
+/// "Lines spoken in full": they are all spoken before the window, none
+/// skipped, as a burst's first lines are (F1).
+#[test]
+fn rows_past_the_window_fewer_than_the_opening_group_are_all_spoken() {
+    let mut state = live(&["$"]);
+    let read = changed(&mut state);
+    let last = numbered("out", 25, 60);
+    let last: Vec<&str> = last.iter().map(String::as_str).collect();
+    let mut from = vec!["$".to_owned()];
+    from.extend(numbered("out", 1, 30));
+    let from = TerminalText::unpadded(&from.join("\r\n"));
+    let flood = window(&last, 20, (85, Some(MarkPlace::Rows { from })));
+    let outcome = outcome_of(&mut state, read_of(flood));
+    let mut said = Vec::new();
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let expected: Vec<Waiting> = numbered("out", 1, 84)
+        .into_iter()
+        .map(Waiting::Line)
+        .collect();
+    assert_eq!(entry.output, expected);
+}
+
 #[test]
 fn rotation_with_the_marks_line_in_the_window_speaks_the_diff() {
     let mut state = live(&["a", "b", "$"]);
