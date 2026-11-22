@@ -637,3 +637,17 @@ fn a_line_changed_in_place_is_shared_with_the_last_read() {
     let new = window(&["ready> ."], Some((1, 8)), 10);
     assert!(Reading::new().answer(&old, &new).shares_line);
 }
+
+#[test]
+fn a_line_keys_answer_is_spoken_once_however_many_reads_its_window_holds() {
+    // TM 18: each read is compared once with the last; a second read in
+    // the key's window that finds the caret and its line as the first did
+    // says nothing more.
+    let mut reading = Reading::new();
+    let old = Arc::new(window(&["> apple", "  banana"], Some((2, 2)), 0));
+    reading.key(KeyKind::Caret(Unit::Line), 0, &old);
+    let moved = window(&["  apple", "> banana"], Some((1, 2)), 20);
+    assert_eq!(reading.answer(&old, &moved).keys, [said("> banana")]);
+    let again = window(&["  apple", "> banana"], Some((1, 2)), 40);
+    assert_eq!(reading.answer(&moved, &again), quiet());
+}

@@ -133,6 +133,17 @@ pub(super) fn caret(reading: &mut Reading, read: &mut Judged<'_>, window: &KeyWi
         Some(Fate::Kept(i) | Fate::Paired(i)) => *i,
         Some(Fate::Inserted) | None => return,
     };
+    // Each read is compared once with the last (TM 18): one that finds the
+    // caret and its line as the last read did has nothing to answer, so a
+    // key's answer is not said again by a later read in its window.
+    if matches!(read.fates.get(now.line), Some(Fate::Kept(_)))
+        && read
+            .old
+            .caret
+            .is_some_and(|was| (was.line, was.row, was.column) == (i, now.row, now.column))
+    {
+        return;
+    }
     let text = read.new.text(now.line);
     let Some((_, head, _)) = read.new.at_caret() else {
         return;
