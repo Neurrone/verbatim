@@ -8,9 +8,8 @@
 #![allow(dead_code)]
 
 use verbatim_model::batch::{
-    Batch, Before, CaretAt, Chunks, Done, Edges, HeldPoint, Located, Missing, Op, Place, Placement,
-    Point, PointOf, RangeText, Selected, SelectionCompared, Step, StepOutcome, StepRefusal,
-    Subject, Through,
+    Batch, Before, CaretAt, Chunks, Done, Located, Missing, Op, Place, Placement, Point, PointOf,
+    RangeText, Selected, SelectionCompared, Step, StepOutcome, StepRefusal, Subject, Through,
 };
 use verbatim_model::request::Reply;
 use verbatim_model::{
@@ -239,10 +238,7 @@ pub fn lost(anchor: u64) -> StepOutcome {
 /// A caret read with nothing selected, its read held under `held`.
 fn caret_at(held: u64) -> StepOutcome {
     StepOutcome::Done(Done::Caret(CaretAt {
-        caret: HeldPoint {
-            anchor: TextAnchor(held),
-            edges: Edges::default(),
-        },
+        caret: TextAnchor(held),
         selection: None,
         held: TextAnchor(held),
         offsets: None,

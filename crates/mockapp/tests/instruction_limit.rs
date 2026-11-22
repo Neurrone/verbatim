@@ -377,7 +377,7 @@ fn caret_reads_execute_exactly() {
     // text is selected.
     assert_eq!(
         [worst, typical],
-        [4466, 143],
+        [4446, 131],
         "caret read worst and typical"
     );
 }
@@ -410,7 +410,7 @@ fn densely_mixed_formatting_executes_exactly() {
     fixture.app.quit();
     // 2152 and 4144 by the focus's hand-written caret program, which this
     // generated read replaced (2026-11-22).
-    assert_eq!([sixteen, thirty_two], [2207, 4199], "17 and 33 stretches");
+    assert_eq!([sixteen, thirty_two], [2195, 4187], "17 and 33 stretches");
     assert_eq!(eighty, 64, "80 characters, cut at 64 stretches");
     assert_eq!(calls.uia, 1, "the 80 characters' read, one program");
 }
@@ -517,7 +517,7 @@ fn range_selections_execute_exactly() {
         .collect();
     assert_eq!(changes, [(true, "alpha".to_owned())]);
     fixture.app.quit();
-    assert_eq!(press, [130, 119], "the review copy's first press");
+    assert_eq!(press, [118, 99], "the review copy's first press");
     assert!(press.iter().all(|&count| count < LIMIT / 2));
 }
 
@@ -785,7 +785,7 @@ fn wait_polls_execute_exactly() {
     mixed.app.quit();
     assert_eq!(
         [typical, moved, deleting, sixteen],
-        [139, 315, 542, 2306],
+        [139, 303, 522, 2294],
         "a poll that finds nothing, a moved line key's, a deleting key's at the bound, \
          and 17 mixed stretches at the bound"
     );
@@ -923,10 +923,10 @@ fn batch_text_shapes_execute_exactly() {
             // comparison one cap, which the outpost never did: the
             // program builder's own caps differ, so each takes its own
             // constant (2026-11-22).
-            vec![4494],
-            vec![162],
+            vec![4474],
+            vec![150],
             vec![148],
-            vec![126, 119],
+            vec![114, 99],
             vec![53],
             vec![749],
         ],

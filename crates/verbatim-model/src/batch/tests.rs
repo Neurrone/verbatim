@@ -889,16 +889,14 @@ fn a_condition_runs_its_step_as_the_named_outcome_says() {
         check,
         negated,
     };
-    let point = |anchor| HeldPoint {
-        anchor: TextAnchor(anchor),
-        edges: Edges::default(),
-    };
+    let point = TextAnchor;
     let caret = |selected: bool| {
         StepOutcome::Done(Done::Caret(CaretAt {
             caret: point(1),
             selection: selected.then(|| HeldSelection {
                 start: point(1),
                 end: point(2),
+                at_text_start: false,
             }),
             held: TextAnchor(3),
             offsets: None,
@@ -1000,10 +998,7 @@ fn focus_node(number: u64) -> FocusNode {
 /// numbering them from 1 in the order the walk meets them.
 fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
     let done = StepOutcome::Done;
-    let point = |anchor| HeldPoint {
-        anchor: TextAnchor(anchor),
-        edges: Edges::default(),
-    };
+    let point = TextAnchor;
     vec![
         done(Done::Read(node_read(1))),
         done(Done::Test(Tested {
@@ -1055,6 +1050,7 @@ fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
             selection: Some(HeldSelection {
                 start: point(6),
                 end: point(7),
+                at_text_start: false,
             }),
             held: TextAnchor(8),
             offsets: None,

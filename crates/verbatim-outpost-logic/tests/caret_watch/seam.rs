@@ -40,9 +40,7 @@ use verbatim_model::request::{
 mod readers;
 
 use readers::Found;
-use verbatim_model::batch::{
-    Batch, CaretAt, Check, Chunks, Done, Edges, HeldPoint, Op, StepOutcome, Waited,
-};
+use verbatim_model::batch::{Batch, CaretAt, Check, Chunks, Done, Op, StepOutcome, Waited};
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -701,10 +699,7 @@ impl Seam {
                 Op::Caret { .. } => {
                     let anchor = self.anchor();
                     StepOutcome::Done(Done::Caret(CaretAt {
-                        caret: HeldPoint {
-                            anchor,
-                            edges: Edges::default(),
-                        },
+                        caret: anchor,
                         selection: None,
                         held: point,
                         offsets: None,

@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::task::{Context, Waker};
 
 use verbatim_model::batch::{
-    Batch, CaretAt, Done, Edges, HeldPoint, Missing, Op, Placement, Step, StepOutcome, Subject,
+    Batch, CaretAt, Done, Missing, Op, Placement, Step, StepOutcome, Subject,
 };
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{
@@ -2073,12 +2073,8 @@ fn send_batch(number: u64, batch: Batch) -> Effect {
 
 /// A caret read's result.
 fn caret_done() -> StepOutcome {
-    let point = HeldPoint {
-        anchor: verbatim_model::TextAnchor(4),
-        edges: Edges::default(),
-    };
     StepOutcome::Done(Done::Caret(CaretAt {
-        caret: point,
+        caret: verbatim_model::TextAnchor(4),
         selection: None,
         held: verbatim_model::TextAnchor(5),
         offsets: None,

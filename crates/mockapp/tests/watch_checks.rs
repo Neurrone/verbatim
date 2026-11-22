@@ -84,7 +84,7 @@ fn wait_from(
     (motion, word): (CaretMotion, Option<&str>),
 ) -> CaretWait {
     let at = caret(source, anchors, READ_AT).expect("the caret");
-    let line = line_at(source, anchors, at.caret.anchor);
+    let line = line_at(source, anchors, at.caret);
     CaretWait {
         from: at.held,
         line: line.text,

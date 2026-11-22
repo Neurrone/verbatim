@@ -231,10 +231,10 @@ pub fn visit_outcomes(
                 .for_each(|descendant| read(&mut descendant.node, nodes)),
             Done::FocusRead(focus) => focus.visit(nodes, anchors),
             Done::Caret(caret) => {
-                anchors(&mut caret.caret.anchor);
+                anchors(&mut caret.caret);
                 if let Some(selection) = &mut caret.selection {
-                    anchors(&mut selection.start.anchor);
-                    anchors(&mut selection.end.anchor);
+                    anchors(&mut selection.start);
+                    anchors(&mut selection.end);
                 }
                 anchors(&mut caret.held);
             }

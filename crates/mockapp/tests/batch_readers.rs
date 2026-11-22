@@ -422,7 +422,7 @@ fn a_run_of_text_steps_is_one_program_with_its_formatting() {
         WindowVerdict::Uia,
         batch(vec![step(read(
             Point::At(verbatim_model::TextPoint::At(
-                verbatim_model::TextPosition::at(at.caret.anchor),
+                verbatim_model::TextPosition::at(at.caret),
             )),
             Some(TextMovement {
                 unit: TextUnit::Word,
@@ -510,7 +510,7 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
     let Some(StepOutcome::Done(Done::Caret(at))) = read.first() else {
         panic!("the caret: {read:?}");
     };
-    assert!(at.caret.edges.start && at.selection.is_none(), "{at:?}");
+    assert!(at.selection.is_none(), "{at:?}");
     let Some(StepOutcome::Done(Done::ReadText(line))) = read.get(1) else {
         panic!("the line: {read:?}");
     };

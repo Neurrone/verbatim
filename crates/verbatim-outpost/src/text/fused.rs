@@ -16,9 +16,9 @@
 use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 
 use verbatim_model::batch::{
-    Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, Edges, Gate, HeldPoint,
-    HeldSelection, KindMismatch, Located, Missing, Op, Place, Point, PointOf, RangeText, Selected,
-    SelectionCompared, Step, StepOutcome, StepRefusal, Subject, Waited,
+    Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, Gate, HeldSelection, KindMismatch,
+    Located, Missing, Op, Place, Point, PointOf, RangeText, Selected, SelectionCompared, Step,
+    StepOutcome, StepRefusal, Subject, Waited,
 };
 use verbatim_model::{
     CaretSelection, MAX_RANGE_BYTES, MAX_READ_AHEAD_TEXT, NodeId, Selection, SelectionDifference,
@@ -115,17 +115,17 @@ fn outside_anchor(point: Point, first: usize, earlier: &[StepOutcome]) -> Option
 fn earlier_anchor(outcome: &StepOutcome, which: PointOf) -> Option<TextAnchor> {
     match (outcome, which) {
         (StepOutcome::Done(Done::Caret(caret)), PointOf::Caret | PointOf::ChunkStart) => {
-            Some(caret.caret.anchor)
+            Some(caret.caret)
         }
         (StepOutcome::Done(Done::Caret(caret)), PointOf::SelectionStart) => Some(
             caret
                 .selection
-                .map_or(caret.caret.anchor, |selection| selection.start.anchor),
+                .map_or(caret.caret, |selection| selection.start),
         ),
         (StepOutcome::Done(Done::Caret(caret)), PointOf::SelectionEnd) => Some(
             caret
                 .selection
-                .map_or(caret.caret.anchor, |selection| selection.end.anchor),
+                .map_or(caret.caret, |selection| selection.end),
         ),
         (StepOutcome::Done(Done::ReadText(read)), PointOf::ChunkStart) => {
             read.chunks.first().map(|chunk| chunk.start)
@@ -422,12 +422,12 @@ pub fn caret_line(
     };
     source.learned(learning, line.unsupported);
     let selection = match &caret.selection {
-        Some((range, start, _)) => Some((
+        Some((range, at_text_start)) => Some((
             (
                 UiaPos::new(range, Endpoint::Start, false)?,
                 UiaPos::new(range, Endpoint::End, false)?,
             ),
-            start.start,
+            *at_text_start,
         )),
         None => None,
     };
@@ -870,33 +870,30 @@ impl Made<'_, '_> {
     ) -> TextResult<Done> {
         let caret = UiaPos::new(&found.caret, Endpoint::Start, true)?;
         let selection = match &found.selection {
-            Some((range, start, end)) => Some((
+            Some((range, at_text_start)) => Some((
                 (
                     UiaPos::new(range, Endpoint::Start, false)?,
                     UiaPos::new(range, Endpoint::End, false)?,
                 ),
-                (*start, *end),
+                *at_text_start,
             )),
             None => None,
         };
-        let held_point =
-            |anchors: &mut NodeText<'_, UiaPos>, pos: &UiaPos, edges: Edges| HeldPoint {
-                anchor: anchors.hold_point(pos.clone()),
-                edges,
-            };
-        let caret_point = held_point(self.anchors, &caret, found.edges);
-        let held_selection = selection
-            .as_ref()
-            .map(|((start, end), (start_edges, end_edges))| HeldSelection {
-                start: held_point(self.anchors, start, *start_edges),
-                end: held_point(self.anchors, end, *end_edges),
-            });
+        let caret_point = self.anchors.hold_point(caret.clone());
+        let held_selection =
+            selection
+                .as_ref()
+                .map(|((start, end), at_text_start)| HeldSelection {
+                    start: self.anchors.hold_point(start.clone()),
+                    end: self.anchors.hold_point(end.clone()),
+                    at_text_start: *at_text_start,
+                });
         let ends = selection.as_ref().map(|(ends, _)| ends.clone());
         let kept = ends.clone().zip(held_selection).map(|(ends, held)| {
             let report = CaretSelection {
                 range: Selection {
-                    start: TextPosition::at(held.start.anchor),
-                    end: TextPosition::at(held.end.anchor),
+                    start: TextPosition::at(held.start),
+                    end: TextPosition::at(held.end),
                 },
             };
             (ends, report, text)

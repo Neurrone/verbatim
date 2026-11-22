@@ -11,7 +11,7 @@
 
 use std::cmp::Ordering;
 
-use verbatim_model::batch::{CaretAt, Edges, HeldPoint, HeldSelection, SelectionCompared};
+use verbatim_model::batch::{CaretAt, HeldSelection, SelectionCompared};
 use verbatim_model::{CaretSelection, Selection, TextAnchor, TextPosition};
 
 use super::{
@@ -19,10 +19,10 @@ use super::{
     selection_changes,
 };
 
-/// The caret and the selection, each end held as an anchor with whether it
-/// is at the text's start or end, and the read held as the next selection
-/// baseline, compared with nothing. It reads no line and no selected text,
-/// which a batch reads by steps of its own.
+/// The caret and the selection, each end held as an anchor, with whether
+/// the selection starts at the text's start, and the read held as the next
+/// selection baseline, compared with nothing. It reads no line and no
+/// selected text, which a batch reads by steps of its own.
 ///
 /// # Errors
 ///
@@ -33,29 +33,23 @@ pub fn caret<S: TextSource>(
     read_at_us: u64,
 ) -> TextResult<CaretAt> {
     let state = source.caret()?;
-    let (start, end) = (source.start()?, source.end()?);
-    let mut held = |anchors: &mut NodeText<'_, S::Pos>, at: &S::Pos| -> TextResult<HeldPoint> {
-        Ok(HeldPoint {
-            anchor: anchors.hold_point(at.clone()),
-            edges: Edges {
-                start: source.compare(at, &start)? != Ordering::Greater,
-                end: source.compare(at, &end)? != Ordering::Less,
-            },
-        })
-    };
-    let caret = held(anchors, &state.caret)?;
+    let caret = anchors.hold_point(state.caret.clone());
     let selection = match &state.selection {
         Some((start, end)) => Some(HeldSelection {
-            start: held(anchors, start)?,
-            end: held(anchors, end)?,
+            at_text_start: {
+                let text_start = source.start()?;
+                source.compare(start, &text_start)? != Ordering::Greater
+            },
+            start: anchors.hold_point(start.clone()),
+            end: anchors.hold_point(end.clone()),
         }),
         None => None,
     };
     let kept = state.selection.clone().zip(selection).map(|(ends, held)| {
         let report = CaretSelection {
             range: Selection {
-                start: TextPosition::at(held.start.anchor),
-                end: TextPosition::at(held.end.anchor),
+                start: TextPosition::at(held.start),
+                end: TextPosition::at(held.end),
             },
         };
         (ends, report, None)

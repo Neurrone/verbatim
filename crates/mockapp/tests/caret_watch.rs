@@ -740,7 +740,9 @@ fn read_selection(
         panic!("the caret and its line: {steps:?}");
     };
     let mut line = line.chunks[0].clone();
-    line.first |= at.caret.edges.start;
+    if let Some(selection) = &at.selection {
+        line.first |= selection.at_text_start;
+    }
     let selection = at
         .selection
         .map(|selection| verbatim_model::CaretSelection {
@@ -749,7 +751,7 @@ fn read_selection(
                     anchor: line.start,
                     offset: line.offset,
                 },
-                end: TextPosition::at(selection.end.anchor),
+                end: TextPosition::at(selection.end),
             },
         });
     let difference = match steps.get(2) {

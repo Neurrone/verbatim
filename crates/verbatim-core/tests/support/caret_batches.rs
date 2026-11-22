@@ -7,9 +7,9 @@
 #![allow(dead_code)]
 
 use verbatim_model::batch::{
-    Batch, Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, Edges, EffectTest,
-    HeldPoint, HeldSelection, Missing, Op, Place, Placement, Point, PointOf, SelectionCompared,
-    Step, StepOutcome, Subject, Waited,
+    Batch, Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, EffectTest, HeldSelection,
+    Missing, Op, Place, Placement, Point, PointOf, SelectionCompared, Step, StepOutcome, Subject,
+    Waited,
 };
 use verbatim_model::{
     CaretMotion, CaretReport, EditSelection, NodeId, SelectionDifference, SentenceMoved,
@@ -258,18 +258,15 @@ pub fn read(caret: CaretReport, unit: TextChunk) -> Facts {
     }
 }
 
-/// The `Caret` result the caret `report` gives, holding `held`, its caret
-/// and its selection's start at the text's start when `at_start`.
+/// The `Caret` result the caret `report` gives, holding `held`, its
+/// selection's start at the text's start when `at_start`.
 fn caret_at(report: &CaretReport, held: TextAnchor, at_start: bool) -> CaretAt {
-    let at = |anchor, start| HeldPoint {
-        anchor,
-        edges: Edges { start, end: false },
-    };
     CaretAt {
-        caret: at(report.line.start, at_start),
+        caret: report.line.start,
         selection: report.selection.as_ref().map(|selection| HeldSelection {
-            start: at(selection.range.start.anchor, at_start),
-            end: at(selection.range.end.anchor, false),
+            start: selection.range.start.anchor,
+            end: selection.range.end.anchor,
+            at_text_start: at_start,
         }),
         held,
         offsets: None,

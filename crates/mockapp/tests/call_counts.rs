@@ -3064,7 +3064,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let expected = if remote {
         calls(2, 0, 0)
     } else {
-        calls(9, 0, 0)
+        calls(6, 0, 0)
     };
     ratchet.check(
         &format!("UIA say-all caret move, {way}"),
@@ -3160,7 +3160,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     let expected = if remote {
         calls(2, 0, 0)
     } else {
-        calls(40, 0, 0)
+        calls(32, 0, 0)
     };
     ratchet.check(
         &format!("UIA review copy select, {way}"),
@@ -3426,12 +3426,12 @@ fn caret_tell_program(caret: &str) -> u32 {
 /// `Caret`, the caret's line and the selection's comparison with the
 /// baseline, with its text and its changes, the element and its text
 /// pattern being the focus's, held since its completion. Classically each
-/// step's calls in turn, 23: the caret, the selection and whether each is
-/// at the text's start or end, the line, then the comparison's (the read
+/// step's calls in turn, 18: the caret, the selection and whether its
+/// start is at the text's start, the line, then the comparison's (the read
 /// the batch replaced shared its reads of the caret among them, 19). The
-/// program's instructions, under UI Automation's limit of 10,000: 160 for
+/// program's instructions, under UI Automation's limit of 10,000: 140 for
 /// the selection "alpha" in a line of plain text, compared with a baseline
-/// at the text's start, and 139 for the caret alone moved inside the line
+/// at the text's start, and 127 for the caret alone moved inside the line
 /// (the purpose-built program the batch replaced executed 90 and 48).
 fn caret_tell_reads_cost_exactly() {
     common::init_com();
@@ -3441,7 +3441,7 @@ fn caret_tell_reads_cost_exactly() {
     )]];
     for (operation, remote, expected) in [
         ("UIA caret tell's read, remotely", true, calls(1, 0, 0)),
-        ("UIA caret tell's read, classically", false, calls(23, 0, 0)),
+        ("UIA caret tell's read, classically", false, calls(18, 0, 0)),
     ] {
         let (said, measured) = caret_tell_read(remote);
         assert_eq!(said, selected, "{operation}: what Core said");
@@ -3452,7 +3452,7 @@ fn caret_tell_reads_cost_exactly() {
             caret_tell_program("caret doc 0 5"),
             caret_tell_program("caret doc 3")
         ],
-        [160, 139],
+        [140, 127],
         "the caret tell's read's program, a selection and the caret alone"
     );
     ratchet.finish();
@@ -3466,13 +3466,13 @@ fn caret_tell_reads_cost_exactly() {
 /// document, the caret inside its first line. Through UI Automation
 /// remotely the batch is one program, as the starting read it replaces was
 /// (the design's section 5); classically the steps' calls one by one: the
-/// caret, the selection and whether each is at the text's start or end,
-/// then each unit read from the caret held, 12 calls, and 23 and 20 with
+/// caret and the selection, then each unit read from the caret held, 9
+/// calls, and 20 and 17 with
 /// the word and the character before the caret (the starting read the
 /// batch replaced read the caret's line with it in 8, and the unit in 15).
-/// Through an edit control's window messages, the caret's and the text's
-/// length, then the line's, then the unit's, each found from its line's
-/// messages: 6, and 21 with a unit before the caret.
+/// Through an edit control's window messages, the caret's, then the
+/// line's, then the unit's, each found from its line's messages: 5, and
+/// 20 with a unit before the caret.
 #[expect(
     clippy::too_many_lines,
     reason = "each text's cases, then the edit control's"
@@ -3489,7 +3489,7 @@ fn starting_reads_cost_exactly() {
             "UIA starting read, classically",
             false,
             arrow,
-            calls(12, 0, 0),
+            calls(9, 0, 0),
         ),
         (
             "UIA Control+Backspace starting read, remotely",
@@ -3501,7 +3501,7 @@ fn starting_reads_cost_exactly() {
             "UIA Control+Backspace starting read, classically",
             false,
             word,
-            calls(23, 0, 0),
+            calls(20, 0, 0),
         ),
         (
             "UIA Backspace starting read, remotely",
@@ -3513,7 +3513,7 @@ fn starting_reads_cost_exactly() {
             "UIA Backspace starting read, classically",
             false,
             before,
-            calls(20, 0, 0),
+            calls(17, 0, 0),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-starting-read");
@@ -3572,16 +3572,16 @@ fn starting_reads_cost_exactly() {
         },
     );
     for (operation, read, expected) in [
-        ("Edit control starting read", arrow, calls(0, 0, 6)),
+        ("Edit control starting read", arrow, calls(0, 0, 5)),
         (
             "Edit control Control+Backspace starting read",
             word,
-            calls(0, 0, 21),
+            calls(0, 0, 20),
         ),
         (
             "Edit control Backspace starting read",
             before,
-            calls(0, 0, 21),
+            calls(0, 0, 20),
         ),
     ] {
         let measured =
@@ -3707,7 +3707,7 @@ fn starting_batch_calls(
 /// steps, the caret and its line with the default theme's formatting, in
 /// the same program. Remotely one program each, the ending poll included
 /// (the watch the batch replaced made its check and final read in one
-/// program too); classically each step's calls: 14 for a check alone, 33
+/// program too); classically each step's calls: 14 for a check alone, 30
 /// with the caret and the line's formatting read after it (the watch's
 /// classic check made 13, and 8 more for the line's formatting).
 #[expect(
@@ -3763,7 +3763,7 @@ fn watch_checks_cost_exactly() {
         (
             "UIA line key's poll that ends its wait, classically",
             false,
-            (true, calls(33, 0, 0)),
+            (true, calls(30, 0, 0)),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-watch-check");
@@ -3776,8 +3776,7 @@ fn watch_checks_cost_exactly() {
         common::apply(&mut app, hwnd, "caret doc 0");
         let at =
             verbatim_outpost::text::ops::caret(&mut source, &mut anchors, 1).expect("the caret");
-        let caret =
-            verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at.caret.anchor));
+        let caret = verbatim_model::TextPoint::At(verbatim_model::TextPosition::at(at.caret));
         let read = verbatim_outpost::text::CallStep::Read {
             at: caret,
             movement: None,
@@ -3896,10 +3895,10 @@ fn edit_control_select_and_location_cost_exactly() {
         .map(|change| (change.selected, change.text.as_str(), change.characters))
         .collect();
     assert_eq!(changes, [(true, "alpha", 5)]);
-    // Each `Caret` an `EM_GETSEL` and the text's length, the select
-    // `EM_SETSEL` and `EM_SCROLLCARET`, and the comparison the change's
-    // and the new selection's text.
-    ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 9));
+    // Each `Caret` an `EM_GETSEL`, the select `EM_SETSEL` and
+    // `EM_SCROLLCARET`, and the comparison the change's and the new
+    // selection's text.
+    ratchet.check_calls("Edit control review copy select", measured, calls(0, 0, 8));
 
     // The caret's location, from a request of its own: `EM_GETSEL`, the
     // text's length (`WM_GETTEXTLENGTH`) for the percentage, and
@@ -4197,13 +4196,13 @@ fn uia_text_focus_reporting(
 /// the selected text read in the program; the focus was 9 calls with its
 /// caret and 10 with a selection before Core asked the completion and read
 /// the states after the registration. Classically the read is the classic
-/// calls behind the same signature: 46 and 51 calls, the line's
+/// calls behind the same signature: 46 and 54 calls, the line's
 /// formatting read with every attribute, where the caret
 /// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is read with its
 /// focus too, so that the focus says its line (`docs/parity/terminals.md`),
 /// and its first read is the watch's baseline, the window read
 /// (`TerminalRead`), which Core sends as the focus commits: the focus, its
-/// caret and its baseline cost 11 calls remotely and 65 classically, the
+/// caret and its baseline cost 11 calls remotely and 62 classically, the
 /// window read's classic calls including its width, the caret's rows to
 /// the document's end and the document's first row and row count. The line's formatting, which the focus
 /// says, is read in the caret's program remotely, at no call of its own.
@@ -4277,7 +4276,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             text_said(false, &line),
-            first_focus(49),
+            first_focus(46),
         ),
         (
             "UIA text field focus with a selection, remotely",
@@ -4295,7 +4294,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(59),
+            first_focus(54),
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
@@ -4316,7 +4315,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(59),
+            first_focus(54),
         ),
         (
             "UIA terminal focus, remotely",
@@ -4334,7 +4333,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(65),
+            first_focus(62),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);
@@ -4366,7 +4365,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "UIA text field focus with its caret, default details, classically",
         measured,
-        first_focus(49),
+        first_focus(46),
     );
 
     let title = common::unique_title("mockapp-counts-edit-focus");
@@ -4432,7 +4431,7 @@ fn text_field_focuses_cost_exactly() {
 /// read with the focus as the focus answer's selection baseline read
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"), its
 /// line
-/// "alpha beta". Remotely 4 UIA calls and the probe; classically 15, the
+/// "alpha beta". Remotely 4 UIA calls and the probe; classically 12, the
 /// walk ending at the desktop's root with no step above it.
 fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
     for (operation, remote, expected) in [
@@ -4444,7 +4443,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         (
             "UIA text field focus-now answer with its caret, classically",
             false,
-            calls(15, 0, 1),
+            calls(12, 0, 1),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-text-focus-now");

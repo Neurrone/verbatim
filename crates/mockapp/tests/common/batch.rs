@@ -703,14 +703,12 @@ pub fn describe(text: Option<&Text>, answer: &Answer) -> String {
                 walk.complete
             ),
             Ran::Done(Found::Caret(caret)) => format!(
-                "caret {} {:?} selection {:?}",
+                "caret {} selection {:?}",
                 range(&caret.caret),
-                caret.edges,
-                caret.selection.as_ref().map(|(selection, start, end)| (
-                    range(selection),
-                    start,
-                    end
-                ))
+                caret
+                    .selection
+                    .as_ref()
+                    .map(|(selection, at_text_start)| (range(selection), at_text_start))
             ),
             Ran::Done(Found::ReadText(read)) => {
                 let mut line = format!("units moved {} ended {}", read.moved, read.ended);

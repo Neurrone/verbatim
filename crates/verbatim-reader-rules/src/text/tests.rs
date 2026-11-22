@@ -962,7 +962,7 @@ fn watched(
 ) -> TextResult<Option<verbatim_model::batch::Waited>> {
     let mut anchors = store();
     let at = ops::caret(before, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
-    let line = line_at(before, &mut anchors.node(1), at.caret.anchor);
+    let line = line_at(before, &mut anchors.node(1), at.caret);
     let start = anchors.node(1).held_read(at.held).expect("the read held");
     let wait = verbatim_model::batch::CaretWait {
         from: at.held,

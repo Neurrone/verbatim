@@ -802,7 +802,7 @@ enum Regs {
     Caret {
         caret: CaretRegisters,
         point: Reg<kind::TextRange>,
-        edges: [Reg<kind::Bool>; 6],
+        at_text_start: Reg<kind::Bool>,
     },
     ReadText(Box<UnitsRegs>),
     ReadRange(Reg<kind::Str>),
@@ -1253,40 +1253,27 @@ impl Emit<'_> {
     }
 
     /// Emits a `Caret`: the caret and the selection as the classic
-    /// reads find them, a collapsed copy at the caret, and whether each
-    /// point is at the text's start or end.
+    /// reads find them, a collapsed copy at the caret, and, when something
+    /// is selected, whether the selection's start is at the text's start.
     fn caret(&self, b: &mut Builder, text: usize) -> Regs {
         let element = self.element(text);
         let pattern = b.get_text_pattern(element, false);
         let caret = emit_caret(b, self.c, pattern);
         let point = self.c.collapsed(b, caret.caret);
         let point = b.add_to_results(point);
-        let document = b.text_pattern_get_document_range(pattern);
-        let edges = [(); 6].map(|()| {
-            let edge = b.new_bool(false);
-            b.add_to_results(edge)
-        });
+        let at_text_start = b.new_bool(false);
+        let at_text_start = b.add_to_results(at_text_start);
         let c = self.c;
-        let at = |b: &mut Builder,
-                  range,
-                  end,
-                  (start_edge, end_edge): (Reg<kind::Bool>, Reg<kind::Bool>)| {
-            let order = b.text_range_compare_endpoints(range, end, document, c.start);
-            let at_start = b.equal(order, c.zero);
-            b.set(start_edge, at_start);
-            let order = b.text_range_compare_endpoints(range, end, document, c.end);
-            let at_end = b.equal(order, c.zero);
-            b.set(end_edge, at_end);
-        };
-        at(b, point, c.start, (edges[0], edges[1]));
         b.if_(caret.has_selection, |b| {
-            at(b, caret.selection, c.start, (edges[2], edges[3]));
-            at(b, caret.selection, c.end, (edges[4], edges[5]));
+            let document = b.text_pattern_get_document_range(pattern);
+            let order = b.text_range_compare_endpoints(caret.selection, c.start, document, c.start);
+            let at_start = b.equal(order, c.zero);
+            b.set(at_text_start, at_start);
         });
         Regs::Caret {
             caret,
             point,
-            edges,
+            at_text_start,
         }
     }
 
@@ -1794,10 +1781,10 @@ impl<'a> State<'_, 'a> {
                 Regs::Caret {
                     caret,
                     point,
-                    edges,
+                    at_text_start,
                 },
                 _,
-            ) => Found::Caret(caret_found(outcome, caret, *point, edges)?),
+            ) => Found::Caret(caret_found(outcome, caret, *point, *at_text_start)?),
             (Regs::ReadText(units), _) => Found::ReadText(units_found(outcome, units)?),
             (Regs::ReadRange(text), _) => {
                 Found::ReadRange(string_of(outcome, *text)?.encode_utf16().collect())
@@ -1949,19 +1936,13 @@ fn caret_found(
     outcome: &Outcome,
     caret: &CaretRegisters,
     point: Reg<kind::TextRange>,
-    edges: &[Reg<kind::Bool>; 6],
+    at_text_start: Reg<kind::Bool>,
 ) -> Result<CaretFound, Error> {
-    let edge = |start, end| -> Result<_, Error> {
-        Ok(verbatim_model::batch::Edges {
-            start: outcome.get(start)?,
-            end: outcome.get(end)?,
-        })
-    };
     let selection = if outcome.get(caret.has_selection)? {
         let range = outcome
             .get(caret.selection)?
             .ok_or(Error::MissingResult(caret.selection.id()))?;
-        Some((range, edge(edges[2], edges[3])?, edge(edges[4], edges[5])?))
+        Some((range, outcome.get(at_text_start)?))
     } else {
         None
     };
@@ -1969,7 +1950,6 @@ fn caret_found(
         caret: outcome
             .get(point)?
             .ok_or(Error::MissingResult(point.id()))?,
-        edges: edge(edges[0], edges[1])?,
         selection,
     })
 }

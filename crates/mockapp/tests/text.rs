@@ -408,7 +408,7 @@ fn caret_both(text: &batch::Text, formats: Option<(Attributes, Attributes)>) -> 
         selection: caret
             .selection
             .as_ref()
-            .map(|(_, start, _)| (utf8(selected), start.start)),
+            .map(|(_, at_text_start)| (utf8(selected), *at_text_start)),
         unsupported: line.unsupported,
     }
 }

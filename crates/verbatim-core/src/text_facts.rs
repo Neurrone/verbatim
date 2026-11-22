@@ -140,9 +140,9 @@ pub(crate) fn caret_report(
         && usize::try_from(line.offset).is_ok_and(|offset| offset >= line.text.len());
     let selection = caret.selection.map(|selection| {
         let start = if cut_before {
-            verbatim_model::TextPosition::at(selection.start.anchor)
+            verbatim_model::TextPosition::at(selection.start)
         } else {
-            line.first |= selection.start.edges.start;
+            line.first |= selection.at_text_start;
             verbatim_model::TextPosition {
                 anchor: line.start,
                 offset: line.offset,
@@ -151,7 +151,7 @@ pub(crate) fn caret_report(
         verbatim_model::CaretSelection {
             range: verbatim_model::Selection {
                 start,
-                end: verbatim_model::TextPosition::at(selection.end.anchor),
+                end: verbatim_model::TextPosition::at(selection.end),
             },
         }
     });

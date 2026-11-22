@@ -1129,11 +1129,11 @@ batch's later steps. Core alone judges what the key says.
   comes with no move still pays every check to its bound.
 - The unit's formatting, which the key says: read by the batch's later
   reads in the poll that ends the wait, at no call of its own; a poll
-  that finds nothing pays its gated reads' tests (139 instructions, 315
-  for a moved line key reading its line's formatting, 2,306 at the bound
+  that finds nothing pays its gated reads' tests (139 instructions, 303
+  for a moved line key reading its line's formatting, 2,294 at the bound
   for 17 mixed stretches, and the 64-stretch worst runs under the limit
   as one program). Classically a poll that finds nothing costs 14 calls,
-  and the one that ends the wait 33 with the caret and the line's
+  and the one that ends the wait 30 with the caret and the line's
   formatting. A check that finds the effect only by the text runs the
   later reads in one more round trip.
 
@@ -1172,14 +1172,13 @@ its turn and its starting read
 caret and the key's unit (`starting_reads_cost_exactly`).
 
 - Today: 1 UIA call remotely, the starting batch's `Caret` and the
-  caret's line in one program; 12 classically, each step's calls, the
-  caret's and the selection's edges among them; 6 window messages in a
-  Win32 edit control.
+  caret's line in one program; 9 classically, each step's calls; 5
+  window messages in a Win32 edit control.
 - Backspace's and Control+Backspace's, which read the character or the
   word around the character before the caret, the text the key would
-  delete: 1 UIA call remotely, the unit read in the same program; 20 and
-  23 classically, the caret's copy moved back a character, expanded, and
-  its text and its part before the caret read; 21 window messages in a
+  delete: 1 UIA call remotely, the unit read in the same program; 17 and
+  20 classically, the caret's copy moved back a character, expanded, and
+  its text and its part before the caret read; 20 window messages in a
   Win32 edit control, the character before the caret and the unit around
   it each found from its line's messages (`starting_reads_cost_exactly`).
 - Wake-ups: two more of the hook's thread per held key, and the read's
@@ -1416,8 +1415,9 @@ field"); this entry is the read alone.
 - Minimum and today: 1 UIA call remotely, met; classically the calls of
   the generated read's three steps (`caret_line` in the verbatim-outpost
   crate guide), with the default theme or every indication on: the caret,
-  a collapsed copy of it and each of its ends compared with the text's
-  ends, the line, the selection between two points when text is
+  a collapsed copy of it, the selection's start compared with the text's
+  start when text is selected, the line, the selection between two
+  points when text is
   selected, and the line's
   formatting: a collapsed copy of the line (2), for each stretch a copy, `MoveEndpointByUnit`, a
   comparison with the line's end, its text and its attributes in one
@@ -1464,9 +1464,9 @@ its probe adds 1 window message (above):
   nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
   protected or not, each with 1 connection and no window message, so the
-  minimum is met remotely; classically 49, and 59 with a selection. A UIA
+  minimum is met remotely; classically 46, and 54 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline window read after it, 11 remotely and 65 classically, each with 1
+  its baseline window read after it, 11 remotely and 62 classically, each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the
@@ -2119,13 +2119,13 @@ first, the share of the limit in brackets:
   hundred items, its runs about a third of the limit each. The
   controlled list is the one bound the application sets (Settings'
   search suggestions were 25).
-- The caret read (`caret_reads_execute_exactly`): 4,466 (45 percent) for
+- The caret read (`caret_reads_execute_exactly`): 4,446 (45 percent) for
   a line of 64 stretches reached by walking a mixed stretch by words and
-  characters, eleven attributes, and ten characters selected; 143 for the
+  characters, eleven attributes, and ten characters selected; 131 for the
   report after a focus on plain text with the default theme, nothing
   selected, so the selection is not read. Where every stretch is mixed
   (`mixed.json`, `densely_mixed_formatting_executes_exactly`), each adds
-  249: 2,207 for 17 stretches and 4,199 for 33,
+  249: 2,195 for 17 stretches and 4,187 for 33,
   so 64 come to about 8,000 (80 percent), under the limit but uncountable.
   It is the one program that can come within a factor of two of the limit,
   bounded by the 64 stretches.

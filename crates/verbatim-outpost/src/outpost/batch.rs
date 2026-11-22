@@ -1188,9 +1188,9 @@ impl Run<'_, '_> {
                 let caret = self.caret_of(place)?;
                 let selection = caret.selection;
                 Some(at(match (which, selection) {
-                    (PointOf::SelectionStart, Some(selection)) => selection.start.anchor,
-                    (PointOf::SelectionEnd, Some(selection)) => selection.end.anchor,
-                    _ => caret.caret.anchor,
+                    (PointOf::SelectionStart, Some(selection)) => selection.start,
+                    (PointOf::SelectionEnd, Some(selection)) => selection.end,
+                    _ => caret.caret,
                 }))
             }
         }

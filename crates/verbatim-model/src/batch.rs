@@ -886,38 +886,25 @@ pub struct Descended {
     pub complete: bool,
 }
 
-/// Whether a point is at its text's start or end.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Edges {
-    /// At the start.
-    pub start: bool,
-    /// At the end.
-    pub end: bool,
-}
-
-/// A point a [`Op::Caret`] read, held by the outpost.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeldPoint {
-    /// The anchor it is held at.
-    pub anchor: TextAnchor,
-    /// Whether it is at the text's start or end.
-    pub edges: Edges,
-}
-
-/// A selection's two ends as a [`Op::Caret`] read them.
+/// A selection's two ends as a [`Op::Caret`] read them, each held by the
+/// outpost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeldSelection {
-    /// Its start.
-    pub start: HeldPoint,
-    /// Its end.
-    pub end: HeldPoint,
+    /// The anchor its start is held at.
+    pub start: TextAnchor,
+    /// The anchor its end is held at.
+    pub end: TextAnchor,
+    /// Whether its start is at the text's start, read only when something
+    /// is selected, so that a caret report knows the selection starts on
+    /// the text's first line (Dickson, 2026-11-22).
+    pub at_text_start: bool,
 }
 
 /// A [`Op::Caret`]'s result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaretAt {
-    /// The caret.
-    pub caret: HeldPoint,
+    /// The anchor the caret is held at.
+    pub caret: TextAnchor,
     /// The selection, when something is selected.
     pub selection: Option<HeldSelection>,
     /// The selection's range as held, the next selection baseline.

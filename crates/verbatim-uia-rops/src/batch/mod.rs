@@ -35,8 +35,8 @@ mod walk;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange, TextUnit};
 
 use verbatim_model::batch::{
-    Before, Check, Edges, Gate, Missing, Op, Place, Point, Step, StepOutcome, StepRefusal, Subject,
-    View, Walk,
+    Before, Check, Gate, Missing, Op, Place, Point, Step, StepOutcome, StepRefusal, Subject, View,
+    Walk,
 };
 use verbatim_model::{NodeSnapshot, TableId, TextDetails, TextMovement, TextPoint};
 use verbatim_uia::{Cached, Fill, Node, Uia};
@@ -616,11 +616,9 @@ pub struct CaretFound {
     /// A collapsed range at the caret: the start of the selection's first
     /// range, as NVDA's caret is, or the text's start when it has none.
     pub caret: IUIAutomationTextRange,
-    /// Whether the caret is at the text's start or end.
-    pub edges: Edges,
-    /// The selection, when text is selected, with whether its start and its
-    /// end are each at the text's start or end.
-    pub selection: Option<(IUIAutomationTextRange, Edges, Edges)>,
+    /// The selection, when text is selected, with whether its start is at
+    /// the text's start.
+    pub selection: Option<(IUIAutomationTextRange, bool)>,
 }
 
 /// `ReadText`'s result.

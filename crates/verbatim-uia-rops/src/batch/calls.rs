@@ -6,7 +6,7 @@
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
 use verbatim_model::batch::{
-    Before, Edges, Missing, Op, Place, Point, PointOf, Relation, Subject, Through, View,
+    Before, Missing, Op, Place, Point, PointOf, Relation, Subject, Through, View,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
@@ -378,10 +378,11 @@ pub(super) fn filled(
     refresh(element, fill)
 }
 
-/// The caret, the selection, and whether each is at the text's start or
-/// end, as the program reads them: the selection (one call), its order
-/// (one), a collapsed copy of the caret (two, or none when it is one), the
-/// document range (one) and two comparisons for each point.
+/// The caret and the selection, as the program reads them: the selection
+/// (one call), its order (one), a collapsed copy of the caret (two, or
+/// none when it is one), and, when something is selected, whether its
+/// start is at the text's start: the document range (one) and one
+/// comparison.
 fn caret(text: TextTarget<'_>) -> Result<CaretFound, Error> {
     let state = classic_caret(text)?;
     let caret = if state.caret.collapsed {
@@ -389,26 +390,16 @@ fn caret(text: TextTarget<'_>) -> Result<CaretFound, Error> {
     } else {
         collapsed_copy(&state.caret)?
     };
-    let document = text.pattern.document_range()?;
-    let edges = |range: &IUIAutomationTextRange, end: Endpoint| -> Result<Edges, Error> {
-        Ok(Edges {
-            start: range.compare_endpoints(end, &document, Endpoint::Start)? == 0,
-            end: range.compare_endpoints(end, &document, Endpoint::End)? == 0,
-        })
-    };
     let selection = match state.selection {
         Some(selection) => {
-            let start = edges(&selection, Endpoint::Start)?;
-            let end = edges(&selection, Endpoint::End)?;
-            Some((selection, start, end))
+            let document = text.pattern.document_range()?;
+            let at_text_start =
+                selection.compare_endpoints(Endpoint::Start, &document, Endpoint::Start)? == 0;
+            Some((selection, at_text_start))
         }
         None => None,
     };
-    Ok(CaretFound {
-        edges: edges(&caret, Endpoint::Start)?,
-        caret,
-        selection,
-    })
+    Ok(CaretFound { caret, selection })
 }
 
 /// The point `at` names in `text`.
