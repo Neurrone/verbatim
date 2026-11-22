@@ -113,7 +113,7 @@ hung application's stays a plain window. The ghost and hung checks are
 three local calls per window, and the style is read once
 (`window::window_style`). The outpost connects to, probes, and walks up into only its
 application's windows (`read::serves`): its UIA walk
-(`read::uia_ancestors`) stops below the boundary, a step that reaches
+(`read::chain`) stops below the boundary, a step that reaches
 another process's window anyway is not read further, the MSAA walk does
 not step from a window's own window object into a parent window it reads
 as plain (`read::reads_as_plain`) and does not read a parent an
@@ -1046,9 +1046,9 @@ taken before any call that can block. Each step runs under its gate
   `NodeDetails::desktop_window` for Core to name.
 - `Ancestors` by each backend's executor's `Ancestors` arm, the UI
   Automation walk chained above where it ends by the window walk-on
-  (`read::ancestors`), cut at the first ancestor Core already knows, its
-  end answered as the walk's. A focus's ancestors are walked by the same
-  arms with the focus's stops.
+  (`read::chain`, the dispatcher's chaining across backends, which a
+  focus's ancestors take too), cut at the first ancestor Core already knows, its
+  end answered as the walk's.
 - `Descendants` of a UI Automation node by the program builder's walk
   (`verbatim_uia_rops::batch::run_batch`), its matchers judged between
   runs; of an MSAA object by the MSAA executor's children walk

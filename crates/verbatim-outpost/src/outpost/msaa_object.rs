@@ -142,7 +142,7 @@ pub(super) fn step(
         )),
         Ok(Found::IsOneOf(place)) => StepOutcome::Done(Done::IsOneOf(place)),
         Ok(Found::Activate(action)) => StepOutcome::Done(Done::Activate(action)),
-        // The dispatcher chains a batch's ancestors itself ([`ancestors`]).
+        // The dispatcher chains a batch's ancestors itself (`read::chain`).
         Ok(Found::Ancestors(..)) => {
             tracing::error!(target: verbatim_model::DEFECT_TARGET, "an ancestor walk reached the MSAA object steps");
             StepOutcome::Failed

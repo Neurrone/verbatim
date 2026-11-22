@@ -281,11 +281,15 @@ pub(super) fn uia_enrichment(
     parent_automation_id: &mut Option<String>,
     (previous, visited): (&[KnownAncestor], Visited<'_>),
 ) -> Result<Enrichment, FocusLost> {
-    let ancestors = uia_ancestors(
+    let ancestors = chain(
         context,
-        (uia, ancestors),
-        (element.live(), element.read().role.hwnd, nearest),
-        (previous, parent_automation_id, visited),
+        ChainStart::Uia {
+            uia: (uia, ancestors),
+            element: (element.live(), element.read().role.hwnd, nearest),
+            parent_automation_id,
+            visited,
+        },
+        (previous, None),
     )?;
     let selected = if element.read().value_from_selection() {
         match uia.selected_node(element.live(), nodes, context.nodes()) {
@@ -304,29 +308,80 @@ pub(super) fn uia_enrichment(
     Ok((ancestors, selected))
 }
 
-/// A UIA element's ancestors, outermost first, its own window handle
-/// `element_window` and its nearest window `nearest`, 0 when not known.
-/// Where the walk reaches the root of a window read through MSAA or as a
-/// plain window ([`uia_walk_leaves`]), or stops below the process
-/// boundary, it goes on from that window
-/// ([`window_onward`]), as NVDA switches API when its walk crosses into
-/// such a window: in File Explorer, the folder window above the UIA file
-/// list is then the client area a foreground report already named, not a
-/// second, UIA copy of it. A walk cut by its hop limit, or whose step to a
-/// parent failed or timed out, is completed as [`complete`] says, and one
-/// that fails before it reads anything goes on from the parent window of
-/// the element's nearest window ([`onward_after_failure`]). The desktop
-/// window ends the walk. The automation id of the element's raw-view
-/// parent, when the walk's first step read it, is put in
-/// `parent_automation_id`.
-fn uia_ancestors(
+/// Where a chain of ancestors starts: a UI Automation element, with its
+/// own window handle and its nearest window, 0 when not known, the client
+/// that walks it, and what is told of the walk; or an MSAA node, with the
+/// UI Automation client the chain goes on through, if any.
+pub(super) enum ChainStart<'a> {
+    /// A UI Automation element.
+    Uia {
+        /// The client and how each ancestor is filled.
+        uia: (&'a Uia, &'a Request<Ancestor>),
+        /// The element, its own window and its nearest window.
+        element: (&'a Live, isize, isize),
+        /// Given the automation id of the element's raw-view parent, when
+        /// the walk's first step read it.
+        parent_automation_id: &'a mut Option<String>,
+        /// Told of each ancestor visited.
+        visited: Visited<'a>,
+    },
+    /// An MSAA node, its window objects above controls left out (see
+    /// [`msaa_enrichment`]); without a UI Automation client the chain
+    /// stays in MSAA.
+    Msaa(&'a NodeSnapshot, Option<(&'a Uia, &'a Request<Ancestor>)>),
+}
+
+/// The chain of ancestors above `start`, outermost first: the walk of its
+/// backend's executor's `Ancestors` arm, stopping at an ancestor of
+/// `previous`, those Core knows, and chained above where it ends as
+/// [`complete`] says, the dispatcher's chaining across backends.
+///
+/// A UI Automation walk that reaches the root of a window read through
+/// MSAA or as a plain window ([`uia_walk_leaves`]), or stops below the
+/// process boundary, goes on from that window ([`window_onward`]), as NVDA
+/// switches API when its walk crosses into such a window: in File
+/// Explorer, the folder window above the UIA file list is then the client
+/// area a foreground report already named, not a second, UIA copy of it.
+/// An MSAA walk whose parent lies in a window read through UIA goes on
+/// from that window's UIA element (`correctAPIForRelation`): in a Save As
+/// dialog, the file name box's containers above the shell's UIA view are
+/// UIA's; where a parent lies in a window read as a plain window
+/// ([`reads_as_plain`]), or an `accParent` fails or names nothing, from
+/// that window or the parent window. A walk cut by its hop limit is
+/// completed by plain windows, and one that fails before it reads anything
+/// goes on from the parent window of the start's nearest window
+/// ([`onward_after_failure`]). The desktop window ends the chain.
+///
+/// # Errors
+///
+/// [`FocusLost`], from [`window_onward`].
+pub(super) fn chain(
     context: &RequestContext<'_>,
-    (uia, request): (&Uia, &Request<Ancestor>),
-    (element, element_window, nearest): (&Live, isize, isize),
-    (previous, parent_automation_id, visited): (&[KnownAncestor], &mut Option<String>, Visited<'_>),
+    start: ChainStart<'_>,
+    (previous, candidates): (&[KnownAncestor], Option<&Candidates>),
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
-    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let known = |id: NodeId| knows(previous, id);
+    let (uia, request, element, element_window, nearest, parent_automation_id, visited) =
+        match start {
+            ChainStart::Msaa(node, uia) => {
+                return msaa_chain(context, uia, node, (previous, candidates));
+            }
+            ChainStart::Uia {
+                uia: (uia, request),
+                element: (element, element_window, nearest),
+                parent_automation_id,
+                visited,
+            } => (
+                uia,
+                request,
+                element,
+                element_window,
+                nearest,
+                parent_automation_id,
+                visited,
+            ),
+        };
+    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let start = AncestryStart {
         element: element.element().clone(),
         own_window: element_window,
@@ -793,11 +848,15 @@ fn window_object_onward(
         let visited = |runtime_id: &[i32], window: isize| {
             walked.borrow_mut().push((runtime_id.to_vec(), window));
         };
-        let above = uia_ancestors(
+        let above = chain(
             context,
-            (uia, request),
-            (element.live(), hwnd, hwnd),
-            (previous, &mut None, Some(&visited)),
+            ChainStart::Uia {
+                uia: (uia, request),
+                element: (element.live(), hwnd, hwnd),
+                parent_automation_id: &mut None,
+                visited: Some(&visited),
+            },
+            (previous, None),
         )?;
         let chain: Vec<NodeSnapshot> = above.into_iter().chain(below).collect();
         super::completion::keep_read_routes(context, &chain, &walked.into_inner());
@@ -816,7 +875,11 @@ fn window_object_onward(
     if known(client.id) {
         return Ok(Some(vec![client]));
     }
-    let above = msaa_ancestors(context, uia, &client, (previous, candidates))?;
+    let above = chain(
+        context,
+        ChainStart::Msaa(&client, uia),
+        (previous, candidates),
+    )?;
     Ok(Some(
         above.into_iter().chain(std::iter::once(client)).collect(),
     ))
@@ -1191,24 +1254,14 @@ fn window_read_without_its_handle(hwnd: isize, runtime_id: &[i32]) -> Option<isi
     }
 }
 
-/// An MSAA node's ancestors, outermost first, without the window objects
-/// above controls (see [`msaa_enrichment`]), stopping at an ancestor
-/// of `previous`, those Core knows, and completed above as [`complete`]
-/// says: where a parent lies in a window read through UIA, the walk goes
-/// on from that window's UIA element, as NVDA switches API when a parent
-/// is in such a window (`correctAPIForRelation`): in a Save As dialog, the
-/// file name box's containers above the shell's UIA view are UIA's; where
-/// a parent lies in a window read as a plain window
-/// ([`reads_as_plain`]), or an `accParent` fails or names nothing, from
-/// that window or the parent window ([`window_onward`]); and a walk cut by
-/// the hop limit, by plain windows. A node that can no longer be reached
-/// goes on from the parent window of its window ([`onward_after_failure`]).
-/// Without `uia` the walk stays in MSAA.
+/// The MSAA half of [`chain`]: the MSAA executor's walk above `node`,
+/// its window objects above controls left out, chained above where it
+/// ends.
 ///
 /// # Errors
 ///
 /// [`FocusLost`], from [`window_onward`].
-fn msaa_ancestors(
+fn msaa_chain(
     context: &RequestContext<'_>,
     uia: Option<(&Uia, &Request<Ancestor>)>,
     node: &NodeSnapshot,
@@ -1250,13 +1303,13 @@ fn msaa_ancestors(
 }
 
 /// An MSAA node's ancestors, stopping at an ancestor of `previous`, those
-/// Core knows, and completed above as [`msaa_ancestors`] says: an MSAA
+/// Core knows, and completed above as [`chain`] says: an MSAA
 /// call has no bound of its own, and a UIA call in the walk ends after
 /// UIA's call timeout.
 ///
 /// # Errors
 ///
-/// [`FocusLost`], from [`msaa_ancestors`].
+/// [`FocusLost`], from [`chain`].
 pub(super) fn msaa_enrichment(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1270,10 +1323,9 @@ pub(super) fn msaa_enrichment(
     let request = client
         .uia_with(context, RequestContext::ancestor_request)
         .ok();
-    msaa_ancestors(
+    chain(
         context,
-        request.as_ref().map(|(uia, request)| (*uia, request)),
-        node,
+        ChainStart::Msaa(node, request.as_ref().map(|(uia, request)| (*uia, request))),
         (previous, candidates),
     )
 }
@@ -1832,7 +1884,7 @@ pub(super) fn resolve_uia_element(
 
 /// A UIA node's live element, filled as a node, or the error a query
 /// reports for it.
-fn uia_node<'a>(
+pub(super) fn uia_node<'a>(
     context: &RequestContext<'_>,
     client: &'a mut Client,
     node_id: NodeId,
@@ -1840,33 +1892,6 @@ fn uia_node<'a>(
     let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
     let element = resolve_uia_element(context, uia, &nodes, node_id)?;
     Ok((uia, nodes, element))
-}
-
-/// A node's ancestors, outermost first.
-pub(super) fn ancestors(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-) -> Result<Vec<NodeSnapshot>, ReadError> {
-    if context.store.runtime_id_of(node_id).is_some() {
-        let (uia, _, element) = uia_node(context, client, node_id)?;
-        let request = context.ancestor_request(uia).map_err(|error| {
-            ReadError::Failed(format!("could not build a cache request: {error}"))
-        })?;
-        // The full chain: object navigation reuses nothing and waits for
-        // the application as long as it takes.
-        let own_window = element.read().role.hwnd;
-        return uia_ancestors(
-            context,
-            (uia, &request),
-            (element.live(), own_window, own_window),
-            (&[], &mut None, None),
-        )
-        .map_err(|FocusLost| {
-            ReadError::Failed("a UIA window's element on the way could not be read".to_owned())
-        });
-    }
-    super::msaa_object::ancestors(context, client, node_id)
 }
 
 /// The UI Automation element of node `node_id`, for a registration: the

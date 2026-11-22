@@ -886,7 +886,7 @@ impl Run<'_, '_> {
             Err(outcome) => return Ok(outcome),
         };
         let context = self.context;
-        let chain = match read::ancestors(context, self.client, node) {
+        let chain = match self.chain(node) {
             Ok(chain) => chain,
             Err(error) => return Ok(failed(&error, node)),
         };
@@ -904,6 +904,36 @@ impl Run<'_, '_> {
             ancestors: asked::ancestor_reads(context, &ancestors, nearest, set),
             end,
         })))
+    }
+
+    /// The whole chain of ancestors above `node`, outermost first: a UI
+    /// Automation node's by its executor's walk chained above where it
+    /// ends ([`read::chain`]), as object navigation reads it, reusing
+    /// nothing and waiting for the application as long as it takes; an
+    /// MSAA node's by its executor's walk to the top.
+    fn chain(&mut self, node: NodeId) -> Result<Vec<NodeSnapshot>, ReadError> {
+        let context = self.context;
+        if context.store.runtime_id_of(node).is_none() {
+            return super::msaa_object::ancestors(context, self.client, node);
+        }
+        let (uia, _, element) = read::uia_node(context, self.client, node)?;
+        let request = context.ancestor_request(uia).map_err(|error| {
+            ReadError::Failed(format!("could not build a cache request: {error}"))
+        })?;
+        let own_window = element.read().role.hwnd;
+        read::chain(
+            context,
+            read::ChainStart::Uia {
+                uia: (uia, &request),
+                element: (element.live(), own_window, own_window),
+                parent_automation_id: &mut None,
+                visited: None,
+            },
+            (&[], None),
+        )
+        .map_err(|read::FocusLost| {
+            ReadError::Failed("a UIA window's element on the way could not be read".to_owned())
+        })
     }
 
     /// `Descendants`: each start's subtree in tree order, each node judged
