@@ -1536,9 +1536,13 @@ pub fn navigate(
 /// them (its `children`): those `AccessibleChildren` answers for an
 /// object's own `accChildCount`, a child object outside the object's
 /// window or a window inside it left out, and the object itself, should it
-/// name itself, too. A child that is gone keeps its place, read as a
-/// disconnected object reads, so the children after it are still listed,
-/// where a step on from it would end the list. Each child is read as
+/// name itself, too. An empty entry, and a child the list answers as an
+/// object with no window of its own or at its place, which a gone one
+/// has, are left out, as NVDA leaves them out; a child the list names by
+/// its id keeps its place in the object's window, as NVDA keeps one
+/// (`NVDAObjects/IAccessible/__init__.py` 1387 to 1397), however it then
+/// reads. Either way the children after it are still listed, where a step
+/// on from a gone child would end the list. Each child is read as
 /// [`navigate`] reads a neighbor. `Ok(None)` for a node whose children are
 /// reached by navigation instead: a window's own object, which navigates
 /// the window hierarchy, a simple child, and the objects of a tree view,
@@ -1581,7 +1585,31 @@ pub fn children(
     let identity = acc.canonical();
     let mut children = Vec::with_capacity(entries.len());
     for entry in &entries {
-        let (child_acc, child_hwnd) = resolve_child(&acc, entry, hwnd);
+        let (child_acc, child_hwnd) = match entry {
+            // An empty entry is no child, as NVDA filters it out of the
+            // list (`IAccessibleHandler/__init__.py` 390 to 393).
+            Related::Nothing | Related::Other => continue,
+            Related::Child(_) => resolve_child(&acc, entry, hwnd),
+            Related::Object(_) => {
+                // A child object with no window, by its own or by its
+                // place on the screen, is not made an object, as NVDA's
+                // `IAccessible` refuses one (`NVDAObjects/IAccessible/
+                // __init__.py` 812 to 822, 1416 to 1420): a gone child
+                // is left out, and the children after it are listed.
+                let Some(child_acc) = entry.object() else {
+                    continue;
+                };
+                let window = child_acc.window().or_else(|| {
+                    child_acc
+                        .location()
+                        .and_then(|place| window::at_point(place.left, place.top))
+                });
+                let Some(window) = window else {
+                    continue;
+                };
+                (child_acc, window)
+            }
+        };
         let child_id = child_acc.child();
         if child_id == CHILDID_SELF && identity.is_some() && child_acc.canonical() == identity {
             continue;

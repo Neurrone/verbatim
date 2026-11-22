@@ -190,3 +190,16 @@ pub(crate) fn tree_view_state_image(hwnd: isize, item: isize) -> u32 {
     };
     u32::try_from((state >> 12) & 3).unwrap_or(0)
 }
+
+/// The window at screen point (`x`, `y`) (`WindowFromPoint`), a local
+/// call; `None` where there is none.
+pub(crate) fn at_point(x: i32, y: i32) -> Option<isize> {
+    // SAFETY: WindowFromPoint takes a point by value and returns null where
+    // no window is.
+    let found = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::WindowFromPoint(
+            windows::Win32::Foundation::POINT { x, y },
+        )
+    };
+    (!found.is_invalid()).then_some(found.0 as isize)
+}

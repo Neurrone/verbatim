@@ -582,12 +582,12 @@ gamma
 /// An alert's walk (`Descendants` of an MSAA object, as Core's alert
 /// writes it) of mockapp's alert (`alert_children.json`, addressed by its
 /// object id) whose middle child, a static text, is gone where it stands
-/// (`disconnect`) before the walk: its parent still lists it, so it keeps
-/// its place read with no name, and the walk goes on to the button after
-/// it, as NVDA's `recursiveDescendants` lists an object's children
-/// whatever one of them answers (`docs/parity/alerts.md`, "Other
-/// alerts"); the walk is incomplete, since the gone text's own children
-/// are unknown.
+/// (`disconnect`) before the walk: its parent still lists it by its child
+/// id, which NVDA keeps in the parent's window
+/// (`NVDAObjects/IAccessible/__init__.py` 1387 to 1397), so it keeps its
+/// place read with no name, and the walk goes on to the button after it
+/// (`docs/parity/alerts.md`, "Other alerts"); the walk is incomplete, since
+/// the gone text's own children are unknown.
 fn an_msaa_walk_reads_the_children_after_a_gone_one() {
     let title = common::unique_title("mockapp-batch-gone-child");
     let mut app = common::spawn("alert_children.json", "msaa", &title);
