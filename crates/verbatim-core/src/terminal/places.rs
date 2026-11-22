@@ -161,8 +161,8 @@ impl TerminalPlaces {
             }
             (Some(MarkPlace::Rows { .. } | MarkPlace::Refused) | None, _) => None,
         };
-        let (written, added, past) = match (place, counted) {
-            (None, _) => (None, None, None),
+        let (added, past) = match (place, counted) {
+            (None, _) => (None, None),
             (Some(MarkPlace::Rows { .. }), Some(counted)) => {
                 // The rows above the window are spoken first, the opening
                 // group's worth of them at most (F1).
@@ -177,7 +177,6 @@ impl TerminalPlaces {
                     .saturating_sub(window_rows)
                     .saturating_sub(u32::try_from(opening.len()).unwrap_or(u32::MAX));
                 (
-                    Some(counted.written),
                     Some(counted.added),
                     (counted.written > window_rows)
                         .then(|| past(window, Some(opening), Skipped::Count(skipped))),
@@ -185,14 +184,13 @@ impl TerminalPlaces {
             }
             (Some(MarkPlace::Rows { .. }), None) if rotated_now && !from_aside => {
                 let (written, past) = rotated(read, window, line, (window_rows, said));
-                (written, written, past)
+                (written, past)
             }
             // Refused, or a document shorter than when the mark was set: the
             // text shrank under a clear.
             (Some(MarkPlace::Refused | MarkPlace::Rows { .. }), _) => {
                 let written = read.document_rows;
                 (
-                    Some(written),
                     Some(written),
                     (written > window_rows).then(|| {
                         past(
