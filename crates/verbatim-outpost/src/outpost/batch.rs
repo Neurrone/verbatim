@@ -12,8 +12,9 @@
 //! code the outpost's kinds of request run on: an MSAA node's properties
 //! with those read apart, a navigation step, the ancestor walk, the
 //! children walk for a walk down the tree, the MSAA candidate's
-//! acquisition, focused-state walk and full read, the focus-now read, and
-//! the text reads through each backend's adapter. The controller-for relation and the first selected
+//! acquisition, and the text reads through each backend's adapter. A
+//! `FocusRead`, and a `Test` of the application's focus, run through the
+//! focus window's executor's arms ([`super::focus`]). The controller-for relation and the first selected
 //! item run through the program builder ([`verbatim_uia_rops::batch`]), as
 //! does each run of consecutive text steps on one subject that resolves
 //! to a UI Automation node (`Caret`, `ReadText`, `ReadRange`,
@@ -38,7 +39,8 @@ use verbatim_model::{
 };
 
 use super::RequestContext;
-use super::asked::{self, FocusNow};
+use super::asked;
+use super::focus::FocusNow;
 use super::read::{self, Client, ReadError};
 use super::text_reads;
 use super::window::hwnd_of;
@@ -692,27 +694,6 @@ impl Run<'_, '_> {
         })
     }
 
-    /// The application's focus in `hwnd`, taken already, through the
-    /// executors' `FocusRead` arms or the outpost's own focus read, as
-    /// [`super::Outpost::set_focus_arms`] chooses until the switch.
-    fn focus_now(
-        context: &RequestContext<'_>,
-        client: &mut Client,
-        hwnd: isize,
-        set: &[PropertyId],
-        read: (
-            &[KnownAncestor],
-            verbatim_model::TextDetails,
-            read::FocusDepth,
-        ),
-    ) -> FocusNow {
-        if context.focus_arms() {
-            super::focus_arms::focus_now(context, client, hwnd, set, read)
-        } else {
-            asked::focus_now(context, client, Ok(hwnd), set, read)
-        }
-    }
-
     /// `Test` of a window's own object or of the application's focus: the
     /// matcher evaluated lazily, each property read at most once when the
     /// matcher first needs it, in its order.
@@ -745,36 +726,23 @@ impl Run<'_, '_> {
             }
             Ok(Held::Focus(hwnd, kept)) => {
                 let hwnd = *hwnd;
-                // The focus read as a read of it with its focused state
-                // reads it, in full only when focused, kept for the read
-                // of the focus that follows.
+                // The focus read through its backend's arm with its focused
+                // state, in full only when focused, kept for the read of
+                // the focus that follows.
                 let (known, set, details) = self
                     .focus_read
                     .clone()
                     .unwrap_or_else(|| (Vec::new(), Vec::new(), verbatim_model::TextDetails::NONE));
-                let now = Self::focus_now(
+                let (now, tested) = super::focus::focus_now(
                     context,
                     self.client,
-                    hwnd,
-                    &set,
-                    (&known, details, read::FocusDepth::FullIfFocused),
+                    (hwnd, Some(matcher)),
+                    (&known, &set, details),
                 );
-                let (focused, values) = match &now {
-                    FocusNow::Read(focused, focus) => (
-                        focused.map(PropertyValue::Flag),
-                        Some(&focus.focus.read.values),
-                    ),
-                    FocusNow::Unfocused => (Some(PropertyValue::Flag(false)), None),
-                    FocusNow::NotThere => return Ok(StepOutcome::NotThere(Missing::Object)),
+                let Some((holds, values)) = tested else {
+                    return Ok(StepOutcome::NotThere(Missing::Object));
                 };
-                let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
-                    Ok(match id {
-                        PropertyId::FocusedWithin => focused.clone(),
-                        id => values
-                            .and_then(|values| values.answer(id))
-                            .and_then(|answer| answer.value.clone()),
-                    })
-                });
+                read = values;
                 *kept = Some(now);
                 (None, hwnd, holds)
             }
@@ -1166,39 +1134,27 @@ impl Run<'_, '_> {
         let context = self.context;
         let read = match &mut self.held[place].1 {
             Ok(Held::Msaa(candidate)) => candidate.take().and_then(|candidate| {
-                if context.focus_arms() {
-                    super::focus_arms::candidate(
-                        context,
-                        self.client,
-                        *candidate,
-                        (known, set, details),
-                    )
-                } else {
-                    asked::candidate_read(context, self.client, *candidate, (known, set, details))
-                }
+                super::focus::candidate(context, self.client, *candidate, (known, set, details))
             }),
             Ok(Held::Focus(hwnd, tested)) => {
                 let hwnd = *hwnd;
                 let now = tested.take().unwrap_or_else(|| {
-                    Self::focus_now(
+                    super::focus::focus_now(
                         context,
                         self.client,
-                        hwnd,
-                        set,
-                        (known, details, read::FocusDepth::Full),
+                        (hwnd, None),
+                        (known, set, details),
                     )
+                    .0
                 });
                 match now {
-                    FocusNow::Read(_, read) => Some(*read),
-                    FocusNow::Unfocused | FocusNow::NotThere => None,
+                    FocusNow::Read(read) => Some(*read),
+                    FocusNow::Unread => None,
                 }
             }
             Ok(Held::Route(route)) => {
-                let read = if context.focus_arms() {
-                    super::uia_focus::route(context, self.client, route, (known, set, details))
-                } else {
-                    super::completion::focus(context, self.client, route, (known, set, details))
-                };
+                let read =
+                    super::uia_focus::route(context, self.client, route, (known, set, details));
                 return Ok(match read {
                     Ok(read) => StepOutcome::Done(Done::FocusRead(read)),
                     Err(unread) => unread.outcome(),

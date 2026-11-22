@@ -71,7 +71,7 @@ process held open (`outpost::ApplicationNames`).
 
 An outpost takes a window as its application's when the application serves
 its UIA (`verbatim_win32::provider::served_by`, through
-`verbatim_win32::provider::served_by`, local calls), and `read::focused_control_in` reads no focused element in another
+`verbatim_win32::provider::served_by`, local calls), and the focus read (`read::checked_focused_element`) reads no focused element in another
 process's window (`read::control_window`). `GetFocusedElementBuildCache`
 reads the keyboard focus again itself and can return an element of the
 application the focus has just moved to
@@ -563,7 +563,7 @@ and the inherited pipe handles.
 
 ### The current focus
 
-- A `FocusRead` of the application's focus (`asked::focus_now`) is the
+- A `FocusRead` of the application's focus (its executor's arm) is the
   focused control (`hwndFocus`, through its window's backend) with
   its ancestors up to one Core already knows, the selected item that is
   its value where it has one, and its caret (a console's text area reads as a nameless terminal,
@@ -611,7 +611,7 @@ and the inherited pipe handles.
 - Hidden-frame suppression (decision D9): Core's hidden 1x1 frame, marked
   with `verbatim_model::HIDDEN_FRAME_WINDOW_PROP`, is never announced: a
   reader's window facts say a window is the frame, and Core drops a focus
-  there; `focused_control_in` treats the frame as nothing focused.
+  there; the focus read (`read::checked_focus_window`) treats the frame as nothing focused.
 
 ### Event flow
 
@@ -1003,13 +1003,13 @@ taken before any call that can block. Each step runs under its gate
   children of a node MSAA does not list, by the dispatcher's navigation
   on that node's backend (`asked::children`).
 - `FocusRead`, and a `Test` of the focus, run through the executors'
-  `FocusRead` arms when `Outpost::set_focus_arms` is on, the dispatch
-  choice that lives until the switch (`outpost/focus_arms.rs`): the
-  focus window's backend picks the arm, resolved by
+  `FocusRead` arms (`verbatim_uia_rops::batch::focus`,
+  `verbatim_ia2::batch::focus_read` and `test_focus`): the focus
+  window's backend picks the arm (`outpost/focus.rs`), resolved by
   `outpost/uia_focus.rs` and by `outpost/msaa_object.rs`'s
-  `MsaaFocusRead`. Off, the outpost's own focus reads answer, as below.
-  `focus_arms_agree` (mockapp) compares the two on every fixture
-  `focus_reports` uses, with remote operations on and off.
+  `MsaaFocusRead`. `focus_paths_agree` (mockapp) compares their answers
+  with remote operations on and off on every fixture `focus_reports`
+  uses.
 - `Read` of a node reads its snapshot, an acquired MSAA object's each
   property alone (`FocusCandidate::property`). Through either backend,
   those no snapshot holds are read apart: `Suggestions`
@@ -1027,9 +1027,10 @@ taken before any call that can block. Each step runs under its gate
   element is the listener's.
 - `Test` lazily in its matcher's order, each property read once and kept
   in its result in the order read. A `Test` of the application's focus,
-  the check after a menu end, reads an MSAA focus's focused state over
-  it and every ancestor up to the desktop, and the focus in full only
-  when it has it, kept for the `FocusRead` after it.
+  the check after a menu end, is its executor's arm: it reads an MSAA
+  focus's focused state over it and every ancestor up to the desktop,
+  and the focus in full only when it has it; the dispatcher keeps what
+  it read for the `FocusRead` after it.
 - `Related`: parent, siblings and first child by object navigation
   (`read::navigate`; through UI Automation a `Related` step of the
   program builder, `read::related_step`); a UI Automation node's last
@@ -1070,16 +1071,17 @@ taken before any call that can block. Each step runs under its gate
   before, by runtime id or by an MSAA object's address where it was
   acquired at it (`Store::address_of`), and answers "nothing activated"
   past either.
-- `FocusRead` of an MSAA candidate (`asked::candidate_read`): its object
+- `FocusRead` of an MSAA candidate (the MSAA arm): its object
   not at its address is not there; it reads it in full with its
   ancestors up to the first Core already knows.
-- `FocusRead` of the application's focus (`Subject::Focus`,
-  `asked::focus_now`): the focus-now read, its walk up through either
+- `FocusRead` of the application's focus (`Subject::Focus`, the focus
+  window's executor's arm): the focus-now read, its walk up through either
   API stopping at the first ancestor Core already knows. The window with
   the keyboard focus is taken first, before any call that can block,
   the request's probe included, as NVDA's fake focus takes it when its
   timer fires.
-- `FocusRead` of a route (`Subject::Route`, `outpost/completion.rs`):
+- `FocusRead` of a route (`Subject::Route`, the UI Automation arm's
+  `route`, resolved by `outpost/completion.rs`):
   the outpost's own copy of the element is found by the route, which
   goes on, when the listener's walk met an ancestor Core already knows,
   from that ancestor: a window's own element, or the route kept for its
@@ -1091,8 +1093,7 @@ taken before any call that can block. Each step runs under its gate
   moved to the element on the registering thread and waited for, keeping
   the node `Follow` named, then the node's states are read; the
   ancestors are the listener's reads, which the route carries
-  (`Route::read`), completed above as a focus read's are
-  (`completion::focus`); a `Read` of a route, a selection's item, mints
+  (`Route::read`), completed above as a focus read's are; a `Read` of a route, a selection's item, mints
   the element alone (`completion::object`). Where the listener's walk
   met an ancestor Core already knows, the route's end names it, and the
   completion makes no read to find it.

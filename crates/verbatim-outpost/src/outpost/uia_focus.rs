@@ -10,7 +10,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use verbatim_model::property::PropertyId;
+use verbatim_model::matcher::Matcher;
+use verbatim_model::property::{PropertyAnswer, PropertyId};
 use verbatim_model::request::{FocusRead, KnownAncestor, Route};
 use verbatim_model::{NodeId, NodeSnapshot, TextDetails};
 use verbatim_uia::{Ancestor, AncestorWalk, Cached, Interning, Live, Node, Request, Uia};
@@ -19,8 +20,9 @@ use verbatim_uia_rops::batch::focus::{
 };
 
 use super::RequestContext;
-use super::asked::{self, FocusNow};
+use super::asked;
 use super::completion::{self, RouteKept, Unread};
+use super::focus::FocusNow;
 use super::read::{self, Client};
 use super::window::hwnd_of;
 
@@ -289,17 +291,16 @@ impl FocusResolve for UiaFocusRead<'_, '_> {
 }
 
 /// The application's focus in `hwnd`, a window read through UI
-/// Automation, through the executor's `FocusRead` arm, as
-/// [`asked::focus_now`] reads it.
+/// Automation, through the executor's `FocusRead` arm; with `matcher`,
+/// `Test` of it through the executor's arm, with the test's result.
 pub(super) fn focus_now(
     context: &RequestContext<'_>,
     client: &mut Client,
-    hwnd: isize,
-    set: &[PropertyId],
-    (known, details): (&[KnownAncestor], TextDetails),
-) -> FocusNow {
+    (hwnd, matcher): (isize, Option<&Matcher>),
+    (known, set, details): (&[KnownAncestor], &[PropertyId], TextDetails),
+) -> (FocusNow, Option<(bool, Vec<PropertyAnswer>)>) {
     let Some(uia) = client.shared_uia() else {
-        return FocusNow::NotThere;
+        return (FocusNow::Unread, None);
     };
     let resolver = UiaFocusRead {
         context,
@@ -310,14 +311,23 @@ pub(super) fn focus_now(
         set,
         details,
     };
-    match verbatim_uia_rops::batch::focus::focus_now(&uia, hwnd, &resolver) {
-        FocusNowFound::Read(read) => FocusNow::Read(None, read),
-        FocusNowFound::NotThere => FocusNow::NotThere,
-    }
+    let (found, tested) = match matcher {
+        Some(matcher) => {
+            verbatim_uia_rops::batch::focus::test_focus(&uia, hwnd, matcher, &resolver)
+        }
+        None => (
+            verbatim_uia_rops::batch::focus::focus_now(&uia, hwnd, &resolver),
+            None,
+        ),
+    };
+    let now = match found {
+        FocusNowFound::Read(read) => FocusNow::Read(read),
+        FocusNowFound::NotThere => FocusNow::Unread,
+    };
+    (now, tested)
 }
 
-/// The focus `route` names, through the executor's `FocusRead` arm, as
-/// [`completion::focus`] reads it.
+/// The focus `route` names, through the executor's `FocusRead` arm.
 pub(super) fn route(
     context: &RequestContext<'_>,
     client: &mut Client,

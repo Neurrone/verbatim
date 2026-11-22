@@ -659,5 +659,6 @@ step runs alone, by calls:
   outpost's `FocusResolve` for the chaining, a UI Automation dialog's
   text, the foreground object and the answer. A candidate's dialogs are
   read before the foreground object, the application's focus's after it.
-  Until the switch it runs only under the outpost's dispatch choice
-  (`Outpost::set_focus_arms`).
+  `test_focus` is a `Test` of the application's focus: that read with its
+  focused state first, the matcher evaluated lazily over it, and what it
+  found answered for a later `FocusRead` to take.

@@ -1,10 +1,9 @@
-//! `FocusRead`'s arms agree with the outpost's own focus reads (the
-//! one-path design, section 8): on every fixture `focus_reports` uses,
-//! each read of a focus runs through a real outpost's own
-//! `batch::answer`, once by the outpost's own focus reads and once by the
-//! executors' `FocusRead` arms (`Outpost::set_focus_arms`), with remote
-//! operations on and then off, against the same mockapp, and each answer
-//! is the same both ways.
+//! `FocusRead`'s arms answer the same by their programs and by their
+//! calls (the one-path design, section 8): on every fixture
+//! `focus_reports` uses, each read of a focus runs through a real
+//! outpost's own `batch::answer` and the executors' `FocusRead` arms,
+//! once with remote operations on and once with them off, against the
+//! same mockapp, and each answer is the same both ways.
 //!
 //! A UI Automation fixture's focus is read as the listener's route twice,
 //! the second time with the first committed, so that the listener's walk
@@ -12,8 +11,10 @@
 //! test of the focus with the read of it under the test. An MSAA
 //! fixture's first nodes are each read as an acquired candidate, and its
 //! focus as the application's focus, alone and under a test of its
-//! focused state. Each configuration starts a new outpost, so the node
-//! ids the two outposts mint, in the same order, are the same.
+//! focused state; MSAA has no programs, so its reads pin that remote
+//! operations change nothing on its path. Each configuration starts a new
+//! outpost, so the node ids the two outposts mint, in the same order, are
+//! the same.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -64,11 +65,11 @@ fn tested_focus(known: Vec<verbatim_model::request::KnownAncestor>) -> Batch {
 }
 
 /// Each read of `fixture`'s focus, by label, read by an outpost with
-/// remote operations `remote` and the `FocusRead` arms `arms`.
+/// remote operations `remote`.
 fn reads(
     (app, hwnd, backend): (&mut common::MockApp, HWND, &str),
     (focus, then): (Option<&str>, Option<&str>),
-    (remote, arms): (bool, bool),
+    remote: bool,
 ) -> Vec<(String, String)> {
     if let Some(focus) = focus {
         common::apply(app, hwnd, &format!("set-focus {focus}"));
@@ -79,7 +80,6 @@ fn reads(
             remote_operations: remote,
         },
     );
-    outpost.outpost.set_focus_arms(arms);
     let mut read = Vec::new();
     if backend == "uia" {
         let uia = verbatim_uia::Uia::new().expect("a UIA client");
@@ -126,13 +126,12 @@ fn reads(
     read
 }
 
-/// Reads `fixture`'s focus, its element `focus` focused first, if any, through
-/// `backend` by the outpost's own reads
-/// and by the arms, with remote operations on and off, and asserts each
+/// Reads `fixture`'s focus, its element `focus` focused first, if any,
+/// through `backend`, with remote operations on and off, and asserts each
 /// read answered the same both ways.
 fn agree(fixture: &str, backend: &str, focus: Option<&str>) {
     common::init_com();
-    let title = common::unique_title("mockapp-focus-arms-agree");
+    let title = common::unique_title("mockapp-focus-paths-agree");
     let mut app = common::spawn_visible(fixture, backend, &title);
     let hwnd = common::find_window(&title);
     let then = THEN
@@ -140,18 +139,14 @@ fn agree(fixture: &str, backend: &str, focus: Option<&str>) {
         .find(|(named, _)| *named == fixture)
         .filter(|_| backend == "uia")
         .map(|&(_, then)| then);
-    for remote in [true, false] {
-        let own = reads((&mut app, hwnd, backend), (focus, then), (remote, false));
-        let arms = reads((&mut app, hwnd, backend), (focus, then), (remote, true));
-        assert_eq!(own.len(), arms.len());
-        for ((label, own), (_, arms)) in own.iter().zip(&arms) {
-            assert_eq!(
-                own,
-                arms,
-                "{fixture} ({backend}), {label}, remote operations {}: the outpost's own read and the arms answer differently",
-                if remote { "on" } else { "off" }
-            );
-        }
+    let remote = reads((&mut app, hwnd, backend), (focus, then), true);
+    let classic = reads((&mut app, hwnd, backend), (focus, then), false);
+    assert_eq!(remote.len(), classic.len());
+    for ((label, remote), (_, classic)) in remote.iter().zip(&classic) {
+        assert_eq!(
+            remote, classic,
+            "{fixture} ({backend}), {label}: the reads with remote operations on and off answer differently"
+        );
     }
     app.quit();
 }

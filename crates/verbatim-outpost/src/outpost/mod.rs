@@ -46,7 +46,7 @@ mod batch;
 mod class_path;
 mod commit;
 mod completion;
-mod focus_arms;
+mod focus;
 mod focus_path;
 mod followed;
 pub(crate) mod lock;
@@ -245,11 +245,6 @@ pub(crate) struct Context {
     /// Whether the event thread's console hook was asked for
     /// ([`Context::hook_console`]).
     console_hooked: std::sync::atomic::AtomicBool,
-    /// Whether a batch's `FocusRead`, and its `Test` of the focus, run
-    /// through the executors' `FocusRead` arms rather than the outpost's
-    /// own focus reads ([`Outpost::set_focus_arms`]), held only until the
-    /// switch.
-    focus_arms: std::sync::atomic::AtomicBool,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -650,12 +645,6 @@ impl Context {
         }
     }
 
-    /// Whether focus reads run through the executors' `FocusRead` arms
-    /// ([`Outpost::set_focus_arms`]).
-    fn focus_arms(&self) -> bool {
-        self.focus_arms.load(Ordering::Relaxed)
-    }
-
     /// Hooks the console's events for this outpost's application, once
     /// for its life, the first time `Follow` names a terminal in a
     /// console's window (`docs/design/readers-tell-core-asks-build1.md`:
@@ -874,7 +863,6 @@ impl Outpost {
             failed_reads: AtomicU32::new(0),
             event_thread: OnceLock::new(),
             console_hooked: std::sync::atomic::AtomicBool::new(false),
-            focus_arms: std::sync::atomic::AtomicBool::new(false),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -1125,15 +1113,6 @@ impl Outpost {
     /// can take the keyboard focus says which window has it.
     pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
         *self.context.focus_window.lock() = reader;
-    }
-
-    /// Runs a batch's `FocusRead`, and its `Test` of the focus, through the
-    /// executors' `FocusRead` arms when `on`, else through the outpost's
-    /// own focus reads: the dispatch choice the one-path work's
-    /// differential compares, held only until the switch.
-    #[doc(hidden)]
-    pub fn set_focus_arms(&self, on: bool) {
-        self.context.focus_arms.store(on, Ordering::Relaxed);
     }
 
     /// Judges whether a window can be read with `reader` rather than by

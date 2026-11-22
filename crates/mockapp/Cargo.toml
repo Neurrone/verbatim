@@ -77,7 +77,7 @@ name = "executors_agree"
 harness = false
 
 [[test]]
-name = "focus_arms_agree"
+name = "focus_paths_agree"
 harness = false
 
 [[test]]

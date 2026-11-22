@@ -19,14 +19,12 @@ use verbatim_model::protocol::UiaSnapshotFact;
 use super::read::UiaAncestorFact;
 use verbatim_model::batch::{Missing, StepOutcome, StepRefusal};
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{FocusRead, KnownAncestor, NodeRead, Route, RouteEnd};
-use verbatim_model::{Backend, NodeId, NodeSnapshot, State, TextDetails};
-use verbatim_uia::map::with_legacy_checked_state;
-use verbatim_uia::{Cached, DialogText, Fill, Interning as _, Kept, Node};
-use verbatim_uia_rops::{Path, StatesQuery, focus_states};
+use verbatim_model::request::{KnownAncestor, NodeRead, Route, RouteEnd};
+use verbatim_model::{Backend, NodeId, NodeSnapshot, State};
+use verbatim_uia::{Cached, Interning as _, Kept, Node};
 
 use super::RequestContext;
-use super::asked::{Focus, ancestors_end, cut_at_known, focus_read, node_read, snapshot_of};
+use super::asked::{ancestors_end, node_read, snapshot_of};
 use super::focus_path;
 use super::read::{self, Client};
 use super::reducer::FocusPath;
@@ -136,101 +134,6 @@ pub(super) fn object(
         Some(minted.nearest),
         set,
     ))
-}
-
-/// The focus `route` names, read as a focus: its registration added
-/// before its states are read, its ancestors up to the first of `known`,
-/// by `set`, its caret fetching `details`. The step's outcome when it is
-/// not there, or Core named an ancestor its route's end does not, a
-/// defect.
-pub(super) fn focus(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    route: &Route,
-    (known, set, details): (&[KnownAncestor], &[PropertyId], TextDetails),
-) -> Result<Box<FocusRead>, Unread> {
-    let gone = || Unread::NotThere;
-    let Minted {
-        found,
-        window_element,
-        node,
-        mut snapshot,
-        path,
-        nearest,
-        reused,
-    } = mint(context, client, route, true).ok_or_else(gone)?;
-    let met = match &route.end {
-        RouteEnd::Known(end) => {
-            let Some(place) = known
-                .iter()
-                .position(|named| named == end)
-                .and_then(|place| u32::try_from(place).ok())
-            else {
-                // Core names the ancestor the walk met among those it sends.
-                tracing::error!(target: verbatim_model::DEFECT_TARGET, "a route's end names an ancestor the completion does not");
-                return Err(Unread::Unsupported);
-            };
-            Some(place)
-        }
-        _ => None,
-    };
-    let Ok((mut ancestors, met)) = ancestors(context, client, (route, known), met) else {
-        return Err(gone());
-    };
-    keep_minted(context, (node, &ancestors), &path, window_element.as_ref());
-    // A focus that met none of the ancestors Core knows enters a new
-    // window: its foreground object is read with it, as NVDA reads it then,
-    // taken from the chain when the foreground window is one of it.
-    let foreground = met
-        .is_none()
-        .then(|| read::foreground_object_among(context, client, &ancestors))
-        .flatten();
-    // The node's states, read once its registration is in, so a change
-    // raised from now on is heard, with the text of the dialogs it enters
-    // whose elements the outpost holds.
-    let gathered = found.as_ref().map_or_else(Vec::new, |element| {
-        states_and_dialogs(
-            context,
-            client,
-            element,
-            nearest,
-            (&mut snapshot, &ancestors),
-        )
-    });
-    // Every dialog of the chain below the ancestors Core already knows is
-    // one the focus enters.
-    read::describe_dialogs(
-        context,
-        client,
-        (
-            ancestors.iter_mut().chain(std::iter::once(&mut snapshot)),
-            Some(&path),
-        ),
-        &gathered,
-    );
-    // As the listener read it.
-    let value_from_selection = route.read.first().is_some_and(|read| {
-        matches!(
-            read.answer(PropertyId::ValueFromSelection)
-                .and_then(|answer| answer.value.as_ref()),
-            Some(verbatim_model::property::PropertyValue::Flag(true))
-        )
-    });
-    Ok(Box::new(focus_read(
-        (context, client.uia()),
-        &Focus {
-            node: &snapshot,
-            ancestors: &ancestors,
-            met,
-            nearest: Some(nearest),
-            msaa: None,
-            foreground: foreground.as_ref(),
-            value_from_selection,
-            runtime_id_reused: reused,
-            details,
-        },
-        set,
-    )))
 }
 
 /// The outpost's own copy of the element `runtime_id` names, by the route:
@@ -459,144 +362,6 @@ fn register(context: &RequestContext<'_>, element: &Cached<Node>, node: NodeId) 
         return;
     };
     super::followed::add_focus(context, (node, agile.reference()));
-}
-
-/// Reads the states of the focus `element`, whose registration is in, into
-/// `snapshot`, and gathers the text of each dialog among `ancestors` and
-/// the focus that wants it and whose element the outpost holds, in one
-/// remote program where `window` allows one
-/// ([`verbatim_uia_rops::focus_states`]): NVDA's `event_gainFocus`
-/// registers for the focus's events before it speaks it, dialog text
-/// included (`NVDAObjects/UIA/__init__.py` 1623 to 1626). Answers each
-/// dialog's text gathered, for [`read::describe_dialogs`] to give; the
-/// states stay as the listener read them when the read fails.
-fn states_and_dialogs(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    element: &Cached<Node>,
-    window: isize,
-    (snapshot, ancestors): (&mut NodeSnapshot, &[NodeSnapshot]),
-) -> Vec<(NodeId, Option<String>)> {
-    use verbatim_reader_rules::dialog::dialog_text;
-    use verbatim_uia_rops::dialog::UiaDialog;
-    let dialogs: Vec<(NodeId, verbatim_uia::Live)> = ancestors
-        .iter()
-        .chain(std::iter::once(&*snapshot))
-        .filter(|node| node.backend == Backend::Uia && read::wants_dialog_text(context, node))
-        .filter_map(|node| {
-            let held = context.store.element_of(node.id)?.resolve().ok()?;
-            Some((node.id, held.live().clone()))
-        })
-        .collect();
-    let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
-        return Vec::new();
-    };
-    let Ok(children) = uia.request_fixed::<DialogText>() else {
-        return Vec::new();
-    };
-    let lives: Vec<verbatim_uia::Live> = dialogs.iter().map(|(_, live)| live.clone()).collect();
-    let fill = Fill::new(&nodes);
-    let children_fill = Fill::new(&children);
-    let query = StatesQuery {
-        focus: element.live(),
-        fill: &fill,
-        dialogs: &lives,
-        children: &children_fill,
-    };
-    let (states, path) = match focus_states(uia, &query, context.tries_remote(Some(window))) {
-        Ok(answer) => answer,
-        Err(error) => {
-            tracing::debug!(%error, "a focus's states could not be read");
-            return Vec::new();
-        }
-    };
-    if let Path::Fallback(error) = &path {
-        super::remote_fell_back("focus states", Some(window), error);
-        if matches!(error, verbatim_uia_rops::Error::Import(_)) {
-            context.read_classically(window);
-        }
-    }
-    if let Some(fresh) = states.focus {
-        let fresh = with_legacy_checked_state(
-            fresh.live().element(),
-            fresh.snapshot_in_table(context.nodes()),
-        );
-        let focused = snapshot.states.contains(State::Focused);
-        snapshot.states = fresh.states;
-        if focused {
-            snapshot.states = snapshot.states.with(State::Focused);
-        }
-    }
-    dialogs
-        .into_iter()
-        .zip(states.children)
-        .map(|((id, live), read)| {
-            let text = match read {
-                Some(read) => dialog_text(&UiaDialog::with_children(uia, &children, live, read)),
-                None => dialog_text(&UiaDialog::new(uia, &children, live)),
-            };
-            (id, text)
-        })
-        .collect()
-}
-
-/// The element's ancestors, nearest first, up to the first Core already
-/// knows, and its place in the request's list: the route's ancestors as the
-/// listener read them, ending at `met`, the place of the known ancestor
-/// the listener's walk met, or, where its walk went on to the top, the
-/// chain above them.
-fn ancestors(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (route, known): (&Route, &[KnownAncestor]),
-    met: Option<u32>,
-) -> Result<(Vec<NodeSnapshot>, Option<u32>), read::FocusLost> {
-    let parents: Vec<UiaAncestorFact> = route
-        .steps
-        .iter()
-        .zip(&route.read)
-        .skip(1)
-        .map(|(step, values)| UiaAncestorFact {
-            snapshot: fact(&step.runtime_id.0, values),
-            hwnd: step.window.map_or(0, hwnd_of),
-            content: step.content,
-        })
-        .collect();
-    let own_window = route
-        .steps
-        .first()
-        .and_then(|step| step.window)
-        .map_or(0, hwnd_of);
-    let nearest = hwnd_of(route.window);
-    if let Some(met) = met {
-        let known = |id: NodeId| read::knows(known, id);
-        let read_by_msaa = |hwnd: isize| read::uia_walk_leaves(context, nearest, hwnd);
-        let parts: Vec<verbatim_uia::AncestorParts> = parents.iter().map(parts).collect();
-        let (chain, _, _) = verbatim_uia::Uia::ancestor_chain_from_parts(
-            &parts,
-            context.nodes(),
-            &verbatim_uia::AncestorStops {
-                read_by_other_api: &read_by_msaa,
-                known: &known,
-                out_of_time: None,
-                visited: None,
-            },
-        );
-        let nearest_first = chain.into_iter().rev().collect();
-        return Ok((nearest_first, Some(met)));
-    }
-    let chain = read::uia_chain_from_read(
-        context,
-        client,
-        (
-            &parents,
-            own_window,
-            Some(nearest),
-            ancestors_end(&route.end),
-        ),
-        known,
-    )?;
-    Ok(cut_at_known(context, chain, known))
 }
 
 /// What the listener read of an element, as the continuation above a route

@@ -321,6 +321,46 @@ pub fn focus_now(uia: &Uia, hwnd: isize, resolver: &dyn FocusResolve) -> FocusNo
     })))
 }
 
+/// `Test` of the application's focus in window `hwnd`, taken already: the
+/// focus read as [`focus_now`] reads it, and `matcher` evaluated lazily
+/// over that read, `FocusedWithin` answering none, since UI Automation's
+/// focus is not tested for an MSAA focused state. Answers what was found,
+/// which a `FocusRead` of the focus later in the batch takes instead of
+/// reading again, and the test's result, `None` when no focus could be
+/// read.
+pub fn test_focus(
+    uia: &Uia,
+    hwnd: isize,
+    matcher: &verbatim_model::matcher::Matcher,
+    resolver: &dyn FocusResolve,
+) -> (
+    FocusNowFound,
+    Option<(bool, Vec<verbatim_model::property::PropertyAnswer>)>,
+) {
+    let found = focus_now(uia, hwnd, resolver);
+    let FocusNowFound::Read(focus) = &found else {
+        return (found, None);
+    };
+    let mut read = Vec::new();
+    let Ok(holds) = matcher.evaluate::<std::convert::Infallible>(&mut |id| {
+        let value = match id {
+            verbatim_model::property::PropertyId::FocusedWithin => None,
+            id => focus
+                .focus
+                .read
+                .values
+                .answer(id)
+                .and_then(|answer| answer.value.clone()),
+        };
+        read.push(verbatim_model::property::PropertyAnswer {
+            id,
+            value: value.clone(),
+        });
+        Ok(value)
+    });
+    (found, Some((holds, read)))
+}
+
 /// The selected item `element`, a combo box without the `Value` pattern
 /// or a looping selector, reads as its value; none for another element,
 /// and none read when the application does not answer in time.
@@ -716,4 +756,29 @@ fn uia_dialog_text(uia: &Uia, resolver: &dyn FocusResolve, node: &NodeSnapshot) 
     // includes it.
     let children = uia.request_fixed::<DialogText>().ok()?;
     verbatim_reader_rules::dialog::dialog_text(&UiaDialog::new(uia, &children, dialog))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_read_without_its_handle;
+
+    /// Only a window's own element read without its handle, as the console
+    /// host's window is read inside its provider, is read again through
+    /// its proxy: its handle comes from its runtime id.
+    #[test]
+    fn a_window_element_read_without_its_handle_is_named_by_its_runtime_id() {
+        assert_eq!(
+            window_read_without_its_handle(0, &[42, 76_482_230]),
+            Some(76_482_230)
+        );
+        assert_eq!(
+            window_read_without_its_handle(76_482_230, &[42, 76_482_230]),
+            None
+        );
+        assert_eq!(
+            window_read_without_its_handle(0, &[42, 76_482_230, 4, -1]),
+            None
+        );
+        assert_eq!(window_read_without_its_handle(0, &[7, 76_482_230]), None);
+    }
 }

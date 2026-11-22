@@ -206,29 +206,16 @@ fn measure_msaa_focus(
     (step.spoken(), cost)
 }
 
-fn msaa_focus_changes_cost_exactly() {
-    msaa_focus_changes(false);
-}
-
-/// [`msaa_focus_changes_cost_exactly`], each focus read through the MSAA
-/// executor's `FocusRead` arm (`Outpost::set_focus_arms`): the same calls.
-fn msaa_focus_changes_through_the_arm_cost_exactly() {
-    msaa_focus_changes(true);
-}
-
-/// The MSAA focus changes, read by the outpost's own focus reads or, with
-/// `arms`, through the executor's `FocusRead` arm.
 #[expect(
     clippy::too_many_lines,
     reason = "every focus change, each with what Core said and its calls"
 )]
-fn msaa_focus_changes(arms: bool) {
+fn msaa_focus_changes_cost_exactly() {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-focus");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
-    outpost.outpost.set_focus_arms(arms);
     let mut core = CoreDriver::new(&app, outpost);
     let mut ratchet = Ratchet::default();
 
@@ -487,25 +474,11 @@ fn msaa_state_change_costs_exactly() {
 /// by, so it is a new node to the outpost, which reads it again, as it
 /// would a real windowless dialog.
 fn msaa_dialog_text_costs_exactly() {
-    msaa_dialog_text(false);
-}
-
-/// [`msaa_dialog_text_costs_exactly`], the focus read through the MSAA
-/// executor's `FocusRead` arm, which gathers the text itself: the same
-/// calls.
-fn msaa_dialog_text_through_the_arm_costs_exactly() {
-    msaa_dialog_text(true);
-}
-
-/// The message box's focus, read by the outpost's own focus read or, with
-/// `arms`, through the executor's `FocusRead` arm.
-fn msaa_dialog_text(arms: bool) {
     common::init_com();
     let title = common::unique_title("mockapp-counts-msaa-dialog");
     let mut app = common::spawn_visible("dialog.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::on_frozen_time(&app);
-    outpost.outpost.set_focus_arms(arms);
     let mut core = CoreDriver::new(&app, outpost);
     let mut ratchet = Ratchet::default();
 
@@ -1229,12 +1202,6 @@ struct FocusCosts {
 /// each checked against `expected`. The listener's check probes the window
 /// at the first focus in it.
 fn uia_focus_changes(remote: bool, expected: &FocusCosts) {
-    uia_focus_changes_by(remote, false, expected);
-}
-
-/// [`uia_focus_changes`], read by the outpost's own focus reads or, with
-/// `arms`, through the UI Automation executor's `FocusRead` arm.
-fn uia_focus_changes_by(remote: bool, arms: bool, expected: &FocusCosts) {
     let path = if remote { "remote" } else { "classic" };
     let title = common::unique_title(&format!("mockapp-counts-uia-focus-{path}"));
     let mut app = common::spawn_visible("counts.json", "uia", &title);
@@ -1249,7 +1216,6 @@ fn uia_focus_changes_by(remote: bool, arms: bool, expected: &FocusCosts) {
             },
         ),
     );
-    core.outpost.outpost.set_focus_arms(arms);
     let mut ratchet = Ratchet::default();
     let check = |ratchet: &mut Ratchet, label: &str, cost: &Cost, expected: &(CallCounts, u32)| {
         ratchet.check(
@@ -1362,36 +1328,6 @@ fn uia_focus_changes_cost_exactly_remote() {
             steady: (connected(7, 0, 0), 0),
             into_list: (connected(7, 0, 0), 0),
             next_item: (connected(7, 0, 0), 0),
-        },
-    );
-}
-
-/// The remote pins, each focus read through the UI Automation executor's
-/// `FocusRead` arm: 9, 7, 7 and 7, as the outpost's own reads.
-fn uia_focus_changes_through_the_arm_cost_exactly_remote() {
-    uia_focus_changes_by(
-        true,
-        true,
-        &FocusCosts {
-            cold: (connected(9, 0, 1), 0),
-            steady: (connected(7, 0, 0), 0),
-            into_list: (connected(7, 0, 0), 0),
-            next_item: (connected(7, 0, 0), 0),
-        },
-    );
-}
-
-/// The classic pins through the arm: 12, 11, 10 and 12, as the outpost's
-/// own reads.
-fn uia_focus_changes_through_the_arm_cost_exactly_classic() {
-    uia_focus_changes_by(
-        false,
-        true,
-        &FocusCosts {
-            cold: (connected(12, 0, 1), 0),
-            steady: (connected(11, 0, 0), 0),
-            into_list: (connected(10, 0, 0), 0),
-            next_item: (connected(12, 0, 0), 0),
         },
     );
 }
@@ -4654,22 +4590,6 @@ fn main() {
         (
             "msaa_dialog_text_costs_exactly",
             msaa_dialog_text_costs_exactly,
-        ),
-        (
-            "msaa_dialog_text_through_the_arm_costs_exactly",
-            msaa_dialog_text_through_the_arm_costs_exactly,
-        ),
-        (
-            "msaa_focus_changes_through_the_arm_cost_exactly",
-            msaa_focus_changes_through_the_arm_cost_exactly,
-        ),
-        (
-            "uia_focus_changes_through_the_arm_cost_exactly_remote",
-            uia_focus_changes_through_the_arm_cost_exactly_remote,
-        ),
-        (
-            "uia_focus_changes_through_the_arm_cost_exactly_classic",
-            uia_focus_changes_through_the_arm_cost_exactly_classic,
         ),
         (
             "msaa_state_change_costs_exactly",

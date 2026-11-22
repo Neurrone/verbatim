@@ -616,7 +616,7 @@ pub struct MsaaFocus {
     pub foreground: Option<NodeSnapshot>,
 }
 
-/// The outpost's side of a `FocusRead` through MSAA: the windows it
+/// The outpost's side of a `FocusRead`, or a `Test` of the focus, through MSAA: the windows it
 /// serves, the ancestors Core knows, the chain above the focus across
 /// backends, which dialogs want their text, the other backend's reads,
 /// and the answer made from what was read.
@@ -672,6 +672,39 @@ pub fn focus_read(subject: FocusSubject, resolver: &dyn FocusResolve) -> FocusFo
         FocusSubject::Candidate(candidate) => candidate_read(candidate, resolver),
         FocusSubject::Focus { hwnd, if_focused } => focus_now(hwnd, if_focused, resolver),
     }
+}
+
+/// `Test` of the application's focus in window `hwnd`, the window with
+/// the keyboard focus, taken already: the focus read as [`focus_read`]
+/// reads it with its focused state first, and `matcher` evaluated
+/// lazily over that read, `FocusedWithin` answering the focused state.
+/// Answers what was found, which a `FocusRead` of the focus later in the
+/// batch takes instead of reading again, and the test's result, `None`
+/// when no focus could be read.
+pub fn test_focus(
+    hwnd: isize,
+    matcher: &Matcher,
+    resolver: &dyn FocusResolve,
+) -> (FocusFound, Option<(bool, Vec<PropertyAnswer>)>) {
+    let found = focus_now(hwnd, true, resolver);
+    let (focused, values) = match &found {
+        FocusFound::Read(focused, focus) => (
+            focused.map(PropertyValue::Flag),
+            Some(&focus.focus.read.values),
+        ),
+        FocusFound::Unfocused => (Some(PropertyValue::Flag(false)), None),
+        FocusFound::NotThere => return (found, None),
+    };
+    let mut read = Vec::new();
+    let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
+        Ok(match id {
+            PropertyId::FocusedWithin => focused.clone(),
+            id => values
+                .and_then(|values| values.answer(id))
+                .and_then(|answer| answer.value.clone()),
+        })
+    });
+    (found, Some((holds, read)))
 }
 
 /// An acquired candidate's full read.

@@ -328,6 +328,23 @@ impl FocusResolve for MsaaFocusRead<'_, '_> {
     }
 }
 
+/// The outpost's side of a `FocusRead` or a `Test` of the focus through
+/// the MSAA executor, its walk up stopping at the first of `known`, by
+/// `set`, its caret fetching `details`.
+fn focus_resolver<'a, 'c>(
+    context: &'a RequestContext<'c>,
+    client: &'a mut Client,
+    (known, set, details): (&'a [KnownAncestor], &'a [PropertyId], TextDetails),
+) -> MsaaFocusRead<'a, 'c> {
+    MsaaFocusRead {
+        nodes: MsaaNodes::new(context, client),
+        known,
+        candidates: asked::candidates_of(known),
+        set,
+        details,
+    }
+}
+
 /// `FocusRead` of `subject` through the MSAA executor's arm, its walk up
 /// stopping at the first of `known`, by `set`, its caret fetching
 /// `details`.
@@ -335,14 +352,22 @@ pub(super) fn focus_read(
     context: &RequestContext<'_>,
     client: &mut Client,
     subject: FocusSubject,
-    (known, set, details): (&[KnownAncestor], &[PropertyId], TextDetails),
+    read: (&[KnownAncestor], &[PropertyId], TextDetails),
 ) -> FocusFound {
-    let resolver = MsaaFocusRead {
-        nodes: MsaaNodes::new(context, client),
-        known,
-        candidates: asked::candidates_of(known),
-        set,
-        details,
-    };
-    verbatim_ia2::batch::focus_read(subject, &resolver)
+    verbatim_ia2::batch::focus_read(subject, &focus_resolver(context, client, read))
+}
+
+/// `Test` of the application's focus in `hwnd` through the MSAA
+/// executor's arm, with what it found for a `FocusRead` to take, read as
+/// [`focus_read`] reads it.
+pub(super) fn test_focus(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    (hwnd, matcher): (isize, &verbatim_model::matcher::Matcher),
+    read: (&[KnownAncestor], &[PropertyId], TextDetails),
+) -> (
+    FocusFound,
+    Option<(bool, Vec<verbatim_model::property::PropertyAnswer>)>,
+) {
+    verbatim_ia2::batch::test_focus(hwnd, matcher, &focus_resolver(context, client, read))
 }

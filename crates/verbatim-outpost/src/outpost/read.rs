@@ -16,18 +16,15 @@ use verbatim_ia2::CHILDID_SELF;
 use verbatim_ia2::equality::Candidates;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, StateSet,
-    TableId,
 };
 use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
-    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, Request, Shape, Uia,
+    Ancestor, AncestorWalk, Cached, DialogText, Fill, Live, Node, Request, Shape, Uia,
 };
-use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 
 use verbatim_reader_rules::dialog::{Visited as Identity, is_dialog};
 
-use crate::gates;
 use verbatim_model::protocol::UiaSnapshotFact;
 use verbatim_model::request::KnownAncestor;
 use verbatim_win32::window::window_class_name;
@@ -42,11 +39,6 @@ use verbatim_win32::window::{
 
 /// Cap on the ancestors read for a node.
 pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
-
-/// A UI Automation focus's ancestors, outermost first, complete to the
-/// desktop; and, for a node whose value is its first selected item
-/// (`verbatim_uia::map::value_from_selection`), that item.
-pub(super) type Enrichment = (Vec<NodeSnapshot>, Option<NodeSnapshot>);
 
 /// Told of each ancestor a UI Automation walk steps to, by its runtime id
 /// and its own window ([`verbatim_uia::AncestorStops::visited`]).
@@ -265,56 +257,6 @@ fn local_window_snapshot(context: &RequestContext<'_>, hwnd: isize) -> NodeSnaps
             ..NodeDetails::default()
         },
     }
-}
-
-/// A focused UIA element's ancestors and, for a node whose value is its
-/// first selected item (`verbatim_uia::map::value_from_selection`), that
-/// item, read
-/// from the element already in hand, `nearest` its nearest window. The
-/// walk stops at an ancestor of `previous`, those Core knows, and is
-/// completed above as
-/// [`complete`] says.
-/// A walk that fails goes on from the parent window of the element's
-/// nearest window ([`onward_after_failure`]), and a failed selected item
-/// read is none. The automation id of the element's raw-view parent, when
-/// the walk's first step read it, is put in `parent_automation_id`.
-///
-/// # Errors
-///
-/// [`FocusLost`] when a UIA window's element on the chain's way cannot be
-/// read.
-pub(super) fn uia_enrichment(
-    context: &RequestContext<'_>,
-    (uia, nodes, ancestors): (&Uia, &Request<Node>, &Request<Ancestor>),
-    (element, nearest): (&Cached<Node>, isize),
-    parent_automation_id: &mut Option<String>,
-    (previous, visited): (&[KnownAncestor], Visited<'_>),
-) -> Result<Enrichment, FocusLost> {
-    let ancestors = chain(
-        context,
-        ChainStart::Uia {
-            uia: (uia, ancestors),
-            element: (element.live(), element.read().role.hwnd, nearest),
-            parent_automation_id,
-            visited,
-        },
-        (previous, None),
-    )?;
-    let selected = if element.read().value_from_selection() {
-        match uia.selected_node(element.live(), nodes, context.nodes()) {
-            Ok(selected) => selected,
-            // The application did not answer in time, or the node is
-            // gone: there is no selected item to take, and the log says it
-            // was not read rather than that none was selected.
-            Err(error) => {
-                tracing::debug!(%error, "the selected item could not be read");
-                None
-            }
-        }
-    } else {
-        None
-    };
-    Ok((ancestors, selected))
 }
 
 /// Where a chain of ancestors starts: a UI Automation element, with its
@@ -1021,221 +963,6 @@ pub(super) fn known_uia_nodes(
         .unzip()
 }
 
-/// The element a focus-now query read no longer has the keyboard focus,
-/// read live inside the provider ([`uia_remote_enrichment`]).
-pub(super) struct NotFocused;
-
-/// The ancestors and value's selected item of `element`, the focused element a
-/// focus-now query read, in one round trip run inside the application's
-/// provider ([`verbatim_uia_rops::focus_ancestry`]), with the same stops and
-/// the same completion above as [`uia_enrichment`]. An element that no
-/// longer has the keyboard focus, read live, is answered [`NotFocused`] and
-/// nothing else is read. `None`, having made no call, when remote
-/// operations are off or `window`, the window the focus is in, is read the
-/// classic way: the caller reads it as before. A UIA focus event's
-/// ancestors are the focus listener's read instead
-/// ([`uia_chain_from_read`]). A focus with a ghost's or a hung
-/// application's window above its own ([`plain_window_above`]) is read by
-/// the classic walk instead, since the program cannot judge a window
-/// between its steps: the walk stops at its step into that window, and
-/// the chain goes on from it as a plain window ([`window_onward`]).
-///
-/// A program that fails is answered by the classic walk for this call,
-/// and logged with the instruction that failed and the Rust line that
-/// emitted it; one whose element could not be imported (a client-side
-/// proxy) also has `window` read the classic way from then on. A walk that
-/// fails, the program by UIA's transaction timeout or the classic walk any
-/// way, goes on from the parent window of the focus's nearest window
-/// ([`onward_after_failure`]). A walk that ends at a failed or missing
-/// parent below the top ([`verbatim_uia_rops::Ancestry::failed_hop`]) goes
-/// on from the parent window of its outermost element's nearest window,
-/// and one cut at the depth limit is completed by plain windows from that
-/// nearest window ([`complete`]). The automation id of the element's
-/// raw-view parent, the first ancestor read, is put in
-/// `parent_automation_id` when the walk read it, and the table of an
-/// element that is a cell in `table`. A focus lost on the chain's way
-/// ([`FocusLost`]) is answered as an `Err` inside the `Ok`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the program, its fallback, and the chain's completion, in the order they run"
-)]
-fn uia_remote_enrichment(
-    context: &RequestContext<'_>,
-    (uia, request): (&Uia, &Request<Ancestor>),
-    element: &Cached<Node>,
-    (previous, parent_automation_id, table, visited): (
-        &[KnownAncestor],
-        &mut Option<String>,
-        &mut Option<TableId>,
-        Visited<'_>,
-    ),
-    window: Option<isize>,
-) -> Option<Result<Result<Enrichment, FocusLost>, NotFocused>> {
-    if !context.tries_remote(window) {
-        return None;
-    }
-    let (known_ids, known) = known_uia_nodes(context, previous);
-    // The query reads the focus's control type, class and window; its
-    // ancestors come back as ancestors, and the selected item that is its
-    // value as its node.
-    let input = element.narrow::<FocusInput>();
-    let fill = Fill::new(request);
-    // The selected item is read alone, with its place (`verbatim_uia::Place`).
-    let element_fill = Fill::new(
-        &uia.request(gates::focus_gates(context.node_details()))
-            .ok()?,
-    );
-    let query = FocusQuery {
-        element: &input,
-        known: &known,
-        depth_limit: MAX_ANCESTOR_HOPS,
-        fill: &fill,
-        element_fill: &element_fill,
-        require_focus: true,
-        refresh: false,
-        nearest_window: None,
-        before_call: None,
-        // The node's cache holds it, so the classic fallback asks nothing
-        // of a combo box for it.
-        value_available: Some(element.read().states.value_available),
-        plain: Some(&|hwnd| context.window_unreadable(hwnd).is_some()),
-        is_cell: Some(element.read().is_cell()),
-        progress: None,
-    };
-    // The program cannot judge a window between its steps, so a focus
-    // with a ghost's or a hung application's window above its own is read
-    // by the classic walk, which stops at the step into it.
-    let remote = !window.is_some_and(|window| plain_window_above(context, window));
-    // One remote operation, one transaction, which UIA's transaction
-    // timeout bounds, as it bounds each call of the classic walk it falls
-    // back to.
-    let (mut ancestry, path) = match focus_ancestry(uia, &query, remote) {
-        Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
-        Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
-        Err(error) => {
-            // The walk failed, by UIA's transaction timeout or otherwise:
-            // the focus's chain goes on from its nearest window's parent.
-            tracing::debug!(%error, "the focus ancestry could not be read");
-            let ancestors = onward_after_failure(
-                context,
-                Some((uia, request)),
-                (element.read().role.hwnd, window.unwrap_or(0)),
-                (previous, None),
-            );
-            return Some(Ok(ancestors.map(|ancestors| (ancestors, None))));
-        }
-    };
-    if let Some(parent) = ancestry.ancestors.first() {
-        *parent_automation_id = parent.read().automation_id;
-    }
-    *table = ancestry.element_table;
-    if let Path::Fallback(error) = &path {
-        super::remote_fell_back("focus ancestry", window, error);
-        if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
-            context.read_classically(window);
-        }
-    }
-    // A window's own element read inside the provider can lack what the
-    // client side's window proxy gives it, its handle and title among them
-    // (`books/dev/src/reference/uia-bugs.md`, "Inside a remote operation, conhost's window has
-    // no handle or title"): such an ancestor of this application's is read
-    // again through the proxy, one call, as the listener's classic walk
-    // reads every ancestor.
-    for ancestor in &mut ancestry.ancestors {
-        let Some(hwnd) =
-            window_read_without_its_handle(ancestor.read().node.role.hwnd, &ancestor.runtime_id())
-                .filter(|&hwnd| serves(context, hwnd))
-        else {
-            continue;
-        };
-        match uia.window_element(hwnd, request) {
-            Ok(read) => *ancestor = read,
-            Err(error) => {
-                tracing::debug!(hwnd, %error, "a window ancestor could not be read again through its proxy");
-            }
-        }
-    }
-    let registry = context.nodes();
-    let selected = ancestry
-        .selected_child
-        .as_ref()
-        .map(|child| child.snapshot(registry));
-    let nearest = ancestry.window.or(window).unwrap_or(0);
-    let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
-    let is_known = |id: NodeId| knows(previous, id);
-    let (chain, crossed, mut walked) = Uia::ancestors_from(
-        &ancestry.ancestors,
-        registry,
-        &verbatim_uia::AncestorStops {
-            read_by_other_api: &read_by_msaa,
-            known: &is_known,
-            out_of_time: None,
-            visited,
-        },
-    );
-    // The classic walk stopped at a step into a window read as a plain
-    // window: the chain goes on from it.
-    let crossed = crossed.or(ancestry.plain_window);
-    // The program stops at any known ancestor, while only a reported one
-    // ends the chain: a known ancestor that is not reported (the previous
-    // focus, a list item, say) is still where the previous chain takes
-    // over.
-    if let (AncestorWalk::Complete, None, Some(index)) = (walked, crossed, ancestry.met_known)
-        && let Some(&met) = known_ids.get(index)
-    {
-        walked = AncestorWalk::MetKnown(met);
-    }
-    // The program, and the classic walk it falls back to, stop below the
-    // process boundary, at the window the last ancestor, or the focus
-    // itself, has; a walk that failed or was cut goes on from its
-    // outermost element's nearest window.
-    let focus_window = element.read().role.hwnd;
-    let outermost = ancestry
-        .ancestors
-        .last()
-        .map_or(focus_window, |ancestor| ancestor.read().node.role.hwnd);
-    if walked == AncestorWalk::Complete
-        && crossed.is_none()
-        && (ancestry.failed_hop.is_some() || ancestry.depth_limited)
-    {
-        let hwnds = || {
-            std::iter::once(focus_window).chain(
-                ancestry
-                    .ancestors
-                    .iter()
-                    .map(|ancestor| ancestor.read().node.role.hwnd),
-            )
-        };
-        let nearest = ancestry.window.or(window).unwrap_or(0);
-        if let Some(hop) = ancestry.failed_hop {
-            walked = AncestorWalk::Failed(
-                hop,
-                verbatim_win32::provider::parent_window(
-                    verbatim_win32::provider::outermost_nearest_window(nearest, hwnds()),
-                ),
-            );
-        } else if ancestry.depth_limited {
-            walked = AncestorWalk::Cut(verbatim_win32::provider::plain_windows_start(
-                nearest,
-                hwnds(),
-            ));
-        }
-    }
-    let above = uia_above(crossed, walked, Some(outermost));
-    let ancestors = complete(
-        context,
-        Some((uia, request)),
-        (chain, above),
-        (previous, None),
-    );
-    tracing::debug!(
-        ?path,
-        ancestors = ancestry.ancestors.len(),
-        "UIA focus ancestry read"
-    );
-    Some(Ok(ancestors.map(|ancestors| (ancestors, selected))))
-}
-
 /// Whether a window above `window`, as UIA's raw view goes up
 /// ([`verbatim_win32::provider::raw_view_parent_window`]), below the process boundary,
 /// cannot be read: a ghost's or a hung application's
@@ -1256,18 +983,6 @@ pub(super) fn plain_window_above(context: &Context, window: isize) -> bool {
         current = above;
     }
     false
-}
-
-/// The window whose own element an ancestor is, by its runtime id, `[42,
-/// handle]` as UI Automation gives a window's element, when the ancestor
-/// was read without that handle (`hwnd`, 0): a read inside the provider
-/// that lacked the client side's window proxy. `None` for any other
-/// element, and for a window element read with its handle.
-fn window_read_without_its_handle(hwnd: isize, runtime_id: &[i32]) -> Option<isize> {
-    match runtime_id {
-        &[42, handle] if hwnd == 0 && handle != 0 => isize::try_from(handle).ok(),
-        _ => None,
-    }
 }
 
 /// The MSAA half of [`chain`]: the MSAA executor's walk above `node`,
@@ -1361,54 +1076,6 @@ pub(super) fn wants_dialog_text(context: &RequestContext<'_>, node: &NodeSnapsho
             .is_none_or(|description| description.trim().is_empty())
 }
 
-/// Gives every dialog among `nodes`, the chain of a focus, outermost first,
-/// that has no description of its own, its own text as its description
-/// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
-/// are read at all. The chain a request answers stops below the ancestors
-/// Core already knows, whose dialogs' text Core already has, so every
-/// dialog in it is one the focus enters and is read
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The focus answers").
-///
-/// A dialog `gathered` names is given the text gathered for it already,
-/// with no read. A UIA dialog's text is gathered on the worker's own
-/// client, `client`, as NVDA gathers a dialog's text inside its focus
-/// event. A UIA dialog whose element this outpost does not hold is found
-/// by `path`, the path the focus listener read for the focus these nodes
-/// are, so a dialog has its text on the first focus the listener read for
-/// it.
-pub(super) fn describe_dialogs<'a>(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (nodes, path): (
-        impl IntoIterator<Item = &'a mut NodeSnapshot>,
-        Option<&super::focus_path::FocusPath>,
-    ),
-    gathered: &[(NodeId, Option<String>)],
-) {
-    let mut read: Vec<(NodeId, Option<String>)> = gathered.to_vec();
-    for node in nodes {
-        if !wants_dialog_text(context, node) {
-            continue;
-        }
-        let text = if let Some((_, text)) = read.iter().find(|(id, _)| *id == node.id) {
-            // A dialog met twice in one chain, or gathered already, is
-            // read once.
-            text.clone()
-        } else {
-            let started = std::time::Instant::now();
-            let text = dialog_text_of(context, client, node, path);
-            tracing::debug!(
-                found = text.is_some(),
-                elapsed_us = started.elapsed().as_micros(),
-                "a dialog's text gathered"
-            );
-            read.push((node.id, text.clone()));
-            text
-        };
-        node.details.description = text;
-    }
-}
-
 /// The own text of the dialog `node`, through the backend that reported it,
 /// a UIA dialog's on `client`, found by `path`, its report's listener path,
 /// when this outpost holds no element for it; `None` when it has none or
@@ -1461,195 +1128,7 @@ pub(super) fn dialog_text_of(
     }
 }
 
-/// How far a read of the application's focus goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FocusDepth {
-    /// The focused state as a fact, and the full read only when focused.
-    FullIfFocused,
-    /// The full read.
-    Full,
-}
-
-/// The application's focused control in `hwnd`, the window with the
-/// keyboard focus as [`checked_focus_window`] took it, with its ancestors,
-/// selected child, and window, through the focus window's backend.
-/// [`checked_focus_window`] refuses it when the keyboard
-/// focus is not in a window this application serves ([`control_window`]:
-/// a console window is its console host's), or is on Core's hidden frame,
-/// so the focused element is never read in another application, whose
-/// window this outpost would connect to
-/// (`books/dev/src/explanation/design/listener-without-connections.md`, section 4.3); and when
-/// the focus window is no longer a window, or is stood in for by a ghost
-/// window, or hung (`verbatim_win32::window::event_window_unreadable`,
-/// local calls): nothing is said for an application that does not answer
-/// (Dickson, 2026-11-07). Returned with the window whose focused element it
-/// read.
-///
-/// Through MSAA, the focused object is found from the focus window's client
-/// by following `accFocus` down, each object it reaches checked as one of a
-/// window this application serves before anything more is asked of it
-/// ([`verbatim_ia2::acquire::focused_object`]): another process's
-/// answers no focused control. With [`FocusDepth::FullIfFocused`], the check
-/// after a menu end, whether it or an ancestor, up to the desktop, has the
-/// focused state is read, as NVDA's `processFocusNVDAEvent` tests an
-/// `IAccessible` object before it queues it, and it is read only when
-/// focused, [`Focused::Unfocused`] answered otherwise; Core judges the
-/// fact.
-///
-/// Through UIA, the focused element is read with
-/// `GetFocusedElementBuildCache`, which reads the keyboard focus again
-/// itself and connects to whichever window has it then, so an element of
-/// the application the focus has moved to can come back
-/// (`experiments/getfocusedelement-after-the-focus-moves/`). Its cached
-/// process is compared with the one the check above proved serves the
-/// focus window, this outpost's application, before anything else is done
-/// with it: on a mismatch, or with no process cached, nothing more is read
-/// and `None` is answered, so a stray element is never reported, followed,
-/// or sent a remote operation. `trigger`, what asked for the read, is
-/// logged with it. Answering nothing, it says whether these checks refused
-/// the read or the read failed ([`FocusReadMiss`]). The focus's walk up,
-/// through either API, stops at one of `known`, the ancestors Core already
-/// knows that the request names.
-pub(super) fn focused_control_in(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (hwnd, trigger): (isize, FocusRead),
-    (known, depth): (&[KnownAncestor], FocusDepth),
-) -> Result<Focused, FocusReadMiss> {
-    // The focused element is read from the window's provider at once.
-    if window_uses_uia(context, hwnd) {
-        uia_focused_control(context, client, (hwnd, trigger), known)
-            .map(|(window, control)| Focused::Read(window, Box::new(control), None))
-    } else {
-        // The walk stops at an ancestor Core already knows, `known`,
-        // comparing what it reads with them by NVDA's equality
-        // (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-        let candidates = super::asked::candidates_of(known);
-        let mut object =
-            verbatim_ia2::acquire::focused_object(hwnd, &|window| serves(context, window))
-                .ok_or(FocusReadMiss::Failed(None))?;
-        let focused = (depth == FocusDepth::FullIfFocused).then(|| {
-            object.has_focused_state(
-                MAX_ANCESTOR_HOPS,
-                &|window| reads_as_plain(context, window),
-                &mut |window| parent_window_for_focused_state(context, client, window),
-            )
-        });
-        if focused == Some(false) {
-            tracing::debug!(
-                hwnd,
-                "the focused MSAA object has no focused state, nor any ancestor"
-            );
-            return Ok(Focused::Unfocused);
-        }
-        let node = object.read(context.nodes(), Some(&candidates));
-        let ancestors = msaa_enrichment(context, client, (&node, known, Some(&candidates)))
-            .map_err(|FocusLost| FocusReadMiss::Failed(None))?;
-        Ok(Focused::Read(
-            hwnd,
-            Box::new(FocusedControl {
-                node,
-                ancestors,
-                walked: Vec::new(),
-                value_from_selection: false,
-            }),
-            focused,
-        ))
-    }
-}
-
-/// What [`focused_control_in`] found of the application's focus.
-pub(super) enum Focused {
-    /// The focus, read in the window it names, with its focused state
-    /// when the depth asked for it.
-    Read(isize, Box<FocusedControl>, Option<bool>),
-    /// An MSAA focus with no focused state on it or any ancestor, not read
-    /// further.
-    Unfocused,
-}
-
-/// [`focused_control_in`]'s read through UIA, of the focus window `hwnd`,
-/// for `trigger`, its walk up stopping at one of `known`, the ancestors
-/// Core already knows, as NVDA's focus ancestry stops where it meets the
-/// previous focus's.
-fn uia_focused_control(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    (hwnd, trigger): (isize, FocusRead),
-    known: &[KnownAncestor],
-) -> Result<(isize, FocusedControl), FocusReadMiss> {
-    {
-        let (uia, nodes) = client
-            .uia_with(context, RequestContext::node_request)
-            .map_err(|_| FocusReadMiss::Failed(None))?;
-        let ancestor_request = context
-            .ancestor_request(uia)
-            .map_err(|error| FocusReadMiss::Failed(Some(error.code())))?;
-        let element = checked_focused_element(context, (uia, &nodes), hwnd, trigger)?;
-        let mut node =
-            with_legacy_checked_state(element.live().element(), element.snapshot(context.nodes()));
-        // The element's own UIA class, from its cache, for Core's rules for
-        // an application's elements (decision D6): no call.
-        let fields = element.read();
-        node.details.class_name.clone_from(&fields.role.class_name);
-        // The raw view's chain the walk up steps through, for the routes
-        // to the nodes this read mints.
-        let walked = RefCell::new(vec![(element.runtime_id(), fields.role.hwnd)]);
-        let visited = |runtime_id: &[i32], hwnd: isize| {
-            walked.borrow_mut().push((runtime_id.to_vec(), hwnd));
-        };
-        console_text_area(&mut node, Some(hwnd));
-        context.store.record_nearest_window(
-            node.id,
-            node.details.window.map_or(hwnd, super::window::hwnd_of),
-        );
-        // A focus that has moved on since the focused element was read is
-        // still this query's answer, read the classic way. Its parent's
-        // automation id, for the same rules, comes with its ancestors.
-        let mut parent_automation_id = None;
-        let mut table = None;
-        let remote = uia_remote_enrichment(
-            context,
-            (uia, &ancestor_request),
-            &element,
-            (known, &mut parent_automation_id, &mut table, Some(&visited)),
-            Some(hwnd),
-        );
-        let enrichment = if let Some(Ok(enrichment)) = remote {
-            enrichment
-        } else {
-            table = element.table();
-            uia_enrichment(
-                context,
-                (uia, &nodes, &ancestor_request),
-                (&element, hwnd),
-                &mut parent_automation_id,
-                (known, Some(&visited)),
-            )
-        };
-        let (ancestors, selected_child) =
-            enrichment.map_err(|FocusLost| FocusReadMiss::Failed(None))?;
-        node.details.parent_automation_id = parent_automation_id;
-        node.details.set_table(table);
-        // A combo box without the `Value` pattern, or a looping selector:
-        // its first selected item is its value.
-        let value_from_selection = fields.value_from_selection();
-        if value_from_selection {
-            node.value = selected_child.and_then(|child| child.name);
-        }
-        Ok((
-            hwnd,
-            FocusedControl {
-                node,
-                ancestors,
-                walked: walked.into_inner(),
-                value_from_selection,
-            },
-        ))
-    }
-}
-
-/// The UIA element of this application's focus, as [`focused_control_in`]
+/// The UIA element of this application's focus, as the focus read ([`checked_focused_element`])
 /// reads it, with its checks and its process-id check, filled as a node and
 /// nothing more read: for the focus whose element no route finds (`books/dev/src/reference/adr/0001-focus.md`, "The outpost's own
 /// element"). `Refused` also when the outpost judges the focus
@@ -1670,7 +1149,7 @@ pub(super) fn focused_element_in(
 }
 
 /// The window with the keyboard focus whose focused element
-/// [`focused_control_in`] may read: this application's, not on Core's
+/// the focus read ([`checked_focused_element`]) may read: this application's, not on Core's
 /// hidden frame, and readable. Local calls.
 pub(super) fn checked_focus_window(context: &Context) -> Result<isize, FocusReadMiss> {
     let hwnd = control_window(context.target_pid(), || context.focus_window())
@@ -1719,7 +1198,7 @@ pub(super) fn checked_focused_element(
     Ok(element)
 }
 
-/// Why [`focused_control_in`] answered no focus.
+/// Why the focus read ([`checked_focused_element`]) answered no focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusReadMiss {
     /// Its own checks refused the read: the focus window is not this
@@ -1731,28 +1210,7 @@ pub(super) enum FocusReadMiss {
     Failed(Option<windows::core::HRESULT>),
 }
 
-/// The focused control a read of the application's focus finds
-/// ([`focused_control_in`]).
-pub(super) struct FocusedControl {
-    /// The control.
-    pub(super) node: NodeSnapshot,
-    /// Its ancestors, outermost first, complete to the desktop: a read cut
-    /// short, by its time or a failed step, is completed by plain windows
-    /// (`books/dev/src/reference/adr/0001-focus.md`, "Object identity").
-    pub(super) ancestors: Vec<NodeSnapshot>,
-    /// For a UI Automation focus, the raw view's chain its walk up stepped
-    /// through: the focus, then each ancestor, reported or not, nearest
-    /// first, by its runtime id and its own window (0 for none), from which
-    /// the routes to its nodes are made; empty for an MSAA focus.
-    pub(super) walked: Vec<(Vec<i32>, isize)>,
-    /// Whether its value is its first selected item's name, a UI
-    /// Automation combo box without the `Value` pattern or a looping
-    /// selector (`verbatim_uia::map::value_from_selection`); never for an
-    /// MSAA focus.
-    pub(super) value_from_selection: bool,
-}
-
-/// What asked [`focused_control_in`] to read the application's focus,
+/// What asked the focus read ([`checked_focused_element`]) to read the application's focus,
 /// logged with each read, so a run's log shows how often each makes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusRead {
@@ -1762,7 +1220,7 @@ pub(super) enum FocusRead {
     NoRoute,
 }
 
-/// The window whose focused element [`focused_control_in`] reads for the
+/// The window whose focused element the focus read ([`checked_focused_element`]) reads for the
 /// application `target_pid`: the focus window `focus` answers, only when
 /// that application serves it ([`served_by`]), so a console's client never
 /// reads its console window's focus, which its console host serves.
@@ -1791,24 +1249,6 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
         node.role = Role::Terminal;
         node.name = None;
     }
-}
-
-/// The foreground object a focus entering a new window is told with, as
-/// NVDA reads `objectInForeground` when the focus difference level is 1
-/// or less (`docs/design/readers-tell-core-asks-build1.md`, "Focus and
-/// foreground"): the client object of the window the outpost's
-/// foreground reader names, when that window is the target application's,
-/// a plain window when it cannot be read; `None` for another
-/// application's foreground window, which this outpost does not read, or
-/// for none. Verbatim's hidden frame is read too: it is in front only
-/// while its menu is open, and a focus in the menu takes the frame, titled
-/// "Verbatim", as its foreground (Verbatim-only, design "Focus and
-/// foreground").
-pub(super) fn foreground_object(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-) -> Option<NodeSnapshot> {
-    foreground_object_among(context, client, &[])
 }
 
 /// [`foreground_object`], taken with no call from `chain`, a focus's
@@ -2591,9 +2031,7 @@ mod activation_tests {
 mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
-    use super::{
-        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, window_read_without_its_handle,
-    };
+    use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, control_window};
     use verbatim_win32::window::window_owner;
 
     fn node(id: u64) -> NodeSnapshot {
@@ -2690,25 +2128,5 @@ mod tests {
         let mut window = text_area(Role::Window);
         console_text_area_in(&mut window, || panic!("a window's class is not read"));
         assert_eq!(window, text_area(Role::Window));
-    }
-
-    /// Only a window's own element read without its handle, as the console
-    /// host's window is read inside its provider, is read again through
-    /// its proxy: its handle comes from its runtime id.
-    #[test]
-    fn a_window_element_read_without_its_handle_is_named_by_its_runtime_id() {
-        assert_eq!(
-            window_read_without_its_handle(0, &[42, 76_482_230]),
-            Some(76_482_230)
-        );
-        assert_eq!(
-            window_read_without_its_handle(76_482_230, &[42, 76_482_230]),
-            None
-        );
-        assert_eq!(
-            window_read_without_its_handle(0, &[42, 76_482_230, 4, -1]),
-            None
-        );
-        assert_eq!(window_read_without_its_handle(0, &[7, 76_482_230]), None);
     }
 }
