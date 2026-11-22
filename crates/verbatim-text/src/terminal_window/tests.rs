@@ -190,6 +190,23 @@ fn a_spinner_glyph_changed_alone_is_silent() {
 }
 
 #[test]
+fn a_row_rewritten_at_the_read_before_a_read_that_waited_for_speech_is_volatile() {
+    // TM 17: two reads in a row of which the second waited for speech,
+    // however far apart, count as changes within the limit; without the
+    // wait the second change, five seconds on, is spoken.
+    let zero = window(&["build", "Working 0s"], None, 0);
+    let one = window(&["build", "Working 1s"], None, 1000);
+    let six = window(&["build", "Working 6s"], None, 6000);
+    let mut waited = Reading::new();
+    assert_eq!(waited.answer(&zero, &one), output(&["1s"]));
+    assert_eq!(waited.answer_waited(&one, &six), quiet());
+    assert_eq!(waited.due(), Some(13_500_000));
+    let mut live = Reading::new();
+    assert_eq!(live.answer(&zero, &one), output(&["1s"]));
+    assert_eq!(live.answer(&one, &six), output(&["6s"]));
+}
+
+#[test]
 fn a_row_changing_twice_within_two_seconds_is_held_until_it_settles() {
     // F7 (TM 17): its first change heard, then silent, then spoken whole
     // once still for the quiet period, 1.5 times the interval when longer.

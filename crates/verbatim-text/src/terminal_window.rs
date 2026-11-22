@@ -615,6 +615,18 @@ impl Reading {
 
     /// What the read `new` says, against `old`, the watch's last window.
     pub fn answer(&mut self, old: &Window, new: &Window) -> Answer {
+        self.judge(old, new, false)
+    }
+
+    /// What the read `new` says, against `old`, when it waited for speech:
+    /// a row its program rewrote at `old` too is volatile however long
+    /// apart the two reads were (TM 17), since the reads between were held.
+    pub fn answer_waited(&mut self, old: &Window, new: &Window) -> Answer {
+        self.judge(old, new, true)
+    }
+
+    /// [`Reading::answer`], `waited` when the read waited for speech.
+    fn judge(&mut self, old: &Window, new: &Window, waited: bool) -> Answer {
         let now = new.ended_us;
         self.lingering.retain(|(_, until)| *until >= now);
         if old.screen_has_text() && !new.screen_has_text() {
@@ -647,6 +659,7 @@ impl Reading {
             new,
             now,
             fates: &fates,
+            waited,
             answer: &mut answer,
             held: std::mem::take(&mut self.held),
             changes: std::mem::take(&mut self.changes),
@@ -890,10 +903,18 @@ impl Reading {
             .iter()
             .position(|change| change.line == i)
             .map(|at| read.changes.remove(at));
+        // Changed at the read before a read that waited for speech counts
+        // as changed twice within the limit (TM 17).
         let interval = earlier
             .as_ref()
             .map(|change| now.saturating_sub(change.last_us))
-            .filter(|&interval| interval <= VOLATILE_US);
+            .filter(|&interval| {
+                interval <= VOLATILE_US
+                    || (read.waited
+                        && earlier
+                            .as_ref()
+                            .is_some_and(|change| change.last_us == read.old.ended_us))
+            });
         let volatile = earlier.as_ref().is_some_and(|change| change.volatile);
         self.changes.push(Change {
             line: j,
@@ -984,6 +1005,8 @@ struct Judged<'a> {
     new: &'a Window,
     now: u64,
     fates: &'a [Fate],
+    /// Whether the read waited for speech (TM 17).
+    waited: bool,
     answer: &'a mut Answer,
     /// What was held of `old`'s lines, by their indices there, each taken
     /// out as the read consumes it.
