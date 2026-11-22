@@ -433,12 +433,28 @@ pub(super) fn snapshot_of(id: NodeId, backend: Backend, values: &PropertyValues)
     }
 }
 
-/// `node`'s children, in order, at most [`MAX_NODES`].
+/// `node`'s children, in order, at most [`MAX_NODES`], and whether they
+/// are all of them. An MSAA object's are those its object lists
+/// (`verbatim_ia2::acquire::children`), a gone one among them in its
+/// place; any other node's are reached by navigation, where a child gone
+/// as the step on from it is read ends the list there, incomplete.
 pub(super) fn children(
     context: &RequestContext<'_>,
     client: &mut Client,
     node: NodeId,
-) -> Result<Vec<NodeSnapshot>, ReadError> {
+) -> Result<(Vec<NodeSnapshot>, bool), ReadError> {
+    if context.store.runtime_id_of(node).is_none()
+        && let Some(children) = verbatim_ia2::acquire::children(node, context.nodes(), MAX_NODES)?
+    {
+        let window = context.store.key_of(node).map(|key| key.0);
+        let children = children
+            .into_iter()
+            .map(|child| {
+                read::corrected_backend(context, client, window, child, QueryKind::FirstChild)
+            })
+            .collect();
+        return Ok((children, true));
+    }
     let mut children = Vec::new();
     let mut next = read::navigate(context, client, node, QueryKind::FirstChild)?;
     while let Some(child) = next {
@@ -447,13 +463,15 @@ pub(super) fn children(
         }
         next = match read::navigate(context, client, child.id, QueryKind::NextSibling) {
             Ok(next) => next,
-            // A child gone as it was read ends the list there.
-            Err(ReadError::Gone) => None,
+            Err(ReadError::Gone) => {
+                children.push(child);
+                return Ok((children, false));
+            }
             Err(error) => return Err(error),
         };
         children.push(child);
     }
-    Ok(children)
+    Ok((children, true))
 }
 
 /// The nearest window of node `node` known without a call, by its id.

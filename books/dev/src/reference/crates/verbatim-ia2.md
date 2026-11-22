@@ -347,6 +347,12 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   returns `Ok(None)` for a genuine edge and
   `Err(AcquireError::Gone)` when the source node itself is no longer
   reachable, so the outpost can report `Gone` rather than a fake edge),
+  `children` (an object's children as NVDA's MSAA object lists them,
+  through `AccessibleChildren` for its own `accChildCount`, those outside
+  its window or a window inside it left out, a gone child kept in its
+  place as a disconnected object reads so that the children after it are
+  still listed; `Ok(None)` for a window's own object, a simple child and
+  a tree view's objects, whose children are reached by `navigate`),
   and `activate` (`accDoDefaultAction`, MSAA's only
   activation primitive, answering the `accDefaultAction` name read first). Every snapshot is minted through `node_for`,
   which matches a new sighting against the kept nodes in NVDA's

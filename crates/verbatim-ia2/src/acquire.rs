@@ -1532,6 +1532,73 @@ pub fn navigate(
     )))
 }
 
+/// Up to `max` children of `node`, in order, as NVDA's MSAA object lists
+/// them (its `children`): those `AccessibleChildren` answers for an
+/// object's own `accChildCount`, a child object outside the object's
+/// window or a window inside it left out, and the object itself, should it
+/// name itself, too. A child that is gone keeps its place, read as a
+/// disconnected object reads, so the children after it are still listed,
+/// where a step on from it would end the list. Each child is read as
+/// [`navigate`] reads a neighbor. `Ok(None)` for a node whose children are
+/// reached by navigation instead: a window's own object, which navigates
+/// the window hierarchy, a simple child, and the objects of a tree view,
+/// which navigates by the tree view's relations. Blocking; worker only.
+///
+/// # Errors
+///
+/// [`AcquireError::Gone`] when `node` itself is gone, and
+/// [`AcquireError::Failed`] when its children cannot be read for another
+/// reason, so an object whose children are unknown is never reported as
+/// having none.
+pub fn children(
+    node: NodeId,
+    registry: &dyn Interning,
+    max: usize,
+) -> Result<Option<Vec<NodeSnapshot>>, AcquireError> {
+    let (hwnd, id_object, id_child) = registry.key_of(node).ok_or(AcquireError::Gone)?;
+    if (id_object == OBJID_WINDOW.0 && id_child == CHILDID_SELF) || is_systreeview32(hwnd) {
+        return Ok(None);
+    }
+    let (acc, _, _) = locate(node, registry)?;
+    if acc.child() != CHILDID_SELF {
+        return Ok(None);
+    }
+    let read_failed = |error: windows::core::Error| {
+        if disconnected(&error) {
+            AcquireError::Gone
+        } else {
+            AcquireError::Failed(format!("reading an object's children failed: {error}"))
+        }
+    };
+    let count = acc.child_count().map_err(read_failed)?;
+    let Ok(count) = usize::try_from(count) else {
+        return Ok(Some(Vec::new()));
+    };
+    if count == 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let entries = acc.children(count.min(max)).map_err(read_failed)?;
+    let identity = acc.canonical();
+    let mut children = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let (child_acc, child_hwnd) = resolve_child(&acc, entry, hwnd);
+        let child_id = child_acc.child();
+        if child_id == CHILDID_SELF && identity.is_some() && child_acc.canonical() == identity {
+            continue;
+        }
+        if child_hwnd != hwnd && !window::is_child(hwnd, child_hwnd) {
+            continue;
+        }
+        children.push(read_snapshot(
+            &child_acc,
+            (child_hwnd, OBJID_CLIENT.0, child_id),
+            false,
+            registry,
+        ));
+    }
+    Ok(Some(children))
+}
+
 /// Activates `node` through its kept object: `IAccessible::accDoDefaultAction`,
 /// the only activation MSAA offers (UIA's richer `Invoke`/`Toggle` ladder has
 /// no MSAA equivalent). Answers the default action's name

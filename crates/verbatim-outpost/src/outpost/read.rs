@@ -2190,7 +2190,7 @@ type Stepped = (Option<NodeSnapshot>, Option<isize>);
 /// different window, whose window is MSAA, becomes that window's MSAA
 /// object (its client area when reached as a parent, its window object
 /// otherwise). Anything else, or a read that fails, is kept as it is.
-fn corrected_backend(
+pub(super) fn corrected_backend(
     context: &RequestContext<'_>,
     client: &mut Client,
     from_window: Option<isize>,

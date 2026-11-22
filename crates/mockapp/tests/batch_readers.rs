@@ -13,8 +13,8 @@ mod harness;
 
 use verbatim_model::WindowHandle;
 use verbatim_model::batch::{
-    Batch, Check, Condition, Done, Malformed, Op, Place, Placement, Step, StepOutcome, Subject,
-    Tested, WindowOf,
+    Batch, Check, Condition, Done, MAX_DEPTH, Malformed, Op, Place, Placement, Step, StepOutcome,
+    Subject, Tested, View, Walk, WindowOf,
 };
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyId, PropertyValue};
@@ -225,7 +225,7 @@ fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refu
     let read = |subject| Step {
         op: Op::Read {
             subject,
-            set: vec![PropertyId::Name],
+            set: vec![PropertyId::Name, PropertyId::Role],
         },
         when: None,
     };
@@ -579,8 +579,86 @@ gamma
     );
 }
 
+/// An alert's walk (`Descendants` of an MSAA object, as Core's alert
+/// writes it) of mockapp's alert (`alert_children.json`, addressed by its
+/// object id) whose middle child, a static text, is gone where it stands
+/// (`disconnect`) before the walk: its parent still lists it, so it keeps
+/// its place read with no name, and the walk goes on to the button after
+/// it, as NVDA's `recursiveDescendants` lists an object's children
+/// whatever one of them answers (`docs/parity/alerts.md`, "Other
+/// alerts"); the walk is incomplete, since the gone text's own children
+/// are unknown.
+fn an_msaa_walk_reads_the_children_after_a_gone_one() {
+    let title = common::unique_title("mockapp-batch-gone-child");
+    let mut app = common::spawn("alert_children.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    app.send("disconnect text2");
+    let outpost = OutpostUnderTest::new(&app);
+    let (answer, _) = outpost.batch(
+        hwnd,
+        WindowVerdict::Msaa,
+        batch(vec![Step {
+            op: Op::Descendants {
+                subject: Subject::Msaa {
+                    // The alert, the window's second node.
+                    ids: MsaaIds {
+                        window: WindowHandle(hwnd.0 as u64),
+                        object: 2,
+                        child: 0,
+                    },
+                    redirect: false,
+                },
+                walk: Box::new(Walk {
+                    depth: MAX_DEPTH,
+                    view: View::Raw,
+                    matcher: None,
+                    prune: None,
+                    include_subject: true,
+                    limit: 1000,
+                    nodes: 1000,
+                    set: vec![PropertyId::Name],
+                }),
+            },
+            when: None,
+        }]),
+    );
+    let walked = match steps(answer.outcome).as_slice() {
+        [StepOutcome::Done(Done::Descendants(walked))] => walked.clone(),
+        other => panic!("one walk's result, not {other:?}"),
+    };
+    let names: Vec<Option<String>> = walked
+        .nodes
+        .iter()
+        .map(|descendant| {
+            match descendant
+                .node
+                .values
+                .answer(PropertyId::Name)
+                .and_then(|answer| answer.value.clone())
+            {
+                Some(PropertyValue::Text(name)) => Some(name),
+                _ => None,
+            }
+        })
+        .collect();
+    let name = |name: &str| Some(name.to_owned());
+    assert_eq!(
+        (names, walked.complete),
+        (
+            vec![name("Saved"), name("Your file was saved"), None, name("OK"),],
+            false
+        ),
+    );
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "an_msaa_walk_reads_the_children_after_a_gone_one",
+            an_msaa_walk_reads_the_children_after_a_gone_one,
+        ),
         (
             "an_msaa_candidates_test_reads_lazily_and_gates_its_full_read",
             an_msaa_candidates_test_reads_lazily_and_gates_its_full_read,

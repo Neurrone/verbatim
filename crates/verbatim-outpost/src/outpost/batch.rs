@@ -702,7 +702,9 @@ impl Run<'_, '_> {
             Relation::PreviousSibling => QueryKind::PreviousSibling,
             Relation::LastChild => {
                 return Ok(match asked::children(context, self.client, node) {
-                    Ok(children) => StepOutcome::Done(Done::Related(
+                    // A list cut short has no last child known.
+                    Ok((_, false)) => StepOutcome::Failed,
+                    Ok((children, true)) => StepOutcome::Done(Done::Related(
                         children
                             .last()
                             .map(|last| asked::node_read(context, last, None, set))
@@ -1050,14 +1052,13 @@ impl Run<'_, '_> {
             if depth >= walk.depth {
                 continue;
             }
-            let children = match asked::children(context, self.client, node) {
-                Ok(children) => children,
-                Err(ReadError::Gone) => continue,
-                Err(_) => {
-                    walked.complete = false;
-                    continue;
-                }
+            // A node gone, its children unknown, or not read, leaves the
+            // walk incomplete.
+            let Ok((children, complete)) = asked::children(context, self.client, node) else {
+                walked.complete = false;
+                continue;
             };
+            walked.complete &= complete;
             let mut below = Vec::new();
             for child in children {
                 walked.visited += 1;

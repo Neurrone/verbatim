@@ -988,7 +988,7 @@ taken before any call that can block. Each step runs under its gate
 - `Related`: parent, siblings and first child by object navigation
   (`read::navigate`; through UI Automation a `Related` step of the
   program builder, `read::related_step`), the last child by the
-  children walk, and the controller-for relation and the first selected
+  children walk, failed when the list ends at a gone child, and the controller-for relation and the first selected
   item through the program builder alone, since an MSAA object controls
   nothing. A UI Automation node that is dead or gone answers not there,
   except that `Parent` answers the parent of the element's window
@@ -1001,9 +1001,14 @@ taken before any call that can block. Each step runs under its gate
 - `Descendants` of a UI Automation node by the program builder's walk
   (`verbatim_uia_rops::batch::run_batch`), its matchers judged between
   runs; of an MSAA object by the children walk
-  (`batch::descend_by_children`), at most 1000 children of a node. A
-  child gone during the MSAA walk is passed over and the walk still
-  reports itself complete. The tree dump is a `Descendants` of the main window's own
+  (`batch::descend_by_children`), at most 1000 children of a node: an
+  MSAA object's children as its object lists them
+  (`verbatim_ia2::acquire::children`), each through the backend its
+  window uses, and any other node's by object navigation. A child gone
+  during the walk keeps its place, read as a disconnected object reads,
+  the children after it are still read, and the walk is incomplete, as
+  it is wherever a node's children are not read or a navigation's list
+  ends at a gone child. The tree dump is a `Descendants` of the main window's own
   object read through UI Automation, the shell's lists one of the
   taskbar's windows by class path in the control view.
 - `IsOneOf` by NVDA's equality for the equal node and by address for the

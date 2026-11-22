@@ -1,0 +1,17 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Alert Fixture",
+  "children": [
+    {
+      "id": "alert1",
+      "role": "alert",
+      "name": "Saved",
+      "children": [
+        { "id": "text1", "role": "static_text", "name": "Your file was saved" },
+        { "id": "text2", "role": "static_text", "name": "In Documents" },
+        { "id": "ok", "role": "button", "name": "OK", "states": ["focusable"] }
+      ]
+    }
+  ]
+}
