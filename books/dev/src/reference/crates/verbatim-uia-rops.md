@@ -57,10 +57,10 @@ caret wait's starting point, and for the object arms the element filled
 (`filled`, found again by its route when the outpost keeps none), the
 node's id, the properties the outpost answers from what it holds
 (`held`: its MSAA ids, whether its window is shown, its window's class,
-a tree view item's children, and the text summary until the text reads
-join the executor), a property of an element read in full (`value`, from
-an `ElementRead`, the node minted by the outpost), and the focus
-registration a `Follow` moves. A reference or condition on a step before
+and a tree view item's children), a property of an element read in full
+(`value`, from an `ElementRead`, the node minted by the outpost), a text
+summary made of the UTF-16 texts the `Read` arm read (`text_summary`),
+and the focus registration a `Follow` moves. A reference or condition on a step before
 the run is decided from the earlier outcomes. Each resolution that
 fails, a refusal or an anchor no longer held, is the step's outcome. The
 executors read every other input from the step itself, so no second
@@ -576,7 +576,15 @@ snapshot's caret and line (`CaretLineQuery`, `CaretAnswer`). Every caret
 read is a batch's steps, a focus's among them: the focus's caret read and
 report focus's text summary are a `Caret`, a `ReadText` of the line and
 a `ReadRange` of the selection run by the program builder, so no caret
-program is written by hand (Claude, 2026-11-22).
+program is written by hand (Claude, 2026-11-22). The summary is the
+`Read` arm's own segment of those three steps, in its segment's mode,
+the resolver making the property's value of the line's and the
+selection's texts. A `CompareSelection` whose read of the new selection
+was cut at `MAX_COMPARED_TEXT` has it read whole by its range, up to a
+copy's limit, in one call after the segment's steps
+(`State::whole_selections`). UI Automation has no sentence unit, so a
+`MoveBySentence` is refused as no such unit once its subject's text is
+found, by calls.
 
 The caret is the start of the selection's first range, as NVDA's caret
 is (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the

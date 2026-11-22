@@ -160,9 +160,8 @@ pub trait Resolve {
 
     /// Property `id` of the subject that the outpost answers from what it
     /// holds rather than from the element's cache: its MSAA ids, whether
-    /// its window is shown, its window's class, a tree view item's
-    /// children, and its text's summary, read through the outpost's text
-    /// until the text reads join the executor.
+    /// its window is shown, its window's class, and a tree view item's
+    /// children.
     fn held(
         &self,
         _subject: &Subject,
@@ -178,6 +177,19 @@ pub trait Resolve {
         _read: &ElementRead,
         _id: verbatim_model::property::PropertyId,
     ) -> Option<verbatim_model::property::PropertyValue> {
+        None
+    }
+
+    /// A text summary's value, made of the UTF-16 text of the caret's
+    /// line and of the selection when text is selected; `read_classically`
+    /// when a program of its read could not run at all, so the window is
+    /// read classically from now on.
+    fn text_summary(
+        &self,
+        _read: (&[u16], Option<&[u16]>),
+        _read_classically: bool,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        let _ = Defect("a text summary on a resolver that makes none").ran();
         None
     }
 
@@ -742,7 +754,43 @@ impl<'s, 'a> State<'s, 'a> {
         }
     }
 
-    fn answer(self) -> Answer {
+    /// Reads whole the new selection of each comparison whose read of it
+    /// was cut at [`crate::MAX_COMPARED_TEXT`]: by its range, up to a
+    /// copy's limit (one call), after every step of the segment, as the
+    /// comparison's result is made.
+    fn whole_selections(&mut self) {
+        use verbatim_uia::text::TextRangeExt;
+        for index in 0..self.ran.len() {
+            let Op::CompareSelection { after, .. } = &self.step(index).op else {
+                continue;
+            };
+            let cut = matches!(
+                &self.ran[index],
+                Some(Ran::Done(Found::CompareSelection(Compared {
+                    selection_text: Some(text),
+                    ..
+                }))) if text.len() >= crate::MAX_COMPARED_TEXT.unsigned_abs() as usize
+            );
+            let selection = match self.named(*after, index) {
+                Some(Ran::Done(Found::Caret(CaretFound {
+                    selection: Some((selection, ..)),
+                    ..
+                }))) if cut => selection.clone(),
+                _ => continue,
+            };
+            let whole = selection.text(MAX_CHANGE_TEXT);
+            match (&mut self.ran[index], whole) {
+                (Some(Ran::Done(Found::CompareSelection(compared))), Ok(whole)) => {
+                    compared.selection_text = Some(whole);
+                }
+                (ran, Err(error)) => *ran = Some(failed(&error.into())),
+                _ => {}
+            }
+        }
+    }
+
+    fn answer(mut self) -> Answer {
+        self.whole_selections();
         Answer {
             steps: self
                 .ran
@@ -783,6 +831,7 @@ fn kind_name(op: &Op) -> &'static str {
         Op::IsOneOf { .. } => "is one of",
         Op::Activate { .. } => "activate",
         Op::Follow(_) => "follow",
+        Op::MoveBySentence { .. } => "move by sentence",
         _ => "not fusable",
     }
 }

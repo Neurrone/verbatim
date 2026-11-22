@@ -541,7 +541,8 @@ and the inherited pipe handles.
   edit control's messages; `check` makes a wait's check call by call;
   `held` reads a focus's caret read (`held::read_focus`), report focus's
   text summary (`held::summary`) and a terminal key's starting point
-  (`held::starting_from`); `caret_report_from` reads the caret and its
+  (`held::starting_from`), the summary through an edit control's
+  messages only; `caret_report_from` reads the caret and its
   line. `Anchors` keeps a backend's anchors by node for a reader that
   holds them for the whole read, a test or mockapp, until
   `forget_anchors`; `NodeText` is one node's, borrowed from it or from
@@ -823,8 +824,9 @@ anchors are (Table 16 of
 `docs/design/readers-tell-core-asks-build1.md`):
 
 - A run of consecutive text steps (`Caret`, `ReadText`, `ReadRange`,
-  `CompareSelection`, `Select`, `Locate`) on one UI Automation node is
-  one segment of the program builder (`text_reads::fused_steps`,
+  `CompareSelection`, `Select`, `Locate`, `MoveBySentence`) on one
+  subject that resolves to a UI Automation node is one segment of the
+  program builder (`text_reads::fused_steps`,
   `text::fused::run`), the batch's own steps with the node's text as
   their resolver (`TextResolver`): a position Core names, a point of an
   earlier segment's result and a baseline are resolved to the positions
@@ -834,7 +836,9 @@ anchors are (Table 16 of
   next selection baseline (`NodeText::hold_caret`), with the selection's
   text a `CompareSelection` of the run read, a `ReadText`'s chunks minted
   with the formatting its details name, the control's support of each
-  attribute learned as the caret read learns it. An edit control's text
+  attribute learned as the caret read learns it. A node whose text cannot
+  be opened answers each step of the run, under its condition, as the
+  opening answered (no text, not there, failed). An edit control's text
   steps run one at a time by its messages (`text::by_calls`, `text::ops`).
   A step the text refuses answers its refusal as the step's outcome
   (no text, no such unit, unsupported), and an anchor no longer held
@@ -851,14 +855,14 @@ anchors are (Table 16 of
   selection with its text, held as the next baseline, compared with
   nothing; `NoText` for a node with no text, `NotRead` when the read
   failed and for a terminal, whose baseline read is its first.
-- `MoveBySentence` (`text::sentence`), run whole: from the starting
+- `MoveBySentence` on an edit control (`text::sentence`), run whole: from the starting
   point, the caret's paragraph is read, the next or previous sentence
   found in it by Unicode's rules, the paragraph beside it read when the
   sentence is not in it, and the caret moved; past the last sentence the
   caret goes to the text's end, and at the start it stays with the first
-  sentence; the next baseline held. A source with no sentence unit
-  refuses it as no such unit, and a starting point no longer held is not
-  there, by its anchor.
+  sentence; the next baseline held. A starting point no longer held is
+  not there, by its anchor. UI Automation's text has no sentence unit,
+  and its executor refuses the move as no such unit.
 - `TerminalRead` (`text_reads::terminal_window_step`, on
   `terminal::window`, public for mockapp's tests): the end marks Core
   names are resolved from their held anchors (one no longer held is not
@@ -912,8 +916,8 @@ anchors are (Table 16 of
   offsets.
 - A point is found as a `PointFrom` (caret, selection end, text end, kept
   position, or text after one, matched in the provider) and read from.
-- The caret read for a focus and for report focus's text summary
-  (`text::held`, `TextSource::caret_line`) reads through UI Automation
+- The caret read for a focus (`text::held`, `TextSource::caret_line`)
+  and report focus's text summary (the `Read` arm's) read through UI Automation
   one segment of the program builder (`text::fused::caret_line`): a
   `Caret`, a `ReadText` of the line at the caret with the formatting the
   read names and no language, and a `ReadRange` of the selection, run
@@ -995,8 +999,9 @@ taken before any call that can block. Each step runs under its gate
   (`verbatim_uia_rops::batch`, its crate guide), resolved by
   `outpost/uia_object.rs`: the element filled or found again by its
   route, the properties the outpost holds (its MSAA ids, whether its
-  window is shown, its window's class, a tree view item's children, and
-  the text summary), a property of the element read in full, and the
+  window is shown, its window's class, a tree view item's children), a
+  property of the element read in full, the text a text summary reads
+  and the summary made of what it read (`text::summary_of`), and the
   focus registration.
 - `Read`, `Test`, `Related`, `Descendants`, `IsOneOf` and `Activate` on
   an MSAA node or an acquired MSAA object run through the MSAA executor
@@ -1017,7 +1022,8 @@ taken before any call that can block. Each step runs under its gate
   alone; `WindowClass` from the node's own or nearest window, with no
   call into the application; and `TextSummary`, for report focus, by a
   caret read of the node's text, the selected text when there is any,
-  else the caret's line, holding no baseline (`text::held::summary`). A
+  else the caret's line, holding no baseline (the UI Automation `Read`
+  arm's, an edit control's by `text::held::summary`). A
   dead element answers not there. A lone `Read` of a listener's kept
   element is the listener's.
 - `Test` lazily in its matcher's order, each property read once and kept

@@ -194,7 +194,8 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
         | Op::Test { .. }
         | Op::IsOneOf { .. }
         | Op::Activate { .. }
-        | Op::Follow(_) => true,
+        | Op::Follow(_)
+        | Op::MoveBySentence { .. } => true,
         _ => false,
     }
 }

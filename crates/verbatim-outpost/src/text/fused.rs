@@ -34,13 +34,8 @@ use verbatim_uia_rops::{FoundPoint, Movement, Position, TextTarget};
 use super::uia::{UiaPos, UiaText, character_counts, round, unit_text};
 use super::{
     CaretRead, CaretState, MAX_RANGE_UNITS, NodeText, PointFrom, SelectionStart, TextError,
-    TextResult, change, change_of, chunk_from, keep_whole_characters, to_utf8,
+    TextResult, change_of, chunk_from, keep_whole_characters, to_utf8,
 };
-
-/// The most UTF-16 code units of a selection's text a program reads
-/// (`verbatim_uia_rops::MAX_COMPARED_TEXT`): a text as long is cut, and is
-/// read whole by its range.
-const SELECTION_TEXT_CAP: usize = 513;
 
 /// What a run of steps answered: each step's outcome, in order, and
 /// whether a program could not run at all, so the window is read
@@ -280,7 +275,7 @@ fn node_text<'s>(
 
 /// A read's units as the program reads them, each unit's language read
 /// when `culture`; the refusal when the text has no such unit.
-fn units_read(
+pub(crate) fn units_read(
     source: &UiaText,
     (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
     (details, culture): (TextDetails, bool),
@@ -810,10 +805,9 @@ impl Made<'_, '_> {
             (Op::ReadRange { .. }, Ran::Done(Found::ReadRange(units))) => {
                 Ok(Done::ReadRange(range_text(&units)))
             }
-            (
-                Op::CompareSelection { before, after, .. },
-                Ran::Done(Found::CompareSelection(compared)),
-            ) => self.compared(before, *after, compared),
+            (Op::CompareSelection { before, .. }, Ran::Done(Found::CompareSelection(compared))) => {
+                Ok(self.compared(before, compared))
+            }
             (Op::Select { .. }, Ran::Done(Found::Select)) => {
                 Ok(Done::Select(Selected { began_us }))
             }
@@ -1000,25 +994,18 @@ impl Made<'_, '_> {
     /// A `CompareSelection`'s result: the changes, the whole new selection
     /// (read whole by its range when the program's read was cut), and
     /// whether the text the baseline selected changed since it was read.
-    fn compared(&mut self, before: &Before, after: Place, compared: Compared) -> TextResult<Done> {
+    fn compared(&self, before: &Before, compared: Compared) -> Done {
         let changes = compared
             .changes
             .iter()
             .map(|change| change_of(change.selected, &change.text))
             .collect();
-        let selection = after
-            .index()
-            .checked_sub(self.first)
-            .and_then(|index| self.carets.get(index))
-            .and_then(|caret| caret.as_ref())
-            .and_then(|(_, selection)| selection.clone());
-        let new_selection = match (compared.selection_text, selection) {
-            (Some(units), _) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),
-            (Some(_), Some((start, end))) => Some(change(self.source, true, &start, &end)?),
-            (Some(units), None) => Some(change_of(true, &units)),
-            (None, _) => None,
-        }
-        .filter(|selected| !selected.text.is_empty());
+        // The executor read the new selection whole when its first read
+        // was cut.
+        let new_selection = compared
+            .selection_text
+            .map(|units| change_of(true, &units))
+            .filter(|selected| !selected.text.is_empty());
         // The text the baseline selected as it was read, when it was held
         // outside the run and selected something.
         let was = match before {
@@ -1034,13 +1021,13 @@ impl Made<'_, '_> {
             (Some(was), Some(now)) => change_of(false, &now).text != change_of(false, &was).text,
             _ => false,
         };
-        Ok(Done::CompareSelection(SelectionCompared {
+        Done::CompareSelection(SelectionCompared {
             difference: SelectionDifference {
                 changes,
                 new_selection,
             },
             text_changed,
-        }))
+        })
     }
 }
 

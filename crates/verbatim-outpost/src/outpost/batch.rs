@@ -15,10 +15,10 @@
 //! acquisition, focused-state walk and full read, the focus-now read, and
 //! the text reads through each backend's adapter. The controller-for relation and the first selected
 //! item run through the program builder ([`verbatim_uia_rops::batch`]), as
-//! does each run of consecutive text steps on one UI Automation node
-//! (`Caret`, `ReadText`, `ReadRange`, `CompareSelection`, `Select`,
-//! `Locate`); an edit control's text is read by its messages, step by
-//! step.
+//! does each run of consecutive text steps on one subject that resolves
+//! to a UI Automation node (`Caret`, `ReadText`, `ReadRange`,
+//! `CompareSelection`, `Select`, `Locate`, `MoveBySentence`); an edit
+//! control's text is read by its messages, step by step.
 
 #![forbid(unsafe_code)]
 
@@ -236,21 +236,16 @@ impl Run<'_, '_> {
     /// condition: the batch's answer.
     fn steps(mut self, steps: &[verbatim_model::batch::Step]) -> Outcome {
         let mut at = 0;
-        // The end of a run of fusable text steps found to be read one at a
-        // time, so it is not tried again for each of its steps.
-        let mut single_until = 0;
         while at < steps.len() {
-            if at >= single_until {
-                let end = self.fusable_end(steps, at);
-                if end > at {
-                    let first = self.outcomes.len();
-                    if let Some(outcomes) = self.fused(&steps[at..end], first) {
-                        self.outcomes.extend(outcomes);
-                        at = end;
-                        continue;
-                    }
-                    single_until = end;
+            match self.fusable_end(steps, at) {
+                Ok(Some((node, end))) => {
+                    let outcomes = self.fused(node, &steps[at..end]);
+                    self.outcomes.extend(outcomes);
+                    at = end;
+                    continue;
                 }
+                Ok(None) => {}
+                Err(whole) => return whole,
             }
             let step = &steps[at];
             let outcome = match step.gate(&self.outcomes) {
@@ -426,50 +421,70 @@ impl Run<'_, '_> {
         })
     }
 
-    /// The end of the run of fusable text steps on one UI Automation node
-    /// that starts at `at` (the request list's design, section 5): `at`
-    /// when the step there is not one.
-    fn fusable_end(&self, steps: &[verbatim_model::batch::Step], at: usize) -> usize {
-        let node_of = |op: &Op| match op {
-            Op::Caret { subject, .. }
-            | Op::ReadText { subject, .. }
-            | Op::ReadRange { subject, .. }
-            | Op::CompareSelection { subject, .. }
-            | Op::Select { subject, .. }
-            | Op::Locate { subject, .. } => match subject {
-                Subject::Node(node) => Some(*node),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(node) = steps.get(at).and_then(|step| node_of(&step.op)) else {
-            return at;
-        };
-        if self.context.store.runtime_id_of(node).is_none() {
-            return at;
-        }
-        at + steps[at..]
-            .iter()
-            .take_while(|step| node_of(&step.op) == Some(node))
-            .count()
-    }
-
-    /// Runs `steps`, a run of fusable text steps on one UI Automation node
-    /// starting at place `first`, through the program builder: their
-    /// outcomes, or `None` when the node's text is read otherwise, for the
-    /// steps to run one at a time.
-    fn fused(
+    /// The UI Automation node of the run of text steps on one subject
+    /// that starts at `at` (the request list's design, section 5), and the
+    /// run's end: `None` when the step there is no text step the UI
+    /// Automation executor runs, or its subject is no UI Automation node.
+    fn fusable_end(
         &mut self,
         steps: &[verbatim_model::batch::Step],
-        first: usize,
-    ) -> Option<Vec<StepOutcome>> {
-        let subject = steps.first()?.op.subject()?;
-        let Ok(Ok(node)) = self.node(subject) else {
-            return None;
+        at: usize,
+    ) -> Result<Option<(NodeId, usize)>, Outcome> {
+        fn subject_of(op: &Op) -> Option<&Subject> {
+            match op {
+                Op::Caret { subject, .. }
+                | Op::ReadText { subject, .. }
+                | Op::ReadRange { subject, .. }
+                | Op::CompareSelection { subject, .. }
+                | Op::Select { subject, .. }
+                | Op::Locate { subject, .. }
+                | Op::MoveBySentence { subject, .. } => Some(subject),
+                _ => None,
+            }
+        }
+        let Some(subject) = steps.get(at).and_then(|step| subject_of(&step.op)) else {
+            return Ok(None);
         };
+        let node = match self.node(subject)? {
+            Ok(node) if self.context.store.runtime_id_of(node).is_some() => node,
+            _ => return Ok(None),
+        };
+        let end = at
+            + steps[at..]
+                .iter()
+                .take_while(|step| subject_of(&step.op) == Some(subject))
+                .count();
+        Ok(Some((node, end)))
+    }
+
+    /// Runs `steps`, a run of text steps on UI Automation node `node`,
+    /// through the UI Automation executor: their outcomes, each step
+    /// refused as its text's opening answered, under its condition, when
+    /// the node's text cannot be opened.
+    fn fused(&mut self, node: NodeId, steps: &[verbatim_model::batch::Step]) -> Vec<StepOutcome> {
         let context = self.context;
-        let uia = self.client.uia()?;
-        text_reads::fused_steps(context, uia, node, (steps, first, &self.outcomes))
+        let first = self.outcomes.len();
+        let reply = match self.client.uia() {
+            Some(uia) => {
+                match text_reads::fused_steps(context, uia, node, (steps, first, &self.outcomes)) {
+                    Ok(outcomes) => return outcomes,
+                    Err(reply) => reply,
+                }
+            }
+            None => TextReply::Unanswered,
+        };
+        let mut outcomes = self.outcomes.clone();
+        for step in steps {
+            outcomes.push(match step.gate(&outcomes) {
+                Ok(Gate::Skip) => StepOutcome::Skipped,
+                Ok(Gate::Run) => text_refused(&reply, node),
+                Err(KindMismatch) => {
+                    tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
+                    StepOutcome::Failed
+                }
+            });
+        }
+        outcomes.split_off(first)
     }
 
     fn step(&mut self, op: &Op) -> Stepped {

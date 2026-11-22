@@ -11,18 +11,19 @@ use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, Proper
 use verbatim_model::{StateSet, TableId, WindowHandle};
 use verbatim_uia::{Cached, ComboBoxRefresh, Node, SuggestionsRefresh, Uia, Ungated};
 
-use super::{Defect, Found, Ran, Resolve, failed};
+use super::{Defect, Found, Ran, Resolve, Segment, failed};
 
-/// The result of the object step `op`, at `place`, by its call arm.
+/// The result of the object step `op`, at `place` of `segment`, by its
+/// call arm.
 pub(super) fn found(
-    uia: &Uia,
-    resolver: &dyn Resolve,
+    segment: &Segment<'_>,
     place: Place,
     op: &verbatim_model::batch::Op,
 ) -> Result<Found, Ran> {
     use verbatim_model::batch::Op;
+    let (uia, resolver) = (segment.uia, segment.resolver);
     match op {
-        Op::Read { subject, set } => read(uia, resolver, (subject, place), set).map(Found::Read),
+        Op::Read { subject, set } => read(segment, (subject, place), set).map(Found::Read),
         Op::Test { subject, matcher } => {
             test(uia, resolver, (subject, place), matcher).map(Found::Test)
         }
@@ -151,11 +152,11 @@ fn refreshed<S: Ungated>(
 /// property its cache holds, each property read apart by its own read,
 /// and those the outpost holds from it.
 pub(super) fn read(
-    uia: &Uia,
-    resolver: &dyn Resolve,
+    segment: &Segment<'_>,
     (subject, place): (&Subject, Place),
     set: &[PropertyId],
 ) -> Result<PropertyValues, Ran> {
+    let (uia, resolver) = (segment.uia, segment.resolver);
     let wants = |id| set.contains(&id);
     let element = if set.iter().any(|&id| !read_apart(id)) {
         Some(element_read(uia, resolver, (subject, place))?)
@@ -172,11 +173,17 @@ pub(super) fn read(
     } else {
         None
     };
+    let summary = if wants(PropertyId::TextSummary) {
+        text_summary(segment, subject)
+    } else {
+        None
+    };
     Ok(PropertyValues(
         set.iter()
             .map(|&id| PropertyAnswer {
                 id,
                 value: match id {
+                    PropertyId::TextSummary => summary.clone(),
                     PropertyId::Suggestions => suggestions.as_ref().and_then(|element| {
                         let read = element.read();
                         read.reports_suggestions()
@@ -188,7 +195,6 @@ pub(super) fn read(
                     PropertyId::ComboBoxList => combo_box.as_ref().and_then(combo_box_list),
                     PropertyId::WindowClass
                     | PropertyId::ChildCount
-                    | PropertyId::TextSummary
                     | PropertyId::MsaaAddress
                     | PropertyId::WindowShown => resolver.held(subject, id),
                     id => element
@@ -198,6 +204,73 @@ pub(super) fn read(
             })
             .collect(),
     ))
+}
+
+/// What the subject's text says of it, as NVDA's object speech reads it
+/// for report focus: the caret's line, or the selected text when the
+/// selection holds some, read as one segment of the text operations
+/// (`Caret`, `ReadText` of the line at the caret, and `ReadRange` of the
+/// selection only when text is selected), in the segment's mode, and made
+/// the property's value by the resolver. `None` when the subject has no
+/// text or a read failed, as NVDA then speaks no text.
+fn text_summary(segment: &Segment<'_>, subject: &Subject) -> Option<PropertyValue> {
+    use verbatim_model::batch::{Check, Condition, Op, Point, PointOf, Step};
+    use verbatim_model::{TextDetails, TextUnit};
+    let of = |which| Point::Of(Place(0), which);
+    let steps = [
+        Step {
+            op: Op::Caret {
+                subject: subject.clone(),
+                adopt: None,
+            },
+            when: None,
+        },
+        Step {
+            op: Op::ReadText {
+                subject: subject.clone(),
+                at: of(PointOf::Caret),
+                movement: None,
+                unit: TextUnit::Line,
+                count: 1,
+                details: TextDetails::NONE,
+            },
+            when: None,
+        },
+        Step {
+            op: Op::ReadRange {
+                subject: subject.clone(),
+                start: of(PointOf::SelectionStart),
+                end: of(PointOf::SelectionEnd),
+                through: None,
+            },
+            when: Some(Condition {
+                on: Place(0),
+                check: Check::Found,
+                negated: false,
+            }),
+        },
+    ];
+    let answer = super::run_batch(&Segment {
+        steps: &steps,
+        first: 0,
+        earlier: &[],
+        ..*segment
+    });
+    let mut ran = answer.steps.into_iter();
+    let line = match (ran.next(), ran.next()) {
+        (Some(Ran::Done(Found::Caret(_))), Some(Ran::Done(Found::ReadText(mut line)))) => {
+            line.units.swap_remove(0).text
+        }
+        _ => return None,
+    };
+    let selected = match ran.next() {
+        Some(Ran::Done(Found::ReadRange(selected))) => Some(selected),
+        Some(Ran::Unrun(super::Unrun::Skipped)) => None,
+        _ => return None,
+    };
+    segment
+        .resolver
+        .text_summary((&line, selected.as_deref()), answer.read_classically)
 }
 
 /// The list window of a classic .NET Framework Windows Forms combo box,

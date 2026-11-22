@@ -42,13 +42,7 @@ impl Resolve for MsaaNodes<'_, '_> {
     }
 
     fn held(&self, node: NodeId, id: PropertyId) -> Option<PropertyValue> {
-        let mut client = self.client.borrow_mut();
-        let uia = if id == PropertyId::TextSummary {
-            client.uia()
-        } else {
-            None
-        };
-        super::uia_object::held(self.context, uia, node, id)
+        super::uia_object::held(self.context, node, id)
     }
 
     fn values(&self, node: &NodeSnapshot, set: &[PropertyId]) -> PropertyValues {

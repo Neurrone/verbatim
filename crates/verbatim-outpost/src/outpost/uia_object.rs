@@ -33,6 +33,8 @@ pub(super) struct UiaNode<'a, 'c> {
     fill: Fill<Node>,
     /// The element the outpost keeps, or found by its route, once asked.
     element: OnceCell<IUIAutomationElement>,
+    /// Its text, opened once asked, for a `Read` of its text summary.
+    text: OnceCell<Result<crate::text::uia::UiaText, verbatim_model::TextReply>>,
 }
 
 impl<'a, 'c> UiaNode<'a, 'c> {
@@ -49,6 +51,23 @@ impl<'a, 'c> UiaNode<'a, 'c> {
             node,
             fill: Fill::new(request),
             element: OnceCell::new(),
+            text: OnceCell::new(),
+        }
+    }
+
+    /// Its text, opened at the first ask: the step's outcome when it has
+    /// none, is gone, or did not answer.
+    fn source(&self) -> Result<&crate::text::uia::UiaText, Ran> {
+        use verbatim_model::TextReply;
+        match self.text.get_or_init(|| {
+            super::text_reads::uia_text(self.context, self.node, verbatim_model::TextDetails::NONE)
+        }) {
+            Ok(source) => Ok(source),
+            Err(TextReply::NoText) => Err(Ran::Unrun(Unrun::Refused(
+                verbatim_model::batch::StepRefusal::NoText,
+            ))),
+            Err(TextReply::Gone) => Err(Ran::Unrun(Unrun::NotThere(Missing::Node(self.node)))),
+            Err(_) => Err(Ran::Failed),
         }
     }
 
@@ -110,7 +129,36 @@ impl Resolve for UiaNode<'_, '_> {
     }
 
     fn held(&self, _subject: &Subject, id: PropertyId) -> Option<PropertyValue> {
-        held(self.context, Some(self.uia), self.node, id)
+        held(self.context, self.node, id)
+    }
+
+    fn text(&self, _subject: &Subject) -> Result<verbatim_uia_rops::TextTarget<'_>, Ran> {
+        self.source().map(crate::text::uia::UiaText::target)
+    }
+
+    fn units(
+        &self,
+        read: (
+            Option<verbatim_model::TextMovement>,
+            verbatim_model::TextUnit,
+            u8,
+        ),
+        details: verbatim_model::TextDetails,
+    ) -> Result<verbatim_uia_rops::batch::UnitsRead, Ran> {
+        crate::text::fused::units_read(self.source()?, read, (details, false))
+    }
+
+    fn text_summary(
+        &self,
+        (line, selected): (&[u16], Option<&[u16]>),
+        read_classically: bool,
+    ) -> Option<PropertyValue> {
+        if read_classically && let Some(window) = asked::known_nearest_of(self.context, self.node) {
+            self.context.read_classically(window);
+        }
+        Some(PropertyValue::TextSummary(crate::text::summary_of(
+            line, selected,
+        )))
     }
 
     fn value(&self, read: &ElementRead, id: PropertyId) -> Option<PropertyValue> {
@@ -131,11 +179,10 @@ impl Resolve for UiaNode<'_, '_> {
 /// holds rather than from the node's own read: its MSAA ids, whether its
 /// window, its own or its nearest ancestor's, is shown, and that window's
 /// class, from Windows; a tree view item's children, by the control's
-/// messages; and its text's summary, through the outpost's text, with the
-/// UI Automation client `uia` for a UI Automation node.
+/// messages; and an edit control's text summary, through its messages (a
+/// UI Automation node's is the executor's `Read` arm's).
 pub(super) fn held(
     context: &RequestContext<'_>,
-    uia: Option<&Uia>,
     node: NodeId,
     id: PropertyId,
 ) -> Option<PropertyValue> {
@@ -162,7 +209,7 @@ pub(super) fn held(
             .and_then(|(hwnd, _, child)| verbatim_ia2::acquire::tree_view_child_count(hwnd, child))
             .map(PropertyValue::Count),
         PropertyId::TextSummary => {
-            super::text_reads::text_summary(context, uia, node).map(PropertyValue::TextSummary)
+            super::text_reads::text_summary(context, node).map(PropertyValue::TextSummary)
         }
         _ => None,
     }
@@ -190,8 +237,14 @@ impl Resolve for Following<'_, '_> {
 }
 
 /// Runs `op`, an object step, alone through the UI Automation executor,
-/// resolved by `resolver`: its one step's outcome.
-fn run(context: &RequestContext<'_>, uia: &Uia, resolver: &dyn Resolve, op: Op) -> Ran {
+/// resolved by `resolver`, its subject in `window` when known: its one
+/// step's outcome.
+fn run(
+    context: &RequestContext<'_>,
+    (uia, window): (&Uia, Option<isize>),
+    resolver: &dyn Resolve,
+    op: Op,
+) -> Ran {
     let steps = [Step { op, when: None }];
     let answer = verbatim_uia_rops::batch::run_batch(&verbatim_uia_rops::batch::Segment {
         uia,
@@ -199,8 +252,8 @@ fn run(context: &RequestContext<'_>, uia: &Uia, resolver: &dyn Resolve, op: Op) 
         first: 0,
         earlier: &[],
         resolver,
-        remote: context.tries_remote(None),
-        window: None,
+        remote: context.tries_remote(window),
+        window,
     });
     answer.steps.into_iter().next().unwrap_or(Ran::Failed)
 }
@@ -246,7 +299,8 @@ pub(super) fn step(context: &RequestContext<'_>, uia: &Uia, node: NodeId, op: &O
         }
     };
     let resolver = UiaNode::new(context, uia, node, &request);
-    let ran = run(context, uia, &resolver, with_subject(op, node));
+    let window = asked::known_nearest_of(context, node);
+    let ran = run(context, (uia, window), &resolver, with_subject(op, node));
     let read = |values| NodeRead {
         node: Some(node),
         window: asked::node_window(asked::known_nearest_of(context, node).unwrap_or(0)),
@@ -277,7 +331,7 @@ pub(super) fn activate(
     let resolver = UiaNode::new(context, uia, node, &request);
     match run(
         context,
-        uia,
+        (uia, None),
         &resolver,
         Op::Activate {
             subject: Subject::Node(node),
@@ -305,7 +359,7 @@ pub(super) fn follow(
         uia,
         followed,
     };
-    let ran = run(context, uia, &resolver, Op::Follow(target.cloned()));
+    let ran = run(context, (uia, None), &resolver, Op::Follow(target.cloned()));
     outcome(ran, node, |found| match found {
         Found::Follow => Some(StepOutcome::Done(Done::Follow)),
         _ => None,

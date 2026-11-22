@@ -565,8 +565,8 @@ pub(super) fn caret_step(
 /// place of its first step and `earlier` the outcomes of the steps before
 /// it: each step's outcome, its anchors committed with the program's text
 /// writes. A `Caret` adopts the element of the caret tell it names first,
-/// as [`caret_step`] does. `None` when the node's text is not read through
-/// UI Automation or cannot be opened, for the steps to run one at a time.
+/// as [`caret_step`] does. `Err` with the reply its text's opening
+/// answered when the node's text cannot be opened.
 pub(super) fn fused_steps(
     context: &RequestContext<'_>,
     uia: &verbatim_uia::Uia,
@@ -576,7 +576,7 @@ pub(super) fn fused_steps(
         usize,
         &[verbatim_model::batch::StepOutcome],
     ),
-) -> Option<Vec<verbatim_model::batch::StepOutcome>> {
+) -> Result<Vec<verbatim_model::batch::StepOutcome>, TextReply> {
     for step in steps {
         if let verbatim_model::batch::Op::Caret {
             adopt: Some(adopt), ..
@@ -585,9 +585,7 @@ pub(super) fn fused_steps(
             adopt_told(context, node_id, Some(adopt));
         }
     }
-    let Ok(Source::Uia(mut source)) = source(context, node_id, TextDetails::NONE) else {
-        return None;
-    };
+    let mut source = uia_source(context, node_id, TextDetails::NONE)?;
     let named = text::fused::named(steps, first, earlier);
     let mut call = uia_call(context, node_id, &named);
     let window = super::asked::known_nearest_of(context, node_id);
@@ -605,7 +603,7 @@ pub(super) fn fused_steps(
     {
         context.read_classically(window);
     }
-    Some(answer.outcomes)
+    Ok(answer.outcomes)
 }
 
 /// A batch's `MoveBySentence` of `node_id` from the starting point held
@@ -744,20 +742,30 @@ fn watch_outcome(
     }
 }
 
-/// The text summary of `node_id` for report focus
-/// ([`text::held::summary`]): `None` when it has no text or the read
-/// failed, as NVDA then speaks no text.
+/// The text summary of edit control `node_id` for report focus
+/// ([`text::held::summary`]), read by its messages: `None` when it has no
+/// text or the read failed, as NVDA then speaks no text. A UI Automation
+/// node's is read by the executor's `Read` arm.
 pub(super) fn text_summary(
     context: &RequestContext<'_>,
-    uia: Option<&verbatim_uia::Uia>,
     node_id: NodeId,
 ) -> Option<verbatim_model::property::TextSummary> {
     let read_at_us = context.observed_now();
     on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
-        text::held::summary(source, text, ((uia, node_id), read_at_us))
+        text::held::summary(source, text, ((None, node_id), read_at_us))
     })
     .ok()?
     .ok()
+}
+
+/// UI Automation node `node_id`'s text, its reads fetching `details`:
+/// `Err` with the reply a node with no text, or gone, answers.
+pub(super) fn uia_text(
+    context: &RequestContext<'_>,
+    node_id: NodeId,
+    details: TextDetails,
+) -> Result<UiaText, TextReply> {
+    uia_source(context, node_id, details)
 }
 
 /// A focus's caret, read after its states (Table 17, columns A to C): the

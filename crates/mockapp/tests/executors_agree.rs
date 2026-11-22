@@ -229,10 +229,29 @@ fn outcomes(
         let (answer, _) = outpost.batch(hwnd, WindowVerdict::Uia, sent);
         #[cfg(feature = "faults")]
         drop(armed);
-        outcomes.push((label, format!("{:#?}", answer.outcome)));
+        outcomes.push((label, without_times(&format!("{:#?}", answer.outcome))));
     }
     drop(outpost);
     outcomes
+}
+
+/// `text` with each time a selection began, which no two runs share,
+/// left out.
+fn without_times(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("began_us: ") {
+        let start = at + "began_us: ".len();
+        let end = start
+            + rest[start..]
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len() - start);
+        out.push_str(&rest[..start]);
+        out.push('#');
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Runs `script` against `fixture`, its element `focus`, named
@@ -484,21 +503,91 @@ fn caret_reads(doc: &Subject) -> Batch {
     ])
 }
 
-/// The text operations on `text.json`'s document: the caret's reads, and
-/// its summary.
+/// A selection of `doc` from `start` to `end`.
+fn select(doc: &Subject, (start, end): (TextPoint, TextPoint)) -> Op {
+    Op::Select {
+        subject: doc.clone(),
+        start: Point::At(start),
+        end: Point::At(end),
+        through: None,
+    }
+}
+
+/// The selections on `doc`: the caret read, the whole text selected, the
+/// caret read again and the two selections compared, then the summary,
+/// which says the selection; the caret put back at the start, as the next
+/// run finds it.
+fn selections(doc: &Subject) -> Vec<Labelled> {
+    let caret = || Op::Caret {
+        subject: doc.clone(),
+        adopt: None,
+    };
+    vec![
+        (
+            "a selection compared".to_owned(),
+            batch(vec![
+                caret(),
+                select(doc, (TextPoint::Start, TextPoint::End)),
+                caret(),
+                Op::CompareSelection {
+                    subject: doc.clone(),
+                    before: verbatim_model::batch::Before::SelectionOf(Place(0)),
+                    after: Place(2),
+                },
+            ]),
+            None,
+        ),
+        (
+            "the summary of a selection".to_owned(),
+            batch(vec![Op::Read {
+                subject: doc.clone(),
+                set: vec![PropertyId::TextSummary],
+            }]),
+            None,
+        ),
+        (
+            "the caret put back".to_owned(),
+            batch(vec![select(doc, (TextPoint::Start, TextPoint::Start))]),
+            None,
+        ),
+    ]
+}
+
+/// The text operations on `text.json`'s document: the caret's reads, its
+/// summary, a move by sentence, which UI Automation's text refuses, and
+/// the selections.
 fn text_operations(_: HWND, named: &Named) -> Vec<Labelled> {
     let doc = named.node("Notes");
-    vec![
+    let mut batches = vec![
         ("the caret's reads".to_owned(), caret_reads(&doc), None),
         (
             "the summary".to_owned(),
             batch(vec![Op::Read {
-                subject: doc,
+                subject: doc.clone(),
                 set: vec![PropertyId::Name, PropertyId::TextSummary],
             }]),
             None,
         ),
-    ]
+        (
+            "a move by sentence".to_owned(),
+            batch(vec![Op::MoveBySentence {
+                subject: doc.clone(),
+                from: verbatim_model::TextAnchor(1),
+                forward: true,
+                details: TextDetails::NONE,
+            }]),
+            None,
+        ),
+    ];
+    batches.extend(selections(&doc));
+    batches
+}
+
+/// The selections on `long_text.json`'s document, whose text is longer
+/// than a comparison's first read of the new selection, which is read
+/// whole after it.
+fn long_selections(_: HWND, named: &Named) -> Vec<Labelled> {
+    selections(&named.node("Notes"))
 }
 
 /// The caret's reads on `text.json`'s document, with each program fault
@@ -542,6 +631,10 @@ fn text_operations_agree() {
     agree("text.json", ("doc", "Notes"), text_operations);
 }
 
+fn long_selections_agree() {
+    agree("long_text.json", ("doc", "Notes"), long_selections);
+}
+
 #[cfg(feature = "faults")]
 fn faulted_text_operations_agree() {
     agree("text.json", ("doc", "Notes"), faulted_text_operations);
@@ -555,6 +648,7 @@ fn main() {
         ("object_operations_agree", object_operations_agree),
         ("activations_agree", activations_agree),
         ("text_operations_agree", text_operations_agree),
+        ("long_selections_agree", long_selections_agree),
     ]);
 }
 

@@ -157,11 +157,19 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
                 .map_err(call_failed)
         }
         Op::WaitForCaret { .. } => wait_check(&resolver.wait_check()?).map_err(call_failed),
+        // UI Automation has no sentence unit: once the subject's text is
+        // found, the move is refused, as NVDA's UIA text has none.
+        Op::MoveBySentence { subject, .. } => {
+            resolver.text(subject)?;
+            Err(Ran::Unrun(Unrun::Refused(
+                verbatim_model::batch::StepRefusal::NoSuchUnit,
+            )))
+        }
         op @ (Op::Read { .. }
         | Op::Test { .. }
         | Op::IsOneOf { .. }
         | Op::Activate { .. }
-        | Op::Follow(_)) => super::object::found(uia, resolver, place, op),
+        | Op::Follow(_)) => super::object::found(state.segment, place, op),
         _ => Err(Defect("a step no executor of fusable steps runs").ran()),
     }
 }

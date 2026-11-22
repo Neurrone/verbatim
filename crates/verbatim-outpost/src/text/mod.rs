@@ -667,6 +667,33 @@ fn to_utf8(units: &[u16], max_bytes: usize, offsets: &[usize]) -> (String, Vec<u
     (text, mapped, truncated)
 }
 
+/// What a text says of its node for report focus, as NVDA's object speech
+/// reads it: the selected text when `selected`, the selection's UTF-16
+/// text, holds some, else the caret's `line`, each cut as a copy and a
+/// chunk are.
+pub(crate) fn summary_of(
+    line: &[u16],
+    selected: Option<&[u16]>,
+) -> verbatim_model::property::TextSummary {
+    use verbatim_model::property::TextSummary;
+    if let Some(selected) = selected
+        .map(|units| change_of(true, &units[..units.len().min(MAX_RANGE_UNITS)]))
+        .filter(|selected| !selected.text.is_empty())
+    {
+        return TextSummary::Selected(selected.text);
+    }
+    let truncated = line.len() > MAX_CHUNK_UNITS;
+    let (mut text, _, _) = to_utf8(
+        &line[..line.len().min(MAX_CHUNK_UNITS)],
+        MAX_CHUNK_BYTES,
+        &[],
+    );
+    if truncated {
+        keep_whole_characters(&mut text);
+    }
+    TextSummary::Line(text)
+}
+
 /// Cuts `text`, which a read limit cut short, back to the end of its last
 /// whole character, so a surrogate pair or a letter with its marks is never
 /// split: the last grapheme cluster may have lost its rest to the cut (a
