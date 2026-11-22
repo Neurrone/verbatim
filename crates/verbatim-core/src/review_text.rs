@@ -476,7 +476,8 @@ const ABOVE_PLACE: u32 = 15;
 /// past the end mark. A press from the review position then reads the rows
 /// around the position's place, counted from the document's end, and finds
 /// its line again on the nearest row with its text, the higher at one
-/// distance, or else keeps its place and takes the row there; a read that
+/// distance, or else keeps its place and takes the row there, at the review
+/// cursor's column; a read that
 /// fails ends the press saying nothing. Anywhere else, and with no place,
 /// the press starts as any text's does.
 async fn terminal_start(
@@ -506,14 +507,16 @@ async fn terminal_start(
     if !from_position(press.command) {
         return Start::Begin;
     }
-    let place = {
+    // The place, and the review cursor's column on its row now, which
+    // moves along the row with no read.
+    let (place, column) = {
         let facts = cx.facts();
-        let at = matches!(
-            facts.navigator.as_ref().map(|navigator| &navigator.text),
-            Some(ReviewText::At(_))
-        );
+        let column = match facts.navigator.as_ref().map(|navigator| &navigator.text) {
+            Some(ReviewText::At(position)) => position.column,
+            _ => return Start::Begin,
+        };
         match crate::terminal::review_place(&facts, node) {
-            Some(place) if at && terminal_rows(&facts, node) => place,
+            Some(place) if terminal_rows(&facts, node) => (place, column),
             _ => return Start::Begin,
         }
     };
@@ -543,7 +546,6 @@ async fn terminal_start(
     let mut facts = cx.facts_mut();
     let line = Arc::new(chunk.clone());
     let content = text::line_content(&line.text, true);
-    let column = usize::try_from(place.column).unwrap_or(usize::MAX);
     let position = ReviewPosition {
         offset: text::offset_at_column(content, column, true),
         column,
@@ -553,7 +555,11 @@ async fn terminal_start(
     crate::terminal::set_review_place(
         &mut facts,
         node,
-        crate::terminal::places::RowPlace { above, ..place },
+        crate::terminal::places::RowPlace {
+            above,
+            column: u32::try_from(column).unwrap_or(u32::MAX),
+            ..place
+        },
     );
     Start::At(execute(&mut facts, press.trace_id, press, node, &position))
 }

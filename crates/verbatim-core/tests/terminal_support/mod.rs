@@ -20,7 +20,7 @@ use std::collections::VecDeque;
 use crate::desk::{Desk, ONE, focus_read_of};
 use verbatim_model::batch::{
     Batch, CaretAt, Chunks, Done, FoundText, Gate, Located, Missing, Moved, Op, Point, PointOf,
-    RangeText, StepOutcome, StepRefusal, VisibleText, Waited,
+    RangeText, SelectionCompared, StepOutcome, StepRefusal, VisibleText, Waited,
 };
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
@@ -31,8 +31,8 @@ use verbatim_model::request::{
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     Backend, CaretKey, Effect, Input, KeySeq, NodeDetails, NodeId, NodeSnapshot, ReaderSettings,
-    Role, SegmentContent, SpeechMark, StateSet, TerminalColourRun, TerminalText, TextAnchor,
-    TextChunk, TextPoint, TextUnit, TraceId,
+    Role, SegmentContent, SelectionDifference, SpeechMark, StateSet, TerminalColourRun,
+    TerminalText, TextAnchor, TextChunk, TextPoint, TextUnit, TraceId,
 };
 use verbatim_term_sim::{Flavor, Position, Range, Terminal};
 
@@ -366,10 +366,28 @@ impl Sim {
                 )
             }
             Op::ReadRange {
-                start, end, trim, ..
+                start,
+                end,
+                trim,
+                through,
+                ..
             } => {
                 let (a, b) = (self.point(start, earlier)?, self.point(end, earlier)?);
-                let (start, end) = if a <= b { (a, b) } else { (b, a) };
+                // Through the character at the later end, by the point just
+                // past it.
+                let past = match through {
+                    Some(through) => Some((
+                        self.point(&through.start, earlier)?,
+                        self.point(&through.end, earlier)?,
+                    )),
+                    None => None,
+                };
+                let (start, end) = match (a <= b, past) {
+                    (true, Some((_, past_end))) => (a, past_end),
+                    (false, Some((past_start, _))) => (b, past_start),
+                    (true, None) => (a, b),
+                    (false, None) => (b, a),
+                };
                 let (text, padded) = Self::trimmed(self.text(Range { start, end })?, *trim);
                 Ok(Done::ReadRange(RangeText {
                     text,
@@ -454,8 +472,16 @@ impl Sim {
                 screen: None,
                 offset: None,
             })),
-            // The terminals' text cannot be selected.
+            // The terminals' text cannot be selected, so the selection
+            // stays as it was.
             Op::Select { .. } => Err(StepOutcome::Refused(StepRefusal::Unsupported)),
+            Op::CompareSelection { .. } => Ok(Done::CompareSelection(SelectionCompared {
+                difference: SelectionDifference {
+                    changes: Vec::new(),
+                    new_selection: None,
+                },
+                text_changed: false,
+            })),
             other => panic!("a step the simulated terminal does not answer: {other:?}"),
         }
     }
@@ -477,23 +503,28 @@ impl Sim {
     }
 }
 
-/// What Core asked of the terminal, by the batch's kind: a window read, a
-/// read of lines (a review command's or a command mark's), a command
-/// mark's search, a caret key's wait with its final window read, or the
-/// commit's `Follow`.
+/// What Core asked of the terminal, by the batch's kind: a window read, one
+/// that searches for its end mark's line, a read of lines (a review
+/// command's or a command mark's), a command mark's search, a caret key's
+/// wait with its final window read, or the commit's `Follow`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asked {
     Window,
+    WindowSearching,
     Lines,
     Search,
     Wait,
     Follow,
+    Other,
 }
 
 /// What `batch` asks, by its kind.
 fn asked_of(batch: &Batch) -> Asked {
     let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
     match ops.first() {
+        Some(Op::Visible { .. }) if ops.iter().any(|op| matches!(op, Op::FindText { .. })) => {
+            Asked::WindowSearching
+        }
         Some(Op::Visible { .. }) => Asked::Window,
         Some(Op::WaitForCaret { .. }) => Asked::Wait,
         Some(Op::Follow(_)) => Asked::Follow,
@@ -504,7 +535,7 @@ fn asked_of(batch: &Batch) -> Asked {
         {
             Asked::Lines
         }
-        _ => panic!("a batch the support does not name: {batch:?}"),
+        _ => Asked::Other,
     }
 }
 
@@ -590,16 +621,25 @@ pub struct Session {
     queued: VecDeque<(Vec<SpeechMark>, Said)>,
     /// The wake Core last asked for, in microseconds.
     pub wake: Option<u64>,
+    /// How many terminal reads Core gave the control plane's event stream.
+    pub observed: usize,
 }
 
 impl Session {
     /// A terminal of `flavor`, `width` by `height` with `history` rows,
     /// showing `text`, focused and read twice, all of which is let pass
     /// unasserted.
-    pub fn new(
+    pub fn new(flavor: Flavor, size: (usize, usize, usize), text: &str) -> Self {
+        Self::under(flavor, size, text, &[])
+    }
+
+    /// [`Session::new`], the terminal focused under `ancestors`, outermost
+    /// first.
+    pub fn under(
         flavor: Flavor,
         (width, height, history): (usize, usize, usize),
         text: &str,
+        ancestors: &[NodeSnapshot],
     ) -> Self {
         let mut sim = Sim::new(flavor, width, height, history);
         sim.terminal.write(text.as_bytes());
@@ -613,7 +653,7 @@ impl Session {
             states: StateSet::new(),
             details: NodeDetails::default(),
         };
-        let _ = desk.focus_read(ONE, focus_read_of(ONE, &terminal, &[]));
+        let _ = desk.focus_read(ONE, focus_read_of(ONE, &terminal, ancestors));
         let pending = desk
             .sent
             .iter()
@@ -633,6 +673,7 @@ impl Session {
             pending,
             queued: VecDeque::new(),
             wake: None,
+            observed: 0,
         };
         session.run();
         // A read at the screen's height, once the baseline found it, so
@@ -642,6 +683,7 @@ impl Session {
         session.play();
         session.heard.clear();
         session.requests.clear();
+        session.observed = 0;
         session
     }
 
@@ -698,6 +740,17 @@ impl Session {
         self.take(effects, None);
         self.run();
         self.settle();
+    }
+
+    /// `text` typed at `at_ms` under `trace_id`.
+    pub fn typed(&mut self, text: &str, at_ms: u64, trace_id: TraceId) {
+        self.press_at(
+            at_ms,
+            trace_id,
+            PressAction::Typed {
+                text: text.to_owned(),
+            },
+        );
     }
 
     /// Review command `command`, its `repeat`th quick press, a millisecond
@@ -834,9 +887,16 @@ impl Session {
                     self.pending.push_back((ask.number.0, batch));
                 }
                 Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = wake,
+                Effect::Observed(observed) => {
+                    if matches!(
+                        observed.event,
+                        verbatim_model::NormalizedEvent::TerminalSnapshot { .. }
+                    ) {
+                        self.observed += 1;
+                    }
+                }
                 Effect::Queue(_)
                 | Effect::DropExpiredSpeech(_)
-                | Effect::Observed(_)
                 | Effect::PlayEarcon(_)
                 | Effect::SettingsChanged(_) => {}
                 other => panic!("unexpected effect: {other:?}"),

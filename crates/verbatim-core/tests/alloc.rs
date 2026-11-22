@@ -17,6 +17,7 @@
 mod desk;
 #[path = "support/readers.rs"]
 mod readers;
+mod terminal_support;
 
 use readers::Found;
 
@@ -420,4 +421,34 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         },
     }));
     let _ = same(&mut small, &mut large, &next_word);
+}
+
+#[test]
+fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
+    // The simulated terminal focused inside a chain of groups and read
+    // through Core's window reads (`terminal_support`): a line of output,
+    // told and read, its every step answered as the terminal's provider
+    // answers it.
+    let session = |depth: u64| {
+        let mut session = terminal_support::Session::under(
+            verbatim_term_sim::Flavor::ConsoleHost,
+            (40, 5, 20),
+            "PS> ",
+            &chain(depth),
+        );
+        // Playback's marks are entries of their own, outside the line's
+        // step.
+        session.manual_play = true;
+        session
+    };
+    let mut small = session(SMALL_CHAIN);
+    let mut large = session(LARGE_CHAIN);
+    let ((), small_bytes) = allocated_by(|| small.write("\r\ntotal 42\r\nPS> ", 200));
+    let ((), large_bytes) = allocated_by(|| large.write("\r\ntotal 42\r\nPS> ", 200));
+    small.play();
+    large.play();
+    let heard = small.heard();
+    assert_eq!(heard, terminal_support::plain(&["total 42", "PS>"]));
+    assert_eq!(large.heard(), heard);
+    assert_eq!(small_bytes, large_bytes);
 }
