@@ -515,6 +515,7 @@ const FAULT_TESTS: &[(&str, &str)] = &[
     ("verbatim-audio", "mixer"),
     ("verbatim-supervisor", "fault_paths"),
     ("mockapp", "batch_faults"),
+    ("mockapp", "executors_agree"),
     ("mockapp", "failure_paths"),
     ("mockapp", "shutdown"),
     ("mockapp", "time_limits"),

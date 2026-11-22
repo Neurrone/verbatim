@@ -70,6 +70,12 @@ name = "batch_faults"
 harness = false
 required-features = ["faults"]
 
+# Built with the `faults` feature by `cargo xtask faults`, it runs its
+# faulted cases alone.
+[[test]]
+name = "executors_agree"
+harness = false
+
 [[test]]
 name = "call_counts"
 harness = false

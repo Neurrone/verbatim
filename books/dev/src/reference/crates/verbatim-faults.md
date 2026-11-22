@@ -70,7 +70,7 @@ fault step on Windows: clippy of each of those crates, `verbatim-audio`
 and mockapp with the feature, one package at a time, then the fault test
 targets (`verbatim-supervisor`'s `fault_paths` and mockapp's
 `batch_faults`, `failure_paths`, `shutdown`, `terminal_reading` and `time_limits`), each declared with `required-features =
-["faults"]` so the ordinary steps skip it, and `verbatim-audio`'s `mixer`,
+["faults"]` so the ordinary steps skip it, mockapp's `executors_agree`, which runs its faulted cases alone when built with the feature, and `verbatim-audio`'s `mixer`,
 into `target/debug`. `verbatim-audio` is platform-neutral, so it cannot
 depend on this crate: its `faults` feature has no dependency and compiles
 its own observation point, a producer's wait for room
