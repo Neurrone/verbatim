@@ -1690,3 +1690,36 @@ fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
         }
     );
 }
+
+/// A switch to an input desktop Verbatim cannot open (the secure desktop)
+/// while a flood's paced lines wait commits Core's own focus, which
+/// leaves the terminal, and its stop of speech drops the lines handed to
+/// speech and the lines still waiting, as any cut does: nothing more of
+/// the flood is spoken, and no read is asked of the terminal after it.
+/// The terminal rebuild's design (section 5.2, the desktop switch) reads
+/// this test for today's behaviour.
+#[test]
+fn a_switch_to_the_secure_desktop_drops_a_flood_s_waiting_lines() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=100)));
+    for _ in 0..10 {
+        assert!(playback.play_one(&mut state));
+    }
+    assert_eq!(playback.queued.len(), 2, "{:?}", playback.queued);
+    playback.requests.clear();
+    playback.feed(
+        &mut state,
+        &queue_input(crate::input_desktop::tests::switch(false)),
+    );
+    assert!(playback.queued.is_empty(), "{:?}", playback.queued);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=10));
+    assert_eq!(playback.requests, []);
+    assert!(state.terminal.waiting.is_empty());
+    assert_eq!(
+        state.terminal_focus.focused,
+        super::reading::FocusedTerminal::None
+    );
+}
