@@ -25,7 +25,7 @@ mod harness;
 
 use std::sync::{Arc, Mutex};
 
-use verbatim_model::{MarkPlace, MarkSearch, TerminalColourRun, TerminalText, row_hash};
+use verbatim_model::{MarkPlace, MarkSearch, TerminalColourRun, TerminalText};
 use verbatim_outpost::terminal::{WindowAnswer, WindowRead, window};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
@@ -145,13 +145,15 @@ struct Fields {
     above: u32,
     screen_top: u32,
     screen_rows: u32,
+    width: u32,
     screen_at_start: bool,
+    caret_rows_to_end: Option<u32>,
     first_row: TerminalText,
     document_rows: u32,
     end_place: Option<MarkPlace>,
     aside_place: Option<MarkPlace>,
     found: MarkSearch,
-    colours: Option<Vec<Option<Vec<TerminalColourRun>>>>,
+    colours: Option<Vec<Vec<TerminalColourRun>>>,
     caret: Option<(String, usize)>,
 }
 
@@ -166,7 +168,9 @@ impl From<&WindowAnswer> for Fields {
             above: answer.above,
             screen_top: answer.screen_top,
             screen_rows: answer.screen_rows,
+            width: answer.width,
             screen_at_start: answer.screen_at_start,
+            caret_rows_to_end: answer.caret_rows_to_end,
             first_row: answer.first_row.clone(),
             document_rows: answer.document_rows,
             end_place: answer.end_place.clone(),
@@ -190,7 +194,7 @@ fn plain(height: u32) -> WindowRead<'static> {
         aside: None,
         height,
         opening: 2,
-        colours: None,
+        colours: false,
     }
 }
 
@@ -212,9 +216,9 @@ fn caret_on(row: &str) -> (String, usize) {
 /// A first read starts at the screen's top; after output, a read from two
 /// screens above the document's end counts the rows written past each
 /// mark it names and gives the two opening rows after them, and reads the
-/// colours of the screen rows whose text Core's hashes do not match; after
+/// colours of every screen row; after
 /// a clear, both marks lie past the document's end and are refused.
-fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
+fn a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways() {
     let mut terminal = Terminal::start("terminal-colours.json", "mockapp-window-marks", 4);
     let mut rows = numbered("line", 1..=8);
     rows.push("ready>".to_owned());
@@ -227,7 +231,9 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
             above: 3,
             screen_top: 3,
             screen_rows: 3,
+            width: 12,
             screen_at_start: false,
+            caret_rows_to_end: Some(1),
             first_row: unpadded(&["line 1"]),
             document_rows: 9,
             end_place: None,
@@ -241,13 +247,12 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
     let mut rows = numbered("line", 1..=28);
     rows.push("ready>".to_owned());
     terminal.show(&rows);
-    let held = [row_hash("line 27"), row_hash("line 8"), row_hash("ready>")];
     let ask = WindowRead {
         end: Some((&first_end, "ready>", false)),
         aside: Some(&first_end),
         height: first.screen_rows,
         opening: 2,
-        colours: Some(&held),
+        colours: true,
     };
     let (second, second_end) = terminal.both(&ask);
     let past = MarkPlace::Rows {
@@ -263,13 +268,15 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
             above: 6,
             screen_top: 3,
             screen_rows: 3,
+            width: 12,
             screen_at_start: false,
+            caret_rows_to_end: Some(1),
             first_row: unpadded(&["line 1"]),
             document_rows: 29,
             end_place: Some(past.clone()),
             aside_place: Some(past),
             found: MarkSearch::NotAsked,
-            colours: Some(vec![None, Some(plain_row()), None]),
+            colours: Some(vec![plain_row(), plain_row(), plain_row()]),
             caret: Some(caret_on("ready>")),
         }
     );
@@ -280,7 +287,7 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
         aside: Some(&first_end),
         height: second.screen_rows,
         opening: 2,
-        colours: None,
+        colours: false,
     };
     let (cleared, _) = terminal.both(&ask);
     assert_eq!(
@@ -290,13 +297,82 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways() {
             above: 1,
             screen_top: 1,
             screen_rows: 1,
+            width: 12,
             screen_at_start: true,
+            caret_rows_to_end: Some(1),
             first_row: unpadded(&["ready>"]),
             document_rows: 1,
             end_place: Some(MarkPlace::Refused),
             aside_place: Some(MarkPlace::Refused),
             found: MarkSearch::NotAsked,
             colours: None,
+            caret: Some(caret_on("ready>")),
+        }
+    );
+    terminal.app.quit();
+}
+
+/// A line longer than the width wraps over two rows, which the provider's
+/// line unit moves over one at a time, as a terminal's does: the window,
+/// the screen's top, the caret's rows to the end and the document's rows
+/// count rows, the width is a row's and not the wrapped line's, and the
+/// colours are read for each screen row, the wrapped line's two rows each
+/// its own. The screen of four rows shows three, as mockapp counts the
+/// empty end after the last line break as a row.
+fn a_wrapped_lines_rows_are_counted_and_coloured_each_its_own_both_ways() {
+    let mut terminal = Terminal::start("terminal-colours.json", "mockapp-window-wrap", 4);
+    common::apply(
+        &mut terminal.app,
+        terminal.hwnd,
+        &format!("wrap term {WIDTH}"),
+    );
+    let wrapped = "abcdefghijklmnopqrstuvwx";
+    let text = format!(
+        "{:WIDTH$}\r\n{wrapped}\r\n{:WIDTH$}\r\n",
+        "line 1", "ready>"
+    );
+    let escaped = text.replace('\r', "\\r").replace('\n', "\\n");
+    common::apply(
+        &mut terminal.app,
+        terminal.hwnd,
+        &format!("set-text term {escaped}"),
+    );
+    let caret = WIDTH + 2 + wrapped.len() + 2 + "ready>".len();
+    common::apply(
+        &mut terminal.app,
+        terminal.hwnd,
+        &format!("caret term {caret} {caret}"),
+    );
+    let ask = WindowRead {
+        colours: true,
+        ..plain(3)
+    };
+    let (read, _) = terminal.both(&ask);
+    // The fixture's red, at the text's units 21 and 22, falls on the
+    // wrapped line's first row, columns 7 and 8, and not on its second.
+    let run = |column, length, foreground| TerminalColourRun {
+        column,
+        length,
+        foreground,
+        background: 0x00FF_FFFF,
+    };
+    let red_at_seven = vec![run(0, 7, 0), run(7, 2, 255), run(9, 3, 0)];
+    assert_eq!(
+        read,
+        Fields {
+            rows: TerminalText::unpadded(&text),
+            above: 4,
+            screen_top: 3,
+            screen_rows: 3,
+            width: 12,
+            screen_at_start: false,
+            caret_rows_to_end: Some(1),
+            first_row: unpadded(&["line 1"]),
+            document_rows: 4,
+            end_place: None,
+            aside_place: None,
+            found: MarkSearch::NotAsked,
+            colours: Some(vec![red_at_seven, plain_row(), plain_row()]),
             caret: Some(caret_on("ready>")),
         }
     );
@@ -319,7 +395,7 @@ fn sought(terminal: &Terminal, end: &IUIAutomationTextRange, line: &str) -> Mark
         aside: None,
         height: 3,
         opening: 2,
-        colours: None,
+        colours: false,
     };
     terminal.both(&ask).0.found
 }
@@ -386,7 +462,7 @@ fn a_search_after_the_history_is_trimmed_falls_back_nowhere() {
             aside: None,
             height: 3,
             opening: 2,
-            colours: None,
+            colours: false,
         };
         tracing::subscriber::with_default(Arc::clone(&targets), || terminal.read(&ask, true))
     };
@@ -415,8 +491,12 @@ fn a_search_after_the_history_is_trimmed_falls_back_nowhere() {
 fn main() {
     harness::run_isolated(&[
         (
-            "a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways",
-            a_read_counts_the_rows_past_its_marks_and_reads_changed_colours_both_ways,
+            "a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways",
+            a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways,
+        ),
+        (
+            "a_wrapped_lines_rows_are_counted_and_coloured_each_its_own_both_ways",
+            a_wrapped_lines_rows_are_counted_and_coloured_each_its_own_both_ways,
         ),
         (
             "the_search_for_a_marks_line_answers_both_kinds_of_miss_both_ways",

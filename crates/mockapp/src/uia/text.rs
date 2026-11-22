@@ -140,15 +140,16 @@ impl ITextProvider_Impl for TextProvider_Impl {
     fn GetVisibleRanges(&self) -> WinResult<*mut SAFEARRAY> {
         hits::hit(Method::TextGetVisibleRanges);
         let text = text_of(&self.tree, self.index);
-        let rows = {
+        let (rows, width) = {
             let guard = self
                 .tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.nodes[self.index].screen_rows
+            let node = &guard.nodes[self.index];
+            (node.screen_rows, node.row_width)
         };
         Ok(range_array(
-            &self.range(screen_start(&text, rows), text.len()),
+            &self.range(screen_start(&text, rows, width), text.len()),
         ))
     }
     fn RangeFromChild(
@@ -237,19 +238,47 @@ fn text_of(tree: &SharedTree, index: usize) -> Vec<u16> {
 /// from the end (a line ends after its line feed, and a text ending in one
 /// has an empty last line), or the text's start when it has no more lines,
 /// or with no screen set.
-fn screen_start(text: &[u16], rows: Option<usize>) -> usize {
+fn screen_start(text: &[u16], rows: Option<usize>, width: Option<usize>) -> usize {
     let Some(rows) = rows else {
         return 0;
     };
-    let starts: Vec<usize> = std::iter::once(0)
-        .chain(
-            text.iter()
-                .enumerate()
-                .filter(|&(_, &unit)| unit == u16::from(b'\n'))
-                .map(|(index, _)| index + 1),
-        )
+    let starts: Vec<usize> = row_spans(text, width)
+        .into_iter()
+        .map(|(start, _)| start)
         .collect();
     starts[starts.len().saturating_sub(rows)]
+}
+
+/// The spans of the rows of `text`: its lines, each ended by its line
+/// feed, and with a `width`, each line longer than it cut into rows of
+/// `width` units, the last taking the line's break.
+fn row_spans(text: &[u16], width: Option<usize>) -> Vec<(usize, usize)> {
+    let lines = units(text, TextUnit_Line);
+    let Some(width) = width else {
+        return lines;
+    };
+    let mut rows = Vec::new();
+    for (start, end) in lines {
+        let content = text[start..end]
+            .iter()
+            .take_while(|&&unit| unit != u16::from(b'\r') && unit != u16::from(b'\n'))
+            .count();
+        let mut at = start;
+        while content > width && at + width < start + content {
+            rows.push((at, at + width));
+            at += width;
+        }
+        rows.push((at, end));
+    }
+    rows
+}
+
+/// The node's row width (`wrap`), if it wraps.
+fn row_width_of(tree: &SharedTree, index: usize) -> Option<usize> {
+    tree.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .nodes[index]
+        .row_width
 }
 
 /// The node's formatting now.
@@ -273,6 +302,9 @@ fn spans_of(tree: &SharedTree, index: usize, unit: TextUnit) -> Vec<(usize, usiz
             .chunks(lines.max(1))
             .map(|page| (page[0].0, page[page.len() - 1].1))
             .collect();
+    }
+    if unit == TextUnit_Line {
+        return row_spans(&text, row_width_of(tree, index));
     }
     if unit != TextUnit_Format {
         return units(&text, unit);

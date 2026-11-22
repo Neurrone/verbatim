@@ -123,6 +123,10 @@ parses them.
 - `screen <id> <rows>` (UIA only) puts only the last `rows` lines of a
   text node's text on screen, its visible range, as a terminal shows the
   end of its buffer; 0 shows the whole text again. It raises no event.
+- `wrap <id> <width>` (UIA only) makes a text node's line unit a row of
+  `width` UTF-16 units, as a terminal's is: a longer line is several
+  rows for moves by line and for `screen`; 0 makes each line one row
+  again. It raises no event.
 - `active-text-position <id> <start> <end>` (UIA only) raises UIA's
   active text position changed event from a text node, with the range
   between those UTF-16 offsets.

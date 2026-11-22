@@ -70,6 +70,10 @@ pub(crate) struct NodeData {
     /// How many of the text's last lines are on screen, as a terminal shows
     /// the end of its buffer (`screen`); `None` shows the whole text.
     pub(crate) screen_rows: Option<usize>,
+    /// The width in UTF-16 units past which a line wraps onto the next row,
+    /// as a terminal's line unit is a row (`wrap`); `None` keeps each line
+    /// one row.
+    pub(crate) row_width: Option<usize>,
     /// The text's spelling errors and bold stretches, UTF-16 offsets.
     pub(crate) formats: Formats,
     pub(crate) parent: Option<usize>,
@@ -404,6 +408,7 @@ fn insert(
         selection: (0, 0),
         caret_at_end: false,
         screen_rows: None,
+        row_width: None,
         formats: Formats {
             spelling_errors: node.spelling_errors,
             bold: node.bold,

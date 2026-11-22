@@ -651,7 +651,7 @@ fn terminal_window_reads_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [first, capped],
-        [65, 115],
+        [78, 128],
         "terminal window first and capped"
     );
     assert!(capped < LIMIT / 2);

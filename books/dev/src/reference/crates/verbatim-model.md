@@ -295,18 +295,22 @@ tell, Core asks", which the protocol below carries.
   at an earlier read's document end, with the last line with text at or
   above it and that line's distance) and whether to search for its line
   (`CurrentMark::find`), the aside mark, the screen's height as last
-  read, "Lines spoken in full" as `opening`, and, for colours, the
-  `row_hash` of each screen row it holds. The outpost answers a
+  read, "Lines spoken in full" as `opening`, and whether to read the
+  screen's colours. The outpost answers a
   `TerminalWindow`: the rows from two screens above the document's end
   to its end without padding, where the screen's top lies counted from
   the end (`screen_top`, since a screen not yet full or after a clear
-  runs past the end in blank rows) with its height and whether it starts
-  at the document's start, the caret as a `WindowCaret` (a caret report
-  and the point held at it), the new end mark, the first row and the
+  runs past the end in blank rows) with its height, its width in cells
+  (a wrapped line is one line of the text but several rows, which every
+  count is in) and whether it starts at the document's start, the caret
+  as a `WindowCaret` (a caret report and the point held at it) with
+  `caret_rows_to_end`, the rows from the caret's row to the end, the new
+  end mark, the first row and the
   document's row count (by which Core tells a full history's rotation), a
   `MarkPlace` per mark (refused, or the rows written past it with the
   opening rows when more follow than those and the window), the
-  `MarkSearch`, the colours of the changed screen rows, and the read's
+  `MarkSearch`, every screen row's colours when asked, a wrapped line's
+  rows each its own, and the read's
   begin and end. Every count is a fact read; what it means for speech is
   Core's.
 - `batch`: the request list, closed (ADR 0003, "A new command adds no

@@ -223,7 +223,7 @@ fn a_terminal_read_is_one_step_read_by_its_handle() {
         aside: None,
         height: 30,
         opening: 30,
-        colours: Some(vec![verbatim_model::row_hash("ready>")]),
+        colours: true,
     };
     let mut read = Builder::<Bar>::named();
     let window = read.terminal_read(node(), ask.clone());
@@ -243,8 +243,10 @@ fn a_terminal_read_is_one_step_read_by_its_handle() {
         above: 1,
         screen_top: 1,
         screen_rows: 30,
+        width: 120,
         screen_at_start: true,
         caret: None,
+        caret_rows_to_end: None,
         end: TextAnchor(8),
         first_row: verbatim_model::TerminalText::unpadded("ready>"),
         document_rows: 1,
@@ -254,7 +256,7 @@ fn a_terminal_read_is_one_step_read_by_its_handle() {
         }),
         aside_place: None,
         found: verbatim_model::MarkSearch::InWindow,
-        colours: Some(vec![None]),
+        colours: Some(vec![Vec::new()]),
         began_us: 1,
         ended_us: 2,
     });

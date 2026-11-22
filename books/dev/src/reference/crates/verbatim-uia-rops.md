@@ -532,21 +532,25 @@ full" as `opening`, and the caret's `CaretLineQuery`. One program, with
 no loop, answers a `Window`: the rows from twice the height above the
 document's end to its end in one `GetText` (from the screen's top when
 the height is 0), how many rows above the end the window and the
-screen's top start, the screen's text and top, whether the screen starts
+screen's top start, the screen's text and top, its top row as the
+provider expands the top to a line (for the width, a wrapped line's
+first row alone), whether the screen starts
 at the document's start, the document's end collapsed, its first row and
 its row count (one move by line from the end to the start), and for each
 mark a `MarkRows`: refused when it lies past the document's end or the
 provider will not compare it, otherwise the rows from it to the end, with
-the `opening` rows after it when more than those and the window follow.
-The classic implementation makes the same calls. The program executes 65
-instructions naming no mark and 115 at its cap, both marks with their
-opening rows (`instruction_limit.rs`).
+the `opening` rows after it when more than those and the window follow,
+and the caret's rows to the end, counted from the selection's first
+range as the snapshot program counts them. The classic implementation
+makes the same calls. The program executes 78 instructions naming no
+mark and 128 at its cap, both marks with their opening rows
+(`instruction_limit.rs`).
 
 Two reads sit beside it, outside the program. `terminal_row_colours`
-reads the colours of chosen screen rows, counted from the screen's top,
-with the colour read's emitter and classic checks (`emit_rows`,
-`classic_rows`), since which rows changed is known only once the text
-is read. And `terminal_read_find` searches for a mark's line by the
+reads the colours of screen rows, counted from the screen's top by the
+line unit, so a wrapped line's rows are each read as a row, with the
+colour read's emitter and classic checks (`emit_rows`,
+`classic_rows`). And `terminal_read_find` searches for a mark's line by the
 classic search alone (`classic_search`, taking the nearest match):
 output that trims the history between a search's calls makes a miss
 Windows Terminal's nowhere range, whose calls end a remote run, while the
@@ -834,7 +838,7 @@ properties, a stalled and an exited provider), `call_counts.rs` (the
 calls of each read), `text.rs` (the caret read and the text steps),
 `watch_checks.rs` (a wait's polls), `terminal.rs`,
 `terminal_snapshot.rs` and `terminal_window.rs` (the window read, its
-marks, changed colours and the classic search against Windows Terminal's
+marks, a wrapped line's rows and colours, and the classic search against Windows Terminal's
 two kinds of miss), `controller_for.rs`, `uia_tree.rs` and
 `time_limits.rs` (the tree dump), and `instruction_limit.rs` (the
 platform's limit and every program's count, a batch's shapes at their

@@ -93,7 +93,7 @@ pub use terminal::{
     TerminalColourRun, TerminalMatch, TerminalScope, TerminalSnapshot, TerminalText,
 };
 pub use terminal_window::{
-    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, WindowCaret, row_hash,
+    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, WindowCaret,
 };
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReport, CaretSelection, Compared, EditSelection,

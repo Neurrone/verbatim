@@ -18,7 +18,6 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_model::{
     MarkPlace, MarkSearch, TerminalColourRun, TerminalScope, TerminalSnapshot, TerminalText,
-    row_hash,
 };
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
@@ -388,8 +387,8 @@ pub struct WindowRead<'a> {
     pub height: u32,
     /// "Lines spoken in full".
     pub opening: u32,
-    /// The hashes of the screen rows Core holds, when it asks for colours.
-    pub colours: Option<&'a [u64]>,
+    /// Whether to read the colours of every screen row.
+    pub colours: bool,
 }
 
 /// What [`window`] read: everything of the operation's answer but its
@@ -403,8 +402,13 @@ pub struct WindowAnswer {
     pub screen_top: u32,
     /// The screen's height in rows.
     pub screen_rows: u32,
+    /// The screen's width in cells.
+    pub width: u32,
     /// Whether the screen starts at the document's start.
     pub screen_at_start: bool,
+    /// How many rows the caret's row and those below it hold, to the
+    /// document's end, when the provider reports a caret.
+    pub caret_rows_to_end: Option<u32>,
     /// The document's first row.
     pub first_row: TerminalText,
     /// How many rows lie from the document's end to its start.
@@ -415,8 +419,8 @@ pub struct WindowAnswer {
     pub aside_place: Option<MarkPlace>,
     /// The search for the current mark's line.
     pub found: MarkSearch,
-    /// The screen rows' colours, when asked: `None` for a row unchanged.
-    pub colours: Option<Vec<Option<Vec<TerminalColourRun>>>>,
+    /// Every screen row's colours, when asked, from the screen's top.
+    pub colours: Option<Vec<Vec<TerminalColourRun>>>,
     /// When the read began, in microseconds on the shared clock.
     pub began_us: u64,
     /// When its calls ended, before the text was converted.
@@ -463,66 +467,28 @@ fn runs_of(runs: Vec<verbatim_uia_rops::ColourRun>) -> Vec<TerminalColourRun> {
         .collect()
 }
 
-/// The screen's top row of `screen`, its line break included, as the
-/// colour read measures the width from it.
-fn top_row(screen: &[u16]) -> &[u16] {
-    let line_end = screen
-        .windows(2)
-        .position(|pair| pair == [u16::from(b'\r'), u16::from(b'\n')])
-        .map_or(screen.len(), |at| at + 2);
-    &screen[..line_end]
-}
-
-/// The colours of the screen rows of `rows`, the screen's top `screen_top`
-/// rows above the document's end, whose text hashes otherwise than
-/// `held`, Core's rows from the screen's top; `None` for the others.
-fn changed_colours(
+/// The colours of the screen's rows, `height` of them from `top`, each
+/// `width` cells: a wrapped line's rows each its own, the rows stopping at
+/// the document's end.
+fn screen_colours(
     top: &IUIAutomationTextRange,
-    (rows, screen_top, held): (&TerminalText, u32, &[u64]),
-    (width, remote, window_handle): (usize, bool, Option<isize>),
-) -> Result<Vec<Option<Vec<TerminalColourRun>>>, TextError> {
-    let lines = lines_of(&rows.text);
-    let on_screen = lines
-        .len()
-        .min(usize::try_from(screen_top).unwrap_or(usize::MAX));
-    let screen = &lines[lines.len() - on_screen..];
-    let changed: Vec<bool> = screen
-        .iter()
-        .enumerate()
-        .map(|(row, text)| held.get(row) != Some(&row_hash(text)))
-        .collect();
-    let mut colours: Vec<Option<Vec<TerminalColourRun>>> = vec![None; screen.len()];
-    let mut row = 0;
-    while row < changed.len() {
-        if !changed[row] {
-            row += 1;
-            continue;
-        }
-        let count = changed[row..]
-            .iter()
-            .take_while(|changed| **changed)
-            .count();
-        let first = u32::try_from(row).unwrap_or(u32::MAX);
-        let stretch = u32::try_from(count).unwrap_or(u32::MAX);
-        let (runs, path) = terminal_row_colours(top, (first, stretch, width), remote)
-            .map_err(|error| gone_or_failed(&error))?;
-        if let Path::Fallback(error) = &path {
-            verbatim_uia_rops::batch::remote_fell_back("terminal colours", window_handle, error);
-        }
-        for (at, runs) in runs.into_iter().enumerate() {
-            colours[row + at] = Some(runs_of(runs));
-        }
-        row += count;
+    (height, width): (u32, usize),
+    (remote, window_handle): (bool, Option<isize>),
+) -> Result<Vec<Vec<TerminalColourRun>>, TextError> {
+    let (rows, path) = terminal_row_colours(top, (0, height, width), remote)
+        .map_err(|error| gone_or_failed(&error))?;
+    if let Path::Fallback(error) = &path {
+        verbatim_uia_rops::batch::remote_fell_back("terminal colours", window_handle, error);
     }
-    Ok(colours)
+    Ok(rows.into_iter().map(runs_of).collect())
 }
 
 /// A terminal's window read ([`verbatim_model::batch::Op::TerminalRead`]):
 /// one program, or its classic calls when `remote` is false or the
 /// program fails, the fallback logged for `window_handle`; then, when
 /// Core asked, the search for the current mark's line, by classic calls
-/// alone and only when the window lacks the line, and the colours of the
-/// screen rows whose text hashes otherwise than Core's. Every text is
+/// alone and only when the window lacks the line, and, when Core asked,
+/// the colours of every screen row. Every text is
 /// converted once, from UTF-16 ([`unpadded_utf16`]).
 ///
 /// # Errors
@@ -571,15 +537,15 @@ pub fn window<'a>(
         }
         Some((_, _, false)) | None => MarkSearch::NotAsked,
     };
-    let width = row_width(top_row(&read.screen));
+    let width = row_width(&read.top_row);
     let screen_rows = u32::try_from(screen_height(&read.screen, width)).unwrap_or(u32::MAX);
     let colours = match (ask.colours, read.top.as_ref()) {
-        (Some(held), Some(top)) => Some(changed_colours(
+        (true, Some(top)) => Some(screen_colours(
             top,
-            (&rows, read.screen_top, held),
-            (width, remote, window_handle),
+            (screen_rows, width),
+            (remote, window_handle),
         )?),
-        (Some(_), None) | (None, _) => None,
+        (true, None) | (false, _) => None,
     };
     let ended_us = verbatim_process::clock::now_us().max(began_us);
     let end = read
@@ -592,7 +558,9 @@ pub fn window<'a>(
         above: read.above,
         screen_top: read.screen_top,
         screen_rows,
+        width: u32::try_from(width).unwrap_or(u32::MAX),
         screen_at_start: read.screen_at_start,
+        caret_rows_to_end: read.caret_rows_to_end,
         first_row: unpadded_utf16(&read.first_row),
         document_rows: read.document_rows,
         end_place,

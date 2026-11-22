@@ -190,6 +190,11 @@ pub(crate) enum Command {
     /// the end of its buffer; 0 shows the whole text again. Raises no
     /// event. UIA-only.
     Screen(String, usize),
+    /// `wrap <id> <width>`: a UIA text node's lines wrap onto rows of
+    /// `width` UTF-16 units, as a terminal's line unit is a row: a line
+    /// longer than that is several rows for moves by line and for the
+    /// screen; 0 keeps each line one row. Raises no event. UIA-only.
+    Wrap(String, usize),
     /// `active-text-position <id> <start> <end>`: raises UIA's active text
     /// position changed event from a text node, with the range of its text
     /// from `start` to `end` (UTF-16 offsets), as an application raises it
@@ -683,6 +688,10 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             let (id, rows) = rest.split_once(' ')?;
             Some(Command::Screen(id.to_owned(), rows.trim().parse().ok()?))
         }
+        "wrap" => {
+            let (id, width) = rest.split_once(' ')?;
+            Some(Command::Wrap(id.to_owned(), width.trim().parse().ok()?))
+        }
         "set-text" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
             (!id.is_empty()).then(|| Command::SetText(id.to_owned(), unescape(text)))
@@ -864,6 +873,15 @@ mod tests {
             _ => panic!("expected Screen"),
         }
         assert!(parse_command("screen term many").is_none());
+    }
+
+    #[test]
+    fn parses_a_row_width() {
+        match parse_command("wrap term 12") {
+            Some(Command::Wrap(id, width)) => assert_eq!((id.as_str(), width), ("term", 12)),
+            _ => panic!("expected Wrap"),
+        }
+        assert!(parse_command("wrap term wide").is_none());
     }
 
     #[test]

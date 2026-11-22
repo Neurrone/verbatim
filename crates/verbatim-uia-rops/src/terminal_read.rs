@@ -20,9 +20,9 @@
 //! A remote program reads it in one round trip and a classic
 //! implementation behind the same signature call by call; [`terminal_read`]
 //! is the one function callers use. Two parts are not in the program. The
-//! screen's colours are read afterwards, only for the rows the caller
-//! chooses ([`terminal_row_colours`]), since which rows changed is known
-//! only once the text is read. And the search for an end mark's line
+//! screen's colours are read afterwards, row by row from the screen's top
+//! ([`terminal_row_colours`]), at the width its top row gives, which the
+//! colour programs are built for. And the search for an end mark's line
 //! ([`terminal_read_find`]) runs only as classic calls: output that trims
 //! the history between two searches makes a later miss Windows Terminal's
 //! nowhere range, whose calls end a remote run whatever try block holds
@@ -98,8 +98,12 @@ pub struct Window {
     pub rows: Vec<u16>,
     /// How many rows the window starts above the document's end.
     pub above: u32,
-    /// The first visible range's text, for the screen's height and width.
+    /// The first visible range's text, for the screen's height.
     pub screen: Vec<u16>,
+    /// The screen's top row as the provider expands its start to a line,
+    /// for the screen's width ([`crate::row_width`]): a wrapped line's
+    /// first row alone, where the screen's text gives the line whole.
+    pub top_row: Vec<u16>,
     /// How many rows the screen's top lies above the document's end: the
     /// lines a move from the screen's top to the end went.
     pub screen_top: u32,
@@ -119,6 +123,11 @@ pub struct Window {
     pub marks: [Option<MarkRows>; 2],
     /// The caret and its line.
     pub caret: Option<CaretAnswer>,
+    /// How many rows the caret's row and those below it hold, to the
+    /// document's end: the lines a move from the caret to the end went,
+    /// as the snapshot program counts them. `None` when the provider
+    /// reports no caret.
+    pub caret_rows_to_end: Option<u32>,
 }
 
 /// The signature both window read implementations share.
@@ -172,6 +181,7 @@ struct ReadRegisters {
     rows: Reg<kind::Str>,
     above: Reg<kind::Int>,
     screen: Reg<kind::Str>,
+    top_row: Reg<kind::Str>,
     screen_top: Reg<kind::Int>,
     top: Reg<kind::TextRange>,
     screen_at_start: Reg<kind::Bool>,
@@ -180,6 +190,8 @@ struct ReadRegisters {
     document_rows: Reg<kind::Int>,
     marks: [Option<MarkRegisters>; 2],
     caret: CaretLineRegisters,
+    /// The caret's rows to the end, -1 for no caret.
+    caret_rows: Reg<kind::Int>,
 }
 
 thread_local! {
@@ -247,6 +259,7 @@ pub fn terminal_read_remote(_uia: &Uia, query: &ReadQuery<'_>) -> Result<Window,
         rows: outcome.get_utf16(r.rows)?,
         above: rows_of(outcome.get(r.above)?),
         screen: outcome.get_utf16(r.screen)?,
+        top_row: utf16_of(&outcome, r.top_row)?,
         screen_top: rows_of(outcome.get(r.screen_top)?),
         top: outcome.get(r.top)?,
         screen_at_start: outcome.get(r.screen_at_start)?,
@@ -255,6 +268,7 @@ pub fn terminal_read_remote(_uia: &Uia, query: &ReadQuery<'_>) -> Result<Window,
         document_rows: rows_of(outcome.get(r.document_rows)?),
         marks: [mark(r.marks[0])?, mark(r.marks[1])?],
         caret: Some(r.caret.read(&outcome)?),
+        caret_rows_to_end: u32::try_from(outcome.get(r.caret_rows)?).ok(),
     })
 }
 
@@ -311,6 +325,10 @@ fn build_read(b: &mut Builder, query: &ReadQuery<'_>) -> ReadRegisters {
     let screen_at_start = b.add_to_results(screen_at_start);
     let top = at_start(b, screen);
     let top = b.add_to_results(top);
+    let top_row = b.text_range_clone(top);
+    b.text_range_expand_to_enclosing_unit(top_row, line);
+    let top_row = b.text_range_get_text(top_row, all);
+    let top_row = b.add_to_results(top_row);
     let walker = b.text_range_clone(top);
     let screen_top = b.text_range_move(walker, line, far);
     let screen_top = b.add_to_results(screen_top);
@@ -346,11 +364,13 @@ fn build_read(b: &mut Builder, query: &ReadQuery<'_>) -> ReadRegisters {
     let opening = b.int(i32::try_from(query.opening).unwrap_or(i32::MAX));
     let marks =
         imported.map(|mark| mark.map(|mark| emit_mark(b, mark, document, (above, opening))));
+    let caret_rows = emit_caret_rows(b, pattern);
     let caret = emit_caret_line(b, &query.caret, (pattern, None));
     ReadRegisters {
         rows,
         above,
         screen: screen_text,
+        top_row,
         screen_top,
         top,
         screen_at_start,
@@ -359,7 +379,31 @@ fn build_read(b: &mut Builder, query: &ReadQuery<'_>) -> ReadRegisters {
         document_rows,
         marks,
         caret,
+        caret_rows,
     }
+}
+
+/// Emits the caret's rows to the document's end: a move by line from the
+/// selection's first range, collapsed to its start, to the end; -1 when
+/// the provider reports no selection.
+fn emit_caret_rows(b: &mut Builder, pattern: Reg<kind::TextPattern>) -> Reg<kind::Int> {
+    let (start, end) = (b.int(0), b.int(1));
+    let line = b.int(TextUnit_Line.0);
+    let far = b.int(FAR);
+    let none = b.uint(0);
+    let caret_rows = b.new_int(-1);
+    let caret_rows = b.add_to_results(caret_rows);
+    let selection = b.text_pattern_get_selection(pattern);
+    let size = b.array_size(selection);
+    let some = b.compare(size, none, Comparison::GreaterThan);
+    b.if_(some, |b| {
+        let first = b.array_get_at(selection, none).assume::<kind::TextRange>();
+        let walker = b.text_range_clone(first);
+        b.text_range_move_endpoint_by_range(walker, end, walker, start);
+        let moved = b.text_range_move(walker, line, far);
+        b.set(caret_rows, moved);
+    });
+    caret_rows
 }
 
 /// Emits what one end mark shows: refused when it lies past the
@@ -485,6 +529,9 @@ pub fn terminal_read_classic(_uia: &Uia, query: &ReadQuery<'_>) -> Result<Window
     let screen_at_start =
         document.compare_endpoints(Endpoint::Start, &screen, Endpoint::Start)? == 0;
     let top = collapsed(&screen, Endpoint::Start)?;
+    let top_row = top.clone_range()?;
+    top_row.expand(TextUnit_Line)?;
+    let top_row = top_row.text(-1)?;
     let screen_top = top.clone_range()?.move_by(TextUnit_Line, FAR)?;
     let at_end = collapsed(&document, Endpoint::End)?;
     let (window, moved) = if query.height > 0 {
@@ -505,11 +552,18 @@ pub fn terminal_read_classic(_uia: &Uia, query: &ReadQuery<'_>) -> Result<Window
     let marks = query
         .marks
         .map(|mark| mark.map(|mark| mark_classic(mark, &document, (above, query.opening))));
+    let caret_rows_to_end = match query.pattern.selection()?.into_iter().next() {
+        Some(caret) => Some(rows_of(
+            collapsed(&caret, Endpoint::Start)?.move_by(TextUnit_Line, FAR)?,
+        )),
+        None => None,
+    };
     let caret = caret_line_classic(&query.caret)?;
     Ok(Window {
         rows,
         above,
         screen: screen_text,
+        top_row,
         screen_top: rows_of(screen_top),
         top: Some(top),
         screen_at_start,
@@ -518,6 +572,7 @@ pub fn terminal_read_classic(_uia: &Uia, query: &ReadQuery<'_>) -> Result<Window
         document_rows: rows_of(document_rows),
         marks,
         caret: Some(caret),
+        caret_rows_to_end,
     })
 }
 

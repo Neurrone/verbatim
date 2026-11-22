@@ -361,6 +361,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::Screen(..) => {
             return Err("screen is not supported on the msaa backend".into());
         }
+        Command::Wrap(..) => {
+            return Err("wrap is not supported on the msaa backend".into());
+        }
         Command::TextChanged(_) => {
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
             // SAFETY: `edit` is the edit control's live handle, a child of

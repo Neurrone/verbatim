@@ -48,11 +48,9 @@ pub struct WindowAsk {
     /// than this and the window together, the read gives this many rows
     /// after the mark ([`MarkPlace::Rows::opening`]).
     pub opening: u32,
-    /// Whether to read the screen rows' colours, and the hashes
-    /// ([`row_hash`]) of the screen rows Core holds, from the screen's
-    /// top: only rows whose text hashes otherwise, or that lie past these,
-    /// are read.
-    pub colours: Option<Vec<u64>>,
+    /// Whether to read the colours of every screen row, as Core does for
+    /// each read in a key's window.
+    pub colours: bool,
 }
 
 /// What a mark showed.
@@ -109,10 +107,17 @@ pub struct TerminalWindow {
     pub screen_top: u32,
     /// The screen's height in rows.
     pub screen_rows: u32,
+    /// The screen's width in cells: a line longer than it wraps over
+    /// several rows, which `above`, `screen_top` and the marks count.
+    pub width: u32,
     /// Whether the screen starts at the document's start.
     pub screen_at_start: bool,
     /// The caret, when the provider reports one.
     pub caret: Option<WindowCaret>,
+    /// How many rows the caret's row and those below it hold, to the
+    /// document's end, when the provider reports a caret: a blank caret
+    /// row is told from the blank rows around it only by its place.
+    pub caret_rows_to_end: Option<u32>,
     /// The new end mark, held at the document's end.
     pub end: TextAnchor,
     /// The document's first row, without its padding.
@@ -126,8 +131,9 @@ pub struct TerminalWindow {
     /// The search for the current mark's line.
     pub found: MarkSearch,
     /// When Core asked for colours, each screen row's runs from the
-    /// screen's top, `None` for a row whose text hashes as Core's does.
-    pub colours: Option<Vec<Option<Vec<TerminalColourRun>>>>,
+    /// screen's top, a wrapped line's rows each its own; the rows stop at
+    /// the document's end.
+    pub colours: Option<Vec<Vec<TerminalColourRun>>>,
     /// When the read began, in microseconds on the run's shared clock.
     pub began_us: u64,
     /// When the read's calls ended, before its text was converted.
@@ -149,14 +155,4 @@ impl TerminalWindow {
         }
         anchors(&mut self.end);
     }
-}
-
-/// A row's hash, as Core sends the screen rows it holds and the outpost
-/// compares the rows it read with them: FNV-1a over the row's UTF-8 text
-/// without its padding.
-#[must_use]
-pub fn row_hash(row: &str) -> u64 {
-    row.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }

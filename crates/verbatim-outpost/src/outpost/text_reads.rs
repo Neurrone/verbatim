@@ -1068,7 +1068,7 @@ pub(super) fn terminal_window_step(
         aside: aside.as_ref(),
         height: ask.height,
         opening: ask.opening,
-        colours: ask.colours.as_deref(),
+        colours: ask.colours,
     };
     let answer = crate::terminal::window(
         uia,
@@ -1109,8 +1109,10 @@ pub(super) fn terminal_window_step(
             above: answer.above,
             screen_top: answer.screen_top,
             screen_rows: answer.screen_rows,
+            width: answer.width,
             screen_at_start: answer.screen_at_start,
             caret,
+            caret_rows_to_end: answer.caret_rows_to_end,
             end,
             first_row: answer.first_row,
             document_rows: answer.document_rows,

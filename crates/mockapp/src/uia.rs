@@ -263,6 +263,13 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].screen_rows = (rows > 0).then_some(rows);
         }
+        Command::Wrap(id, width) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].row_width = (width > 0).then_some(width);
+        }
         Command::SetText(id, text) => {
             let mut guard = tree
                 .lock()

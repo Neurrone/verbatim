@@ -1081,6 +1081,7 @@ fn terminal_window(first: u64) -> crate::TerminalWindow {
         above: 1,
         screen_top: 1,
         screen_rows: 1,
+        width: 6,
         screen_at_start: true,
         caret: Some(crate::WindowCaret {
             report: CaretReport {
@@ -1089,6 +1090,7 @@ fn terminal_window(first: u64) -> crate::TerminalWindow {
             },
             point: TextAnchor(first + 1),
         }),
+        caret_rows_to_end: Some(1),
         end: TextAnchor(first + 2),
         first_row: crate::TerminalText::unpadded("ready>"),
         document_rows: 1,
@@ -1119,7 +1121,7 @@ fn terminal_read(subject: Subject, (end, aside): (Option<u64>, Option<u64>)) -> 
             aside: aside.map(mark),
             height: 30,
             opening: 30,
-            colours: None,
+            colours: false,
         }),
     }
 }
