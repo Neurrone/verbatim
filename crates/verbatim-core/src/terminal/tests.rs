@@ -200,7 +200,7 @@ fn answer(state: &mut SrState, token: u64, answered: impl Into<Answered>) -> Vec
         };
         said.extend({
             let now = state.queue.now_us();
-            speak(state, *entry, now)
+            speak(state, *entry, (now, false))
         });
     }
     words(&said)
@@ -281,10 +281,8 @@ fn node_of(state: &SrState) -> NodeId {
 /// A change of the focused terminal told.
 fn tell(state: &mut SrState) {
     let node = node_of(state);
-    let _ = {
-        let now = state.queue.now_us();
-        told(state, node, now)
-    };
+    let now = state.queue.now_us();
+    told(state, node, now);
 }
 
 /// A change told, and the read it sends.
@@ -304,7 +302,30 @@ fn play(state: &mut SrState, mut effects: Vec<Effect>) -> Vec<String> {
             .into_iter()
             .flat_map(|mark| {
                 let now = state.queue.now_us();
-                mark_reached(state, mark, now)
+                mark_reached(state, mark, (now, false))
+            })
+            .collect();
+    }
+    heard
+}
+
+/// Every effect speech handed on from now, as [`play`], while `waiting`,
+/// a speech entry with output, waits in the queue for its turn.
+fn play_waiting(
+    state: &mut SrState,
+    mut effects: Vec<Effect>,
+    waiting: &SpeechEntry,
+) -> Vec<String> {
+    assert!(!waiting.output.is_empty(), "a speech entry with output");
+    let mut heard = Vec::new();
+    while !effects.is_empty() {
+        heard.extend(words(&effects));
+        let reached = marks(&effects);
+        effects = reached
+            .into_iter()
+            .flat_map(|mark| {
+                let now = state.queue.now_us();
+                mark_reached(state, mark, (now, true))
             })
             .collect();
     }
@@ -341,10 +362,8 @@ fn unread_on_the_window_answering_again_sends_its_baseline() {
     let _ = answer(&mut state, token, Outcome::NotResponding);
     assert_eq!(watch(&state), Watch::Unread { dirty: false });
     let window = focused(&state).unwrap().window;
-    let _ = {
-        let now = state.queue.now_us();
-        recovered(&mut state, &window, now)
-    };
+    let now = state.queue.now_us();
+    recovered(&mut state, &window, now);
     let baseline = one_read(&mut state);
     assert_eq!(
         watch(&state),
@@ -618,10 +637,8 @@ fn a_hung_terminal_speaks_its_output_once_the_window_answers() {
     assert_eq!(read_state(&state), Read::Idle { dirty: false });
     assert_eq!(wanted(&mut state), []);
     let window = focused(&state).unwrap().window;
-    let _ = {
-        let now = state.queue.now_us();
-        recovered(&mut state, &window, now)
-    };
+    let now = state.queue.now_us();
+    recovered(&mut state, &window, now);
     let again = one_read(&mut state);
     assert_eq!(
         answer(
@@ -762,7 +779,7 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     };
     let handed = {
         let now = state.queue.now_us();
-        speak(&mut state, *entry, now)
+        speak(&mut state, *entry, (now, false))
     };
     assert_eq!(words(&handed), ["line 1", "line 2"]);
     // Thirty lines wait past the group: held, so a change reads nothing.
@@ -779,7 +796,7 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
             .into_iter()
             .flat_map(|mark| {
                 let now = state.queue.now_us();
-                mark_reached(&mut state, mark, now)
+                mark_reached(&mut state, mark, (now, false))
             })
             .collect();
         release = wanted(&mut state)
@@ -808,6 +825,114 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
 }
 
 #[test]
+fn the_look_at_what_waits_is_taken_at_the_release_reads_turn() {
+    // Q9 (Claude, 2026-11-22): the read at the group's last line answers,
+    // and its entry waits for its turn behind the group's last mark: the
+    // count is taken at that entry's turn, after its lines are applied, so
+    // one count says every line that went by.
+    let mut state = live(&["$"]);
+    let first = numbered("line", 1, 70);
+    let lines: Vec<&str> = first.iter().map(String::as_str).collect();
+    let read = changed(&mut state);
+    let mut said = Vec::new();
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, 71)));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let mut effects = {
+        let now = state.queue.now_us();
+        speak(&mut state, *entry, (now, false))
+    };
+    tell(&mut state);
+    let mut heard = Vec::new();
+    let mut release = None;
+    while release.is_none() {
+        heard.extend(words(&effects));
+        let reached = marks(&effects);
+        effects = reached
+            .into_iter()
+            .flat_map(|mark| {
+                let now = state.queue.now_us();
+                mark_reached(&mut state, mark, (now, false))
+            })
+            .collect();
+        release = wanted(&mut state).first().map(|(token, _)| *token);
+    }
+    // The read at the group's last line answers before the group ends; its
+    // entry waits behind the group's last mark.
+    let many = numbered("line", 4975, 30);
+    let window_lines: Vec<&str> = many.iter().map(String::as_str).collect();
+    let outcome = outcome_of(&mut state, read_of(grown(&window_lines, 900, 5005)));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(
+        &mut state,
+        release.unwrap(),
+        outcome,
+        (at_us, TRACE, &mut said),
+    );
+    let Some(Entry::TerminalSpeech(waiting)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    heard.extend(play_waiting(&mut state, effects, &waiting));
+    let turn = {
+        let now = state.queue.now_us();
+        speak(&mut state, *waiting, (now, false))
+    };
+    heard.extend(play(&mut state, turn));
+    let after: Vec<&String> = heard
+        .iter()
+        .skip_while(|line| line.as_str() != "line 30")
+        .skip(1)
+        .collect();
+    assert_eq!(
+        after.first().map(|line| line.as_str()),
+        Some("Phrase(SkippedLines(4944))")
+    );
+    assert_eq!(
+        heard
+            .iter()
+            .filter(|line| line.starts_with("Phrase"))
+            .count(),
+        1,
+        "{heard:?}"
+    );
+}
+
+#[test]
+fn a_trailing_blank_row_past_the_window_is_not_counted() {
+    // TM 12: a blank row counts once a line with text is below it, so the
+    // blank row the caret waits on at a flood's end is no output yet; the
+    // next read counts it, its row filled or with rows below it.
+    let mut state = live(&["$"]);
+    let read = changed(&mut state);
+    // The window's last row is blank, its text ending in two line breaks.
+    let mut last = numbered("out", 41, 30);
+    last.extend([String::new(), String::new()]);
+    let last: Vec<&str> = last.iter().map(String::as_str).collect();
+    let mut from = vec!["$".to_owned()];
+    from.extend(numbered("out", 1, 30));
+    let from = TerminalText::unpadded(&from.join("\r\n"));
+    let mut flood = window(&last, 20, (72, Some(MarkPlace::Rows { from })));
+    (flood.above, flood.screen_top, flood.screen_rows) = (31, 31, 31);
+    let outcome = outcome_of(&mut state, read_of(flood));
+    let mut said = Vec::new();
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let mut expected: Vec<Waiting> = numbered("out", 1, 30)
+        .into_iter()
+        .map(Waiting::Line)
+        .collect();
+    expected.push(Waiting::Skipped(pacing::Skipped::Count(10)));
+    expected.extend(numbered("out", 41, 30).into_iter().map(Waiting::Line));
+    assert_eq!(entry.output, expected);
+}
+
+#[test]
 fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     let mut state = live(&["$"]);
     let first = numbered("line", 1, 70);
@@ -822,14 +947,12 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     };
     let _ = {
         let now = state.queue.now_us();
-        speak(&mut state, *entry, now)
+        speak(&mut state, *entry, (now, false))
     };
     tell(&mut state);
     assert_eq!(wanted(&mut state), []);
-    let _ = {
-        let now = state.queue.now_us();
-        cut(&mut state, now)
-    };
+    let now = state.queue.now_us();
+    cut(&mut state, now);
     let reads = wanted(&mut state);
     assert_eq!(reads.len(), 1);
     assert!(matches!(
@@ -858,10 +981,8 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
     let mut state = live(&["Reply from ::1: time<1ms"]);
     let read = changed(&mut state);
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(1));
-    let _ = {
-        let now = state.queue.now_us();
-        cut(&mut state, now)
-    };
+    let now = state.queue.now_us();
+    cut(&mut state, now);
     let mut said = Vec::new();
     let outcome = outcome_of(
         &mut state,
@@ -881,7 +1002,7 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
     assert_eq!(
         words(&{
             let now = state.queue.now_us();
-            speak(&mut state, *entry, now)
+            speak(&mut state, *entry, (now, false))
         }),
         ["Reply from ::1: time<2ms"]
     );
@@ -904,7 +1025,7 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
     assert_eq!(
         words(&{
             let now = state.queue.now_us();
-            speak(&mut state, *entry, now)
+            speak(&mut state, *entry, (now, false))
         }),
         Vec::<String>::new()
     );
@@ -1082,10 +1203,8 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
     let ask = places_of(&state, node).unwrap().ask(false, 30, false);
     assert!(ask.aside.is_some_and(|aside| aside.line == "$ less file"));
     // Speech cut off, so the next screen is handed on at once.
-    let _ = {
-        let now = state.queue.now_us();
-        cut(&mut state, now)
-    };
+    let now = state.queue.now_us();
+    cut(&mut state, now);
     let read = changed(&mut state);
     let mut closed = window(&["$ less file", "$"], 30, (2, None));
     closed.screen_at_start = false;
@@ -1122,7 +1241,7 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
     };
     let mut effects = {
         let now = state.queue.now_us();
-        speak(&mut state, *entry, now)
+        speak(&mut state, *entry, (now, false))
     };
     tell(&mut state);
     let mut heard = Vec::new();
@@ -1133,7 +1252,7 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
             .into_iter()
             .flat_map(|mark| {
                 let now = state.queue.now_us();
-                mark_reached(&mut state, mark, now)
+                mark_reached(&mut state, mark, (now, false))
             })
             .collect();
     }
@@ -1197,10 +1316,8 @@ fn a_modifiers_cut_then_output_is_spoken() {
     // 6a9e55dc: a modifier's cut with nothing held drops nothing later.
     let mut state = live(&["$"]);
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(1));
-    let _ = {
-        let now = state.queue.now_us();
-        cut(&mut state, now)
-    };
+    let now = state.queue.now_us();
+    cut(&mut state, now);
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, 2)));
@@ -1213,7 +1330,7 @@ fn a_modifiers_cut_then_output_is_spoken() {
     assert_eq!(
         words(&{
             let now = state.queue.now_us();
-            speak(&mut state, *entry, now)
+            speak(&mut state, *entry, (now, false))
         }),
         ["out"]
     );
@@ -1246,7 +1363,7 @@ fn what_was_read_is_spoken_after_the_outpost_ends() {
     };
     let effects = {
         let now = state.queue.now_us();
-        speak(&mut state, *entry, now)
+        speak(&mut state, *entry, (now, false))
     };
     let outpost = node_of(&state).outpost().unwrap();
     outpost_ended(&mut state, outpost);

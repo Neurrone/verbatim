@@ -361,6 +361,11 @@ impl<E, F> Queue<E, F> {
         self.record.listener
     }
 
+    /// The items waiting behind the front, in arrival order.
+    pub(crate) fn waiting_items(&self) -> &VecDeque<Item<E>> {
+        &self.waiting
+    }
+
     /// The front entry and every entry waiting behind it, a run's
     /// candidates and the menu slot's included: the ids each names stay
     /// held.

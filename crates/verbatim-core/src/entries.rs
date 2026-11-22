@@ -726,7 +726,7 @@ impl Logic for Entries {
     fn recovered(facts: &mut SrState, window: &RequestWindow, now_us: u64) -> Option<Entry> {
         // A recovery only marks the watch dirty; the read it wants is sent
         // as the queue settles, and nothing it says can be due.
-        let _ = crate::terminal::recovered(facts, window, now_us);
+        crate::terminal::recovered(facts, window, now_us);
         Some(Entry::CurrentFocus(Box::new(
             crate::focus::retake::recovered(facts, window),
         )))
@@ -1171,9 +1171,8 @@ pub(crate) fn route(
                 // outpost's fault.
                 return Routed::Said(Vec::new());
             };
-            let mut said = crate::terminal::told(state, node, at_us);
-            said.extend(run_input(state, runtime, (trace_id, at_us), Input::Settle));
-            return Routed::Said(said);
+            crate::terminal::told(state, node, at_us);
+            return Routed::Said(run_input(state, runtime, (trace_id, at_us), Input::Settle));
         }
         QueueInput::Tell { from, tell } => match Entry::of_tell(
             *from,
@@ -1279,8 +1278,8 @@ pub(crate) fn route(
             // past the cut, a terminal drops what waits, and say-all stops,
             // as NVDA's stops on any key.
             state.arrivals.speech_cut(*key);
-            let mut said = crate::terminal::cut(state, at_us);
-            said.extend(crate::say_all::stop(state));
+            crate::terminal::cut(state, at_us);
+            let mut said = crate::say_all::stop(state);
             // A say-all stopped with its read out withdraws it.
             said.extend(settle(state, runtime, trace_id));
             return Routed::Said(said);

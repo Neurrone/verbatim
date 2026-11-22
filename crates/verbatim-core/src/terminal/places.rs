@@ -356,7 +356,8 @@ fn rotated(
 
 /// What a read says when more was written than its window holds: the
 /// opening lines after the mark, the count of those skipped, then every
-/// line of the window.
+/// line of the window but the blank ones at its end, which count only once
+/// a line with text is below them (TM 12), as the next read finds.
 fn past(window: &Window, opening: Option<Vec<String>>, skipped: Skipped) -> Vec<Waiting> {
     let mut output: Vec<Waiting> = opening
         .unwrap_or_default()
@@ -366,7 +367,17 @@ fn past(window: &Window, opening: Option<Vec<String>>, skipped: Skipped) -> Vec<
     if skipped != Skipped::Count(0) {
         output.push(Waiting::Skipped(skipped));
     }
-    output.extend(window.texts().map(|line| Waiting::Line(line.to_owned())));
+    let texts: Vec<&str> = window.texts().collect();
+    let end = texts
+        .iter()
+        .rposition(|line| !line.is_empty())
+        .map_or(0, |last| last.saturating_add(1));
+    output.extend(
+        texts
+            .iter()
+            .take(end)
+            .map(|line| Waiting::Line((*line).to_owned())),
+    );
     output
 }
 

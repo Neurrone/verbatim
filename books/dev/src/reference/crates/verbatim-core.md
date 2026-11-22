@@ -1585,7 +1585,12 @@ match's rows. Speech of anything but the focus is ignored.
   its caret. `caret_key_kind` says what a key is to the reading rules.
 - The pacing (`terminal/pacing.rs`, `Pacing`): `Idle`, `Speaking` a
   group, or `Due`, its group's last mark reached and the look at the
-  backlog waiting for the watch's output read (Q9). Lines go to speech a
+  backlog waiting for the watch's output read and for any speech entry of
+  the terminal's with output still waiting in the queue, so that the
+  count is taken after the read at the group's last line is applied
+  (Q9). The look runs only at a turn of the queue's, a mark's or a speech
+  entry's (`terminal::look`); a read that ends with nothing to say while
+  the pacing is due joins an empty speech entry, whose turn takes it. Lines go to speech a
   few at a time, each between two index marks, and the rest wait, so the
   backlog not yet spoken is known. The first "Lines spoken in full"
   lines of a burst are spoken whole; once a group's last line has been

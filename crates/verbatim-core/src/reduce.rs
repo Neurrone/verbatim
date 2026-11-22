@@ -81,8 +81,7 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
-        let cut = terminal::cut(state, now_us);
-        effects.extend(cut);
+        terminal::cut(state, now_us);
     }
     // A say-all in the event queue changed by an input outside it, such as
     // the speech side's cut: the queue settles, its entries stamping their
@@ -98,14 +97,11 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
 fn reduce_input(state: &mut SrState, input: &Input, now_us: u64) -> Vec<Effect> {
     match input {
         Input::Settings(settings) => {
-            let effects =
-                if state.settings.report_terminal_output && !settings.report_terminal_output {
-                    crate::terminal::drop_waiting(state, now_us)
-                } else {
-                    Vec::new()
-                };
+            if state.settings.report_terminal_output && !settings.report_terminal_output {
+                crate::terminal::drop_waiting(state, now_us);
+            }
             state.settings = *settings;
-            effects
+            Vec::new()
         }
         Input::Reported(reported) => {
             state.reported = *reported;
@@ -115,16 +111,16 @@ fn reduce_input(state: &mut SrState, input: &Input, now_us: u64) -> Vec<Effect> 
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
         Input::UtteranceCancelled { marks, .. } => {
-            let mut effects = terminal::utterance_cancelled(state, marks, now_us);
-            effects.extend(say_all::utterance_cancelled(state, marks));
-            effects
+            terminal::utterance_cancelled(state, marks, now_us);
+            say_all::utterance_cancelled(state, marks)
         }
         // A failed utterance counts as heard: its marks are taken as
         // reached, though say-all moves no cursor to what was not heard.
         Input::UtteranceFailed { marks } => {
             let mut effects = say_all::utterance_failed(state, marks);
             for mark in marks {
-                effects.extend(terminal::mark_reached(state, *mark, now_us));
+                let waits = terminal::output_waits(state, state.queue.waiting_items());
+                effects.extend(terminal::mark_reached(state, *mark, (now_us, waits)));
             }
             effects
         }

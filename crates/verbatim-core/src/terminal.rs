@@ -28,6 +28,7 @@ pub(crate) mod commands;
 pub(crate) mod pacing;
 pub(crate) mod places;
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -43,7 +44,7 @@ use verbatim_text::terminal_window::{
 
 use crate::batch::{Builder, Got};
 use crate::entries::{Entries, Entry};
-use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
+use crate::event_queue::{Cx, Item, Outcome, Reader, RequestWindow};
 use crate::keys::entry::{Fence, PressEntry};
 use crate::state::SrState;
 use crate::terminal::pacing::{Pacing, Under, Voice, Waiting};
@@ -393,15 +394,13 @@ pub(crate) fn committed(
 
 /// Column A: a change of terminal `node` told at `now_us`; a tell for any
 /// other node is dropped.
-pub(crate) fn told(state: &mut SrState, node: NodeId, now_us: u64) -> Vec<Effect> {
-    with_focus(state, |state, focus| {
-        if focus.terminal.node != node {
-            return Vec::new();
+pub(crate) fn told(state: &mut SrState, node: NodeId, now_us: u64) {
+    let _ = with_focus(state, |state, focus| {
+        if focus.terminal.node == node {
+            mark_dirty(&mut focus.watch);
+            settle(state, focus, now_us);
         }
-        mark_dirty(&mut focus.watch);
-        settle(state, focus, now_us)
-    })
-    .unwrap_or_default()
+    });
 }
 
 /// Columns A and R: the watch has a change to read.
@@ -419,34 +418,21 @@ fn mark_dirty(watch: &mut Watch) {
 
 /// Column R: a window in the recovery set, `window`, answers again at
 /// `now_us`: the focused terminal in it is read again.
-pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64) -> Vec<Effect> {
-    with_focus(state, |state, focus| {
-        if focus.terminal.window.handle != window.handle {
-            return Vec::new();
+pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64) {
+    let _ = with_focus(state, |state, focus| {
+        if focus.terminal.window.handle == window.handle {
+            mark_dirty(&mut focus.watch);
+            settle(state, focus, now_us);
         }
-        mark_dirty(&mut focus.watch);
-        settle(state, focus, now_us)
-    })
-    .unwrap_or_default()
+    });
 }
 
 /// Column E, after every input that changes the watch or the pacing: a
-/// dirty unread watch sends its baseline, a dirty live one with no read
-/// out sends one unless the pacing holds it, and a pacing due looks at
-/// what waits once no output read is out; `now_us` is the input's time.
-fn settle(state: &mut SrState, focus: &mut TerminalFocus, now_us: u64) -> Vec<Effect> {
-    settle_with(state, focus, false, now_us)
-}
-
-/// [`settle`], `joining` when an answer's output is about to join the
-/// queue: its lines reach the pacing at that entry's turn, so the look
-/// waits for it as it waits for the read (Q9).
-fn settle_with(
-    state: &mut SrState,
-    focus: &mut TerminalFocus,
-    joining: bool,
-    now_us: u64,
-) -> Vec<Effect> {
+/// dirty unread watch sends its baseline, and a dirty live one with no
+/// read out sends one unless the pacing holds it; `now_us` is the input's
+/// time. The look at what a pacing due holds is taken only at a turn of
+/// the queue's ([`look`]).
+fn settle(state: &mut SrState, focus: &mut TerminalFocus, now_us: u64) {
     let full = state.settings.full_lines();
     match focus.watch {
         Watch::Unread { dirty: true } => {
@@ -476,7 +462,16 @@ fn settle_with(
         | Watch::Live { .. }
         | Watch::Gone => {}
     }
-    let reading = joining
+}
+
+/// At a turn of the queue's, a mark's or a speech entry's: a pacing due
+/// looks at what waits (F1) unless more output is yet to reach it, an
+/// output read of the watch's out or, `waits`, a speech entry of the
+/// terminal's with output waiting for its turn, so that the count is taken
+/// after the lines of the read at the group's last line are applied (Q9;
+/// Claude, 2026-11-22).
+fn look(state: &mut SrState, focus: &mut TerminalFocus, waits: bool) -> Vec<Effect> {
+    let reading = waits
         || matches!(
             focus.watch,
             Watch::Live {
@@ -488,6 +483,41 @@ fn settle_with(
             }
         );
     speaking(state, |voice| focus.pacing.look(reading, voice))
+}
+
+/// Whether a speech entry of the focused terminal with output waits in the
+/// queue, `waiting`, for its turn ([`look`]).
+pub(crate) fn output_waits(state: &SrState, waiting: &VecDeque<Item<Entry>>) -> bool {
+    let Some(node) = focused(state).map(|terminal| terminal.node) else {
+        return false;
+    };
+    waiting
+        .iter()
+        .flat_map(|item| match item {
+            Item::One(entry) | Item::Menu { entry, .. } => std::slice::from_ref(entry),
+            Item::Run(entries) => entries.as_slice(),
+        })
+        .any(|entry| {
+            matches!(entry, Entry::TerminalSpeech(speech)
+                if speech.node == node && !speech.output.is_empty())
+        })
+}
+
+/// The speech entry an ended read of the watch's joins: `entry`, the read's
+/// own, or, when it made none while the pacing is due, an empty one, whose
+/// turn takes the look its own turn would have ([`look`]).
+fn joins(focus: &TerminalFocus, entry: Option<SpeechEntry>, trace: TraceId) -> Option<SpeechEntry> {
+    entry.or_else(|| {
+        matches!(focus.pacing, Pacing::Due { .. }).then(|| SpeechEntry {
+            node: focus.terminal.node,
+            echo: Vec::new(),
+            keys: Vec::new(),
+            output: Vec::new(),
+            key: None,
+            trace,
+            fence: Fence::default(),
+        })
+    })
 }
 
 /// Runs `then` with the pacing's voice: the limits, the marks and the
@@ -774,9 +804,8 @@ pub(crate) fn facts_answered(
             said.push(observed(&focus.terminal, read, trace));
         }
         let entry = answered(state, focus, (token, ended), trace);
-        let joining = entry.as_ref().is_some_and(|entry| !entry.output.is_empty());
-        said.extend(settle_with(state, focus, joining, at_us));
-        entry
+        settle(state, focus, at_us);
+        joins(focus, entry, trace)
             .map(|entry| Entry::TerminalSpeech(Box::new(entry)))
             .into_iter()
             .collect()
@@ -901,9 +930,8 @@ fn key_read_ended(
                 effects.push(observed(&focus.terminal, read, trace));
             }
             let entry = answered(state, focus, (token, ended), trace);
-            let joining = entry.as_ref().is_some_and(|entry| !entry.output.is_empty());
-            effects.extend(settle_with(state, focus, joining, now_us));
-            (entry, effects)
+            settle(state, focus, now_us);
+            (joins(focus, entry, trace), effects)
         })
         .unwrap_or_default()
     };
@@ -998,14 +1026,16 @@ pub(crate) async fn key_wait(
 /// handed to the pacing unless a cut passed its fence (column G).
 pub(crate) fn speech_turn(cx: &mut Cx<Entries>, entry: SpeechEntry) {
     let now_us = cx.now_us();
-    let effects = speak(&mut cx.facts_mut(), entry, now_us);
+    let waits = output_waits(&cx.facts(), &cx.waiting());
+    let effects = speak(&mut cx.facts_mut(), entry, (now_us, waits));
     for effect in effects {
         cx.emit(effect);
     }
 }
 
-/// [`speech_turn`]'s speech, at `now_us`.
-fn speak(state: &mut SrState, entry: SpeechEntry, now_us: u64) -> Vec<Effect> {
+/// [`speech_turn`]'s speech, at `now_us`, `waits` when another speech
+/// entry of the terminal's with output waits behind it ([`look`]).
+fn speak(state: &mut SrState, entry: SpeechEntry, (now_us, waits): (u64, bool)) -> Vec<Effect> {
     let cut = state.arrivals.cut_since(entry.fence);
     let trace = entry.key.unwrap_or(entry.trace);
     let effects = with_focus(state, |state, focus| {
@@ -1039,7 +1069,8 @@ fn speak(state: &mut SrState, entry: SpeechEntry, now_us: u64) -> Vec<Effect> {
                 focus.pacing.take(entry.output, under, voice)
             }));
         }
-        effects.extend(settle(state, focus, now_us));
+        settle(state, focus, now_us);
+        effects.extend(look(state, focus, waits));
         effects
     })
     .unwrap_or_default();
@@ -1052,15 +1083,18 @@ fn speak(state: &mut SrState, entry: SpeechEntry, now_us: u64) -> Vec<Effect> {
     }
 }
 
-/// Columns H and I: playback reached `mark`, an input at `now_us`.
+/// Columns H and I: playback reached `mark`, at its turn at `now_us`,
+/// `waits` when a speech entry of the terminal's with output waits for its
+/// turn ([`look`]).
 pub(crate) fn mark_reached(
     state: &mut SrState,
     mark: verbatim_model::SpeechMark,
-    now_us: u64,
+    (now_us, waits): (u64, bool),
 ) -> Vec<Effect> {
     with_focus(state, |state, focus| {
         let mut effects = speaking(state, |voice| focus.pacing.mark_reached(mark, voice));
-        effects.extend(settle(state, focus, now_us));
+        settle(state, focus, now_us);
+        effects.extend(look(state, focus, waits));
         effects
     })
     .unwrap_or_default()
@@ -1069,8 +1103,8 @@ pub(crate) fn mark_reached(
 /// Column J: speech was cut off by an input at `now_us`. A read out while
 /// the pacing holds speaks only keys, and a change held unread is read at
 /// once, speaking only keys; what waits is dropped.
-pub(crate) fn cut(state: &mut SrState, now_us: u64) -> Vec<Effect> {
-    with_focus(state, |state, focus| {
+pub(crate) fn cut(state: &mut SrState, now_us: u64) {
+    let _ = with_focus(state, |state, focus| {
         let held = focus.pacing.holds(state.settings.full_lines());
         focus.pacing = Pacing::Idle;
         if held {
@@ -1099,9 +1133,8 @@ pub(crate) fn cut(state: &mut SrState, now_us: u64) -> Vec<Effect> {
                 | Watch::Gone => {}
             }
         }
-        settle(state, focus, now_us)
-    })
-    .unwrap_or_default()
+        settle(state, focus, now_us);
+    });
 }
 
 /// An utterance cut off before playback reached `marks`, an input at
@@ -1111,11 +1144,9 @@ pub(crate) fn utterance_cancelled(
     state: &mut SrState,
     marks: &[verbatim_model::SpeechMark],
     now_us: u64,
-) -> Vec<Effect> {
+) {
     if focus_of(state).is_some_and(|focus| focus.pacing.cancelled(marks)) {
-        cut(state, now_us)
-    } else {
-        Vec::new()
+        cut(state, now_us);
     }
 }
 
@@ -1131,12 +1162,11 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
 
 /// Column K2: "report new output" turned off, by its key or the settings,
 /// at `now_us`, drops what waits.
-pub(crate) fn drop_waiting(state: &mut SrState, now_us: u64) -> Vec<Effect> {
-    with_focus(state, |state, focus| {
+pub(crate) fn drop_waiting(state: &mut SrState, now_us: u64) {
+    let _ = with_focus(state, |state, focus| {
         focus.pacing.drop_waiting();
-        settle(state, focus, now_us)
-    })
-    .unwrap_or_default()
+        settle(state, focus, now_us);
+    });
 }
 
 /// Verbatim+5, pressed at `now_us`: toggles "Report new output", says its
@@ -1144,12 +1174,10 @@ pub(crate) fn drop_waiting(state: &mut SrState, now_us: u64) -> Vec<Effect> {
 pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId, now_us: u64) -> Vec<Effect> {
     let on = !state.settings.report_terminal_output;
     state.settings.report_terminal_output = on;
-    let mut effects = if on {
-        Vec::new()
-    } else {
-        drop_waiting(state, now_us)
-    };
-    effects.extend([
+    if !on {
+        drop_waiting(state, now_us);
+    }
+    vec![
         editing::speak(
             trace_id,
             vec![UtteranceSegment::new(SegmentContent::Message(if on {
@@ -1159,8 +1187,7 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId, now_us: u64) -> Vec
             }))],
         ),
         Effect::SettingsChanged(state.settings),
-    ]);
-    effects
+    ]
 }
 
 /// What a caret key is to the reading: its unit, Delete, Enter, or any
