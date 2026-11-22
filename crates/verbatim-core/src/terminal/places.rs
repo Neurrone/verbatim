@@ -209,7 +209,15 @@ impl TerminalPlaces {
             self.aside = None;
         } else {
             let new_screen = within && !shares_line;
-            if new_screen && read.screen_at_start && self.aside.is_none() {
+            // A full-screen program's screen replacing one with text sets
+            // that screen's mark aside; a first screen written where the
+            // last read showed no text, as a terminal's first prompt is,
+            // replaces nothing to come back to.
+            let replaced_text = self
+                .end
+                .as_ref()
+                .is_some_and(|end| !end.mark.line.is_empty());
+            if new_screen && read.screen_at_start && self.aside.is_none() && replaced_text {
                 self.aside = self.end.as_ref().map(|end| end.mark.clone());
             } else if self.aside.is_none() {
                 self.moved(added, read.document_rows);

@@ -1259,6 +1259,53 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
     assert_eq!(ask.aside, None);
 }
 
+#[test]
+fn a_first_screen_over_no_text_sets_no_mark_aside() {
+    // A terminal's first prompt, written on an empty screen, replaces no
+    // screen with text, so no mark is set aside, and a flood's rows are
+    // counted from the current mark, the command line not counted again.
+    let mut state = terminal();
+    let token = one_read(&mut state);
+    let _ = answer(&mut state, token, read_of(window(&[""], 10, (1, None))));
+    let read = changed(&mut state);
+    let _ = answer(&mut state, read, read_of(grown(&["ready> run"], 20, 1)));
+    let node = node_of(&state);
+    assert_eq!(
+        places_of(&state, node).unwrap().ask(false, 30, false).aside,
+        None
+    );
+    // Fifty rows of output, the window the last thirty: the opening rows
+    // are read from the current mark's row, the command line unchanged.
+    let read = changed(&mut state);
+    let last = numbered("out", 21, 30);
+    let last: Vec<&str> = last.iter().map(String::as_str).collect();
+    let mut from = vec!["ready> run".to_owned()];
+    from.extend(numbered("out", 1, 30));
+    let from = TerminalText::unpadded(&from.join("\r\n"));
+    let mut flood = window(
+        &last,
+        30,
+        (51, Some(MarkPlace::Rows { from: from.clone() })),
+    );
+    flood.aside_place = Some(MarkPlace::Rows { from });
+    let outcome = outcome_of(&mut state, read_of(flood));
+    let mut said = Vec::new();
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let expected: Vec<Waiting> = numbered("out", 1, 50)
+        .into_iter()
+        .map(Waiting::Line)
+        .collect();
+    assert_eq!(entry.output, expected);
+    assert_eq!(
+        places_of(&state, node).unwrap().ask(false, 30, false).aside,
+        None
+    );
+}
+
 // Defects.
 
 #[test]
