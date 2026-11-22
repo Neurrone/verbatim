@@ -141,12 +141,12 @@ fn a_growing_line_holds_its_unfinished_word_until_it_grows_past_it() {
     let grown = window(&["> The quick brown f"], Some((1, 19)), 100);
     let done = window(&["> The quick brown fox", "$"], Some((1, 1)), 200);
     let base = window(&["> "], Some((1, 2)), 0);
-    assert_eq!(reading.answer(&base, &first), changed(&["The"]));
+    assert_eq!(reading.answer(&base, &first), output(&["The"]));
     assert_eq!(reading.due(), Some(1_000_000));
-    assert_eq!(reading.answer(&first, &grown), changed(&["quick brown"]));
+    assert_eq!(reading.answer(&first, &grown), output(&["quick brown"]));
     assert_eq!(reading.due(), Some(1_100_000));
     // The caret left the line: the rest is spoken, the prompt with it.
-    assert_eq!(reading.answer(&grown, &done), changed(&["fox", "$"]));
+    assert_eq!(reading.answer(&grown, &done), output(&["fox", "$"]));
     assert_eq!(reading.due(), None);
 }
 
@@ -155,7 +155,7 @@ fn a_held_word_is_spoken_once_the_quiet_period_passes() {
     let mut reading = Reading::new();
     let base = window(&["> "], Some((1, 2)), 0);
     let first = window(&["> Hello wor"], Some((1, 11)), 0);
-    assert_eq!(reading.answer(&base, &first), changed(&["Hello"]));
+    assert_eq!(reading.answer(&base, &first), output(&["Hello"]));
     assert_eq!(reading.timer(999_999), Answer::default());
     assert_eq!(
         reading.timer(1_000_000),
@@ -186,7 +186,7 @@ fn a_spinner_glyph_changed_alone_is_silent() {
     // Q6: one character, neither a letter nor a digit, replaced in place.
     let old = window(&["| Working"], None, 0);
     let new = window(&["/ Working"], None, 10);
-    assert_eq!(Reading::new().answer(&old, &new), changed(&[]));
+    assert_eq!(Reading::new().answer(&old, &new), output(&[]));
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn typing_is_echoed_at_the_read_that_shows_it_and_never_spoken_as_output() {
         reading.answer(&old, &shown),
         Answer {
             echo: vec!["o".to_owned()],
-            shares_line: false,
+            shares_line: true,
             ..Answer::default()
         }
     );
@@ -259,6 +259,7 @@ fn a_line_changed_some_other_way_drops_the_typing_and_says_what_it_shows() {
     assert_eq!(
         reading.answer(&old, &shown),
         Answer {
+            shares_line: true,
             keys: vec![said("*")],
             ..Answer::default()
         }
@@ -275,7 +276,7 @@ fn typing_not_shown_within_300_milliseconds_is_dropped_unspoken() {
     // The "x" written later is output, not an echo: a word at the caret,
     // held until the quiet period passes (F5).
     let shown = window(&["$ x"], Some((1, 3)), 500);
-    assert_eq!(reading.answer(&late, &shown), changed(&[]));
+    assert_eq!(reading.answer(&late, &shown), output(&[]));
     assert_eq!(
         reading.timer(1_500_000),
         Answer {
@@ -295,11 +296,11 @@ fn a_completion_after_tab_is_output_however_short() {
     reading.hold_typed("w", 0);
     reading.key(KeyKind::Forget, 0, &old);
     let spaced = window(&["$ cd web "], Some((1, 9)), 1000);
-    assert_eq!(reading.answer(&old, &spaced), changed(&["eb"]));
+    assert_eq!(reading.answer(&old, &spaced), output(&["eb"]));
     let old = Arc::new(spaced);
     reading.key(KeyKind::Forget, 2000, &old);
     let slashed = window(&["$ cd web s/"], Some((1, 11)), 3000);
-    assert_eq!(reading.answer(&old, &slashed), changed(&[]));
+    assert_eq!(reading.answer(&old, &slashed), output(&[]));
     assert_eq!(
         reading.timer(4_000_000),
         Answer {
@@ -372,6 +373,7 @@ fn one_character_lost_before_the_caret_is_spelled() {
     assert_eq!(
         reading.answer(&old, &deleted),
         Answer {
+            shares_line: true,
             keys: vec![Said {
                 unit: Unit::Character,
                 text: "o".to_owned(),
@@ -391,6 +393,7 @@ fn a_word_lost_before_the_caret_is_said_as_text() {
     assert_eq!(
         reading.answer(&old, &deleted),
         Answer {
+            shares_line: true,
             keys: vec![said("hello")],
             ..Answer::default()
         }
@@ -406,6 +409,7 @@ fn delete_speaks_what_it_leaves_at_the_caret() {
     assert_eq!(
         reading.answer(&old, &deleted),
         Answer {
+            shares_line: true,
             keys: vec![Said {
                 unit: Unit::Character,
                 text: "c".to_owned(),
@@ -427,6 +431,7 @@ fn a_recalled_line_with_a_character_typed_after_it_is_the_line() {
     assert_eq!(
         reading.answer(&old, &recalled),
         Answer {
+            shares_line: true,
             keys: vec![said("$ cat a.txt")],
             ..Answer::default()
         }
@@ -622,4 +627,13 @@ fn rows_held_until_the_same_time_are_spoken_in_their_order() {
             ..Answer::default()
         }
     );
+}
+
+#[test]
+fn a_line_changed_in_place_is_shared_with_the_last_read() {
+    // TM 7: a read that keeps or pairs a line of the last is no new
+    // screen: typing on a document's only row changes it in place.
+    let old = window(&["ready>"], Some((1, 6)), 0);
+    let new = window(&["ready> ."], Some((1, 8)), 10);
+    assert!(Reading::new().answer(&old, &new).shares_line);
 }

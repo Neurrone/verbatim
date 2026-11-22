@@ -506,7 +506,8 @@ pub struct Answer {
     /// New output for the pacing, in order; a blank line is empty, passed
     /// on to be counted, never spoken (Q1).
     pub output: Vec<String>,
-    /// Whether the read kept any line with text of the last (F14's input).
+    /// Whether the read kept or changed any line with text of the last
+    /// (F14's input).
     pub shares_line: bool,
     /// Whether the read showed no text where the last had text: it is
     /// dropped and the last kept, but for its caret (TM 10).
@@ -694,9 +695,11 @@ impl Reading {
             diff::pair_by_place(old, new, (&mut fates, &mut used));
         }
         let mut answer = Answer {
-            shares_line: fates
-                .iter()
-                .any(|fate| matches!(fate, Fate::Kept(i) if !old.text(*i).is_empty())),
+            // TM 7: a read that keeps or pairs a line with text of the last
+            // is no new screen.
+            shares_line: fates.iter().any(
+                |fate| matches!(fate, Fate::Kept(i) | Fate::Paired(i) if !old.text(*i).is_empty()),
+            ),
             ..Answer::default()
         };
         let mut read = Judged {
