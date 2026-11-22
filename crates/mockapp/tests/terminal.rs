@@ -29,7 +29,8 @@ mod harness;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use verbatim_model::request::TerminalAsk;
+use verbatim_model::batch::Op;
+use verbatim_model::request::{Question, TerminalAsk};
 use verbatim_model::{
     CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
     TerminalSnapshot, TextOp,
@@ -242,7 +243,7 @@ impl Driven {
     /// picks.
     fn before_first(
         &mut self,
-        of: fn(&TextOp) -> bool,
+        of: fn(&Question) -> bool,
         act: impl FnOnce(&mut common::MockApp, HWND) + 'static,
     ) -> Rc<RefCell<u32>> {
         let app = Rc::clone(&self.app);
@@ -251,10 +252,7 @@ impl Driven {
         let counted = Rc::clone(&count);
         let mut act = Some(act);
         self.core.observe_sends(Some(Box::new(move |ask, outpost| {
-            let Some(TerminalAsk { op, .. }) = ask.request.terminal() else {
-                return;
-            };
-            if !of(op) {
+            if !of(&ask.request) {
                 return;
             }
             *counted.borrow_mut() += 1;
@@ -379,7 +377,15 @@ fn show_after_ls(app: &mut common::MockApp, hwnd: HWND, lines: u32) {
 fn command_marks_are_found_while_output_scrolls(remote: bool) {
     let mut driven = with_a_command("mockapp-terminal-marks-scrolling", remote);
     let finds = driven.before_first(
-        |op| matches!(op, TextOp::TerminalFind { .. }),
+        |request| {
+            matches!(
+                request.terminal(),
+                Some(TerminalAsk {
+                    op: TextOp::TerminalFind { .. },
+                    ..
+                })
+            )
+        },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
     let step = driven.core.command(ReviewCommand::PreviousCommandMark);
@@ -402,21 +408,24 @@ fn command_marks_are_found_while_output_scrolls_classic() {
 
 /// The review cursor on the command's line above the rows Core keeps, as
 /// [`command_marks_move_the_review_cursor`] puts it there; the program
-/// prints three more lines as the history read the next line needs is on
-/// its way, told to Core while it is out: the history's rows are placed
-/// from the anchor Core holds at the start it named, the screen more Core
-/// asked for still holds the command's output, and the review cursor moves
-/// to it, with one history read on the remote path.
+/// prints three more lines as the line read the next line needs is on its
+/// way, told to Core while it is out: the read moves from the review
+/// cursor's held position, so the output moves nothing, and the review
+/// cursor moves to the command's output, with one line read on the remote
+/// path.
 fn the_history_is_placed_while_output_scrolls_remote() {
     let mut driven = with_a_command("mockapp-terminal-history-scrolling", true);
     let step = driven.core.command(ReviewCommand::PreviousCommandMark);
     assert_eq!(step.spoken(), [text("ready>ls")]);
     let histories = driven.before_first(
-        |op| matches!(op, TextOp::TerminalHistory { .. }),
+        |request| {
+            matches!(request, Question::Batch(batch)
+                if batch.steps.iter().any(|step| matches!(step.op, Op::ReadText { .. })))
+        },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
     let step = driven.core.command(ReviewCommand::ReviewNextLine);
-    assert_eq!(*histories.borrow(), 1);
+    assert_eq!(*histories.borrow(), 1, "one live line read");
     // The new output waits in the flood policy's queue, which this test
     // never plays.
     assert_eq!(step.spoken(), [text("a.txt")]);

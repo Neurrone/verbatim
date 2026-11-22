@@ -1,1131 +1,1073 @@
-//! What a focused terminal says (`books/dev/src/explanation/design/terminal-model.md`, "Core's
-//! flood policy"): the terminal's outpost reads it, Core's terminal model
-//! (`crate::terminal_model`) gives each read to the reading rules, and what
-//! they say is spoken here:
+//! The focused terminal (`books/dev/src/explanation/design/terminal-model.md`;
+//! build 9's design, section 5): Core watches the terminal the committed
+//! focus is, as NVDA's monitor loop does, and decides what is said; the
+//! outpost reads the window, two screens up to the document's end, when
+//! Core asks ([`verbatim_model::batch::Op::TerminalRead`]).
 //!
-//! - The answers to keys (typing the terminal showed, a caret key's unit or
-//!   the landing rule's, text the caret's line gained or lost, a row away
-//!   from the caret that is a key's answer, a suggestion) are spoken at
-//!   once, typing by the typing echo settings. With "speak passwords" on,
-//!   typing is echoed as it is typed instead, so the terminal showing it is
-//!   not echoed again.
-//! - Output, in order, queued, as it arrives, one line per utterance; blank
-//!   lines are not spoken, but count as lines like any other. Newer output
-//!   never cancels older output still waiting.
-//! - Lines are handed to speech a few at a time, each starting and ending
-//!   with an index mark, and the rest wait here, so the backlog of output
-//!   not yet spoken is known. Output is spoken in groups (the flood policy):
-//!   the first "Lines spoken in full" lines of a burst of output are spoken
-//!   whole, however fast the rest arrives. Only once a group's last line
-//!   has been heard is the backlog looked at: when more lines wait than "Lines
-//!   spoken in full", the older are replaced by "skipped N lines"
-//!   ("skipped lines" when the outpost could not count them) and the newest
-//!   "Last lines to speak" are kept (every line of output counts, a
-//!   shell's prompt shown after the output included), and those make the
-//!   next group; when
-//!   no more wait than that, they are the next group as they are. This
-//!   repeats until the output stops and everything waiting is heard, and
-//!   the next output starts a burst of its own. Output shorter than the
-//!   limit is never touched, however many batches it arrives in. A burst
-//!   ends only once its last line has been heard: one whose first line
-//!   starts playing before its second arrives is still one burst. Nothing
-//!   is lost for good: every line stays reachable with the review cursor.
-//! - Anything that cuts speech off (a key, a focus change, an interrupting
-//!   utterance) drops the output still waiting, as a key press does in
-//!   NVDA, and output read before the cut is never spoken after it. "Report
-//!   new output" off (Verbatim+5) speaks no output at all.
-//! - On-demand reading (`books/dev/src/explanation/design/terminal-model.md`, "When to read";
-//!   `docs/design/readers-tell-core-asks-build3.md`): once as many lines
-//!   wait as a group speaks, Core holds the terminal's reads
-//!   ([`reading`]), noting only that it changed. When the group's last
-//!   line is handed to speech, Core asks for what is new, so the answer is
-//!   ready before that line ends; the backlog is looked at once the line
-//!   plays and the answer's speech is taken, never before. Once nothing
-//!   waits, reading goes live again. A cut while holding reads to the end
-//!   without speaking; of what was read before a cut, still on its way,
-//!   only the answers to keys are spoken.
-
-use std::collections::VecDeque;
-
-use serde::{Deserialize, Serialize};
-use verbatim_model::{
-    CaretKey, CaretMotion, Effect, FocusValidity, KeySeq, Message, NodeId, Phrase, SegmentContent,
-    SpeechMark, SpeechPriority, TraceId, Utterance, UtteranceSegment,
-};
-
-use verbatim_text::terminal_rows::Text;
-
-use crate::editing;
-use crate::state::{ReviewText, SrState};
-use crate::text;
+//! - The watch ([`Watch`]) is the record of the focused terminal's reads:
+//!   unread, its baseline out, live with the last window and its read idle
+//!   or out, or gone. A change told marks it dirty; at settle a dirty live
+//!   watch with no read out sends one, unless the pacing holds it. Every
+//!   outcome of a read is matched by name.
+//! - Each answer is judged against the last window by `verbatim-text`'s
+//!   [`Reading`] (the echo, the keys' answers, the output), and its count
+//!   of rows written past the end mark by the terminal's places
+//!   ([`places`]); what it says joins the event queue as one entry
+//!   ([`SpeechEntry`]) and is spoken at its turn, its output through the
+//!   pacing ([`pacing`]).
+//! - A key's or command's read is a read of the watch's too: it takes over
+//!   any read out, and its answer is judged as the watch's.
+//!
+//! The record lives in the committed focus's context, so every commit
+//! replaces it; only the pacing is carried over for the same node not
+//! left. The places outlive it, one record per terminal node, dropped with
+//! the outpost generation that minted the node.
 
 pub(crate) mod commands;
-mod items;
-pub(crate) mod reading;
+pub(crate) mod pacing;
+pub(crate) mod places;
 
-pub(crate) use items::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
+use std::sync::Arc;
 
-/// How many utterances of output are handed to speech before their marks
-/// are reached: two queued behind the one playing, so there is no gap
-/// between lines and the backlog stays here, where it can be trimmed.
-const AHEAD: usize = 2;
+use serde::{Deserialize, Serialize};
+use verbatim_model::batch::{Done, StepOutcome};
+use verbatim_model::request::{CancelReason, Followed, PressAction, Reply};
+use verbatim_model::{
+    CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, OutpostId, SegmentContent,
+    SpeechPriority, TerminalSnapshot, TerminalText, TerminalWindow, TraceId, Utterance,
+    UtteranceSegment, WindowCaret,
+};
+use verbatim_text::terminal_window::{
+    Caret, ColourRun, KeyKind, Read as Parsed, Reading, Unit, Window,
+};
 
-/// The focus's terminal output still to be spoken: the focus's, so it is
-/// forgotten when the focus moves, and spoken when the terminal's outpost
-/// ends, as what was read is. Whether Core holds the terminal's reads is
-/// its reading's ([`reading::Reading`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TerminalSpeechState {
-    /// Output not yet handed to speech, oldest first: what is left of the
-    /// group being spoken, and after it at most as many lines as either
-    /// limit keeps, older ones counted as skipped ([`bound`]).
-    pub(crate) waiting: VecDeque<Waiting>,
-    /// How many more lines the group being spoken hands to speech before
-    /// the backlog is looked at; `None` between bursts of output, when
-    /// everything has been heard.
-    pub(crate) group: Option<usize>,
-    /// The opening marks of output handed to speech whose playback has not
-    /// reached them yet, oldest first, with whether each is a line.
-    pub(crate) ahead: VecDeque<(SpeechMark, bool)>,
-    /// The closing mark of the last utterance of output handed to speech,
-    /// until playback reaches it: while it is set, output is still being
-    /// heard.
-    pub(crate) sounding: Option<SpeechMark>,
-    /// The trace of the newest output, which output handed to speech when
-    /// a mark is reached is spoken under.
-    pub(crate) trace: Option<TraceId>,
-    /// The key number of the newest output: its speech entry's fence,
-    /// which every utterance of output handed to speech carries, whatever
-    /// input hands it on; `None` for output the quiet-period timer read.
-    pub(crate) key: Option<KeySeq>,
-    /// The group's last line is playing, and the backlog is looked at once
-    /// the release read's speech is taken.
-    pub(crate) deciding: bool,
-    /// A release read was sent and its speech is not yet taken: the look at
-    /// the backlog waits for it (`docs/design/readers-tell-core-asks-build3.md`,
-    /// "Answers and speech").
-    pub(crate) release_waiting: bool,
-    /// When speech was last cut off (milliseconds on the shared clock):
-    /// output from a read that began before it was read before the cut,
-    /// and is not spoken.
-    pub(crate) cut_at_ms: u64,
+use crate::batch::{Builder, Got};
+use crate::entries::{Entries, Entry};
+use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
+use crate::keys::entry::{Fence, PressEntry};
+use crate::state::SrState;
+use crate::terminal::pacing::{Pacing, Under, Voice, Waiting};
+use crate::terminal::places::TerminalPlaces;
+use crate::{editing, text};
+
+/// The focused terminal, as the committed focus names it: its node, the
+/// window its requests name, and whether that window is a console host's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Terminal {
+    /// The terminal's node.
+    pub(crate) node: NodeId,
+    /// The window its requests name.
+    pub(crate) window: RequestWindow,
+    /// Whether its window is a console host's.
+    pub(crate) console: bool,
 }
 
-/// One piece of output waiting to be spoken.
+/// The watch: the focused terminal's reads (build 9's design, 5.2).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Waiting {
-    /// A line, or what changed of one, and what a skipped count makes of
-    /// it.
-    Line(String, LineKind),
-    /// Lines skipped as too much to read.
-    Skipped(Skipped),
-    /// The line before was longer than all the output kept waiting
-    /// ([`MAX_WAITING_BYTES`]) and was cut: "line cut". Not a line.
-    Cut,
+pub(crate) enum Watch {
+    /// No baseline: its read was refused, or its window hung; `dirty` when
+    /// a change was told since.
+    Unread { dirty: bool },
+    /// Its baseline out under `token`.
+    Baselining { token: u64, dirty: bool },
+    /// Read: the last window, and its read.
+    Live { old: Arc<Window>, read: Read },
+    /// Its node is gone.
+    Gone,
 }
 
-/// What a waiting line is to a skipped count.
+/// A live watch's read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum LineKind {
-    /// A terminal line, counted once, as `Counted` says.
-    Line(Counted),
-    /// What a growing line gained ([`TerminalItem::Growth`]): it belongs to
-    /// the line before it, with which it counts and is dropped as one.
-    Growth,
+pub(crate) enum Read {
+    /// None out; `dirty` when a change was told since the last was sent.
+    Idle { dirty: bool },
+    /// One out under `token`.
+    Out {
+        token: u64,
+        dirty: bool,
+        speaks: Speaks,
+        /// Whether it was sent once the pacing's group had handed on its
+        /// last line, a read that waited for speech (TM 17).
+        waited: bool,
+    },
 }
 
-/// How a skipped count that takes a line counts it. A lost read's lines
-/// keep the read's kind, so that any count that skips one of them says so
-/// ("skipped about N lines", "skipped more than N lines"), however many
-/// reads later the skip comes.
+/// What a read out says when it answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Counted {
-    /// Counted exactly.
-    Exactly,
-    /// Read after a lost read that found the last read's rows by their
-    /// text, so counted from text ([`Skipped::About`]).
-    About,
-    /// Read after a lost read that found none of the last read's rows: the
-    /// lines a full history held, after lines that went by unread
-    /// ([`Skipped::MoreThan`]).
-    MoreThan,
+pub(crate) enum Speaks {
+    /// Its output, the echo and the keys' answers.
+    Output,
+    /// Only the echo and the keys' answers: a cut came while the pacing
+    /// held it (TM, "Core's flood policy").
+    KeysOnly,
 }
 
-/// `skipped`, the count so far of lines being skipped, with one more line
-/// that counts as `counted`. After a "more than" count every line adds to
-/// it; a line past a full history makes the count "more than", standing
-/// for what went before it, as [`Skipped::plus`] does; a line counted from
-/// text makes it "about".
-fn with_line(skipped: Option<Skipped>, counted: Counted) -> Skipped {
-    match (skipped, counted) {
-        (Some(more @ Skipped::MoreThan(_)), _) => more.plus(Skipped::Count(1)),
-        (skipped, Counted::MoreThan) => skipped
-            .unwrap_or(Skipped::Count(0))
-            .plus(Skipped::MoreThan(1)),
-        (skipped, Counted::About) => {
-            skipped.map_or(Skipped::About(1), |skipped| skipped.plus(Skipped::About(1)))
-        }
-        (skipped, Counted::Exactly) => {
-            skipped.map_or(Skipped::Count(1), |skipped| skipped.plus(Skipped::Count(1)))
+/// What Core keeps of the focused terminal, in the committed focus's
+/// context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TerminalFocus {
+    /// The terminal.
+    pub(crate) terminal: Terminal,
+    /// Its reads.
+    pub(crate) watch: Watch,
+    /// The reading beside the watch's last window: typing, held rows and
+    /// the keys' window.
+    pub(crate) reading: Reading,
+    /// The output being handed to speech.
+    pub(crate) pacing: Pacing,
+    /// The newest key passed to the terminal: its trace and when it reached
+    /// the program, by which a read is the key's answer.
+    key: Option<(TraceId, u64)>,
+}
+
+impl TerminalFocus {
+    /// What a commit of the same node, not left, carries over: the pacing
+    /// alone, in a record whose watch the commit's terminal replaces.
+    pub(crate) fn carried(&self) -> Self {
+        Self {
+            terminal: self.terminal,
+            watch: Watch::Gone,
+            reading: Reading::new(),
+            pacing: self.pacing.clone(),
+            key: None,
         }
     }
 }
 
-/// The most bytes of terminal output waiting to be spoken (Dickson,
-/// 2026-10-07): extremely long output is not cut, but when the bound is
-/// reached the oldest waiting lines join the skipped count, and a single
-/// line larger than the whole bound is cut on a grapheme boundary, saying
-/// so.
-pub(crate) const MAX_WAITING_BYTES: usize = 10 * 1024 * 1024;
-
-/// `line` cut to [`MAX_WAITING_BYTES`] on a grapheme boundary, and whether
-/// it was.
-fn within_bound(mut line: String) -> (String, bool) {
-    if line.len() <= MAX_WAITING_BYTES {
-        return (line, false);
-    }
-    let end = verbatim_text::graphemes(&line)
-        .into_iter()
-        .take_while(|grapheme| grapheme.end <= MAX_WAITING_BYTES)
-        .last()
-        .map_or(0, |grapheme| grapheme.end);
-    line.truncate(end);
-    (line, true)
-}
-
-/// What a terminal's reading rules said, as the flood policy takes it in
-/// ([`speech`]): new lines keep the rules' text, shared with the read, until
-/// they wait, so a line the backlog's bound skips is never copied
-/// ([`queue`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Said {
-    /// What to say, in the order it is spoken.
-    pub(crate) items: Vec<SaidItem>,
-    /// Whether the review cursor followed the caret: a key moved the caret
-    /// within its window with "review follows caret" on, so the next review
-    /// command reads at the caret.
-    pub(crate) followed: bool,
-}
-
-/// One thing a terminal said.
+/// How a read of the watch's ended, every outcome by name.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SaidItem {
-    /// Anything but a new line.
-    Item(TerminalItem),
-    /// A new line of output, as [`TerminalItem::Output`] is, its text the
-    /// reading rules'.
-    Line(Text),
+pub(crate) enum Ended {
+    /// Column B: the window.
+    Read(Box<TerminalWindow>),
+    /// Column C1: refused or no longer awaited, `due` past its due time.
+    Abandoned { due: bool },
+    /// Column C2: a call failed, or the node has no text.
+    Failed,
+    /// Column C3: the window hung.
+    Hung,
+    /// Column C4: the node is gone.
+    NotThere,
+    /// Column C5: the outpost ended.
+    ReaderGone,
 }
 
-impl SaidItem {
-    /// Whether it is output ([`TerminalItem::is_output`]).
-    fn is_output(&self) -> bool {
-        match self {
-            Self::Item(item) => item.is_output(),
-            Self::Line(_) => true,
-        }
-    }
-}
-
-/// What a caret key is to the reading rules: one Verbatim knows, by the
-/// unit it moves by, or any other ("Keys and their window").
-#[must_use]
-pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
-    match key.motion {
-        CaretMotion::PreviousCharacter
-        | CaretMotion::NextCharacter
-        | CaretMotion::StartOfLine
-        | CaretMotion::EndOfLine => TerminalKeyKind::Caret(TerminalUnit::Character),
-        CaretMotion::PreviousWord | CaretMotion::NextWord => {
-            TerminalKeyKind::Caret(TerminalUnit::Word)
-        }
-        CaretMotion::PreviousLine
-        | CaretMotion::NextLine
-        | CaretMotion::PreviousPage
-        | CaretMotion::NextPage
-        | CaretMotion::PreviousParagraph
-        | CaretMotion::NextParagraph
-        | CaretMotion::Top
-        | CaretMotion::Bottom => TerminalKeyKind::Caret(TerminalUnit::Line),
-        CaretMotion::Delete => TerminalKeyKind::Delete,
-        // Enter held for a terminal, by a hook view behind the focus, is
-        // the carriage return it types there.
-        CaretMotion::NewLine => TerminalKeyKind::Enter,
-        _ => TerminalKeyKind::Other,
-    }
-}
-
-/// What text typed is to the reading rules: Enter, which forgets the
-/// typing not yet shown and is answered only by new output; Tab, which
-/// forgets it too; a control character, which types nothing the terminal
-/// shows as itself; and anything else, typed.
-#[must_use]
-pub(crate) fn typed_kind(typed: &str) -> TerminalKeyKind {
-    if typed.chars().any(|c| matches!(c, '\r' | '\n')) {
-        TerminalKeyKind::Enter
-    } else if typed.contains('\t') {
-        TerminalKeyKind::Forget
-    } else if typed.chars().any(char::is_control) {
-        TerminalKeyKind::Other
-    } else {
-        TerminalKeyKind::Typed(typed.to_owned())
-    }
-}
-
-/// Handles what the focused terminal `node` said, read at `observed_at_ms`:
-/// the answers to keys spoken at once, then the output queued by the flood
-/// policy and the oldest handed to speech.
-pub(crate) fn speech(
-    state: &mut SrState,
-    trace_id: TraceId,
-    observed_at_ms: u64,
-    node: NodeId,
-    speech: Said,
-) -> Vec<Effect> {
-    if reading::modelled(state) != Some(node) {
-        return Vec::new();
-    }
-    // Read before speech was last cut off: the output pending then is
-    // dropped, as NVDA drops it.
-    let before_cut = observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms;
-    take(state, (trace_id, None), Some(node), speech, before_cut)
-}
-
-/// Takes in what a full read of the focused terminal `node`, begun at
-/// `started_ms`, said at its speech entry's turn, under its trace and its
-/// fence's key number: the answers to keys spoken, and the output, unless
-/// `silent` or read before the last cut, queued by the flood policy; a
-/// release read's (`release`) lets the look at the backlog run.
-pub(crate) fn read_spoken(
-    state: &mut SrState,
-    under: (TraceId, Option<KeySeq>),
-    (node, started_ms): (NodeId, u64),
-    speech: Said,
-    (silent, release): (bool, bool),
-) -> Vec<Effect> {
-    let before_cut = silent || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
-    let mut effects = take(state, under, Some(node), speech, before_cut);
-    if release {
-        state.terminal.release_waiting = false;
-        if std::mem::take(&mut state.terminal.deciding) {
-            effects.extend(decide_and_pump(state));
-        }
-    }
-    effects
-}
-
-/// The release read ended with no speech to take: the look at the backlog
-/// runs, sending nothing for it.
-pub(crate) fn release_ended(state: &mut SrState) -> Vec<Effect> {
-    state.terminal.release_waiting = false;
-    if std::mem::take(&mut state.terminal.deciding) {
-        return decide_and_pump(state);
-    }
-    Vec::new()
-}
-
-/// Whether the lines waiting, or handed to speech and yet to start
-/// playing, reach "Lines spoken in full": the terminal's reads are held.
-pub(crate) fn lines_hold(state: &SrState) -> bool {
-    waiting_lines(&state.terminal.waiting).saturating_add(
-        state
-            .terminal
-            .ahead
-            .iter()
-            .filter(|(_, line)| *line)
-            .count(),
-    ) >= state.settings.full_lines()
-}
-
-/// The segments of a key's answer.
-fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
-    Some(match item {
-        TerminalItem::Caret { unit, text } => match unit {
-            TerminalUnit::Character => {
-                text::character_segments(Some(text.as_str()).filter(|text| !text.is_empty()), None)
+impl Ended {
+    /// A request's `outcome`, its result's step judged by `step`.
+    fn of<T>(outcome: Outcome<T>, step: impl FnOnce(T) -> Self) -> Self {
+        match outcome {
+            Outcome::Result(result) => step(result),
+            Outcome::Refused(_)
+            | Outcome::NoLongerAwaited(CancelReason::Withdrawn | CancelReason::Foreground) => {
+                Self::Abandoned { due: false }
             }
-            TerminalUnit::Word => text::word_segments(text, None),
-            TerminalUnit::Line => text::text_segments(text, None),
-        },
-        TerminalItem::Lost(text) => text::word_segments(text, None),
-        TerminalItem::Gained(text)
-        | TerminalItem::Answer(text)
-        | TerminalItem::Suggestion(text) => text::text_segments(text, None),
-        TerminalItem::Output(_)
-        | TerminalItem::Growth(_)
-        | TerminalItem::Skipped(_)
-        | TerminalItem::Echo(_) => return None,
+            Outcome::NoLongerAwaited(CancelReason::DueTime) => Self::Abandoned { due: true },
+            Outcome::NotResponding | Outcome::NoLongerAwaited(CancelReason::Hung) => Self::Hung,
+            Outcome::NotThere => Self::NotThere,
+            Outcome::ReaderEnded => Self::ReaderGone,
+        }
+    }
+
+    /// A window read step's outcome.
+    fn of_step(outcome: StepOutcome) -> Self {
+        match outcome {
+            StepOutcome::Done(Done::TerminalRead(window)) => Self::Read(window),
+            StepOutcome::NotThere(_) => Self::NotThere,
+            // A text that answers no read, as a call that failed, leaves
+            // an empty baseline, as NVDA's monitor starts from empty text.
+            StepOutcome::Refused(_)
+            | StepOutcome::Failed
+            | StepOutcome::Skipped
+            | StepOutcome::Done(_) => Self::Failed,
+        }
+    }
+
+    /// A window read step's outcome as its handle reads it.
+    fn of_got(got: &Got<'_, Box<TerminalWindow>>) -> Self {
+        match got {
+            Got::Done(window) => Self::Read(Box::clone(window)),
+            Got::NotThere(_) => Self::NotThere,
+            Got::Refused(_) | Got::Failed | Got::Skipped => Self::Failed,
+        }
+    }
+
+    /// A Core request's reply, one window read step.
+    fn of_reply(reply: Reply) -> Self {
+        match reply {
+            Reply::Steps(steps) if steps.len() == 1 => {
+                steps.into_iter().next().map_or(Self::Failed, Self::of_step)
+            }
+            // No reader that answers the batch gives another reply.
+            _ => Self::Failed,
+        }
+    }
+}
+
+/// A key's answer, as its entry carries it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct KeyAnswer {
+    unit: Unit,
+    text: String,
+}
+
+/// What a read or the quiet timer said, joining the event queue as one
+/// entry and spoken at its turn (build 9's design, row T2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SpeechEntry {
+    /// The terminal read.
+    pub(crate) node: NodeId,
+    echo: Vec<String>,
+    keys: Vec<KeyAnswer>,
+    output: Vec<Waiting>,
+    /// The key it answers, whose speech it is.
+    key: Option<TraceId>,
+    /// The trace it is spoken under.
+    trace: TraceId,
+    /// Its speech fence, set when it joins the queue.
+    pub(crate) fence: Fence,
+}
+
+/// The terminal the committed focus of `role` read on `window`, `node`, is,
+/// when it is one.
+pub(crate) fn terminal_of(
+    role: verbatim_model::Role,
+    node: NodeId,
+    window: RequestWindow,
+    console: bool,
+) -> Option<Terminal> {
+    (role == verbatim_model::Role::Terminal).then_some(Terminal {
+        node,
+        window,
+        console,
     })
 }
 
-/// Takes in what the focused terminal, `node`, said, under a trace and a
-/// key number: speaks the answers to keys, then, unless the output is
-/// `before_cut` (read before a cut), queues it by the flood policy and
-/// hands the oldest to speech.
-fn take(
+/// The focused terminal's record.
+fn focus_of(state: &SrState) -> Option<&TerminalFocus> {
+    state.versions.focus()?.context.terminal.as_deref()
+}
+
+/// The focused terminal, its watch read or not.
+pub(crate) fn focused(state: &SrState) -> Option<Terminal> {
+    focus_of(state).map(|focus| focus.terminal)
+}
+
+/// Runs `then` on the focused terminal's record, taken out of the focus's
+/// context while it runs, with the state beside it.
+fn with_focus<R>(
     state: &mut SrState,
-    (trace_id, key): (TraceId, Option<KeySeq>),
-    node: Option<NodeId>,
-    speech: Said,
-    before_cut: bool,
-) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    for item in &speech.items {
-        let SaidItem::Item(item) = item else {
-            continue;
-        };
-        match item {
-            // With passwords spoken, typing was echoed as it was typed.
-            TerminalItem::Echo(typed) if !state.settings.speak_terminal_passwords => {
-                effects.extend(editing::echo(state, trace_id, typed));
-            }
-            item => {
-                if let Some(segments) = answer_segments(item) {
-                    effects.push(editing::speak(trace_id, segments));
-                }
-            }
-        }
+    then: impl FnOnce(&mut SrState, &mut TerminalFocus) -> R,
+) -> Option<R> {
+    let mut focus = state.versions.focus_mut()?.context.terminal.take()?;
+    let result = then(state, &mut focus);
+    if let Some(record) = state.versions.focus_mut() {
+        record.context.terminal = Some(focus);
     }
-    if speech.followed
-        && let Some(navigator) = state.navigator.as_mut()
-        && Some(navigator.object.id) == node
-    {
-        // The review cursor followed the caret: the next review command
-        // reads at the caret as the outpost finds it.
-        navigator.text = ReviewText::Caret;
-    }
-    let output = speech.items.iter().any(SaidItem::is_output);
-    if !state.settings.report_terminal_output || before_cut || !output {
-        return effects;
-    }
-    state.terminal.trace = Some(trace_id);
-    state.terminal.key = key;
-    if state.terminal.group.is_none() {
-        state.terminal.group = Some(state.settings.full_lines());
-    }
-    queue(state, speech.items);
-    bound(state);
-    effects.extend(pump(state, trace_id));
-    if lines_hold(state) {
-        reading::lines_full(state);
-    }
-    effects
+    Some(result)
 }
 
-/// Whether `item` is a line that counts: a line and its growth count, and
-/// are dropped, as one ("Core's flood policy").
-fn is_line(item: &Waiting) -> bool {
-    matches!(item, Waiting::Line(_, LineKind::Line(_)))
-}
-
-/// Whether `item` belongs to the line before it: its growth, or the note
-/// that it was cut.
-fn belongs(item: &Waiting) -> bool {
-    matches!(item, Waiting::Line(_, LineKind::Growth) | Waiting::Cut)
-}
-
-/// The number of lines waiting.
-fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
-    waiting.iter().filter(|item| is_line(item)).count()
-}
-
-/// Adds the output among `items` to the waiting queue, in the order it is
-/// spoken, its text moved, and keeps the backlog behind the group being
-/// spoken to at most as many lines as either limit could keep, older ones
-/// counted as skipped, as [`skip_all_but`] would once they were added:
-/// output past that bound is counted as it is added, and never added, so a
-/// line of the reading rules' is made a string of its own only once it
-/// waits. Which of them is spoken is decided once the group is heard
-/// ([`decide`]).
-fn queue(state: &mut SrState, items: Vec<SaidItem>) {
-    let keep = state.settings.full_lines().max(state.settings.last_lines());
-    let terminal = &mut state.terminal;
-    let group_left = terminal.group.unwrap_or(0);
-    // The backlog once the output is added: the lines past the group's
-    // ([`backlog_start`]).
-    let lines = waiting_lines(&terminal.waiting).saturating_add(
-        items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    SaidItem::Item(TerminalItem::Output(_)) | SaidItem::Line(_)
-                )
-            })
-            .count(),
-    );
-    let backlog = match group_left {
-        0 => lines,
-        group => lines.saturating_sub(group),
+/// The places of terminal `node`, made the first time, moved to the back
+/// as the most recently used.
+fn places_mut(state: &mut SrState, node: NodeId) -> &mut TerminalPlaces {
+    let places = &mut state.terminal_places;
+    let entry = match places.iter().position(|(of, _)| *of == node) {
+        Some(at) => places.remove(at),
+        None => (node, TerminalPlaces::default()),
     };
-    let waiting = &mut terminal.waiting;
-    if backlog <= keep {
-        added(items, |item| match item {
-            Adding::Waiting(Waiting::Skipped(skipped)) => push_skipped(waiting, skipped),
-            item => waiting.push_back(item.waiting()),
-        });
-        return;
-    }
-    // The waiting items go round once, each taken from the front and given
-    // back at the back unless it is skipped, followed by the output's.
-    let mut bounded = Bounded {
-        group_left: (group_left > 0).then_some(group_left),
-        skipping: group_left == 0,
-        dropping: backlog.saturating_sub(keep),
-        skipped: None,
-        in_line: false,
-    };
-    // The item before the next, held until the next is known: a skipped
-    // count of the output merges with a skipped count before it, as
-    // [`push_skipped`] merges it with the last waiting.
-    let mut held: Option<Adding> = None;
-    for _ in 0..waiting.len() {
-        if let Some(item) = waiting.pop_front()
-            && let Some(before) = held.replace(Adding::Waiting(item))
-        {
-            bounded.add(waiting, before);
-        }
-    }
-    added(items, |item| match (item, &mut held) {
-        (
-            Adding::Waiting(Waiting::Skipped(skipped)),
-            Some(Adding::Waiting(Waiting::Skipped(last))),
-        ) => *last = last.plus(skipped),
-        (item, held) => {
-            if let Some(before) = held.replace(item) {
-                bounded.add(waiting, before);
-            }
-        }
-    });
-    if let Some(before) = held {
-        bounded.add(waiting, before);
-    }
-    bounded.end(waiting);
+    &mut places.push_mut(entry).1
 }
 
-/// A waiting item as it is added ([`queue`]): one of the reading rules'
-/// lines keeps their text until it waits.
-enum Adding {
-    /// An item as it waits.
-    Waiting(Waiting),
-    /// A line no larger than the bound, of the kind given, its text the
-    /// reading rules'.
-    Line(Text, LineKind),
-}
-
-impl Adding {
-    /// What it waits as.
-    fn waiting(self) -> Waiting {
-        match self {
-            Self::Waiting(item) => item,
-            Self::Line(text, kind) => Waiting::Line(text.to_string(), kind),
-        }
-    }
-
-    /// The line's kind when it is a line, or else the item, with no text.
-    fn kind(&self) -> Result<LineKind, &Waiting> {
-        match self {
-            Self::Waiting(Waiting::Line(_, kind)) | Self::Line(_, kind) => Ok(*kind),
-            Self::Waiting(item) => Err(item),
-        }
-    }
-
-    /// Whether it is a line that counts ([`is_line`]).
-    fn is_line(&self) -> bool {
-        matches!(self.kind(), Ok(LineKind::Line(_)))
-    }
-
-    /// Whether it belongs to the line before it ([`belongs`]).
-    fn belongs(&self) -> bool {
-        matches!(self.kind(), Ok(LineKind::Growth) | Err(Waiting::Cut))
-    }
-}
-
-/// The waiting items the output among `items` makes, in order, each given
-/// to `add`, a skipped count as itself for `add` to merge with a count
-/// before it. A line larger than the bound is cut and followed by
-/// [`Waiting::Cut`].
-fn added(items: Vec<SaidItem>, mut add: impl FnMut(Adding)) {
-    // Every line counts, blank ones included (Dickson, 2026-10-07, and the
-    // coherence review of 2026-10-09): a blank line waits like any other
-    // and is counted when skipped, but is never spoken ([`pump`]).
-    // A lost read puts a count of none ahead of its lines, and they keep
-    // its kind ([`Counted`]). An "about" count of none says nothing itself,
-    // so only its lines carry it; a "more than" count of none waits ahead
-    // of its lines, and says "skipped lines" unless a skip after it will
-    // say "more than" ([`pump`]).
-    let mut counted = Counted::Exactly;
-    for item in items {
-        let (line, kind) = match item {
-            SaidItem::Line(text) if text.len() <= MAX_WAITING_BYTES => {
-                add(Adding::Line(text, LineKind::Line(counted)));
-                continue;
-            }
-            SaidItem::Line(text) => (text.to_string(), LineKind::Line(counted)),
-            SaidItem::Item(TerminalItem::Output(line)) => (line, LineKind::Line(counted)),
-            SaidItem::Item(TerminalItem::Growth(line)) => (line, LineKind::Growth),
-            SaidItem::Item(TerminalItem::Skipped(Skipped::About(0))) => {
-                counted = Counted::About;
-                continue;
-            }
-            SaidItem::Item(TerminalItem::Skipped(skipped)) => {
-                if skipped == Skipped::MoreThan(0) {
-                    counted = Counted::MoreThan;
-                }
-                add(Adding::Waiting(Waiting::Skipped(skipped)));
-                continue;
-            }
-            SaidItem::Item(_) => continue,
-        };
-        let (line, cut) = within_bound(line);
-        add(Adding::Waiting(Waiting::Line(line, kind)));
-        if cut {
-            add(Adding::Waiting(Waiting::Cut));
-        }
-    }
-}
-
-/// The waiting queue rebuilt in order while the backlog is over its bound
-/// ([`queue`]): the group being spoken and what belongs to its last line
-/// kept, then, from the backlog's start, what [`skip_all_but`] drops
-/// counted into one skipped count in its place, then the rest kept.
-struct Bounded {
-    /// Lines of the group still to come; `None` once they and what belongs
-    /// to the last of them have.
-    group_left: Option<usize>,
-    /// Whether the backlog has started and nothing in it is kept yet.
-    skipping: bool,
-    /// Lines still to drop.
-    dropping: usize,
-    /// The count of what was dropped.
-    skipped: Option<Skipped>,
-    /// Whether the last item dropped was a line, whose growth goes with it.
-    in_line: bool,
-}
-
-impl Bounded {
-    /// The next item, kept at the back of `waiting`, or dropped and
-    /// counted.
-    fn add(&mut self, waiting: &mut VecDeque<Waiting>, item: Adding) {
-        if let Some(left) = &mut self.group_left {
-            if *left > 0 {
-                if item.is_line() {
-                    *left = left.saturating_sub(1);
-                }
-                waiting.push_back(item.waiting());
-                return;
-            }
-            // What belongs to the group's last line is the group's.
-            if item.belongs() {
-                waiting.push_back(item.waiting());
-                return;
-            }
-            self.group_left = None;
-            self.skipping = true;
-        }
-        if self.skipping {
-            let drop = match item.kind() {
-                Err(Waiting::Skipped(_)) => true,
-                _ if item.belongs() => self.in_line || self.dropping > 0,
-                _ => self.dropping > 0,
-            };
-            if drop {
-                match item.kind() {
-                    Ok(LineKind::Line(counted)) => {
-                        self.skipped = Some(with_line(self.skipped, counted));
-                        self.dropping = self.dropping.saturating_sub(1);
-                        self.in_line = true;
-                    }
-                    Err(Waiting::Skipped(count)) => {
-                        let count = *count;
-                        self.skipped = Some(self.skipped.map_or(count, |s| s.plus(count)));
-                        self.in_line = false;
-                    }
-                    // A dropped line's growth, and its note that it was cut,
-                    // go with it.
-                    Ok(LineKind::Growth) | Err(_) => {}
-                }
-                return;
-            }
-            self.end(waiting);
-        }
-        waiting.push_back(item.waiting());
-    }
-
-    /// Puts the count of what was dropped where it was, once nothing more
-    /// is: a line's growth alone counts no line, and leaves no count.
-    fn end(&mut self, waiting: &mut VecDeque<Waiting>) {
-        if std::mem::take(&mut self.skipping)
-            && let Some(skipped) = self
-                .skipped
-                .take()
-                .filter(|skipped| *skipped != Skipped::Count(0))
-        {
-            waiting.push_back(Waiting::Skipped(skipped));
-        }
-    }
-}
-
-/// Adds a skipped count after the waiting output, merged with one that is
-/// last already.
-fn push_skipped(waiting: &mut VecDeque<Waiting>, skipped: Skipped) {
-    if let Some(Waiting::Skipped(last)) = waiting.back_mut() {
-        *last = last.plus(skipped);
-    } else {
-        waiting.push_back(Waiting::Skipped(skipped));
-    }
-}
-
-/// Where the backlog starts in `waiting`: past the lines the group being
-/// spoken still hands to speech, `group_left` of them, anything among them,
-/// and what belongs to the last of them.
-fn backlog_start(waiting: &VecDeque<Waiting>, group_left: usize) -> usize {
-    if group_left == 0 {
-        return 0;
-    }
-    let mut lines: usize = 0;
-    for (index, item) in waiting.iter().enumerate() {
-        if is_line(item) {
-            lines = lines.saturating_add(1);
-            if lines == group_left {
-                let after = index.saturating_add(1);
-                return after.saturating_add(
-                    waiting
-                        .iter()
-                        .skip(after)
-                        .take_while(|item| belongs(item))
-                        .count(),
-                );
-            }
-        }
-    }
-    waiting.len()
-}
-
-/// Replaces everything in `waiting` from `start` on but its newest `keep`
-/// lines with one skipped count, which then comes first among them. A line
-/// is dropped with what belongs to it, so the lines kept never start with a
-/// bare growth.
-fn skip_all_but(waiting: &mut VecDeque<Waiting>, start: usize, keep: usize) {
-    let lines = waiting
+/// The places of terminal `node`, when it has any.
+pub(crate) fn places_of(state: &SrState, node: NodeId) -> Option<&TerminalPlaces> {
+    state
+        .terminal_places
         .iter()
-        .skip(start)
-        .filter(|item| is_line(item))
-        .count();
-    let mut dropping = lines.saturating_sub(keep);
-    let mut skipped: Option<Skipped> = None;
-    let index = start;
-    // Whether the last item dropped was a line, whose growth goes with it.
-    let mut in_line = false;
-    while let Some(item) = waiting.get(index) {
-        let drop = match item {
-            Waiting::Skipped(_) => true,
-            item if belongs(item) => in_line || dropping > 0,
-            _ => dropping > 0,
-        };
-        if !drop {
-            break;
-        }
-        match waiting.remove(index) {
-            Some(Waiting::Line(_, LineKind::Line(counted))) => {
-                skipped = Some(with_line(skipped, counted));
-                dropping = dropping.saturating_sub(1);
-                in_line = true;
-            }
-            Some(Waiting::Skipped(count)) => {
-                skipped = Some(skipped.map_or(count, |s| s.plus(count)));
-                in_line = false;
-            }
-            // A dropped line's growth, and its note that it was cut, go with
-            // it.
-            Some(Waiting::Line(_, LineKind::Growth) | Waiting::Cut) => {}
-            None => break,
-        }
-    }
-    // A line's growth alone counts no line, and leaves no count.
-    if let Some(skipped) = skipped.filter(|skipped| *skipped != Skipped::Count(0)) {
-        waiting.insert(start, Waiting::Skipped(skipped));
-    }
+        .find_map(|(of, places)| (*of == node).then_some(places))
 }
 
-/// Keeps everything waiting at most [`MAX_WAITING_BYTES`], the oldest
-/// lines counted as skipped beyond it, as [`queue`] keeps the backlog to
-/// as many lines as either limit could keep.
-fn bound(state: &mut SrState) {
-    let terminal = &mut state.terminal;
-    // The oldest waiting lines join the skipped count until what waits fits
-    // the bound, the backlog's first, then the group's.
-    let mut bytes: usize = terminal
-        .waiting
-        .iter()
-        .map(|item| match item {
-            Waiting::Line(line, _) => line.len(),
-            Waiting::Skipped(_) | Waiting::Cut => 0,
-        })
-        .sum();
-    while bytes > MAX_WAITING_BYTES {
-        let start = backlog_start(&terminal.waiting, terminal.group.unwrap_or(0));
-        let index = terminal
-            .waiting
-            .iter()
-            .enumerate()
-            .skip(start)
-            .chain(terminal.waiting.iter().enumerate().take(start))
-            .find(|(_, item)| matches!(item, Waiting::Line(..)))
-            .map(|(index, _)| index);
-        let Some(index) = index else {
-            break;
-        };
-        if index < start
-            && let Some(left) = terminal.group.as_mut()
-        {
-            *left = left.saturating_sub(1);
-        }
-        let counted = match terminal.waiting.get(index) {
-            Some(Waiting::Line(_, LineKind::Line(counted))) => Some(*counted),
-            _ => None,
-        };
-        // The count just before it, which a skipped line joins.
-        let before = index
-            .checked_sub(1)
-            .and_then(|before| match terminal.waiting.get(before) {
-                Some(Waiting::Skipped(count)) => Some(*count),
-                _ => None,
-            });
-        // The line goes with what belongs to it.
-        let mut first = true;
-        while let Some(item) = terminal.waiting.get(index)
-            && (first || (counted.is_some() && belongs(item)))
-        {
-            if let Some(Waiting::Line(line, _)) = terminal.waiting.remove(index) {
-                bytes = bytes.saturating_sub(line.len());
-            }
-            first = false;
-        }
-        if let Some(counted) = counted {
-            let count = Waiting::Skipped(with_line(before, counted));
-            // `before` is the count at the index before, which nothing
-            // above removed.
-            let slot = index
-                .checked_sub(1)
-                .and_then(|at| terminal.waiting.get_mut(at));
-            match (before, slot) {
-                (Some(_), Some(slot)) => *slot = count,
-                (Some(_), None) => {
-                    debug_assert!(false, "no count before the line at {index}");
-                    terminal.waiting.insert(index, count);
-                }
-                (None, _) => terminal.waiting.insert(index, count),
-            }
-        }
-    }
-}
-
-/// The flood policy, once the group being spoken has handed its last line
-/// to speech and that line is playing: when more lines wait than "Lines
-/// spoken in full" (those skipped already included), everything but the
-/// newest "Last lines to speak" becomes one skipped count. What waits then
-/// is the next group; with nothing waiting, the burst is over.
-fn decide(state: &mut SrState) {
-    let full = state.settings.full_lines();
-    let last = state.settings.last_lines();
-    let terminal = &mut state.terminal;
-    if terminal.waiting.is_empty() {
-        terminal.group = None;
-        return;
-    }
-    let mut lines = waiting_lines(&terminal.waiting);
-    if skips(&terminal.waiting, 0, full) {
-        skip_all_but(&mut terminal.waiting, 0, last);
-        lines = lines.min(last);
-    }
-    terminal.group = Some(full.max(lines));
-}
-
-/// Whether the flood policy skips what waits in `waiting` from `start` on
-/// once it is looked at: more lines than "Lines spoken in full" (`full`),
-/// those skipped already included. A lost read's "more than" count of none
-/// ([`is_mark`]) counts no line.
-fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
-    let mut lines = 0usize;
-    let mut skipped = Skipped::Count(0);
-    for item in waiting.iter().skip(start) {
-        match item {
-            item if is_mark(item) => {}
-            Waiting::Skipped(count) => skipped = skipped.plus(*count),
-            item if is_line(item) => lines = lines.saturating_add(1),
-            _ => {}
-        }
-    }
-    match skipped {
-        Skipped::Count(count) => {
-            lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)) > full
-        }
-        Skipped::Uncounted | Skipped::MoreThan(_) | Skipped::About(_) => true,
-    }
-}
-
-/// Whether `item` is a lost read's "more than" count of none: the lines
-/// after it are what a full history held, and how many went by before
-/// them is not known.
-fn is_mark(item: &Waiting) -> bool {
-    matches!(item, Waiting::Skipped(Skipped::MoreThan(0)))
-}
-
-/// Whether, once the group being spoken (`group_left` more lines of
-/// `waiting`) is heard, the flood policy, with what waits now, skips the
-/// backlog's first item and that item says "more than": a line read past
-/// a full history, or a "more than" count. A lost read's "more than" count
-/// of none reaching speech is then silent, the skip saying it instead.
-fn skip_says_more_than(
-    waiting: &VecDeque<Waiting>,
-    group_left: usize,
-    full: usize,
-    last: usize,
-) -> bool {
-    let start = backlog_start(waiting, group_left);
-    match waiting.get(start) {
-        Some(Waiting::Skipped(Skipped::MoreThan(_))) => skips(waiting, start, full),
-        // The policy keeps the newest "Last lines to speak": the first line
-        // is skipped only when more wait.
-        Some(Waiting::Line(_, LineKind::Line(Counted::MoreThan))) => {
-            skips(waiting, start, full)
-                && waiting
-                    .iter()
-                    .skip(start)
-                    .filter(|item| is_line(item))
-                    .count()
-                    > last
-        }
-        _ => false,
-    }
-}
-
-/// The utterance of terminal output `segments`, queued, about the focus,
-/// and dropped once the focus leaves the terminal.
-fn output_utterance(
+/// Every anchor the terminals' places hold, with its node.
+pub(crate) fn held(
     state: &SrState,
-    trace_id: TraceId,
-    segments: Vec<UtteranceSegment>,
-) -> Utterance {
-    Utterance {
+) -> impl Iterator<Item = (NodeId, verbatim_model::TextAnchor)> + '_ {
+    state
+        .terminal_places
+        .iter()
+        .flat_map(|(node, places)| places.anchors().map(move |anchor| (*node, anchor)))
+}
+
+/// Terminal `node`'s element is gone, its runtime id reused: its places go.
+pub(crate) fn forget(state: &mut SrState, node: NodeId) {
+    state.terminal_places.retain(|(of, _)| *of != node);
+}
+
+/// The outpost generation `outpost` ended: its terminals' places go.
+pub(crate) fn outpost_ended(state: &mut SrState, outpost: OutpostId) {
+    state
+        .terminal_places
+        .retain(|(node, _)| node.outpost() != Some(outpost));
+}
+
+/// Whether the keys' window is open at `now_us`: the newest key passed
+/// reached the program within [`verbatim_text::terminal_window::KEY_WINDOW_US`].
+fn in_key_window(focus: &TerminalFocus, now_us: u64) -> bool {
+    focus.key.is_some_and(|(_, at_us)| {
+        now_us <= at_us.saturating_add(verbatim_text::terminal_window::KEY_WINDOW_US)
+    })
+}
+
+/// The window read of `focus`'s terminal as Core names it now, `held`
+/// when the pacing held it.
+fn ask_now(state: &mut SrState, focus: &TerminalFocus, held: bool) -> verbatim_model::WindowAsk {
+    let colours = in_key_window(focus, state.queue.now_us());
+    let opening = u32::try_from(state.settings.full_lines()).unwrap_or(u32::MAX);
+    places_mut(state, focus.terminal.node).ask(held, opening, colours)
+}
+
+/// Wants a read of `focus`'s terminal, `held` when the pacing held it, and
+/// returns its token.
+fn want_read(state: &mut SrState, focus: &TerminalFocus, held: bool) -> u64 {
+    let ask = ask_now(state, focus, held);
+    let mut read = Builder::<WatchRead>::named();
+    let _ = read.terminal_read(focus.terminal.node, ask);
+    let token = state.wants.token();
+    let window = focus.terminal.window;
+    state.wants.want(
+        Some(token),
+        (Reader::Outpost(window.process), window),
+        read.finish().question(),
+    );
+    token
+}
+
+/// The brand of the watch's own reads.
+enum WatchRead {}
+
+/// The committed focus changed (column F): `to` is the terminal now
+/// committed, if the new focus is one, at `now_us`. Every `Follow` the
+/// commit wants is wanted first, in order; a terminal's record is made,
+/// carrying the pacing a commit of the same node kept, and its baseline is
+/// wanted after the `Follow`.
+pub(crate) fn committed(
+    state: &mut SrState,
+    to: Option<Terminal>,
+    follows: Vec<(RequestWindow, Option<Followed>)>,
+) {
+    for (window, node) in follows {
+        state.wants.want(
+            None,
+            (Reader::Outpost(window.process), window),
+            crate::focus::follow::batch(node.as_ref()).question(),
+        );
+    }
+    let Some(record) = state.versions.focus_mut() else {
+        return;
+    };
+    let carried = record.context.terminal.take();
+    let Some(terminal) = to else {
+        return;
+    };
+    let pacing = carried
+        .filter(|carried| carried.terminal.node == terminal.node)
+        .map(|carried| carried.pacing)
+        .unwrap_or_default();
+    let mut focus = TerminalFocus {
+        terminal,
+        watch: Watch::Unread { dirty: false },
+        reading: Reading::new(),
+        pacing,
+        key: None,
+    };
+    let token = want_read(state, &focus, false);
+    focus.watch = Watch::Baselining {
+        token,
+        dirty: false,
+    };
+    if let Some(record) = state.versions.focus_mut() {
+        record.context.terminal = Some(Box::new(focus));
+    }
+}
+
+/// Column A: a change of terminal `node` told; a tell for any other node
+/// is dropped.
+pub(crate) fn told(state: &mut SrState, node: NodeId) -> Vec<Effect> {
+    with_focus(state, |state, focus| {
+        if focus.terminal.node != node {
+            return Vec::new();
+        }
+        mark_dirty(&mut focus.watch);
+        settle(state, focus)
+    })
+    .unwrap_or_default()
+}
+
+/// Columns A and R: the watch has a change to read.
+fn mark_dirty(watch: &mut Watch) {
+    match watch {
+        Watch::Unread { dirty }
+        | Watch::Baselining { dirty, .. }
+        | Watch::Live {
+            read: Read::Idle { dirty } | Read::Out { dirty, .. },
+            ..
+        } => *dirty = true,
+        Watch::Gone => {}
+    }
+}
+
+/// Column R: a window in the recovery set, `window`, answers again: the
+/// focused terminal in it is read again.
+pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow) -> Vec<Effect> {
+    with_focus(state, |state, focus| {
+        if focus.terminal.window.handle != window.handle {
+            return Vec::new();
+        }
+        mark_dirty(&mut focus.watch);
+        settle(state, focus)
+    })
+    .unwrap_or_default()
+}
+
+/// Column E, after every input that changes the watch or the pacing: a
+/// dirty unread watch sends its baseline, a dirty live one with no read
+/// out sends one unless the pacing holds it, and a pacing due looks at
+/// what waits once no output read is out.
+fn settle(state: &mut SrState, focus: &mut TerminalFocus) -> Vec<Effect> {
+    settle_with(state, focus, false)
+}
+
+/// [`settle`], `joining` when an answer's output is about to join the
+/// queue: its lines reach the pacing at that entry's turn, so the look
+/// waits for it as it waits for the read (Q9).
+fn settle_with(state: &mut SrState, focus: &mut TerminalFocus, joining: bool) -> Vec<Effect> {
+    let full = state.settings.full_lines();
+    match focus.watch {
+        Watch::Unread { dirty: true } => {
+            let token = want_read(state, focus, false);
+            focus.watch = Watch::Baselining {
+                token,
+                dirty: false,
+            };
+        }
+        Watch::Live {
+            read: Read::Idle { dirty: true },
+            ..
+        } if !focus.pacing.holds(full) => {
+            let waited = focus.pacing.released();
+            let token = want_read(state, focus, waited);
+            if let Watch::Live { read, .. } = &mut focus.watch {
+                *read = Read::Out {
+                    token,
+                    dirty: false,
+                    speaks: Speaks::Output,
+                    waited,
+                };
+            }
+        }
+        Watch::Unread { dirty: false }
+        | Watch::Baselining { .. }
+        | Watch::Live { .. }
+        | Watch::Gone => {}
+    }
+    let reading = joining
+        || matches!(
+            focus.watch,
+            Watch::Live {
+                read: Read::Out {
+                    speaks: Speaks::Output,
+                    ..
+                },
+                ..
+            }
+        );
+    speaking(state, |voice| focus.pacing.look(reading, voice))
+}
+
+/// Runs `then` with the pacing's voice: the limits, the marks and the
+/// focus's utterance.
+fn speaking<R>(state: &mut SrState, then: impl FnOnce(&mut Voice<'_>) -> R) -> R {
+    let (full, last) = (state.settings.full_lines(), state.settings.last_lines());
+    let focus = state.versions.focus().map(|focus| &focus.context);
+    let source = focus.map(|focus| crate::reduce::source_of(&focus.snapshot));
+    let validity = focus.map(|focus| FocusValidity {
+        node: focus.snapshot.id,
+        window: verbatim_model::WindowIdentity::of(&focus.snapshot),
+    });
+    let utterance = move |trace_id, segments| Utterance {
         trace_id,
         priority: SpeechPriority::Queued,
         segments,
-        source: state
-            .versions
-            .focus()
-            .map(|focus| &focus.context)
-            .map(|focus| crate::reduce::source_of(&focus.snapshot)),
+        source,
         say_all: false,
-        validity: state
-            .versions
-            .focus()
-            .map(|focus| &focus.context)
-            .map(|focus| focus.snapshot.id)
-            .map(|node| FocusValidity {
-                node,
-                window: focus_window(state, node),
-            }),
+        validity,
+    };
+    let mut voice = Voice {
+        full,
+        last,
+        next_mark: &mut state.next_mark,
+        utterance: &utterance,
+    };
+    then(&mut voice)
+}
+
+/// A read of the watch's under `token` ended as `ended`: the watch moves
+/// by its column, and a window read is judged, its speech returned to join
+/// the queue; an answer the watch does not await is dropped (column D).
+fn answered(
+    state: &mut SrState,
+    focus: &mut TerminalFocus,
+    (token, ended): (u64, Ended),
+    trace: TraceId,
+) -> Option<SpeechEntry> {
+    let node = focus.terminal.node;
+    match focus.watch.clone() {
+        Watch::Baselining { token: out, dirty } if out == token => {
+            focus.watch = match ended {
+                Ended::Read(read) => {
+                    let window = Arc::new(parse(&read));
+                    take_caret(state, node, &read);
+                    let _ = places_mut(state, node).took(&read, &window, (true, 0));
+                    Watch::Live {
+                        old: window,
+                        read: Read::Idle { dirty },
+                    }
+                }
+                Ended::Abandoned { .. } => Watch::Unread { dirty },
+                Ended::Failed => Watch::Live {
+                    old: Arc::new(Window::empty()),
+                    read: Read::Idle { dirty },
+                },
+                Ended::Hung => Watch::Unread { dirty: false },
+                Ended::NotThere => Watch::Gone,
+                // The re-take replaces the record.
+                Ended::ReaderGone => return None,
+            };
+            None
+        }
+        Watch::Live {
+            old,
+            read:
+                Read::Out {
+                    token: out,
+                    dirty,
+                    speaks,
+                    waited,
+                },
+        } if out == token => {
+            let (old, read, entry) = match ended {
+                Ended::Read(read) => {
+                    let (old, entry) = judged(state, focus, (&old, &read), (speaks, waited), trace);
+                    (old, Read::Idle { dirty }, Some(entry))
+                }
+                Ended::Abandoned { due } => (
+                    old,
+                    Read::Idle {
+                        dirty: dirty || due,
+                    },
+                    None,
+                ),
+                Ended::Failed => (old, Read::Idle { dirty }, None),
+                Ended::Hung => (old, Read::Idle { dirty: false }, None),
+                Ended::NotThere => {
+                    focus.watch = Watch::Gone;
+                    return None;
+                }
+                Ended::ReaderGone => return None,
+            };
+            focus.watch = Watch::Live { old, read };
+            entry
+        }
+        Watch::Unread { .. } | Watch::Baselining { .. } | Watch::Live { .. } | Watch::Gone => None,
     }
 }
 
-/// Hands waiting output to speech until enough is ahead of playback, as
-/// far as the group being spoken goes. Handing the group's last line to
-/// speech while Core holds the terminal's reads asks for what is new.
-fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    while state.terminal.ahead.len() < AHEAD {
-        let terminal = &state.terminal;
-        // A group ends after its last line and what belongs to it.
-        if terminal.group == Some(0) && !terminal.waiting.front().is_some_and(belongs) {
-            break;
+/// The window `read` answered, parsed.
+fn parse(read: &TerminalWindow) -> Window {
+    let caret = read
+        .caret
+        .as_ref()
+        .zip(read.caret_rows_to_end)
+        .map(|(caret, rows)| Caret {
+            rows_to_end: rows,
+            column: {
+                let line = &caret.report.line;
+                let offset = crate::text::byte_offset(line.offset).min(line.text.len());
+                line.text
+                    .get(..offset)
+                    .map_or(0, |before| before.chars().count())
+            },
+        });
+    let colours = read.colours.as_ref().map(|rows| {
+        rows.iter()
+            .map(|runs| {
+                runs.iter()
+                    .map(|run| ColourRun {
+                        column: run.column,
+                        length: run.length,
+                        foreground: run.foreground,
+                        background: run.background,
+                    })
+                    .collect()
+            })
+            .collect()
+    });
+    Window::new(Parsed {
+        text: &read.rows.text,
+        lengths: &read.rows.lengths,
+        width: read.width,
+        screen_top: read.screen_top,
+        screen_rows: read.screen_rows,
+        caret,
+        colours,
+        ended_us: read.ended_us,
+    })
+}
+
+/// The caret `read` found, taken as the focus's.
+fn take_caret(state: &mut SrState, node: NodeId, read: &TerminalWindow) {
+    if let Some(caret) = &read.caret {
+        editing::take_caret(state, node, caret.report.clone());
+    }
+}
+
+/// Judges the window `read` against `old` (column B of a live watch): the
+/// caret taken, the diff, the count of rows written past the mark, and a
+/// new screen; returns the window the watch keeps and the read's speech.
+fn judged(
+    state: &mut SrState,
+    focus: &mut TerminalFocus,
+    (old, read): (&Arc<Window>, &TerminalWindow),
+    (speaks, waited): (Speaks, bool),
+    trace: TraceId,
+) -> (Arc<Window>, SpeechEntry) {
+    let node = focus.terminal.node;
+    let window = Arc::new(parse(read));
+    take_caret(state, node, read);
+    let answer = if waited {
+        focus.reading.answer_waited(old, &window)
+    } else {
+        focus.reading.answer(old, &window)
+    };
+    let mut output = Vec::new();
+    let kept = if answer.dropped {
+        Arc::clone(old)
+    } else {
+        let placed =
+            places_mut(state, node).took(read, &window, (answer.shares_line, answer.output.len()));
+        let speaks_output = speaks == Speaks::Output && state.settings.report_terminal_output;
+        if let Some(past) = placed.past {
+            output = past;
+        } else if placed.within && !answer.shares_line {
+            // A new screen (F14): its rows, and the review cursor at the
+            // caret.
+            output = window
+                .screen_lines()
+                .into_iter()
+                .map(Waiting::Line)
+                .collect();
+            if let Some(navigator) = state.navigator.as_mut()
+                && navigator.object.id == node
+            {
+                navigator.text = crate::state::ReviewText::Caret;
+            }
+            places_mut(state, node).review = None;
+        } else {
+            output = answer.output.into_iter().map(Waiting::Line).collect();
         }
-        let Some(item) = state.terminal.waiting.pop_front() else {
-            break;
-        };
-        if is_line(&item)
-            && let Some(left) = state.terminal.group.as_mut()
+        if !speaks_output {
+            output.clear();
+        }
+        Arc::clone(&window)
+    };
+    let key = focus
+        .key
+        .filter(|(_, at_us)| {
+            read.ended_us <= at_us.saturating_add(verbatim_text::terminal_window::KEY_WINDOW_US)
+        })
+        .map(|(trace, _)| trace);
+    let entry = SpeechEntry {
+        node,
+        echo: answer.echo,
+        keys: answer
+            .keys
+            .into_iter()
+            .map(|said| KeyAnswer {
+                unit: said.unit,
+                text: said.text,
+            })
+            .collect(),
+        output,
+        key,
+        trace,
+        fence: Fence::default(),
+    };
+    (kept, entry)
+}
+
+/// The read `read` as the control plane's event stream carries it, for the
+/// end-to-end suite's waits on a prompt: its rows, the caret and the
+/// caret's rows to the end.
+fn observed(terminal: &Terminal, read: &TerminalWindow, trace: TraceId) -> Effect {
+    let snapshot = TerminalSnapshot {
+        text: read.rows.clone(),
+        screen: TerminalText::default(),
+        from_start: true,
+        shrank: false,
+        at_document_start: false,
+        alternate: read.screen_at_start,
+        first_row: read.first_row.clone(),
+        caret_rows_to_end: read.caret_rows_to_end.unwrap_or(0),
+        caret_line: TerminalText::default(),
+        caret_column: 0,
+        above: read.above,
+        started_ms: read.began_us / 1_000,
+        ended_ms: read.ended_us / 1_000,
+        waited: false,
+        colours: None,
+        caret: read.caret.as_ref().map(|caret| caret.report.clone()),
+    };
+    verbatim_model::Observed::effect(
+        trace,
+        (terminal.window.process, verbatim_model::Backend::Uia),
+        None,
+        verbatim_model::NormalizedEvent::TerminalSnapshot {
+            node_id: terminal.node,
+            snapshot: Box::new(snapshot),
+        },
+    )
+}
+
+/// A request Core's watch asked under `token` ended with `outcome`: the
+/// watch moves by its column, the read's speech joins the back, and what
+/// settle says goes into `said`.
+pub(crate) fn facts_answered(
+    state: &mut SrState,
+    token: u64,
+    outcome: Outcome<Reply>,
+    (trace, said): (TraceId, &mut Vec<Effect>),
+) -> Vec<Entry> {
+    let ended = Ended::of(outcome, Ended::of_reply);
+    with_focus(state, |state, focus| {
+        if let Ended::Read(read) = &ended
+            && watch_token(&focus.watch) == Some(token)
         {
-            *left = left.saturating_sub(1);
-            if *left == 0 {
-                reading::group_last_line(state);
+            said.push(observed(&focus.terminal, read, trace));
+        }
+        let entry = answered(state, focus, (token, ended), trace);
+        let joining = entry.as_ref().is_some_and(|entry| !entry.output.is_empty());
+        said.extend(settle_with(state, focus, joining));
+        entry
+            .map(|entry| Entry::TerminalSpeech(Box::new(entry)))
+            .into_iter()
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The token of the read the watch has out.
+fn watch_token(watch: &Watch) -> Option<u64> {
+    match watch {
+        Watch::Baselining { token, .. }
+        | Watch::Live {
+            read: Read::Out { token, .. },
+            ..
+        } => Some(*token),
+        Watch::Unread { .. }
+        | Watch::Live {
+            read: Read::Idle { .. },
+            ..
+        }
+        | Watch::Gone => None,
+    }
+}
+
+/// Column K: a key's or command's read of terminal `node` sent under a new
+/// token, which takes over the read out, its answer stale. `None` when
+/// `node` is not the focused terminal, or its watch is gone.
+fn key_read_sent(state: &mut SrState, node: NodeId) -> Option<(u64, verbatim_model::WindowAsk)> {
+    with_focus(state, |state, focus| {
+        if focus.terminal.node != node {
+            return None;
+        }
+        let token = state.wants.token();
+        focus.watch = match &focus.watch {
+            Watch::Unread { dirty } | Watch::Baselining { dirty, .. } => Watch::Baselining {
+                token,
+                dirty: *dirty,
+            },
+            Watch::Live {
+                old,
+                read: Read::Idle { dirty } | Read::Out { dirty, .. },
+            } => Watch::Live {
+                old: Arc::clone(old),
+                read: Read::Out {
+                    token,
+                    dirty: *dirty,
+                    speaks: Speaks::Output,
+                    waited: false,
+                },
+            },
+            Watch::Gone => return None,
+        };
+        Some((token, ask_now(state, focus, false)))
+    })
+    .flatten()
+}
+
+/// What a key's or command's read brought.
+#[derive(Clone, Debug)]
+pub(crate) struct KeyRead {
+    /// Whether it answered with the window.
+    pub(crate) answered: bool,
+    /// The caret it found, when it read one: a caret key's starting point.
+    pub(crate) caret: Option<WindowCaret>,
+}
+
+/// Where a key's or command's read's speech goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReadSpeech {
+    /// It joins the back of the queue as its own entry (row T2): a key's,
+    /// which says nothing itself.
+    Joins,
+    /// It is spoken at once in the entry's own turn, under its fence: a
+    /// command's, whose own answer follows it, so that output the read
+    /// found is said before the answer, as it was written before the
+    /// press.
+    Now,
+}
+
+/// A key's or command's read under `token` ended as `ended`, inside its
+/// entry `cx`: judged as the watch's, its speech going as `speech` says.
+/// What it brought, whatever the watch made of it.
+fn key_read_ended(
+    cx: &mut Cx<Entries>,
+    token: u64,
+    ended: Ended,
+    (trace, speech): (TraceId, ReadSpeech),
+) -> KeyRead {
+    let read = match &ended {
+        Ended::Read(read) => KeyRead {
+            answered: true,
+            caret: read.caret.clone(),
+        },
+        Ended::Abandoned { .. }
+        | Ended::Failed
+        | Ended::Hung
+        | Ended::NotThere
+        | Ended::ReaderGone => KeyRead {
+            answered: false,
+            caret: None,
+        },
+    };
+    let (entry, effects) = {
+        let mut facts = cx.facts_mut();
+        with_focus(&mut facts, |state, focus| {
+            let mut effects = Vec::new();
+            if let Ended::Read(read) = &ended
+                && watch_token(&focus.watch) == Some(token)
+            {
+                effects.push(observed(&focus.terminal, read, trace));
+            }
+            let entry = answered(state, focus, (token, ended), trace);
+            let joining = entry.as_ref().is_some_and(|entry| !entry.output.is_empty());
+            effects.extend(settle_with(state, focus, joining));
+            (entry, effects)
+        })
+        .unwrap_or_default()
+    };
+    for effect in effects {
+        cx.emit(effect);
+    }
+    if let Some(mut entry) = entry {
+        match speech {
+            ReadSpeech::Joins => cx.join(Entry::TerminalSpeech(Box::new(entry))),
+            ReadSpeech::Now => {
+                entry.fence = crate::entries::front_fence(cx);
+                speech_turn(cx, entry);
             }
         }
-        // A blank line counts, but is not spoken; a lost read's "more than"
-        // count of none says nothing when a skip after it will say "more
-        // than", which is decided once, as it reaches speech.
-        if matches!(&item, Waiting::Line(line, _) if text::is_blank(line))
-            || (is_mark(&item)
-                && skip_says_more_than(
-                    &state.terminal.waiting,
-                    state.terminal.group.unwrap_or(0),
-                    state.settings.full_lines(),
-                    state.settings.last_lines(),
-                ))
-        {
-            continue;
-        }
-        let mark = state.allocate_mark();
-        let counts = is_line(&item);
-        let (content, line) = match item {
-            Waiting::Line(line, _) => (text::text_segments(&line, None), counts),
-            Waiting::Skipped(Skipped::Count(count)) => (
-                vec![UtteranceSegment::new(SegmentContent::Phrase(
-                    Phrase::SkippedLines(count),
-                ))],
-                false,
-            ),
-            // An overflow none of whose lines were skipped: how many went
-            // by is not known.
-            Waiting::Skipped(Skipped::Uncounted | Skipped::MoreThan(0)) => (
-                vec![UtteranceSegment::new(SegmentContent::Phrase(
-                    Phrase::SkippedUncountedLines,
-                ))],
-                false,
-            ),
-            Waiting::Skipped(Skipped::About(count)) => (
-                vec![UtteranceSegment::new(SegmentContent::Phrase(
-                    Phrase::SkippedAboutLines(count),
-                ))],
-                false,
-            ),
-            Waiting::Skipped(Skipped::MoreThan(count)) => (
-                vec![UtteranceSegment::new(SegmentContent::Phrase(
-                    Phrase::SkippedMoreThanLines(count),
-                ))],
-                false,
-            ),
-            Waiting::Cut => (
-                vec![UtteranceSegment::new(SegmentContent::Message(
-                    Message::TerminalLineCut,
-                ))],
-                false,
-            ),
-        };
-        // A mark at the end too: playback reaching it says the utterance
-        // has been heard.
-        let end = state.allocate_mark();
-        let mut segments = vec![UtteranceSegment::new(SegmentContent::Mark(mark))];
-        segments.extend(content);
-        segments.push(UtteranceSegment::new(SegmentContent::Mark(end)));
-        let utterance = output_utterance(state, trace_id, segments);
-        effects.push(Effect::Speak(utterance, state.terminal.key));
-        state.terminal.ahead.push_back((mark, line));
-        state.terminal.sounding = Some(end);
     }
-    // Blank lines handed on without speech can end a group, or everything
-    // waiting, with nothing sounding whose end would look at the backlog.
-    let reading = state.terminal.release_waiting;
-    let terminal = &mut state.terminal;
-    if terminal.sounding.is_none()
-        && terminal.ahead.is_empty()
-        && terminal.group.is_some()
-        && (terminal.group == Some(0) || terminal.waiting.is_empty())
-    {
-        if reading {
-            terminal.deciding = true;
-        } else {
-            effects.extend(decide_and_pump(state));
-        }
-    }
-    effects
+    read
 }
 
-/// Handles playback reaching an index mark. An utterance's opening mark:
-/// it has started playing, and more is handed to speech, under the newest
-/// output's trace. The closing mark of the last utterance handed to speech:
-/// it has been heard, and when it ended the group, or everything waiting,
-/// the backlog is looked at, once what Core asked for is in. A burst ends
-/// only once its last line has been heard, never while output that has
-/// already been written is still on its way (a burst's first line can
-/// start playing before its second line arrives).
-pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
-    let reading = state.terminal.release_waiting;
-    let terminal = &mut state.terminal;
-    let Some(trace_id) = terminal.trace else {
-        return Vec::new();
+/// A key's or command's read of the focused terminal `node`, under its
+/// key's `trace`, its speech going as `speech` says: `None` when it is not
+/// the focused terminal or its watch is gone; else what it brought.
+pub(crate) async fn key_read(
+    cx: &mut Cx<Entries>,
+    (node, window): (NodeId, RequestWindow),
+    (trace, speech): (TraceId, ReadSpeech),
+    due_us: u64,
+) -> Option<KeyRead> {
+    let (token, ask) = key_read_sent(&mut cx.facts_mut(), node)?;
+    let mut batch = cx.batch(|| ());
+    let read = batch.terminal_read(node, ask);
+    let request = batch.finish().of(Reader::Outpost(window.process), window);
+    let outcome = cx.ask(request, due_us).await;
+    let ended = Ended::of(outcome, |answers| Ended::of_got(&answers.get(read)));
+    Some(key_read_ended(cx, token, ended, (trace, speech)))
+}
+
+/// How a caret key's wait in a terminal ended.
+pub(crate) enum KeyWait {
+    /// It answered; the read after it is the watch's.
+    Done,
+    /// An arrival withdrew it.
+    Withdrawn,
+    /// It failed or was not answered.
+    Ended,
+}
+
+/// A caret key's wait in the focused terminal `node`, then its final read,
+/// in one request: the read is a key's read of the watch's (column K).
+pub(crate) async fn key_wait(
+    cx: &mut Cx<Entries>,
+    (node, window): (NodeId, RequestWindow),
+    wait: verbatim_model::batch::CaretWait,
+    (trace, due_us): (TraceId, u64),
+) -> KeyWait {
+    let Some((token, ask)) = key_read_sent(&mut cx.facts_mut(), node) else {
+        return KeyWait::Ended;
     };
-    if terminal.ahead.iter().any(|(ahead, _)| *ahead == mark) {
-        while terminal
-            .ahead
-            .front()
-            .is_some_and(|(ahead, _)| *ahead <= mark)
-        {
-            terminal.ahead.pop_front();
+    let mut batch = cx.batch(|| ());
+    let waited = batch.wait_for_caret(node, wait);
+    let read = batch.terminal_read(node, ask);
+    let request = batch.finish().of(Reader::Outpost(window.process), window);
+    let outcome = cx.ask(request, due_us).await;
+    let (ended, end) = match outcome.split::<std::convert::Infallible>() {
+        Ok(answers) => (
+            Ended::of_got(&answers.get(read)),
+            if matches!(answers.get(waited), Got::Done(_)) {
+                KeyWait::Done
+            } else {
+                KeyWait::Ended
+            },
+        ),
+        Err(Outcome::NoLongerAwaited(CancelReason::Withdrawn)) => {
+            (Ended::Abandoned { due: false }, KeyWait::Withdrawn)
         }
-        return pump(state, trace_id);
+        Err(unanswered) => (
+            Ended::of(unanswered, |never| match never {}),
+            KeyWait::Ended,
+        ),
+    };
+    let _ = key_read_ended(cx, token, ended, (trace, ReadSpeech::Joins));
+    end
+}
+
+/// A speech entry at its turn: while its terminal is still the focused
+/// terminal, the echo and the keys' answers are spoken, and the output is
+/// handed to the pacing unless a cut passed its fence (column G).
+pub(crate) fn speech_turn(cx: &mut Cx<Entries>, entry: SpeechEntry) {
+    let effects = speak(&mut cx.facts_mut(), entry);
+    for effect in effects {
+        cx.emit(effect);
     }
-    if terminal.sounding != Some(mark) {
-        return Vec::new();
-    }
-    terminal.sounding = None;
-    if terminal.ahead.is_empty()
-        && terminal.group.is_some()
-        && (terminal.group == Some(0) || terminal.waiting.is_empty())
-    {
-        if reading {
-            terminal.deciding = true;
+}
+
+/// [`speech_turn`]'s speech.
+fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
+    let cut = state.arrivals.cut_since(entry.fence);
+    let trace = entry.key.unwrap_or(entry.trace);
+    let effects = with_focus(state, |state, focus| {
+        if focus.terminal.node != entry.node {
             return Vec::new();
         }
-        return decide_and_pump(state);
+        let mut effects = Vec::new();
+        for typed in &entry.echo {
+            // With passwords spoken, typing was echoed as it was typed.
+            if !state.settings.speak_terminal_passwords {
+                effects.extend(editing::echo(state, trace, typed));
+            }
+        }
+        for answer in &entry.keys {
+            let segments = match answer.unit {
+                Unit::Character => text::character_segments(
+                    Some(answer.text.as_str()).filter(|text| !text.is_empty()),
+                    None,
+                ),
+                Unit::Word => text::word_segments(&answer.text, None),
+                Unit::Line => text::text_segments(&answer.text, None),
+            };
+            effects.push(editing::speak(trace, segments));
+        }
+        if !cut && !entry.output.is_empty() && state.settings.report_terminal_output {
+            let under = Under {
+                trace,
+                fence: entry.fence.key(),
+            };
+            effects.extend(speaking(state, |voice| {
+                focus.pacing.take(entry.output, under, voice)
+            }));
+        }
+        effects.extend(settle(state, focus));
+        effects
+    })
+    .unwrap_or_default();
+    match entry.key {
+        Some(key) => effects
+            .into_iter()
+            .map(|effect| Effect::ForKey(key, Box::new(effect)))
+            .collect(),
+        None => effects,
     }
-    pump(state, trace_id)
 }
 
-/// The flood policy's decision ([`decide`]), then the next group handed to
-/// speech; with nothing left waiting, reading goes live again.
-fn decide_and_pump(state: &mut SrState) -> Vec<Effect> {
-    let Some(trace_id) = state.terminal.trace else {
-        return Vec::new();
-    };
-    decide(state);
-    let effects = pump(state, trace_id);
-    reading::looked(state, state.terminal.waiting.is_empty());
-    effects
+/// Columns H and I: playback reached `mark`.
+pub(crate) fn mark_reached(state: &mut SrState, mark: verbatim_model::SpeechMark) -> Vec<Effect> {
+    with_focus(state, |state, focus| {
+        let mut effects = speaking(state, |voice| focus.pacing.mark_reached(mark, voice));
+        effects.extend(settle(state, focus));
+        effects
+    })
+    .unwrap_or_default()
 }
 
-/// Speech was cut off (at `at_ms`, when known): output waiting or handed to
-/// speech is dropped, and changes held unread are read to the end without
-/// speaking, so nothing from before the cut is spoken.
-pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
-    let terminal = &mut state.terminal;
-    terminal.waiting.clear();
-    terminal.ahead.clear();
-    terminal.sounding = None;
-    terminal.group = None;
-    terminal.deciding = false;
-    terminal.cut_at_ms = terminal.cut_at_ms.max(at_ms);
-    reading::cut(state);
-    Vec::new()
+/// Column J: speech was cut off. A read out while the pacing holds speaks
+/// only keys, and a change held unread is read at once, speaking only keys;
+/// what waits is dropped.
+pub(crate) fn cut(state: &mut SrState) -> Vec<Effect> {
+    with_focus(state, |state, focus| {
+        let held = focus.pacing.holds(state.settings.full_lines());
+        focus.pacing = Pacing::Idle;
+        if held {
+            match &mut focus.watch {
+                Watch::Live {
+                    read: Read::Out { speaks, .. },
+                    ..
+                } => *speaks = Speaks::KeysOnly,
+                Watch::Live {
+                    read: Read::Idle { dirty: true },
+                    ..
+                } => {
+                    let token = want_read(state, focus, true);
+                    if let Watch::Live { read, .. } = &mut focus.watch {
+                        *read = Read::Out {
+                            token,
+                            dirty: false,
+                            speaks: Speaks::KeysOnly,
+                            waited: true,
+                        };
+                    }
+                }
+                Watch::Live { .. }
+                | Watch::Unread { .. }
+                | Watch::Baselining { .. }
+                | Watch::Gone => {}
+            }
+        }
+        settle(state, focus)
+    })
+    .unwrap_or_default()
 }
 
-/// An utterance cut off at `at_ms` before playback reached `marks`: when
-/// output handed to speech waits for one of them, speech was cut off, and
-/// the output still waiting is dropped, as a key's cut drops it.
+/// An utterance cut off before playback reached `marks`: when output
+/// handed on waits for one of them, speech was cut off (column J).
 pub(crate) fn utterance_cancelled(
     state: &mut SrState,
-    marks: &[SpeechMark],
-    at_ms: u64,
+    marks: &[verbatim_model::SpeechMark],
 ) -> Vec<Effect> {
-    let terminal = &state.terminal;
-    let waits = terminal.sounding.is_some_and(|mark| marks.contains(&mark))
-        || terminal.ahead.iter().any(|(mark, _)| marks.contains(mark));
-    if waits { cut(state, at_ms) } else { Vec::new() }
-}
-
-/// The focus moves to `node` from the focus `state` still holds: another
-/// node's output, or its own when the focus was `left` for another window
-/// and is taken again, is forgotten.
-pub(crate) fn focus_moved(state: &mut SrState, node: NodeId, left: bool) {
-    if left
-        || state
-            .versions
-            .focus()
-            .map(|focus| &focus.context)
-            .is_none_or(|focus| focus.snapshot.id != node)
-    {
-        state.terminal = TerminalSpeechState::default();
+    if focus_of(state).is_some_and(|focus| focus.pacing.cancelled(marks)) {
+        cut(state)
+    } else {
+        Vec::new()
     }
 }
 
@@ -1139,21 +1081,18 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
     }
 }
 
-/// Drops terminal output still waiting to be spoken, as turning "Report new
-/// output" off does, whether by its key or from the settings.
+/// Column K2: "report new output" turned off, by its key or the settings,
+/// drops what waits.
 pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
-    state.terminal.waiting.clear();
-    if state.terminal.ahead.is_empty() {
-        state.terminal.group = None;
-    }
-    state.terminal.deciding = false;
-    reading::cut(state);
-    Vec::new()
+    with_focus(state, |state, focus| {
+        focus.pacing.drop_waiting();
+        settle(state, focus)
+    })
+    .unwrap_or_default()
 }
 
 /// Verbatim+5: toggles "Report new output", says its new value, and
-/// reports the settings for the shell to save. Turning it off drops the
-/// output still waiting.
+/// reports the settings for the shell to save.
 pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let on = !state.settings.report_terminal_output;
     state.settings.report_terminal_output = on;
@@ -1172,15 +1111,185 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     effects
 }
 
-/// The window `node` is, when it is the focus and a window, for its
-/// speech's validity.
-fn focus_window(state: &SrState, node: NodeId) -> Option<verbatim_model::WindowIdentity> {
-    state
+/// What a caret key is to the reading: its unit, Delete, Enter, or any
+/// other key.
+pub(crate) fn caret_key_kind(key: CaretKey) -> KeyKind {
+    match key.motion {
+        CaretMotion::PreviousCharacter
+        | CaretMotion::NextCharacter
+        | CaretMotion::StartOfLine
+        | CaretMotion::EndOfLine => KeyKind::Caret(Unit::Character),
+        CaretMotion::PreviousWord | CaretMotion::NextWord => KeyKind::Caret(Unit::Word),
+        CaretMotion::PreviousLine
+        | CaretMotion::NextLine
+        | CaretMotion::PreviousPage
+        | CaretMotion::NextPage
+        | CaretMotion::PreviousParagraph
+        | CaretMotion::NextParagraph
+        | CaretMotion::Top
+        | CaretMotion::Bottom => KeyKind::Caret(Unit::Line),
+        CaretMotion::Delete => KeyKind::Delete,
+        // Enter held for a terminal, by a hook view behind the focus, is
+        // the carriage return it types there.
+        CaretMotion::NewLine => KeyKind::Enter,
+        _ => KeyKind::Other,
+    }
+}
+
+/// What text typed is to the reading: Enter, which forgets the typing not
+/// yet shown; Tab, which forgets it too; a control character, typing
+/// nothing shown as itself; and anything else, typed.
+fn typed_kind(typed: &str) -> KeyKind {
+    if typed.chars().any(|c| matches!(c, '\r' | '\n')) {
+        KeyKind::Enter
+    } else if typed.contains('\t') {
+        KeyKind::Forget
+    } else if typed.chars().any(char::is_control) {
+        KeyKind::Other
+    } else {
+        KeyKind::Typed
+    }
+}
+
+/// `press` reached Core's inbox: a key the focused terminal takes at its
+/// arrival is passed to its reading, with when it reached the program,
+/// which for a key behind a held stroke is no later than that stroke's
+/// release (`state.strokes`). A held caret key is passed at its pass
+/// ([`key_passed`]).
+pub(crate) fn key_arrived(state: &mut SrState, press: &PressEntry) {
+    let Some(terminal) = focused(state) else {
+        return;
+    };
+    let (kind, typed) = match &press.press.action {
+        PressAction::Typed { text } => (typed_kind(text), Some(text.as_str())),
+        PressAction::Clearing => (KeyKind::Forget, None),
+        PressAction::EditingChord => (KeyKind::Other, None),
+        PressAction::CaretKey {
+            key,
+            held: None,
+            bound,
+        } if bound
+            .as_ref()
+            .is_some_and(|bound| bound.node == terminal.node) =>
+        {
+            (caret_key_kind(*key), None)
+        }
+        PressAction::CaretKey { .. }
+        | PressAction::Command { .. }
+        | PressAction::Script { .. }
+        | PressAction::Control => return,
+    };
+    let pressed_us = press.press.pressed_at_us;
+    let at_us = if state.strokes.holds() {
+        state
+            .strokes
+            .next_release()
+            .map_or(pressed_us, |release| release.max(pressed_us))
+    } else {
+        pressed_us
+    };
+    let typed = typed.filter(|_| kind == KeyKind::Typed).map(str::to_owned);
+    key_passed(state, (kind, typed.as_deref()), at_us, press.trace_id);
+}
+
+/// A key of `kind` reached the focused terminal's program at `at_us` under
+/// `trace`, `typed` its text when it is typed: held for its echo while
+/// "speak passwords" is off, and opening or extending the keys' window;
+/// Enter on a caret line with text marks the line for the command marks
+/// (F12).
+pub(crate) fn key_passed(
+    state: &mut SrState,
+    (kind, typed): (KeyKind, Option<&str>),
+    at_us: u64,
+    trace: TraceId,
+) {
+    let speak_passwords = state.settings.speak_terminal_passwords;
+    let _ = with_focus(state, |state, focus| {
+        if let Some(typed) = typed
+            && !speak_passwords
+        {
+            focus.reading.hold_typed(typed, at_us);
+        }
+        if let Watch::Live { old, .. } = &focus.watch {
+            if kind == KeyKind::Enter
+                && let Some((line, above)) = old.caret_line()
+                && !line.trim().is_empty()
+            {
+                places_mut(state, focus.terminal.node).mark(places::RowPlace {
+                    above,
+                    column: 0,
+                    text: line.to_owned(),
+                });
+            }
+            focus.reading.key(kind, at_us, old);
+        }
+        focus.key = Some((trace, at_us));
+    });
+}
+
+/// The one time the focused terminal's held rows wait for, for
+/// `Logic::due`.
+pub(crate) fn due(state: &SrState) -> Option<u64> {
+    focus_of(state)?.reading.due()
+}
+
+/// The quiet timer at `now_us`: what comes due joins the back as a speech
+/// entry, under `trace`.
+pub(crate) fn tick(state: &mut SrState, now_us: u64, trace: TraceId) -> Option<Entry> {
+    if due(state).is_none_or(|due| due > now_us) {
+        return None;
+    }
+    with_focus(state, |_, focus| {
+        let answer = focus.reading.timer(now_us);
+        Entry::TerminalSpeech(Box::new(SpeechEntry {
+            node: focus.terminal.node,
+            echo: answer.echo,
+            keys: answer
+                .keys
+                .into_iter()
+                .map(|said| KeyAnswer {
+                    unit: said.unit,
+                    text: said.text,
+                })
+                .collect(),
+            output: answer.output.into_iter().map(Waiting::Line).collect(),
+            key: None,
+            trace,
+            fence: Fence::default(),
+        }))
+    })
+}
+
+/// Makes the committed focus's record watch terminal `node` on `window`,
+/// live on an empty window with nothing out, for tests of what passes to
+/// it.
+#[cfg(test)]
+pub(crate) fn live_for_tests(state: &mut SrState, node: NodeId, window: RequestWindow) {
+    let record = state
         .versions
-        .focus()
-        .map(|focus| &focus.context)
-        .filter(|focus| focus.snapshot.id == node)
-        .and_then(|focus| verbatim_model::WindowIdentity::of(&focus.snapshot))
+        .focus_mut()
+        .expect("a committed focus for the terminal's record");
+    record.context.terminal = Some(Box::new(TerminalFocus {
+        terminal: Terminal {
+            node,
+            window,
+            console: false,
+        },
+        watch: Watch::Live {
+            old: Arc::new(Window::empty()),
+            read: Read::Idle { dirty: false },
+        },
+        reading: Reading::new(),
+        pacing: Pacing::Idle,
+        key: None,
+    }));
+}
+
+/// When the newest key passed to the focused terminal reached its program,
+/// for tests.
+#[cfg(test)]
+pub(crate) fn passed_for_tests(state: &SrState) -> Option<u64> {
+    focus_of(state)?.key.map(|(_, at_us)| at_us)
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 4: key Line "▌ banana"
 5: key Line "▌ orange"
 6: key Line "▌ banana"
-7: key Line "n"; out "▌ apricot                                                                                                             │"; out "▌ apple                                                                                                               │"
+7: key Character "n"; out "▌ apricot                                                                                                             │"; out "▌ apple                                                                                                               │"
 8: key Line "▌ avocado                                                                                                             │"
 9: key Line "▌ date                                                                                                                │"
 10 (new): dropped

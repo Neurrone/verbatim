@@ -924,8 +924,8 @@ Each exists in both terminals unless named for one.
   being the lines the terminal's buffer holds less the 15 last lines
   (9,016 in Windows Terminal, 8,986 in the console host), so each
   terminal's provider reads its whole document. The flood policy's counts
-  for the other kinds of flood are tested with the reading rules in
-  `crates/verbatim-core/tests/terminal_floods.rs`. Outpost logs are collected in
+  for the other kinds of flood are tested with the pacing and the places
+  in `crates/verbatim-core/src/terminal/tests.rs`. Outpost logs are collected in
   chunks, since a flood's debug log can be larger than one read of the
   agent's.
 - Windows and tabs (`scenarios/terminal_windows.rs`):

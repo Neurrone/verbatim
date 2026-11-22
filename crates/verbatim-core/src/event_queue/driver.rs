@@ -952,51 +952,6 @@ impl<L: Logic> Cx<L> {
         taken
     }
 
-    /// Takes out of the queue the waiting single entries `pick` chooses
-    /// ahead of the first focus-kind entry, in their order: a focus, a run
-    /// or the menu slot's entry ends the search.
-    pub(crate) fn take_waiting_before(
-        &mut self,
-        pick: impl Fn(&L::Entry) -> bool,
-    ) -> Vec<L::Entry> {
-        let mut shared = self.shared.borrow_mut();
-        let state = &mut shared.state;
-        let facts = &state.facts;
-        let waiting = &mut state.queue.waiting;
-        let mut taken = Vec::new();
-        let mut kept = VecDeque::with_capacity(waiting.len());
-        let mut searching = true;
-        for item in waiting.drain(..) {
-            if searching {
-                let focus_kind = match &item {
-                    Item::One(entry) => match L::place(facts, entry) {
-                        super::Place::Other { focus_kind, .. } => focus_kind,
-                        super::Place::Msaa { class, .. } => matches!(
-                            class,
-                            super::MsaaClass::Focus
-                                | super::MsaaClass::Foreground
-                                | super::MsaaClass::Menu
-                        ),
-                    },
-                    Item::Run(_) | Item::Menu { .. } => true,
-                };
-                if focus_kind {
-                    searching = false;
-                } else if let Item::One(entry) = &item
-                    && pick(entry)
-                {
-                    if let Item::One(entry) = item {
-                        taken.push(entry);
-                    }
-                    continue;
-                }
-            }
-            kept.push_back(item);
-        }
-        *waiting = kept;
-        taken
-    }
-
     /// The backend verdicts of windows.
     pub(crate) fn backend(&self) -> Ref<'_, BackendCache> {
         Ref::map(self.shared.borrow(), |shared| &shared.state.queue.backend)

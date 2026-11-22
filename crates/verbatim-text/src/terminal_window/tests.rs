@@ -362,6 +362,42 @@ fn enter_is_answered_only_by_new_output() {
 }
 
 #[test]
+fn one_character_lost_before_the_caret_is_spelled() {
+    // Backspace, as NVDA's script spells a one-character deletion
+    // (`editableText.py` 317 to 320).
+    let mut reading = Reading::new();
+    let old = Arc::new(window(&["$ helo"], Some((1, 6)), 0));
+    reading.key(KeyKind::Other, 0, &old);
+    let deleted = window(&["$ hel"], Some((1, 5)), 50);
+    assert_eq!(
+        reading.answer(&old, &deleted),
+        Answer {
+            keys: vec![Said {
+                unit: Unit::Character,
+                text: "o".to_owned(),
+            }],
+            ..Answer::default()
+        }
+    );
+}
+
+#[test]
+fn a_word_lost_before_the_caret_is_said_as_text() {
+    // Control+Backspace: NVDA speaks a longer deletion as a message.
+    let mut reading = Reading::new();
+    let old = Arc::new(window(&["$ echo hello"], Some((1, 12)), 0));
+    reading.key(KeyKind::Other, 0, &old);
+    let deleted = window(&["$ echo "], Some((1, 7)), 50);
+    assert_eq!(
+        reading.answer(&old, &deleted),
+        Answer {
+            keys: vec![said("hello")],
+            ..Answer::default()
+        }
+    );
+}
+
+#[test]
 fn delete_speaks_what_it_leaves_at_the_caret() {
     let mut reading = Reading::new();
     let old = Arc::new(window(&["$ echo"], Some((1, 2)), 0));

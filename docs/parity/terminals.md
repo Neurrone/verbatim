@@ -60,7 +60,7 @@ Verbatim: **different** (Dickson, 2026-10-23; rules 5, 12 and 13).
   read at once, outside its event queue, when none is out; changes told
   while one is out are read once after it, unless it began after them,
   and a change a read begun after it covers asks nothing (Dickson,
-  2026-11-16; `crates/verbatim-core/src/terminal/reading.rs`).
+  2026-11-16; `crates/verbatim-core/src/terminal.rs`).
   Each read's speech joins the event queue in order, as NVDA reads on a
   monitor thread of its own and queues only the speech
   (`NVDAObjects/behaviors.py` 466 to 500).
@@ -144,6 +144,14 @@ settings", Core's flood policy).
   it reads them when a group's last line is handed to speech; a cut while
   it holds reads them at once with a silent read, which speaks only its
   answers to keys, as NVDA's cut drops output it had already read.
+- The listener ending while the read at a group's last line is out, the
+  terminal taken again (`conhost_flood`): Verbatim speaks the lines
+  waiting and then reads from the new baseline, so output written
+  between the dropped read and the new baseline is not heard; NVDA's
+  monitor speaks every line it reads, the lost stretch included
+  (`behaviors.py` 470, 497 to 501). Matching NVDA would need the dropped
+  watch's text kept across the commit, which is new state (Claude,
+  2026-11-22, pending Dickson's approval).
 
 ### Typing
 

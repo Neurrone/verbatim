@@ -29,7 +29,7 @@ use crate::focus_rules::{
 };
 use crate::foreground::ForegroundFact;
 use crate::state::{CellMemory, FocusContext, Navigator, SpokenRecord, SrState};
-use crate::{editing, say_all, shell, terminal, terminal_model, text};
+use crate::{editing, say_all, shell, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity/focus-events.md`, "Event
@@ -71,16 +71,12 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
         },
         _ => (input, reduce_input(state, input)),
     };
-    // The terminals Core reads (`terminal_model`) are given the settings.
-    if !state.terminals.is_empty() {
-        terminal_model::sync_settings(state);
-    }
     // A press whose read ended with no answer, its terminal's model gone,
     // says nothing and ends.
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
-        let cut = terminal::cut(state, 0);
+        let cut = terminal::cut(state);
         effects.extend(cut);
     }
     // A say-all in the event queue changed by an input outside it, such as
@@ -96,7 +92,6 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
 /// [`reduce`]'s dispatch, by input.
 fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
-        Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::Settings(settings) => {
             let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
@@ -114,8 +109,8 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // Playback will reach none of a cut utterance's marks it had not
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
-        Input::UtteranceCancelled { marks, at_ms } => {
-            let mut effects = terminal::utterance_cancelled(state, marks, *at_ms);
+        Input::UtteranceCancelled { marks, .. } => {
+            let mut effects = terminal::utterance_cancelled(state, marks);
             effects.extend(say_all::utterance_cancelled(state, marks));
             effects
         }
@@ -362,12 +357,7 @@ pub(crate) fn execute_report(
     })];
     // Entering a menu cuts speech too, at its place among the entered
     // containers (`focus_speech`).
-    end_text_activity(
-        state,
-        report.node.id,
-        (foreground_changed, previous_left),
-        &mut effects,
-    );
+    end_text_activity(state, foreground_changed, &mut effects);
     write(state, commit, new_focus, line.ancestors);
     state.navigator = Some(navigator);
     // A nameless whole-window focus, and any focus in the shell's staging
@@ -422,6 +412,13 @@ fn focus_context(
             .map(|previous| &previous.context)
             .filter(|previous| previous.snapshot.id == report.node.id)
             .and_then(|previous| previous.caret.clone()),
+        // The pacing of the same node, not left, is carried over; the
+        // commit's terminal takes it (`crate::terminal::committed`).
+        terminal: previous
+            .map(|previous| &previous.context)
+            .filter(|previous| previous.snapshot.id == report.node.id)
+            .and_then(|previous| previous.terminal.as_deref())
+            .map(|terminal| Box::new(terminal.carried())),
     }
 }
 
@@ -565,28 +562,21 @@ fn spoken_record(
     SpokenRecord::of(report.node, entries)
 }
 
-/// Ends what the previous focus's text was doing when the focus moves to
-/// `node`: a say-all reading it (its speech is cut off too, since say-all's
-/// speech is not focus speech the speech manager would drop), a caret key
-/// still waiting for evidence (the focus announcement wins, as NVDA's wait
-/// gives way to a pending focus event), and the typing being echoed. Speech
-/// is cut off when `cut` says so or say-all was reading. When the focus
-/// was `left`, what is kept of its node is reset as for another node: the
-/// terminal's speech state and its caret, as the same switch with no stall
-/// leaves them (the left mark, `crate::focus::versions`).
-fn end_text_activity(
-    state: &mut SrState,
-    node: NodeId,
-    (cut, left): (bool, bool),
-    effects: &mut Vec<Effect>,
-) {
+/// Ends what the previous focus's text was doing when the focus moves: a
+/// say-all reading it (its speech is cut off too, since say-all's speech
+/// is not focus speech the speech manager would drop), a caret key still
+/// waiting for evidence (the focus announcement wins, as NVDA's wait gives
+/// way to a pending focus event), and the typing being echoed. Speech is
+/// cut off when `cut` says so or say-all was reading. A terminal's pacing
+/// goes with a focus left or another node, as the new record carries only
+/// the pacing of the same node not left ([`focus_context`]).
+fn end_text_activity(state: &mut SrState, cut: bool, effects: &mut Vec<Effect>) {
     let reading = state.say_all.is_some();
     effects.extend(say_all::stop(state));
     if cut || reading {
         effects.push(Effect::StopSpeech);
     }
     state.typed_word.clear();
-    crate::terminal::focus_moved(state, node, left);
 }
 
 /// The speech for a new focus: the window's title the title rule adds, if

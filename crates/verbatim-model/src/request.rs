@@ -927,13 +927,6 @@ pub enum QueueInput {
         /// first.
         marks: Vec<crate::SpeechMark>,
     },
-    /// The focused terminal's quiet-period timer came due at `at_ms`, the
-    /// due time Core's state gives.
-    TerminalDue {
-        /// When it came due, in milliseconds on the clock every process of
-        /// a run shares.
-        at_ms: u64,
-    },
     /// A lock key's state, read by the shell once the key's read was due
     /// and Windows had changed it.
     LockKeyRead {

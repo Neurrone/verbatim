@@ -163,22 +163,20 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
     };
     let due_us = cx.due_in(OTHER_DUE_US);
     let next = begin(&mut cx.facts_mut(), press);
-    run_next(cx, (press, fence), window, next, (due_us, false)).await;
+    run_next(cx, (press, fence), window, next, due_us).await;
 }
 
 /// Runs a review press from `next` on: each read of its text, or the live
 /// read of the object for flat review, as the queue's request on the
-/// navigator's `window`, under the due time `due_us`; a read of the
-/// focused terminal's text is answered from Core's memory after one fresh
-/// read a command (`docs/design/readers-tell-core-asks-build3.md`,
-/// "Review commands as chained requests"), `fresh` when it was taken; and
-/// a read of flat text from the text the press read ([`flat_answer`]).
+/// navigator's `window`, under the due time `due_us`, a terminal's text
+/// read live as any other's; and a read of flat text from the text the
+/// press read ([`flat_answer`]).
 async fn run_next(
     mut cx: Cx<Entries>,
     (press, fence): (ReviewPress, Fence),
     window: crate::event_queue::RequestWindow,
     mut next: Next,
-    (due_us, mut fresh): (u64, bool),
+    due_us: u64,
 ) {
     let trace_id = press.trace_id;
     let mut flat: Option<String> = None;
@@ -205,12 +203,6 @@ async fn run_next(
             Next::Text(node, ask, then) => {
                 let by = if let Some(text) = flat.as_deref() {
                     Answerer::Flat(text)
-                } else if crate::terminal::commands::answers(&cx.facts(), node, &ask.points()) {
-                    if !fresh {
-                        crate::terminal::commands::fresh(&mut cx, trace_id, node, due_us).await;
-                        fresh = true;
-                    }
-                    Answerer::Terminal(window)
                 } else {
                     Answerer::Outpost(window)
                 };
@@ -282,21 +274,18 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         Found::On(on) => on.window,
         Found::Nothing | Found::Unread => return,
     };
-    let (node, from, place) = {
+    let (node, place) = {
         let facts = cx.facts();
         let Some(navigator) = facts.navigator.as_ref() else {
             return;
         };
-        let (from, place) = match &navigator.text {
-            ReviewText::At(position) => (
-                TextPoint::At(point_of(position)),
-                LandingPlace::Column(position.column),
-            ),
-            _ => (TextPoint::Caret, LandingPlace::Start),
+        let place = match &navigator.text {
+            ReviewText::At(position) => LandingPlace::Column(position.column),
+            _ => LandingPlace::Start,
         };
-        (navigator.object.id, from, place)
+        (navigator.object.id, place)
     };
-    if crate::terminal::reading::modelled(&cx.facts()) != Some(node) {
+    if crate::terminal::focused(&cx.facts()).is_none_or(|terminal| terminal.node != node) {
         return;
     }
     let forward = command == ReviewCommand::NextCommandMark;
@@ -307,10 +296,13 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         command,
     });
     let due_us = cx.due_in(OTHER_DUE_US);
-    crate::terminal::commands::fresh(&mut cx, press.trace_id, node, due_us).await;
-    let Some(reply) =
-        crate::terminal::commands::command_mark(&mut cx, (window, node), (forward, from), due_us)
-            .await
+    let Some(reply) = crate::terminal::commands::command_mark(
+        &mut cx,
+        (window, node),
+        (forward, press.trace_id),
+        due_us,
+    )
+    .await
     else {
         return;
     };
@@ -321,7 +313,7 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         then,
         reply,
     );
-    run_next(cx, (press, fence), window, next, (due_us, true)).await;
+    run_next(cx, (press, fence), window, next, due_us).await;
 }
 
 /// A review position on `line` at byte `offset`, which may be on its line

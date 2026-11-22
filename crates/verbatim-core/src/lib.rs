@@ -90,7 +90,6 @@ mod shell;
 mod state;
 pub mod supervisor;
 mod terminal;
-mod terminal_model;
 mod text;
 #[cfg(test)]
 #[path = "../tests/support/text_batches.rs"]
@@ -109,4 +108,3 @@ pub use held_tokens::{HeldTokens, ListenerView, View, ViewSend};
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
 pub use state::{Readiness, SrState};
-pub use terminal_model::{read_at, read_of, snapshot_of};

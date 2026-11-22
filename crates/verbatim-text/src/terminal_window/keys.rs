@@ -203,6 +203,12 @@ pub(super) fn caret(reading: &mut Reading, read: &mut Judged<'_>, window: &KeyWi
                     Unit::Character,
                     at_unit(text, at, Unit::Character, &row),
                 );
+            } else if crate::graphemes(lost).len() == 1 {
+                // One character lost is spelled, as NVDA's Backspace
+                // script spells a one-character deletion; a longer one is
+                // said as text (`docs/parity/text.md`, "What Backspace and
+                // Delete say").
+                say(read, Unit::Character, lost.to_owned());
             } else {
                 say(read, Unit::Line, lost.to_owned());
             }

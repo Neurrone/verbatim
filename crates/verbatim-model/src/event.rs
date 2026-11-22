@@ -539,17 +539,6 @@ pub enum Input {
     /// The settings dialog's theme page previews an event, as the theme
     /// reports it.
     PreviewEarcon(Earcon),
-    /// The quiet-period timer of the focused terminal's reading rules came
-    /// due, at the due time Core's state gives, which the shell reads after
-    /// each step: the rules are given the keys that reached the program by
-    /// `at_ms`, then the timer.
-    TerminalTimer {
-        /// Trace ID minted when the shell found it due.
-        trace_id: TraceId,
-        /// When it came due, in milliseconds on the clock every process of
-        /// a run shares.
-        at_ms: u64,
-    },
 }
 
 /// A progress bar's percentage, 0 to 100, kept in hundredths of a percent

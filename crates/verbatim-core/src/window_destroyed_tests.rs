@@ -119,23 +119,11 @@ fn followed(held: &mut Held, role: Role) -> Focus {
     focus
 }
 
-/// A ready Core whose focused terminal, APP's node in [`NODE_WINDOW`], is
-/// followed and baselining, its baseline taken from what Core wants to
-/// send.
+/// A ready Core whose terminal, APP's node in [`NODE_WINDOW`], is
+/// followed.
 fn terminal_followed() -> Held {
     let mut state = ready();
-    let focus = followed(&mut state, Role::Terminal);
-    crate::terminal::reading::committed(
-        &mut state.state,
-        Some(crate::terminal::reading::Terminal {
-            node: focus.context.snapshot.id,
-            window: focus.kept.asked,
-            console: false,
-        }),
-        Vec::new(),
-        500,
-    );
-    let _ = state.state.wants.take_for_tests();
+    let _ = followed(&mut state, Role::Terminal);
     state
 }
 
@@ -257,10 +245,9 @@ fn the_followed_nodes_window_destroyed_after_its_generation_ended_sends_nothing(
     );
 }
 
-/// The `Follow` naming nothing, sent when the focused terminal's window is
+/// The `Follow` naming nothing, sent when the terminal's window is
 /// destroyed, is Core's own: its answer, "not there" or applied, says
-/// nothing and changes nothing of the focused terminal, which build 3's
-/// Table 1 reads only for the `Follow` a commit sent.
+/// nothing and wants nothing, a terminal's watch reading no `Follow`.
 #[test]
 fn the_follow_naming_nothing_answered_changes_no_terminal_state() {
     for outcome in [
@@ -268,7 +255,7 @@ fn the_follow_naming_nothing_answered_changes_no_terminal_state() {
         WireOutcome::Result(crate::entries::tests::followed()),
     ] {
         let mut state = terminal_followed();
-        let before = state.state.terminal_focus.focused;
+        let before = state.state.terminal_places.clone();
         assert_eq!(
             read(&shell_feeds(
                 &mut state,
@@ -281,7 +268,7 @@ fn the_follow_naming_nothing_answered_changes_no_terminal_state() {
             feed_at(&mut state, 2_000, answer_outcome(OUTPOST, 1, outcome)),
             NOTHING
         );
-        assert_eq!(state.state.terminal_focus.focused, before);
+        assert_eq!(state.state.terminal_places, before);
         assert_eq!(state.state.wants.take_for_tests(), []);
     }
 }

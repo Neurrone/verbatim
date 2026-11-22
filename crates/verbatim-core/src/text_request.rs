@@ -102,23 +102,6 @@ pub(crate) enum TextAsk {
     Locate(TextPoint),
 }
 
-impl TextAsk {
-    /// The points Core names in the text.
-    pub(crate) fn points(&self) -> Vec<TextPoint> {
-        match *self {
-            Self::Read { at, .. }
-            | Self::Word { at, .. }
-            | Self::MoveCaret(at)
-            | Self::Locate(at) => vec![at],
-            Self::Range(span) | Self::Select(span) => {
-                let mut points = vec![span.start, span.end];
-                points.extend(span.through.into_iter().flat_map(|(a, b)| [a, b]));
-                points
-            }
-        }
-    }
-}
-
 /// A word command's answer: the word to say, and, where the review cursor
 /// moves, the line it lands on, its offset at the word's start.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,21 +150,6 @@ pub(crate) enum TextAnswer {
 }
 
 impl TextAnswer {
-    /// A line read's `outcome` as Core's own answers give it, a terminal's
-    /// command mark move.
-    pub(crate) fn of_line(outcome: StepOutcome) -> Self {
-        match outcome {
-            StepOutcome::Done(verbatim_model::batch::Done::ReadText(read)) => Self::Read {
-                moved: read.moved,
-                chunks: read.chunks,
-            },
-            StepOutcome::Refused(refusal) => Self::Refused(refusal),
-            StepOutcome::NotThere(verbatim_model::batch::Missing::Anchor(_)) => Self::Lost,
-            StepOutcome::NotThere(_) => Self::Gone,
-            StepOutcome::Done(_) | StepOutcome::Failed | StepOutcome::Skipped => Self::Failed,
-        }
-    }
-
     /// The answer a step that was not done gives, `None` for one done.
     fn of_step<T>(got: &Got<'_, T>) -> Option<Self> {
         Some(match got {
@@ -201,9 +169,6 @@ pub(crate) enum Answerer<'a> {
     Outpost(RequestWindow),
     /// Core, from this flat text ([`crate::review_text::flat_steps`]).
     Flat(&'a str),
-    /// Core, from the focused terminal's rows, on this window for the
-    /// history reads its answer may need.
-    Terminal(RequestWindow),
 }
 
 /// Asks `ask` of `node`'s text through `by` under the due time `due_us`:
@@ -225,7 +190,7 @@ pub(crate) async fn ask(
         } => {
             let mut sent = batch(|| ());
             let read = sent.read_text(node, At::from(from), movement, unit, count, plain);
-            let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+            let answers = match answers(cx, by, sent.finish(), due_us).await? {
                 Ok(answers) => answers,
                 Err(answer) => return Some(answer),
             };
@@ -246,7 +211,7 @@ pub(crate) async fn ask(
                 span.through
                     .map(|(start, end)| (At::from(start), At::from(end))),
             );
-            let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+            let answers = match answers(cx, by, sent.finish(), due_us).await? {
                 Ok(answers) => answers,
                 Err(answer) => return Some(answer),
             };
@@ -268,7 +233,7 @@ pub(crate) async fn ask(
             );
             let after = sent.caret(node, None);
             let compared = sent.compare_selection(node, Baseline::Read(before), after);
-            let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+            let answers = match answers(cx, by, sent.finish(), due_us).await? {
                 Ok(answers) => answers,
                 Err(answer) => return Some(answer),
             };
@@ -286,7 +251,7 @@ pub(crate) async fn ask(
             let mut sent = batch(|| ());
             let select = sent.select(node, (At::from(to), At::from(to)), None);
             let caret = sent.caret(node, None);
-            let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+            let answers = match answers(cx, by, sent.finish(), due_us).await? {
                 Ok(answers) => answers,
                 Err(answer) => return Some(answer),
             };
@@ -300,7 +265,7 @@ pub(crate) async fn ask(
         TextAsk::Locate(point) => {
             let mut sent = batch(|| ());
             let located = sent.locate(node, At::from(point));
-            let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+            let answers = match answers(cx, by, sent.finish(), due_us).await? {
                 Ok(answers) => answers,
                 Err(answer) => return Some(answer),
             };
@@ -350,7 +315,7 @@ async fn word(
             (None, Some(between), Some(line))
         }
     };
-    let answers = match answers(cx, (node, by), sent.finish(), due_us).await? {
+    let answers = match answers(cx, by, sent.finish(), due_us).await? {
         Ok(answers) => answers,
         Err(answer) => return Some(answer),
     };
@@ -398,12 +363,12 @@ async fn word(
     Some(judged.map_or_else(|answer| answer, |worded| TextAnswer::Word(Box::new(worded))))
 }
 
-/// `sent`'s answers from `by`, `node`'s answerer: `Err` with the answer
+/// `sent`'s answers from `by`, the text's answerer: `Err` with the answer
 /// for the text not there; `None` when the request was stopped, refused
 /// or not answered, or a local answer did not fit the batch, a defect.
 async fn answers<B: 'static>(
     cx: &mut Cx<Entries>,
-    (node, by): (NodeId, Answerer<'_>),
+    by: Answerer<'_>,
     sent: Sent<B>,
     due_us: u64,
 ) -> Option<Result<Answers<B>, TextAnswer>> {
@@ -417,9 +382,6 @@ async fn answers<B: 'static>(
             };
         }
         Answerer::Flat(text) => crate::review_text::flat_steps(text, sent.batch()),
-        Answerer::Terminal(window) => {
-            crate::terminal::commands::answer(cx, (window, node), sent.batch(), due_us).await?
-        }
     };
     // Core's answers give each step one outcome of its own kind, so they
     // always fit the batch.

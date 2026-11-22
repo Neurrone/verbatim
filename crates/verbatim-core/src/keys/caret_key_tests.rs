@@ -1788,8 +1788,8 @@ fn enter_marked_by_a_later_key_says_nothing_and_keeps_the_word() {
 }
 
 /// Enter held for a terminal, by a hook view behind the focus, is sent at
-/// once with no read, and the terminal's model takes it as Enter, the
-/// carriage return it types there.
+/// once with no read, and passes to the terminal's reading at its pass,
+/// the carriage return it types there.
 #[test]
 fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     let mut held = editing();
@@ -1797,7 +1797,7 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
         role: Role::Terminal,
         ..bound(&held)
     };
-    crate::terminal::reading::modelled_for_tests(
+    crate::terminal::live_for_tests(
         &mut held.state,
         terminal.node,
         crate::event_queue::RequestWindow::of_node(&terminal.window),
@@ -1809,10 +1809,7 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     );
     assert_eq!(sent.strokes, [vec![1]]);
     assert_eq!(sent.text, NO_REQUESTS);
-    assert_eq!(
-        crate::terminal_model::pending_kinds_for_tests(&held.state, terminal.node),
-        [crate::terminal::TerminalKeyKind::Enter]
-    );
+    assert_eq!(crate::terminal::passed_for_tests(&held.state), Some(1_000));
 }
 
 /// A key released by its 150 ms timer before its turn runs no script: a

@@ -59,6 +59,9 @@ pub(crate) struct FocusContext {
     pub(crate) reported_format: TextAttributes,
     /// The caret of the focus's text, when it has text and it was read.
     pub(crate) caret: Option<CaretContext>,
+    /// The focused terminal's watch, reading and pacing, when the focus is
+    /// a terminal (`crate::terminal`): every commit replaces it.
+    pub(crate) terminal: Option<Box<crate::terminal::TerminalFocus>>,
 }
 
 /// What Core last spoke of the focus, against which a change of its name,
@@ -507,20 +510,9 @@ pub struct SrState {
     /// The details the active theme reports (`Input::Reported`), from
     /// which each read's details are chosen ([`crate::details`]).
     pub(crate) reported: ReportedDetails,
-    /// The focused terminal's output still to be spoken (milestone M4 item
-    /// 9), bounded by the flood policy's limits.
-    pub(crate) terminal: crate::terminal::TerminalSpeechState,
-    /// Core's model of each terminal it reads, the most recently read last,
-    /// at most 16 (`crate::terminal_model`): none until a terminal's first
-    /// read is taken.
-    pub(crate) terminals: crate::terminal_model::Terminals,
-    /// The focused terminal's life and its reading
-    /// (`crate::terminal::reading`).
-    pub(crate) terminal_focus: crate::terminal::reading::TerminalFocus,
-    /// The number of the last text anchor Core minted for a terminal's
-    /// review answers, in a range no outpost mints from
-    /// (`crate::terminal_model::TERMINAL_ANCHORS`).
-    pub(crate) next_terminal_anchor: u64,
+    /// Each terminal's places, by node, Core's (`crate::terminal::places`):
+    /// dropped with the outpost generation that minted the node.
+    pub(crate) terminal_places: Vec<(NodeId, crate::terminal::places::TerminalPlaces)>,
     /// The last tree or list item level spoken first, which an item at
     /// the same level speaks last instead ("Where the level goes" in
     /// `docs/nvda/speech.md`).
@@ -686,17 +678,6 @@ impl SrState {
         self.toggle_keys.front().copied()
     }
 
-    /// When the focused terminal's quiet-period timer is due, on the run's
-    /// shared clock: the shell enters [`verbatim_model::Input::TerminalTimer`]
-    /// with this time once it is past. A view of the focused terminal's
-    /// model, read after each step, so a model dropped, or a terminal left,
-    /// has no timer; after the timer fires, the due time is later than the
-    /// time it fired at, or none.
-    #[must_use]
-    pub fn terminal_timer_due(&self) -> Option<u64> {
-        crate::terminal_model::due(self)
-    }
-
     /// What the keyboard hook reads of the foreground window, decided from
     /// the window the focus listener last reported in front (architecture
     /// section 5), the ghost window when one stands in for a hung window,
@@ -742,6 +723,7 @@ impl SrState {
             && self.strokes.is_empty()
             && !self.announces_toggle_key()
             && crate::input_desktop::due(self).is_none()
+            && crate::terminal::due(self).is_none()
     }
 
     /// The number of the oldest key whose entry is still in Core's event
@@ -1106,12 +1088,10 @@ impl SrState {
         if let Some((node, baseline)) = crate::text_facts::held(self) {
             insert(node, TextPosition::at(baseline));
         }
-        // Each terminal model's named start, which its next read, history
-        // read or search counts from (build 3, Table 7).
-        for model in self.terminals.iter() {
-            if let Some(start) = model.start {
-                insert(model.node, TextPosition::at(start));
-            }
+        // Each terminal's end marks, which its next read counts from
+        // (`crate::terminal::places`).
+        for (node, anchor) in crate::terminal::held(self) {
+            insert(node, TextPosition::at(anchor));
         }
         for request in self.queue.requests() {
             for (node, anchors) in crate::text_facts::named_by(request) {
@@ -1139,14 +1119,5 @@ impl SrState {
             self.versions.committed,
             crate::focus::versions::Committed::Ended(_)
         )
-    }
-
-    /// Removes every terminal model `which` picks: the one way a model
-    /// goes.
-    pub(crate) fn drop_models(
-        &mut self,
-        which: impl Fn(&crate::terminal_model::TerminalModel) -> bool,
-    ) {
-        self.terminals.remove_where(which);
     }
 }

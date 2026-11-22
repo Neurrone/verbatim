@@ -19,7 +19,6 @@ mod desk;
 mod readers;
 
 use readers::Found;
-mod terminal_support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -423,41 +422,4 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
         },
     }));
     let _ = same(&mut small, &mut large, &next_word);
-}
-
-#[test]
-fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
-    // The simulated terminal read as its outpost reads it, focused inside
-    // a chain of groups: a first read, then a line of output, told and
-    // read.
-    let session = |depth: u64| {
-        let mut outpost =
-            terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
-        outpost.sim.write(b"PS> ");
-        let mut session = terminal_support::Session::inside(outpost, depth);
-        // Playback's marks are entries of their own, outside the line's
-        // step.
-        session.manual_play = true;
-        session
-    };
-    let mut small = session(SMALL_CHAIN);
-    let mut large = session(LARGE_CHAIN);
-    let ((), small_bytes) = allocated_by(|| small.write("\r\ntotal 42\r\nPS> ", 200));
-    let ((), large_bytes) = allocated_by(|| large.write("\r\ntotal 42\r\nPS> ", 200));
-    small.play();
-    large.play();
-    let heard = small.heard();
-    assert_eq!(
-        heard,
-        [
-            terminal_support::said(None, "total 42"),
-            terminal_support::said(None, "PS>")
-        ]
-    );
-    assert_eq!(large.heard(), heard);
-    assert_eq!(
-        small.log.last().map(|(_, effects)| effects.clone()),
-        large.log.last().map(|(_, effects)| effects.clone())
-    );
-    assert_eq!(small_bytes, large_bytes);
 }

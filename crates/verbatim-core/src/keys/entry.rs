@@ -88,6 +88,13 @@ impl Arrivals {
         Fence(self.newest)
     }
 
+    /// Whether a key whose press cut speech came after an entry of fence
+    /// `fence` joined: its speech, and the output it hands on, is fenced
+    /// off.
+    pub(crate) fn cut_since(self, fence: Fence) -> bool {
+        self.cut > fence.0
+    }
+
     /// Whether the caret key numbered `key` is marked silent: a key joined
     /// behind it. The mark is read from the arrivals, never stored on the
     /// entry, so a key at the front is marked by the same arrival as one

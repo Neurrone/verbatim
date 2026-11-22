@@ -1466,7 +1466,7 @@ its probe adds 1 window message (above):
   protected or not, each with 1 connection and no window message, so the
   minimum is met remotely; classically 49, and 59 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline read after it, 11 remotely and 60 classically, each with 1
+  its baseline window read after it, 11 remotely and 65 classically, each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the
@@ -1744,10 +1744,10 @@ application's focus line.
 ### A terminal's reads in Core
 
 Each read crosses the pipe as a snapshot and is aligned on the reducer
-(`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). Measured through
-`reduce` by `crates/verbatim-core/tests/terminal_cost.rs`, an ignored test
-(`cargo test --release -p verbatim-core --test terminal_cost -- --ignored
---nocapture`): a 120 by 30 terminal of each kind with 9,001 numbered rows,
+(`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). These figures are
+of the row model's reads, which build 9 replaced with the window read;
+its benchmark went with them, and the window read is measured after the
+build. Measured through `reduce`: a 120 by 30 terminal of each kind with 9,001 numbered rows,
 each input carrying a read timed 31 times from a clone of the state
 before. The reducer's time is the whole step; the parse, of the input's
 JSON, runs on the reducer's thread before the step and is timed apart;

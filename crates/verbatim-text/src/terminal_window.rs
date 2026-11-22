@@ -322,6 +322,34 @@ impl Window {
             .map(Line::top)
     }
 
+    /// Every line's text, top to bottom, a blank line empty: what a read
+    /// says when more was written than its window holds (F1).
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().map(|line| line.text.as_str())
+    }
+
+    /// The caret's line: its text and the place of its first row.
+    #[must_use]
+    pub fn caret_line(&self) -> Option<(&str, u32)> {
+        let line = self.lines.get(self.caret?.line)?;
+        Some((line.text.as_str(), line.top()))
+    }
+
+    /// The lines with text below the caret's line, top to bottom: a
+    /// program's footer (F13).
+    #[must_use]
+    pub fn below_caret(&self) -> Vec<String> {
+        let Some(caret) = self.caret else {
+            return Vec::new();
+        };
+        self.lines
+            .iter()
+            .skip(caret.line.saturating_add(1))
+            .filter(|line| !line.text.is_empty())
+            .map(|line| line.text.clone())
+            .collect()
+    }
+
     /// The text of line `index`, empty when there is none.
     fn text(&self, index: usize) -> &str {
         self.lines.get(index).map_or("", |line| line.text.as_str())

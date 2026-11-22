@@ -79,9 +79,9 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     }
     state.desktop.input = InputDesktop::Other;
     state.desktop.switches_away = state.desktop.switches_away.wrapping_add(1);
+    // Core's own focus: the focused terminal's record goes with the
+    // committed focus's.
     state.versions.commit_own();
-    // The focused terminal, if any, is left.
-    crate::terminal::reading::committed(state, None, Vec::new(), now_us);
     // The keys held before the switch never reach the application: the
     // hook's line is cleared with its modifiers, and the front's
     // starting read is withdrawn as the queue settles.

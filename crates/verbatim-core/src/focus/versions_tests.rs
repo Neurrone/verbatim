@@ -34,6 +34,7 @@ pub(crate) fn focus(top_level: u64) -> Focus {
     let button = snapshot(1, Role::Button, None);
     Focus {
         context: FocusContext {
+            terminal: None,
             source: Pid(40),
             window: None,
             spoken: crate::state::SpokenRecord::of(&button, Vec::new().into()),

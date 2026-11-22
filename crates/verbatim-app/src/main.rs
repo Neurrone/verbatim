@@ -1405,28 +1405,20 @@ impl ReducerThread<'_> {
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {standing}, {starting} outposts starting, terminal timer {}",
+            "handled input {}, {standing}, {starting} outposts starting",
             self.handled_input,
-            if self.state.terminal_timer_due().is_some() {
-                "armed"
-            } else {
-                "not armed"
-            }
         );
     }
 
     /// The reducer's own conditions for the idle barrier: no outpost is
     /// starting (one still starting has a request waiting for it, as a
-    /// replacement for a crashed one does), and no terminal's
-    /// quiet-period timer is armed, since what waits for it is spoken when
-    /// it ends; and Core's event queue is idle (`SrState::queue_idle`: no
-    /// entry, no request waiting or out, no window watched for recovery,
-    /// no stroke in line, no lock key's announcement still to come, no
-    /// delay of its own due).
+    /// replacement for a crashed one does), and Core's event queue is idle
+    /// (`SrState::queue_idle`: no entry, no request waiting or out, no
+    /// window watched for recovery, no stroke in line, no lock key's
+    /// announcement still to come, no delay of its own due, no terminal
+    /// row held for its quiet period).
     fn idle_conditions_clear(&self) -> bool {
-        self.state.queue_idle()
-            && self.state.terminal_timer_due().is_none()
-            && self.state.outposts_starting() == 0
+        self.state.queue_idle() && self.state.outposts_starting() == 0
     }
 
     /// Writes the settings dialog's Terminal page's four values into the
@@ -1885,40 +1877,24 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// The earliest time Core's event queue asked to be woken, the focused
-    /// terminal's quiet-period timer is due, or a lock key's state is read.
-    /// The last two are views of Core's state, read here after each step,
-    /// so a timer whose model is gone is gone with it.
+    /// The earliest time Core's event queue asked to be woken, or a lock
+    /// key's state is read, a view of Core's state read here after each
+    /// step.
     fn next_deadline(&self) -> Option<Instant> {
         self.state
-            .terminal_timer_due()
-            .map(ms_to_us)
-            .into_iter()
-            .chain(
-                self.state
-                    .toggle_key_read_due()
-                    .map(|(_, due_ms)| ms_to_us(due_ms)),
-            )
-            .min()
-            .map(instant_at)
+            .toggle_key_read_due()
+            .map(|(_, due_ms)| instant_at(ms_to_us(due_ms)))
             .into_iter()
             .chain(self.queue_due.map(instant_at))
             .min()
     }
 
     /// Tells Core once the time it asked to be woken at is past, and moves
-    /// the terminal's timer and the lock keys' reads on.
+    /// the lock keys' reads on.
     fn expire(&mut self) {
         let shared = now_us();
         if self.queue_due.take_if(|due| *due <= shared).is_some() {
             self.queue(QueueInput::Due);
-        }
-        // The terminal's timer, once its due time is past; the step moves
-        // the due time past it (`SrState::terminal_timer_due`).
-        if let Some(at_ms) = self.state.terminal_timer_due()
-            && ms_to_us(at_ms) <= shared
-        {
-            self.queue(QueueInput::TerminalDue { at_ms });
         }
         // Each lock key whose read is due, in press order; the step takes
         // it from the front.
