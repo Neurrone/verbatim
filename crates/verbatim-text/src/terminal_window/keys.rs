@@ -119,6 +119,21 @@ fn suggest(reading: &mut Reading, read: &mut Judged<'_>, window: &KeyWindow) -> 
     suggestion
 }
 
+/// Whether the read finds the caret on old line `i`'s row and column,
+/// where the last read found it, the line unchanged: each read is compared
+/// once with the last (TM 18), so a key's answer is not said again by a
+/// later read in its window.
+fn unchanged_at_caret(read: &Judged<'_>, i: usize) -> bool {
+    let Some(now) = read.new.caret else {
+        return false;
+    };
+    matches!(read.fates.get(now.line), Some(Fate::Kept(_)))
+        && read
+            .old
+            .caret
+            .is_some_and(|was| (was.line, was.row, was.column) == (i, now.row, now.column))
+}
+
 /// The keys' answer on the caret's line (TM 19), with its suggestion
 /// (TM 22).
 pub(super) fn caret(reading: &mut Reading, read: &mut Judged<'_>, window: &KeyWindow) {
@@ -133,15 +148,7 @@ pub(super) fn caret(reading: &mut Reading, read: &mut Judged<'_>, window: &KeyWi
         Some(Fate::Kept(i) | Fate::Paired(i)) => *i,
         Some(Fate::Inserted) | None => return,
     };
-    // Each read is compared once with the last (TM 18): one that finds the
-    // caret and its line as the last read did has nothing to answer, so a
-    // key's answer is not said again by a later read in its window.
-    if matches!(read.fates.get(now.line), Some(Fate::Kept(_)))
-        && read
-            .old
-            .caret
-            .is_some_and(|was| (was.line, was.row, was.column) == (i, now.row, now.column))
-    {
+    if unchanged_at_caret(read, i) {
         return;
     }
     let text = read.new.text(now.line);
