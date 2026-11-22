@@ -1745,9 +1745,10 @@ application's focus line.
 
 Each read crosses the pipe as a snapshot and is aligned on the reducer
 (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). These figures are
-of the row model's reads, which build 9 replaced with the window read;
-its benchmark went with them, and the window read is measured after the
-build. Measured through `reduce`: a 120 by 30 terminal of each kind with 9,001 numbered rows,
+of the row model's reads, which build 9 replaced with the window read.
+The window read's benchmark is `crates/verbatim-core/tests/terminal_cost.rs`,
+the same cases through `reduce`; its figures replace these when it is
+next run in a release build. Measured through `reduce`: a 120 by 30 terminal of each kind with 9,001 numbered rows,
 each input carrying a read timed 31 times from a clone of the state
 before. The reducer's time is the whole step; the parse, of the input's
 JSON, runs on the reducer's thread before the step and is timed apart;
