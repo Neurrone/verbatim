@@ -20,8 +20,9 @@
 //!   any read out, and its answer is judged as the watch's.
 //!
 //! The record lives in the committed focus's context, so every commit
-//! replaces it; only the pacing is carried over for the same node not
-//! left. The places outlive it, one record per terminal node, dropped with
+//! replaces it; for the same node not left the pacing and the last window
+//! read are carried over, and the new watch reads on from that window. The
+//! places outlive it, one record per terminal node, dropped with
 //! the outpost generation that minted the node.
 
 pub(crate) mod commands;
@@ -125,12 +126,20 @@ pub(crate) struct TerminalFocus {
 }
 
 impl TerminalFocus {
-    /// What a commit of the same node, not left, carries over: the pacing
-    /// alone, in a record whose watch the commit's terminal replaces.
+    /// What a commit of the same node, not left, carries over: the pacing,
+    /// and the last window the watch read, from which the commit's watch
+    /// reads on (T1), in a record whose watch the commit's terminal
+    /// replaces.
     pub(crate) fn carried(&self) -> Self {
         Self {
             terminal: self.terminal,
-            watch: Watch::Gone,
+            watch: match &self.watch {
+                Watch::Live { old, .. } => Watch::Live {
+                    old: Arc::clone(old),
+                    read: Read::Idle { dirty: true },
+                },
+                Watch::Unread { .. } | Watch::Baselining { .. } | Watch::Gone => Watch::Gone,
+            },
             reading: Reading::new(),
             pacing: self.pacing.clone(),
             key: None,
@@ -350,8 +359,9 @@ enum WatchRead {}
 /// The committed focus changed (column F): `to` is the terminal now
 /// committed, if the new focus is one, at `now_us`. Every `Follow` the
 /// commit wants is wanted first, in order; a terminal's record is made,
-/// carrying the pacing a commit of the same node kept, and its baseline is
-/// wanted after the `Follow`.
+/// carrying the pacing and the last window a commit of the same node kept,
+/// and its read, an output read on from that window or else its baseline,
+/// is wanted after the `Follow`.
 pub(crate) fn committed(
     state: &mut SrState,
     to: Option<Terminal>,
@@ -371,9 +381,15 @@ pub(crate) fn committed(
     let Some(terminal) = to else {
         return;
     };
-    let pacing = carried
+    let (pacing, old) = carried
         .filter(|carried| carried.terminal.node == terminal.node)
-        .map(|carried| carried.pacing)
+        .map(|carried| {
+            let old = match carried.watch {
+                Watch::Live { old, .. } => Some(old),
+                Watch::Unread { .. } | Watch::Baselining { .. } | Watch::Gone => None,
+            };
+            (carried.pacing, old)
+        })
         .unwrap_or_default();
     let mut focus = TerminalFocus {
         terminal,
@@ -382,10 +398,27 @@ pub(crate) fn committed(
         pacing,
         key: None,
     };
-    let token = want_read(state, &focus, false, None);
-    focus.watch = Watch::Baselining {
-        token,
-        dirty: false,
+    focus.watch = match old {
+        // The same node not left reads on from the window last spoken, so
+        // output written meanwhile, a dropped read's included, is spoken
+        // (T1; Claude, 2026-11-22).
+        Some(old) => {
+            let waited = focus.pacing.released();
+            let token = want_read(state, &focus, waited, None);
+            Watch::Live {
+                old,
+                read: Read::Out {
+                    token,
+                    dirty: false,
+                    speaks: Speaks::Output,
+                    waited,
+                },
+            }
+        }
+        None => Watch::Baselining {
+            token: want_read(state, &focus, false, None),
+            dirty: false,
+        },
     };
     if let Some(record) = state.versions.focus_mut() {
         record.context.terminal = Some(Box::new(focus));

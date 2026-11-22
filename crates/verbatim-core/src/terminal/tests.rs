@@ -1263,11 +1263,11 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
 
 #[test]
 fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
-    // T1: the read at a group's last line is out when the listener dies and
-    // the re-take commits: the new watch's baseline is not an output read,
-    // so the look runs at the next settle and the waiting lines are
-    // spoken. Output between the dropped read and the new baseline is not
-    // heard (pending Dickson in `docs/parity/terminals.md`).
+    // T1 (Claude, 2026-11-22): the read at a group's last line is out when
+    // the listener dies and the re-take commits: the new watch reads on
+    // from the window last spoken, so the lines waiting are spoken and then
+    // the output written meanwhile, the dropped read's stretch included,
+    // as NVDA's monitor speaks every line it reads.
     let mut state = live(&["$"]);
     let first = numbered("line", 1, 34);
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
@@ -1296,18 +1296,35 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
             })
             .collect();
     }
-    // The re-take of the same node commits: the pacing is carried.
+    // The re-take of the same node commits: the pacing and the last window
+    // are carried, and the new watch reads on from that window.
     let terminal = focused(&state).unwrap();
     let carried = focus_of(&state).unwrap().carried();
     state.versions.focus_mut().unwrap().context.terminal = Some(Box::new(carried));
     committed(&mut state, Some(terminal), Vec::new());
-    let _ = wanted(&mut state);
+    let read = one_read(&mut state);
     heard.extend(play(&mut state, effects));
+    let all = numbered("line", 1, 40);
+    let all: Vec<&str> = all.iter().map(String::as_str).collect();
+    let outcome = outcome_of(&mut state, read_of(grown(&all, 900, 41)));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    for entry in entries {
+        let Entry::TerminalSpeech(entry) = entry else {
+            panic!("speech");
+        };
+        let turn = {
+            let now = state.queue.now_us();
+            speak(&mut state, *entry, (now, false))
+        };
+        heard.extend(play(&mut state, turn));
+    }
     assert_eq!(
         heard.iter().filter(|line| line.starts_with("line")).count(),
-        34
+        40,
+        "{heard:?}"
     );
-    assert_eq!(heard.last().map(String::as_str), Some("line 34"));
+    assert_eq!(heard.last().map(String::as_str), Some("line 40"));
 }
 
 #[test]

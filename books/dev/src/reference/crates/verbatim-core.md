@@ -1551,8 +1551,11 @@ end mark to the text's end, against which `matches_of` counts each
 match's rows. Speech of anything but the focus is ignored.
 
 - The focused terminal's record, `TerminalFocus`, lives in the committed
-  focus's context, so every commit replaces it; only its pacing is
-  carried over for the same node not left (`TerminalFocus::carried`). It
+  focus's context, so every commit replaces it; for the same node not
+  left its pacing and the last window read are carried over
+  (`TerminalFocus::carried`), and the new watch reads on from that window
+  with an output read rather than a silent baseline, so output written
+  while a read was dropped is spoken (T1). It
   holds the terminal (`Terminal`: its node, the window its requests name,
   whether that window is a console host's), the watch, the reading and
   the pacing.

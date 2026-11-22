@@ -144,14 +144,6 @@ settings", Core's flood policy).
   it reads them when a group's last line is handed to speech; a cut while
   it holds reads them at once with a silent read, which speaks only its
   answers to keys, as NVDA's cut drops output it had already read.
-- The listener ending while the read at a group's last line is out, the
-  terminal taken again (`conhost_flood`): Verbatim speaks the lines
-  waiting and then reads from the new baseline, so output written
-  between the dropped read and the new baseline is not heard; NVDA's
-  monitor speaks every line it reads, the lost stretch included
-  (`behaviors.py` 470, 497 to 501). Matching NVDA would need the dropped
-  watch's text kept across the commit, which is new state (Claude,
-  2026-11-22, pending Dickson's approval).
 
 ### Typing
 

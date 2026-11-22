@@ -413,8 +413,9 @@ fn focus_context(
             .map(|previous| &previous.context)
             .filter(|previous| previous.snapshot.id == report.node.id)
             .and_then(|previous| previous.caret.clone()),
-        // The pacing of the same node, not left, is carried over; the
-        // commit's terminal takes it (`crate::terminal::committed`).
+        // The pacing and the last window of the same node, not left, are
+        // carried over; the commit's terminal takes them
+        // (`crate::terminal::committed`).
         terminal: previous
             .map(|previous| &previous.context)
             .filter(|previous| previous.snapshot.id == report.node.id)
