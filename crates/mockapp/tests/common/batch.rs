@@ -416,16 +416,11 @@ pub fn describe(text: Option<&Text>, answer: &Answer) -> String {
     };
     for ran in &answer.steps {
         let line = match ran {
-            Ran::Done(Found::Read(read)) => format!("read {}", node(read)),
             Ran::Done(Found::Related(related)) => format!(
                 "related {:?} window {:?} table {:?}",
                 related.nodes.iter().map(node).collect::<Vec<_>>(),
                 related.window,
                 related.table
-            ),
-            Ran::Done(Found::Ancestors(ancestors)) => format!(
-                "ancestors {:?} {:?} {:?} {:?}",
-                ancestors.chain, ancestors.crossed, ancestors.walk, ancestors.parent_automation_id
             ),
             Ran::Done(Found::Descendants(walk)) => format!(
                 "descendants {:?} complete {}",

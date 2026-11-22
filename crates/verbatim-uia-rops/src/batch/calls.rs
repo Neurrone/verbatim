@@ -11,8 +11,8 @@ use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
 
 use super::walk::{Reads, Walk};
 use super::{
-    Ancestors, AncestorsInput, Answer, CaretFound, Compared, Ends, Found, Input, Object, Point,
-    Prior, Ran, Related, Segment, State, UnitsFound, Unrun, failed,
+    Answer, CaretFound, Compared, Ends, Found, Input, Object, Point, Prior, Ran, Related, Segment,
+    State, UnitsFound, Unrun, failed,
 };
 use crate::caret::{Attributes, MAX_COMPARED_TEXT, RangeEnd, classic_changes, classic_runs};
 use crate::error::Error;
@@ -55,20 +55,12 @@ pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran
     let uia = state.segment.uia;
     let found = match input {
         Input::Answered(unrun) => return Ran::Unrun(*unrun),
-        Input::Read { subject, fill } => match one(state, index, subject) {
-            Ok((element, _)) => refresh(&element, fill).map(Found::Read),
-            Err(ran) => return ran,
-        },
         Input::Related {
             subject,
             relation,
             fill,
         } => match one(state, index, subject) {
             Ok((element, window)) => related(uia, &element, window, *relation, fill),
-            Err(ran) => return ran,
-        },
-        Input::Ancestors(ancestors) => match one(state, index, &ancestors.subject) {
-            Ok((element, window)) => ancestry(uia, &element, window, ancestors),
             Err(ran) => return ran,
         },
         Input::Descendants { subject, walk } => match starts(state, index, subject) {
@@ -147,10 +139,7 @@ fn one(
 ) -> Result<(IUIAutomationElement, isize), Ran> {
     match *subject {
         Object::Held { element, window } => Ok((element.clone(), window)),
-        Object::Result(place) => match state.named(place, index) {
-            Some(Ran::Done(Found::Read(node))) => Ok(node_of(node)),
-            _ => Err(super::Defect("a step names no node as its subject").ran()),
-        },
+        Object::Result(_) => Err(super::Defect("a step names a list as its one subject").ran()),
         Object::Item(place, item) => match list(state, place, index)?.get(item as usize) {
             Some(node) => Ok(node_of(node)),
             None => Err(Ran::Unrun(Unrun::NotThere(Missing::Object))),
@@ -188,14 +177,10 @@ fn starts(
     subject: &Object<'_>,
 ) -> Result<Vec<IUIAutomationElement>, Ran> {
     match *subject {
-        Object::Result(place)
-            if !matches!(state.named(place, index), Some(Ran::Done(Found::Read(_)))) =>
-        {
-            Ok(list(state, place, index)?
-                .into_iter()
-                .map(|node| node.live().element().clone())
-                .collect())
-        }
+        Object::Result(place) => Ok(list(state, place, index)?
+            .into_iter()
+            .map(|node| node.live().element().clone())
+            .collect()),
         _ => one(state, index, subject).map(|(element, _)| vec![element]),
     }
 }
@@ -263,30 +248,6 @@ fn related(
         nodes: neighbour.into_iter().collect(),
         window,
         table,
-    }))
-}
-
-/// The ancestors of `element`, whose own window is `window`, as
-/// [`verbatim_uia::Uia::ancestors`] walks them.
-fn ancestry(
-    uia: &verbatim_uia::Uia,
-    element: &IUIAutomationElement,
-    window: isize,
-    input: &AncestorsInput<'_>,
-) -> Result<Found, Error> {
-    let mut parent_automation_id = None;
-    let (chain, crossed, walk) = uia.ancestors(
-        (&Live::new(element.clone()), window, input.nearest),
-        input.request,
-        input.registry,
-        (input.max_hops, &mut parent_automation_id),
-        input.stops,
-    )?;
-    Ok(Found::Ancestors(Ancestors {
-        chain,
-        crossed,
-        walk,
-        parent_automation_id,
     }))
 }
 

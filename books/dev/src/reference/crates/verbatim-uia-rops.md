@@ -32,9 +32,11 @@ lists the rest.
 ## The program builder and the ordinary-calls executor
 
 `batch` runs the request list's fusable operations on UI Automation
-subjects (`Read`, `Related`, `Ancestors`, `Descendants`, `Caret`,
-`ReadText`, `ReadRange`, `CompareSelection`, `Select`, `Locate`;
-`verbatim_model::batch`). Its input is a `Segment`: consecutive steps of
+subjects (`Related`, `Descendants`, `Caret`, `ReadText`, `ReadRange`,
+`CompareSelection`, `Select`, `Locate`; `verbatim_model::batch`). `Read`
+and `Ancestors` are not among them: the outpost answers them through its
+own object reads, so no program arm or call arm of theirs is kept for
+tests alone (Claude, 2026-11-22). Its input is a `Segment`: consecutive steps of
 one parsed batch, each a `Fused` holding its place, its condition and an
 `Input`, the operation with the subjects the outpost resolved: an
 `Object` (an element it holds, or an earlier step's node or list), a
@@ -55,10 +57,9 @@ act, `Select`, so the act is its program's last step and runs only if
 every earlier step of its program finished; after a walk down the tree,
 whose later runs come before anything reads it; and before a step whose
 declared worst case would take the program past the platform's limit of
-10,000 executed instructions. `Ancestors`, whose stops before each hop
-are calls to Windows no program can make, and a walk of the control
-view, since a program's `Navigate` walks the raw view, run by calls
-(Claude, 2026-11-21). Each step is lowered to a shape that holds no
+10,000 executed instructions. A walk of the control view, since a
+program's `Navigate` walks the raw view, runs by calls (Claude,
+2026-11-21). Each step is lowered to a shape that holds no
 object of UI Automation's (its imports by their place, a point's text
 found by its prefix as a constant, since a program imports only
 elements and ranges), and the shapes key the thread's `ProgramCache`, so
@@ -67,10 +68,10 @@ checked program to their own imports. Each emitted step runs in a try
 block with its own status register, written "not reached" before any
 step runs; a gate inside the program tests the statuses of the steps of
 the same program it names, and a condition's found-or-not on one of
-them is a register taken as it is or negated, never compared. A node
-read fills the element's cache inside the provider with the absent
-record of `RemoteCache`, so a property the element lacks reads absent
-as it does by calls.
+them is a register taken as it is or negated, never compared. Each node
+a relation or a walk reaches fills its cache inside the provider with
+the absent record of `RemoteCache`, so a property the element lacks
+reads absent as it does by calls.
 
 The fallback rule. After a run whose statuses are known (it ran, or
 stopped partway with `InstructionLimitExceeded` or
@@ -97,8 +98,7 @@ tree", below.
 `run_calls` runs each step through the classic calls, cut per operation
 and shared with the reads outside the list where they make the same
 calls (`text::classic_units`, `classic_range`, `classic_location`,
-`classic_caret`, `watch_check_classic`, the walk's `Uia::children`,
-`Uia::ancestors`). The developer setting with remote
+`classic_caret`, `watch_check_classic`, the walk's `Uia::children`). The developer setting with remote
 operations off, a window marked for classic reading, and the fallback's
 reruns use it. mockapp's `batch.rs` runs every converted shape through
 both executors and requires the same answer, and `batch_faults.rs`
@@ -760,10 +760,8 @@ call.
 - The menu item's legacy checked state for the focus-now answer and an
   object reached by navigation: one call.
 - A dialog's own text through UIA: already one call.
-- A batch's `Ancestors`, whose stops before each hop are calls to
-  Windows no program can make (`Uia::ancestors`), and a `Descendants`
-  walk of the control view, since a program's `Navigate` walks the raw
-  view.
+- A `Descendants` walk of the control view, since a program's
+  `Navigate` walks the raw view.
 - The arbitration probe and the checks of a console's and a Windows Forms
   window's provider: window messages and one-time checks made before the
   window's backend is known.

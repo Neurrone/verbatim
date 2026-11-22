@@ -3,8 +3,7 @@
 //! provider: every batch shape a conversion sends, run as generated
 //! programs (`run_batch`) and call by call (`run_calls`), answers the same,
 //! each program run counted as the one call it is; a shape run again binds
-//! the program it built; and a property an element lacks reads absent on
-//! both paths.
+//! the program it built.
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -15,7 +14,7 @@ mod harness;
 use batch::{Text, after, describe, many_node_fill, node_fill, read_text, step, units};
 use verbatim_model::batch::{Relation, View};
 use verbatim_uia::text::Endpoint;
-use verbatim_uia::{AncestorStops, Cached, Live, Node, NodeIdRegistry, Shape, Uia, runtime_id};
+use verbatim_uia::{Cached, Live, Node, Shape, Uia, runtime_id};
 use verbatim_uia_rops::batch::{
     CaretFound, Ends, Found, Fused, Input, Judged, Object, Point, Ran, Segment, run_batch,
     run_calls,
@@ -252,8 +251,7 @@ fn review_shapes_agree() {
     fixture.app.quit();
 }
 
-/// Object navigation, the controlled selection and a node read on
-/// `controller.json`, and the listener's ancestors.
+/// Object navigation and the controlled selection on `controller.json`.
 fn object_shapes_agree() {
     let mut fixture = Fixture::start("controller.json", "mockapp-batch-objects");
     let fill = node_fill(&fixture.uia);
@@ -280,15 +278,6 @@ fn object_shapes_agree() {
             )]
         });
     }
-    fixture.agree("read", None, ("", 1), &|| {
-        vec![step(
-            0,
-            Input::Read {
-                subject: held(&display),
-                fill: &fill,
-            },
-        )]
-    });
     let target = runtime_id(&display).expect("a runtime id");
     let judge = |node: &Cached<Node>| Judged {
         matched: node.runtime_id() == target,
@@ -297,32 +286,6 @@ fn object_shapes_agree() {
     let search = fixture.find("Search box");
     fixture.agree("controlled selection", None, ("", 1), &|| {
         batch::controlled_selection(&search, (&fill, &many), &judge)
-    });
-    let registry = NodeIdRegistry::new(std::sync::Arc::default());
-    let request = fixture
-        .uia
-        .request::<verbatim_uia::Ancestor>(common::ancestor_gates())
-        .expect("a cache request");
-    let stops = AncestorStops {
-        read_by_other_api: &|_| false,
-        known: &|_| false,
-        out_of_time: None,
-        visited: None,
-    };
-    // The ancestors run by calls on both paths, a call a hop: four to
-    // mockapp's window, and the desktop's root above it.
-    fixture.agree("ancestors", None, ("", 4), &|| {
-        vec![step(
-            0,
-            Input::Ancestors(Box::new(verbatim_uia_rops::batch::AncestorsInput {
-                subject: held(&display),
-                nearest: 0,
-                request: &request,
-                registry: &registry,
-                max_hops: 64,
-                stops: &stops,
-            })),
-        )]
     });
     fixture.app.quit();
 }
@@ -407,50 +370,6 @@ fn a_shape_run_again_binds_its_program() {
     fixture.app.quit();
 }
 
-/// A node read whose element lacks properties a filled cache would hold
-/// defaults for (a group: no value, no position, no level): the program's
-/// read and the read by calls agree, the lacking ones absent on both.
-fn absent_properties_agree() {
-    let mut fixture = Fixture::start("tree.json", "mockapp-batch-absent");
-    let fill = node_fill(&fixture.uia);
-    let group = fixture.find("Group One");
-    fixture.agree("absent", None, ("", 1), &|| {
-        vec![step(
-            0,
-            Input::Read {
-                subject: Object::Held {
-                    element: &group,
-                    window: 0,
-                },
-                fill: &fill,
-            },
-        )]
-    });
-    let read = run_batch(&fixture.segment(vec![step(
-        0,
-        Input::Read {
-            subject: Object::Held {
-                element: &group,
-                window: 0,
-            },
-            fill: &fill,
-        },
-    )]));
-    let Ran::Done(Found::Read(node)) = &read.steps[0] else {
-        panic!("a read")
-    };
-    let parts = node.read().parts(node.runtime_id());
-    assert_eq!(
-        (
-            parts.details.position_in_set,
-            parts.details.level,
-            parts.value
-        ),
-        (None, None, None)
-    );
-    fixture.app.quit();
-}
-
 /// An element the outpost holds, with no window of its own.
 fn held(element: &IUIAutomationElement) -> Object<'_> {
     Object::Held { element, window: 0 }
@@ -466,6 +385,5 @@ fn main() {
             "a_shape_run_again_binds_its_program",
             a_shape_run_again_binds_its_program,
         ),
-        ("absent_properties_agree", absent_properties_agree),
     ]);
 }

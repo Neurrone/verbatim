@@ -939,7 +939,7 @@ fn batch_text_shapes_execute_exactly() {
 
 /// The request list's generated object programs at their caps: object
 /// navigation from the deepest item of `deep.json`, whose window is
-/// sixty-two levels up; a node read; and the walks down the tree of
+/// sixty-two levels up; and the walks down the tree of
 /// `wide.json`: the controlled selection whose list holds a hundred items,
 /// and the tree dump, each run at its sixty children or sixty-four waiting
 /// elements.
@@ -968,16 +968,6 @@ fn batch_object_shapes_execute_exactly() {
             Input::Related {
                 subject: held(&apple),
                 relation: Relation::Parent,
-                fill: &fill,
-            },
-        )],
-    );
-    let read = run(
-        &fixture.uia,
-        vec![batch::step(
-            0,
-            Input::Read {
-                subject: held(&apple),
                 fill: &fill,
             },
         )],
@@ -1015,18 +1005,17 @@ fn batch_object_shapes_execute_exactly() {
     );
     fixture.app.quit();
 
-    let counts = [navigation, read, controlled, dump];
+    let counts = [navigation, controlled, dump];
     assert_eq!(
         counts,
         [
             vec![978],
-            vec![205],
             // The list's hundred items fill no run alone, and are read by
             // a call between the first program and the second.
             vec![3366, 3448, 2020],
             vec![3188, 3192, 3529, 2225],
         ],
-        "navigation, a read, the controlled selection, the tree dump"
+        "navigation, the controlled selection, the tree dump"
     );
     assert!(counts.iter().flatten().all(|&count| count < LIMIT / 2));
 }

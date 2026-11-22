@@ -12,8 +12,9 @@
 //! where its emitters' declared worst cases would pass the platform's
 //! limit on one run. A step whose subject no program can take, an element
 //! served only by UI Automation's proxies inside this process or a step
-//! from a top-level window ([`Fused::calls_only`]), runs by calls, as do
-//! `Ancestors` and a walk of the control view.
+//! from a top-level window ([`Fused::calls_only`]), runs by calls, as does
+//! a walk of the control view. `Read` and `Ancestors` are not fusable: the
+//! outpost reads them through its own reads (Claude, 2026-11-22).
 //!
 //! After a program, the fallback rule of the design's section 5 decides
 //! what runs again by calls, in batch order, before anything after it:
@@ -26,13 +27,11 @@ mod walk;
 
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange, TextUnit};
 
+use verbatim_model::TableId;
 use verbatim_model::batch::{
     Check, Condition, Edges, Missing, Place, PointOf, Relation, StepRefusal, View,
 };
-use verbatim_model::{NodeSnapshot, TableId};
-use verbatim_uia::{
-    Ancestor, AncestorStops, AncestorWalk, Cached, Fill, Interning, Node, Request, Uia,
-};
+use verbatim_uia::{Cached, Fill, Node, Uia};
 
 use crate::caret::{Attributes, Run, SelectionTextChange};
 use crate::error::Error;
@@ -77,13 +76,6 @@ pub struct Fused<'a> {
 pub enum Input<'a> {
     /// The outpost answered it without a call.
     Answered(Unrun),
-    /// [`verbatim_model::batch::Op::Read`].
-    Read {
-        /// The object.
-        subject: Object<'a>,
-        /// How its cache is filled.
-        fill: &'a Fill<Node>,
-    },
     /// [`verbatim_model::batch::Op::Related`].
     Related {
         /// The object stepped from.
@@ -93,9 +85,6 @@ pub enum Input<'a> {
         /// How each object reached is filled.
         fill: &'a Fill<Node>,
     },
-    /// [`verbatim_model::batch::Op::Ancestors`], always by calls
-    /// ([`Uia::ancestors`]).
-    Ancestors(Box<AncestorsInput<'a>>),
     /// [`verbatim_model::batch::Op::Descendants`].
     Descendants {
         /// Where the walk starts: one node, or every node of an earlier
@@ -311,22 +300,6 @@ pub struct Judged {
     pub pruned: bool,
 }
 
-/// What an [`Input::Ancestors`] reads, as [`Uia::ancestors`] takes it.
-pub struct AncestorsInput<'a> {
-    /// The element walked from.
-    pub subject: Object<'a>,
-    /// Its nearest window, 0 when not known.
-    pub nearest: isize,
-    /// How each ancestor's cache is filled.
-    pub request: &'a Request<Ancestor>,
-    /// Mints each ancestor's node id.
-    pub registry: &'a dyn Interning,
-    /// The most hops.
-    pub max_hops: u32,
-    /// Where the walk stops.
-    pub stops: &'a AncestorStops<'a>,
-}
-
 /// A step's outcome, as run.
 #[derive(Debug)]
 pub enum Ran {
@@ -346,12 +319,8 @@ pub enum Ran {
 /// A step's result.
 #[derive(Debug)]
 pub enum Found {
-    /// [`Input::Read`]'s: the object, its cache filled.
-    Read(Cached<Node>),
     /// [`Input::Related`]'s.
     Related(Related),
-    /// [`Input::Ancestors`]'.
-    Ancestors(Ancestors),
     /// [`Input::Descendants`]'.
     Descendants(Descendants),
     /// [`Input::Caret`]'s.
@@ -376,9 +345,7 @@ impl Found {
     /// that finds nothing.
     fn found(&self) -> Option<bool> {
         match self {
-            Self::Read(_) => Some(true),
             Self::Related(related) => Some(!related.nodes.is_empty()),
-            Self::Ancestors(ancestors) => Some(matches!(ancestors.walk, AncestorWalk::MetKnown(_))),
             Self::Descendants(descendants) => Some(!descendants.nodes.is_empty()),
             Self::WaitCheck(checked) => Some(checked.reads_after),
             Self::Caret(_)
@@ -403,20 +370,6 @@ pub struct Related {
     /// For a step through the tree reaching a cell, with a fill that reads
     /// cells, the cell's table.
     pub table: Option<TableId>,
-}
-
-/// [`Input::Ancestors`]' result, as [`Uia::ancestors`] answers it.
-#[derive(Debug)]
-pub struct Ancestors {
-    /// The ancestors, outermost first.
-    pub chain: Vec<NodeSnapshot>,
-    /// The window the walk stopped below, to go on through the other API.
-    pub crossed: Option<isize>,
-    /// How the walk ended.
-    pub walk: AncestorWalk,
-    /// The automation id of the subject's raw-view parent, when the first
-    /// hop read it.
-    pub parent_automation_id: Option<String>,
 }
 
 /// [`Input::Descendants`]' result.
@@ -687,10 +640,9 @@ fn references(input: &Input<'_>) -> Vec<Place> {
     };
     let places = match input {
         Input::Answered(_) | Input::Caret { .. } | Input::WaitCheck(_) => Vec::new(),
-        Input::Read { subject, .. }
-        | Input::Related { subject, .. }
-        | Input::Descendants { subject, .. } => vec![object(subject)],
-        Input::Ancestors(ancestors) => vec![object(&ancestors.subject)],
+        Input::Related { subject, .. } | Input::Descendants { subject, .. } => {
+            vec![object(subject)]
+        }
         Input::ReadText { at, .. } | Input::Locate { at, .. } => vec![point(at)],
         Input::ReadRange { ends: range, .. } | Input::Select { ends: range, .. } => ends(range),
         Input::CompareSelection { before, after, .. } => vec![
@@ -708,9 +660,7 @@ fn references(input: &Input<'_>) -> Vec<Place> {
 fn kind_name(input: &Input<'_>) -> &'static str {
     match input {
         Input::Answered(_) => "answered",
-        Input::Read { .. } => "read",
         Input::Related { .. } => "related",
-        Input::Ancestors(_) => "ancestors",
         Input::Descendants { .. } => "descendants",
         Input::Caret { .. } => "caret",
         Input::ReadText { .. } => "read text",

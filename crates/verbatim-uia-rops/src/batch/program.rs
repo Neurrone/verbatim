@@ -63,11 +63,7 @@ pub(super) const PROLOGUE: u32 = 60;
 fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
     let input = &state.segment.steps[index].input;
     match input {
-        Input::Answered(_) | Input::Ancestors(_) => 0,
-        Input::Read { fill, .. } => {
-            let (setup, each) = RemoteCache::costs(*fill);
-            10 + setup + each
-        }
+        Input::Answered(_) => 0,
         Input::Related { relation, fill, .. } => {
             let (setup, each) = RemoteCache::costs(*fill);
             match relation {
@@ -144,7 +140,6 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
     let step = &state.segment.steps[index];
     let proxied = |object: &Object<'_>| match *object {
         Object::Result(place) | Object::Item(place, _) => match state.named(place, index) {
-            Some(Ran::Done(Found::Read(node))) => node.served_only_by_uia_proxies() == Some(true),
             Some(Ran::Done(Found::Related(related))) => related
                 .nodes
                 .iter()
@@ -155,9 +150,8 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
     };
     step.calls_only
         || match &step.input {
-            Input::Ancestors(_) => true,
             Input::Descendants { walk, subject } => walk.view == View::Control || proxied(subject),
-            Input::Read { subject, .. } | Input::Related { subject, .. } => proxied(subject),
+            Input::Related { subject, .. } => proxied(subject),
             _ => false,
         }
 }
@@ -167,9 +161,7 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
 /// place, which a program would have to check against the list's length.
 fn names_item_inside(state: &State<'_, '_>, start: usize, index: usize) -> bool {
     let object = match &state.segment.steps[index].input {
-        Input::Read { subject, .. }
-        | Input::Related { subject, .. }
-        | Input::Descendants { subject, .. } => *subject,
+        Input::Related { subject, .. } | Input::Descendants { subject, .. } => *subject,
         _ => return false,
     };
     matches!(object, Object::Item(place, _) if state.index(place, index).is_some_and(|at| at >= start))
@@ -282,7 +274,6 @@ fn fill_key(fill: &Fill<Node>) -> FillKey {
 enum Low {
     /// Answered before the program, not emitted.
     Unemitted,
-    Read(Src, FillKey),
     Related(Src, isize, Relation, FillKey),
     Descendants(Src, (u32, bool, bool, u32), FillKey),
     Caret(usize),
@@ -365,10 +356,6 @@ impl<'p> Planner<'p, '_, '_> {
                     return Ok((Src::Here(here), 0));
                 }
                 match self.done(place, by)? {
-                    Found::Read(node) => Ok((
-                        Src::Import(self.import(Import::Element(node.live().element().clone()))),
-                        node.read().role.hwnd,
-                    )),
                     found if many => {
                         let nodes = nodes_of(found)
                             .ok_or_else(|| Defect("a walk starts from no list").ran())?;
@@ -586,10 +573,6 @@ impl<'p> Planner<'p, '_, '_> {
         };
         let low = match &step.input {
             Input::Answered(unrun) => return Err(Ran::Unrun(*unrun)),
-            Input::Ancestors(_) => return Err(Defect("ancestors in a program").ran()),
-            Input::Read { subject, fill } => {
-                Low::Read(self.src(subject, index, false)?.0, fill_key(fill))
-            }
             Input::Related {
                 subject,
                 relation,
@@ -692,10 +675,6 @@ fn attribute_bits(attributes: crate::caret::Attributes) -> u16 {
 /// The registers a step's result is read from.
 #[derive(Clone)]
 enum Regs {
-    Read {
-        node: Reg<kind::Element>,
-        absent: Reg<kind::Int>,
-    },
     Related {
         nodes: Reg<kind::Array>,
         absents: Reg<kind::Array>,
@@ -945,7 +924,6 @@ impl Emit<'_> {
         match src {
             Src::Import(index) => self.element(*index),
             Src::Here(place) => match self.regs(*place) {
-                Regs::Read { node, .. } => *node,
                 Regs::Related { nodes, .. } => {
                     let zero = b.uint(0);
                     b.array_get_at(*nodes, zero).assume::<kind::Element>()
@@ -959,15 +937,6 @@ impl Emit<'_> {
     /// Emits the step's body inside its try block.
     fn step(&self, b: &mut Builder, low: &Low, input: &Input<'_>) -> Regs {
         match (low, input) {
-            (Low::Read(src, _), Input::Read { fill, .. }) => {
-                let node = self.node(b, src);
-                let cache = RemoteCache::new(b, *fill);
-                let absent = cache.populate(b, node);
-                Regs::Read {
-                    node: b.add_to_results(node),
-                    absent: b.add_to_results(absent),
-                }
-            }
             (Low::Related(src, window, relation, _), Input::Related { fill, .. }) => {
                 let node = self.node(b, src);
                 Self::related(b, node, (*window, *relation), fill)
@@ -986,7 +955,6 @@ impl Emit<'_> {
                         }
                     }
                     Src::Here(place) => match self.regs(*place) {
-                        Regs::Read { node, .. } => b.array_append(queue, *node),
                         Regs::Related { nodes, .. } => {
                             let size = b.array_size(*nodes);
                             let index = b.new_uint(0);
@@ -1668,10 +1636,6 @@ impl State<'_, '_> {
             .ok_or(Error::MissingResult(emitted.status.id()))?;
         let input = &self.segment.steps[index].input;
         Ok(Ran::Done(match (regs, input) {
-            (Regs::Read { node, absent }, Input::Read { fill, .. }) => {
-                let element = outcome.get(*node)?.ok_or(Error::MissingResult(node.id()))?;
-                Found::Read(fill.claim(element, absent_record(outcome.get(*absent)?)))
-            }
             (
                 Regs::Related {
                     nodes,
@@ -1793,7 +1757,6 @@ impl State<'_, '_> {
         let count = match *subject {
             Object::Held { .. } | Object::Item(..) => 1,
             Object::Result(place) => match self.named(place, index) {
-                Some(Ran::Done(Found::Read(_))) => 1,
                 Some(Ran::Done(found)) => nodes_of(found).map_or(0, |nodes| nodes.len()),
                 _ => 0,
             },
