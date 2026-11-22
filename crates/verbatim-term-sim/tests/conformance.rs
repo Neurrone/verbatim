@@ -76,3 +76,59 @@ fn the_read_programs_colours_are_the_cells_colours_in_the_colour_streams() {
     assert!(checked > 0, "the corpus has no stream of several colours");
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// Where a read's screen meets the document's end, when no document row
+/// lies below it: the screen's text up to the document's end, which the
+/// read's text from its start to the document's end ends with, or which
+/// ends with that text when the read started inside the screen. Only blank
+/// rows of the screen may lie past the document's end, as before a screen
+/// fills and after a clear.
+fn screen_to_document_end<'a>(text: &str, screen: &'a str) -> Option<&'a str> {
+    let blank_from = screen.trim_end_matches([' ', '\r', '\n']).len();
+    (blank_from..=screen.len())
+        .rev()
+        .filter(|&end| screen.is_char_boundary(end))
+        .map(|end| &screen[..end])
+        .find(|within| text.ends_with(within) || within.ends_with(text))
+}
+
+/// The window read's assumption (`TerminalRead`, which reads the two
+/// screens above the document's end): in every read of both terminals no
+/// document row lies below the screen, so the screen's top is at most one
+/// screen above the document's end and the window holds the whole screen.
+#[test]
+fn no_document_row_lies_below_a_reads_screen() {
+    let mut failures = Vec::new();
+    let mut reads = 0;
+    for (name, _) in streams() {
+        for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+            let text = std::fs::read_to_string(expectation_path(&name, flavor))
+                .expect("the stream's expectation");
+            let expected: Expectation =
+                serde_json::from_str(&text).expect("an expectation's contents");
+            for (index, answer) in expected.answers.iter().enumerate() {
+                reads += 1;
+                match screen_to_document_end(&answer.text, &answer.screen) {
+                    None => failures.push(format!(
+                        "{name} in {flavor:?}, read {index}: a document row lies below the screen"
+                    )),
+                    Some(within) => {
+                        let rows = within
+                            .strip_suffix("\r\n")
+                            .unwrap_or(within)
+                            .split("\r\n")
+                            .count();
+                        if rows > expected.height {
+                            failures.push(format!(
+                                "{name} in {flavor:?}, read {index}: the screen's top is {rows} rows above the document's end, past its height {}",
+                                expected.height
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(reads > 0, "the corpus has no reads");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
