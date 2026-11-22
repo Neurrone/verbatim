@@ -236,7 +236,7 @@ fn a_terminal_read_is_steps_whose_outcomes_make_its_window() {
         colours: true,
     };
     let mut read = Builder::<Bar>::named();
-    add_steps(&mut read, node(), &ask, Some((30, 120)));
+    add_steps(&mut read, node(), &ask);
     let sent = read.finish();
     let kinds: Vec<OpKind> = sent
         .batch()

@@ -1529,12 +1529,16 @@ Core asks, by the request list's generic steps (`terminal_window`): a
 the steps (the visible range, a move from the screen's top and from the
 text's end, the window's text, the first row, the caret and its line and
 rows, a move from each mark with its opening rows, the search for the
-mark's line, and the colours, at most sixteen steps with a key's wait),
+mark's line, and the colours of the screen this batch's visible range
+and top line read, at most sixteen steps with a key's wait),
 and `window_of` makes the window of their outcomes, a step that failed
 failing the read. The watch's own read is answered with its reply alone,
 so its steps are recomputed from what Core names when the answer
 arrives, the search and the colours, last, telling themselves by their
-kinds; a read's time is when its answer reaches Core. A move by command
+kinds; a read's time is when its answer reaches Core, the time of the
+input that carries it, which the queue hands the hook answering it and a
+step reads from the driver (`Cx::now_us`), since the facts' copy of the
+queue reads 0 while a step runs. A move by command
 mark searches by `add_search`: a move to the mark's row, `FindText` down
 and up from it, each to 20 matches over 100 calls, and a move from the
 end mark to the text's end, against which `matches_of` counts each

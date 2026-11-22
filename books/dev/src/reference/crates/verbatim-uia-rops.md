@@ -505,7 +505,10 @@ cell, read alone, answers the same: four attribute reads, whatever the
 stretch's length (Dickson, 2026-11-22).
 
 The read (`terminal_colours.rs`, run by `batch/colours.rs`) takes the
-rows Core names, each as wide as Core names, from a point, counted by the
+rows of the screen the batch's `Visible` step read, from its start, each
+as wide as the line at the screen's top that its `ReadText` step read,
+their count `verbatim_model::screen_rows` at that width (`batch/calls.rs`,
+`colour_size`), counted by the
 line unit, so a wrapped line's rows are each read as a row, stopping at
 the document's end. Each row is checked whole; a row of several colours
 is checked in chunks of `COLOUR_CHUNK` (16) cells; a chunk of several

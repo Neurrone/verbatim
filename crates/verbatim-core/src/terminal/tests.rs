@@ -162,7 +162,8 @@ fn outcome_of(state: &mut SrState, answered: impl Into<Answered>) -> Outcome<Rep
 fn answer(state: &mut SrState, token: u64, answered: impl Into<Answered>) -> Vec<String> {
     let outcome = outcome_of(state, answered);
     let mut said = Vec::new();
-    let entries = facts_answered(state, token, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(state, token, outcome, (at_us, TRACE, &mut said));
     for entry in entries {
         let Entry::TerminalSpeech(entry) = entry else {
             panic!("a speech entry");
@@ -697,7 +698,8 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -750,7 +752,8 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -796,7 +799,8 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
             (2, 1),
         )),
     );
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(mut entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -816,7 +820,8 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(3));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
@@ -993,7 +998,8 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (35, 34))));
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -1068,7 +1074,8 @@ fn a_modifiers_cut_then_output_is_spoken() {
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(mut entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
@@ -1099,7 +1106,8 @@ fn what_was_read_is_spoken_after_the_outpost_ends() {
         &mut state,
         read_of(grown(&["$", "a", "b", "c"], 20, (4, 3))),
     );
-    let entries = facts_answered(&mut state, read, outcome, (TRACE, &mut said));
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };

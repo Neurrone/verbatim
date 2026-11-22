@@ -740,7 +740,7 @@ impl Logic for Entries {
         facts: &mut SrState,
         token: u64,
         outcome: Outcome<verbatim_model::request::Reply>,
-        _: (u64, Option<Foreground>),
+        (now_us, _): (u64, Option<Foreground>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let Some(bar) = crate::progress::ended(facts, token) {
@@ -748,7 +748,7 @@ impl Logic for Entries {
             return Vec::new();
         }
         let trace = facts.queue_trace.0;
-        crate::terminal::facts_answered(facts, token, outcome, (trace, said))
+        crate::terminal::facts_answered(facts, token, outcome, (now_us, trace, said))
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {

@@ -152,8 +152,7 @@ impl Batch {
                 Op::ReadText { at, .. }
                 | Op::Locate { at, .. }
                 | Op::Move { at, .. }
-                | Op::FindText { at, .. }
-                | Op::ReadColours { at, .. } => point(*at).into_iter().collect(),
+                | Op::FindText { at, .. } => point(*at).into_iter().collect(),
                 Op::ReadRange {
                     start,
                     end,
@@ -186,7 +185,8 @@ impl Batch {
                 | Op::Follow(_)
                 | Op::FocusRead { .. }
                 | Op::Caret { .. }
-                | Op::Visible { .. } => Vec::new(),
+                | Op::Visible { .. }
+                | Op::ReadColours { .. } => Vec::new(),
             };
             anchors.push((*node, named));
         }

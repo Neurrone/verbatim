@@ -61,8 +61,10 @@ pub fn named(steps: &[Step], first: usize, earlier: &[StepOutcome]) -> Vec<u64> 
             Op::ReadText { at, .. }
             | Op::Locate { at, .. }
             | Op::Move { at, .. }
-            | Op::FindText { at, .. }
-            | Op::ReadColours { at, .. } => points.push(*at),
+            | Op::FindText { at, .. } => points.push(*at),
+            Op::ReadColours { screen, .. } => {
+                points.push(Point::Of(*screen, PointOf::VisibleStart));
+            }
             Op::ReadRange {
                 start,
                 end,

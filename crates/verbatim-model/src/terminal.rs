@@ -153,9 +153,46 @@ pub struct TerminalColourRun {
     pub background: u32,
 }
 
+/// How many rows a terminal's screen fills at `width` cells a row, its
+/// lines' lengths with their padding and without their line breaks in
+/// `lines`, `ends_with_break` when its text ends with a line break: each
+/// line as many rows as its length takes, at least one, and the empty line
+/// after a last line break no row, while a blank last row, empty once its
+/// padding is trimmed, is one. Core counts the screen of a window read so,
+/// and an executor the rows of a [`crate::batch::Op::ReadColours`], so the
+/// two agree on every screen.
+#[must_use]
+pub fn screen_rows(lines: impl IntoIterator<Item = u32>, ends_with_break: bool, width: u32) -> u32 {
+    if width == 0 {
+        return 0;
+    }
+    let mut lines = lines.into_iter().peekable();
+    let mut rows: u32 = 0;
+    while let Some(length) = lines.next() {
+        if length == 0 && ends_with_break && lines.peek().is_none() {
+            break;
+        }
+        rows = rows.saturating_add(length.div_ceil(width).max(1));
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each line fills as many rows as its length takes at the width, at
+    /// least one; the empty line after a last line break is no row, a
+    /// blank last row with no break after it is one.
+    #[test]
+    fn a_screen_fills_each_lines_rows_at_its_width() {
+        assert_eq!(screen_rows([4, 8, 2], false, 4), 4);
+        assert_eq!(screen_rows([8], false, 4), 2);
+        assert_eq!(screen_rows([4, 0], true, 4), 1);
+        assert_eq!(screen_rows([4, 4], false, 4), 2);
+        assert_eq!(screen_rows([0], false, 4), 1);
+        assert_eq!(screen_rows([4], false, 0), 0);
+    }
 
     #[test]
     fn a_terminals_text_without_its_padding_is_padded_again_exactly() {

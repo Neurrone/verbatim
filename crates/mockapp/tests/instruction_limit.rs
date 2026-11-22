@@ -525,12 +525,12 @@ fn range_selections_execute_exactly() {
 enum WindowSteps {}
 
 /// The steps of Core's window read of mockapp's terminal `text` as `ask`
-/// names it, its marks the positions `marks` holds, with `colours`, as a
-/// shape the executor runs here.
+/// names it, its marks the positions `marks` holds, with the screen's
+/// colours when `colours`, as a shape the executor runs here.
 fn window_shape<'t>(
     text: &'t batch::Text,
     (height, marks): (u32, &[&IUIAutomationTextRange]),
-    colours: Option<(u32, u32)>,
+    colours: bool,
 ) -> batch::Shape<'t> {
     use verbatim_core::terminal_window::{CurrentMark, EndMark, WindowAsk, add_steps};
     let mut shape = batch::Shape::of(Some(text));
@@ -551,10 +551,10 @@ fn window_shape<'t>(
         aside: held.next(),
         height,
         opening: 30,
-        colours: colours.is_some(),
+        colours,
     };
     let mut steps = verbatim_core::batch::Builder::<WindowSteps>::named();
-    add_steps(&mut steps, verbatim_model::NodeId::new(1), &ask, colours);
+    add_steps(&mut steps, verbatim_model::NodeId::new(1), &ask);
     let verbatim_model::request::Question::Batch(sent) = steps.finish().question();
     shape.steps = sent.steps;
     shape.culture = false;
@@ -577,7 +577,7 @@ fn terminal_window_reads_execute_exactly() {
         fixture.hwnd,
         &format!(r"set-text term {}ready>\n", numbered(10)),
     );
-    let first_shape = window_shape(&text, (0, &[]), None);
+    let first_shape = window_shape(&text, (0, &[]), false);
     let mut end = None;
     let first = each_counted(|| {
         let answer = run_batch(&first_shape.segment(&fixture.uia));
@@ -592,7 +592,7 @@ fn terminal_window_reads_execute_exactly() {
         fixture.hwnd,
         &format!(r"set-text term {}ready>\n", numbered(200)),
     );
-    let capped_shape = window_shape(&text, (30, &[&end, &end]), None);
+    let capped_shape = window_shape(&text, (30, &[&end, &end]), false);
     let capped = each_counted(|| {
         let _ = run_batch(&capped_shape.segment(&fixture.uia));
     });
@@ -622,7 +622,7 @@ fn terminal_colours_execute_exactly() {
             fixture.hwnd,
             &format!("set-text term {screen}"),
         );
-        let shape = window_shape(&text, (0, &[]), Some((30, 120)));
+        let shape = window_shape(&text, (0, &[]), true);
         let mut colours = None;
         let counts = each_counted(|| {
             let answer = run_batch(&shape.segment(&fixture.uia));

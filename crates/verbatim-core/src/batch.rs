@@ -1013,20 +1013,23 @@ impl<B> Builder<B> {
         self.push(op)
     }
 
-    /// Reads the colours of `rows` rows of `width` cells of terminal
-    /// `node`'s text from `at`.
+    /// Reads the colours of the rows of terminal `node`'s screen that
+    /// `screen` read, each as wide as the line at its top that `top` read
+    /// ([`Op::ReadColours`]).
     pub fn read_colours(
         &mut self,
         node: NodeId,
-        at: At<B>,
-        (rows, width): (u32, u32),
+        screen: Ref<B, kind::Visible>,
+        top: Ref<B, kind::ReadText>,
     ) -> Ref<B, kind::ReadColours> {
-        let op = self.point(at).map(|at| Op::ReadColours {
-            subject: Subject::Node(node),
-            at,
-            rows,
-            width,
-        });
+        let op = self
+            .place(screen.handle)
+            .zip(self.place(top.handle))
+            .map(|(screen, top)| Op::ReadColours {
+                subject: Subject::Node(node),
+                screen,
+                top,
+            });
         self.push(op)
     }
 

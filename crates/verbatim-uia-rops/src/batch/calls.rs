@@ -7,7 +7,8 @@ use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextR
 
 use verbatim_model::TextPoint;
 use verbatim_model::batch::{
-    Before, Missing, Op, Place, Point, PointOf, Relation, StepRefusal, Subject, Through, View,
+    Before, Done, Missing, Op, Place, Point, PointOf, Relation, StepOutcome, StepRefusal, Subject,
+    Through, View,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
@@ -227,12 +228,13 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
         }
         Op::ReadColours {
             subject,
-            at,
-            rows,
-            width,
+            screen,
+            top,
         } => {
-            let from = point(state, index, resolver.text(subject)?, at)?;
-            colours(state, &from, (*rows, *width)).map(Found::Colours)
+            let at = Point::Of(*screen, PointOf::VisibleStart);
+            let from = point(state, index, resolver.text(subject)?, &at)?;
+            let size = colour_size(state, index, (*screen, *top))?;
+            colours(state, &from, size).map(Found::Colours)
         }
         Op::MoveBySentence { subject, .. } => no_sentences(resolver.text(subject)?),
         op @ (Op::Read { .. }
@@ -826,6 +828,82 @@ fn find_text(
         }
     }
     Ok(found)
+}
+
+/// The rows a `ReadColours` reads and their width: the screen's rows that
+/// its `screen` step read, at the width of the line at the screen's top
+/// that its `top` step read ([`verbatim_model::screen_rows`]), each taken
+/// from this segment's result or an earlier segment's outcome.
+fn colour_size(
+    state: &State<'_, '_>,
+    index: usize,
+    (screen, top): (Place, Place),
+) -> Result<(u32, u32), Ran> {
+    let missing = || Defect("a colour read names no screen or top line").ran();
+    let width = if state.before(top) {
+        match state.segment.earlier.get(top.index()) {
+            Some(StepOutcome::Done(Done::ReadText(read))) => {
+                match (&read.padded, read.chunks.first()) {
+                    (Some(padded), _) => padded.first().map(|&(_, length)| length),
+                    (None, Some(chunk)) => lengths_of(&chunk.text).first().copied(),
+                    (None, None) => None,
+                }
+            }
+            _ => None,
+        }
+    } else {
+        match state.named(top, index) {
+            Some(Ran::Done(Found::ReadText(read))) => read.units.first().and_then(|unit| {
+                lengths_of(&String::from_utf16_lossy(&unit.text))
+                    .first()
+                    .copied()
+            }),
+            _ => None,
+        }
+    }
+    .ok_or_else(missing)?;
+    let rows = if state.before(screen) {
+        match state.segment.earlier.get(screen.index()) {
+            Some(StepOutcome::Done(Done::Visible(visible))) => {
+                let lines = visible.padded.iter().flat_map(|&(count, length)| {
+                    std::iter::repeat_n(length, usize::try_from(count).unwrap_or(0))
+                });
+                Some(verbatim_model::screen_rows(
+                    lines,
+                    visible.text.ends_with("\r\n"),
+                    width,
+                ))
+            }
+            _ => None,
+        }
+    } else {
+        match state.named(screen, index) {
+            Some(Ran::Done(Found::Visible(visible))) => {
+                let text = String::from_utf16_lossy(&visible.text);
+                Some(verbatim_model::screen_rows(
+                    lengths_of(&text),
+                    text.ends_with('\n'),
+                    width,
+                ))
+            }
+            _ => None,
+        }
+    }
+    .ok_or_else(missing)?;
+    Ok((rows, width))
+}
+
+/// The length in characters of each line of `text` as the provider gave
+/// it, padding included and its line break left out, a line break being a
+/// line feed with or without a carriage return before it; the empty line
+/// after a last line break is one.
+fn lengths_of(text: &str) -> Vec<u32> {
+    text.split('\n')
+        .map(|line| {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            u32::try_from(line.chars().count()).unwrap_or(u32::MAX)
+        })
+        .collect()
 }
 
 /// `ReadColours`' arms: the rows' colours from `from`'s point, by the

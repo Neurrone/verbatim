@@ -399,8 +399,10 @@ impl Checking<'_> {
                 }
                 anchor(named)
             }
-            Op::Locate { at, .. } | Op::Move { at, .. } | Op::ReadColours { at, .. } => {
-                anchor(self.point(*at)?)
+            Op::Locate { at, .. } | Op::Move { at, .. } => anchor(self.point(*at)?),
+            Op::ReadColours { screen, top, .. } => {
+                self.names(*screen, |kind| kind == OpKind::Visible)?;
+                self.names(*top, |kind| kind == OpKind::ReadText)
             }
             Op::CompareSelection { before, after, .. } => {
                 self.names(*after, |kind| kind == OpKind::Caret)?;

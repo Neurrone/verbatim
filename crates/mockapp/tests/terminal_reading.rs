@@ -87,19 +87,19 @@ enum WindowRead {}
 
 impl Terminal {
     /// Core's window read of the terminal, as Core asks it with no mark,
-    /// four rows high, taking the colours of `colours`' rows and width when
-    /// given: the window Core makes of the answer, and the calls the read
-    /// made into mockapp.
-    fn read_with_calls(&self, colours: Option<(u32, u32)>) -> (TerminalWindow, CallCounts) {
+    /// four rows high, taking the screen's colours when `colours`: the
+    /// window Core makes of the answer, and the calls the read made into
+    /// mockapp.
+    fn read_with_calls(&self, colours: bool) -> (TerminalWindow, CallCounts) {
         let ask = WindowAsk {
             end: None,
             aside: None,
             height: 4,
             opening: 2,
-            colours: colours.is_some(),
+            colours,
         };
         let mut steps = Builder::<WindowRead>::named();
-        add_steps(&mut steps, self.node, &ask, colours);
+        add_steps(&mut steps, self.node, &ask);
         let number = self.outpost.request(self.hwnd, steps.finish().question());
         let (answer, calls) = self.outpost.answer_with_calls(number);
         let Outcome::Result(Reply::Steps(outcomes)) = answer.outcome else {
@@ -116,7 +116,7 @@ impl Terminal {
     /// Core's window read of the terminal ([`Self::read_with_calls`]),
     /// with no colours.
     fn read(&self) -> TerminalWindow {
-        self.read_with_calls(None).0
+        self.read_with_calls(false).0
     }
 
     /// The tell the outpost sends next, which must be a change tell of the
@@ -287,9 +287,33 @@ fn a_read_takes_the_colours_when_core_asks() {
     let without = terminal.read();
     assert!(without.colours.is_none());
     write(&mut terminal, &["three"]);
-    let (read, _) = terminal.read_with_calls(Some((3, 20)));
+    let (read, _) = terminal.read_with_calls(true);
     assert_eq!(text(&read), after(&["three"]));
     assert!(read.colours.is_some());
+    terminal.outpost.settled();
+    terminal.quit();
+}
+
+/// A read's colours are the screen's rows at its width as the same read
+/// found them, so the first read after the screen grew takes every row of
+/// the new screen: three rows of 20 cells on a screen showing three, then
+/// five once it shows five.
+fn the_colours_are_the_screen_this_read_found() {
+    let mut terminal = start("mockapp-terminal-colours-resize");
+    let cells = |read: &TerminalWindow| -> Vec<u32> {
+        read.colours
+            .as_ref()
+            .expect("the colours")
+            .iter()
+            .map(|runs| runs.iter().map(|run| run.length).sum())
+            .collect()
+    };
+    let (read, _) = terminal.read_with_calls(true);
+    assert_eq!(cells(&read), [20; 3]);
+    terminal.app.send("screen term 6");
+    write(&mut terminal, &["four", "five"]);
+    let (read, _) = terminal.read_with_calls(true);
+    assert_eq!(cells(&read), [20; 5]);
     terminal.outpost.settled();
     terminal.quit();
 }
@@ -303,7 +327,7 @@ fn a_read_takes_the_colours_when_core_asks() {
 fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
     let mut terminal = start("mockapp-terminal-starting-read");
     terminal.app.send("caret term 1");
-    let (read, calls) = terminal.read_with_calls(None);
+    let (read, calls) = terminal.read_with_calls(false);
     assert_eq!(caret_at(&read), ("one\r\n".to_owned(), 1));
     assert!(read.caret.is_some());
     assert_eq!(
@@ -567,6 +591,10 @@ fn main() {
         (
             "a_read_takes_the_colours_when_core_asks",
             a_read_takes_the_colours_when_core_asks,
+        ),
+        (
+            "the_colours_are_the_screen_this_read_found",
+            the_colours_are_the_screen_this_read_found,
         ),
         (
             "a_starting_read_reads_the_caret_and_mints_the_starting_point",

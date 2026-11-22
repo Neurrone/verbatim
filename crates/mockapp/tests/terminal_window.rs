@@ -194,13 +194,7 @@ impl Terminal {
             colours: asked.colours,
         };
         let mut steps = Builder::<WindowSteps>::named();
-        let colours = asked.colours.then(|| {
-            (
-                asked.height,
-                u32::try_from(WIDTH).expect("a narrow terminal"),
-            )
-        });
-        add_steps(&mut steps, *node, &ask, colours);
+        add_steps(&mut steps, *node, &ask);
         let Question::Batch(batch) = steps.finish().question();
         let (answer, calls) = outpost.batch(self.hwnd, WindowVerdict::Uia, batch);
         // By remote operations, a read with no search is one program, and

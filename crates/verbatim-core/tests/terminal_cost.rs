@@ -32,19 +32,17 @@ mod readers;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use desk::{Desk, ONE, focus_read_of};
+use desk::{Desk, ONE, focus_read_of, window_ask};
 use verbatim_core::reduce;
 use verbatim_core::terminal_window::{
-    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, outcomes_making,
+    MarkPlace, MarkSearch, TerminalWindow, WindowAsk, outcomes_making,
 };
-use verbatim_model::batch::{Batch, Op, Point};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
-use verbatim_model::request::{Answer, Outcome, Question, QueueInput, Reply, RequestNumber};
+use verbatim_model::request::{Answer, Outcome, QueueInput, Reply, RequestNumber};
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, Input, NodeDetails, NodeSnapshot, Role, StateSet, TerminalText, TextAnchor, TextPoint,
-    TraceId,
+    Backend, Input, NodeDetails, NodeSnapshot, Role, StateSet, TerminalText, TextAnchor, TraceId,
 };
 use verbatim_term_sim::conformance::history;
 use verbatim_term_sim::{Flavor, Query, Terminal};
@@ -199,55 +197,6 @@ impl Simulated {
             ended_us: 0,
         }
     }
-}
-
-/// What Core names to the window read `batch` holds, read back from its
-/// steps: a move up from the text's end twice the height, the moves from
-/// the marks, and the search and the colours when asked.
-fn ask_of(batch: &Batch) -> Option<WindowAsk> {
-    let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
-    if !matches!(ops.first(), Some(Op::Visible { .. })) {
-        return None;
-    }
-    let height = match ops.get(3) {
-        Some(Op::Move {
-            at: Point::At(TextPoint::End),
-            movement,
-            ..
-        }) => movement.count.unsigned_abs() / 2,
-        _ => 0,
-    };
-    let mut marks = ops.iter().filter_map(|op| match op {
-        Op::Move {
-            at: Point::At(TextPoint::At(position)),
-            ..
-        } => Some(EndMark {
-            anchor: position.anchor,
-            line: String::new(),
-            line_above: 0,
-        }),
-        _ => None,
-    });
-    let end = marks.next();
-    let aside = marks.next();
-    let find = ops.iter().any(|op| matches!(op, Op::FindText { .. }));
-    Some(WindowAsk {
-        end: end.map(|mark| CurrentMark { mark, find }),
-        aside,
-        height,
-        opening: 0,
-        colours: ops.iter().any(|op| matches!(op, Op::ReadColours { .. })),
-    })
-}
-
-/// The window read Core asked for last, by its request's number.
-fn window_ask(desk: &Desk) -> Option<(u64, WindowAsk)> {
-    desk.sent
-        .iter()
-        .rev()
-        .find_map(|(number, _, question)| match question {
-            Question::Batch(batch) => ask_of(batch).map(|ask| (*number, ask)),
-        })
 }
 
 /// The outpost's tell that the focused terminal changed, at `at_us`.

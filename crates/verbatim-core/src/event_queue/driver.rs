@@ -330,7 +330,10 @@ impl<E, F> Queue<E, F> {
         L::ends(facts, (&front.entry, live), cause, at).map(|reason| (number, reason))
     }
 
-    /// The time of the last input handled.
+    /// The time of the last input handled. Inside a step the facts' queue
+    /// is an empty stand-in that reads 0, the driver holding the queue: a
+    /// step takes its time from the driver ([`Cx::now_us`]) or from what
+    /// its [`super::Logic`] hook is given.
     pub(crate) fn now_us(&self) -> u64 {
         self.now_us
     }

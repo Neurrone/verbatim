@@ -643,9 +643,12 @@ carrying one outcome per step. The operations:
   its start, by calls, at most `MAX_FIND_MATCHES` matches over at most
   `MAX_FIND_CALLS` calls, each with its units to the text's end and its
   text (`FoundText`); and `ReadColours`, the one operation for terminals
-  alone, each row's colour runs (`TerminalColourRun`) from a point, for
-  as many rows of as many cells as Core names, since the terminals answer
-  a stretch whose last cell differs as one colour (Dickson, 2026-11-22).
+  alone, each row's colour runs (`TerminalColourRun`) of the screen an
+  earlier `Visible` read, each row as wide as an earlier `ReadText`'s
+  first line and the screen as many rows as `screen_rows` counts at that
+  width, so a read after a resize reads the new screen (Claude,
+  2026-11-22), since the terminals answer a stretch whose last cell
+  differs as one colour (Dickson, 2026-11-22).
 
 A batch's text step answers its refusals and failures as its own outcome
 (`StepOutcome`). `TextReply` is why a node's text could not be opened

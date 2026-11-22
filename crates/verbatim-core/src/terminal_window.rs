@@ -25,7 +25,8 @@
 //!   "Lines spoken in full" lines read whole from it;
 //! - when Core asks, the search for the current mark's line back from the
 //!   text's end, by calls;
-//! - when Core asks, the colours of the screen's rows.
+//! - when Core asks, the colours of the screen's rows, as many and as
+//!   wide as the screen and its top line read by this batch.
 //!
 //! The search and the colours come last, each only when asked, so the
 //! outcomes say which ran by their kinds.
@@ -188,20 +189,14 @@ pub enum Unread {
 }
 
 /// Adds the window read of terminal `node` that `ask` names to `batch`,
-/// with the colours of `colours`' rows and width when given, as the
-/// module's documentation lists its steps.
-pub fn add_steps<B>(
-    batch: &mut Builder<B>,
-    node: NodeId,
-    ask: &WindowAsk,
-    colours: Option<(u32, u32)>,
-) {
+/// as the module's documentation lists its steps.
+pub fn add_steps<B>(batch: &mut Builder<B>, node: NodeId, ask: &WindowAsk) {
     let line = |count: i32| TextMovement {
         unit: TextUnit::Line,
         count,
     };
     let visible = batch.visible(node);
-    let _top = batch.read_trimmed(node, visible.visible_start(), TextUnit::Line, (1, false));
+    let top = batch.read_trimmed(node, visible.visible_start(), TextUnit::Line, (1, false));
     let _screen_top = batch.move_point(node, visible.visible_start(), line(FAR));
     if ask.height > 0 {
         let up = i32::try_from(ask.height)
@@ -250,8 +245,8 @@ pub fn add_steps<B>(
             },
         );
     }
-    if let Some((rows, width)) = colours {
-        let _colours = batch.read_colours(node, visible.visible_start(), (rows, width));
+    if ask.colours {
+        let _colours = batch.read_colours(node, visible, top);
     }
 }
 
@@ -301,27 +296,13 @@ fn read_text(done: &Done) -> Result<TerminalText, Unread> {
     }
 }
 
-/// How many rows the screen's text fills at `width` cells a row: each
-/// line as many as its padded length takes, at least one, the empty line
-/// after a last line break not a line, and a blank last row, whose padding
-/// the trimmed text dropped, a line.
+/// How many rows the screen's trimmed text fills at `width` cells a row
+/// ([`verbatim_model::screen_rows`]), from its lines' padded lengths.
 fn screen_rows(text: &str, padded: &[(u32, u32)], width: u32) -> u32 {
-    if width == 0 {
-        return 0;
-    }
-    let mut lines: Vec<u32> = padded
-        .iter()
-        .flat_map(|&(count, length)| {
-            std::iter::repeat_n(length, usize::try_from(count).unwrap_or(0))
-        })
-        .collect();
-    if text.ends_with("\r\n") && lines.last() == Some(&0) {
-        lines.pop();
-    }
-    lines
-        .into_iter()
-        .map(|length| length.div_ceil(width).max(1))
-        .fold(0, u32::saturating_add)
+    let lines = padded.iter().flat_map(|&(count, length)| {
+        std::iter::repeat_n(length, usize::try_from(count).unwrap_or(0))
+    });
+    verbatim_model::screen_rows(lines, text.ends_with("\r\n"), width)
 }
 
 /// The rows of `text` as the provider ends them, without the empty line

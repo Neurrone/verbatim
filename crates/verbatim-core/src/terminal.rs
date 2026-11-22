@@ -195,16 +195,6 @@ impl Ended {
     }
 }
 
-/// The screen's height and width the watch's last window found, for a read
-/// that wants the colours, `colours`: none for a watch with no window yet,
-/// whose baseline judges no colours.
-fn colour_size(focus: &TerminalFocus, colours: bool) -> Option<(u32, u32)> {
-    match &focus.watch {
-        Watch::Live { old, .. } if colours => Some(old.screen_size()),
-        Watch::Live { .. } | Watch::Unread { .. } | Watch::Baselining { .. } | Watch::Gone => None,
-    }
-}
-
 /// A key's answer, as its entry carries it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct KeyAnswer {
@@ -330,12 +320,7 @@ fn ask_now(state: &mut SrState, focus: &TerminalFocus, held: bool) -> WindowAsk 
 fn want_read(state: &mut SrState, focus: &TerminalFocus, held: bool) -> u64 {
     let ask = ask_now(state, focus, held);
     let mut read = Builder::<WatchRead>::named();
-    add_steps(
-        &mut read,
-        focus.terminal.node,
-        &ask,
-        colour_size(focus, ask.colours),
-    );
+    add_steps(&mut read, focus.terminal.node, &ask);
     let token = state.wants.token();
     let window = focus.terminal.window;
     state.wants.want(
@@ -742,14 +727,15 @@ fn observed(terminal: &Terminal, read: &TerminalWindow, trace: TraceId) -> Effec
     )
 }
 
-/// A request Core's watch asked under `token` ended with `outcome`: the
-/// watch moves by its column, the read's speech joins the back, and what
-/// settle says goes into `said`.
+/// A request Core's watch asked under `token` ended with `outcome` at
+/// `at_us`, when its answer reached Core and the read's time: the watch
+/// moves by its column, the read's speech joins the back, and what settle
+/// says goes into `said`.
 pub(crate) fn facts_answered(
     state: &mut SrState,
     token: u64,
     outcome: Outcome<Reply>,
-    (trace, said): (TraceId, &mut Vec<Effect>),
+    (at_us, trace, said): (u64, TraceId, &mut Vec<Effect>),
 ) -> Vec<Entry> {
     with_focus(state, |state, focus| {
         // The read's steps follow from what Core names now: the marks and
@@ -757,7 +743,6 @@ pub(crate) fn facts_answered(
         // for the read the watch awaits they are those it was sent with;
         // the search and the colours, last, say themselves by their kinds.
         let ask = ask_now(state, focus, false);
-        let at_us = state.queue.now_us();
         let ended = Ended::of(outcome, |reply| match reply {
             Reply::Steps(steps) => Ended::of_steps(Some(&steps), (&ask, 0), at_us),
         });
@@ -822,24 +807,20 @@ fn key_read_sent(state: &mut SrState, node: NodeId) -> Option<KeySent> {
             },
             Watch::Gone => return None,
         };
-        let ask = ask_now(state, focus, false);
-        let colours = colour_size(focus, ask.colours);
         Some(KeySent {
             token,
-            ask,
-            colours,
+            ask: ask_now(state, focus, false),
         })
     })
     .flatten()
 }
 
-/// A key's or command's read as sent: its token, what Core named to it,
-/// and the screen's size its colours take, when it takes them.
+/// A key's or command's read as sent: its token and what Core named to
+/// it.
 #[derive(Debug, PartialEq, Eq)]
 struct KeySent {
     token: u64,
     ask: WindowAsk,
-    colours: Option<(u32, u32)>,
 }
 
 /// What a key's or command's read brought.
@@ -927,16 +908,12 @@ pub(crate) async fn key_read(
     (trace, speech): (TraceId, ReadSpeech),
     due_us: u64,
 ) -> Option<KeyRead> {
-    let KeySent {
-        token,
-        ask,
-        colours,
-    } = key_read_sent(&mut cx.facts_mut(), node)?;
+    let KeySent { token, ask } = key_read_sent(&mut cx.facts_mut(), node)?;
     let mut batch = cx.batch(|| ());
-    add_steps(&mut batch, node, &ask, colours);
+    add_steps(&mut batch, node, &ask);
     let request = batch.finish().of(Reader::Outpost(window.process), window);
     let outcome = cx.ask(request, due_us).await;
-    let at_us = cx.facts().queue.now_us();
+    let at_us = cx.now_us();
     let ended = Ended::of(outcome, |answers| {
         Ended::of_steps(answers.outcomes(), (&ask, 0), at_us)
     });
@@ -961,20 +938,15 @@ pub(crate) async fn key_wait(
     wait: verbatim_model::batch::CaretWait,
     (trace, due_us): (TraceId, u64),
 ) -> KeyWait {
-    let Some(KeySent {
-        token,
-        ask,
-        colours,
-    }) = key_read_sent(&mut cx.facts_mut(), node)
-    else {
+    let Some(KeySent { token, ask }) = key_read_sent(&mut cx.facts_mut(), node) else {
         return KeyWait::Ended;
     };
     let mut batch = cx.batch(|| ());
     let waited = batch.wait_for_caret(node, wait);
-    add_steps(&mut batch, node, &ask, colours);
+    add_steps(&mut batch, node, &ask);
     let request = batch.finish().of(Reader::Outpost(window.process), window);
     let outcome = cx.ask(request, due_us).await;
-    let at_us = cx.facts().queue.now_us();
+    let at_us = cx.now_us();
     let (ended, end) = match outcome.split::<std::convert::Infallible>() {
         Ok(answers) => (
             Ended::of_steps(answers.outcomes(), (&ask, 1), at_us),

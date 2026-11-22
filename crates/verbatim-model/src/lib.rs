@@ -88,7 +88,7 @@ pub use speech::{
     SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
     UtteranceSource,
 };
-pub use terminal::{TerminalColourRun, TerminalSnapshot, TerminalText};
+pub use terminal::{TerminalColourRun, TerminalSnapshot, TerminalText, screen_rows};
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReport, CaretSelection, Compared, EditSelection,
     FocusText, FormatAttribute, FormatRun, FormatSet, HeldAnchors, LanguageRun, LineStyle,

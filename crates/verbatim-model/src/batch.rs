@@ -548,21 +548,26 @@ pub enum Op {
         /// The most `FindText` calls, at most [`MAX_FIND_CALLS`].
         calls: u8,
     },
-    /// A terminal's colours: each of `rows` rows from `at`, `width` cells
-    /// a row, as runs of one foreground and background, the rows stopping
-    /// at the text's end. The one operation for terminals alone: the
+    /// A terminal's colours: each row of the screen an earlier
+    /// [`Op::Visible`] read, from its start, as runs of one foreground and
+    /// background, the rows stopping at the text's end. Each row is as
+    /// many cells as an earlier [`Op::ReadText`]'s first line holds
+    /// without its line break, the line at the screen's top, and the
+    /// screen as many rows as its lines fill at that width
+    /// ([`crate::screen_rows`]): both are sized from the same
+    /// batch's answers, so a read after a resize reads the new screen
+    /// (Claude, 2026-11-22). The one operation for terminals alone: the
     /// terminals answer a stretch whose last cell differs as one colour,
     /// and their format unit stops only at rows, so no read of formatting
     /// gives a row's colours (Dickson, 2026-11-22).
     ReadColours {
         /// The text subject.
         subject: Subject,
-        /// The first row's start.
-        at: Point,
-        /// How many rows.
-        rows: u32,
-        /// How many cells a row holds.
-        width: u32,
+        /// The [`Op::Visible`] whose screen's rows are read.
+        screen: Place,
+        /// The [`Op::ReadText`] of the line at the screen's top, whose
+        /// length is a row's width.
+        top: Place,
     },
 }
 
@@ -809,8 +814,8 @@ impl Step {
             Op::ReadText { at, .. }
             | Op::Locate { at, .. }
             | Op::Move { at, .. }
-            | Op::FindText { at, .. }
-            | Op::ReadColours { at, .. } => places.push(point(at)),
+            | Op::FindText { at, .. } => places.push(point(at)),
+            Op::ReadColours { screen, top, .. } => places.extend([Some(*screen), Some(*top)]),
             Op::ReadRange {
                 start,
                 end,

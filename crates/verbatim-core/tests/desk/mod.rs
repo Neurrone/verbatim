@@ -872,3 +872,57 @@ impl Desk {
         self.step(QueueInput::MarkReached(mark))
     }
 }
+
+/// What Core names to the window read `batch` holds, read back from its
+/// steps: a move up from the text's end twice the height, the moves from
+/// the marks, and the search and the colours when asked.
+pub fn window_ask_of(
+    batch: &verbatim_model::batch::Batch,
+) -> Option<verbatim_core::terminal_window::WindowAsk> {
+    use verbatim_core::terminal_window::{CurrentMark, EndMark, WindowAsk};
+    use verbatim_model::TextPoint;
+    use verbatim_model::batch::Point;
+    let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
+    if !matches!(ops.first(), Some(Op::Visible { .. })) {
+        return None;
+    }
+    let height = match ops.get(3) {
+        Some(Op::Move {
+            at: Point::At(TextPoint::End),
+            movement,
+            ..
+        }) => movement.count.unsigned_abs() / 2,
+        _ => 0,
+    };
+    let mut marks = ops.iter().filter_map(|op| match op {
+        Op::Move {
+            at: Point::At(TextPoint::At(position)),
+            ..
+        } => Some(EndMark {
+            anchor: position.anchor,
+            line: String::new(),
+            line_above: 0,
+        }),
+        _ => None,
+    });
+    let end = marks.next();
+    let aside = marks.next();
+    let find = ops.iter().any(|op| matches!(op, Op::FindText { .. }));
+    Some(WindowAsk {
+        end: end.map(|mark| CurrentMark { mark, find }),
+        aside,
+        height,
+        opening: 0,
+        colours: ops.iter().any(|op| matches!(op, Op::ReadColours { .. })),
+    })
+}
+
+/// The window read Core asked for last, by its request's number.
+pub fn window_ask(desk: &Desk) -> Option<(u64, verbatim_core::terminal_window::WindowAsk)> {
+    desk.sent
+        .iter()
+        .rev()
+        .find_map(|(number, _, question)| match question {
+            Question::Batch(batch) => window_ask_of(batch).map(|ask| (*number, ask)),
+        })
+}
