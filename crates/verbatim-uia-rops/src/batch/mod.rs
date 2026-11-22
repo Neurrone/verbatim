@@ -38,7 +38,7 @@ use verbatim_model::batch::{
     Before, Check, Edges, Gate, Missing, Op, Place, Point, Step, StepOutcome, StepRefusal, Subject,
     View, Walk,
 };
-use verbatim_model::{TableId, TextDetails, TextMovement, TextPoint};
+use verbatim_model::{NodeSnapshot, TableId, TextDetails, TextMovement, TextPoint};
 use verbatim_uia::{Cached, Fill, Node, Uia};
 
 use crate::caret::{Attributes, Run, SelectionTextChange};
@@ -154,6 +154,32 @@ pub trait Resolve {
     /// The step's outcome when it names none, or the read fails.
     fn filled(&self, _subject: &Subject, _place: Place) -> Result<Cached<Node>, Ran> {
         Err(Defect("an element read on a resolver of text").ran())
+    }
+
+    /// The window a window subject names, as the dispatcher resolved it.
+    fn window(&self, _subject: &Subject) -> Option<isize> {
+        None
+    }
+
+    /// Property `id` of `node`, a window's own element read as it is, as
+    /// its node's snapshot holds it. Local.
+    fn node_value(
+        &self,
+        _node: &Cached<Node>,
+        _id: verbatim_model::property::PropertyId,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        None
+    }
+
+    /// The element a listener's route names, found and minted by the
+    /// outpost, as the listener read it, with the route's window: what a
+    /// `Read` of a route answers, with no read of its own.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the route names no element.
+    fn route(&self, _subject: &Subject) -> Result<(NodeSnapshot, isize), Ran> {
+        Err(Defect("a route on a resolver that holds none").ran())
     }
 
     /// The node an object step's subject names, as the outpost holds it.
@@ -515,6 +541,11 @@ pub enum Found {
     Activate(Option<verbatim_model::ActionName>),
     /// `Follow`'s: the registration moved.
     Follow,
+    /// `Read`'s of a window's own element: the element, as read.
+    Window(Cached<Node>),
+    /// `Read`'s of a listener's route: the element as the listener read
+    /// it, and the route's window.
+    Route(Box<NodeSnapshot>, isize),
 }
 
 impl Found {
@@ -536,6 +567,8 @@ impl Found {
             | Self::IsOneOf(_)
             | Self::Activate(_)
             | Self::Follow
+            | Self::Window(_)
+            | Self::Route(..)
             | Self::Ancestors(_) => None,
         }
     }

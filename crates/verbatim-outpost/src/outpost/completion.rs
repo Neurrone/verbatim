@@ -19,12 +19,12 @@ use verbatim_model::protocol::UiaSnapshotFact;
 use super::read::UiaAncestorFact;
 use verbatim_model::batch::{Missing, StepOutcome, StepRefusal};
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{KnownAncestor, NodeRead, Route, RouteEnd};
+use verbatim_model::request::{KnownAncestor, Route, RouteEnd};
 use verbatim_model::{Backend, NodeId, NodeSnapshot, State};
 use verbatim_uia::{Cached, Interning as _, Kept, Node};
 
 use super::RequestContext;
-use super::asked::{ancestors_end, node_read, snapshot_of};
+use super::asked::{ancestors_end, snapshot_of};
 use super::focus_path;
 use super::read::{self, Client};
 use super::reducer::FocusPath;
@@ -114,26 +114,22 @@ fn mint(
     })
 }
 
-/// The element `route` names, alone, by `set`: a selection's item.
-pub(super) fn object(
+/// The element `route` names, alone, found, minted and kept, as the
+/// resolver of a `Read` of a route resolves it (a selection's item): what
+/// the listener read of it, as its node, and its nearest window.
+pub(super) fn resolve_route(
     context: &RequestContext<'_>,
     client: &mut Client,
     route: &Route,
-    set: &[PropertyId],
-) -> Result<NodeRead, Unread> {
-    let minted = mint(context, client, route, false).ok_or(Unread::NotThere)?;
+) -> Option<(NodeSnapshot, isize)> {
+    let minted = mint(context, client, route, false)?;
     keep_minted(
         context,
         (minted.node, &[]),
         &minted.path,
         minted.window_element.as_ref(),
     );
-    Ok(node_read(
-        context,
-        &minted.snapshot,
-        Some(minted.nearest),
-        set,
-    ))
+    Some((minted.snapshot, minted.nearest))
 }
 
 /// The outpost's own copy of the element `runtime_id` names, by the route:

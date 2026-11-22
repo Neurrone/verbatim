@@ -40,7 +40,12 @@ program arm and a call arm each, and `Read`, `Test`, `IsOneOf`,
 (`batch/object.rs`): a `Read` adds reads a program would drop or cut its
 segment for, a menu item's legacy state, a selected item's value and
 refreshes of its own, and a `Test` reads only what its matcher asks next
-(Claude, 2026-11-22). `Ancestors` has a call arm only, the raw view's
+(Claude, 2026-11-22). A `Read` or `Test` of a window subject reads the
+window's own element (`Uia::any_window_element`), a `Test` whether the
+window is shown from Windows and the element only for another property;
+a `Read` of a listener's route answers what the listener read of the
+element its resolver finds and mints (`Resolve::route`), with no call of
+its own. `Ancestors` has a call arm only, the raw view's
 walk up (`verbatim_uia::Uia::ancestors`) from where the resolver says,
 with the outpost's stops between its steps (`AncestryFrom`: a window
 read through the other API, an ancestor Core knows, the routes kept of

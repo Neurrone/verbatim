@@ -105,7 +105,7 @@ fn unrun(unrun: Unrun, node: Option<NodeId>) -> StepOutcome {
 
 /// `op`, an object step, on `object`, through the MSAA executor: its
 /// outcome, a read carrying its node and its nearest window as the outpost
-/// holds them, `window` for an acquired object.
+/// holds them, `window` for an acquired object or a window's own object.
 pub(super) fn step(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -114,7 +114,7 @@ pub(super) fn step(
 ) -> StepOutcome {
     let node = match &object {
         Object::Node(node) => Some(*node),
-        Object::Candidate(_) => None,
+        Object::Candidate(_) | Object::Window(_) => None,
     };
     let resolver = MsaaNodes::new(context, client);
     let found = verbatim_ia2::batch::run(op, object, &resolver);
@@ -127,10 +127,16 @@ pub(super) fn step(
         values,
     };
     let set = match op {
-        Op::Related { set, .. } => set.as_slice(),
+        Op::Related { set, .. } | Op::Read { set, .. } => set.as_slice(),
         _ => &[],
     };
     match found {
+        Ok(Found::Window(object)) => StepOutcome::Done(Done::Read(asked::node_read(
+            context,
+            &object,
+            Some(window),
+            set,
+        ))),
         Ok(Found::Read(values)) => StepOutcome::Done(Done::Read(read(values))),
         Ok(Found::Test(matched, values)) => StepOutcome::Done(Done::Test(Tested {
             matched,
@@ -150,6 +156,28 @@ pub(super) fn step(
             StepOutcome::Failed
         }
         Err(failure) => unrun(failure, node),
+    }
+}
+
+/// Window `hwnd`'s own object, its client area, through the executor's
+/// `Read` arm: `None` when it cannot be read.
+pub(super) fn window(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    hwnd: isize,
+) -> Option<NodeSnapshot> {
+    let resolver = MsaaNodes::new(context, client);
+    let op = Op::Read {
+        subject: verbatim_model::batch::Subject::Window {
+            which: verbatim_model::batch::WindowOf::Handle(super::window::window_handle(hwnd)),
+            backend: verbatim_model::Backend::Msaa,
+            visible: false,
+        },
+        set: Vec::new(),
+    };
+    match verbatim_ia2::batch::run(&op, Object::Window(hwnd), &resolver) {
+        Ok(Found::Window(object)) => Some(*object),
+        _ => None,
     }
 }
 

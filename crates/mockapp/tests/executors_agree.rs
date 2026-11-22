@@ -24,18 +24,21 @@ mod harness;
 
 #[cfg(feature = "faults")]
 use verbatim_faults::Fault;
+use verbatim_model::batch::WindowOf;
 use verbatim_model::batch::{
     Batch, Done, FollowTarget, Op, Place, Placement, Point, PointOf, Relation, Step, StepOutcome,
     Subject, View, Walk,
 };
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::{FollowGroup, Outcome, Reply, WindowVerdict};
-use verbatim_model::{NodeId, Role, State, TextDetails, TextPoint, TextUnit};
+use verbatim_model::request::{FollowGroup, Outcome, Reply, Route, WindowVerdict};
+use verbatim_model::{
+    Backend, NodeId, Role, State, TextDetails, TextPoint, TextUnit, WindowHandle,
+};
 use verbatim_process::arguments::OutpostOptions;
 use windows::Win32::Foundation::HWND;
 
-use common::outpost::OutpostUnderTest;
+use common::outpost::{ListenerObject, OutpostUnderTest};
 
 /// Every property a node read can answer that the outpost reads of a UI
 /// Automation node, those read apart included.
@@ -119,8 +122,9 @@ fn focus_of(outcome: &Outcome) -> NodeId {
     read.focus.read.node.expect("the focus's node")
 }
 
-/// The nodes of a fixture by name, as the walk of its window minted them.
-struct Named(Vec<(String, NodeId)>);
+/// The nodes of a fixture by name, as the walk of its window minted them,
+/// and the route to the focus the listener read.
+struct Named(Vec<(String, NodeId)>, Option<Route>);
 
 impl Named {
     /// The nodes `named`'s outcomes read with a name, and the focus,
@@ -146,7 +150,7 @@ impl Named {
                 _ => None,
             }
         }));
-        Self(nodes)
+        Self(nodes, None)
     }
 
     /// The node named `name`.
@@ -187,10 +191,7 @@ fn outcomes(
     (app, hwnd, (focused, focus_name)): (
         &common::MockApp,
         HWND,
-        (
-            &windows::Win32::UI::Accessibility::IUIAutomationElement,
-            &str,
-        ),
+        (&verbatim_uia::Cached<verbatim_uia::ListenerEvent>, &str),
     ),
     remote: bool,
     script: Script,
@@ -201,7 +202,7 @@ fn outcomes(
             remote_operations: remote,
         },
     );
-    outpost.read_focus_as(focused);
+    outpost.read_focus_as(focused.live().element());
     let (focus, _) = outpost.batch(
         hwnd,
         WindowVerdict::Uia,
@@ -214,7 +215,20 @@ fn outcomes(
     );
     let focus_node = focus_of(&focus.outcome);
     let (walked, _) = outpost.batch(hwnd, WindowVerdict::Uia, naming(focus_node));
-    let named = Named::of((focus_node, focus_name), &walked.outcome);
+    let mut named = Named::of((focus_node, focus_name), &walked.outcome);
+    let (listened, _) = outpost.listener_focus(focused);
+    let ListenerObject {
+        object,
+        ancestors,
+        route,
+    } = listened.object;
+    named.1 = route.map(|mut route| {
+        route.read = std::iter::once(object.values)
+            .chain(ancestors.into_iter().map(|ancestor| ancestor.values))
+            .take(route.steps.len())
+            .collect();
+        route
+    });
     let mut outcomes = vec![
         ("the focus".to_owned(), format!("{:#?}", focus.outcome)),
         ("the naming".to_owned(), format!("{:#?}", walked.outcome)),
@@ -265,10 +279,7 @@ fn agree(fixture: &str, (focus, focus_name): (&str, &str), script: Script) {
     app.send(&format!("set-focus {focus}"));
     // The focused element is found once, before either outpost runs.
     let uia = verbatim_uia::Uia::new().expect("a UIA client");
-    let focused = common::listener_focus(&uia, hwnd.0 as isize)
-        .live()
-        .element()
-        .clone();
+    let focused = common::listener_focus(&uia, hwnd.0 as isize);
     let remote = outcomes((&app, hwnd, (&focused, focus_name)), true, script);
     let classic = outcomes((&app, hwnd, (&focused, focus_name)), false, script);
     assert_eq!(remote.len(), classic.len());
@@ -472,6 +483,80 @@ fn object_operations(_: HWND, named: &Named) -> Vec<Labelled> {
     batches
 }
 
+/// The reads of a window's own object through each backend and of the
+/// listener's route to the focus: a read, a test that holds and one that
+/// does not, and, through MSAA, a walk below the window's object.
+fn window_and_route_reads(hwnd: HWND, named: &Named) -> Vec<Labelled> {
+    let window = |backend| Subject::Window {
+        which: WindowOf::Handle(WindowHandle(hwnd.0 as u64)),
+        backend,
+        visible: false,
+    };
+    let set = vec![
+        PropertyId::Name,
+        PropertyId::Role,
+        PropertyId::States,
+        PropertyId::ClassName,
+        PropertyId::NativeWindow,
+        PropertyId::WindowShown,
+        PropertyId::Process,
+    ];
+    let mut batches = Vec::new();
+    for backend in [Backend::Uia, Backend::Msaa] {
+        batches.push((
+            format!("the window's own object through {backend:?}"),
+            batch(vec![
+                Op::Read {
+                    subject: window(backend),
+                    set: set.clone(),
+                },
+                Op::Test {
+                    subject: window(backend),
+                    matcher: Matcher::All(vec![
+                        Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(true)),
+                        Matcher::Not(Box::new(Matcher::Absent(PropertyId::Name))),
+                    ]),
+                },
+                Op::Test {
+                    subject: window(backend),
+                    matcher: Matcher::Any(vec![
+                        Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(false)),
+                        Matcher::Is(PropertyId::Role, PropertyValue::Role(Role::Dialog)),
+                    ]),
+                },
+            ]),
+            None,
+        ));
+    }
+    batches.push((
+        "a walk below the window's own object through MSAA".to_owned(),
+        batch(vec![Op::Descendants {
+            subject: window(Backend::Msaa),
+            walk: Box::new(Walk {
+                depth: 1,
+                view: View::Raw,
+                matcher: None,
+                prune: None,
+                include_subject: true,
+                limit: 4,
+                nodes: 8,
+                set: vec![PropertyId::Name, PropertyId::Role],
+            }),
+        }]),
+        None,
+    ));
+    let route = named.1.clone().expect("the listener's route to the focus");
+    batches.push((
+        "a read of the listener's route".to_owned(),
+        batch(vec![Op::Read {
+            subject: Subject::Route(Box::new(route)),
+            set: vec![PropertyId::Name, PropertyId::Role, PropertyId::States],
+        }]),
+        None,
+    ));
+    batches
+}
+
 /// The activations on `activation.json`: an item that selects, selected
 /// again on the second run, and a check box that invokes. An object with
 /// nothing to do is left out: its walk up reaches the window and the
@@ -640,6 +725,14 @@ fn object_operations_agree() {
     );
 }
 
+fn window_and_route_reads_agree() {
+    agree(
+        "controller.json",
+        ("search", "Search box"),
+        window_and_route_reads,
+    );
+}
+
 fn activations_agree() {
     agree(
         "activation.json",
@@ -668,6 +761,7 @@ fn main() {
     harness::run_isolated(&[
         ("object_operations_agree", object_operations_agree),
         ("activations_agree", activations_agree),
+        ("window_and_route_reads_agree", window_and_route_reads_agree),
         ("text_operations_agree", text_operations_agree),
         ("long_selections_agree", long_selections_agree),
     ]);

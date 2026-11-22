@@ -1,5 +1,6 @@
 //! The call arms of the object operations that read or act on one element
-//! (`Read`, `Test`, `IsOneOf`, `Activate`, `Follow`): each runs alone, by
+//! (`Read`, `Test`, `IsOneOf`, `Activate`, `Follow`), of a node, of a
+//! window's own element, or of a listener's route: each runs alone, by
 //! calls, never in a program. A `Read` adds reads a program would drop or
 //! cut its segment for (a menu item's legacy state, a selected item's
 //! value, and refreshes of their own), and a `Test` reads only what its
@@ -23,6 +24,25 @@ pub(super) fn found(
     use verbatim_model::batch::Op;
     let (uia, resolver) = (segment.uia, segment.resolver);
     match op {
+        Op::Read {
+            subject: subject @ Subject::Window { .. },
+            ..
+        } => window_element(uia, resolver, (subject, place)).map(Found::Window),
+        Op::Read {
+            subject: subject @ Subject::Route(_),
+            ..
+        } => resolver
+            .route(subject)
+            .map(|(read, window)| Found::Route(Box::new(read), window)),
+        Op::Test {
+            subject: subject @ Subject::Window { .. },
+            matcher,
+        } => Ok(Found::Test(window_test(
+            uia,
+            resolver,
+            (subject, place),
+            matcher,
+        )?)),
         Op::Read { subject, set } => read(segment, (subject, place), set).map(Found::Read),
         Op::Test { subject, matcher } => {
             test(uia, resolver, (subject, place), matcher).map(Found::Test)
@@ -319,6 +339,68 @@ pub(super) fn test(
         });
         Ok(value)
     })?;
+    Ok(TestFound {
+        matched: holds,
+        values,
+    })
+}
+
+/// The own element of the window `subject` names, filled by the fill of
+/// the step at `place`: one call, whatever serves the window, since Core
+/// named its backend. Not there when it cannot be read.
+fn window_element(
+    uia: &Uia,
+    resolver: &dyn Resolve,
+    (subject, place): (&Subject, Place),
+) -> Result<Cached<Node>, Ran> {
+    let hwnd = resolver
+        .window(subject)
+        .ok_or_else(|| Defect("a window subject its resolver names no window of").ran())?;
+    let fill = resolver
+        .fill(place)
+        .ok_or_else(|| Defect("a window read with no fill").ran())?;
+    uia.any_window_element(hwnd, fill.request())
+        .map_err(|error| {
+            tracing::debug!(%error, "a window's own element could not be read");
+            Ran::Unrun(super::Unrun::NotThere(
+                verbatim_model::batch::Missing::Object,
+            ))
+        })
+}
+
+/// `Test`'s call arm on a window's own element: the matcher evaluated
+/// lazily, whether the window is shown read from Windows with no call into
+/// the application, and the element read at most once, for the first
+/// other property; a property of an element that cannot be read answers
+/// none.
+fn window_test(
+    uia: &Uia,
+    resolver: &dyn Resolve,
+    (subject, place): (&Subject, Place),
+    matcher: &Matcher,
+) -> Result<TestFound, Ran> {
+    let hwnd = resolver
+        .window(subject)
+        .ok_or_else(|| Defect("a window subject its resolver names no window of").ran())?;
+    let mut element: Option<Option<Cached<Node>>> = None;
+    let mut values = Vec::new();
+    let Ok(holds) = matcher.evaluate::<std::convert::Infallible>(&mut |id| {
+        let value = if id == PropertyId::WindowShown {
+            Some(PropertyValue::Flag(
+                verbatim_win32::window::window_is_visible(hwnd),
+            ))
+        } else {
+            element
+                .get_or_insert_with(|| window_element(uia, resolver, (subject, place)).ok())
+                .as_ref()
+                .and_then(|element| resolver.node_value(element, id))
+        };
+        values.push(PropertyAnswer {
+            id,
+            value: value.clone(),
+        });
+        Ok(value)
+    });
     Ok(TestFound {
         matched: holds,
         values,

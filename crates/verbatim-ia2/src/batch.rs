@@ -2,8 +2,8 @@
 //! subjects, `Read`, `Test`, `Related`, `Ancestors`, `Descendants`,
 //! `IsOneOf` and `Activate`, each one step at a time by calls, as the UI Automation
 //! executor's call arms run theirs (the verbatim-ia2 crate guide, "The
-//! MSAA executor"). Its subject is a node the outpost holds or an object
-//! acquired at its event's ids ([`Object`]); what the outpost holds, the
+//! MSAA executor"). Its subject is a node the outpost holds, an object
+//! acquired at its event's ids, or a window's own object ([`Object`]); what the outpost holds, the
 //! backend a reached object is read through, and a node MSAA does not list
 //! the children of, it resolves ([`Resolve`]).
 
@@ -25,6 +25,10 @@ pub enum Object<'a> {
     Node(NodeId),
     /// An object acquired at its event's ids, read once each property.
     Candidate(&'a mut FocusCandidate),
+    /// A window's own object: its client area, as NVDA reads a foreground
+    /// window, so that a focus event on the client area that follows is
+    /// the same node and is not announced again.
+    Window(isize),
 }
 
 /// What the outpost resolves for the MSAA executor: the node registry, the
@@ -91,6 +95,9 @@ pub enum Found {
     /// `Ancestors`': the ancestors, outermost first, and how the walk
     /// ended.
     Ancestors(Vec<NodeSnapshot>, acquire::Walked),
+    /// `Read`'s of a window's own object: the object, whose node and
+    /// window the answer carries.
+    Window(Box<NodeSnapshot>),
 }
 
 /// Why a step answers no result.
@@ -124,6 +131,25 @@ pub fn run(op: &Op, object: Object<'_>, resolver: &dyn Resolve) -> Result<Found,
                 })
                 .collect(),
         ))),
+        (Op::Read { .. }, Object::Window(hwnd)) => window_object(hwnd, resolver.registry())
+            .map(|object| Found::Window(Box::new(object)))
+            .ok_or(Unrun::Failed(AcquireError::Gone)),
+        (Op::Test { matcher, .. }, Object::Window(hwnd)) => {
+            let mut object: Option<Option<NodeSnapshot>> = None;
+            let mut values = Vec::new();
+            let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut values, |id| {
+                Ok(
+                    window_property(hwnd, id, acquire::client_role).unwrap_or_else(|| {
+                        object
+                            .get_or_insert_with(|| window_object(hwnd, resolver.registry()))
+                            .as_ref()
+                            .and_then(|object| resolver.values(object, &[id]).0.pop())
+                            .and_then(|answer| answer.value)
+                    }),
+                )
+            });
+            Ok(Found::Test(holds, values))
+        }
         (Op::Test { matcher, .. }, Object::Node(node)) => test(resolver, node, matcher),
         (Op::Test { matcher, .. }, Object::Candidate(candidate)) => {
             let mut values = Vec::new();
@@ -139,10 +165,20 @@ pub fn run(op: &Op, object: Object<'_>, resolver: &dyn Resolve) -> Result<Found,
             Op::IsOneOf {
                 equal, at_address, ..
             },
-            object,
+            Object::Node(node),
         ) => Ok(Found::IsOneOf(is_one_of(
             resolver,
-            object,
+            Ok(node),
+            (*equal, at_address),
+        ))),
+        (
+            Op::IsOneOf {
+                equal, at_address, ..
+            },
+            Object::Candidate(candidate),
+        ) => Ok(Found::IsOneOf(is_one_of(
+            resolver,
+            Err(candidate),
             (*equal, at_address),
         ))),
         (Op::Activate { .. }, Object::Node(node)) => Ok(Found::Activate(acquire::activate(
@@ -180,6 +216,41 @@ pub fn ancestors(
     limits: &acquire::AncestorLimits<'_>,
 ) -> Result<(Vec<NodeSnapshot>, acquire::Walked), AcquireError> {
     acquire::ancestor_chain_until(node, registry, limits)
+}
+
+/// Window `hwnd`'s own object, its client area: `None` when it cannot be
+/// read.
+fn window_object(hwnd: isize, registry: &dyn Interning) -> Option<NodeSnapshot> {
+    acquire::snapshot_from_event(
+        hwnd,
+        windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        crate::com::CHILDID_SELF,
+        registry,
+        acquire::Purpose::Announce,
+    )
+}
+
+/// Property `id` of window `hwnd`'s own object when it is one read of the
+/// window itself: whether it is shown, from Windows with no call into the
+/// application, and its client object's role as `client_role` reads it,
+/// as the hidden-dialog check reads it whatever the window's verdict (two
+/// counted calls). `None` for a property read from the window's object.
+#[expect(
+    clippy::option_option,
+    reason = "a value or none for the window's own properties, none for the rest"
+)]
+pub(crate) fn window_property(
+    hwnd: isize,
+    id: PropertyId,
+    client_role: impl Fn(isize) -> Option<verbatim_model::Role>,
+) -> Option<Option<PropertyValue>> {
+    match id {
+        PropertyId::WindowShown => Some(Some(PropertyValue::Flag(
+            verbatim_win32::window::window_is_visible(hwnd),
+        ))),
+        PropertyId::Role => Some(client_role(hwnd).map(PropertyValue::Role)),
+        _ => None,
+    }
 }
 
 /// Whether `Read` reads property `id` apart from the node's snapshot.
@@ -411,7 +482,7 @@ fn children(
 /// kept for the reads after it; a node by its id.
 fn is_one_of(
     resolver: &dyn Resolve,
-    object: Object<'_>,
+    object: Result<NodeId, &mut FocusCandidate>,
     (equal, at_address): (Option<NodeId>, &[NodeId]),
 ) -> Option<u32> {
     let nodes: Vec<NodeId> = equal
@@ -419,8 +490,8 @@ fn is_one_of(
         .chain(at_address.iter().copied())
         .collect();
     let found = match object {
-        Object::Node(node) => nodes.iter().position(|&each| each == node),
-        Object::Candidate(candidate) => {
+        Ok(node) => nodes.iter().position(|&each| each == node),
+        Err(candidate) => {
             let mut held = candidate.object();
             let found = nodes.iter().enumerate().position(|(place, &node)| {
                 if place == 0 && equal.is_some() {
@@ -823,3 +894,7 @@ fn describe_dialogs<'a>(
         node.details.description = text;
     }
 }
+
+#[cfg(test)]
+#[path = "hidden_root_tests.rs"]
+mod hidden_root_tests;

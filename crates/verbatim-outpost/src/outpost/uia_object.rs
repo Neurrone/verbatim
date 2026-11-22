@@ -2,9 +2,10 @@
 //! (`Read`, `Test`, `IsOneOf`, `Activate`, `Follow`;
 //! [`verbatim_uia_rops::batch`]) reach the outpost's state: a node's
 //! element, kept or found again by its route, the properties the outpost
-//! holds of it, its snapshot's values, and the focus registration. The
+//! holds of it, its snapshot's values, a window subject's window, a
+//! listener's route found and minted, and the focus registration. The
 //! arms make every call; these resolve and convert, with no call of their
-//! own but the route's walk and the text summary's read.
+//! own but the routes' walks and the text summary's read.
 
 #![forbid(unsafe_code)]
 
@@ -234,6 +235,214 @@ impl Resolve for Following<'_, '_> {
             super::followed::Moved::Unregistered => Err(Ran::Failed),
         }
     }
+}
+
+/// A window's own element, as a `Read` or `Test` of a window subject
+/// resolves it.
+struct UiaWindow<'a, 'c> {
+    context: &'a RequestContext<'c>,
+    hwnd: isize,
+    fill: Fill<Node>,
+}
+
+impl Resolve for UiaWindow<'_, '_> {
+    fn window(&self, _subject: &Subject) -> Option<isize> {
+        Some(self.hwnd)
+    }
+
+    fn fill(&self, _place: Place) -> Option<&Fill<Node>> {
+        Some(&self.fill)
+    }
+
+    fn node_value(&self, node: &Cached<Node>, id: PropertyId) -> Option<PropertyValue> {
+        asked::values(self.context, &node.snapshot(self.context.nodes()), &[id])
+            .0
+            .pop()
+            .and_then(|answer| answer.value)
+    }
+}
+
+/// A listener's route, as a `Read` of it resolves it.
+struct RouteObject<'a, 'c> {
+    context: &'a RequestContext<'c>,
+    client: std::cell::RefCell<&'a mut read::Client>,
+    route: &'a verbatim_model::request::Route,
+}
+
+impl Resolve for RouteObject<'_, '_> {
+    fn route(&self, _subject: &Subject) -> Result<(verbatim_model::NodeSnapshot, isize), Ran> {
+        super::completion::resolve_route(self.context, &mut self.client.borrow_mut(), self.route)
+            .ok_or(Ran::Unrun(Unrun::NotThere(Missing::Object)))
+    }
+}
+
+/// `op`, a `Read` or `Test` of window `hwnd`'s own element, through the
+/// executor's call arm: its outcome, a read carrying the element's node
+/// and the window.
+pub(super) fn window_step(
+    context: &RequestContext<'_>,
+    client: &mut read::Client,
+    hwnd: isize,
+    op: &Op,
+) -> StepOutcome {
+    use verbatim_model::batch::{Done, Tested};
+    use verbatim_model::request::NodeRead;
+    use verbatim_uia_rops::batch::Found;
+    let Ok((uia, nodes)) = client.uia_with(context, RequestContext::node_request) else {
+        return StepOutcome::Failed;
+    };
+    let resolver = UiaWindow {
+        context,
+        hwnd,
+        fill: Fill::new(&nodes),
+    };
+    let ran = run(context, (uia, Some(hwnd)), &resolver, op.clone());
+    outcome(ran, None, |found| match found {
+        Found::Window(element) => Some(StepOutcome::Done(Done::Read(asked::node_read(
+            context,
+            &element.snapshot(context.nodes()),
+            Some(hwnd),
+            match op {
+                Op::Read { set, .. } => set,
+                _ => &[],
+            },
+        )))),
+        Found::Test(tested) => Some(StepOutcome::Done(Done::Test(Tested {
+            matched: tested.matched,
+            node: NodeRead {
+                node: None,
+                window: asked::node_window(hwnd),
+                values: PropertyValues(tested.values),
+            },
+        }))),
+        _ => None,
+    })
+}
+
+/// Window `hwnd`'s own element, through the executor's `Read` arm: `None`
+/// when it cannot be read.
+pub(super) fn window(
+    context: &RequestContext<'_>,
+    client: &mut read::Client,
+    hwnd: isize,
+) -> Option<verbatim_model::NodeSnapshot> {
+    let op = Op::Read {
+        subject: Subject::Window {
+            which: verbatim_model::batch::WindowOf::Handle(window_handle(hwnd)),
+            backend: verbatim_model::Backend::Uia,
+            visible: false,
+        },
+        set: Vec::new(),
+    };
+    let (uia, nodes) = client
+        .uia_with(context, RequestContext::node_request)
+        .ok()?;
+    let resolver = UiaWindow {
+        context,
+        hwnd,
+        fill: Fill::new(&nodes),
+    };
+    match run(context, (uia, Some(hwnd)), &resolver, op) {
+        Ran::Done(verbatim_uia_rops::batch::Found::Window(element)) => {
+            Some(element.snapshot(context.nodes()))
+        }
+        _ => None,
+    }
+}
+
+/// `op`, a `Read` of the element `route` names, through the executor's
+/// call arm: what the listener read of it, as its node, carrying the
+/// route's window.
+pub(super) fn route_read(
+    context: &RequestContext<'_>,
+    client: &mut read::Client,
+    route: &verbatim_model::request::Route,
+    op: &Op,
+) -> StepOutcome {
+    use verbatim_model::batch::Done;
+    use verbatim_uia_rops::batch::Found;
+    let Some(uia) = client.shared_uia() else {
+        return StepOutcome::Failed;
+    };
+    let resolver = RouteObject {
+        context,
+        client: std::cell::RefCell::new(client),
+        route,
+    };
+    let set = match op {
+        Op::Read { set, .. } => set.as_slice(),
+        _ => &[],
+    };
+    let ran = run(context, (&uia, None), &resolver, op.clone());
+    outcome(ran, None, |found| match found {
+        Found::Route(read, window) => Some(StepOutcome::Done(Done::Read(asked::node_read(
+            context,
+            &read,
+            Some(window),
+            set,
+        )))),
+        _ => None,
+    })
+}
+
+/// What a step that may run as a program answers from a UI Automation
+/// node: the executor's result, or the step's outcome when it answers
+/// none.
+pub(super) type Programmed = Result<verbatim_uia_rops::batch::Found, StepOutcome>;
+
+/// `op`, a `Related` by the controller-for relation or to the first
+/// selected item, or a `Descendants`, from the UI Automation node `node`,
+/// alone through the executor, by a program where the window allows one:
+/// the element the outpost keeps, its own window and its nearest, each
+/// node reached filled by the walk's request and judged by `judge`.
+/// `Err` with the whole batch's outcome when the application did not
+/// answer within UI Automation's transaction timeout, which a program
+/// fails with no fallback; a program that could not run at all has its
+/// window read classically from now on.
+pub(super) fn programmed(
+    context: &RequestContext<'_>,
+    client: &mut read::Client,
+    (node, op): (NodeId, Op),
+    judge: Option<read::Judge<'_>>,
+) -> Result<Programmed, verbatim_model::request::Outcome> {
+    let Some(element) = context
+        .store
+        .element_of(node)
+        .and_then(|agile| agile.resolve().ok())
+    else {
+        return Ok(Err(StepOutcome::NotThere(Missing::Node(node))));
+    };
+    let request = match &op {
+        Op::Descendants { walk, .. } if walk.set.contains(&PropertyId::Rect) => {
+            RequestContext::located_many_node_request
+        }
+        Op::Descendants { .. } => RequestContext::many_node_request,
+        _ => RequestContext::node_request,
+    };
+    let Ok((uia, nodes)) = client.uia_with(context, request) else {
+        return Ok(Err(StepOutcome::Failed));
+    };
+    let fill = Fill::new(&nodes);
+    let window = asked::known_nearest_of(context, node);
+    let from = read::OneElement {
+        element: element.live().element(),
+        window: read::kept_own_window(context, node).unwrap_or(0),
+        calls_only: false,
+        fill: &fill,
+        judge,
+    };
+    let answer = from.run(context, uia, op, window);
+    if answer.read_classically
+        && let Some(window) = window
+    {
+        context.read_classically(verbatim_win32::window::top_level_of(window));
+    }
+    Ok(match answer.steps.into_iter().next() {
+        Some(Ran::Done(found)) => Ok(found),
+        Some(Ran::Gone) => Err(StepOutcome::NotThere(Missing::Node(node))),
+        Some(Ran::TimedOut) => return Err(verbatim_model::request::Outcome::NotResponding),
+        _ => Err(StepOutcome::Failed),
+    })
 }
 
 /// Runs `op`, an object step, alone through the UI Automation executor,

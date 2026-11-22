@@ -203,41 +203,10 @@ fn window_snapshot(
         )?;
         return Some((Backend::Msaa, node));
     }
-    let backend = if window_uses_uia(context, hwnd) {
-        Backend::Uia
+    if window_uses_uia(context, hwnd) {
+        super::uia_object::window(context, client, hwnd).map(|node| (Backend::Uia, node))
     } else {
-        Backend::Msaa
-    };
-    window_node(context, client, hwnd, backend).map(|node| (backend, node))
-}
-
-/// Window `hwnd`'s own snapshot through `backend`, the one Core names: its
-/// element, or its client area as NVDA reads a foreground window.
-pub(super) fn window_node(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    hwnd: isize,
-    backend: Backend,
-) -> Option<NodeSnapshot> {
-    // The window's element is the connection to it, read through UI
-    // Automation whatever serves it, since Core named the backend.
-    if backend == Backend::Uia {
-        let (uia, nodes) = client
-            .uia_with(context, RequestContext::node_request)
-            .ok()?;
-        let element = uia.any_window_element(hwnd, &nodes).ok()?;
-        Some(element.snapshot(context.nodes()))
-    } else {
-        // The client area, as NVDA reads a foreground window: a focus event
-        // on the client area that follows is then the same node and is not
-        // announced again.
-        verbatim_ia2::acquire::snapshot_from_event(
-            hwnd,
-            OBJID_CLIENT.0,
-            CHILDID_SELF,
-            context.nodes(),
-            verbatim_ia2::acquire::Purpose::Announce,
-        )
+        super::msaa_object::window(context, client, hwnd).map(|node| (Backend::Msaa, node))
     }
 }
 
@@ -1533,7 +1502,8 @@ fn uia_step(
 }
 
 /// The matchers a walk down the tree judges each node it reads by.
-type Judge<'a> = &'a dyn Fn(&verbatim_uia::Cached<Node>) -> verbatim_uia_rops::batch::Judged;
+pub(super) type Judge<'a> =
+    &'a dyn Fn(&verbatim_uia::Cached<Node>) -> verbatim_uia_rops::batch::Judged;
 
 /// The one element a batch's object step goes from, as the program
 /// builder resolves it ([`verbatim_uia_rops::batch::Resolve`]): its own

@@ -113,10 +113,6 @@ use verbatim_model::hung::WindowState;
 use worker::Charge;
 
 #[cfg(test)]
-#[path = "hidden_root_tests.rs"]
-mod hidden_root_tests;
-
-#[cfg(test)]
 mod application_names_tests {
     use std::process::{Command, Stdio};
 

@@ -954,14 +954,15 @@ no comparison Core did not ask for.
 
 The hidden-dialog check Core puts before a focus read (an MSAA
 candidate's, the current focus's, a route's) is a `Test` of the
-top-level window's own object through MSAA (`batch::window_property`):
+top-level window's own object through MSAA, the MSAA executor's window
+arm (`verbatim_ia2::batch`, `Object::Window`):
 whether it is shown, a local call; only for a hidden one its client
 object's role, two counted calls (`verbatim_ia2::acquire::client_role`),
 answered absent when the read fails (Dickson, 2026-11-19). The window of
 `WindowOf::Focused` is the top-level window of the window with the
 keyboard focus, taken once per batch (Claude, 2026-11-22). The outpost
 judges nothing of it: Core postpones a hidden dialog to its show. Tests:
-`outpost::hidden_root_tests`, the check's cost pinned at no call for a
+verbatim-ia2's `batch::hidden_root_tests`, the check's cost pinned at no call for a
 shown root and two for a hidden one.
 
 Each `CoreToOutpost::Request` is one program on the worker
@@ -1093,8 +1094,10 @@ taken before any call that can block. Each step runs under its gate
   moved to the element on the registering thread and waited for, keeping
   the node `Follow` named, then the node's states are read; the
   ancestors are the listener's reads, which the route carries
-  (`Route::read`), completed above as a focus read's are; a `Read` of a route, a selection's item, mints
-  the element alone (`completion::object`). Where the listener's walk
+  (`Route::read`), completed above as a focus read's are; a `Read` of a
+  route, a selection's item, is the UI Automation executor's arm, which
+  answers the listener's read of the element its resolver finds and
+  mints alone (`completion::resolve_route`). Where the listener's walk
   met an ancestor Core already knows, the route's end names it, and the
   completion makes no read to find it.
 - `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
@@ -1112,8 +1115,8 @@ taken before any call that can block. Each step runs under its gate
   the reducer's own subscription moves are dropped.
 - The text operations, under "Text and caret" above.
 
-Tests: `mockapp`'s `batch_readers`, `focus_reports` and `controller_for`;
-`outpost::hidden_root_tests`.
+Tests: `mockapp`'s `batch_readers`, `focus_reports`, `controller_for`
+and `executors_agree`; verbatim-ia2's `batch::hidden_root_tests`.
 
 Besides answering Core:
 

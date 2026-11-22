@@ -98,7 +98,7 @@ These are `.local_only` in the registry, each with its reason; the `e2e` job lea
 
 ## The outpost's hidden-dialog check of a field
 
-- `verbatim-outpost`'s unit test `outpost::hidden_root_tests::a_field_in_a_hidden_dialog_matches`, locally, twice under `cargo test -p verbatim-outpost --lib` (2026-11-21 and 2026-11-22), each time passing on reruns and in `cargo xtask ci`; 20 of 20 runs of the crate's unit tests passed on 2026-11-22.
-  - How: the `assert_eq!` at `crates/verbatim-outpost/src/outpost/hidden_root_tests.rs` line 119 failed; which of the check's result or its two reads differed was not kept.
+- `verbatim-ia2`'s unit test `batch::hidden_root_tests::a_field_in_a_hidden_dialog_matches`, locally, twice under `cargo test -p verbatim-outpost --lib` before it moved to `verbatim-ia2` (2026-11-21 and 2026-11-22), each time passing on reruns and in `cargo xtask ci`; 20 of 20 runs of the crate's unit tests passed on 2026-11-22.
+  - How: the `assert_eq!` at `crates/verbatim-ia2/src/hidden_root_tests.rs` line 119 failed; which of the check's result or its two reads differed was not kept.
   - Cause: not yet named. The test reads only windows its own thread made: the dialog's visibility (`IsWindowVisible`) and its client object's role through oleacc's own proxy, in this process, with no clock, no wait and no state shared with the crate's other tests, so the code shows no ordering or timing it depends on.
   - Fix: build 6, the tests and the harness. The next failure's left and right values are kept, and they name which read differed before anything is changed.

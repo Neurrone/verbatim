@@ -631,6 +631,13 @@ step runs alone, by calls:
   window facts through the resolver).
 - `Test` evaluates its matcher lazily, a node read at most once, at the
   first property the outpost does not hold.
+- A window's own object (`Object::Window`) is its client area
+  (`snapshot_from_event` at `OBJID_CLIENT`), as NVDA reads a foreground
+  window. A `Test` of it reads whether the window is shown from Windows
+  and its role as its client object's (`acquire::client_role`, two
+  counted calls), and the object only for any other property; this is
+  the hidden-dialog check Core puts before a focus read
+  (`hidden_root_tests`).
 - `Related` steps by `acquire::navigate`, the object reached read
   through its window's backend (`Resolve::corrected`); a last child is
   the last of the children; an MSAA object controls nothing and has no

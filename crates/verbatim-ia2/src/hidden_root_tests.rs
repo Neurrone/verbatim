@@ -1,15 +1,16 @@
 //! The hidden-dialog check of a focus read (Dickson, 2026-11-19), the
-//! `Test` of a top-level window's own object through MSAA that Core asks
-//! first: a window whose top-level window is a hidden dialog matches; a
-//! shown root, or a hidden one that is no dialog, does not, as File
+//! `Test` of a top-level window's own object that Core asks first, run by
+//! the MSAA executor's window arm ([`crate::batch`]): a window whose
+//! top-level window is a hidden dialog matches; a shown root, or a hidden
+//! one that is no dialog, does not, as File
 //! Explorer's hidden Static before Run was recorded; and a hidden root
 //! whose client role cannot be read answers its role absent, never "not a
 //! dialog", which Core judges not there. The roles are the ones oleacc's
 //! own proxies give these classes.
 
+use verbatim_model::Role;
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::{Backend, Role};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, SW_SHOWNA, ShowWindow, WINDOW_EX_STYLE, WS_CHILD,
@@ -17,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use super::batch::window_property;
+use crate::batch::window_property;
 
 /// The hidden-dialog check as Core asks it (`verbatim-core`'s
 /// `focus::shown::check`).
@@ -43,7 +44,7 @@ fn checked(
     let top = verbatim_win32::window::top_level_of(window);
     let mut read = Vec::new();
     let Ok(holds) = check().evaluate::<std::convert::Infallible>(&mut |id| {
-        let value = window_property((top, Backend::Msaa), id, &client_role)
+        let value = window_property(top, id, &client_role)
             .expect("the check reads the window's own properties");
         read.push((id, value.clone()));
         Ok(value)
@@ -53,7 +54,7 @@ fn checked(
 
 /// [`checked`], the role read as the outpost reads it.
 fn hidden_root(window: isize) -> bool {
-    checked(window, verbatim_ia2::acquire::client_role).0
+    checked(window, crate::acquire::client_role).0
 }
 
 /// A popup of `class`, of this thread's, with no size and never taking the
@@ -117,7 +118,7 @@ fn a_field_in_a_hidden_dialog_matches() {
     let dialog = top_level(w!("#32770"));
     let field = field_in(dialog);
     assert_eq!(
-        checked(raw(field), verbatim_ia2::acquire::client_role),
+        checked(raw(field), crate::acquire::client_role),
         (
             true,
             vec![
@@ -137,7 +138,7 @@ fn a_shown_dialog_does_not_match() {
     // SAFETY: a live window of this thread's.
     let _ = unsafe { ShowWindow(dialog, SW_SHOWNA) };
     assert_eq!(
-        checked(raw(field), verbatim_ia2::acquire::client_role),
+        checked(raw(field), crate::acquire::client_role),
         (
             false,
             vec![(PropertyId::WindowShown, Some(PropertyValue::Flag(true)))]
