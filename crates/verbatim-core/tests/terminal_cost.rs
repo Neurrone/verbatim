@@ -154,19 +154,15 @@ impl Simulated {
         let above = (2 * height).min(document_rows);
         let window = rows[document_rows - above..].join("\r\n");
         let screen_top = HEIGHT.min(document_rows);
-        // The rows written past the current mark: those the document grew
-        // by, and those the history rotated out, counted by the lines
-        // written; a clear refuses the mark.
+        // The rows from the one the current mark sits after, the last
+        // row of the read that set it, "Lines spoken in full" and one
+        // more; a clear refuses the mark.
         let end_place = ask.end.as_ref().map(|_| match self.last {
-            Some((rows_then, written_then))
-                if document_rows >= rows_then || self.written > written_then =>
-            {
+            Some((rows_then, _)) if document_rows >= rows_then && rows_then > 0 => {
+                let from = rows_then - 1;
+                let to = (from + usize::try_from(ask.opening).unwrap_or(0) + 1).min(document_rows);
                 MarkPlace::Rows {
-                    written: u32::try_from(
-                        (self.written - written_then).max(document_rows.saturating_sub(rows_then)),
-                    )
-                    .unwrap_or(u32::MAX),
-                    opening: None,
+                    from: TerminalText::unpadded(&rows[from..to].join("\r\n")),
                 }
             }
             _ => MarkPlace::Refused,

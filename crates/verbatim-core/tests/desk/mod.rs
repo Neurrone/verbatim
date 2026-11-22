@@ -881,17 +881,19 @@ pub fn window_ask_of(
 ) -> Option<verbatim_core::terminal_window::WindowAsk> {
     use verbatim_core::terminal_window::{CurrentMark, EndMark, WindowAsk};
     use verbatim_model::TextPoint;
-    use verbatim_model::batch::Point;
+    use verbatim_model::batch::{Point, PointOf};
     let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
     if !matches!(ops.first(), Some(Op::Visible { .. })) {
         return None;
     }
+    // The window's move up from the read's end, where the move from the
+    // screen's top landed, when the height is known.
     let height = match ops.get(3) {
         Some(Op::Move {
-            at: Point::At(TextPoint::End),
+            at: Point::Of(_, PointOf::Moved),
             movement,
             ..
-        }) => movement.count.unsigned_abs() / 2,
+        }) if movement.count < 0 => movement.count.unsigned_abs() / 2,
         _ => 0,
     };
     let mut marks = ops.iter().filter_map(|op| match op {
@@ -902,6 +904,8 @@ pub fn window_ask_of(
             anchor: position.anchor,
             line: String::new(),
             line_above: 0,
+            rows: 0,
+            row: String::new(),
         }),
         _ => None,
     });

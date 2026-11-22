@@ -11,18 +11,25 @@
 //! - the line at the screen's top, trimmed: its padded length is the
 //!   screen's width;
 //! - a move from the screen's top to the text's end: how far above the end
-//!   the screen's top lies;
-//! - the window: from twice the screen's last height above the text's
-//!   end, a move up from the end and the text from where it landed, or,
-//!   before the height is known, the text from the screen's top, trimmed;
-//! - a move from the text's end to its start: the document's rows, the
-//!   point it started from held as the next end mark;
+//!   the screen's top lies, and where it landed, the read's end, which
+//!   every later step counts to, so that output written while the read
+//!   runs is all after it;
+//! - the window: from twice the screen's last height above the read's
+//!   end, a move up from it and the text from where it landed to it, or,
+//!   before the height is known, the text from the screen's top to it,
+//!   trimmed;
+//! - a move from the read's end to the text's start: the document's rows,
+//!   the point it started from held as the next end mark;
 //! - the first line, trimmed;
 //! - the caret, its line, and a move from it to the end: the caret's rows
 //!   to the end;
-//! - for each end mark Core names, a move from it to the end, the rows
-//!   written past it, refused past the text's end, and, when it was not,
-//!   "Lines spoken in full" lines read whole from it;
+//! - for each end mark Core names, a move from it up one row, to the start
+//!   of the last row of the read that set it, refused past the text's end,
+//!   and, when it was not, "Lines spoken in full" lines and one more read
+//!   whole from there: Core counts the rows written past the mark from the
+//!   document's rows then and now, and the first of these rows, the one
+//!   the mark sat on, tells whether output filled it since
+//!   ([`crate::terminal::places`]);
 //! - when Core asks, the search for the current mark's line back from the
 //!   text's end, by calls;
 //! - when Core asks, the colours of the screen's rows, as many and as
@@ -50,7 +57,8 @@ const MARK_SEARCH_CALLS: u8 = 100;
 /// An end mark Core names: a held range at an earlier read's document
 /// end, with the text of the last line with text at or above it and that
 /// line's distance in rows above the mark, by which a read finds the line
-/// again once the history rotated.
+/// again once the history rotated, and the document's rows and its last
+/// row's text then, by which a later read counts the rows written past it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndMark {
     /// The held range at the earlier read's document end.
@@ -59,6 +67,12 @@ pub struct EndMark {
     pub line: String,
     /// How many rows that line lies above the mark.
     pub line_above: u32,
+    /// How many rows the document held when the mark was set.
+    pub rows: u32,
+    /// The text of the document's last row then, the row the mark sits
+    /// after, without its padding: empty when it was blank, a row no
+    /// output had reached.
+    pub row: String,
 }
 
 /// The current end mark, and whether the read searches for its line.
@@ -83,9 +97,9 @@ pub struct WindowAsk {
     /// the window starts twice that many rows above the document's end,
     /// or at the screen's top when it is 0.
     pub height: u32,
-    /// "Lines spoken in full": past a mark with more rows written after it
-    /// than this and the window together, the read gives this many rows
-    /// after the mark ([`MarkPlace::Rows::opening`]).
+    /// "Lines spoken in full": each mark's read gives this many rows after
+    /// the mark's own ([`MarkPlace::Rows`]), the opening group of a read
+    /// past more rows than these and the window together.
     pub opening: u32,
     /// Whether to read the colours of every screen row, as Core does for
     /// each read in a key's window.
@@ -99,13 +113,12 @@ pub enum MarkPlace {
     /// compare it: the text shrank under a clear, or the mark is on the
     /// other screen.
     Refused,
-    /// The rows written past the mark.
+    /// The rows from the start of the row the mark sits after, the last
+    /// row of the read that set it: that row as it reads now, then the
+    /// rows after it, "Lines spoken in full" of them at most.
     Rows {
-        /// How many rows lie from the mark to the document's end.
-        written: u32,
-        /// The first "Lines spoken in full" rows after the mark, when more
-        /// rows follow it than those and the window together.
-        opening: Option<TerminalText>,
+        /// The rows, without their padding.
+        from: TerminalText,
     },
 }
 
@@ -197,19 +210,19 @@ pub fn add_steps<B>(batch: &mut Builder<B>, node: NodeId, ask: &WindowAsk) {
     };
     let visible = batch.visible(node);
     let top = batch.read_trimmed(node, visible.visible_start(), TextUnit::Line, (1, false));
-    let _screen_top = batch.move_point(node, visible.visible_start(), line(FAR));
+    let screen_top = batch.move_point(node, visible.visible_start(), line(FAR));
+    let end = || screen_top.landed();
     if ask.height > 0 {
         let up = i32::try_from(ask.height)
             .ok()
             .and_then(|height| height.checked_mul(-2))
             .unwrap_or(-FAR);
-        let window = batch.move_point(node, TextPoint::End.into(), line(up));
-        let _rows = batch.read_range_trimmed(node, (window.landed(), TextPoint::End.into()));
+        let window = batch.move_point(node, end(), line(up));
+        let _rows = batch.read_range_trimmed(node, (window.landed(), end()));
     } else {
-        let _rows =
-            batch.read_range_trimmed(node, (visible.visible_start(), TextPoint::End.into()));
+        let _rows = batch.read_range_trimmed(node, (visible.visible_start(), end()));
     }
-    let _document = batch.move_point(node, TextPoint::End.into(), line(-FAR));
+    let _document = batch.move_point(node, end(), line(-FAR));
     let _first = batch.read_trimmed(node, TextPoint::Start.into(), TextUnit::Line, (1, false));
     let caret = batch.caret(node, None);
     let _line = batch.read_text(
@@ -221,16 +234,16 @@ pub fn add_steps<B>(batch: &mut Builder<B>, node: NodeId, ask: &WindowAsk) {
         TextDetails::NONE,
     );
     let _caret_rows = batch.move_point(node, caret.caret(), line(FAR));
-    let opening = u16::try_from(ask.opening.max(1)).unwrap_or(u16::MAX);
+    let rows = u16::try_from(ask.opening.saturating_add(1)).unwrap_or(u16::MAX);
     let marks = ask.end.as_ref().map(|end| end.mark.anchor);
     for mark in marks
         .into_iter()
         .chain(ask.aside.as_ref().map(|aside| aside.anchor))
     {
-        let at = || TextPoint::At(TextPosition::at(mark)).into();
-        let written = batch.move_point(node, at(), line(FAR));
-        batch.when(written.found());
-        let _opening = batch.read_trimmed(node, at(), TextUnit::Line, (opening, true));
+        let at = TextPoint::At(TextPosition::at(mark)).into();
+        let row = batch.move_point(node, at, line(-1));
+        batch.when(row.found());
+        let _from = batch.read_trimmed(node, row.landed(), TextUnit::Line, (rows, true));
     }
     if let Some(CurrentMark { mark, find: true }) = &ask.end {
         let _found = batch.find_text(
@@ -314,28 +327,26 @@ fn lines_of(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// What a mark's move and its opening read showed, the window's rows
-/// being `above` and "Lines spoken in full" `opening`.
+/// What a mark's move to its row and the read from there showed.
 fn mark_place(
     (moved, read): (Option<&StepOutcome>, Option<&StepOutcome>),
-    (above, opening): (u32, u32),
 ) -> Result<MarkPlace, Unread> {
-    let written = match moved {
-        Some(StepOutcome::Done(Done::Move(moved))) => rows(moved.moved),
+    match moved {
+        Some(StepOutcome::Done(Done::Move(_))) => {}
         Some(StepOutcome::Refused(_)) => return Ok(MarkPlace::Refused),
         Some(StepOutcome::NotThere(_)) => return Err(Unread::NotThere),
         _ => return Err(Unread::Failed),
-    };
-    let long = u64::from(written) > u64::from(opening).saturating_add(u64::from(above));
-    let opening = match read {
-        Some(StepOutcome::Done(done)) => long.then(|| read_text(done)).transpose()?,
+    }
+    match read {
+        Some(StepOutcome::Done(done)) => Ok(MarkPlace::Rows {
+            from: read_text(done)?,
+        }),
         // A read that failed refuses the mark, as a mark whose rows could
         // not be read always was.
-        Some(StepOutcome::Failed | StepOutcome::Refused(_)) => return Ok(MarkPlace::Refused),
-        Some(StepOutcome::NotThere(_)) => return Err(Unread::NotThere),
-        Some(StepOutcome::Skipped) | None => return Err(Unread::Failed),
-    };
-    Ok(MarkPlace::Rows { written, opening })
+        Some(StepOutcome::Failed | StepOutcome::Refused(_)) => Ok(MarkPlace::Refused),
+        Some(StepOutcome::NotThere(_)) => Err(Unread::NotThere),
+        Some(StepOutcome::Skipped) | None => Err(Unread::Failed),
+    }
 }
 
 /// The search's answer for the current mark's line: in the window when its
@@ -404,7 +415,7 @@ pub fn window_of(
         }
         let moved = steps.next();
         let read = steps.next();
-        mark_place((moved, read), (above, ask.opening)).map(Some)
+        mark_place((moved, read)).map(Some)
     };
     let end_place = mark(ask.end.is_some())?;
     let aside_place = mark(ask.aside.is_some())?;
@@ -614,10 +625,7 @@ pub fn outcomes_making(window: &TerminalWindow, ask: &WindowAsk) -> Vec<StepOutc
             continue;
         }
         match place {
-            Some(MarkPlace::Rows { written, opening }) => outcomes.extend([
-                moved(i32::try_from(*written).unwrap_or(i32::MAX), held),
-                trimmed(&opening.clone().unwrap_or_default()),
-            ]),
+            Some(MarkPlace::Rows { from }) => outcomes.extend([moved(-1, held), trimmed(from)]),
             Some(MarkPlace::Refused) | None => outcomes.extend([
                 StepOutcome::Refused(StepRefusal::OutsideText),
                 StepOutcome::Skipped,

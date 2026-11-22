@@ -11,7 +11,9 @@ use verbatim_model::{
     TextUnit, TraceId,
 };
 
-use crate::terminal_window::{MarkPlace, MarkSearch, TerminalWindow, WindowCaret, outcomes_making};
+use crate::terminal_window::{
+    MarkPlace, MarkSearch, TerminalWindow, WindowAsk, WindowCaret, outcomes_making,
+};
 
 use super::*;
 use crate::event_queue::Outcome;
@@ -108,16 +110,17 @@ fn window(
     }
 }
 
-/// A window with the mark showing `written` rows past it.
-fn grown(lines: &[&str], at_ms: u64, (document_rows, written): (u32, u32)) -> TerminalWindow {
+/// A window of a document `document_rows` rows long, the row its mark sits
+/// after unchanged ([`outcome_of`] reads it in), so that the rows written
+/// past the mark are those the document gained.
+fn grown(lines: &[&str], at_ms: u64, document_rows: u32) -> TerminalWindow {
     window(
         lines,
         at_ms,
         (
             document_rows,
             Some(MarkPlace::Rows {
-                written,
-                opening: None,
+                from: TerminalText::default(),
             }),
         ),
     )
@@ -154,9 +157,33 @@ fn outcome_of(state: &mut SrState, answered: impl Into<Answered>) -> Outcome<Rep
                 let now = state.queue.now_us();
                 ask_now(state, &focus, false, Some(now))
             };
-            Outcome::Result(Reply::Steps(outcomes_making(&window, &ask)))
+            Outcome::Result(Reply::Steps(outcomes_making(
+                &with_mark_rows(*window, &ask),
+                &ask,
+            )))
         }
     }
+}
+
+/// `window` with each mark's rows given empty read as the row the mark
+/// sits after unchanged, as the mark Core names in `ask` recorded it.
+fn with_mark_rows(mut window: TerminalWindow, ask: &WindowAsk) -> TerminalWindow {
+    let fill = |place: &mut Option<MarkPlace>, row: Option<&str>| {
+        if let (Some(MarkPlace::Rows { from }), Some(row)) = (place, row)
+            && from.text.is_empty()
+        {
+            *from = TerminalText::unpadded(row);
+        }
+    };
+    fill(
+        &mut window.end_place,
+        ask.end.as_ref().map(|end| end.mark.row.as_str()),
+    );
+    fill(
+        &mut window.aside_place,
+        ask.aside.as_ref().map(|aside| aside.row.as_str()),
+    );
+    window
 }
 
 /// Answers the read under `token` with `answered`, at the window's time
@@ -475,7 +502,7 @@ fn an_answer_whose_token_is_not_the_watchs_is_dropped() {
         answer(
             &mut state,
             read.wrapping_add(100),
-            read_of(grown(&["$", "x"], 20, (2, 1)))
+            read_of(grown(&["$", "x"], 20, 2))
         ),
         Vec::<String>::new()
     );
@@ -506,7 +533,7 @@ fn live_out_on_a_change_is_dirty_and_reads_again_after_its_answer() {
     assert_eq!(wanted(&mut state), []);
     assert!(matches!(read_state(&state), Read::Out { dirty: true, .. }));
     assert_eq!(
-        answer(&mut state, read, read_of(grown(&["$", "one"], 20, (2, 1)))),
+        answer(&mut state, read, read_of(grown(&["$", "one"], 20, 2))),
         ["one"]
     );
     assert_eq!(wanted(&mut state).len(), 1);
@@ -520,7 +547,7 @@ fn live_out_answered_speaks_the_diff_and_keeps_the_window() {
         answer(
             &mut state,
             read,
-            read_of(grown(&["$ ls", "a.txt", "$"], 20, (3, 2)))
+            read_of(grown(&["$ ls", "a.txt", "$"], 20, 3))
         ),
         ["a.txt", "$"]
     );
@@ -542,7 +569,7 @@ fn live_out_past_its_due_time_reads_again() {
         answer(
             &mut state,
             again,
-            read_of(grown(&["$ make", "Finished"], 30, (2, 1)))
+            read_of(grown(&["$ make", "Finished"], 30, 2))
         ),
         ["Finished"]
     );
@@ -575,11 +602,7 @@ fn live_out_failed_keeps_the_last_window() {
     assert_eq!(read_state(&state), Read::Idle { dirty: false });
     let again = changed(&mut state);
     assert_eq!(
-        answer(
-            &mut state,
-            again,
-            read_of(grown(&["$ ls", "a.txt"], 30, (2, 1)))
-        ),
+        answer(&mut state, again, read_of(grown(&["$ ls", "a.txt"], 30, 2))),
         ["a.txt"]
     );
 }
@@ -604,7 +627,7 @@ fn a_hung_terminal_speaks_its_output_once_the_window_answers() {
         answer(
             &mut state,
             again,
-            read_of(grown(&["$ build", "done"], 900, (2, 1)))
+            read_of(grown(&["$ build", "done"], 900, 2))
         ),
         ["done"]
     );
@@ -649,7 +672,7 @@ fn any_commit_replaces_the_watch_and_an_answer_still_out_is_stale() {
         answer(
             &mut state,
             read,
-            read_of(grown(&["line 74", "line 75"], 20, (2, 1)))
+            read_of(grown(&["line 74", "line 75"], 20, 2))
         ),
         Vec::<String>::new()
     );
@@ -668,11 +691,11 @@ fn a_keys_read_takes_over_the_read_out_whose_answer_goes_stale() {
     .token;
     assert!(matches!(read_state(&state), Read::Out { token, .. } if token == key));
     assert_eq!(
-        answer(&mut state, read, read_of(grown(&["$", "x"], 20, (2, 1)))),
+        answer(&mut state, read, read_of(grown(&["$", "x"], 20, 2))),
         Vec::<String>::new()
     );
     assert_eq!(
-        answer(&mut state, key, read_of(grown(&["$", "x"], 21, (2, 1)))),
+        answer(&mut state, key, read_of(grown(&["$", "x"], 21, 2))),
         ["x"]
     );
 }
@@ -731,7 +754,7 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, 71)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
@@ -776,7 +799,7 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     let after = answer(
         &mut state,
         release,
-        read_of(grown(&window_lines, 900, (5005, 4934))),
+        read_of(grown(&window_lines, 900, 5005)),
     );
     assert_eq!(
         after.first().map(String::as_str),
@@ -791,7 +814,7 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (71, 70))));
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, 71)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
@@ -823,7 +846,7 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
         .chain(more.iter().map(String::as_str))
         .collect();
     assert_eq!(
-        answer(&mut state, reads[0].0, read_of(grown(&more, 50, (76, 5)))),
+        answer(&mut state, reads[0].0, read_of(grown(&more, 50, 76))),
         Vec::<String>::new()
     );
 }
@@ -845,7 +868,7 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
         read_of(grown(
             &["Reply from ::1: time<1ms", "Reply from ::1: time<2ms"],
             1000,
-            (2, 1),
+            2,
         )),
     );
     let at_us = state.queue.now_us();
@@ -871,7 +894,7 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
+    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, 2)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(3));
@@ -890,24 +913,58 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
 // The places, 5.6: one test a row.
 
 /// Sixty rows written past the mark, no more than the window's thirty and
-/// "Lines spoken in full"'s thirty together, so the read gives no opening
-/// rows, as a window read's steps never do past more.
+/// "Lines spoken in full"'s thirty together, so no opening group is
+/// spoken.
 #[test]
 fn no_rotation_counts_the_rows_written_exactly() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let lines = numbered("line", 31, 30);
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let said = answer(&mut state, read, read_of(grown(&lines, 20, (61, 60))));
+    let said = answer(&mut state, read, read_of(grown(&lines, 20, 61)));
     assert_eq!(said[0], "Phrase(SkippedLines(30))");
     assert_eq!(said[1], "line 31");
+}
+
+/// The mark sits after the last read's last row, the blank row the caret
+/// was on, which output then filled: that row is the first written past
+/// the mark, the opening group's first and counted, so a hundred rows of
+/// output are thirty spoken, forty skipped and the window's thirty.
+#[test]
+fn a_marks_row_filled_since_is_the_first_row_written_past_it() {
+    let mut state = terminal();
+    let token = one_read(&mut state);
+    let _ = answer(
+        &mut state,
+        token,
+        read_of(window(&["$ run", ""], 10, (2, None))),
+    );
+    let read = changed(&mut state);
+    let last = numbered("out", 71, 30);
+    let last: Vec<&str> = last.iter().map(String::as_str).collect();
+    let from = TerminalText::unpadded(&numbered("out", 1, 31).join("\r\n"));
+    let flood = window(&last, 20, (101, Some(MarkPlace::Rows { from })));
+    let outcome = outcome_of(&mut state, read_of(flood));
+    let mut said = Vec::new();
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let mut expected: Vec<Waiting> = numbered("out", 1, 30)
+        .into_iter()
+        .map(Waiting::Line)
+        .collect();
+    expected.push(Waiting::Skipped(pacing::Skipped::Count(40)));
+    expected.extend(numbered("out", 71, 30).into_iter().map(Waiting::Line));
+    assert_eq!(entry.output, expected);
 }
 
 #[test]
 fn rotation_with_the_marks_line_in_the_window_speaks_the_diff() {
     let mut state = live(&["a", "b", "$"]);
     let read = changed(&mut state);
-    let mut rotated = grown(&["b", "$", "c"], 20, (3, 0));
+    let mut rotated = grown(&["b", "$", "c"], 20, 3);
     rotated.first_row = TerminalText::unpadded("b");
     assert_eq!(answer(&mut state, read, read_of(rotated)), ["c"]);
 }
@@ -926,7 +983,7 @@ fn full_history() -> SrState {
         read_of(window(&["a", "b", "$"], 10, (FULL, None))),
     );
     let read = changed(&mut state);
-    let mut rotated = grown(&["b", "$", "c"], 20, (FULL, 0));
+    let mut rotated = grown(&["b", "$", "c"], 20, FULL);
     rotated.first_row = TerminalText::unpadded("b");
     let _ = answer(&mut state, read, read_of(rotated));
     state
@@ -952,7 +1009,7 @@ fn rotation_with_the_line_found_counts_from_its_distance() {
     let read = changed(&mut state);
     let lines = numbered("x", 1, 3);
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let mut found = grown(&lines, 30, (FULL, 0));
+    let mut found = grown(&lines, 30, FULL);
     found.first_row = TerminalText::unpadded("y");
     found.found = MarkSearch::Found(12);
     let said = answer(&mut state, read, read_of(found));
@@ -968,7 +1025,7 @@ fn rotation_with_the_line_missed_skips_more_than_the_document_holds() {
     let read = changed(&mut state);
     let lines = numbered("x", 1, 3);
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let mut missed = grown(&lines, 30, (FULL, 0));
+    let mut missed = grown(&lines, 30, FULL);
     missed.first_row = TerminalText::unpadded("y");
     missed.found = MarkSearch::Missed;
     let said = answer(&mut state, read, read_of(missed));
@@ -979,7 +1036,7 @@ fn rotation_with_the_line_missed_skips_more_than_the_document_holds() {
 fn a_flood_of_identical_lines_over_a_full_history_skips_uncounted_lines() {
     let mut state = full_history();
     let read = changed(&mut state);
-    let mut same = grown(&["b", "$", "c"], 30, (FULL, 0));
+    let mut same = grown(&["b", "$", "c"], 30, FULL);
     same.first_row = TerminalText::unpadded("z");
     same.found = MarkSearch::InWindow;
     let said = answer(&mut state, read, read_of(same));
@@ -1004,7 +1061,7 @@ fn a_mark_refused_after_a_clear_skips_about_the_documents_rows() {
 fn a_read_the_pacing_did_not_hold_after_rotation_is_spoken_by_its_diff() {
     let mut state = full_history();
     let read = changed(&mut state);
-    let mut next = grown(&["$", "c", "d"], 30, (FULL, 0));
+    let mut next = grown(&["$", "c", "d"], 30, FULL);
     next.first_row = TerminalText::unpadded("$");
     assert_eq!(answer(&mut state, read, read_of(next)), ["d"]);
 }
@@ -1015,7 +1072,7 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
     // then the shell's screen with no skip phrase.
     let mut state = live(&["$ less file"]);
     let read = changed(&mut state);
-    let mut pager = grown(&["page one", "page two"], 20, (2, 0));
+    let mut pager = grown(&["page one", "page two"], 20, 2);
     pager.screen_at_start = true;
     assert_eq!(
         answer(&mut state, read, read_of(pager)),
@@ -1030,11 +1087,10 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
         cut(&mut state, now)
     };
     let read = changed(&mut state);
-    let mut closed = window(&["$ less file", "$"], 30, (9000, None));
+    let mut closed = window(&["$ less file", "$"], 30, (2, None));
     closed.screen_at_start = false;
     closed.aside_place = Some(MarkPlace::Rows {
-        written: 1,
-        opening: None,
+        from: TerminalText::default(),
     });
     assert_eq!(
         answer(&mut state, read, read_of(closed)),
@@ -1058,7 +1114,7 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
     let lines: Vec<&str> = first.iter().map(String::as_str).collect();
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, (35, 34))));
+    let outcome = outcome_of(&mut state, read_of(grown(&lines, 20, 35)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
@@ -1118,8 +1174,7 @@ fn typing_shown_by_a_keys_final_read_joins_under_the_later_keys_fence() {
         (
             1,
             Some(MarkPlace::Rows {
-                written: 0,
-                opening: None,
+                from: TerminalText::unpadded("$"),
             }),
         ),
     );
@@ -1148,7 +1203,7 @@ fn a_modifiers_cut_then_output_is_spoken() {
     };
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
+    let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, 2)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(mut entry)) = entries.into_iter().next() else {
@@ -1183,10 +1238,7 @@ fn what_was_read_is_spoken_after_the_outpost_ends() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let mut said = Vec::new();
-    let outcome = outcome_of(
-        &mut state,
-        read_of(grown(&["$", "a", "b", "c"], 20, (4, 3))),
-    );
+    let outcome = outcome_of(&mut state, read_of(grown(&["$", "a", "b", "c"], 20, 4)));
     let at_us = state.queue.now_us();
     let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
@@ -1227,8 +1279,7 @@ fn up_arrow_then_a_typed_letter_speak_once_in_their_window() {
         (
             1,
             Some(MarkPlace::Rows {
-                written: 0,
-                opening: None,
+                from: TerminalText::unpadded("$"),
             }),
         ),
     );

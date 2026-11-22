@@ -227,6 +227,8 @@ fn a_terminal_read_is_steps_whose_outcomes_make_its_window() {
                 anchor: TextAnchor(7),
                 line: "ready>".into(),
                 line_above: 0,
+                rows: 1,
+                row: "ready>".into(),
             },
             find: true,
         }),
@@ -283,8 +285,7 @@ fn a_terminal_read_is_steps_whose_outcomes_make_its_window() {
         first_row: verbatim_model::TerminalText::unpadded("ready>"),
         document_rows: 1,
         end_place: Some(MarkPlace::Rows {
-            written: 0,
-            opening: None,
+            from: verbatim_model::TerminalText::unpadded("ready>"),
         }),
         aside_place: None,
         found: MarkSearch::InWindow,

@@ -7,11 +7,13 @@
 //! outpost generation that minted the node; the outpost only holds the
 //! marks' ranges, as anchors Core names, and counts.
 //!
-//! Each read says how many rows were written past the mark Core named, and
-//! Core decides what that means: an exact count while the document grows,
-//! or, once the history is full and rows rotate under fixed places (the
-//! same row count with another first row), the mark's line found again
-//! by its text, in the window or by the outpost's search.
+//! Each read gives the document's rows and the rows from the one the mark
+//! Core named sits after, and Core decides what they mean: while the
+//! document grows, an exact count, the rows added since the mark was set
+//! and the mark's own row when output filled or changed it since; once the
+//! history is full and rows rotate under fixed places (the same row count
+//! with another first row), the mark's line found again by its text, in
+//! the window or by the outpost's search.
 
 use std::collections::VecDeque;
 
@@ -117,15 +119,16 @@ impl TerminalPlaces {
     }
 
     /// Takes the read `read`, parsed as `window`, whose diff kept a line of
-    /// the last (`shares_line`) and said `said` lines of output: the count of
-    /// rows written past its mark judged (the table of 5.6), every place
-    /// moved by it, the end mark replaced, and the aside mark set or used.
-    /// `first` is the watch's baseline, whose output is not spoken.
+    /// the last (`shares_line`) and said `said` lines of output, a read past
+    /// more than `opening` ("Lines spoken in full") rows and its window
+    /// speaking that many first: the count of rows written past its mark
+    /// judged (the table of 5.6), every place moved by the rows added, the
+    /// end mark replaced, and the aside mark set or used.
     pub(crate) fn took(
         &mut self,
         read: &TerminalWindow,
         window: &Window,
-        (shares_line, said): (bool, usize),
+        (shares_line, said, opening): (bool, usize, u32),
     ) -> Placed {
         let first_row = read.first_row.text.clone();
         let rotated_now = self.end.as_ref().is_some_and(|end| {
@@ -134,20 +137,61 @@ impl TerminalPlaces {
         self.rotated |= rotated_now;
         let window_rows = read.above;
         let from_aside = self.aside.is_some() && !read.screen_at_start;
-        let place = if from_aside {
-            read.aside_place.as_ref()
+        let (place, mark) = if from_aside {
+            (read.aside_place.as_ref(), self.aside.as_ref())
         } else {
-            read.end_place.as_ref()
+            (
+                read.end_place.as_ref(),
+                self.end.as_ref().map(|end| &end.mark),
+            )
         };
         let line = self
             .end
             .as_ref()
             .map(|end| (end.mark.line.as_str(), end.mark.line_above));
-        let (written, past) = match place {
-            None => (None, None),
-            Some(MarkPlace::Refused) => {
+        let counted = match (place, mark) {
+            (Some(MarkPlace::Rows { from }), Some(mark)) if !rotated_now || from_aside => {
+                written_past(mark, from, read.document_rows)
+            }
+            (Some(MarkPlace::Rows { .. } | MarkPlace::Refused) | None, _) => None,
+        };
+        let (written, added, past) = match (place, counted) {
+            (None, _) => (None, None, None),
+            (Some(MarkPlace::Rows { .. }), Some(counted)) => {
+                // Past more rows than the window and the opening group
+                // together, the opening group is spoken first.
+                let long = u64::from(counted.written)
+                    > u64::from(window_rows).saturating_add(u64::from(opening));
+                let opening: Vec<String> = if long {
+                    counted
+                        .rows
+                        .into_iter()
+                        .take(usize::try_from(opening).unwrap_or(usize::MAX))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let skipped = counted
+                    .written
+                    .saturating_sub(window_rows)
+                    .saturating_sub(u32::try_from(opening.len()).unwrap_or(u32::MAX));
+                (
+                    Some(counted.written),
+                    Some(counted.added),
+                    (counted.written > window_rows)
+                        .then(|| past(window, Some(opening), Skipped::Count(skipped))),
+                )
+            }
+            (Some(MarkPlace::Rows { .. }), None) if rotated_now && !from_aside => {
+                let (written, past) = rotated(read, window, line, (window_rows, said));
+                (written, written, past)
+            }
+            // Refused, or a document shorter than when the mark was set: the
+            // text shrank under a clear.
+            (Some(MarkPlace::Refused | MarkPlace::Rows { .. }), _) => {
                 let written = read.document_rows;
                 (
+                    Some(written),
                     Some(written),
                     (written > window_rows).then(|| {
                         past(
@@ -158,21 +202,6 @@ impl TerminalPlaces {
                     }),
                 )
             }
-            Some(MarkPlace::Rows { written, opening }) if !rotated_now || from_aside => {
-                let opening: Vec<String> = opening
-                    .as_ref()
-                    .map(|opening| lines_of(&opening.text))
-                    .unwrap_or_default();
-                let skipped = written
-                    .saturating_sub(window_rows)
-                    .saturating_sub(u32::try_from(opening.len()).unwrap_or(u32::MAX));
-                (
-                    Some(*written),
-                    (*written > window_rows)
-                        .then(|| past(window, Some(opening), Skipped::Count(skipped))),
-                )
-            }
-            Some(MarkPlace::Rows { .. }) => rotated(read, window, line, (window_rows, said)),
         };
         let within = written.is_some_and(|written| written <= window_rows);
         if from_aside {
@@ -182,7 +211,7 @@ impl TerminalPlaces {
             if new_screen && read.screen_at_start && self.aside.is_none() {
                 self.aside = self.end.as_ref().map(|end| end.mark.clone());
             } else if self.aside.is_none() {
-                self.moved(written, read.document_rows);
+                self.moved(added, read.document_rows);
             }
         }
         let (line, line_above) = window.last_text_line().unwrap_or_default();
@@ -191,6 +220,8 @@ impl TerminalPlaces {
                 anchor: read.end,
                 line,
                 line_above,
+                rows: read.document_rows,
+                row: window.last_row_text(),
             },
             document_rows: read.document_rows,
             first_row,
@@ -227,6 +258,47 @@ impl TerminalPlaces {
         }
         self.marks.push_back(place);
     }
+}
+
+/// The rows a read found written past an end mark, while the history does
+/// not rotate.
+struct Counted {
+    /// The rows added since the mark was set, by which every place moves.
+    added: u32,
+    /// The rows written past the mark: those added, and the mark's own row
+    /// when output filled or changed it since.
+    written: u32,
+    /// The rows written past the mark from the first, as many as were read.
+    rows: Vec<String>,
+}
+
+/// What the rows `from` the mark's row, read when the document held
+/// `document_rows` rows, show of `mark`; `None` when the document is
+/// shorter than when the mark was set. The mark's row, the last row of the
+/// read that set it, is written past the mark when its text changed, or,
+/// blank then and so not yet spoken or counted, when it has text now or
+/// rows below it (TM 12).
+fn written_past(
+    mark: &EndMark,
+    from: &verbatim_model::TerminalText,
+    document_rows: u32,
+) -> Option<Counted> {
+    let added = document_rows.checked_sub(mark.rows)?;
+    let mut rows = lines_of(&from.text);
+    let own = rows.first().map_or("", String::as_str);
+    let refilled = if mark.row.is_empty() {
+        added > 0 || !own.is_empty()
+    } else {
+        own != mark.row
+    };
+    if !refilled && !rows.is_empty() {
+        rows.remove(0);
+    }
+    Some(Counted {
+        added,
+        written: added.saturating_add(u32::from(refilled)),
+        rows,
+    })
 }
 
 /// The count of a read after the history rotated (5.6's rows with

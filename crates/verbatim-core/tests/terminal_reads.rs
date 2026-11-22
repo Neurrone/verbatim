@@ -46,8 +46,8 @@ fn changed(at_us: u64) -> Event {
 }
 
 /// A window of `lines`, each one row, the whole document on the screen,
-/// with no rows written past the mark Core named and no caret; its end
-/// mark `end`.
+/// with no rows added past the mark Core named and no caret; its end mark
+/// `end`.
 fn window(lines: &[&str], end: u64) -> TerminalWindow {
     let rows = u32::try_from(lines.len()).expect("a few rows");
     TerminalWindow {
@@ -65,9 +65,9 @@ fn window(lines: &[&str], end: u64) -> TerminalWindow {
         end: TextAnchor(end),
         first_row: TerminalText::unpadded(lines[0]),
         document_rows: rows,
+        // No row added: the mark's row is the last, as it reads now.
         end_place: Some(MarkPlace::Rows {
-            written: 0,
-            opening: None,
+            from: TerminalText::unpadded(lines[lines.len() - 1]),
         }),
         aside_place: None,
         found: MarkSearch::NotAsked,

@@ -311,6 +311,20 @@ impl Window {
             .map(|line| (line.text.clone(), line.top()))
     }
 
+    /// The text of the window's last row, without padding, empty when it
+    /// is blank: the row an end mark set at this read sits after.
+    #[must_use]
+    pub fn last_row_text(&self) -> String {
+        self.lines
+            .len()
+            .checked_sub(1)
+            .and_then(|last| {
+                let line = self.lines.get(last)?;
+                Some(self.row_text(last, line.rows.saturating_sub(1)))
+            })
+            .unwrap_or_default()
+    }
+
     /// The place of the first row of the lowest line reading `text`, when
     /// the window holds one: whether a mark's line is in the window.
     #[must_use]

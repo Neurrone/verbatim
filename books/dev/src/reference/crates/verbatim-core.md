@@ -1526,11 +1526,15 @@ outpost reads the window, two screens up to the document's end, when
 Core asks, by the request list's generic steps (`terminal_window`): a
 `WindowAsk` names the end mark, the mark kept aside, the screen's height,
 "Lines spoken in full" and whether to read colours, `add_steps` writes
-the steps (the visible range, a move from the screen's top and from the
-text's end, the window's text, the first row, the caret and its line and
-rows, a move from each mark with its opening rows, the search for the
-mark's line, and the colours of the screen this batch's visible range
-and top line read, at most sixteen steps with a key's wait),
+the steps (the visible range; a move from the screen's top to the text's
+end, whose landing is the read's end, to which the window's text, the
+document's rows and the next end mark are all counted, so that output
+written while the read runs lies wholly after it; the first row; the
+caret and its line and rows; a move from each mark up to the row it sits
+after, the last row of the read that set it, and the rows from there;
+the search for the mark's line; and the colours of the screen this
+batch's visible range and top line read, at most sixteen steps with a
+key's wait),
 and `window_of` makes the window of their outcomes, a step that failed
 failing the read. The watch's own read is answered with its reply alone,
 so its steps are recomputed from what Core names when the answer
@@ -1538,7 +1542,9 @@ arrives, the search and the colours, last, telling themselves by their
 kinds; a read's time is when its answer reaches Core, the time of the
 input that carries it, which the queue hands the hook answering it and a
 step reads from the driver (`Cx::now_us`), since the facts' copy of the
-queue reads 0 while a step runs. A move by command
+queue reads 0 while a step runs. Every entry point of the watch takes
+its input's time the same way, by which a read it sends asks for the
+colours only within the keys' window. A move by command
 mark searches by `add_search`: a move to the mark's row, `FindText` down
 and up from it, each to 20 matches over 100 calls, and a move from the
 end mark to the text's end, against which `matches_of` counts each
@@ -1593,7 +1599,11 @@ match's rows. Speech of anything but the focus is ignored.
 - The places (`terminal/places.rs`, `TerminalPlaces`), one record per
   terminal node, kept in `SrState::terminal_places` and dropped with the
   outpost generation that minted the node: the end mark the next read
-  counts rows written from, the mark kept aside while a full-screen
+  counts rows written from, with the document's rows and its last row's
+  text when it was set, so that the rows written past it are the rows
+  added since and the mark's own row when output filled or changed it
+  (a blank row counting once it has text or rows below it), the mark kept
+  aside while a full-screen
   program's screen is up, the review position, the command marks, whether
   the history has rotated, the screen's height, and the rows every place
   has moved up by (`written`), by which a search's answer, counted from

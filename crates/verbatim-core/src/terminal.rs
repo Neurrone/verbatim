@@ -317,8 +317,14 @@ fn ask_now(
     now_us: Option<u64>,
 ) -> WindowAsk {
     let colours = now_us.is_some_and(|now_us| in_key_window(focus, now_us));
-    let opening = u32::try_from(state.settings.full_lines()).unwrap_or(u32::MAX);
+    let opening = opening_of(state);
     places_mut(state, focus.terminal.node).ask(held, opening, colours)
+}
+
+/// "Lines spoken in full", the opening group of a read past more rows than
+/// it and the window together.
+fn opening_of(state: &SrState) -> u32 {
+    u32::try_from(state.settings.full_lines()).unwrap_or(u32::MAX)
 }
 
 /// Wants a read of `focus`'s terminal for an input at `now_us`, `held`
@@ -527,7 +533,8 @@ fn answered(
                 Ended::Read(read) => {
                     let window = Arc::new(parse(&read));
                     take_caret(state, node, &read);
-                    let _ = places_mut(state, node).took(&read, &window, (true, 0));
+                    let opening = opening_of(state);
+                    let _ = places_mut(state, node).took(&read, &window, (true, 0, opening));
                     Watch::Live {
                         old: window,
                         read: Read::Idle { dirty },
@@ -653,8 +660,12 @@ fn judged(
     let kept = if answer.dropped {
         Arc::clone(old)
     } else {
-        let placed =
-            places_mut(state, node).took(read, &window, (answer.shares_line, answer.output.len()));
+        let opening = opening_of(state);
+        let placed = places_mut(state, node).took(
+            read,
+            &window,
+            (answer.shares_line, answer.output.len(), opening),
+        );
         let speaks_output = speaks == Speaks::Output && state.settings.report_terminal_output;
         if let Some(past) = placed.past {
             output = past;

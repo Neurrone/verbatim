@@ -9,9 +9,9 @@
 //! makes of the outcomes is pinned whole.
 //!
 //! What is checked: a first read from the screen's top; a read after
-//! output, from two screens above the document's end, counting the rows
-//! written past the end marks it names and giving the opening rows after
-//! them, with the colours of the screen rows whose text changed; a read
+//! output, from two screens above the document's end, giving for each end
+//! mark it names the rows from the one the mark sits after, with the
+//! colours of the screen rows; a read
 //! after a clear, whose marks lie past the document's end and are refused;
 //! the search for a mark's line, by classic calls, against both of Windows
 //! Terminal's kinds of miss (`terminal_find_misses_answer_a_range.json`):
@@ -181,6 +181,8 @@ impl Terminal {
                     anchor: ends.anchors[which],
                     line: line.to_owned(),
                     line_above: 0,
+                    rows: 0,
+                    row: String::new(),
                 },
                 find,
             }),
@@ -188,6 +190,8 @@ impl Terminal {
                 anchor: ends.anchors[which],
                 line: String::new(),
                 line_above: 0,
+                rows: 0,
+                row: String::new(),
             }),
             height: asked.height,
             opening: 2,
@@ -304,9 +308,10 @@ fn caret_on(row: &str) -> (String, usize) {
 }
 
 /// A first read starts at the screen's top; after output, a read from two
-/// screens above the document's end counts the rows written past each
-/// mark it names and gives the two opening rows after them, and reads the
-/// colours of every screen row; after
+/// screens above the document's end gives, for each mark it names, the
+/// rows from the one the mark sits after, which output filled since, and
+/// the two opening rows after it, and reads the colours of every screen
+/// row; after
 /// a clear, both marks lie past the document's end and are refused.
 fn a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways() {
     let mut terminal = Terminal::start("terminal-colours.json", "mockapp-window-marks", 4);
@@ -344,9 +349,12 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways
         colours: true,
     };
     let (second, second_end) = terminal.both(&ask);
+    // Each mark's rows start at the row it sits after, the last read's
+    // last row, "ready>" then and filled by "line 9" since, so that Core
+    // counts that row as written past the mark: it and the two opening
+    // rows after it.
     let past = MarkPlace::Rows {
-        written: 20,
-        opening: Some(unpadded(&["line 10", "line 11"])),
+        from: unpadded(&["line 9", "line 10", "line 11"]),
     };
     assert_eq!(
         second,

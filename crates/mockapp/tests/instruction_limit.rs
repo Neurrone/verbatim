@@ -544,6 +544,8 @@ fn window_shape<'t>(
             anchor: position.anchor,
             line: String::new(),
             line_above: 0,
+            rows: 0,
+            row: String::new(),
         }
     });
     let ask = WindowAsk {
@@ -600,7 +602,7 @@ fn terminal_window_reads_execute_exactly() {
     assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [vec![229], vec![353]],
+        [vec![229], vec![358]],
         "terminal window first and capped"
     );
 }
