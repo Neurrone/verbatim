@@ -2477,7 +2477,6 @@ fn uia_object_steps_cost_exactly() {
             remote_operations: false,
         },
     );
-    outpost.outpost.set_executor_arms(true);
     app.send("set-focus item1");
     let (read, _) = outpost.listener_focus(&under_test.focused(hwnd));
     let (outcome, calls_made) = outpost.complete_focus(read);

@@ -990,19 +990,28 @@ without the proxy rule, `any_window_element`), and the focus window,
 taken before any call that can block. Each step runs under its gate
 (`Step::gate`):
 
-- `Read` by the node's properties (`asked::properties`), an MSAA
-  object's each read alone (`FocusCandidate::property`). Those no
-  snapshot holds are read apart: `Suggestions` by one refresh reading
-  the node's `ControllerFor` live, absent for a node that is neither
-  editable text nor a search field; `HasValuePattern` and
-  `ComboBoxList` by one refresh, the latter by `GetComboBoxInfo` on the
-  node's window when the refresh finds NVDA's classic .NET Framework
-  Windows Forms combo box; `WindowClass` from the node's own or nearest
-  window, with no call into the application; and `TextSummary`, for
-  report focus, by a caret read of the node's text, the selected text
-  when there is any, else the caret's line, holding no baseline
-  (`text::held::summary`). A dead element answers not there. A lone
-  `Read` of a listener's kept element is the listener's.
+- `Read`, `Test`, `IsOneOf` and `Activate` on a UI Automation node, and
+  every `Follow`, run through the UI Automation executor's call arms
+  (`verbatim_uia_rops::batch`, its crate guide), resolved by
+  `outpost/uia_object.rs`: the element filled or found again by its
+  route, the properties the outpost holds (its MSAA ids, whether its
+  window is shown, its window's class, a tree view item's children, and
+  the text summary), a property of the element read in full, and the
+  focus registration.
+- `Read` of an MSAA node by its properties (`asked::properties`), an
+  MSAA object's each read alone (`FocusCandidate::property`). Through
+  either backend, those no snapshot holds are read apart: `Suggestions`
+  by one refresh reading the node's `ControllerFor` live, absent for a
+  node that is neither editable text nor a search field;
+  `HasValuePattern` and `ComboBoxList` by one refresh, the latter by
+  `GetComboBoxInfo` on the node's window when the refresh finds NVDA's
+  classic .NET Framework Windows Forms combo box, both UI Automation's
+  alone; `WindowClass` from the node's own or nearest window, with no
+  call into the application; and `TextSummary`, for report focus, by a
+  caret read of the node's text, the selected text when there is any,
+  else the caret's line, holding no baseline (`text::held::summary`). A
+  dead element answers not there. A lone `Read` of a listener's kept
+  element is the listener's.
 - `Test` lazily in its matcher's order, each property read once and kept
   in its result in the order read. A `Test` of the application's focus,
   the check after a menu end, reads an MSAA focus's focused state over
@@ -1010,8 +1019,10 @@ taken before any call that can block. Each step runs under its gate
   when it has it, kept for the `FocusRead` after it.
 - `Related`: parent, siblings and first child by object navigation
   (`read::navigate`; through UI Automation a `Related` step of the
-  program builder, `read::related_step`), the last child by the
-  children walk, failed when the list ends at a gone child, and the controller-for relation and the first selected
+  program builder, `read::related_step`); a UI Automation node's last
+  child in one such step, taken as a step to the first child is, an
+  MSAA node's by the children walk, failed when the list ends at a gone
+  child; and the controller-for relation and the first selected
   item through the program builder alone, since an MSAA object controls
   nothing. A UI Automation node that is dead or gone answers not there,
   except that `Parent` answers the parent of the element's window
@@ -1036,8 +1047,9 @@ taken before any call that can block. Each step runs under its gate
   taskbar's windows by class path in the control view.
 - `IsOneOf` by NVDA's equality for the equal node and by address for the
   others.
-- `Activate` goes to the issuing registry: UIA's patterns, or MSAA's
-  `accDoDefaultAction`. An activation tries the node, then up to 1,024
+- `Activate` goes to the issuing registry: UIA's patterns through the
+  executor's arm, or MSAA's `accDoDefaultAction`. An activation tries
+  the node, then up to 1,024
   parents (`ACTIVATION_PARENT_HOPS`), stopping at a node it has visited
   before, by runtime id or by an MSAA object's address where it was
   acquired at it (`Store::address_of`), and answers "nothing activated"

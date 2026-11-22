@@ -4,12 +4,16 @@
 //! every later use taking the same object; each step run in order, under
 //! its condition, by the outpost's code for its operation.
 //!
-//! Each operation runs on the code the outpost's kinds of request run on:
-//! a node's properties with those read apart, a navigation step, the
-//! ancestor walk, the children walk for a walk down the tree, the MSAA
-//! candidate's acquisition, focused-state walk and full read, the focus-now
-//! read, an activation, a `Follow`, and the text reads through each
-//! backend's adapter. The controller-for relation and the first selected
+//! A `Read`, `Test`, `IsOneOf` or `Activate` on a UI Automation node, and
+//! every `Follow`, runs through the UI Automation executor's call arms
+//! (`verbatim_uia_rops::batch`), resolved by [`super::uia_object`]; an
+//! activation's walk up the parents is the dispatcher's, each parent
+//! activated through its own backend. Each other operation runs on the
+//! code the outpost's kinds of request run on: an MSAA node's properties
+//! with those read apart, a navigation step, the ancestor walk, the
+//! children walk for a walk down the tree, the MSAA candidate's
+//! acquisition, focused-state walk and full read, the focus-now read, and
+//! the text reads through each backend's adapter. The controller-for relation and the first selected
 //! item run through the program builder ([`verbatim_uia_rops::batch`]), as
 //! does each run of consecutive text steps on one UI Automation node
 //! (`Caret`, `ReadText`, `ReadRange`, `CompareSelection`, `Select`,
@@ -499,7 +503,6 @@ impl Run<'_, '_> {
                     Err(error) => failed(&error, node),
                 },
             }),
-            Op::Follow(target) => self.follow(target.as_ref()),
             Op::FocusRead {
                 subject,
                 known,
@@ -513,11 +516,8 @@ impl Run<'_, '_> {
     /// An object step on a UI Automation node through the executor's call
     /// arm (`Read`, `Test`, `IsOneOf`, `Activate`), a `Follow`, or a last
     /// child in one step: `None` for a step on any other subject, which
-    /// the outpost's own reads run.
+    /// the outpost's MSAA and window reads run.
     fn on_uia_node(&mut self, op: &Op) -> Result<Option<StepOutcome>, Outcome> {
-        if !self.context.executor_arms() {
-            return Ok(None);
-        }
         let subject = match op {
             Op::Read { subject, .. }
             | Op::Test { subject, .. }
@@ -585,8 +585,9 @@ impl Run<'_, '_> {
         })
     }
 
-    /// `Read`: a node's properties with those read apart; an MSAA object's
-    /// each read alone; a window's own object's through its backend.
+    /// `Read`: an MSAA node's properties with those read apart; an MSAA
+    /// object's each read alone; a window's own object's through its
+    /// backend.
     fn read(&mut self, subject: &Subject, set: &[PropertyId]) -> Stepped {
         let place = match self.held(subject)? {
             Ok(place) => place,
@@ -694,12 +695,11 @@ impl Run<'_, '_> {
             Ok(Held::Node(node)) => {
                 let node = *node;
                 let mut snapshot: Option<NodeSnapshot> = None;
-                let client = &mut *self.client;
                 let read_node = evaluate(matcher, &mut read, |id| {
                     let mut values = PropertyValues(vec![PropertyAnswer { id, value: None }]);
                     if !is_reported(id) {
                         if snapshot.is_none() {
-                            snapshot = Some(read::read_node(context, client, node)?);
+                            snapshot = Some(read::read_node(context, node)?);
                         }
                         if let Some(snapshot) = &snapshot {
                             values = asked::values(context, snapshot, &[id]);
@@ -1083,7 +1083,7 @@ impl Run<'_, '_> {
         if walk.include_subject {
             let snapshot = match snapshot {
                 Some(snapshot) => snapshot,
-                None => match read::read_node(context, self.client, start) {
+                None => match read::read_node(context, start) {
                     Ok(snapshot) => snapshot,
                     Err(error) => return Err(Box::new(failed(&error, start))),
                 },
@@ -1188,33 +1188,6 @@ impl Run<'_, '_> {
         Ok(StepOutcome::Done(Done::IsOneOf(
             found.and_then(|place| u32::try_from(place).ok()),
         )))
-    }
-
-    /// `Follow`: the registration moved to the node named, or removed.
-    fn follow(&mut self, target: Option<&verbatim_model::batch::FollowTarget>) -> Stepped {
-        let node = match target {
-            None => None,
-            Some(target) => match self.node(&target.subject)? {
-                Ok(node) => Some(Followed {
-                    node,
-                    group: target.group,
-                    extra: target.extra,
-                }),
-                Err(outcome) => return Ok(outcome),
-            },
-        };
-        let named = node.as_ref().map(|followed| followed.node);
-        let context = self.context;
-        let Some(uia) = self.client.uia() else {
-            return Ok(StepOutcome::Failed);
-        };
-        Ok(match super::followed::follow(context, uia, node.as_ref()) {
-            super::followed::Moved::Done => StepOutcome::Done(Done::Follow),
-            super::followed::Moved::NotThere => {
-                StepOutcome::NotThere(named.map_or(Missing::Object, Missing::Node))
-            }
-            super::followed::Moved::Unregistered => StepOutcome::Failed,
-        })
     }
 
     /// `FocusRead`: an MSAA candidate's full read, the focus-now read, or

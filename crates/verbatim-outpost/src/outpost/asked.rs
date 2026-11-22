@@ -274,9 +274,10 @@ pub(super) fn is_read_apart(id: PropertyId) -> bool {
     )
 }
 
-/// The properties of `set` of node `node_id`: its snapshot, read only when
-/// the set names a property the snapshot holds, and each property read
-/// apart from it ([`read_apart`]).
+/// The properties of `set` of the MSAA node `node_id`: its snapshot, read
+/// only when the set names a property the snapshot holds, and each
+/// property read apart from it ([`read_apart`]). A UI Automation node's
+/// are read by the executor's arms (`verbatim_uia_rops::batch`, `Read`).
 pub(super) fn properties(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -284,7 +285,7 @@ pub(super) fn properties(
     set: &[PropertyId],
 ) -> Result<PropertyValues, ReadError> {
     let mut answers = if set.iter().any(|&id| !is_read_apart(id)) {
-        values(context, &read::read_node(context, client, node_id)?, set)
+        values(context, &read::read_node(context, node_id)?, set)
     } else {
         PropertyValues(
             set.iter()
@@ -298,7 +299,7 @@ pub(super) fn properties(
         .filter(|&id| is_read_apart(id))
         .collect();
     if !apart.is_empty() {
-        let read = read_apart(context, client, node_id, &apart)?;
+        let read = read_apart(context, client, node_id, &apart);
         for answer in &mut answers.0 {
             if let Some(value) = read.answer(answer.id) {
                 answer.value.clone_from(&value.value);
@@ -308,61 +309,29 @@ pub(super) fn properties(
     Ok(answers)
 }
 
-/// The properties of `set` that no snapshot holds, of node `node_id`, each
-/// by the one read its table entry names: whether its suggestions are
-/// open, a refresh reading its controller-for relation live; whether it
-/// has the `Value` pattern; its nearest window's class, from Windows; and,
-/// for a classic .NET Framework Windows Forms combo box, its list's window
-/// by `GetComboBoxInfo`; and how many children a `SysTreeView32` item
-/// holds, by the control's messages, as NVDA's tree view item counts them
-/// (`NVDAObjects/IAccessible/sysTreeView32.py`), with no read of a child.
+/// The properties of `set` that no snapshot holds, of the MSAA node
+/// `node_id`, each by the one read its table entry names: its nearest
+/// window's class, from Windows; its text's summary; and how many children
+/// a `SysTreeView32` item holds, by the control's messages, as NVDA's tree
+/// view item counts them (`NVDAObjects/IAccessible/sysTreeView32.py`),
+/// with no read of a child. Suggestions, the `Value` pattern and a combo
+/// box's list are UI Automation's, which an MSAA node answers none of.
 fn read_apart(
     context: &RequestContext<'_>,
     client: &mut Client,
     node_id: NodeId,
     set: &[PropertyId],
-) -> Result<PropertyValues, ReadError> {
-    let wants = |id| set.contains(&id);
-    let suggestions = if wants(PropertyId::Suggestions) {
-        read::refreshed::<verbatim_uia::SuggestionsRefresh>(context, client, node_id)?
-    } else {
-        None
-    };
-    let combo_box = if wants(PropertyId::HasValuePattern) || wants(PropertyId::ComboBoxList) {
-        read::refreshed::<verbatim_uia::ComboBoxRefresh>(context, client, node_id)?
-    } else {
-        None
-    };
-    Ok(PropertyValues(
+) -> PropertyValues {
+    PropertyValues(
         set.iter()
             .map(|&id| PropertyAnswer {
                 id,
                 value: match id {
-                    PropertyId::Suggestions => suggestions.as_ref().and_then(|element| {
-                        let read = element.read();
-                        read.reports_suggestions()
-                            .then_some(PropertyValue::Flag(read.controls_any))
-                    }),
-                    PropertyId::HasValuePattern => combo_box
-                        .as_ref()
-                        .map(|element| PropertyValue::Flag(element.read().value_available)),
                     PropertyId::WindowClass => read::kept_own_window(context, node_id)
                         .or_else(|| known_nearest_of(context, node_id))
                         .map(|hwnd| {
                             PropertyValue::Text(verbatim_win32::window::window_class_name(hwnd))
                         }),
-                    PropertyId::ComboBoxList => combo_box.as_ref().and_then(|element| {
-                        let read = element.read();
-                        let class = verbatim_model::class::normalize(
-                            &verbatim_win32::window::window_class_name(read.hwnd),
-                        )
-                        .to_owned();
-                        if !read.is_net_framework_win_forms(&class) {
-                            return None;
-                        }
-                        verbatim_win32::window::combo_box_list(read.hwnd)
-                            .map(|list| PropertyValue::Window(window_handle(list)))
-                    }),
                     PropertyId::TextSummary => {
                         text_reads::text_summary(context, client.uia(), node_id)
                             .map(PropertyValue::TextSummary)
@@ -378,7 +347,7 @@ fn read_apart(
                 },
             })
             .collect(),
-    ))
+    )
 }
 
 /// The snapshot `values` describe of node `id`, read through `backend`:

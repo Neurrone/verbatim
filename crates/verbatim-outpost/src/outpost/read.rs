@@ -1805,34 +1805,14 @@ pub(super) fn ancestors(
         .map_err(ReadError::from)
 }
 
-/// The node `node_id` as it is now, for a review command's live read
-/// (`Query::ReadNode`), its table's row and column counts included.
+/// The MSAA node `node_id` as it is now, read live; a UI Automation
+/// node is read by the executor's arms
+/// ([`verbatim_uia_rops::batch`], `Read`).
 pub(super) fn read_node(
     context: &RequestContext<'_>,
-    client: &mut Client,
     node_id: NodeId,
 ) -> Result<NodeSnapshot, ReadError> {
-    if context.store.runtime_id_of(node_id).is_none() {
-        return verbatim_ia2::acquire::read_node(node_id, context.nodes()).map_err(ReadError::from);
-    }
-    let (uia, nodes) = client.uia_with(context, RequestContext::read_node_request)?;
-    let element = resolve_uia_element(context, uia, &nodes, node_id)?;
-    let mut snapshot = with_legacy_checked_state(
-        element.live().element(),
-        element.snapshot_in_table(context.nodes()),
-    );
-    // A combo box without the `Value` pattern, or a looping selector, has
-    // its first selected item's name as its value, read live, as NVDA's
-    // `ComboBoxWithoutValuePattern` reads it (`NVDAObjects/UIA/__init__.py`
-    // 1380 to 1392).
-    if element.read().value_from_selection() {
-        snapshot.value = uia
-            .selected(element.live(), &nodes)
-            .ok()
-            .flatten()
-            .and_then(|selected| selected.read().parts(selected.runtime_id()).name);
-    }
-    Ok(snapshot)
+    verbatim_ia2::acquire::read_node(node_id, context.nodes()).map_err(ReadError::from)
 }
 
 /// The UI Automation element of node `node_id`, for a registration: the
@@ -1852,38 +1832,6 @@ pub(super) fn element_reference(
     let nodes = context.read_node_request(uia).ok()?;
     let element = resolve_uia_element(context, uia, &nodes, node_id).ok()?;
     windows::core::AgileReference::new(element.live().element()).ok()
-}
-
-/// The UI Automation element of node `node_id` refreshed with shape `S`,
-/// in one call when the outpost keeps its element; `None` for an MSAA
-/// node, which UI Automation does not read.
-pub(super) fn refreshed<S: verbatim_uia::Ungated>(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-) -> Result<Option<Cached<S>>, ReadError> {
-    if context.store.runtime_id_of(node_id).is_none() {
-        return Ok(None);
-    }
-    let kept = context
-        .store
-        .element_of(node_id)
-        .and_then(|agile| agile.resolve().ok());
-    let (uia, nodes) = client.uia_with(context, RequestContext::read_node_request)?;
-    let request = uia
-        .request_fixed::<S>()
-        .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
-    let refreshed = match kept {
-        Some(element) => element.live().refresh(&request),
-        None => resolve_uia_element(context, uia, &nodes, node_id)?
-            .live()
-            .refresh(&request),
-    };
-    match refreshed {
-        Ok(element) => Ok(Some(element)),
-        Err(error) if verbatim_uia::element_is_gone(&error) => Err(ReadError::Gone),
-        Err(error) => Err(ReadError::Failed(format!("reading the element: {error}"))),
-    }
 }
 
 /// The window handle the kept element of the UIA node `node_id` says it is,
@@ -2434,17 +2382,11 @@ fn activate_one(
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<Option<ActionName>, ReadError> {
-    if context.store.runtime_id_of(node_id).is_some() && context.executor_arms() {
+    if context.store.runtime_id_of(node_id).is_some() {
         let uia = client
             .uia()
             .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
         return super::uia_object::activate(context, uia, node_id);
-    }
-    if context.store.runtime_id_of(node_id).is_some() {
-        let (uia, _, element) = uia_node(context, client, node_id)?;
-        return uia
-            .activate(element.live().element())
-            .map_err(|error| ReadError::Failed(format!("UIA activation failed: {error}")));
     }
     verbatim_ia2::acquire::activate(node_id, context.nodes()).map_err(ReadError::from)
 }
