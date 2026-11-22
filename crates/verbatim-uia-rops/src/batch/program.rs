@@ -189,6 +189,12 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
     match op {
         Op::Descendants { walk, subject } => walk.view == View::Control || calls_only(subject),
         Op::Related { subject, .. } => calls_only(subject),
+        // The operations with call arms only.
+        Op::Read { .. }
+        | Op::Test { .. }
+        | Op::IsOneOf { .. }
+        | Op::Activate { .. }
+        | Op::Follow(_) => true,
         _ => false,
     }
 }

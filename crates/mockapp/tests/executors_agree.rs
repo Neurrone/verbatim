@@ -1,17 +1,20 @@
 //! The request list's executors agree (the verbatim-outpost crate guide,
 //! "Core's requests"): every batch shape runs through a real outpost's own
-//! `batch::answer`, its resolvers and its executors, once with remote
-//! operations on and once with them off, against the same mockapp, and
-//! each batch's outcome is the same both ways. Built with the `faults`
+//! `batch::answer`, its resolvers and its executors, with remote operations
+//! on and off, and with the object steps on UI Automation nodes run by the
+//! outpost's own reads and by the executor's arms (the dispatch choice the
+//! switch removes), against the same mockapp, and each batch's outcome is
+//! the same all four ways, node ids compared by their order of first
+//! appearance, since a last child read in one step mints no id for the
+//! children before it. Built with the `faults`
 //! feature, as `cargo xtask faults` builds it, it runs instead the caret's
 //! reads with each of the program faults the fallback rule covers armed on
 //! the remote run, which still answer as the calls alone do.
 //!
 //! Each run starts with a read of the focus and a batch that names the
-//! nodes after it ([`naming`]). The two runs share one mockapp, one after the other, so the windows and
-//! the node ids the two outposts mint, in the same order, are the same;
-//! the one activation selects an item, which a second selection leaves as
-//! it is.
+//! nodes after it ([`naming`]). The runs share one mockapp, one after the
+//! other, so the windows are the same; the one activation selects an item,
+//! which a second selection leaves as it is.
 
 #![cfg_attr(
     feature = "faults",
@@ -180,9 +183,10 @@ type Armed = std::convert::Infallible;
 type Script = fn(HWND, &Named) -> Vec<Labelled>;
 
 /// The outcome of each batch of `script` against mockapp's window `hwnd`,
-/// its element `focused` read as the focus, read by an outpost with remote operations `remote`, after the walk that
-/// names the nodes; on the remote run each batch's fault is armed to fire
-/// once.
+/// its element `focused` read as the focus, read by an outpost with remote
+/// operations `remote` and the executor's object arms `arms`, after the
+/// walk that names the nodes; on the remote run each batch's fault is
+/// armed to fire once.
 fn outcomes(
     (app, hwnd, (focused, focus_name)): (
         &common::MockApp,
@@ -192,7 +196,7 @@ fn outcomes(
             &str,
         ),
     ),
-    remote: bool,
+    (remote, arms): (bool, bool),
     script: Script,
 ) -> Vec<(String, String)> {
     let outpost = OutpostUnderTest::with_options(
@@ -201,6 +205,7 @@ fn outcomes(
             remote_operations: remote,
         },
     );
+    outpost.outpost.set_executor_arms(arms);
     outpost.read_focus_as(focused);
     let (focus, _) = outpost.batch(
         hwnd,
@@ -232,12 +237,46 @@ fn outcomes(
         outcomes.push((label, format!("{:#?}", answer.outcome)));
     }
     drop(outpost);
+    renumbered(outcomes)
+}
+
+/// `outcomes` with each node id's number replaced by its place among the
+/// node ids in order of first appearance.
+fn renumbered(outcomes: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut seen: Vec<String> = Vec::new();
     outcomes
+        .into_iter()
+        .map(|(label, text)| {
+            let mut out = String::new();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("NodeId {") {
+                let Some(number) = rest[at..].find("number: ").map(|place| at + place + 8) else {
+                    break;
+                };
+                let end = number
+                    + rest[number..]
+                        .find(|c: char| !c.is_ascii_digit())
+                        .unwrap_or(rest.len() - number);
+                let id = &rest[number..end];
+                let place = seen.iter().position(|each| each == id).unwrap_or_else(|| {
+                    seen.push(id.to_owned());
+                    seen.len() - 1
+                });
+                out.push_str(&rest[..number]);
+                out.push('#');
+                out.push_str(&place.to_string());
+                rest = &rest[end..];
+            }
+            out.push_str(rest);
+            (label, out)
+        })
+        .collect()
 }
 
 /// Runs `script` against `fixture`, its element `focus`, named
-/// `focus_name`, focused, with remote operations on, then off, and asserts
-/// each batch answered the same both ways.
+/// `focus_name`, focused, with remote operations on, then off, by the
+/// outpost's own reads, then by the executor's arms, and asserts each
+/// batch answered the same all four ways.
 fn agree(fixture: &str, (focus, focus_name): (&str, &str), script: Script) {
     common::init_com();
     let title = common::unique_title("mockapp-executors-agree");
@@ -250,14 +289,20 @@ fn agree(fixture: &str, (focus, focus_name): (&str, &str), script: Script) {
         .live()
         .element()
         .clone();
-    let remote = outcomes((&app, hwnd, (&focused, focus_name)), true, script);
-    let classic = outcomes((&app, hwnd, (&focused, focus_name)), false, script);
-    assert_eq!(remote.len(), classic.len());
-    for ((label, remote), (_, classic)) in remote.iter().zip(&classic) {
-        assert_eq!(
-            remote, classic,
-            "{fixture}, {label}: remote operations on and off answer differently"
-        );
+    let remote = outcomes((&app, hwnd, (&focused, focus_name)), (true, false), script);
+    for (way, ways) in [
+        ("remote operations off", (false, false)),
+        ("the executor's arms", (true, true)),
+        ("the executor's arms, remote operations off", (false, true)),
+    ] {
+        let other = outcomes((&app, hwnd, (&focused, focus_name)), ways, script);
+        assert_eq!(remote.len(), other.len());
+        for ((label, remote), (_, other)) in remote.iter().zip(&other) {
+            assert_eq!(
+                remote, other,
+                "{fixture}, {label}: {way} answers differently"
+            );
+        }
     }
     app.quit();
 }
@@ -281,6 +326,14 @@ fn object_operations(_: HWND, named: &Named) -> Vec<Labelled> {
             None,
         ));
         batches.push((
+            format!("a read apart of {name}"),
+            batch(vec![Op::Read {
+                subject: node.clone(),
+                set: vec![PropertyId::Suggestions, PropertyId::WindowClass],
+            }]),
+            None,
+        ));
+        batches.push((
             format!("tests of {name}"),
             batch(vec![
                 Op::Test {
@@ -295,6 +348,14 @@ fn object_operations(_: HWND, named: &Named) -> Vec<Labelled> {
                     matcher: Matcher::Any(vec![
                         Matcher::Absent(PropertyId::Description),
                         Matcher::Is(PropertyId::WindowShown, PropertyValue::Flag(true)),
+                    ]),
+                },
+                Op::Test {
+                    subject: node.clone(),
+                    matcher: Matcher::All(vec![
+                        Matcher::Absent(PropertyId::WindowClass),
+                        Matcher::Absent(PropertyId::MsaaAddress),
+                        Matcher::Not(Box::new(Matcher::Absent(PropertyId::Name))),
                     ]),
                 },
             ]),

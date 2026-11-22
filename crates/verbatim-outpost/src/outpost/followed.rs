@@ -22,7 +22,6 @@ use verbatim_uia::{Group, Scope};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
-use super::read::Client;
 use super::{Context, RequestContext};
 
 /// What the newest `Follow` named, with the elements its registration was
@@ -69,7 +68,7 @@ pub(super) enum Moved {
 /// there, with every registration removed.
 pub(super) fn follow(
     context: &RequestContext<'_>,
-    client: &mut Client,
+    uia: &verbatim_uia::Uia,
     node: Option<&Followed>,
 ) -> Moved {
     let Some(registration) = context.focus_events.get() else {
@@ -83,7 +82,7 @@ pub(super) fn follow(
         // its route when the outpost keeps none.
         let extra = followed
             .extra
-            .and_then(|extra| super::read::element_reference(context, client, extra));
+            .and_then(|extra| super::read::element_reference(context, uia, extra));
         Some(Named {
             node: followed.node,
             element,

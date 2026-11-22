@@ -469,6 +469,9 @@ impl Run<'_, '_> {
     }
 
     fn step(&mut self, op: &Op) -> Stepped {
+        if let Some(outcome) = self.on_uia_node(op)? {
+            return Ok(outcome);
+        }
         match op {
             Op::Read { subject, set } => self.read(subject, set),
             Op::Test { subject, matcher } => self.test(subject, matcher),
@@ -505,6 +508,81 @@ impl Run<'_, '_> {
             } => self.focus_read(subject, (known, set, *details)),
             _ => self.text(op),
         }
+    }
+
+    /// An object step on a UI Automation node through the executor's call
+    /// arm (`Read`, `Test`, `IsOneOf`, `Activate`), a `Follow`, or a last
+    /// child in one step: `None` for a step on any other subject, which
+    /// the outpost's own reads run.
+    fn on_uia_node(&mut self, op: &Op) -> Result<Option<StepOutcome>, Outcome> {
+        if !self.context.executor_arms() {
+            return Ok(None);
+        }
+        let subject = match op {
+            Op::Read { subject, .. }
+            | Op::Test { subject, .. }
+            | Op::IsOneOf { subject, .. }
+            | Op::Activate { subject }
+            | Op::Related {
+                subject,
+                relation: Relation::LastChild,
+                ..
+            } => subject,
+            Op::Follow(target) => return self.follow_step(target.as_ref()).map(Some),
+            _ => return Ok(None),
+        };
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(Some(outcome)),
+        };
+        let node = match &self.held[place].1 {
+            Ok(Held::Node(node)) if self.context.store.runtime_id_of(*node).is_some() => *node,
+            _ => return Ok(None),
+        };
+        let context = self.context;
+        Ok(Some(match op {
+            Op::Related { set, .. } => match read::last_child(context, self.client, node) {
+                Ok(reached) => StepOutcome::Done(Done::Related(
+                    reached
+                        .map(|reached| asked::node_read(context, &reached, None, set))
+                        .into_iter()
+                        .collect(),
+                )),
+                Err(error) => failed(&error, node),
+            },
+            Op::Activate { .. } => match read::activate(context, self.client, node) {
+                Ok(action) => StepOutcome::Done(Done::Activate(action)),
+                Err(error) => failed(&error, node),
+            },
+            op => match self.client.uia() {
+                Some(uia) => super::uia_object::step(context, uia, node, op),
+                None => StepOutcome::Failed,
+            },
+        }))
+    }
+
+    /// `Follow` through the executor's call arm: the registration moved to
+    /// the node named, or removed.
+    fn follow_step(
+        &mut self,
+        target: Option<&verbatim_model::batch::FollowTarget>,
+    ) -> Result<StepOutcome, Outcome> {
+        let followed = match target {
+            None => None,
+            Some(target) => match self.node(&target.subject)? {
+                Ok(node) => Some(Followed {
+                    node,
+                    group: target.group,
+                    extra: target.extra,
+                }),
+                Err(outcome) => return Ok(outcome),
+            },
+        };
+        let context = self.context;
+        Ok(match self.client.uia() {
+            Some(uia) => super::uia_object::follow(context, uia, (target, followed)),
+            None => StepOutcome::Failed,
+        })
     }
 
     /// `Read`: a node's properties with those read apart; an MSAA object's
@@ -1126,15 +1204,17 @@ impl Run<'_, '_> {
             },
         };
         let named = node.as_ref().map(|followed| followed.node);
-        Ok(
-            match super::followed::follow(self.context, self.client, node.as_ref()) {
-                super::followed::Moved::Done => StepOutcome::Done(Done::Follow),
-                super::followed::Moved::NotThere => {
-                    StepOutcome::NotThere(named.map_or(Missing::Object, Missing::Node))
-                }
-                super::followed::Moved::Unregistered => StepOutcome::Failed,
-            },
-        )
+        let context = self.context;
+        let Some(uia) = self.client.uia() else {
+            return Ok(StepOutcome::Failed);
+        };
+        Ok(match super::followed::follow(context, uia, node.as_ref()) {
+            super::followed::Moved::Done => StepOutcome::Done(Done::Follow),
+            super::followed::Moved::NotThere => {
+                StepOutcome::NotThere(named.map_or(Missing::Object, Missing::Node))
+            }
+            super::followed::Moved::Unregistered => StepOutcome::Failed,
+        })
     }
 
     /// `FocusRead`: an MSAA candidate's full read, the focus-now read, or

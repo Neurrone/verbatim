@@ -54,6 +54,7 @@ mod read;
 mod shell;
 mod store;
 pub(crate) mod text_reads;
+mod uia_object;
 pub(crate) mod window;
 mod worker;
 
@@ -241,6 +242,10 @@ pub(crate) struct Context {
     /// Whether the event thread's console hook was asked for
     /// ([`Context::hook_console`]).
     console_hooked: std::sync::atomic::AtomicBool,
+    /// Whether a batch's object steps on UI Automation nodes run through
+    /// the executor's arms rather than the outpost's own reads
+    /// ([`Outpost::set_executor_arms`]), held only until the switch.
+    executor_arms: std::sync::atomic::AtomicBool,
 }
 
 /// An event the outpost's own UIA handlers or `WinEvent` hooks took in from
@@ -652,6 +657,10 @@ impl Context {
     /// raised after the baseline read Core sends behind it is heard;
     /// one raised before is covered by that read. A hook that cannot be
     /// installed is reported to Core ([`OutpostToCore::Fault`]).
+    fn executor_arms(&self) -> bool {
+        self.executor_arms.load(Ordering::Relaxed)
+    }
+
     fn hook_console(&self) {
         if self.console_hooked.swap(true, Ordering::AcqRel) {
             return;
@@ -859,6 +868,7 @@ impl Outpost {
             failed_reads: AtomicU32::new(0),
             event_thread: OnceLock::new(),
             console_hooked: std::sync::atomic::AtomicBool::new(false),
+            executor_arms: std::sync::atomic::AtomicBool::new(false),
         });
         if let Some(registration) = register_focus_events(&context) {
             let _ = context.focus_events.set(registration);
@@ -1109,6 +1119,15 @@ impl Outpost {
     /// can take the keyboard focus says which window has it.
     pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
         *self.context.focus_window.lock() = reader;
+    }
+
+    /// Runs a batch's `Read`, `Test`, `IsOneOf`, `Activate`, `Follow` and
+    /// last child on a UI Automation node through the executor's arms when
+    /// `on`, else through the outpost's own reads: the dispatch choice the
+    /// one-path work's differential compares, held only until the switch.
+    #[doc(hidden)]
+    pub fn set_executor_arms(&self, on: bool) {
+        self.context.executor_arms.store(on, Ordering::Relaxed);
     }
 
     /// Judges whether a window can be read with `reader` rather than by

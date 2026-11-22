@@ -1724,7 +1724,7 @@ pub(super) fn foreground_object_among(
 /// kept and the read fails: it may well still be alive. So does a route's
 /// walk that fails rather than finishing without the element
 /// ([`super::focus_path::find`]).
-fn resolve_uia_element(
+pub(super) fn resolve_uia_element(
     context: &RequestContext<'_>,
     uia: &Uia,
     nodes: &Request<Node>,
@@ -1841,7 +1841,7 @@ pub(super) fn read_node(
 /// an MSAA node or one whose element is gone.
 pub(super) fn element_reference(
     context: &RequestContext<'_>,
-    client: &mut Client,
+    uia: &Uia,
     node_id: NodeId,
 ) -> Option<windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>>
 {
@@ -1849,9 +1849,7 @@ pub(super) fn element_reference(
         return Some(kept.reference());
     }
     context.store.runtime_id_of(node_id)?;
-    let (uia, nodes) = client
-        .uia_with(context, RequestContext::read_node_request)
-        .ok()?;
+    let nodes = context.read_node_request(uia).ok()?;
     let element = resolve_uia_element(context, uia, &nodes, node_id).ok()?;
     windows::core::AgileReference::new(element.live().element()).ok()
 }
@@ -2023,7 +2021,7 @@ fn uia_step(
     context: &RequestContext<'_>,
     client: &mut Client,
     node_id: NodeId,
-    kind: QueryKind,
+    relation: verbatim_model::batch::Relation,
 ) -> Result<Stepped, ReadError> {
     if let Some(element) = context
         .store
@@ -2036,7 +2034,7 @@ fn uia_step(
             element.read().hwnd,
             element.served_only_by_uia_proxies() == Some(true),
         );
-        if let Some(stepped) = related_step(context, uia, &nodes, (node_id, from, kind))? {
+        if let Some(stepped) = related_step(context, uia, &nodes, (node_id, from, relation))? {
             return Ok(stepped);
         }
         context.store.evict_element(node_id);
@@ -2047,7 +2045,7 @@ fn uia_step(
         element.read().role.hwnd,
         element.served_only_by_uia_proxies() == Some(true),
     );
-    related_step(context, uia, &nodes, (node_id, from, kind))?.ok_or(ReadError::Gone)
+    related_step(context, uia, &nodes, (node_id, from, relation))?.ok_or(ReadError::Gone)
 }
 
 /// The matchers a walk down the tree judges each node it reads by.
@@ -2122,7 +2120,7 @@ impl OneElement<'_> {
     }
 }
 
-/// One navigation step `kind` through the program builder
+/// One navigation step `relation` through the program builder
 /// (`verbatim_uia_rops::batch`, `Related`) from `element`, node `node_id`'s, whose own
 /// window is `own`, 0 for none, each node reached filled as `nodes` asks:
 /// `None` when the element is gone. A step from a top-level window, whose
@@ -2133,24 +2131,18 @@ fn related_step(
     context: &RequestContext<'_>,
     uia: &Uia,
     nodes: &Request<Node>,
-    (node_id, (element, own, proxied), kind): (
+    (node_id, (element, own, proxied), relation): (
         NodeId,
         (
             &windows::Win32::UI::Accessibility::IUIAutomationElement,
             isize,
             bool,
         ),
-        QueryKind,
+        verbatim_model::batch::Relation,
     ),
 ) -> Result<Option<Stepped>, ReadError> {
-    use verbatim_model::batch::{Op, Relation};
+    use verbatim_model::batch::Op;
     use verbatim_uia_rops::batch::{Found, Ran};
-    let relation = match kind {
-        QueryKind::Parent => Relation::Parent,
-        QueryKind::NextSibling => Relation::NextSibling,
-        QueryKind::PreviousSibling => Relation::PreviousSibling,
-        QueryKind::FirstChild => Relation::FirstChild,
-    };
     let window = (own != 0).then_some(own);
     let fill = Fill::new(nodes);
     let from = OneElement {
@@ -2215,34 +2207,68 @@ fn step(
     node_id: NodeId,
     kind: QueryKind,
 ) -> Result<Option<NodeSnapshot>, ReadError> {
-    let (neighbor, from_window) = if context.store.runtime_id_of(node_id).is_some() {
-        let (neighbor, from_window) = uia_step(context, client, node_id, kind)?;
-        if let Some(neighbor) = &neighbor {
-            let from_is_window = kept_own_window(context, node_id).is_some();
-            if let Some(window) =
-                neighbor_nearest_window(neighbor, kind, from_window, from_is_window)
-            {
-                context.store.record_nearest_window(neighbor.id, window);
-            }
+    use verbatim_model::batch::Relation;
+    if context.store.runtime_id_of(node_id).is_some() {
+        let relation = match kind {
+            QueryKind::Parent => Relation::Parent,
+            QueryKind::NextSibling => Relation::NextSibling,
+            QueryKind::PreviousSibling => Relation::PreviousSibling,
+            QueryKind::FirstChild => Relation::FirstChild,
+        };
+        return uia_neighbor(context, client, node_id, (relation, kind));
+    }
+    let from_window = context.store.key_of(node_id).map(|key| key.0);
+    let neighbor = verbatim_ia2::acquire::navigate(node_id, context.nodes(), kind)?;
+    Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
+}
+
+/// The last child of the UI Automation node `node_id`, in one step, taken
+/// as a step to the first child is: the child, or `None` for a node with
+/// none, never conflated with a node that is gone.
+pub(super) fn last_child(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+) -> Result<Option<NodeSnapshot>, ReadError> {
+    uia_neighbor(
+        context,
+        client,
+        node_id,
+        (
+            verbatim_model::batch::Relation::LastChild,
+            QueryKind::FirstChild,
+        ),
+    )
+}
+
+/// One step by `relation` from the UI Automation node `node_id`, taken as
+/// a step of `kind` is: the neighbor's nearest window recorded, a menu
+/// item's legacy checked state read, and its backend corrected.
+fn uia_neighbor(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node_id: NodeId,
+    (relation, kind): (verbatim_model::batch::Relation, QueryKind),
+) -> Result<Option<NodeSnapshot>, ReadError> {
+    let (neighbor, from_window) = uia_step(context, client, node_id, relation)?;
+    if let Some(neighbor) = &neighbor {
+        let from_is_window = kept_own_window(context, node_id).is_some();
+        if let Some(window) = neighbor_nearest_window(neighbor, kind, from_window, from_is_window) {
+            context.store.record_nearest_window(neighbor.id, window);
         }
-        // A menu item reached by navigation reads its legacy checked state
-        // as a focused one does.
-        let neighbor = neighbor.map(|neighbor| {
-            match context
-                .store
-                .element_of(neighbor.id)
-                .and_then(|agile| agile.resolve().ok())
-            {
-                Some(element) => with_legacy_checked_state(element.live().element(), neighbor),
-                None => neighbor,
-            }
-        });
-        (neighbor, from_window)
-    } else {
-        let from_window = context.store.key_of(node_id).map(|key| key.0);
-        let neighbor = verbatim_ia2::acquire::navigate(node_id, context.nodes(), kind)?;
-        (neighbor, from_window)
-    };
+    }
+    // A menu item reached by navigation reads its legacy checked state as
+    // a focused one does.
+    let neighbor = neighbor.map(|neighbor| {
+        match context
+            .store
+            .element_of(neighbor.id)
+            .and_then(|agile| agile.resolve().ok())
+        {
+            Some(element) => with_legacy_checked_state(element.live().element(), neighbor),
+            None => neighbor,
+        }
+    });
     Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
 }
 
@@ -2408,6 +2434,12 @@ fn activate_one(
     client: &mut Client,
     node_id: NodeId,
 ) -> Result<Option<ActionName>, ReadError> {
+    if context.store.runtime_id_of(node_id).is_some() && context.executor_arms() {
+        let uia = client
+            .uia()
+            .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
+        return super::uia_object::activate(context, uia, node_id);
+    }
     if context.store.runtime_id_of(node_id).is_some() {
         let (uia, _, element) = uia_node(context, client, node_id)?;
         return uia

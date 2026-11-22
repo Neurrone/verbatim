@@ -2451,6 +2451,146 @@ fn a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone() {
     app.quit();
 }
 
+/// What each object step on a UI Automation node costs by calls, through
+/// the executor's call arms, with remote operations off: a read of the
+/// node's own properties, the element filled in one call; a read apart of
+/// its suggestions and window class, one refresh of its own; a test, the
+/// element read once; an identity check and a `Follow`, no call; an
+/// activation, the element filled and each pattern fetched until one acts,
+/// as the outpost's own reads made them; and the last child of a list, one
+/// step and the nearest window, whatever the number of children, where the
+/// outpost's children walk made eight for its three. Each runs alone,
+/// from a focus on the list's first item, `One`, completed from the
+/// listener's read.
+#[expect(clippy::too_many_lines, reason = "one step per operation")]
+fn uia_object_steps_cost_exactly() {
+    use verbatim_model::batch::{Done, Op, Relation, StepOutcome, Subject};
+    use verbatim_model::matcher::Matcher;
+    use verbatim_model::property::{PropertyId, PropertyValue};
+    let title = common::unique_title("mockapp-counts-uia-object-steps");
+    let mut app = common::spawn_visible("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::on_frozen_time_with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    outpost.outpost.set_executor_arms(true);
+    app.send("set-focus item1");
+    let (read, _) = outpost.listener_focus(&under_test.focused(hwnd));
+    let (outcome, calls_made) = outpost.complete_focus(read);
+    let focused = Focused::of(outcome, calls_made);
+    assert_eq!(focused.name(), Some("One"));
+    let one = focused.node();
+    outpost.settled();
+    let step = |op: Op| {
+        let (answer, calls_made) =
+            outpost.batch(hwnd, WindowVerdict::Uia, common::outpost::one(op));
+        (common::outpost::only_step(answer.outcome), calls_made)
+    };
+    let reached = |outcome: StepOutcome| match outcome {
+        StepOutcome::Done(Done::Related(reads)) => reads
+            .first()
+            .and_then(|read| read.node)
+            .expect("a node reached"),
+        other => panic!("the step answered {other:?}"),
+    };
+    let (list, _) = step(Op::Related {
+        subject: Subject::Node(one),
+        relation: Relation::Parent,
+        set: Vec::new(),
+    });
+    let list = reached(list);
+    let (two, _) = step(Op::Related {
+        subject: Subject::Node(one),
+        relation: Relation::NextSibling,
+        set: Vec::new(),
+    });
+    let two = reached(two);
+
+    let mut ratchet = Ratchet::default();
+    for (operation, op, expected_calls) in [
+        (
+            "UIA read of a node's own properties, classically",
+            Op::Read {
+                subject: Subject::Node(one),
+                set: vec![PropertyId::Name, PropertyId::Role, PropertyId::States],
+            },
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA read apart of a node's suggestions and window class, classically",
+            Op::Read {
+                subject: Subject::Node(one),
+                set: vec![PropertyId::Suggestions, PropertyId::WindowClass],
+            },
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA test of a node, classically",
+            Op::Test {
+                subject: Subject::Node(one),
+                matcher: Matcher::All(vec![
+                    Matcher::Is(PropertyId::Role, PropertyValue::Role(Role::ListItem)),
+                    Matcher::HasState(verbatim_model::State::Selectable),
+                ]),
+            },
+            calls(1, 0, 0),
+        ),
+        (
+            "UIA identity check of a node",
+            Op::IsOneOf {
+                subject: Subject::Node(one),
+                equal: Some(two),
+                at_address: vec![one],
+            },
+            calls(0, 0, 0),
+        ),
+        (
+            "UIA last child of a list, classically",
+            Op::Related {
+                subject: Subject::Node(list),
+                relation: Relation::LastChild,
+                set: vec![PropertyId::Name],
+            },
+            calls(2, 0, 0),
+        ),
+        (
+            "UIA activation of a node, classically",
+            Op::Activate {
+                subject: Subject::Node(two),
+            },
+            calls(5, 0, 0),
+        ),
+        (
+            "UIA follow of a node",
+            Op::Follow(Some(verbatim_model::batch::FollowTarget {
+                subject: Subject::Node(one),
+                group: verbatim_model::request::FollowGroup::Base,
+                extra: None,
+            })),
+            calls(0, 0, 0),
+        ),
+    ] {
+        let _ = verbatim_uia::calls::take_failed_reads();
+        let (outcome, calls_made) = step(op);
+        assert!(
+            matches!(outcome, StepOutcome::Done(_)),
+            "{operation} answered {outcome:?}"
+        );
+        let cost = Cost {
+            calls: calls_made,
+            failed_reads: outpost.take_failed_reads(),
+        };
+        ratchet.check(operation, &cost, expected_calls, 0);
+    }
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
 /// What registering for events costs. A registration is made on its own
 /// thread and is the same with remote operations on or off, so it makes no
 /// counted call on this thread either way: the focus listener's
@@ -4507,6 +4647,10 @@ fn main() {
         (
             "uia_navigation_steps_cost_exactly",
             uia_navigation_steps_cost_exactly,
+        ),
+        (
+            "uia_object_steps_cost_exactly",
+            uia_object_steps_cost_exactly,
         ),
         (
             "a_node_whose_route_does_not_lead_to_it_is_gone_by_its_route_alone",

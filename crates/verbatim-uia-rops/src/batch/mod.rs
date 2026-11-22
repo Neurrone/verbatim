@@ -14,9 +14,10 @@
 //! limit on one run. A step whose subject no program can take, an element
 //! served only by UI Automation's proxies inside this process or a step
 //! from a top-level window ([`Element::calls_only`]), runs by calls, as
-//! does a walk of the control view. `Read` and `Ancestors` are not
-//! fusable: the outpost reads them through its own reads (Claude,
-//! 2026-11-22).
+//! does a walk of the control view. `Read`, `Test`, `IsOneOf`, `Activate`
+//! and `Follow` have call arms only, and each runs alone by calls
+//! ([`object`]'s module documentation says why). `Ancestors` is not here:
+//! the outpost reads it through its own reads (Claude, 2026-11-22).
 //!
 //! After a program, the fallback rule of the design's section 5 decides
 //! what runs again by calls, in batch order, before anything after it:
@@ -24,6 +25,7 @@
 //! end-to-end scenario that meets one fails.
 
 mod calls;
+mod object;
 mod program;
 mod walk;
 
@@ -41,6 +43,7 @@ use crate::error::Error;
 use crate::text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 
 pub use calls::run_calls;
+pub use object::{ElementRead, TestFound};
 
 /// A run of consecutive fusable steps of one batch, the model's own, from
 /// place `first`; what they name before it, a subject, a point, a
@@ -136,6 +139,58 @@ pub trait Resolve {
         _details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
         Err(Defect("a text read on a resolver of objects").ran())
+    }
+
+    /// The element an object step's subject names, its cache filled by
+    /// the fill of the step at `place`: one call, or the outpost's walk of
+    /// the route to it when it keeps none. What a `Read`, a `Test` and an
+    /// `Activate` read first.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when it names none, or the read fails.
+    fn filled(&self, _subject: &Subject, _place: Place) -> Result<Cached<Node>, Ran> {
+        Err(Defect("an element read on a resolver of text").ran())
+    }
+
+    /// The node an object step's subject names, as the outpost holds it.
+    fn node_id(&self, _subject: &Subject) -> Option<verbatim_model::NodeId> {
+        None
+    }
+
+    /// Property `id` of the subject that the outpost answers from what it
+    /// holds rather than from the element's cache: its MSAA ids, whether
+    /// its window is shown, its window's class, a tree view item's
+    /// children, and its text's summary, read through the outpost's text
+    /// until the text reads join the executor.
+    fn held(
+        &self,
+        _subject: &Subject,
+        _id: verbatim_model::property::PropertyId,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        None
+    }
+
+    /// Property `id` of the element `read`, as its node's snapshot holds
+    /// it, the node minted by the outpost. Local.
+    fn value(
+        &self,
+        _read: &ElementRead,
+        _id: verbatim_model::property::PropertyId,
+    ) -> Option<verbatim_model::property::PropertyValue> {
+        None
+    }
+
+    /// Moves the outpost's focus registration to what `target` names, or
+    /// removes it, as `Follow` asks: the registration and what it follows
+    /// are the outpost's.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the node named is not held, or the outpost
+    /// has no registration.
+    fn follow(&self, _target: Option<&verbatim_model::batch::FollowTarget>) -> Result<(), Ran> {
+        Err(Defect("a follow on a resolver with no registration").ran())
     }
 
     /// What a `WaitForCaret` poll's check compares.
@@ -389,6 +444,16 @@ pub enum Found {
     Locate(Option<(f64, f64)>),
     /// A `WaitForCaret` poll's check's.
     WaitCheck(Checked),
+    /// `Read`'s: the properties of its set, in its order.
+    Read(verbatim_model::property::PropertyValues),
+    /// `Test`'s.
+    Test(TestFound),
+    /// `IsOneOf`'s: the place of the node met among those named.
+    IsOneOf(Option<u32>),
+    /// `Activate`'s: the action performed.
+    Activate(Option<verbatim_model::ActionName>),
+    /// `Follow`'s: the registration moved.
+    Follow,
 }
 
 impl Found {
@@ -404,7 +469,12 @@ impl Found {
             | Self::ReadRange(_)
             | Self::CompareSelection(_)
             | Self::Select
-            | Self::Locate(_) => None,
+            | Self::Locate(_)
+            | Self::Read(_)
+            | Self::Test(_)
+            | Self::IsOneOf(_)
+            | Self::Activate(_)
+            | Self::Follow => None,
         }
     }
 }
@@ -708,6 +778,11 @@ fn kind_name(op: &Op) -> &'static str {
         Op::Select { .. } => "select",
         Op::Locate { .. } => "locate",
         Op::WaitForCaret { .. } => "wait check",
+        Op::Read { .. } => "read",
+        Op::Test { .. } => "test",
+        Op::IsOneOf { .. } => "is one of",
+        Op::Activate { .. } => "activate",
+        Op::Follow(_) => "follow",
         _ => "not fusable",
     }
 }

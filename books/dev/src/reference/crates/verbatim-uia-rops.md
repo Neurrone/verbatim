@@ -32,12 +32,16 @@ lists the rest.
 
 ## The program builder and the ordinary-calls executor
 
-`batch` runs the request list's fusable operations on UI Automation
-subjects (`Related`, `Descendants`, `Caret`, `ReadText`, `ReadRange`,
-`CompareSelection`, `Select`, `Locate`; `verbatim_model::batch`). `Read`
-and `Ancestors` are not among them: the outpost answers them through its
-own object reads, so no program arm or call arm of theirs is kept for
-tests alone (Claude, 2026-11-22). Its input is a `Segment`: a run of
+`batch` runs the request list's operations on UI Automation subjects
+(`verbatim_model::batch`): `Related`, `Descendants`, `Caret`,
+`ReadText`, `ReadRange`, `CompareSelection`, `Select` and `Locate` with a
+program arm and a call arm each, and `Read`, `Test`, `IsOneOf`,
+`Activate` and `Follow` with a call arm only, each run alone by calls
+(`batch/object.rs`): a `Read` adds reads a program would drop or cut its
+segment for, a menu item's legacy state, a selected item's value and
+refreshes of its own, and a `Test` reads only what its matcher asks next
+(Claude, 2026-11-22). `Ancestors` is not among them: the outpost answers
+it through its own reads. Its input is a `Segment`: a run of
 consecutive steps of one parsed batch, the model's own `Step`s, with the
 place of the first, the outcomes of the batch's steps before it, and a
 resolver (`Resolve`) for what the steps name that the outpost holds: the
@@ -48,8 +52,15 @@ window), the text a text step's subject names, a position Core names or
 a point of a step before the run (`HeldAt`, the position and any text
 after it), a baseline, how a `ReadText`'s unit and details are read
 (`UnitsRead`), the `Fill` each node reached takes, a walk's judgement
-(the outpost's matchers evaluated in Rust on each node read), and a
-caret wait's starting point. A reference or condition on a step before
+(the outpost's matchers evaluated in Rust on each node read), a
+caret wait's starting point, and for the object arms the element filled
+(`filled`, found again by its route when the outpost keeps none), the
+node's id, the properties the outpost answers from what it holds
+(`held`: its MSAA ids, whether its window is shown, its window's class,
+a tree view item's children, and the text summary until the text reads
+join the executor), a property of an element read in full (`value`, from
+an `ElementRead`, the node minted by the outpost), and the focus
+registration a `Follow` moves. A reference or condition on a step before
 the run is decided from the earlier outcomes. Each resolution that
 fails, a refusal or an anchor no longer held, is the step's outcome. The
 executors read every other input from the step itself, so no second
