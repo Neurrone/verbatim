@@ -1152,6 +1152,19 @@ fn a_held_read_after_rotation_asks_for_the_search() {
 }
 
 #[test]
+fn typing_on_the_documents_first_row_is_no_rotation() {
+    // The first row changing with the row count the same is rotation only
+    // when that row lies above the screen: typing on the first row of a
+    // short document changes it in place, and asks for no search.
+    let mut state = live(&["$ "]);
+    let read = changed(&mut state);
+    let _ = answer(&mut state, read, read_of(grown(&["$ l"], 20, 1)));
+    let node = node_of(&state);
+    let ask = places_of(&state, node).unwrap().ask(true, 30, false);
+    assert!(ask.end.is_some_and(|end| !end.find));
+}
+
+#[test]
 fn rotation_with_the_line_found_counts_from_its_distance() {
     let mut state = full_history();
     let read = changed(&mut state);

@@ -132,9 +132,14 @@ impl TerminalPlaces {
         (shares_line, said, opening): (bool, usize, u32),
     ) -> Placed {
         let first_row = read.first_row.text.clone();
-        let rotated_now = self.end.as_ref().is_some_and(|end| {
-            end.document_rows == read.document_rows && end.first_row != first_row
-        });
+        // Rows rotate under fixed places only once the history is full: the
+        // same row count with another first row, that row above the screen,
+        // where nothing types (a short document's first row is edited in
+        // place).
+        let rotated_now = read.document_rows > read.screen_top
+            && self.end.as_ref().is_some_and(|end| {
+                end.document_rows == read.document_rows && end.first_row != first_row
+            });
         self.rotated |= rotated_now;
         let window_rows = read.above;
         let from_aside = self.aside.is_some() && !read.screen_at_start;
