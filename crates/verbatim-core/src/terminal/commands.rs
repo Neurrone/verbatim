@@ -3,58 +3,43 @@
 //! each reads the window first, as a key's read of the watch's, then acts
 //! on live reads. A command mark is a place counted from the document's
 //! end with its line's text: tried at its place by one line read, and
-//! otherwise found by the outpost's search outward from it.
+//! otherwise found by a search outward from it, the request list's
+//! `FindText` each way from the mark's row.
 
 use verbatim_model::batch::Chunks;
-use verbatim_model::request::{Question, Reply, TerminalAsk};
 use verbatim_model::{
-    Effect, Message, NodeId, TextAnchor, TextDetails, TextFailure, TextMovement, TextOp, TextPoint,
-    TextPosition, TextReply, TextUnit, TraceId, UtteranceSegment,
+    Effect, Message, NodeId, TextAnchor, TextDetails, TextMovement, TextPoint, TextPosition,
+    TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::batch::Got;
 use crate::entries::Entries;
-use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
 use crate::terminal::places::RowPlace;
 use crate::terminal::{ReadSpeech, Watch, focus_of, focused, key_read, places_mut, places_of};
+use crate::terminal_window::{Match, add_search, matches_of};
 
 /// How many searches a press makes at most; the marks not yet tried are
 /// kept once they are spent.
 const SEARCHES: u32 = 3;
 
-/// A search for a command mark's line, counted from the end mark Core
-/// names.
-#[derive(Debug)]
-struct Search {
-    window: RequestWindow,
-    node: NodeId,
-    op: TextOp,
-}
-
-impl Request for Search {
-    type Reply = Result<Vec<verbatim_model::TerminalMatch>, TextFailure>;
-
-    fn reader(&self) -> Reader {
-        Reader::Outpost(self.window.process)
-    }
-
-    fn window(&self) -> RequestWindow {
-        self.window
-    }
-
-    fn wire(&self) -> Question {
-        Question::Terminal(TerminalAsk {
-            node: self.node,
-            op: self.op.clone(),
-        })
-    }
-
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            TextReply::TerminalFound { matches } => Some(matches),
-            _ => None,
-        })
-    }
+/// The search for `needle` in terminal `node` outward from the row `from`
+/// rows above `start`, its end mark ([`crate::terminal_window::add_search`]):
+/// the matches, counted from the mark; `None` when it could not run.
+async fn search(
+    cx: &mut Cx<Entries>,
+    (window, node): (RequestWindow, NodeId),
+    (start, from): (TextAnchor, i32),
+    needle: &str,
+    due_us: u64,
+) -> Option<Vec<Match>> {
+    let mut batch = cx.batch(|| ());
+    let steps = add_search(&mut batch, node, (start, from), needle)?;
+    let request = batch.finish().of(Reader::Outpost(window.process), window);
+    let Outcome::Result(answers) = cx.ask(request, due_us).await else {
+        return None;
+    };
+    matches_of(&answers, &steps)
 }
 
 /// The line `above` rows above `start`, terminal `node`'s end mark, read
@@ -190,18 +175,10 @@ pub(crate) async fn command_mark(
                 places_mut(&mut cx.facts_mut(), node).mark(mark);
                 return None;
             };
-            let search = Search {
-                window,
-                node,
-                op: TextOp::TerminalFind {
-                    needle: mark.text.clone(),
-                    from: i32::try_from(mark.above).unwrap_or(i32::MAX),
-                    rows: 1,
-                    start,
-                },
-            };
+            let from = i32::try_from(mark.above).unwrap_or(i32::MAX);
             // A search that never ran ends the move, every mark kept.
-            let Outcome::Result(Ok(matches)) = cx.ask(search, due_us).await else {
+            let Some(matches) = search(cx, (window, node), (start, from), &mark.text, due_us).await
+            else {
                 if let Some(above) = moved_since(cx, node, (mark.above, search_frame)) {
                     mark.above = above;
                     places_mut(&mut cx.facts_mut(), node).mark(mark);

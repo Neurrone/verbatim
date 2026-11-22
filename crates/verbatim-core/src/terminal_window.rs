@@ -37,7 +37,7 @@ use verbatim_model::{
     WindowCaret,
 };
 
-use crate::batch::{Builder, Search};
+use crate::batch::{Answers, Builder, Got, Ref, Search, kind};
 
 /// More rows than any terminal holds, for moving to the end of the text.
 const FAR: i32 = 1_000_000;
@@ -332,4 +332,81 @@ pub fn window_of(
         began_us: at_us,
         ended_us: at_us,
     })
+}
+
+/// How each way of a command mark's search bounds it: the matches that
+/// start a row, each read for one row, at most 20 over at most 100
+/// `FindText` calls, the bound the console host's search needed
+/// (`books/dev/src/reference/performance.md`, "A terminal's upward
+/// search").
+const WAY: Search = Search {
+    unit_start: Some(TextUnit::Line),
+    read: 1,
+    limit: 20,
+    calls: 100,
+};
+
+/// A command mark's search's steps.
+pub struct SearchSteps<B> {
+    down: Ref<B, kind::FindText>,
+    up: Ref<B, kind::FindText>,
+    to_end: Ref<B, kind::Move>,
+}
+
+/// A match of a command mark's search, counted in rows above the end mark
+/// it was counted from (negative below it), with its row's text as read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Match {
+    /// Rows above the mark.
+    pub above: i32,
+    /// The row's text, padding and line break as the provider gave them.
+    pub text: String,
+}
+
+/// Adds to `batch` the search for `needle` in terminal `node` outward from
+/// the row `from` rows above `start`, its end mark: a move to that row, a
+/// search down from it and one up, each to its own bound, and a move from
+/// the mark to the text's end, which the matches are counted against.
+/// `None` when `from` cannot be negated.
+pub fn add_search<B>(
+    batch: &mut Builder<B>,
+    node: NodeId,
+    (start, from): (verbatim_model::TextAnchor, i32),
+    needle: &str,
+) -> Option<SearchSteps<B>> {
+    let mark = || TextPoint::At(TextPosition::at(start)).into();
+    let line = |count| TextMovement {
+        unit: TextUnit::Line,
+        count,
+    };
+    let row = batch.move_point(node, mark(), line(from.checked_neg()?));
+    let down = batch.find_text(node, row.landed(), (needle.to_owned(), false), WAY);
+    let up = batch.find_text(node, row.landed(), (needle.to_owned(), true), WAY);
+    let to_end = batch.move_point(node, mark(), line(FAR));
+    Some(SearchSteps { down, up, to_end })
+}
+
+/// The matches a command mark's search answered, below its row first and
+/// then above, each way nearest first; `None` when a step did not run.
+#[must_use]
+pub fn matches_of<B>(answers: &Answers<B>, steps: &SearchSteps<B>) -> Option<Vec<Match>> {
+    let (Got::Done(down), Got::Done(up), Got::Done(to_end)) = (
+        answers.get(steps.down),
+        answers.get(steps.up),
+        answers.get(steps.to_end),
+    ) else {
+        return None;
+    };
+    let from_end = i64::from(to_end.moved.unsigned_abs());
+    Some(
+        down.iter()
+            .chain(up)
+            .filter_map(|found| {
+                Some(Match {
+                    above: i32::try_from(i64::from(found.to_end).checked_sub(from_end)?).ok()?,
+                    text: found.text.clone(),
+                })
+            })
+            .collect(),
+    )
 }

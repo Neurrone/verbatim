@@ -30,10 +30,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use verbatim_model::batch::Op;
-use verbatim_model::request::{Question, TerminalAsk};
+use verbatim_model::request::Question;
 use verbatim_model::{
     CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
-    TerminalSnapshot, TextOp,
+    TerminalSnapshot,
 };
 use verbatim_outpost::terminal::{ReadAsk, read};
 use verbatim_outpost::text::uia::UiaText;
@@ -377,14 +377,12 @@ fn show_after_ls(app: &mut common::MockApp, hwnd: HWND, lines: u32) {
 fn command_marks_are_found_while_output_scrolls(remote: bool) {
     let mut driven = with_a_command("mockapp-terminal-marks-scrolling", remote);
     let finds = driven.before_first(
+        // The command's search: a batch from a move to the mark's row that
+        // searches from it.
         |request| {
-            matches!(
-                request.terminal(),
-                Some(TerminalAsk {
-                    op: TextOp::TerminalFind { .. },
-                    ..
-                })
-            )
+            matches!(request, Question::Batch(batch)
+                if matches!(batch.steps.first().map(|step| &step.op), Some(Op::Move { .. }))
+                    && batch.steps.iter().any(|step| matches!(step.op, Op::FindText { .. })))
         },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
@@ -529,6 +527,119 @@ fn find_on_path(
         .collect()
 }
 
+/// Brands the generic steps' batches.
+enum Searching {}
+
+/// The search for `needle` outward from the row `from` rows above the
+/// screen's top, as Core asks it, its generic steps
+/// (`verbatim_core::terminal_window::add_search`) run through a real
+/// outpost reading mockapp's terminal by remote operations when `remote`:
+/// the matches, by their rows.
+fn find_generic(
+    app: &common::MockApp,
+    hwnd: HWND,
+    (needle, from): (&str, i32),
+    remote: bool,
+) -> Vec<verbatim_model::TerminalMatch> {
+    use verbatim_core::batch::{Answers, Builder};
+    use verbatim_model::batch::{Batch, Done, Placement, Step, StepOutcome, Subject};
+    use verbatim_model::request::{Outcome, Reply, WindowVerdict};
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::with_options(
+        app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    outpost.read_focus_as(&terminal_element(&uia, hwnd));
+    let steps = |ops: Vec<Op>| Batch {
+        steps: ops.into_iter().map(|op| Step { op, when: None }).collect(),
+        placement: Placement::Queue,
+        spare: None,
+    };
+    let done = |outcome: &Outcome| -> Vec<StepOutcome> {
+        let Outcome::Result(Reply::Steps(steps)) = outcome else {
+            panic!("steps, not {outcome:?}")
+        };
+        steps.clone()
+    };
+    let (focus, _) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        steps(vec![Op::FocusRead {
+            subject: Subject::Focus,
+            known: Vec::new(),
+            set: common::outpost::focus_set(),
+            details: verbatim_model::TextDetails::NONE,
+        }]),
+    );
+    let Some(StepOutcome::Done(Done::FocusRead(read))) = done(&focus.outcome).first().cloned()
+    else {
+        panic!("the terminal's focus read")
+    };
+    let node = read.focus.read.node.expect("the terminal's node");
+    let (visible, _) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        steps(vec![Op::Visible {
+            subject: Subject::Node(node),
+        }]),
+    );
+    let Some(StepOutcome::Done(Done::Visible(visible))) = done(&visible.outcome).first().cloned()
+    else {
+        panic!("the screen's top")
+    };
+    let mut search = Builder::<Searching>::named();
+    let found = verbatim_core::terminal_window::add_search(
+        &mut search,
+        node,
+        (visible.start, from),
+        needle,
+    )
+    .expect("a row to search from");
+    let sent = search.finish();
+    let (answer, _) = outpost.batch(hwnd, WindowVerdict::Uia, sent.batch().clone());
+    let Outcome::Result(reply) = answer.outcome else {
+        panic!("the search's steps, not {:?}", answer.outcome)
+    };
+    let answers = Answers::parse(&sent, reply).expect("the search's answers");
+    verbatim_core::terminal_window::matches_of(&answers, &found)
+        .expect("the search ran")
+        .into_iter()
+        .map(|found| verbatim_model::TerminalMatch {
+            above: found.above,
+            text: found.text,
+        })
+        .collect()
+}
+
+/// The search for `needle` from `from` by Core's generic steps, through an
+/// outpost reading by remote operations and one reading by calls, each
+/// answering the matches of `expected`, the terminal search's, by their
+/// rows: the differential of `FindText` against the terminal search.
+fn generic_agrees(
+    app: &common::MockApp,
+    hwnd: HWND,
+    needle_from: (&str, i32),
+    expected: &[verbatim_model::TerminalMatch],
+) {
+    let rows = |matches: &[verbatim_model::TerminalMatch]| {
+        let mut rows: Vec<(i32, String)> = matches
+            .iter()
+            .map(|found| (found.above, found.text.clone()))
+            .collect();
+        rows.sort();
+        rows
+    };
+    for remote in [true, false] {
+        assert_eq!(
+            rows(&find_generic(app, hwnd, needle_from, remote)),
+            rows(expected),
+            "the generic search, remote {remote}, differs from the terminal search"
+        );
+    }
+}
+
 /// A provider whose `FindText` fails (`terminal_find_fails.json`): the
 /// search finds nothing, and is no error.
 fn a_failing_search_finds_nothing(remote: bool) {
@@ -543,6 +654,8 @@ fn a_failing_search_finds_nothing(remote: bool) {
     let _ = read_terminal(&uia, &source, &mut terminal, remote);
     let found = find_on_path(&uia, &source, &terminal, ("two", 1), remote);
     assert_eq!(found, []);
+    app.send("set-focus term");
+    generic_agrees(&app, hwnd, ("two", 1), &found);
     app.quit();
 }
 
@@ -617,6 +730,16 @@ fn a_search_whose_misses_answer_a_range(remote: bool) -> u32 {
         .into_iter()
         .find_map(|(name, count)| (name == "RPC_E_SERVERFAULT").then_some(count))
         .unwrap_or(0);
+    app.send("set-focus term");
+    let both = [
+        found_row(2, "y 3"),
+        found_row(3, "y 2"),
+        found_row(1, "y 4"),
+        found_row(4, "y 1"),
+        found_row(0, "y 5"),
+    ];
+    generic_agrees(&app, hwnd, ("y", 2), &both);
+    generic_agrees(&app, hwnd, ("q", 2), &[]);
     app.quit();
     faults
 }
@@ -658,6 +781,8 @@ fn search_in(
     let mut terminal = Terminal::new();
     let _ = read_terminal(&uia, &source, &mut terminal, remote);
     let found = find_on_path(&uia, &source, &terminal, (needle, from), remote);
+    app.send("set-focus term");
+    generic_agrees(&app, hwnd, (needle, from), &found);
     app.quit();
     found
 }
@@ -749,10 +874,23 @@ fn the_search_ends_after_its_calls(remote: bool) {
     let calls = common::read_hits(hwnd)
         .into_iter()
         .find_map(|(name, count)| (name == "FindText").then_some(count));
+    // Core's search runs each way to its own bound: one call down over the
+    // empty span below the document's end, and a hundred up.
+    app.send("set-focus term");
+    common::reset_hits(hwnd);
+    generic_agrees(&app, hwnd, ("y", -10), &[]);
+    let generic_calls = common::read_hits(hwnd)
+        .into_iter()
+        .find_map(|(name, count)| (name == "FindText").then_some(count));
     app.quit();
     assert_eq!(
         calls,
         Some(u32::try_from(verbatim_uia_rops::FIND_CALLS).expect("a small bound"))
+    );
+    assert_eq!(
+        generic_calls,
+        Some(2 * 101),
+        "the generic searches' calls, both outposts'"
     );
 }
 
