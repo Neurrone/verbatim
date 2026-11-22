@@ -1,0 +1,6 @@
+15 (new): out "Get-ChildItem"
+26 (new): out "echo"
+30 (new): out "one"
+34 (new): out "two"
+52: out "PS C:\\Windows>"
+56 (new): out "exit"

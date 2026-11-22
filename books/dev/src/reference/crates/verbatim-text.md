@@ -424,3 +424,88 @@ explanation the oracle accepts, a listed limit through its own reason, or
 a defect. Each listed limit has its smallest stream as a fixed test.
 `tests/terminal_cost.rs` is a measurement, ignored so that no test run
 includes it (`books/dev/src/reference/performance.md`, "A terminal's rotation").
+
+## A terminal's window read, judged
+
+`terminal_window` is what a terminal's window read (`TerminalRead`, the
+rows from two screens above the document's end) says against the read
+before it, for Core's watch of the focused terminal. It replaces the row
+memory and the reading rules above once Core switches to it; until then
+nothing in the product calls it. It is written from
+`books/dev/src/explanation/design/terminal-model.md` (its rules are cited
+as "TM" with their numbers), `docs/parity/terminals.md` and
+`docs/nvda/editable-text-and-terminals.md`, with no clock, thread or map.
+
+### Public API
+
+- `Window::new(Read)`: a read parsed once. `Read` carries the unpadded
+  text with each line's padded length (`TerminalText`'s two fields), the
+  width, the screen's top in rows above the end and its height, the
+  caret's rows to the end and its column in its row, the screen rows'
+  colours when read, and when the read ended. Lines are cut into rows by
+  cells, a wide character taking two, so a wrapped line knows its rows.
+  `Window::empty()` is the empty baseline of a first read that failed.
+  `screen_lines`, `last_text_line` and `line_place` give a new screen's
+  speech, a new end mark's line and whether the window holds a mark's
+  line.
+- `Reading`: the rest of one terminal's reading state, kept beside the
+  watch's last window: typed characters waiting to be shown, the held
+  items, the lines' last changes, lingering lines, the keys' window and
+  the last suggestion.
+- `Reading::key(KeyKind, at_us, &Arc<Window>)` at each key passed on,
+  with `hold_typed` for a typed character while "speak passwords" is off;
+  `Reading::answer(&old, &new)` at each read, giving an `Answer`: the
+  echo, the keys' answers (`Said`, a unit and its text), the output for
+  the pacing in order, whether a line with text was kept, and whether the
+  read is dropped and the last kept (TM 10). `Reading::due` is the one
+  time anything held waits for, and `Reading::timer(now_us)` gives what
+  comes due.
+
+### How a read is judged
+
+The two windows' lines are aligned as a longest common subsequence of
+equal lines, a line with text weighing sixteen times a blank one so blank
+rows never pull text out of place; the lines left between two kept ones
+are paired in order with old lines that share half the longer line's
+characters in order, or of which one starts the other. In the keys'
+window, a new line left unpaired on the screen pairs with the old line
+gone from the same place, so a list the keys redraw is its rows changed
+(F8's larger form, the screens compared row by row).
+
+- An inserted line is output; a blank one is passed on, to be counted,
+  only once a line with text is below it (Q1, TM 12). One equal to a line
+  that lingers (gone within 2 seconds, at or below the caret or changed by
+  the program before) is silent (TM 9, Q7).
+- A changed line the program owns speaks what it gained, holding its last
+  word when the caret is at its end and no space follows (F5, TM 13), or
+  from its first changed word (F6, TM 16); a single symbol replaced in
+  place is silent (Q6); a line changed twice within 2 seconds is held as
+  volatile and spoken whole once still for the quiet period (F7, TM 17).
+  Held items are carried from read to read by the alignment, each checked
+  against its line's text.
+- On the caret's line the typing the text before the caret ends with is
+  echoed and taken out of the line, typed characters older than 300
+  milliseconds are dropped, and a line changed some other way drops them
+  (F9, TM 20, Q2 and Q8).
+- A read ending within 300 milliseconds of the last key is the keys'
+  (TM 18), but for a line the program changed in the 2 seconds before the
+  first key. The caret's answer (TM 19) compares the caret's row, the
+  provider's line unit, with where the keys started and the last read;
+  rows away from the caret that gained text are spoken whole, others held
+  until no key has come for the quiet period (TM 21); the row whose
+  emphasis, the colours of its first letter or digit, now stands out from
+  both its neighbours and did not before is spoken whole; and in a window
+  of typed keys, text after the caret in other colours than the cell before
+  it is the suggestion (TM 22).
+
+### Tests
+
+The unit tests in `src/terminal_window/tests.rs` take one rule each on
+windows written by hand, each seen failing by a mutation of the rule it
+covers. `tests/terminal_window_corpus.rs` replays the conformance
+corpus's recorded streams the design names, and every `stream-` stream,
+read by read in both terminals, each recorded read cut to the window the
+read takes, the keys of fzf, tig and Microsoft Edit passed at their
+recipes' times with colours in their windows, and pins what each read
+hands on in `tests/fixtures/terminal_window/`, the recording machine's
+paths left out.

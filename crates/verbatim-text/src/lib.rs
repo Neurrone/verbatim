@@ -29,6 +29,9 @@
 //! - [`terminal_reading`] is the reading rules on that memory: what is
 //!   spoken of each read, each key and the quiet period, as a state machine
 //!   driven by inputs with times.
+//! - [`terminal_window`] is what a terminal's window read says against the
+//!   read before it, for Core's watch: the diff, typing, held words,
+//!   volatile rows and the keys' answers, with no row model.
 //!
 //! Offsets are byte offsets into the UTF-8 string given. Positions in a
 //! provider's own units (UTF-16 code units, text ranges) are converted at
@@ -89,6 +92,7 @@ use jieba_rs::Jieba;
 pub mod proven;
 pub mod terminal_reading;
 pub mod terminal_rows;
+pub mod terminal_window;
 
 /// The grapheme clusters of `text`, each as its byte range, in order.
 #[must_use]

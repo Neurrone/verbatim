@@ -1,0 +1,9 @@
+1 (new): key Line "2 │ Second line.                                                                                                       █"; key Line "1 │ First line of the notes.                                                                                           █"
+2 (new): key Line "3 │ Third line, the last.                                                                                              █"
+3 (new): key Character " "
+4 (new): key Line "└──────────────────────┘                                                                                               █"
+5: key Line "│  Open File…  Ctrl+O  │.                                                                                              █"
+6: key Line "│  Save        Ctrl+S  │                                                                                               █"
+8 (new): key Line "  │      │ File name:                                                                                         │        █"
+9 (new): key Line "3 │ Third line, the last.                                                                                              █"
+10 (new): dropped
