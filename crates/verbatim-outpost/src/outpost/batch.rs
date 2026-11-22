@@ -31,7 +31,7 @@ use verbatim_model::property::{
     NodeDetailSet, PropertyAnswer, PropertyId, PropertyValue, PropertyValues,
 };
 use verbatim_model::request::{
-    Ask, Followed, HeldIds, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
+    Ask, Followed, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
 };
 use verbatim_model::{
     Backend, NodeId, NodeSnapshot, QueryKind, TextPoint, TextPosition, TextReply,
@@ -41,7 +41,7 @@ use super::RequestContext;
 use super::asked::{self, FocusNow};
 use super::read::{self, Client, ReadError};
 use super::text_reads;
-use super::window::{hwnd_of, window_handle};
+use super::window::hwnd_of;
 use crate::text::TextError;
 
 /// The node details a batch's reads fetch: those its steps' property sets
@@ -476,6 +476,9 @@ impl Run<'_, '_> {
         if let Some(outcome) = self.on_uia_node(op)? {
             return Ok(outcome);
         }
+        if let Some(outcome) = self.on_msaa(op)? {
+            return Ok(outcome);
+        }
         match op {
             Op::Read { subject, set } => self.read(subject, set),
             Op::Test { subject, matcher } => self.test(subject, matcher),
@@ -491,18 +494,9 @@ impl Run<'_, '_> {
                 set,
             } => self.ancestors(subject, until, *depth, set),
             Op::Descendants { subject, walk } => self.descendants(subject, walk),
-            Op::IsOneOf {
-                subject,
-                equal,
-                at_address,
-            } => self.is_one_of(subject, *equal, at_address),
-            Op::Activate { subject } => Ok(match self.node(subject)? {
-                Err(outcome) => outcome,
-                Ok(node) => match read::activate(self.context, self.client, node) {
-                    Ok(action) => StepOutcome::Done(Done::Activate(action)),
-                    Err(error) => failed(&error, node),
-                },
-            }),
+            Op::IsOneOf { .. } | Op::Activate { .. } => {
+                Ok(StepOutcome::Refused(StepRefusal::Unsupported))
+            }
             Op::FocusRead {
                 subject,
                 known,
@@ -550,15 +544,80 @@ impl Run<'_, '_> {
                 )),
                 Err(error) => failed(&error, node),
             },
-            Op::Activate { .. } => match read::activate(context, self.client, node) {
-                Ok(action) => StepOutcome::Done(Done::Activate(action)),
-                Err(error) => failed(&error, node),
-            },
+            Op::Activate { .. } => self.activate(node),
             op => match self.client.uia() {
                 Some(uia) => super::uia_object::step(context, uia, node, op),
                 None => StepOutcome::Failed,
             },
         }))
+    }
+
+    /// An object step on an MSAA node or an acquired MSAA object through the
+    /// MSAA executor (`Read`, `Test`, `Related`, `IsOneOf`, `Activate`):
+    /// `None` for a step on any other subject.
+    fn on_msaa(&mut self, op: &Op) -> Result<Option<StepOutcome>, Outcome> {
+        let (Op::Read { subject, .. }
+        | Op::Test { subject, .. }
+        | Op::IsOneOf { subject, .. }
+        | Op::Activate { subject }
+        | Op::Related { subject, .. }) = op
+        else {
+            return Ok(None);
+        };
+        let place = match self.held(subject)? {
+            Ok(place) => place,
+            Err(outcome) => return Ok(Some(outcome)),
+        };
+        let context = self.context;
+        let client = &mut *self.client;
+        Ok(match &mut self.held[place].1 {
+            Ok(Held::Node(node)) if context.store.runtime_id_of(*node).is_none() => {
+                let node = *node;
+                Some(match op {
+                    Op::Activate { .. } => {
+                        match read::activate_walk(
+                            &mut read::LiveActivation { context, client },
+                            node,
+                        ) {
+                            Ok(action) => StepOutcome::Done(Done::Activate(action)),
+                            Err(error) => failed(&error, node),
+                        }
+                    }
+                    op => super::msaa_object::step(
+                        context,
+                        client,
+                        (verbatim_ia2::batch::Object::Node(node), 0),
+                        op,
+                    ),
+                })
+            }
+            Ok(Held::Msaa(Some(candidate))) => {
+                let window = candidate.key().0;
+                Some(super::msaa_object::step(
+                    context,
+                    client,
+                    (verbatim_ia2::batch::Object::Candidate(candidate), window),
+                    op,
+                ))
+            }
+            _ => None,
+        })
+    }
+
+    /// The dispatcher's activation of node `node`, up its parents
+    /// ([`read::activate_walk`]).
+    fn activate(&mut self, node: NodeId) -> StepOutcome {
+        let context = self.context;
+        match read::activate_walk(
+            &mut read::LiveActivation {
+                context,
+                client: self.client,
+            },
+            node,
+        ) {
+            Ok(action) => StepOutcome::Done(Done::Activate(action)),
+            Err(error) => failed(&error, node),
+        }
     }
 
     /// `Follow` through the executor's call arm: the registration moved to
@@ -585,9 +644,8 @@ impl Run<'_, '_> {
         })
     }
 
-    /// `Read`: an MSAA node's properties with those read apart; an MSAA
-    /// object's each read alone; a window's own object's through its
-    /// backend.
+    /// `Read` of a window's own object, through its backend, or of a
+    /// listener's element by its route.
     fn read(&mut self, subject: &Subject, set: &[PropertyId]) -> Stepped {
         let place = match self.held(subject)? {
             Ok(place) => place,
@@ -595,38 +653,6 @@ impl Run<'_, '_> {
         };
         let context = self.context;
         Ok(match &mut self.held[place].1 {
-            Ok(Held::Node(node)) => {
-                let node = *node;
-                match asked::properties(context, self.client, node, set) {
-                    Ok(mut values) => {
-                        reported(context, node, &mut values);
-                        let window = asked::known_nearest_of(context, node).unwrap_or(0);
-                        StepOutcome::Done(Done::Read(NodeRead {
-                            node: Some(node),
-                            window: asked::node_window(window),
-                            values,
-                        }))
-                    }
-                    Err(error) => failed(&error, node),
-                }
-            }
-            Ok(Held::Msaa(Some(candidate))) => {
-                let hwnd = candidate.key().0;
-                let client = &mut *self.client;
-                let mut read = |id| candidate_property((context, client), candidate, id);
-                StepOutcome::Done(Done::Read(NodeRead {
-                    node: None,
-                    window: asked::node_window(hwnd),
-                    values: PropertyValues(
-                        set.iter()
-                            .map(|&id| PropertyAnswer {
-                                id,
-                                value: read(id),
-                            })
-                            .collect(),
-                    ),
-                }))
-            }
             Ok(Held::Window(hwnd, backend)) => {
                 let (hwnd, backend) = (*hwnd, *backend);
                 match read::window_node(context, self.client, hwnd, backend) {
@@ -645,15 +671,15 @@ impl Run<'_, '_> {
                     Err(unread) => unread.outcome(),
                 }
             }
-            Ok(Held::Msaa(None) | Held::Focus(..)) | Err(_) => {
+            Ok(Held::Node(_) | Held::Msaa(_) | Held::Focus(..)) | Err(_) => {
                 StepOutcome::Refused(StepRefusal::Unsupported)
             }
         })
     }
 
-    /// `Test`: the matcher evaluated lazily, each property read at most
-    /// once when the matcher first needs it, in its order.
-    #[expect(clippy::too_many_lines, reason = "one arm per kind of object tested")]
+    /// `Test` of a window's own object or of the application's focus: the
+    /// matcher evaluated lazily, each property read at most once when the
+    /// matcher first needs it, in its order.
     fn test(&mut self, subject: &Subject, matcher: &verbatim_model::matcher::Matcher) -> Stepped {
         let place = match self.held(subject)? {
             Ok(place) => place,
@@ -662,17 +688,6 @@ impl Run<'_, '_> {
         let context = self.context;
         let mut read = Vec::new();
         let (node, window, holds) = match &mut self.held[place].1 {
-            Ok(Held::Msaa(Some(candidate))) => {
-                let hwnd = candidate.key().0;
-                let Ok(holds) = evaluate::<std::convert::Infallible>(matcher, &mut read, |id| {
-                    Ok(candidate_property(
-                        (context, &mut *self.client),
-                        candidate,
-                        id,
-                    ))
-                });
-                (None, hwnd, holds)
-            }
             Ok(Held::Window(hwnd, backend)) => {
                 let (hwnd, backend) = (*hwnd, *backend);
                 let mut snapshot: Option<Option<NodeSnapshot>> = None;
@@ -691,29 +706,6 @@ impl Run<'_, '_> {
                     )
                 });
                 (None, hwnd, holds)
-            }
-            Ok(Held::Node(node)) => {
-                let node = *node;
-                let mut snapshot: Option<NodeSnapshot> = None;
-                let read_node = evaluate(matcher, &mut read, |id| {
-                    let mut values = PropertyValues(vec![PropertyAnswer { id, value: None }]);
-                    if !is_reported(id) {
-                        if snapshot.is_none() {
-                            snapshot = Some(read::read_node(context, node)?);
-                        }
-                        if let Some(snapshot) = &snapshot {
-                            values = asked::values(context, snapshot, &[id]);
-                        }
-                    }
-                    reported(context, node, &mut values);
-                    Ok(values.0.pop().and_then(|answer| answer.value))
-                });
-                let holds = match read_node {
-                    Ok(holds) => holds,
-                    Err(error) => return Ok(failed(&error, node)),
-                };
-                let window = asked::known_nearest_of(context, node).unwrap_or(0);
-                (Some(node), window, holds)
             }
             Ok(Held::Focus(hwnd, kept)) => {
                 let hwnd = *hwnd;
@@ -750,7 +742,7 @@ impl Run<'_, '_> {
                 *kept = Some(now);
                 (None, hwnd, holds)
             }
-            Ok(Held::Msaa(None) | Held::Route(_)) | Err(_) => {
+            Ok(Held::Node(_) | Held::Msaa(_) | Held::Route(_)) | Err(_) => {
                 return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
             }
         };
@@ -764,9 +756,10 @@ impl Run<'_, '_> {
         })))
     }
 
-    /// `Related`: a step through the tree by the navigation the outpost
-    /// makes for object navigation; the controller-for relation and the
-    /// first selected item through the program builder.
+    /// `Related` of a UI Automation node: a step through the tree by the
+    /// navigation the outpost makes for object navigation; the
+    /// controller-for relation and the first selected item through the
+    /// program builder.
     fn related(&mut self, subject: &Subject, relation: Relation, set: &[PropertyId]) -> Stepped {
         let node = match self.node(subject)? {
             Ok(node) => node,
@@ -778,19 +771,12 @@ impl Run<'_, '_> {
             Relation::FirstChild => QueryKind::FirstChild,
             Relation::NextSibling => QueryKind::NextSibling,
             Relation::PreviousSibling => QueryKind::PreviousSibling,
+            // A UI Automation node's last child is one step
+            // ([`Self::on_uia_node`]), and an MSAA node's the MSAA
+            // executor's.
             Relation::LastChild => {
-                return Ok(match asked::children(context, self.client, node) {
-                    // A list cut short has no last child known.
-                    Ok((_, false)) => StepOutcome::Failed,
-                    Ok((children, true)) => StepOutcome::Done(Done::Related(
-                        children
-                            .last()
-                            .map(|last| asked::node_read(context, last, None, set))
-                            .into_iter()
-                            .collect(),
-                    )),
-                    Err(error) => failed(&error, node),
-                });
+                tracing::error!(target: verbatim_model::DEFECT_TARGET, "a last child reached the dispatcher's own relations");
+                return Ok(StepOutcome::Failed);
             }
             Relation::ControllerFor | Relation::FirstSelectedItem => {
                 return self.related_by_program(node, relation, set);
@@ -934,7 +920,7 @@ impl Run<'_, '_> {
             let ended = if self.context.store.runtime_id_of(start).is_some() {
                 self.descend_uia(start, root, walk, &mut walked)?
             } else {
-                self.descend_by_children(start, snapshot, root, walk, &mut walked)
+                self.descend_msaa((start, snapshot), root, walk, &mut walked)
             };
             match ended {
                 Ok(true) => break,
@@ -1066,128 +1052,38 @@ impl Run<'_, '_> {
     }
 
     /// Walks `start`, the walk's start at `root`, its snapshot `snapshot`
-    /// when resolving it read one, by the children walk, into `walked`:
-    /// `Ok(true)` when the walk met its limit or its node cap.
-    fn descend_by_children(
+    /// when resolving it read one, through the MSAA executor, into
+    /// `walked`: `true` when the walk met its limit or its node cap.
+    fn descend_msaa(
         &mut self,
-        start: NodeId,
-        snapshot: Option<NodeSnapshot>,
+        (start, snapshot): (NodeId, Option<NodeSnapshot>),
         root: u32,
         walk: &Walk,
         walked: &mut Walked,
     ) -> Result<bool, Box<StepOutcome>> {
         let context = self.context;
-        let limit = usize::try_from(walk.limit).unwrap_or(usize::MAX);
-        let cap = usize::try_from(walk.nodes).unwrap_or(usize::MAX);
-        let mut parent = None;
-        if walk.include_subject {
-            let snapshot = match snapshot {
-                Some(snapshot) => snapshot,
-                None => match read::read_node(context, start) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => return Err(Box::new(failed(&error, start))),
-                },
-            };
-            let (matched, pruned) = judged(context, &snapshot, walk);
-            if pruned {
-                return Ok(false);
-            }
-            if matched {
-                parent = Some(u32::try_from(walked.found.len()).unwrap_or(u32::MAX));
-                walked.found.push(Descendant {
-                    node: asked::node_read(context, &snapshot, None, &walk.set),
-                    parent: None,
-                    root,
-                });
-                if walked.found.len() >= limit {
-                    return Ok(true);
-                }
-            }
-        }
-        // Each level's children with the depth below the start and the
-        // place of the nearest answered ancestor.
-        let mut stack = vec![(start, 0u32, parent)];
-        while let Some((node, depth, parent)) = stack.pop() {
-            if depth >= walk.depth {
-                continue;
-            }
-            // A node gone, its children unknown, or not read, leaves the
-            // walk incomplete.
-            let Ok((children, complete)) = asked::children(context, self.client, node) else {
-                walked.complete = false;
-                continue;
-            };
-            walked.complete &= complete;
-            let mut below = Vec::new();
-            for child in children {
-                walked.visited += 1;
-                if walked.visited > cap {
-                    walked.complete = false;
-                    return Ok(true);
-                }
-                let (matched, pruned) = judged(context, &child, walk);
-                if pruned {
-                    continue;
-                }
-                let mut own = parent;
-                if matched {
-                    own = Some(u32::try_from(walked.found.len()).unwrap_or(u32::MAX));
-                    walked.found.push(Descendant {
-                        node: asked::node_read(context, &child, None, &walk.set),
-                        parent,
-                        root,
-                    });
-                    if walked.found.len() >= limit {
-                        return Ok(true);
-                    }
-                }
-                below.push((child.id, depth + 1, own));
-            }
-            // Depth first in tree order: the first child's subtree next.
-            stack.extend(below.into_iter().rev());
-        }
-        Ok(false)
-    }
-
-    /// `IsOneOf`: the equal node met by NVDA's equality, the nodes at an
-    /// address only at it; a node of the outpost by its id.
-    fn is_one_of(
-        &mut self,
-        subject: &Subject,
-        equal: Option<NodeId>,
-        at_address: &[NodeId],
-    ) -> Stepped {
-        let place = match self.held(subject)? {
-            Ok(place) => place,
-            Err(outcome) => return Ok(outcome),
+        let mut descended = verbatim_ia2::batch::Descended {
+            before: walked.found.len(),
+            reached: Vec::new(),
+            visited: walked.visited,
+            complete: walked.complete,
         };
-        let context = self.context;
-        let nodes: Vec<NodeId> = equal
-            .into_iter()
-            .chain(at_address.iter().copied())
-            .collect();
-        let found = match &mut self.held[place].1 {
-            Ok(Held::Node(node)) => nodes.iter().position(|each| each == node),
-            Ok(Held::Msaa(Some(candidate))) => {
-                let mut object = candidate.object();
-                let found = nodes.iter().enumerate().position(|(place, &node)| {
-                    if place == 0 && equal.is_some() {
-                        object.is_equal_to(node, context.nodes())
-                    } else {
-                        object.which_of(&[node], context.nodes()) == Some(node)
-                    }
-                });
-                // The role the equality read serves the reads after it.
-                candidate.keep_role_of(&object);
-                found
-            }
-            Ok(Held::Msaa(None) | Held::Window(..) | Held::Focus(..) | Held::Route(_)) | Err(_) => {
-                return Ok(StepOutcome::Refused(StepRefusal::Unsupported));
-            }
-        };
-        Ok(StepOutcome::Done(Done::IsOneOf(
-            found.and_then(|place| u32::try_from(place).ok()),
-        )))
+        let ended = verbatim_ia2::batch::descend(
+            &super::msaa_object::MsaaNodes::new(context, self.client),
+            (start, snapshot),
+            walk,
+            &mut descended,
+        );
+        walked.visited = descended.visited;
+        walked.complete = descended.complete;
+        walked
+            .found
+            .extend(descended.reached.into_iter().map(|reached| Descendant {
+                node: asked::node_read(context, &reached.node, None, &walk.set),
+                parent: reached.parent,
+                root,
+            }));
+        ended.map_err(|error| Box::new(failed(&ReadError::from(error), start)))
     }
 
     /// `FocusRead`: an MSAA candidate's full read, the focus-now read, or
@@ -1451,86 +1347,6 @@ fn evaluate<E>(
         });
         Ok(value)
     })
-}
-
-/// An MSAA candidate's property `id`: the four the outpost reports, or one
-/// read alone by the identity check's reads.
-fn candidate_property(
-    (context, client): (&RequestContext<'_>, &mut Client),
-    candidate: &mut verbatim_ia2::acquire::FocusCandidate,
-    id: PropertyId,
-) -> Option<PropertyValue> {
-    match id {
-        PropertyId::FocusedWithin => {
-            let plain = |window| read::reads_as_plain(context, window);
-            let mut parent =
-                |window| read::parent_window_for_focused_state(context, client, window);
-            Some(PropertyValue::Flag(candidate.has_focused_state(
-                read::MAX_ANCESTOR_HOPS,
-                &plain,
-                &mut parent,
-            )))
-        }
-        PropertyId::MsaaAddress => {
-            let (window, object, child) = candidate.key();
-            Some(PropertyValue::MsaaAddress(HeldIds {
-                event: MsaaIds {
-                    window: window_handle(window),
-                    object,
-                    child,
-                },
-                held_child: candidate.resolved_child(),
-            }))
-        }
-        PropertyId::WindowShown => Some(PropertyValue::Flag(
-            verbatim_win32::window::window_is_visible(candidate.key().0),
-        )),
-        id => candidate.property(id, context.nodes()),
-    }
-}
-
-/// Whether property `id` is one the outpost reports itself, with no read of
-/// the node's own properties.
-fn is_reported(id: PropertyId) -> bool {
-    matches!(
-        id,
-        PropertyId::FocusedWithin
-            | PropertyId::MsaaAddress
-            | PropertyId::WindowShown
-            | PropertyId::IsContent
-    )
-}
-
-/// Fills in `values` the properties of node `node` the outpost reports
-/// itself: the MSAA ids it is held by, and whether its window is shown.
-/// The focused state over its ancestors is an MSAA candidate's, and
-/// whether it is content is the listener's and the focus read's, so a
-/// node held already answers neither (Claude, 2026-11-21).
-fn reported(context: &RequestContext<'_>, node: NodeId, values: &mut PropertyValues) {
-    for answer in &mut values.0 {
-        match answer.id {
-            PropertyId::MsaaAddress => {
-                answer.value = context.store.key_of(node).map(|(window, object, child)| {
-                    PropertyValue::MsaaAddress(HeldIds {
-                        event: MsaaIds {
-                            window: window_handle(window),
-                            object,
-                            child,
-                        },
-                        held_child: child,
-                    })
-                });
-            }
-            PropertyId::WindowShown => {
-                answer.value = read::kept_own_window(context, node)
-                    .or_else(|| asked::known_nearest_of(context, node))
-                    .map(|hwnd| {
-                        PropertyValue::Flag(verbatim_win32::window::window_is_visible(hwnd))
-                    });
-            }
-            _ => {}
-        }
-    }
 }
 
 /// Property `id` of a snapshot read already.

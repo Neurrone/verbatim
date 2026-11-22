@@ -6,6 +6,11 @@ parity work covers MSAA and UIA only).
 
 Public API:
 
+- `batch`, the MSAA executor (see "The MSAA executor" below): `run`
+  answers one of the request list's object steps on an `Object`, a node
+  the outpost holds or an object acquired at its event's ids, and
+  `descend` walks down the tree from one start; `step` is its one
+  navigation step. What the outpost holds it reaches through `Resolve`.
 - `WinEventHook::install(target_pid, kinds, callback)` — out-of-context
   WinEvent hooks for a caller-chosen set of event kinds, scoped to one
   process id (or global for pid zero). A thread holds one set at a time,
@@ -605,3 +610,38 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
   request that named it, and the registry implements untagged, its
   `touch` doing nothing. `Facts`, `Found`, `Held`, `Kept` and `KeptObject`
   are public for it, their fields the crate's own.
+
+## The MSAA executor
+
+`batch` is the one implementation of the request list's object
+operations on MSAA subjects, as `verbatim-uia-rops`' executor is UI
+Automation's (the one-path rule, the verbatim-outpost crate guide). Each
+step runs alone, by calls:
+
+- `Read` of a node reads its snapshot (`acquire::read_node`) only when
+  the set names a property a snapshot holds, a tree view item's children
+  by the control's messages (`tree_view_child_count`), and the rest the
+  outpost holds (`Resolve::held`: its MSAA ids, whether its window is
+  shown, its window's class, its text's summary); suggestions, the
+  `Value` pattern and a combo box's list, UI Automation's alone, answer
+  none. An acquired object's properties are each read alone
+  (`FocusCandidate::property`), its focused state over it and every
+  ancestor up to the desktop (`FocusCandidate::has_focused_state`, the
+  window facts through the resolver).
+- `Test` evaluates its matcher lazily, a node read at most once, at the
+  first property the outpost does not hold.
+- `Related` steps by `acquire::navigate`, the object reached read
+  through its window's backend (`Resolve::corrected`); a last child is
+  the last of the children; an MSAA object controls nothing and has no
+  selected item of its own.
+- `Descendants` walks depth first in tree order, judging each node by
+  the walk's matchers on its snapshot's values: an object's children as
+  it lists them (`acquire::children`), each through its window's backend,
+  and a node MSAA does not list the children of (a window's own object, a
+  tree view's item, a node read through UI Automation) through the
+  resolver, which steps on that node's backend.
+- `IsOneOf` compares a node by its id, and an acquired object by NVDA's
+  equality for the equal node and by address for the rest, keeping the
+  role the equality read.
+- `Activate` performs exactly the node's default action
+  (`acquire::activate`); the walk up the parents is the dispatcher's.

@@ -998,9 +998,17 @@ taken before any call that can block. Each step runs under its gate
   window is shown, its window's class, a tree view item's children, and
   the text summary), a property of the element read in full, and the
   focus registration.
-- `Read` of an MSAA node by its properties (`asked::properties`), an
-  MSAA object's each read alone (`FocusCandidate::property`). Through
-  either backend, those no snapshot holds are read apart: `Suggestions`
+- `Read`, `Test`, `Related`, `Descendants`, `IsOneOf` and `Activate` on
+  an MSAA node or an acquired MSAA object run through the MSAA executor
+  (`verbatim_ia2::batch`, the verbatim-ia2 crate guide, "The MSAA
+  executor"), resolved by `outpost/msaa_object.rs`: the properties the
+  outpost holds, a snapshot's values, the window facts the focused-state
+  test asks, the backend a reached object is read through, and the
+  children of a node MSAA does not list, by the dispatcher's navigation
+  on that node's backend (`asked::children`).
+- `Read` of a node reads its snapshot, an acquired MSAA object's each
+  property alone (`FocusCandidate::property`). Through either backend,
+  those no snapshot holds are read apart: `Suggestions`
   by one refresh reading the node's `ControllerFor` live, absent for a
   node that is neither editable text nor a search field;
   `HasValuePattern` and `ComboBoxList` by one refresh, the latter by
@@ -1021,8 +1029,8 @@ taken before any call that can block. Each step runs under its gate
   (`read::navigate`; through UI Automation a `Related` step of the
   program builder, `read::related_step`); a UI Automation node's last
   child in one such step, taken as a step to the first child is, an
-  MSAA node's by the children walk, failed when the list ends at a gone
-  child; and the controller-for relation and the first selected
+  MSAA node's the last of its children, failed when the list ends at a
+  gone child; and the controller-for relation and the first selected
   item through the program builder alone, since an MSAA object controls
   nothing. A UI Automation node that is dead or gone answers not there,
   except that `Parent` answers the parent of the element's window
@@ -1034,8 +1042,8 @@ taken before any call that can block. Each step runs under its gate
   already knows, its end answered as the walk's.
 - `Descendants` of a UI Automation node by the program builder's walk
   (`verbatim_uia_rops::batch::run_batch`), its matchers judged between
-  runs; of an MSAA object by the children walk
-  (`batch::descend_by_children`), at most 1000 children of a node: an
+  runs; of an MSAA object by the MSAA executor's children walk
+  (`verbatim_ia2::batch::descend`), at most 1000 children of a node: an
   MSAA object's children as its object lists them
   (`verbatim_ia2::acquire::children`), each through the backend its
   window uses, and any other node's by object navigation. A child gone

@@ -49,6 +49,7 @@ mod completion;
 mod focus_path;
 mod followed;
 pub(crate) mod lock;
+mod msaa_object;
 mod outbound;
 mod read;
 mod shell;

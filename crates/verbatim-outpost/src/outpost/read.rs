@@ -1805,16 +1805,6 @@ pub(super) fn ancestors(
         .map_err(ReadError::from)
 }
 
-/// The MSAA node `node_id` as it is now, read live; a UI Automation
-/// node is read by the executor's arms
-/// ([`verbatim_uia_rops::batch`], `Read`).
-pub(super) fn read_node(
-    context: &RequestContext<'_>,
-    node_id: NodeId,
-) -> Result<NodeSnapshot, ReadError> {
-    verbatim_ia2::acquire::read_node(node_id, context.nodes()).map_err(ReadError::from)
-}
-
 /// The UI Automation element of node `node_id`, for a registration: the
 /// one the outpost keeps, else found again by the route to it, as an
 /// ancestor the completion minted from the listener's read is. `None` for
@@ -2165,9 +2155,7 @@ fn step(
         };
         return uia_neighbor(context, client, node_id, (relation, kind));
     }
-    let from_window = context.store.key_of(node_id).map(|key| key.0);
-    let neighbor = verbatim_ia2::acquire::navigate(node_id, context.nodes(), kind)?;
-    Ok(neighbor.map(|neighbor| corrected_backend(context, client, from_window, neighbor, kind)))
+    super::msaa_object::navigate(context, client, node_id, kind)
 }
 
 /// The last child of the UI Automation node `node_id`, in one step, taken
@@ -2287,7 +2275,7 @@ pub(super) fn corrected_backend(
 const ACTIVATION_PARENT_HOPS: u32 = 1_024;
 
 /// What activation's walk up the parents calls, a seam for its tests.
-trait ActivationWalk {
+pub(super) trait ActivationWalk {
     /// Activates exactly `node`, answering the action's name.
     fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError>;
     /// The parent of `node`, `None` when it has none or it cannot be read.
@@ -2297,9 +2285,9 @@ trait ActivationWalk {
 }
 
 /// The real walk, through the request's store and client.
-struct LiveActivation<'a, 'b> {
-    context: &'a RequestContext<'b>,
-    client: &'a mut Client,
+pub(super) struct LiveActivation<'a, 'b> {
+    pub(super) context: &'a RequestContext<'b>,
+    pub(super) client: &'a mut Client,
 }
 
 impl ActivationWalk for LiveActivation<'_, '_> {
@@ -2326,21 +2314,14 @@ impl ActivationWalk for LiveActivation<'_, '_> {
     }
 }
 
-/// Activates `node_id`, or failing that its nearest ancestor that can be
-/// activated, as NVDA's review activate walks up the navigator object's
-/// parents until one performs an action, and answers the action's name.
-pub(super) fn activate(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-) -> Result<Option<ActionName>, ReadError> {
-    activate_walk(&mut LiveActivation { context, client }, node_id)
-}
-
-/// The walk of [`activate`]: the node, then up to
-/// [`ACTIVATION_PARENT_HOPS`] parents, stopping at a node it has visited
-/// before, where the tree loops.
-fn activate_walk(
+/// The dispatcher's activation of `node_id`, or failing that its nearest
+/// ancestor that can be activated, as NVDA's review activate walks up the
+/// navigator object's parents until one performs an action, answering the
+/// action's name: the node, then up to [`ACTIVATION_PARENT_HOPS`] parents,
+/// stopping at a node it has visited before, where the tree loops. Each
+/// node is activated by its backend's executor, and each parent is a
+/// navigation step on the backend of the node it goes from.
+pub(super) fn activate_walk(
     walk: &mut impl ActivationWalk,
     node_id: NodeId,
 ) -> Result<Option<ActionName>, ReadError> {
@@ -2388,7 +2369,7 @@ fn activate_one(
             .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
         return super::uia_object::activate(context, uia, node_id);
     }
-    verbatim_ia2::acquire::activate(node_id, context.nodes()).map_err(ReadError::from)
+    super::msaa_object::activate(context, client, node_id)
 }
 
 #[cfg(test)]

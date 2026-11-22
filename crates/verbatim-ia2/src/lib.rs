@@ -51,6 +51,7 @@
 
 mod accessible;
 pub mod acquire;
+pub mod batch;
 pub mod calls;
 pub mod class;
 mod com;

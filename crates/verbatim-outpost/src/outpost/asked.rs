@@ -260,96 +260,6 @@ pub(super) fn values(
     )
 }
 
-/// Whether property `id` is read apart from a node's snapshot, by
-/// [`read_apart`].
-pub(super) fn is_read_apart(id: PropertyId) -> bool {
-    matches!(
-        id,
-        PropertyId::Suggestions
-            | PropertyId::HasValuePattern
-            | PropertyId::WindowClass
-            | PropertyId::ComboBoxList
-            | PropertyId::ChildCount
-            | PropertyId::TextSummary
-    )
-}
-
-/// The properties of `set` of the MSAA node `node_id`: its snapshot, read
-/// only when the set names a property the snapshot holds, and each
-/// property read apart from it ([`read_apart`]). A UI Automation node's
-/// are read by the executor's arms (`verbatim_uia_rops::batch`, `Read`).
-pub(super) fn properties(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-    set: &[PropertyId],
-) -> Result<PropertyValues, ReadError> {
-    let mut answers = if set.iter().any(|&id| !is_read_apart(id)) {
-        values(context, &read::read_node(context, node_id)?, set)
-    } else {
-        PropertyValues(
-            set.iter()
-                .map(|&id| PropertyAnswer { id, value: None })
-                .collect(),
-        )
-    };
-    let apart: Vec<PropertyId> = set
-        .iter()
-        .copied()
-        .filter(|&id| is_read_apart(id))
-        .collect();
-    if !apart.is_empty() {
-        let read = read_apart(context, client, node_id, &apart);
-        for answer in &mut answers.0 {
-            if let Some(value) = read.answer(answer.id) {
-                answer.value.clone_from(&value.value);
-            }
-        }
-    }
-    Ok(answers)
-}
-
-/// The properties of `set` that no snapshot holds, of the MSAA node
-/// `node_id`, each by the one read its table entry names: its nearest
-/// window's class, from Windows; its text's summary; and how many children
-/// a `SysTreeView32` item holds, by the control's messages, as NVDA's tree
-/// view item counts them (`NVDAObjects/IAccessible/sysTreeView32.py`),
-/// with no read of a child. Suggestions, the `Value` pattern and a combo
-/// box's list are UI Automation's, which an MSAA node answers none of.
-fn read_apart(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-    set: &[PropertyId],
-) -> PropertyValues {
-    PropertyValues(
-        set.iter()
-            .map(|&id| PropertyAnswer {
-                id,
-                value: match id {
-                    PropertyId::WindowClass => read::kept_own_window(context, node_id)
-                        .or_else(|| known_nearest_of(context, node_id))
-                        .map(|hwnd| {
-                            PropertyValue::Text(verbatim_win32::window::window_class_name(hwnd))
-                        }),
-                    PropertyId::TextSummary => {
-                        text_reads::text_summary(context, client.uia(), node_id)
-                            .map(PropertyValue::TextSummary)
-                    }
-                    PropertyId::ChildCount => context
-                        .store
-                        .key_of(node_id)
-                        .and_then(|(hwnd, _, child)| {
-                            verbatim_ia2::acquire::tree_view_child_count(hwnd, child)
-                        })
-                        .map(PropertyValue::Count),
-                    _ => None,
-                },
-            })
-            .collect(),
-    )
-}
-
 /// The snapshot `values` describe of node `id`, read through `backend`:
 /// what the listener read of an element, for the completion to keep.
 pub(super) fn snapshot_of(id: NodeId, backend: Backend, values: &PropertyValues) -> NodeSnapshot {
@@ -403,28 +313,18 @@ pub(super) fn snapshot_of(id: NodeId, backend: Backend, values: &PropertyValues)
     }
 }
 
-/// `node`'s children, in order, at most [`MAX_NODES`], and whether they
-/// are all of them. An MSAA object's are those its object lists
-/// (`verbatim_ia2::acquire::children`), a gone one among them in its
-/// place; any other node's are reached by navigation, where a child gone
-/// as the step on from it is read ends the list there, incomplete.
+/// The children of `node`, a node whose children MSAA does not list (a
+/// window's own object, a tree view's item, or a node read through UI
+/// Automation), in order, at most [`MAX_NODES`], and whether they are all
+/// of them, for a walk down the tree from an MSAA object: reached by
+/// navigation, the step to the first child and each step on to the next
+/// sibling taken on the backend of the node it goes from, where a child
+/// gone as the step on from it is read ends the list there, incomplete.
 pub(super) fn children(
     context: &RequestContext<'_>,
     client: &mut Client,
     node: NodeId,
 ) -> Result<(Vec<NodeSnapshot>, bool), ReadError> {
-    if context.store.runtime_id_of(node).is_none()
-        && let Some(children) = verbatim_ia2::acquire::children(node, context.nodes(), MAX_NODES)?
-    {
-        let window = context.store.key_of(node).map(|key| key.0);
-        let children = children
-            .into_iter()
-            .map(|child| {
-                read::corrected_backend(context, client, window, child, QueryKind::FirstChild)
-            })
-            .collect();
-        return Ok((children, true));
-    }
     let mut children = Vec::new();
     let mut next = read::navigate(context, client, node, QueryKind::FirstChild)?;
     while let Some(child) = next {

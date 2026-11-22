@@ -63,13 +63,6 @@ impl<'a, 'c> UiaNode<'a, 'c> {
             }
         }
     }
-
-    /// The node's window, its own or its nearest ancestor's, as the
-    /// outpost holds it.
-    fn window(&self) -> Option<isize> {
-        read::kept_own_window(self.context, self.node)
-            .or_else(|| asked::known_nearest_of(self.context, self.node))
-    }
 }
 
 impl Resolve for UiaNode<'_, '_> {
@@ -117,42 +110,7 @@ impl Resolve for UiaNode<'_, '_> {
     }
 
     fn held(&self, _subject: &Subject, id: PropertyId) -> Option<PropertyValue> {
-        let context = self.context;
-        match id {
-            PropertyId::MsaaAddress => {
-                context
-                    .store
-                    .key_of(self.node)
-                    .map(|(window, object, child)| {
-                        PropertyValue::MsaaAddress(HeldIds {
-                            event: MsaaIds {
-                                window: window_handle(window),
-                                object,
-                                child,
-                            },
-                            held_child: child,
-                        })
-                    })
-            }
-            PropertyId::WindowShown => self
-                .window()
-                .map(|hwnd| PropertyValue::Flag(verbatim_win32::window::window_is_visible(hwnd))),
-            PropertyId::WindowClass => self
-                .window()
-                .map(|hwnd| PropertyValue::Text(verbatim_win32::window::window_class_name(hwnd))),
-            PropertyId::ChildCount => context
-                .store
-                .key_of(self.node)
-                .and_then(|(hwnd, _, child)| {
-                    verbatim_ia2::acquire::tree_view_child_count(hwnd, child)
-                })
-                .map(PropertyValue::Count),
-            PropertyId::TextSummary => {
-                super::text_reads::text_summary(context, Some(self.uia), self.node)
-                    .map(PropertyValue::TextSummary)
-            }
-            _ => None,
-        }
+        held(self.context, Some(self.uia), self.node, id)
     }
 
     fn value(&self, read: &ElementRead, id: PropertyId) -> Option<PropertyValue> {
@@ -166,6 +124,47 @@ impl Resolve for UiaNode<'_, '_> {
             .0
             .pop()
             .and_then(|answer| answer.value)
+    }
+}
+
+/// Property `id` of node `node` that the outpost answers from what it
+/// holds rather than from the node's own read: its MSAA ids, whether its
+/// window, its own or its nearest ancestor's, is shown, and that window's
+/// class, from Windows; a tree view item's children, by the control's
+/// messages; and its text's summary, through the outpost's text, with the
+/// UI Automation client `uia` for a UI Automation node.
+pub(super) fn held(
+    context: &RequestContext<'_>,
+    uia: Option<&Uia>,
+    node: NodeId,
+    id: PropertyId,
+) -> Option<PropertyValue> {
+    let window =
+        || read::kept_own_window(context, node).or_else(|| asked::known_nearest_of(context, node));
+    match id {
+        PropertyId::MsaaAddress => context.store.key_of(node).map(|(window, object, child)| {
+            PropertyValue::MsaaAddress(HeldIds {
+                event: MsaaIds {
+                    window: window_handle(window),
+                    object,
+                    child,
+                },
+                held_child: child,
+            })
+        }),
+        PropertyId::WindowShown => window()
+            .map(|hwnd| PropertyValue::Flag(verbatim_win32::window::window_is_visible(hwnd))),
+        PropertyId::WindowClass => window()
+            .map(|hwnd| PropertyValue::Text(verbatim_win32::window::window_class_name(hwnd))),
+        PropertyId::ChildCount => context
+            .store
+            .key_of(node)
+            .and_then(|(hwnd, _, child)| verbatim_ia2::acquire::tree_view_child_count(hwnd, child))
+            .map(PropertyValue::Count),
+        PropertyId::TextSummary => {
+            super::text_reads::text_summary(context, uia, node).map(PropertyValue::TextSummary)
+        }
+        _ => None,
     }
 }
 
