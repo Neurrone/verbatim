@@ -1627,8 +1627,10 @@ match's rows. Speech of anything but the focus is ignored.
   Arrow try the marks beyond the review position, nearest first, each by
   one line read at its place and otherwise by the outpost's search
   outward from it. "Report status bar" (`commands::status_bar`) reads the
-  footer below the caret after the window read, or says
-  `Message::NoStatusLineFound` outside a terminal.
+  footer after the window read (`Reading::footer`): the lines below the
+  caret, else the run of rows at the screen's bottom the program has
+  rewritten, else the last line with text; outside a terminal it says
+  `Message::NoStatusLineFound`.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
   output"; off drops what waits and speaks no output, but still the
   answers to keys.

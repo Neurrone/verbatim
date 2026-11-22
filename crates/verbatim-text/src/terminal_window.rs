@@ -615,6 +615,39 @@ impl Reading {
         }
     }
 
+    /// The footer of `window`, the watch's last window, judged by this
+    /// reading's record of the rows the program rewrote (F13): the lines
+    /// with text below the caret's line; otherwise the run of lines at the
+    /// screen's bottom the program has rewritten, blank lines left out and
+    /// the trailing blank ones skipped; otherwise the last line with text.
+    /// Empty when the window has no text.
+    #[must_use]
+    pub fn footer(&self, window: &Window) -> Vec<String> {
+        let below = window.below_caret();
+        if !below.is_empty() {
+            return below;
+        }
+        let rewritten = |index: usize| self.changes.iter().any(|change| change.line == index);
+        let screen: Vec<usize> = window.screen().collect();
+        let mut run: Vec<String> = screen
+            .into_iter()
+            .rev()
+            .skip_while(|&index| window.text(index).is_empty())
+            .take_while(|&index| window.text(index).is_empty() || rewritten(index))
+            .filter(|&index| !window.text(index).is_empty())
+            .map(|index| window.text(index).to_owned())
+            .collect();
+        run.reverse();
+        if run.is_empty() {
+            window
+                .last_text_line()
+                .map(|(line, _)| vec![line])
+                .unwrap_or_default()
+        } else {
+            run
+        }
+    }
+
     /// The one time something held waits for, while anything is held.
     #[must_use]
     pub fn due(&self) -> Option<u64> {

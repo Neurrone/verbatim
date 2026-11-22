@@ -217,7 +217,10 @@ pub(crate) async fn command_mark(
 }
 
 /// "Report status bar": in the focused terminal, its footer after the
-/// window's read, spelled on the second press and copied on the third;
+/// window's read (`verbatim_text::terminal_window::Reading::footer`: the
+/// lines below the caret, else the rows at the screen's bottom the program
+/// rewrote, else the last line with text), spelled on the second press
+/// and copied on the third;
 /// elsewhere "No status line found", until milestone M5's general status
 /// bar. A read that brings nothing says nothing.
 pub(crate) async fn status_bar(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
@@ -241,17 +244,13 @@ pub(crate) async fn status_bar(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u
     }
     let footer = {
         let facts = cx.facts();
-        let Some(Watch::Live { old, .. }) = focus_of(&facts).map(|focus| &focus.watch) else {
+        let Some(focus) = focus_of(&facts) else {
             return;
         };
-        let below = old.below_caret();
-        if below.is_empty() {
-            old.last_text_line()
-                .map(|(line, _)| vec![line])
-                .unwrap_or_default()
-        } else {
-            below
-        }
+        let Watch::Live { old, .. } = &focus.watch else {
+            return;
+        };
+        focus.reading.footer(old)
     };
     cx.emit(status_bar_said(trace_id, repeat, &footer));
 }

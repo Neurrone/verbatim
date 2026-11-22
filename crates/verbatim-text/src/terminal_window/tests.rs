@@ -639,6 +639,19 @@ fn a_line_changed_in_place_is_shared_with_the_last_read() {
 }
 
 #[test]
+fn the_footer_is_the_run_of_rewritten_lines_at_the_screens_bottom() {
+    // F13: with nothing below the caret, the run of lines at the screen's
+    // bottom the program rewrote, a clock and a load meter, both read;
+    // without such a run, the last line with text.
+    let mut reading = Reading::new();
+    let one = window(&["$ top", "body", "clock 1", "load 1", ""], None, 0);
+    let two = window(&["$ top", "body", "clock 2", "load 2", ""], None, 3000);
+    let _ = reading.answer(&one, &two);
+    assert_eq!(reading.footer(&two), ["clock 2", "load 2"]);
+    assert_eq!(Reading::new().footer(&two), ["load 2"]);
+}
+
+#[test]
 fn a_line_keys_answer_is_spoken_once_however_many_reads_its_window_holds() {
     // TM 18: each read is compared once with the last; a second read in
     // the key's window that finds the caret and its line as the first did
