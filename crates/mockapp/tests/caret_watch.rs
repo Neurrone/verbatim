@@ -714,6 +714,8 @@ fn read_selection(
                     adopt: None,
                 }),
                 step(Op::ReadText {
+                    trim: false,
+                    whole: false,
                     subject: subject.clone(),
                     at: Point::Of(Place(0), PointOf::Caret),
                     movement: None,

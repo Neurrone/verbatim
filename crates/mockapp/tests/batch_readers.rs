@@ -365,6 +365,8 @@ fn a_run_of_text_steps_is_one_program_with_its_formatting() {
     let step = |op| Step { op, when: None };
     let doc = Subject::Node(node);
     let read = |at, movement, unit, details| Op::ReadText {
+        trim: false,
+        whole: false,
         subject: doc.clone(),
         at,
         movement,
@@ -486,6 +488,8 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
                 adopt: None,
             }),
             step(Op::ReadText {
+                trim: false,
+                whole: false,
                 subject: doc.clone(),
                 at: caret,
                 movement: None,
@@ -494,6 +498,7 @@ fn text_reads(outpost: &OutpostUnderTest, hwnd: HWND, node: verbatim_model::Node
                 details: TextDetails::NONE,
             }),
             step(Op::ReadRange {
+                trim: false,
                 subject: doc.clone(),
                 start: caret,
                 end: Point::At(TextPoint::End),

@@ -241,6 +241,8 @@ fn a_poll_that_ends_the_wait_reads_the_later_steps() {
             },
             Step {
                 op: Op::ReadText {
+                    trim: false,
+                    whole: false,
                     subject: node.clone(),
                     at: Point::Of(Place(1), PointOf::Caret),
                     movement: None,

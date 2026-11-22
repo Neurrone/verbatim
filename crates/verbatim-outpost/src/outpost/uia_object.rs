@@ -142,7 +142,7 @@ impl Resolve for UiaNode<'_, '_> {
         read: (
             Option<verbatim_model::TextMovement>,
             verbatim_model::TextUnit,
-            u8,
+            u16,
         ),
         details: verbatim_model::TextDetails,
     ) -> Result<verbatim_uia_rops::batch::UnitsRead, Ran> {

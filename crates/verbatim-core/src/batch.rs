@@ -164,6 +164,14 @@ pub mod kind {
         WaitForCaret => Waited, WaitForCaret;
         /// A terminal's window read's.
         TerminalRead => Box<verbatim_model::TerminalWindow>, TerminalRead;
+        /// The visible range's.
+        Visible => verbatim_model::batch::VisibleText, Visible;
+        /// A move's.
+        Move => verbatim_model::batch::Moved, Move;
+        /// A search's: the matches, the nearest first.
+        FindText => Vec<verbatim_model::batch::FoundText>, FindText;
+        /// A terminal's colours: each row's runs.
+        ReadColours => Vec<Vec<verbatim_model::TerminalColourRun>>, ReadColours;
     }
 
     /// A follow's: applied, with nothing read.
@@ -207,6 +215,7 @@ pub mod kind {
     impl Finds for IsOneOf {}
     impl Finds for FocusRead {}
     impl Finds for WaitForCaret {}
+    impl Finds for Move {}
 }
 
 use kind::Kind;
@@ -384,6 +393,28 @@ impl<B> Ref<B, kind::ReadText> {
     #[must_use]
     pub fn start(self) -> At<B> {
         self.point(PointOf::ChunkStart)
+    }
+}
+
+impl<B> Ref<B, kind::Visible> {
+    /// The start of the visible range this step read.
+    #[must_use]
+    pub fn visible_start(self) -> At<B> {
+        self.point(PointOf::VisibleStart)
+    }
+
+    /// The end of the visible range this step read.
+    #[must_use]
+    pub fn visible_end(self) -> At<B> {
+        self.point(PointOf::VisibleEnd)
+    }
+}
+
+impl<B> Ref<B, kind::Move> {
+    /// Where this step's move landed.
+    #[must_use]
+    pub fn landed(self) -> At<B> {
+        self.point(PointOf::Moved)
     }
 }
 
@@ -867,8 +898,33 @@ impl<B> Builder<B> {
             at,
             movement,
             unit,
-            count,
+            count: count.into(),
             details,
+            whole: false,
+            trim: false,
+        });
+        self.push(op)
+    }
+
+    /// Reads `count` units of `unit` of `node`'s text from `at` with
+    /// nothing beyond the text, each line without its padding: as one span
+    /// from the point itself when `whole`, else the one unit at the point.
+    pub fn read_trimmed(
+        &mut self,
+        node: NodeId,
+        at: At<B>,
+        unit: TextUnit,
+        (count, whole): (u16, bool),
+    ) -> Ref<B, kind::ReadText> {
+        let op = self.point(at).map(|at| Op::ReadText {
+            subject: Subject::Node(node),
+            at,
+            movement: None,
+            unit,
+            count,
+            details: TextDetails::NONE,
+            whole,
+            trim: true,
         });
         self.push(op)
     }
@@ -888,9 +944,91 @@ impl<B> Builder<B> {
                 start,
                 end,
                 through,
+                trim: false,
             }),
             _ => None,
         };
+        self.push(op)
+    }
+
+    /// Reads `node`'s text between `start` and `end`, each line without
+    /// its padding.
+    pub fn read_range_trimmed(
+        &mut self,
+        node: NodeId,
+        (start, end): (At<B>, At<B>),
+    ) -> Ref<B, kind::ReadRange> {
+        let op = match (self.point(start), self.point(end)) {
+            (Some(start), Some(end)) => Some(Op::ReadRange {
+                subject: Subject::Node(node),
+                start,
+                end,
+                through: None,
+                trim: true,
+            }),
+            _ => None,
+        };
+        self.push(op)
+    }
+
+    /// Reads the first range `node`'s text shows on screen.
+    pub fn visible(&mut self, node: NodeId) -> Ref<B, kind::Visible> {
+        self.push(Some(Op::Visible {
+            subject: Subject::Node(node),
+        }))
+    }
+
+    /// Moves a collapsed copy of `at` in `node`'s text by `movement`.
+    pub fn move_point(
+        &mut self,
+        node: NodeId,
+        at: At<B>,
+        movement: TextMovement,
+    ) -> Ref<B, kind::Move> {
+        let op = self.point(at).map(|at| Op::Move {
+            subject: Subject::Node(node),
+            at,
+            movement,
+        });
+        self.push(op)
+    }
+
+    /// Searches `node`'s text from `at` for `needle`, forward or back, as
+    /// `search` bounds it.
+    pub fn find_text(
+        &mut self,
+        node: NodeId,
+        at: At<B>,
+        (needle, backward): (String, bool),
+        search: Search,
+    ) -> Ref<B, kind::FindText> {
+        let op = self.point(at).map(|at| Op::FindText {
+            subject: Subject::Node(node),
+            at,
+            needle,
+            backward,
+            unit_start: search.unit_start,
+            read: search.read,
+            limit: search.limit,
+            calls: search.calls,
+        });
+        self.push(op)
+    }
+
+    /// Reads the colours of `rows` rows of `width` cells of terminal
+    /// `node`'s text from `at`.
+    pub fn read_colours(
+        &mut self,
+        node: NodeId,
+        at: At<B>,
+        (rows, width): (u32, u32),
+    ) -> Ref<B, kind::ReadColours> {
+        let op = self.point(at).map(|at| Op::ReadColours {
+            subject: Subject::Node(node),
+            at,
+            rows,
+            width,
+        });
         self.push(op)
     }
 
@@ -984,6 +1122,21 @@ impl<B> Builder<B> {
             wait: Box::new(wait),
         }))
     }
+}
+
+/// How a [`Builder::find_text`] searches: only matches that start a unit
+/// of `unit_start`, when set, each answering `read` units of text, at most
+/// `limit` matches over at most `calls` calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Search {
+    /// The unit a match must start, if any.
+    pub unit_start: Option<TextUnit>,
+    /// The units of text each match answers.
+    pub read: u8,
+    /// The most matches.
+    pub limit: u8,
+    /// The most calls.
+    pub calls: u8,
 }
 
 /// A built batch, branded `B`.

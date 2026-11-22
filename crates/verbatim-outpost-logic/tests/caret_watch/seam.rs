@@ -717,6 +717,7 @@ impl Seam {
                 } => {
                     let line = self.caret(app).line;
                     StepOutcome::Done(Done::ReadText(Chunks {
+                        padded: None,
                         moved: 0,
                         chunks: vec![line],
                     }))
@@ -733,11 +734,13 @@ impl Seam {
                     let text = app.before().map(String::from).unwrap_or_default();
                     let start = self.anchor();
                     StepOutcome::Done(Done::ReadText(Chunks {
+                        padded: None,
                         moved: if text.is_empty() { 0 } else { -1 },
                         chunks: vec![chunk(TextUnit::Character, &text, start, 0)],
                     }))
                 }
                 Op::ReadText { unit, .. } => StepOutcome::Done(Done::ReadText(Chunks {
+                    padded: None,
                     moved: 0,
                     chunks: vec![self.unit(*unit, app)],
                 })),

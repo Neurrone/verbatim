@@ -16,9 +16,9 @@
 use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 
 use verbatim_model::batch::{
-    Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, Gate, HeldSelection, KindMismatch,
-    Located, Missing, Op, Place, Point, PointOf, RangeText, Selected, SelectionCompared, Step,
-    StepOutcome, StepRefusal, Subject, Waited,
+    Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, FoundText, Gate, HeldSelection,
+    KindMismatch, Located, Missing, Moved, Op, Place, Point, PointOf, RangeText, Selected,
+    SelectionCompared, Step, StepOutcome, StepRefusal, Subject, VisibleText, Waited,
 };
 use verbatim_model::{
     CaretSelection, MAX_RANGE_BYTES, MAX_READ_AHEAD_TEXT, NodeId, Selection, SelectionDifference,
@@ -27,7 +27,8 @@ use verbatim_model::{
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{
-    Compared, Found, HeldAt, Ran, Resolve, Segment, UnitsFound, UnitsRead, Unrun, WaitCheck,
+    Compared, Found, HeldAt, MoveFound, Ran, Resolve, Segment, UnitsFound, UnitsRead, Unrun,
+    VisibleFound, WaitCheck,
 };
 use verbatim_uia_rops::{FoundPoint, Movement, Position, TextTarget};
 
@@ -57,7 +58,11 @@ pub fn named(steps: &[Step], first: usize, earlier: &[StepOutcome]) -> Vec<u64> 
     let mut named = Vec::new();
     for step in steps {
         match &step.op {
-            Op::ReadText { at, .. } | Op::Locate { at, .. } => points.push(*at),
+            Op::ReadText { at, .. }
+            | Op::Locate { at, .. }
+            | Op::Move { at, .. }
+            | Op::FindText { at, .. }
+            | Op::ReadColours { at, .. } => points.push(*at),
             Op::ReadRange {
                 start,
                 end,
@@ -130,6 +135,9 @@ fn earlier_anchor(outcome: &StepOutcome, which: PointOf) -> Option<TextAnchor> {
         (StepOutcome::Done(Done::ReadText(read)), PointOf::ChunkStart) => {
             read.chunks.first().map(|chunk| chunk.start)
         }
+        (StepOutcome::Done(Done::Visible(visible)), PointOf::VisibleStart) => Some(visible.start),
+        (StepOutcome::Done(Done::Visible(visible)), PointOf::VisibleEnd) => Some(visible.end),
+        (StepOutcome::Done(Done::Move(moved)), PointOf::Moved) => Some(moved.to),
         _ => None,
     }
 }
@@ -240,7 +248,7 @@ impl Resolve for TextResolver<'_, '_> {
 
     fn units(
         &self,
-        read: (Option<TextMovement>, TextUnit, u8),
+        read: (Option<TextMovement>, TextUnit, u16),
         details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
         units_read(self.source, read, (details, true))
@@ -277,7 +285,7 @@ fn node_text<'s>(
 /// when `culture`; the refusal when the text has no such unit.
 pub(crate) fn units_read(
     source: &UiaText,
-    (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
+    (movement, unit, count): (Option<TextMovement>, TextUnit, u16),
     (details, culture): (TextDetails, bool),
 ) -> Result<UnitsRead, Ran> {
     let no_such_unit = Ran::Unrun(Unrun::Refused(StepRefusal::NoSuchUnit));
@@ -326,7 +334,7 @@ impl Resolve for LineResolver<'_> {
 
     fn units(
         &self,
-        read: (Option<TextMovement>, TextUnit, u8),
+        read: (Option<TextMovement>, TextUnit, u16),
         details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
         units_read(self.source, read, (details, false))
@@ -360,6 +368,8 @@ pub fn caret_line(
             adopt: None,
         }),
         step(Op::ReadText {
+            trim: false,
+            whole: false,
             subject: subject.clone(),
             at: of(PointOf::Caret),
             movement: None,
@@ -369,6 +379,7 @@ pub fn caret_line(
         }),
         Step {
             op: Op::ReadRange {
+                trim: false,
                 subject,
                 start: of(PointOf::SelectionStart),
                 end: of(PointOf::SelectionEnd),
@@ -798,12 +809,44 @@ impl Made<'_, '_> {
             }
             (
                 Op::ReadText {
+                    unit,
+                    whole,
+                    trim: true,
+                    ..
+                }
+                | Op::ReadText {
+                    unit,
+                    whole: whole @ true,
+                    ..
+                },
+                Ran::Done(Found::ReadText(found)),
+            ) => self.trimmed_text(
+                *unit,
+                (*whole, matches!(step.op, Op::ReadText { trim: true, .. })),
+                found,
+            ),
+            (
+                Op::ReadText {
                     at, unit, details, ..
                 },
                 Ran::Done(Found::ReadText(found)),
             ) => self.read_text(at, *unit, *details, found),
-            (Op::ReadRange { .. }, Ran::Done(Found::ReadRange(units))) => {
-                Ok(Done::ReadRange(range_text(&units)))
+            (Op::ReadRange { trim, .. }, Ran::Done(Found::ReadRange(units))) => {
+                Ok(Done::ReadRange(range_text(&units, *trim)))
+            }
+            (Op::Visible { .. }, Ran::Done(Found::Visible(found))) => self.visible(&found),
+            (Op::Move { .. }, Ran::Done(Found::Move(found))) => self.moved(&found),
+            (Op::FindText { .. }, Ran::Done(Found::FindText(found))) => Ok(Done::FindText(
+                found
+                    .into_iter()
+                    .map(|found| FoundText {
+                        to_end: found.to_end,
+                        text: String::from_utf16_lossy(&found.text),
+                    })
+                    .collect(),
+            )),
+            (Op::ReadColours { .. }, Ran::Done(Found::Colours(rows))) => {
+                Ok(Done::ReadColours(colour_rows(rows)))
             }
             (Op::CompareSelection { before, .. }, Ran::Done(Found::CompareSelection(compared))) => {
                 Ok(self.compared(before, compared))
@@ -983,8 +1026,88 @@ impl Made<'_, '_> {
             last.last = true;
         }
         Ok(Done::ReadText(Chunks {
+            padded: None,
             moved: found.moved,
             chunks,
+        }))
+    }
+
+    /// A trimmed or whole `ReadText`'s result: its one unit as one chunk of
+    /// `kind`, its anchor holding the unit's start alone, each line without
+    /// its padding and the padded lengths when `trim`, the text up to a
+    /// range's limit when `whole`.
+    fn trimmed_text(
+        &mut self,
+        kind: TextUnit,
+        (whole, trim): (bool, bool),
+        mut found: UnitsFound,
+    ) -> TextResult<Done> {
+        let unit = found.units.swap_remove(0);
+        let start = self
+            .anchors
+            .hold_point(UiaPos::new(&unit.range, Endpoint::Start, false)?);
+        let limit = if whole {
+            MAX_RANGE_UNITS
+        } else {
+            super::MAX_CHUNK_UNITS
+        };
+        let read_cut = unit.text.len() > limit;
+        let units = &unit.text[..unit.text.len().min(limit)];
+        let (text, offset, padded) = if trim {
+            let trimmed = super::trim::unpadded_utf16(units);
+            let offset = super::trim::trimmed_offset(units, unit.offset, &trimmed.text);
+            (trimmed.text, offset, Some(trimmed.lengths))
+        } else {
+            let (text, mapped, _) = to_utf8(units, MAX_RANGE_BYTES, &[unit.offset]);
+            (text, u32::try_from(mapped[0]).unwrap_or(u32::MAX), None)
+        };
+        Ok(Done::ReadText(Chunks {
+            moved: found.moved,
+            chunks: vec![TextChunk {
+                unit: kind,
+                text,
+                start,
+                offset,
+                languages: Vec::new(),
+                first: false,
+                last: false,
+                truncated: read_cut,
+                formats: Vec::new(),
+            }],
+            padded,
+        }))
+    }
+
+    /// A `Visible`'s result: its ends held, its text trimmed.
+    fn visible(&mut self, found: &VisibleFound) -> TextResult<Done> {
+        let start = self
+            .anchors
+            .hold_point(UiaPos::new(&found.range, Endpoint::Start, false)?);
+        let end = self
+            .anchors
+            .hold_point(UiaPos::new(&found.range, Endpoint::End, false)?);
+        let trimmed = super::trim::unpadded_utf16(&found.text);
+        Ok(Done::Visible(VisibleText {
+            start,
+            end,
+            at_text_start: found.at_text_start,
+            text: trimmed.text,
+            padded: trimmed.lengths,
+        }))
+    }
+
+    /// A `Move`'s result: where it started and landed, held.
+    fn moved(&mut self, found: &MoveFound) -> TextResult<Done> {
+        let from = self
+            .anchors
+            .hold_point(UiaPos::new(&found.from, Endpoint::Start, true)?);
+        let to = self
+            .anchors
+            .hold_point(UiaPos::new(&found.to, Endpoint::Start, true)?);
+        Ok(Done::Move(Moved {
+            moved: found.moved,
+            from,
+            to,
         }))
     }
 
@@ -1029,10 +1152,19 @@ impl Made<'_, '_> {
 }
 
 /// A `ReadRange`'s text, `units` read up to one past the range's limit, as
-/// a copy's: cut at the limit between whole characters.
-fn range_text(units: &[u16]) -> RangeText {
+/// a copy's: cut at the limit between whole characters; each line without
+/// its padding, with the padded lengths, when `trim`.
+fn range_text(units: &[u16], trim: bool) -> RangeText {
     let read_cut = units.len() > MAX_RANGE_UNITS;
     let units = &units[..units.len().min(MAX_RANGE_UNITS)];
+    if trim {
+        let trimmed = super::trim::unpadded_utf16(units);
+        return RangeText {
+            text: trimmed.text,
+            truncated: read_cut,
+            padded: Some(trimmed.lengths),
+        };
+    }
     let (mut text, _, cut) = to_utf8(units, MAX_RANGE_BYTES, &[]);
     if read_cut && !cut {
         keep_whole_characters(&mut text);
@@ -1040,5 +1172,25 @@ fn range_text(units: &[u16]) -> RangeText {
     RangeText {
         text,
         truncated: read_cut || cut,
+        padded: None,
     }
+}
+
+/// A colour read's rows as the model carries them.
+fn colour_rows(
+    rows: Vec<Vec<verbatim_uia_rops::ColourRun>>,
+) -> Vec<Vec<verbatim_model::TerminalColourRun>> {
+    let cells = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+    rows.into_iter()
+        .map(|runs| {
+            runs.into_iter()
+                .map(|run| verbatim_model::TerminalColourRun {
+                    column: cells(run.column),
+                    length: cells(run.length),
+                    foreground: run.foreground,
+                    background: run.background,
+                })
+                .collect()
+        })
+        .collect()
 }

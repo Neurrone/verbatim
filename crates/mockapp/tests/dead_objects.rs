@@ -232,6 +232,8 @@ fn a_text_read_of_a_dead_object_says_gone() {
 
     app.send("disconnect doc");
     let read = common::one_step(verbatim_model::batch::Op::ReadText {
+        trim: false,
+        whole: false,
         subject: verbatim_model::batch::Subject::Node(doc),
         at: verbatim_model::batch::Point::At(TextPoint::Start),
         movement: None,

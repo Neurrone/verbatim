@@ -1385,6 +1385,7 @@ pub(crate) fn flat_steps(text: &str, batch: &Batch) -> Vec<StepOutcome> {
 fn flat_step(text: &str, step: LocalStep) -> StepOutcome {
     let read = |moved, chunk| {
         StepOutcome::Done(Done::ReadText(Chunks {
+            padded: None,
             moved,
             chunks: vec![chunk],
         }))
@@ -1450,6 +1451,7 @@ fn flat_step(text: &str, step: LocalStep) -> StepOutcome {
                 None => (start.min(end), start.max(end)),
             };
             StepOutcome::Done(Done::ReadRange(RangeText {
+                padded: None,
                 text: proven::text_in(text, from..to.max(from)).to_owned(),
                 truncated: false,
             }))

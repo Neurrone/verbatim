@@ -5,7 +5,12 @@
 //! every row padded to the width and ended by a carriage return and line
 //! feed, and whose `screen` command puts only the text's last rows on
 //! screen. Each read is taken by the remote program and by the classic
-//! calls, which must answer alike, and each answer is pinned whole.
+//! calls, which must answer alike, and each answer is pinned whole. Each
+//! read is also asked as the request list's generic steps
+//! (`verbatim_core::terminal_window`), through a real outpost with remote
+//! operations on and one with them off, the window Core makes of their
+//! outcomes answering every field the read's does: the differential of the
+//! generic steps against the terminal read.
 //!
 //! What is checked: a first read from the screen's top; a read after
 //! output, from two screens above the document's end, counting the rows
@@ -23,10 +28,20 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use common::outpost::OutpostUnderTest;
+
 use std::sync::{Arc, Mutex};
 
-use verbatim_model::{MarkPlace, MarkSearch, TerminalColourRun, TerminalText};
+use verbatim_core::batch::Builder;
+use verbatim_core::terminal_window::{add_steps, window_of};
+use verbatim_model::batch::{Done, Op, Placement, Step, StepOutcome, Subject};
+use verbatim_model::request::{Outcome, Question, Reply, WindowVerdict};
+use verbatim_model::{
+    CurrentMark, EndMark, MarkPlace, MarkSearch, NodeId, TerminalColourRun, TerminalText,
+    TerminalWindow, TextAnchor, TextDetails, WindowAsk,
+};
 use verbatim_outpost::terminal::{WindowAnswer, WindowRead, window};
+use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;
@@ -73,13 +88,76 @@ fn unpadded(rows: &[&str]) -> TerminalText {
     TerminalText::unpadded(&padded.concat())
 }
 
-/// A terminal under test.
+/// A terminal under test, with an outpost reading it by remote
+/// operations and one reading it by calls, each holding the terminal's
+/// node.
 struct Terminal {
     app: common::MockApp,
     hwnd: HWND,
     uia: Uia,
     element: IUIAutomationElement,
     pattern: IUIAutomationTextPattern,
+    outposts: Vec<(OutpostUnderTest, NodeId)>,
+}
+
+/// The brand of the generic steps' batches.
+enum WindowSteps {}
+
+/// The end a read found: the range the terminal read holds, and the anchor
+/// each outpost holds for the generic steps' read.
+struct Ends {
+    range: IUIAutomationTextRange,
+    anchors: Vec<TextAnchor>,
+}
+
+/// What a test asks a read: its marks by the ends earlier reads found.
+struct Asked<'a> {
+    end: Option<(&'a Ends, &'a str, bool)>,
+    aside: Option<&'a Ends>,
+    height: u32,
+    colours: bool,
+}
+
+/// An outpost reading mockapp's terminal by remote operations when
+/// `remote`, and the terminal's node, minted by its read of the focus.
+fn generic_outpost(
+    app: &common::MockApp,
+    element: &IUIAutomationElement,
+    hwnd: HWND,
+    remote: bool,
+) -> (OutpostUnderTest, NodeId) {
+    let outpost = OutpostUnderTest::with_options(
+        app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    outpost.read_focus_as(element);
+    let (focus, _) = outpost.batch(
+        hwnd,
+        WindowVerdict::Uia,
+        verbatim_model::batch::Batch {
+            steps: vec![Step {
+                op: Op::FocusRead {
+                    subject: Subject::Focus,
+                    known: Vec::new(),
+                    set: common::outpost::focus_set(),
+                    details: TextDetails::NONE,
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
+        },
+    );
+    let Outcome::Result(Reply::Steps(steps)) = focus.outcome else {
+        panic!("the focus read's steps, not {:?}", focus.outcome)
+    };
+    let Some(StepOutcome::Done(Done::FocusRead(read))) = steps.first() else {
+        panic!("the focus read, not {steps:?}")
+    };
+    let node = read.focus.read.node.expect("the terminal's node");
+    (outpost, node)
 }
 
 impl Terminal {
@@ -93,12 +171,18 @@ impl Terminal {
         let element = common::named_element(&uia, hwnd, "Terminal");
         let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
         common::apply(&mut app, hwnd, &format!("screen term {screen}"));
+        app.send("set-focus term");
+        let outposts = [true, false]
+            .into_iter()
+            .map(|remote| generic_outpost(&app, &element, hwnd, remote))
+            .collect();
         Self {
             app,
             hwnd,
             uia,
             element,
             pattern,
+            outposts,
         }
     }
 
@@ -125,14 +209,90 @@ impl Terminal {
         .expect("the window is read")
     }
 
-    /// The read `ask` names both ways, which must answer alike: the
-    /// answer's fields, and the end the remote read found.
-    fn both(&self, ask: &WindowRead<'_>) -> (Fields, IUIAutomationTextRange) {
-        let remote = self.read(ask, true);
-        let classic = self.read(ask, false);
+    /// The read `asked` names, by the generic steps through outpost
+    /// `which`: the window Core makes of their outcomes.
+    fn generic(&self, which: usize, asked: &Asked<'_>) -> TerminalWindow {
+        let (outpost, node) = &self.outposts[which];
+        let ask = WindowAsk {
+            end: asked.end.map(|(ends, line, find)| CurrentMark {
+                mark: EndMark {
+                    anchor: ends.anchors[which],
+                    line: line.to_owned(),
+                    line_above: 0,
+                },
+                find,
+            }),
+            aside: asked.aside.map(|ends| EndMark {
+                anchor: ends.anchors[which],
+                line: String::new(),
+                line_above: 0,
+            }),
+            height: asked.height,
+            opening: 2,
+            colours: asked.colours,
+        };
+        let mut steps = Builder::<WindowSteps>::named();
+        let colours = asked.colours.then(|| {
+            (
+                asked.height,
+                u32::try_from(WIDTH).expect("a narrow terminal"),
+            )
+        });
+        add_steps(&mut steps, *node, &ask, colours);
+        let Question::Batch(batch) = steps.finish().question() else {
+            panic!("a batch")
+        };
+        let (answer, calls) = outpost.batch(self.hwnd, WindowVerdict::Uia, batch);
+        // By remote operations, a read with no search is one program, and
+        // the colours one more: no step fell back to calls.
+        if which == 0 && !asked.end.is_some_and(|(_, _, find)| find) {
+            assert_eq!(
+                calls.uia,
+                1 + u32::from(asked.colours),
+                "the generic read's programs"
+            );
+        }
+        let Outcome::Result(Reply::Steps(outcomes)) = answer.outcome else {
+            panic!("the window read's steps, not {:?}", answer.outcome)
+        };
+        window_of(&outcomes, &ask, 0)
+            .unwrap_or_else(|unread| panic!("the window, not {unread:?} of {outcomes:#?}"))
+    }
+
+    /// The read `asked` names both ways, which must answer alike, and by
+    /// the generic steps through both outposts, which must answer as the
+    /// read does: the answer's fields, and the ends found.
+    fn both(&self, asked: &Asked<'_>) -> (Fields, Ends) {
+        let ask = WindowRead {
+            end: asked
+                .end
+                .map(|(ends, line, find)| (&ends.range, line, find)),
+            aside: asked.aside.map(|ends| &ends.range),
+            height: asked.height,
+            opening: 2,
+            colours: asked.colours,
+        };
+        let remote = self.read(&ask, true);
+        let classic = self.read(&ask, false);
         let fields = Fields::from(&remote);
         assert_eq!(fields, Fields::from(&classic), "remote and classic differ");
-        (fields, remote.end)
+        let mut anchors = Vec::new();
+        for (which, label) in ["remote", "calls"].into_iter().enumerate() {
+            let window = self.generic(which, asked);
+            assert_eq!(
+                Fields::of_window(&window),
+                fields,
+                "the generic steps by {label} differ from the terminal read"
+            );
+            anchors.push(window.end);
+        }
+        (
+            fields,
+            Ends {
+                range: remote.end,
+                anchors,
+            },
+        )
     }
 }
 
@@ -187,13 +347,40 @@ impl From<&WindowAnswer> for Fields {
     }
 }
 
+impl Fields {
+    /// The fields of the window Core made of the generic steps' outcomes.
+    fn of_window(window: &TerminalWindow) -> Self {
+        Self {
+            rows: window.rows.clone(),
+            above: window.above,
+            screen_top: window.screen_top,
+            screen_rows: window.screen_rows,
+            width: window.width,
+            screen_at_start: window.screen_at_start,
+            caret_rows_to_end: window.caret_rows_to_end,
+            first_row: window.first_row.clone(),
+            document_rows: window.document_rows,
+            end_place: window.end_place.clone(),
+            aside_place: window.aside_place.clone(),
+            found: window.found,
+            colours: window.colours.clone(),
+            caret: window.caret.as_ref().map(|caret| {
+                let line = &caret.report.line;
+                (
+                    line.text.clone(),
+                    usize::try_from(line.offset).expect("an offset"),
+                )
+            }),
+        }
+    }
+}
+
 /// A read naming no mark, of a screen `height` rows high as last read.
-fn plain(height: u32) -> WindowRead<'static> {
-    WindowRead {
+fn plain(height: u32) -> Asked<'static> {
+    Asked {
         end: None,
         aside: None,
         height,
-        opening: 2,
         colours: false,
     }
 }
@@ -247,11 +434,10 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways
     let mut rows = numbered("line", 1..=28);
     rows.push("ready>".to_owned());
     terminal.show(&rows);
-    let ask = WindowRead {
+    let ask = Asked {
         end: Some((&first_end, "ready>", false)),
         aside: Some(&first_end),
         height: first.screen_rows,
-        opening: 2,
         colours: true,
     };
     let (second, second_end) = terminal.both(&ask);
@@ -282,11 +468,10 @@ fn a_read_counts_the_rows_past_its_marks_and_reads_the_screens_colours_both_ways
     );
 
     terminal.show(&["ready>".to_owned()]);
-    let ask = WindowRead {
+    let ask = Asked {
         end: Some((&second_end, "ready>", false)),
         aside: Some(&first_end),
         height: second.screen_rows,
-        opening: 2,
         colours: false,
     };
     let (cleared, _) = terminal.both(&ask);
@@ -343,7 +528,7 @@ fn a_wrapped_lines_rows_are_counted_and_coloured_each_its_own_both_ways() {
         terminal.hwnd,
         &format!("caret term {caret} {caret}"),
     );
-    let ask = WindowRead {
+    let ask = Asked {
         colours: true,
         ..plain(3)
     };
@@ -389,12 +574,11 @@ fn command_rows(first: u32) -> Vec<String> {
 }
 
 /// What the search for `line`, from a read naming `end` as its mark, found.
-fn sought(terminal: &Terminal, end: &IUIAutomationTextRange, line: &str) -> MarkSearch {
-    let ask = WindowRead {
+fn sought(terminal: &Terminal, end: &Ends, line: &str) -> MarkSearch {
+    let ask = Asked {
         end: Some((end, line, true)),
         aside: None,
         height: 3,
-        opening: 2,
         colours: false,
     };
     terminal.both(&ask).0.found
@@ -454,7 +638,18 @@ fn a_search_after_the_history_is_trimmed_falls_back_nowhere() {
         3,
     );
     terminal.show(&command_rows(1));
-    let end = terminal.read(&plain(3), true).end;
+    let end = terminal
+        .read(
+            &WindowRead {
+                end: None,
+                aside: None,
+                height: 3,
+                opening: 2,
+                colours: false,
+            },
+            true,
+        )
+        .end;
     let targets = Arc::new(Targets::default());
     let search = |terminal: &Terminal, end: &IUIAutomationTextRange| {
         let ask = WindowRead {

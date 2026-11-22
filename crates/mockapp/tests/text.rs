@@ -111,7 +111,7 @@ fn read_units<S: TextSource>(
         count,
     };
     match by_calls(source, anchors, step).expect("the text answers") {
-        Ok(Done::ReadText(Chunks { moved, chunks })) => Ok((moved, chunks)),
+        Ok(Done::ReadText(Chunks { moved, chunks, .. })) => Ok((moved, chunks)),
         Ok(other) => panic!("a read, not {other:?}"),
         Err(refused) => Err(Box::new(refused)),
     }
@@ -659,7 +659,7 @@ fn both<'a>(shape: &dyn Fn() -> batch::Shape<'a>) -> Answer {
 fn units_both(
     text: &batch::Text,
     from: &At,
-    read: (Option<TextMovement>, TextUnit, u8),
+    read: (Option<TextMovement>, TextUnit, u16),
     culture: bool,
 ) -> UnitsSummary {
     let answer = both(&|| {

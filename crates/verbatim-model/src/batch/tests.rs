@@ -75,6 +75,8 @@ fn window(which: WindowOf, visible: bool) -> Subject {
 
 fn text(subject: Subject, at: Point, movement: Option<i32>, unit: TextUnit) -> Op {
     Op::ReadText {
+        trim: false,
+        whole: false,
         subject,
         at,
         movement: movement.map(|count| TextMovement { unit, count }),
@@ -387,6 +389,8 @@ fn conversions() -> Vec<(&'static str, ReaderKind, Vec<Step>)> {
                 step(caret()),
                 step(line(Point::Of(Place(0), PointOf::Caret))),
                 step(Op::ReadText {
+                    trim: false,
+                    whole: false,
                     subject: node12(),
                     at: Point::Of(Place(0), PointOf::Caret),
                     movement: Some(TextMovement {
@@ -454,6 +458,8 @@ fn conversions() -> Vec<(&'static str, ReaderKind, Vec<Step>)> {
             "say-all's read ahead",
             ReaderKind::Outpost,
             vec![step(Op::ReadText {
+                trim: false,
+                whole: false,
                 subject: node12(),
                 at: at(50),
                 movement: None,
@@ -482,6 +488,7 @@ fn conversions() -> Vec<(&'static str, ReaderKind, Vec<Step>)> {
             vec![
                 step(text(node12(), at(50), Some(1), TextUnit::Word)),
                 step(Op::ReadRange {
+                    trim: false,
                     subject: node12(),
                     start: at(50),
                     end: Point::Of(Place(0), PointOf::ChunkStart),
@@ -559,7 +566,7 @@ fn a_batch_breaking_a_bound_is_refused_whole() {
         bound,
     };
     refused(Vec::new(), outpost, Malformed::Empty);
-    refused(vec![step(caret()); 5], outpost, Malformed::TooLong(5));
+    refused(vec![step(caret()); 17], outpost, Malformed::TooLong(17));
     let ancestors = |depth| Op::Ancestors {
         subject: Subject::Node(node(1)),
         until: Vec::new(),
@@ -588,6 +595,8 @@ fn a_batch_breaking_a_bound_is_refused_whole() {
         bound(0, Bound::Limit(11)),
     );
     let count = |count| Op::ReadText {
+        trim: false,
+        whole: false,
         subject: node1(),
         at: Point::At(TextPoint::Caret),
         movement: None,
@@ -597,6 +606,69 @@ fn a_batch_breaking_a_bound_is_refused_whole() {
     };
     refused(vec![step(count(0))], outpost, bound(0, Bound::Count(0)));
     refused(vec![step(count(33))], outpost, bound(0, Bound::Count(33)));
+    // A whole read counts to the terminal's most lines; a trimmed one reads
+    // one chunk, and neither reads details or, whole, moves first.
+    let shaped = |count, (whole, trim), details, movement| Op::ReadText {
+        trim,
+        whole,
+        subject: node1(),
+        at: Point::At(TextPoint::Caret),
+        movement,
+        unit: TextUnit::Line,
+        count,
+        details,
+    };
+    let none = TextDetails::NONE;
+    let lines = Some(TextMovement {
+        unit: TextUnit::Line,
+        count: -1,
+    });
+    let max = crate::MAX_TERMINAL_LINES;
+    assert!(
+        parse(
+            batch(vec![step(shaped(max, (true, true), none, None))]),
+            outpost
+        )
+        .is_ok()
+    );
+    refused(
+        vec![step(shaped(max + 1, (true, true), none, None))],
+        outpost,
+        bound(0, Bound::Count(max + 1)),
+    );
+    refused(
+        vec![step(shaped(2, (false, true), none, None))],
+        outpost,
+        bound(0, Bound::Shape),
+    );
+    refused(
+        vec![step(shaped(1, (false, true), TextDetails::ALL, None))],
+        outpost,
+        bound(0, Bound::Shape),
+    );
+    refused(
+        vec![step(shaped(2, (true, false), none, lines))],
+        outpost,
+        bound(0, Bound::Shape),
+    );
+    let find = |read, limit, calls| Op::FindText {
+        subject: node1(),
+        at: Point::At(TextPoint::End),
+        needle: "cmd".to_owned(),
+        backward: true,
+        unit_start: Some(TextUnit::Line),
+        read,
+        limit,
+        calls,
+    };
+    assert!(parse(batch(vec![step(find(1, 20, 200))]), outpost).is_ok());
+    refused(vec![step(find(0, 1, 1))], outpost, bound(0, Bound::Search));
+    refused(vec![step(find(1, 21, 1))], outpost, bound(0, Bound::Search));
+    refused(
+        vec![step(find(1, 1, 201))],
+        outpost,
+        bound(0, Bound::Search),
+    );
     refused(
         vec![step(wait(999, 1_000))],
         outpost,
@@ -662,6 +734,37 @@ fn a_reference_names_an_earlier_step_of_a_kind_it_can_take() {
         vec![step(from_caret_read()), step(from(0, PointOf::Caret))],
         outpost,
         wrong(1, 0, OpKind::ReadText),
+    );
+    // A visible range's points are a `Visible`'s, and a landing a `Move`'s.
+    refused(
+        vec![step(caret()), step(from(0, PointOf::VisibleStart))],
+        outpost,
+        wrong(1, 0, OpKind::Caret),
+    );
+    refused(
+        vec![step(caret()), step(from(0, PointOf::Moved))],
+        outpost,
+        wrong(1, 0, OpKind::Caret),
+    );
+    let visible = Op::Visible { subject: node12() };
+    let moved = Op::Move {
+        subject: node12(),
+        at: Point::Of(Place(0), PointOf::VisibleStart),
+        movement: TextMovement {
+            unit: TextUnit::Line,
+            count: 2,
+        },
+    };
+    assert!(
+        parse(
+            batch(vec![
+                step(visible),
+                step(moved),
+                step(from(1, PointOf::Moved))
+            ]),
+            outpost
+        )
+        .is_ok()
     );
     refused(
         vec![
@@ -1056,6 +1159,7 @@ fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
             offsets: None,
         })),
         done(Done::ReadText(Chunks {
+            padded: None,
             moved: 0,
             chunks: vec![chunk(9), chunk(10)],
         })),

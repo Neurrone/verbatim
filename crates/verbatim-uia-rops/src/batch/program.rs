@@ -10,8 +10,9 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextRange, TextUnit_Character, UIA_ControllerForPropertyId,
 };
 
+use verbatim_model::TextPoint;
 use verbatim_model::batch::{
-    Before as Prior, Check, Op, Place, Point, PointOf, Relation, Subject, View,
+    Before as Prior, Check, Op, Place, Point, PointOf, Relation, StepRefusal, Subject, View,
 };
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Cached, Fill, Node};
@@ -20,7 +21,8 @@ use super::calls::caret_point;
 use super::walk::{Reads, RunRegisters, Walk, emit_run};
 use super::{
     CaretFound, Compared, Cut, Defect, Descend, Found, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
-    MAX_UNIT_TEXT, Ran, Related, State, UnitsFound, UnitsRead, Unrun, failed, named,
+    MAX_UNIT_TEXT, MoveFound, Ran, Related, State, UnitsFound, UnitsRead, Unrun, VisibleFound,
+    failed, named,
 };
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
@@ -86,7 +88,11 @@ fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
             }
             None => 0,
         },
-        Op::Caret { .. } => 60,
+        Op::Caret { .. } | Op::Visible { .. } => 60,
+        Op::ReadText {
+            at, whole: true, ..
+        } => 40 + point_cost(state, at),
+        Op::Move { at, .. } => 60 + point_cost(state, at),
         Op::ReadText {
             at,
             movement,
@@ -196,7 +202,11 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
         | Op::Activate { .. }
         | Op::Follow(_)
         | Op::Ancestors { .. }
-        | Op::MoveBySentence { .. } => true,
+        | Op::MoveBySentence { .. }
+        // A search ends a remote run where it finds nothing in Windows
+        // Terminal, and the colours run programs of their own.
+        | Op::FindText { .. }
+        | Op::ReadColours { .. } => true,
         _ => false,
     }
 }
@@ -336,6 +346,12 @@ enum Low {
     /// and whether each is its range's end, whether the word is read,
     /// whether it is the check at the bound, and the text read's limit.
     WaitCheck(usize, [(usize, bool); 3], bool, bool, i32),
+    Visible(usize),
+    /// The element, the point, the unit and count, and whether the point
+    /// is one Core holds, checked against the text's end.
+    Move(usize, Pt, (i32, i32), bool),
+    /// The element, the point, the unit and count.
+    Whole(usize, Pt, (i32, u16)),
 }
 
 /// What a lowered step's emitter and its answer take beyond its shape:
@@ -491,6 +507,14 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 (Found::ReadText(read), PointOf::ChunkStart) => {
                     let range = read.units[0].range.clone();
                     Ok(Pt::At(self.import(Import::TextRange(range)), false, false))
+                }
+                (Found::Visible(visible), PointOf::VisibleStart | PointOf::VisibleEnd) => {
+                    let range = self.import(Import::TextRange(visible.range.clone()));
+                    Ok(Pt::At(range, which == PointOf::VisibleEnd, false))
+                }
+                (Found::Move(moved), PointOf::Moved) => {
+                    let range = self.import(Import::TextRange(moved.to.clone()));
+                    Ok(Pt::At(range, false, true))
                 }
                 _ => Err(Defect("a point of no text read").ran()),
             };
@@ -655,6 +679,7 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
 
     /// The step at `index` lowered, with its gate inside the program and
     /// what it was given; its outcome when the program does not run it.
+    #[expect(clippy::too_many_lines, reason = "one arm per operation")]
     fn lower(&mut self, index: usize) -> Result<(Low, Gate, Given<'a>), Ran> {
         let state: &'p State<'_, 'a> = self.state;
         let step = state.step(index);
@@ -690,6 +715,41 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 )
             }
             Op::Caret { subject, .. } => (Low::Caret(self.text(subject)?), Given::Nothing),
+            Op::Visible { subject } => (Low::Visible(self.text(subject)?), Given::Nothing),
+            Op::Move {
+                subject,
+                at,
+                movement,
+            } => {
+                let by =
+                    resolver.units((None, movement.unit, 1), verbatim_model::TextDetails::NONE)?;
+                let element = self.text(subject)?;
+                let held = matches!(at, Point::At(TextPoint::At(_)));
+                (
+                    Low::Move(
+                        element,
+                        self.point(at, index)?,
+                        (by.unit.0, movement.count),
+                        held,
+                    ),
+                    Given::Nothing,
+                )
+            }
+            Op::ReadText {
+                subject,
+                at,
+                unit,
+                count,
+                whole: true,
+                ..
+            } => {
+                let by = resolver.units((None, *unit, 1), verbatim_model::TextDetails::NONE)?;
+                let element = self.text(subject)?;
+                (
+                    Low::Whole(element, self.point(at, index)?, (by.unit.0, *count)),
+                    Given::Nothing,
+                )
+            }
             Op::ReadText {
                 subject,
                 at,
@@ -697,6 +757,7 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 unit,
                 count,
                 details,
+                ..
             } => {
                 let read = resolver.units((*movement, *unit, *count), *details)?;
                 let element = self.text(subject)?;
@@ -710,6 +771,7 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 start,
                 end,
                 through,
+                ..
             } => {
                 let element = self.text(subject)?;
                 let ends = self.ends((start, end, through.as_ref()), index)?;
@@ -815,6 +877,21 @@ enum Regs {
     },
     Select(Reg<kind::Bool>),
     Locate(Reg<kind::Array>),
+    Visible {
+        range: Reg<kind::TextRange>,
+        text: Reg<kind::Str>,
+        at_start: Reg<kind::Bool>,
+    },
+    Move {
+        from: Reg<kind::TextRange>,
+        to: Reg<kind::TextRange>,
+        moved: Reg<kind::Int>,
+        refused: Reg<kind::Bool>,
+    },
+    Whole {
+        range: Reg<kind::TextRange>,
+        text: Reg<kind::Str>,
+    },
     WaitCheck {
         check: Box<crate::watch::CheckRegisters>,
         /// Whether the steps gated on it read.
@@ -1132,6 +1209,20 @@ impl Emit<'_> {
             (Low::WaitCheck(text, points, word, last, max), _) => {
                 self.wait_check(b, (*text, points), (*word, *last, *max))
             }
+            (Low::Visible(text), _) => self.visible(b, *text),
+            (Low::Move(text, at, by, held), _) => self.move_point(b, (*text, at), *by, *held),
+            (Low::Whole(text, at, (unit, count)), _) => {
+                let range = self.point(b, *text, at);
+                let unit = b.int(*unit);
+                let count = b.int(i32::from(*count));
+                let _ = b.text_range_move_endpoint_by_unit(range, self.c.end, unit, count);
+                let max = b.int(MAX_RANGE_TEXT);
+                let text = b.text_range_get_text(range, max);
+                Regs::Whole {
+                    range: b.add_to_results(range),
+                    text: b.add_to_results(text),
+                }
+            }
             _ => unreachable_import(),
         }
     }
@@ -1277,6 +1368,92 @@ impl Emit<'_> {
         }
     }
 
+    /// Emits a `Visible`: the first visible range, or the whole text's
+    /// when the provider shows none, its text, and whether it starts at
+    /// the text's start.
+    fn visible(&self, b: &mut Builder, text: usize) -> Regs {
+        let c = self.c;
+        let element = self.element(text);
+        let pattern = b.get_text_pattern(element, false);
+        let document = b.text_pattern_get_document_range(pattern);
+        let screen = b.text_range_clone(document);
+        let ranges = b.text_pattern_get_visible_ranges(pattern);
+        let size = b.array_size(ranges);
+        let none = b.uint(0);
+        let some = b.compare(size, none, Comparison::GreaterThan);
+        b.if_(some, |b| {
+            let first = b.array_get_at(ranges, none).assume::<kind::TextRange>();
+            b.set(screen, first);
+        });
+        let max = b.int(MAX_RANGE_TEXT);
+        let read = b.text_range_get_text(screen, max);
+        let order = b.text_range_compare_endpoints(document, c.start, screen, c.start);
+        let at_start = b.equal(order, c.zero);
+        Regs::Visible {
+            range: b.add_to_results(screen),
+            text: b.add_to_results(read),
+            at_start: b.add_to_results(at_start),
+        }
+    }
+
+    /// Emits a `Move` of the point `at` by `count` units of `unit`, from
+    /// the point itself; a point Core holds (`held`) is first compared
+    /// with the text's end, and the move is refused past it or on any
+    /// failure, as a mark's read always was.
+    fn move_point(
+        &self,
+        b: &mut Builder,
+        (text, at): (usize, &Pt),
+        (unit, count): (i32, i32),
+        held: bool,
+    ) -> Regs {
+        let c = self.c;
+        let from = b.new_null().assume::<kind::TextRange>();
+        let from = b.add_to_results(from);
+        let to = b.new_null().assume::<kind::TextRange>();
+        let to = b.add_to_results(to);
+        let moved = b.new_int(0);
+        let moved = b.add_to_results(moved);
+        let refused = b.new_bool(held);
+        let refused = b.add_to_results(refused);
+        let go = |b: &mut Builder, point: Reg<kind::TextRange>| {
+            b.set(from, point);
+            let walker = b.text_range_clone(point);
+            let by = b.int(unit);
+            let count = b.int(count);
+            let went = b.text_range_move(walker, by, count);
+            b.set(to, walker);
+            b.set(moved, went);
+        };
+        if held {
+            b.try_catch(
+                |b| {
+                    let point = self.point(b, text, at);
+                    let element = self.element(text);
+                    let pattern = b.get_text_pattern(element, false);
+                    let document = b.text_pattern_get_document_range(pattern);
+                    let order = b.text_range_compare_endpoints(point, c.start, document, c.end);
+                    let within = b.compare(order, c.zero, Comparison::LessThanOrEqual);
+                    b.if_(within, |b| {
+                        go(b, point);
+                        let no = b.bool(false);
+                        b.set(refused, no);
+                    });
+                },
+                |_, _| {},
+            );
+        } else {
+            let point = self.point(b, text, at);
+            go(b, point);
+        }
+        Regs::Move {
+            from,
+            to,
+            moved,
+            refused,
+        }
+    }
+
     /// Emits a collapsed range at `point` in the text of `text`'s element.
     fn point(&self, b: &mut Builder, text: usize, point: &Pt) -> Reg<kind::TextRange> {
         let c = self.c;
@@ -1334,6 +1511,15 @@ impl Emit<'_> {
                     _ => self.caret_point(b, caret, *which),
                 },
                 Regs::ReadText(units) => c.collapsed(b, units.0.first.0),
+                Regs::Whole { range, .. } => c.collapsed(b, *range),
+                Regs::Visible { range, .. } => {
+                    if *which == PointOf::VisibleEnd {
+                        collapsed_to_end(b, *range)
+                    } else {
+                        c.collapsed(b, *range)
+                    }
+                }
+                Regs::Move { to, .. } => c.collapsed(b, *to),
                 _ => unreachable_import(),
             },
         }
@@ -1367,7 +1553,11 @@ impl Emit<'_> {
                 },
                 at_caret,
             ),
-            PointOf::Caret | PointOf::ChunkStart => at_caret(b),
+            PointOf::Caret
+            | PointOf::ChunkStart
+            | PointOf::VisibleStart
+            | PointOf::VisibleEnd
+            | PointOf::Moved => at_caret(b),
         }
         point
     }
@@ -1744,6 +1934,7 @@ impl<'a> State<'_, 'a> {
     /// A done step's result, read from the run's answer; a walk down the
     /// tree goes on in later runs. `Err` when the answer is missing what
     /// the step's registers name.
+    #[expect(clippy::too_many_lines, reason = "one arm per operation")]
     fn found(
         &self,
         index: usize,
@@ -1830,6 +2021,52 @@ impl<'a> State<'_, 'a> {
                     reads_after,
                 })
             }
+            (
+                Regs::Visible {
+                    range,
+                    text,
+                    at_start,
+                },
+                _,
+            ) => Found::Visible(VisibleFound {
+                range: outcome
+                    .get(*range)?
+                    .ok_or(Error::MissingResult(range.id()))?,
+                text: outcome.get_utf16(*text)?,
+                at_text_start: outcome.get(*at_start)?,
+            }),
+            (
+                Regs::Move {
+                    from,
+                    to,
+                    moved,
+                    refused,
+                },
+                _,
+            ) => {
+                if outcome.get(*refused)? {
+                    return Ok(Ran::Unrun(Unrun::Refused(StepRefusal::OutsideText)));
+                }
+                Found::Move(MoveFound {
+                    from: outcome.get(*from)?.ok_or(Error::MissingResult(from.id()))?,
+                    to: outcome.get(*to)?.ok_or(Error::MissingResult(to.id()))?,
+                    moved: outcome.get(*moved)?,
+                })
+            }
+            (Regs::Whole { range, text }, _) => Found::ReadText(UnitsFound {
+                moved: 0,
+                units: vec![crate::text::UnitText {
+                    range: outcome
+                        .get(*range)?
+                        .ok_or(Error::MissingResult(range.id()))?,
+                    text: outcome.get_utf16(*text)?,
+                    offset: 0,
+                    language: None,
+                }],
+                ended: false,
+                runs: Vec::new(),
+                unsupported: None,
+            }),
             (Regs::Locate(rectangles), _) => {
                 Found::Locate(match outcome.get(*rectangles)?.as_slice() {
                     [Value::Double(left), Value::Double(top), ..] => Some((*left, *top)),

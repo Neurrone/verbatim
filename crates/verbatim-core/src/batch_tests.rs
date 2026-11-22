@@ -15,6 +15,8 @@ fn step(op: Op, when: Option<Condition>) -> Step {
 
 fn read_text(at: Point, unit: TextUnit) -> Op {
     Op::ReadText {
+        trim: false,
+        whole: false,
         subject: Subject::Node(node()),
         at,
         movement: None,

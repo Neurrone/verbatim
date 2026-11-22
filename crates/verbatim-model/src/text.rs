@@ -1073,6 +1073,7 @@ mod tests {
     fn a_read_of_text_round_trips_through_json() {
         let reply =
             crate::batch::StepOutcome::Done(crate::batch::Done::ReadText(crate::batch::Chunks {
+                padded: None,
                 moved: -1,
                 chunks: vec![TextChunk {
                     unit: TextUnit::Line,

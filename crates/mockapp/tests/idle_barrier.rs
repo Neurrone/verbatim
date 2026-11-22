@@ -64,6 +64,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
     let outpost = OutpostUnderTest::with_pipe_buffer(&app, OutpostOptions::default(), SMALL_PIPE);
     let notes = notes_focus(&mut app, &outpost, hwnd);
     let read = common::one_step(verbatim_model::batch::Op::ReadRange {
+        trim: false,
         subject: verbatim_model::batch::Subject::Node(notes),
         start: verbatim_model::batch::Point::At(TextPoint::Start),
         end: verbatim_model::batch::Point::At(TextPoint::End),

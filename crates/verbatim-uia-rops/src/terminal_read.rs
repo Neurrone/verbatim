@@ -43,7 +43,7 @@ use crate::error::Error;
 use crate::focus::Path;
 use crate::opcode::Comparison;
 use crate::operation::{Import, Outcome, ProgramCache, Value};
-use crate::terminal_colours::{ColourRun, classic_rows, emit_rows};
+use crate::terminal_colours::ColourRun;
 use crate::terminal_find::{FindMatch, FindQuery, classic_search};
 
 /// More rows than any terminal holds, for moving to the end of the text.
@@ -605,117 +605,21 @@ pub fn terminal_read_find(
         .map(|found| u32::try_from(found.above).unwrap_or(0)))
 }
 
-/// The colours of the screen's rows `first` and on, `count` of them, each
-/// `width` cells, from `top`, the screen's top row as the window read
-/// found it ([`Window::top`]): the remote programs when `remote` is true,
-/// falling back to the classic reads for this call, and the classic reads
-/// alone otherwise. The rows stop at the document's end.
+/// The colours of the screen's rows from `top`, the screen's top row as
+/// the window read found it ([`Window::top`]), `count` of them, each
+/// `width` cells: `ReadColours`' arms (`crate::batch`).
 ///
 /// # Errors
 ///
 /// The classic reads' [`Error`], when they ran and failed.
 pub fn terminal_row_colours(
     top: &IUIAutomationTextRange,
-    (first, count, width): (u32, u32, usize),
+    (count, width): (u32, usize),
     remote: bool,
 ) -> Result<(Vec<Vec<ColourRun>>, Path), Error> {
-    if width == 0 || count == 0 {
-        return Ok((
-            Vec::new(),
-            if remote { Path::Remote } else { Path::Classic },
-        ));
-    }
-    if remote {
-        match row_colours_remote(top, (first, count, width)) {
-            Ok(rows) => return Ok((rows, Path::Remote)),
-            Err(error) => {
-                return row_colours_classic(top, (first, count, width))
-                    .map(|rows| (rows, Path::Fallback(error)));
-            }
-        }
-    }
-    row_colours_classic(top, (first, count, width)).map(|rows| (rows, Path::Classic))
-}
-
-/// Where the rows `first` to `first + count` start and stop below `top`,
-/// the classic way, the stop no later than the document's end.
-fn row_bounds_classic(
-    top: &IUIAutomationTextRange,
-    (first, count): (u32, u32),
-) -> Result<(IUIAutomationTextRange, IUIAutomationTextRange), Error> {
-    let row = top.clone_range()?;
-    row.move_by(TextUnit_Line, i32::try_from(first).unwrap_or(i32::MAX))?;
-    let row = collapsed(&row, Endpoint::Start)?;
-    let limit = row.clone_range()?;
-    limit.move_by(TextUnit_Line, i32::try_from(count).unwrap_or(i32::MAX))?;
-    Ok((row, collapsed(&limit, Endpoint::Start)?))
-}
-
-/// The rows' colours the classic way.
-fn row_colours_classic(
-    top: &IUIAutomationTextRange,
-    (first, count, width): (u32, u32, usize),
-) -> Result<Vec<Vec<ColourRun>>, Error> {
-    let (row, limit) = row_bounds_classic(top, (first, count))?;
-    let at_end = row.compare_endpoints(Endpoint::Start, &limit, Endpoint::Start)? == 0;
-    let mut rows = if at_end {
-        Vec::new()
-    } else {
-        classic_rows(
-            &row,
-            &limit,
-            width,
-            usize::try_from(count).unwrap_or(usize::MAX),
-        )?
-    };
-    rows.truncate(usize::try_from(count).unwrap_or(usize::MAX));
-    Ok(rows)
-}
-
-thread_local! {
-    /// The colour programs for rows below the screen's top, one for each
-    /// width, first row and count.
-    static ROW_COLOURS: ProgramCache<
-        (usize, u32, u32),
-        (crate::terminal_colours::ColourRegisters, Reg<kind::TextRange>),
-    > = ProgramCache::default();
-}
-
-/// The rows' colours in programs: the first starts at row `first`, and
-/// each later one goes on from where the last stopped.
-fn row_colours_remote(
-    top: &IUIAutomationTextRange,
-    (first, count, width): (u32, u32, usize),
-) -> Result<Vec<Vec<ColourRun>>, Error> {
-    let (operation, registers) = ROW_COLOURS.with(|programs| {
-        programs.operation(
-            (width, first, count),
-            || vec![Import::TextRange(top.clone())],
-            |b| {
-                let top = b.import_text_range(top);
-                let line = b.int(TextUnit_Line.0);
-                let (start, end) = (b.int(0), b.int(1));
-                let row = b.text_range_clone(top);
-                let down = b.int(i32::try_from(first).unwrap_or(i32::MAX));
-                let _ = b.text_range_move(row, line, down);
-                b.text_range_move_endpoint_by_range(row, end, row, start);
-                let limit = b.text_range_clone(row);
-                let rows = b.int(i32::try_from(count).unwrap_or(i32::MAX));
-                let _ = b.text_range_move(limit, line, rows);
-                b.text_range_move_endpoint_by_range(limit, end, limit, start);
-                let limit = b.add_to_results(limit);
-                (emit_rows(b, row, limit, width), limit)
-            },
-        )
-    });
-    let (registers, limit) = registers;
-    let outcome = operation.execute()?;
-    let height = usize::try_from(count).unwrap_or(usize::MAX);
-    let mut rows = Vec::new();
-    let batch = registers.read(&outcome, width, &mut rows)?;
-    let Some(limit): Option<IUIAutomationTextRange> = outcome.get(limit)? else {
-        return Ok(rows);
-    };
-    crate::terminal_colours::go_on_remote(batch, &limit, (width, height), &mut rows)?;
-    Ok(rows)
+    crate::batch::colours::row_colours(
+        &crate::text::FoundPoint::collapsed(top.clone()),
+        (count, width),
+        remote,
+    )
 }

@@ -94,6 +94,16 @@ impl Batch {
                 | Op::Descendants {
                     subject: object, ..
                 }
+                | Op::Visible { subject: object }
+                | Op::Move {
+                    subject: object, ..
+                }
+                | Op::FindText {
+                    subject: object, ..
+                }
+                | Op::ReadColours {
+                    subject: object, ..
+                }
                 | Op::WaitForCaret {
                     subject: object, ..
                 }
@@ -142,7 +152,11 @@ impl Batch {
                 continue;
             }
             let named = match &step.op {
-                Op::ReadText { at, .. } | Op::Locate { at, .. } => point(*at).into_iter().collect(),
+                Op::ReadText { at, .. }
+                | Op::Locate { at, .. }
+                | Op::Move { at, .. }
+                | Op::FindText { at, .. }
+                | Op::ReadColours { at, .. } => point(*at).into_iter().collect(),
                 Op::ReadRange {
                     start,
                     end,
@@ -180,7 +194,8 @@ impl Batch {
                 | Op::Activate { .. }
                 | Op::Follow(_)
                 | Op::FocusRead { .. }
-                | Op::Caret { .. } => Vec::new(),
+                | Op::Caret { .. }
+                | Op::Visible { .. } => Vec::new(),
             };
             anchors.push((*node, named));
         }
@@ -251,6 +266,14 @@ pub fn visit_outcomes(
                 }
             },
             Done::TerminalRead(window) => window.visit(anchors),
+            Done::Visible(visible) => {
+                anchors(&mut visible.start);
+                anchors(&mut visible.end);
+            }
+            Done::Move(moved) => {
+                anchors(&mut moved.from);
+                anchors(&mut moved.to);
+            }
             Done::IsOneOf(_)
             | Done::Activate(_)
             | Done::Follow
@@ -258,7 +281,9 @@ pub fn visit_outcomes(
             | Done::CompareSelection(_)
             | Done::Select(_)
             | Done::Locate(_)
-            | Done::WaitForCaret(_) => {}
+            | Done::WaitForCaret(_)
+            | Done::FindText(_)
+            | Done::ReadColours(_) => {}
         }
     }
 }

@@ -1170,6 +1170,8 @@ fn the_plain_reader_answers_each_operation_from_the_ghosts_facts() {
                 matcher: Matcher::Is(PropertyId::Role, PropertyValue::Role(Role::Window)),
             },
             Op::ReadText {
+                trim: false,
+                whole: false,
                 subject: Subject::Node(node),
                 at: Point::At(verbatim_model::TextPoint::Caret),
                 movement: None,

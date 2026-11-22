@@ -589,6 +589,8 @@ fn caret_reads(doc: &Subject) -> Batch {
             adopt: None,
         },
         Op::ReadText {
+            trim: false,
+            whole: false,
             subject: doc.clone(),
             at: Point::Of(Place(0), PointOf::Caret),
             movement: None,
@@ -597,6 +599,7 @@ fn caret_reads(doc: &Subject) -> Batch {
             details: TextDetails::ALL,
         },
         Op::ReadRange {
+            trim: false,
             subject: doc.clone(),
             start: Point::At(TextPoint::Start),
             end: Point::At(TextPoint::End),

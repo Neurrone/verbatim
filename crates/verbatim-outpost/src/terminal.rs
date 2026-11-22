@@ -27,67 +27,7 @@ use verbatim_uia_rops::{
 };
 
 use crate::text::TextError;
-
-/// `units`, UTF-16 as a terminal's provider gives its text, as UTF-8
-/// without the spaces that pad its lines, with each line's padded length,
-/// exactly as `TerminalText::unpadded(&String::from_utf16_lossy(units))`
-/// makes it, an unpaired surrogate becoming U+FFFD, but in one pass and
-/// with no copy of the padded text between. The text starts with room for
-/// one byte a code unit, which ASCII text never outgrows, since padding is
-/// only removed.
-#[must_use]
-pub fn unpadded_utf16(units: &[u16]) -> TerminalText {
-    let mut into = TerminalText {
-        text: String::with_capacity(units.len()),
-        lengths: Vec::new(),
-    };
-    let TerminalText { text, lengths } = &mut into;
-    // The line's length so far in characters, padding included; the spaces
-    // after its last other character, written only once another follows;
-    // and a carriage return that may begin a line break.
-    let mut length: u32 = 0;
-    let mut spaces: u32 = 0;
-    let mut carriage_return = false;
-    let push = |text: &mut String, spaces: &mut u32, length: &mut u32, character: char| {
-        for _ in 0..*spaces {
-            text.push(' ');
-        }
-        *spaces = 0;
-        text.push(character);
-        *length += 1;
-    };
-    let end_line = |lengths: &mut Vec<(u32, u32)>, length: u32| match lengths.last_mut() {
-        Some((count, last)) if *last == length => *count += 1,
-        _ => lengths.push((1, length)),
-    };
-    for character in char::decode_utf16(units.iter().copied()) {
-        let character = character.unwrap_or(char::REPLACEMENT_CHARACTER);
-        if carriage_return {
-            carriage_return = false;
-            if character == '\n' {
-                end_line(lengths, length);
-                text.push_str("\r\n");
-                length = 0;
-                spaces = 0;
-                continue;
-            }
-            push(text, &mut spaces, &mut length, '\r');
-        }
-        match character {
-            '\r' => carriage_return = true,
-            ' ' => {
-                spaces += 1;
-                length += 1;
-            }
-            character => push(text, &mut spaces, &mut length, character),
-        }
-    }
-    if carriage_return {
-        push(text, &mut spaces, &mut length, '\r');
-    }
-    end_line(lengths, length);
-    into
-}
+pub use crate::text::trim::unpadded_utf16;
 
 /// The wire form of a snapshot taken at `started_ms`: its texts as UTF-8
 /// without their lines' padding, and the caret's row and its column in it in
@@ -475,7 +415,7 @@ fn screen_colours(
     (height, width): (u32, usize),
     (remote, window_handle): (bool, Option<isize>),
 ) -> Result<Vec<Vec<TerminalColourRun>>, TextError> {
-    let (rows, path) = terminal_row_colours(top, (0, height, width), remote)
+    let (rows, path) = terminal_row_colours(top, (height, width), remote)
         .map_err(|error| gone_or_failed(&error))?;
     if let Path::Fallback(error) = &path {
         verbatim_uia_rops::batch::remote_fell_back("terminal colours", window_handle, error);

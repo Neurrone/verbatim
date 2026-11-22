@@ -27,6 +27,7 @@
 //! end-to-end scenario that meets one fails.
 
 mod calls;
+pub(crate) mod colours;
 pub mod focus;
 mod object;
 mod program;
@@ -138,7 +139,7 @@ pub trait Resolve {
     /// The step's outcome when the text has no such unit.
     fn units(
         &self,
-        _read: (Option<TextMovement>, verbatim_model::TextUnit, u8),
+        _read: (Option<TextMovement>, verbatim_model::TextUnit, u16),
         _details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
         Err(Defect("a text read on a resolver of objects").ran())
@@ -546,6 +547,46 @@ pub enum Found {
     /// `Read`'s of a listener's route: the element as the listener read
     /// it, and the route's window.
     Route(Box<NodeSnapshot>, isize),
+    /// `Visible`'s.
+    Visible(VisibleFound),
+    /// `Move`'s.
+    Move(MoveFound),
+    /// `FindText`'s: the matches, the nearest first.
+    FindText(Vec<TextMatch>),
+    /// `ReadColours`' : each row's runs, from the first.
+    Colours(Vec<Vec<crate::ColourRun>>),
+}
+
+/// `Visible`'s result.
+#[derive(Debug)]
+pub struct VisibleFound {
+    /// The first visible range, or the whole text's.
+    pub range: IUIAutomationTextRange,
+    /// Its text, padding and line breaks as the provider gave them.
+    pub text: Vec<u16>,
+    /// Whether it starts at the text's start.
+    pub at_text_start: bool,
+}
+
+/// `Move`'s result.
+#[derive(Debug)]
+pub struct MoveFound {
+    /// A collapsed range at the point it moved from.
+    pub from: IUIAutomationTextRange,
+    /// A collapsed range where it landed.
+    pub to: IUIAutomationTextRange,
+    /// How many units it went.
+    pub moved: i32,
+}
+
+/// One match a `FindText` found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextMatch {
+    /// How many units a move from the start of the match's unit to the
+    /// text's end went.
+    pub to_end: u32,
+    /// The text read from the start of the match's unit.
+    pub text: Vec<u16>,
 }
 
 impl Found {
@@ -557,7 +598,11 @@ impl Found {
             Self::Descendants(descendants) => Some(!descendants.nodes.is_empty()),
             Self::WaitCheck(checked) => Some(checked.reads_after),
             Self::Caret(caret) => Some(caret.selection.is_some()),
-            Self::ReadText(_)
+            Self::Move(_) => Some(true),
+            Self::Visible(_)
+            | Self::FindText(_)
+            | Self::Colours(_)
+            | Self::ReadText(_)
             | Self::ReadRange(_)
             | Self::CompareSelection(_)
             | Self::Select
@@ -914,6 +959,10 @@ fn kind_name(op: &Op) -> &'static str {
         Op::Follow(_) => "follow",
         Op::Ancestors { .. } => "ancestors",
         Op::MoveBySentence { .. } => "move by sentence",
+        Op::Visible { .. } => "visible",
+        Op::Move { .. } => "move",
+        Op::FindText { .. } => "find text",
+        Op::ReadColours { .. } => "read colours",
         _ => "not fusable",
     }
 }

@@ -98,11 +98,16 @@ pub enum TextStep {
     Compare(TextAnchor, TextAnchor),
     /// `MoveBySentence` from a held read, forward or back.
     Sentence(TextAnchor, bool),
+    /// An operation an edit control's text has no arm for: the visible
+    /// range, a move, a search, a terminal's colours, or a whole or
+    /// trimmed read.
+    Unsupported,
 }
 
 /// The text arms: `step` on MSAA node `node`'s text, and its outcome.
 pub fn step(step: TextStep, node: NodeId, resolver: &dyn TextResolve) -> StepOutcome {
     match step {
+        TextStep::Unsupported => StepOutcome::Refused(StepRefusal::Unsupported),
         TextStep::Calls(call) => {
             let named: Vec<u64> = call.named().into_iter().map(|anchor| anchor.0).collect();
             let ran = on_text(resolver, node, &named, |source, anchors| {

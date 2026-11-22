@@ -34,6 +34,8 @@ fn queued(ops: Vec<Op>) -> Batch {
 /// A `ReadText` op of `node`.
 fn read_op(node: NodeId, at: Point, movement: Option<TextMovement>, unit: TextUnit) -> Op {
     Op::ReadText {
+        trim: false,
+        whole: false,
         subject: Subject::Node(node),
         at,
         movement,
@@ -65,11 +67,13 @@ pub fn read(
     count: u8,
 ) -> Batch {
     queued(vec![Op::ReadText {
+        trim: false,
+        whole: false,
         subject: Subject::Node(node),
         at: Point::At(at),
         movement,
         unit,
-        count,
+        count: count.into(),
         details: TextDetails::NONE,
     }])
 }
@@ -94,6 +98,7 @@ pub fn range(
     past: Option<(TextPoint, TextPoint)>,
 ) -> Batch {
     queued(vec![Op::ReadRange {
+        trim: false,
         subject: Subject::Node(node),
         start: Point::At(start),
         end: Point::At(end),
@@ -182,6 +187,7 @@ pub fn next_word(node: NodeId, at: TextPoint) -> Batch {
             TextUnit::Word,
         ),
         Op::ReadRange {
+            trim: false,
             subject: Subject::Node(node),
             start: Point::At(at),
             end: start,
@@ -209,12 +215,17 @@ pub fn chunk(unit: TextUnit, text: &str, anchor: u64, offset: u32) -> TextChunk 
 
 /// A `ReadText` done: `moved`, and `chunks`.
 pub fn chunks(moved: i32, chunks: Vec<TextChunk>) -> StepOutcome {
-    StepOutcome::Done(Done::ReadText(Chunks { moved, chunks }))
+    StepOutcome::Done(Done::ReadText(Chunks {
+        padded: None,
+        moved,
+        chunks,
+    }))
 }
 
 /// A `ReadRange` done with `text`.
 pub fn range_text(text: &str) -> StepOutcome {
     StepOutcome::Done(Done::ReadRange(RangeText {
+        padded: None,
         text: text.to_owned(),
         truncated: false,
     }))

@@ -340,7 +340,13 @@ impl PlainObject {
             | Op::MoveBySentence { .. }
             | Op::WaitForCaret { .. } => return StepOutcome::Refused(StepRefusal::NoText),
             // Not run by the plain reader, whose parse refuses them.
-            Op::Ancestors { .. } | Op::FocusRead { .. } | Op::TerminalRead { .. } => {
+            Op::Ancestors { .. }
+            | Op::FocusRead { .. }
+            | Op::TerminalRead { .. }
+            | Op::Visible { .. }
+            | Op::Move { .. }
+            | Op::FindText { .. }
+            | Op::ReadColours { .. } => {
                 return StepOutcome::Refused(StepRefusal::Unsupported);
             }
         })

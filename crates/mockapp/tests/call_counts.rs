@@ -2936,11 +2936,13 @@ fn read_text_op(
     count: u8,
 ) -> verbatim_model::batch::Op {
     verbatim_model::batch::Op::ReadText {
+        trim: false,
+        whole: false,
         subject: NOTES,
         at: verbatim_model::batch::Point::At(at),
         movement,
         unit,
-        count,
+        count: count.into(),
         details: verbatim_model::TextDetails::NONE,
     }
 }
@@ -3093,6 +3095,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
 
     common::apply(&mut app, hwnd, "caret doc 0 5");
     let (range, cost) = text(vec![Op::ReadRange {
+        trim: false,
         subject: NOTES,
         start: Point::At(TextPoint::SelectionStart),
         end: Point::At(TextPoint::SelectionEnd),
@@ -3384,6 +3387,8 @@ fn caret_tell_program(caret: &str) -> u32 {
     let told = [
         caret_step.clone(),
         step(Op::ReadText {
+            trim: false,
+            whole: false,
             subject: subject.clone(),
             at: Point::Of(Place(0), PointOf::Caret),
             movement: None,
@@ -3648,6 +3653,8 @@ fn starting_batch_calls(
     common::apply(app, hwnd, "caret doc 1");
     let read_at_caret = |movement, unit| Step {
         op: Op::ReadText {
+            trim: false,
+            whole: false,
             subject: Subject::Node(node),
             at: Point::Of(Place(0), PointOf::Caret),
             movement,
@@ -3734,6 +3741,8 @@ fn watch_checks_cost_exactly() {
         },
         Step {
             op: Op::ReadText {
+                trim: false,
+                whole: false,
                 subject: Subject::Node(node),
                 at: Point::Of(Place(1), PointOf::Caret),
                 movement: None,

@@ -41,6 +41,8 @@ fn read_at_caret(
     details: TextDetails,
 ) -> Op {
     Op::ReadText {
+        trim: false,
+        whole: false,
         subject: Subject::Node(node),
         at: Point::Of(Place(0), PointOf::Caret),
         movement,
@@ -153,6 +155,8 @@ pub fn waiting(
             }),
         },
         step(Op::ReadText {
+            trim: false,
+            whole: false,
             subject: Subject::Node(node),
             at: Point::Of(Place(1), PointOf::Caret),
             movement: None,
@@ -163,6 +167,8 @@ pub fn waiting(
     ];
     if !by_line {
         steps.push(step(Op::ReadText {
+            trim: false,
+            whole: false,
             subject: Subject::Node(node),
             at: Point::Of(Place(1), PointOf::Caret),
             movement: None,
@@ -276,6 +282,7 @@ fn caret_at(report: &CaretReport, held: TextAnchor, at_start: bool) -> CaretAt {
 /// One chunk, read where no movement went.
 fn chunks(chunk: TextChunk, moved: i32) -> StepOutcome {
     StepOutcome::Done(Done::ReadText(Chunks {
+        padded: None,
         moved,
         chunks: vec![chunk],
     }))

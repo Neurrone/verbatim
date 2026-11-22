@@ -22,7 +22,9 @@ fn read_one(
         count: 1,
     };
     match by_calls(source, anchors, step).expect("the fake answers") {
-        Ok(Done::ReadText(Chunks { moved, mut chunks })) => Ok((moved, chunks.remove(0))),
+        Ok(Done::ReadText(Chunks {
+            moved, mut chunks, ..
+        })) => Ok((moved, chunks.remove(0))),
         Ok(other) => panic!("a read, not {other:?}"),
         Err(refused) => Err(Box::new(refused)),
     }
@@ -565,6 +567,7 @@ fn a_range_reads_in_document_order_and_selecting_moves_the_caret() {
     assert_eq!(
         call(&mut source, &mut anchors.node(1), range),
         Ok(Done::ReadRange(RangeText {
+            padded: None,
             text: "world".to_owned(),
             truncated: false
         }))
@@ -604,6 +607,7 @@ fn a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first() {
         assert_eq!(
             call(&mut source, &mut anchors.node(1), range),
             Ok(Done::ReadRange(RangeText {
+                padded: None,
                 text: "hello w".to_owned(),
                 truncated: false
             })),

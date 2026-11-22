@@ -300,7 +300,7 @@ impl verbatim_uia_rops::batch::Resolve for Shape<'_> {
 
     fn units(
         &self,
-        (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
+        (movement, unit, count): (Option<TextMovement>, TextUnit, u16),
         details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
         let provider = |unit| {
@@ -360,10 +360,12 @@ pub fn caret() -> Op {
 /// attribute's formatting when `formats`.
 pub fn read_text(
     at: Point,
-    (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
+    (movement, unit, count): (Option<TextMovement>, TextUnit, u16),
     formats: bool,
 ) -> Op {
     Op::ReadText {
+        trim: false,
+        whole: false,
         subject: Subject::Node(TEXT),
         at,
         movement,
@@ -381,6 +383,7 @@ pub fn read_text(
 /// `through`'s points when given.
 pub fn read_range(start: Point, end: Point, through: Option<(Point, Point)>) -> Op {
     Op::ReadRange {
+        trim: false,
         subject: Subject::Node(TEXT),
         start,
         end,
@@ -428,7 +431,7 @@ pub fn by(unit: TextUnit, count: i32) -> Option<TextMovement> {
 pub fn one_read<'a>(
     text: &'a Text,
     at: &At,
-    read: (Option<TextMovement>, TextUnit, u8),
+    read: (Option<TextMovement>, TextUnit, u16),
 ) -> Shape<'a> {
     let mut shape = Shape::of(Some(text));
     let at = shape.point(at);

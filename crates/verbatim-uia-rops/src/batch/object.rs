@@ -247,6 +247,8 @@ fn text_summary(segment: &Segment<'_>, subject: &Subject) -> Option<PropertyValu
         },
         Step {
             op: Op::ReadText {
+                trim: false,
+                whole: false,
                 subject: subject.clone(),
                 at: of(PointOf::Caret),
                 movement: None,
@@ -258,6 +260,7 @@ fn text_summary(segment: &Segment<'_>, subject: &Subject) -> Option<PropertyValu
         },
         Step {
             op: Op::ReadRange {
+                trim: false,
                 subject: subject.clone(),
                 start: of(PointOf::SelectionStart),
                 end: of(PointOf::SelectionEnd),

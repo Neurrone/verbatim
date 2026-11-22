@@ -90,6 +90,7 @@ mod shell;
 mod state;
 pub mod supervisor;
 mod terminal;
+pub mod terminal_window;
 mod text;
 #[cfg(test)]
 #[path = "../tests/support/text_batches.rs"]

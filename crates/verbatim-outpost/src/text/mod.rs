@@ -8,6 +8,7 @@
 
 mod color;
 pub mod fused;
+pub mod trim;
 pub mod uia;
 
 pub use verbatim_reader_rules::text::*;

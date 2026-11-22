@@ -1166,8 +1166,13 @@ pub fn by_calls<S: TextSource>(
             movement,
             unit,
             count,
-        } => read_units(source, anchors, (at, movement, unit), count)?
-            .map(|(moved, chunks)| Done::ReadText(Chunks { moved, chunks })),
+        } => read_units(source, anchors, (at, movement, unit), count)?.map(|(moved, chunks)| {
+            Done::ReadText(Chunks {
+                padded: None,
+                moved,
+                chunks,
+            })
+        }),
         CallStep::Range { ends, through } => {
             read_range(source, anchors, ends, through)?.map(Done::ReadRange)
         }
@@ -1342,6 +1347,7 @@ fn read_range<S: TextSource>(
         keep_whole_characters(&mut text);
     }
     Ok(Ok(RangeText {
+        padded: None,
         text,
         truncated: read_cut || cut,
     }))

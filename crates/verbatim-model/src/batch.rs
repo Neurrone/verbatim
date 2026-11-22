@@ -1,5 +1,5 @@
 //! The request list: every request Core sends a reader is a batch of at
-//! most four operations from one closed list of eighteen, sent together
+//! most sixteen operations from one closed list of twenty-two, sent together
 //! and answered together (ADR 0003, "Properties, event kinds and
 //! requests": "A new command adds no kind of request").
 //!
@@ -38,15 +38,24 @@ use crate::{
 pub use parse::{Bound, LISTENER_MSAA_SET, Malformed, Parsed, ReaderKind, parse};
 pub use walk::visit_outcomes;
 
-/// The most operations a batch holds: the largest conversion, a caret
-/// key's starting read for Delete or its watch, and the review select.
-pub const MAX_STEPS: usize = 4;
+/// The most operations a batch holds: the largest, a terminal's caret
+/// key's wait with its window read and colours, and the watch's window
+/// read with the search for its mark's line and the colours.
+pub const MAX_STEPS: usize = 16;
 /// The deepest a walk up or down the tree goes.
 pub const MAX_DEPTH: u32 = 64;
 /// The most nodes a walk down the tree visits.
 pub const MAX_NODES: u32 = 4_096;
-/// The most units one read of text reads.
-pub const MAX_UNITS: u8 = 32;
+/// The most units one read of text reads, chunk by chunk.
+pub const MAX_UNITS: u16 = 32;
+/// The most units one whole read reads, as one span
+/// ([`Op::ReadText`]'s `whole`): a terminal's "Lines spoken in full" at
+/// their most.
+pub const MAX_WHOLE_UNITS: u16 = crate::MAX_TERMINAL_LINES;
+/// The most `FindText` calls one search makes.
+pub const MAX_FIND_CALLS: u8 = 200;
+/// The most matches one search answers.
+pub const MAX_FIND_MATCHES: u8 = 20;
 /// The shortest time between two checks of a caret wait, in
 /// microseconds.
 pub const MIN_POLL_US: u32 = 1_000;
@@ -181,6 +190,12 @@ pub enum PointOf {
     SelectionEnd,
     /// The start of a [`Op::ReadText`]'s first chunk.
     ChunkStart,
+    /// The start of a [`Op::Visible`]'s range.
+    VisibleStart,
+    /// The end of a [`Op::Visible`]'s range.
+    VisibleEnd,
+    /// Where a [`Op::Move`] landed.
+    Moved,
 }
 
 /// A point in a subject's text.
@@ -410,10 +425,20 @@ pub enum Op {
         movement: Option<TextMovement>,
         /// The unit read.
         unit: TextUnit,
-        /// How many units, 1 to [`MAX_UNITS`].
-        count: u8,
-        /// What it fetches beyond the text.
+        /// How many units, 1 to [`MAX_UNITS`], or to [`MAX_WHOLE_UNITS`]
+        /// when `whole`.
+        count: u16,
+        /// What it fetches beyond the text: nothing when `whole` or
+        /// `trim`.
         details: TextDetails,
+        /// Whether the units are read as one span from the point itself,
+        /// its end moved by `count` units, in one call, with no movement,
+        /// answered as one chunk of at most [`crate::MAX_RANGE_BYTES`].
+        whole: bool,
+        /// Whether each line of its one chunk loses the spaces at its end,
+        /// its padded length answered ([`Chunks::padded`]): a read of one
+        /// unit, or a whole one.
+        trim: bool,
     },
     /// The text between two points, in document order.
     ReadRange {
@@ -425,6 +450,9 @@ pub enum Op {
         end: Point,
         /// When set, the text runs through the character at the later end.
         through: Option<Through>,
+        /// Whether each line loses the spaces at its end, its padded
+        /// length answered ([`RangeText::padded`]).
+        trim: bool,
     },
     /// How the selection an earlier [`Op::Caret`] read differs from
     /// `before`.
@@ -475,6 +503,67 @@ pub enum Op {
         /// How it waits.
         wait: Box<CaretWait>,
     },
+    /// The first range the provider shows on screen, or the whole text
+    /// when it shows none: its ends, whether it starts at the text's
+    /// start, and its text without the spaces at its lines' ends.
+    Visible {
+        /// The text subject.
+        subject: Subject,
+    },
+    /// Moves a collapsed copy of a point by units from the point itself,
+    /// as the provider moves a range. A point Core holds that lies past
+    /// the text's end, or that the provider will not compare with it, is
+    /// refused ([`StepRefusal::OutsideText`]).
+    Move {
+        /// The text subject.
+        subject: Subject,
+        /// Where it starts.
+        at: Point,
+        /// By how many of which unit.
+        movement: TextMovement,
+    },
+    /// Searches the text from `at` to its end, or back from `at` to its
+    /// start, for `needle`, the nearest match first, always by calls: a
+    /// search that finds nothing in Windows Terminal answers a range whose
+    /// calls end a remote run (the verbatim-uia-rops crate guide, "The
+    /// terminal's operations"). A failed call ends the search with what it
+    /// found.
+    FindText {
+        /// The text subject.
+        subject: Subject,
+        /// Where it starts.
+        at: Point,
+        /// The text sought, with no line break.
+        needle: String,
+        /// Whether it searches toward the text's start.
+        backward: bool,
+        /// When set, only a match that starts a unit of this kind is
+        /// answered; the others are passed over.
+        unit_start: Option<TextUnit>,
+        /// How many units of text each match answers from its unit's
+        /// start, at least one.
+        read: u8,
+        /// The most matches answered, at most [`MAX_FIND_MATCHES`].
+        limit: u8,
+        /// The most `FindText` calls, at most [`MAX_FIND_CALLS`].
+        calls: u8,
+    },
+    /// A terminal's colours: each of `rows` rows from `at`, `width` cells
+    /// a row, as runs of one foreground and background, the rows stopping
+    /// at the text's end. The one operation for terminals alone: the
+    /// terminals answer a stretch whose last cell differs as one colour,
+    /// and their format unit stops only at rows, so no read of formatting
+    /// gives a row's colours (Dickson, 2026-11-22).
+    ReadColours {
+        /// The text subject.
+        subject: Subject,
+        /// The first row's start.
+        at: Point,
+        /// How many rows.
+        rows: u32,
+        /// How many cells a row holds.
+        width: u32,
+    },
     /// A terminal's window read: the outpost's terminal read, with every
     /// rule it holds, as one operation ([`TerminalWindow`]).
     TerminalRead {
@@ -485,7 +574,7 @@ pub enum Op {
     },
 }
 
-/// The eighteen operations, by name: each one's result kind.
+/// The twenty-two operations, by name: each one's result kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpKind {
     /// [`Op::Read`].
@@ -522,6 +611,14 @@ pub enum OpKind {
     MoveBySentence,
     /// [`Op::WaitForCaret`].
     WaitForCaret,
+    /// [`Op::Visible`].
+    Visible,
+    /// [`Op::Move`].
+    Move,
+    /// [`Op::FindText`].
+    FindText,
+    /// [`Op::ReadColours`].
+    ReadColours,
     /// [`Op::TerminalRead`].
     TerminalRead,
 }
@@ -541,6 +638,10 @@ impl OpKind {
                 | Self::Locate
                 | Self::MoveBySentence
                 | Self::WaitForCaret
+                | Self::Visible
+                | Self::Move
+                | Self::FindText
+                | Self::ReadColours
                 | Self::TerminalRead
         )
     }
@@ -561,6 +662,7 @@ impl OpKind {
                 | Self::FocusRead
                 | Self::Caret
                 | Self::WaitForCaret
+                | Self::Move
         )
     }
 }
@@ -587,6 +689,10 @@ impl Op {
             Self::Locate { .. } => OpKind::Locate,
             Self::MoveBySentence { .. } => OpKind::MoveBySentence,
             Self::WaitForCaret { .. } => OpKind::WaitForCaret,
+            Self::Visible { .. } => OpKind::Visible,
+            Self::Move { .. } => OpKind::Move,
+            Self::FindText { .. } => OpKind::FindText,
+            Self::ReadColours { .. } => OpKind::ReadColours,
             Self::TerminalRead { .. } => OpKind::TerminalRead,
         }
     }
@@ -612,6 +718,10 @@ impl Op {
             | Self::MoveBySentence { subject, .. }
             | Self::Descendants { subject, .. }
             | Self::WaitForCaret { subject, .. }
+            | Self::Visible { subject }
+            | Self::Move { subject, .. }
+            | Self::FindText { subject, .. }
+            | Self::ReadColours { subject, .. }
             | Self::TerminalRead { subject, .. } => Some(subject),
             Self::Follow(target) => target.as_ref().map(|target| &target.subject),
         }
@@ -709,7 +819,11 @@ impl Step {
             _ => Vec::new(),
         };
         match &self.op {
-            Op::ReadText { at, .. } | Op::Locate { at, .. } => places.push(point(at)),
+            Op::ReadText { at, .. }
+            | Op::Locate { at, .. }
+            | Op::Move { at, .. }
+            | Op::FindText { at, .. }
+            | Op::ReadColours { at, .. } => places.push(point(at)),
             Op::ReadRange {
                 start,
                 end,
@@ -922,6 +1036,11 @@ pub struct Chunks {
     pub moved: i32,
     /// The units read, in order, at least one.
     pub chunks: Vec<TextChunk>,
+    /// For a trimmed read, each line's length with its padding, in
+    /// characters, as runs of lines of one length: how many lines, and
+    /// their length.
+    #[serde(default)]
+    pub padded: Option<Vec<(u32, u32)>>,
 }
 
 /// A [`Op::ReadRange`]'s result.
@@ -931,6 +1050,47 @@ pub struct RangeText {
     pub text: String,
     /// Whether it was cut.
     pub truncated: bool,
+    /// For a trimmed read, each line's padded length, as
+    /// [`Chunks::padded`].
+    #[serde(default)]
+    pub padded: Option<Vec<(u32, u32)>>,
+}
+
+/// A [`Op::Visible`]'s result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisibleText {
+    /// Its start, held.
+    pub start: TextAnchor,
+    /// Its end, held.
+    pub end: TextAnchor,
+    /// Whether it starts at the text's start.
+    pub at_text_start: bool,
+    /// Its text, each line without the spaces at its end.
+    pub text: String,
+    /// Each line's padded length, as [`Chunks::padded`].
+    pub padded: Vec<(u32, u32)>,
+}
+
+/// A [`Op::Move`]'s result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moved {
+    /// How many units it went, signed as asked: fewer at the text's ends.
+    pub moved: i32,
+    /// The point it started from, held.
+    pub from: TextAnchor,
+    /// Where it landed, held.
+    pub to: TextAnchor,
+}
+
+/// One match a [`Op::FindText`] answered.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundText {
+    /// How many units a move from the start of the match's unit to the
+    /// text's end went.
+    pub to_end: u32,
+    /// The text read from the start of the match's unit, as the provider
+    /// gave it.
+    pub text: String,
 }
 
 /// A [`Op::CompareSelection`]'s result.
@@ -1016,6 +1176,14 @@ pub enum Done {
     MoveBySentence(SentenceMoved),
     /// [`Op::WaitForCaret`]'s.
     WaitForCaret(Waited),
+    /// [`Op::Visible`]'s.
+    Visible(VisibleText),
+    /// [`Op::Move`]'s.
+    Move(Moved),
+    /// [`Op::FindText`]'s: the matches, the nearest first.
+    FindText(Vec<FoundText>),
+    /// [`Op::ReadColours`]'s: each row's runs, from the first.
+    ReadColours(Vec<Vec<crate::TerminalColourRun>>),
     /// [`Op::TerminalRead`]'s.
     TerminalRead(Box<TerminalWindow>),
 }
@@ -1042,6 +1210,10 @@ impl Done {
             Self::Locate(_) => OpKind::Locate,
             Self::MoveBySentence(_) => OpKind::MoveBySentence,
             Self::WaitForCaret(_) => OpKind::WaitForCaret,
+            Self::Visible(_) => OpKind::Visible,
+            Self::Move(_) => OpKind::Move,
+            Self::FindText(_) => OpKind::FindText,
+            Self::ReadColours(_) => OpKind::ReadColours,
             Self::TerminalRead(_) => OpKind::TerminalRead,
         }
     }
@@ -1069,6 +1241,10 @@ impl Done {
             | Self::Locate(_)
             | Self::MoveBySentence(_)
             | Self::WaitForCaret(_)
+            | Self::Visible(_)
+            | Self::Move(_)
+            | Self::FindText(_)
+            | Self::ReadColours(_)
             | Self::TerminalRead(_) => Vec::new(),
         }
     }
@@ -1087,7 +1263,7 @@ impl Done {
     #[must_use]
     pub fn found(&self) -> Option<bool> {
         match self {
-            Self::Read(_) | Self::Test(_) | Self::FocusRead(_) => Some(true),
+            Self::Read(_) | Self::Test(_) | Self::FocusRead(_) | Self::Move(_) => Some(true),
             Self::Related(nodes) => Some(!nodes.is_empty()),
             Self::Ancestors(ancestry) => Some(matches!(ancestry.end, AncestorsEnd::Met(_))),
             Self::Descendants(descended) => Some(!descended.nodes.is_empty()),
@@ -1102,6 +1278,9 @@ impl Done {
             | Self::Select(_)
             | Self::Locate(_)
             | Self::MoveBySentence(_)
+            | Self::Visible(_)
+            | Self::FindText(_)
+            | Self::ReadColours(_)
             | Self::TerminalRead(_) => None,
         }
     }
@@ -1116,6 +1295,9 @@ pub enum StepRefusal {
     NoSuchUnit,
     /// The subject cannot do what was asked.
     Unsupported,
+    /// A point Core holds lies past the text's end, or the provider will
+    /// not compare it with the text.
+    OutsideText,
 }
 
 /// What an operation found not there.

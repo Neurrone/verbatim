@@ -5,8 +5,9 @@
 
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
+use verbatim_model::TextPoint;
 use verbatim_model::batch::{
-    Before, Missing, Op, Place, Point, PointOf, Relation, Subject, Through, View,
+    Before, Missing, Op, Place, Point, PointOf, Relation, StepRefusal, Subject, Through, View,
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
@@ -14,7 +15,8 @@ use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
 use super::walk::{Reads, Walk};
 use super::{
     Answer, CaretFound, Compared, Defect, Descend, Found, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
-    MAX_UNIT_TEXT, Ran, Related, Segment, State, UnitsFound, Unrun, failed, named,
+    MAX_UNIT_TEXT, MoveFound, Ran, Related, Segment, State, TextMatch, UnitsFound, Unrun,
+    VisibleFound, failed, named,
 };
 use crate::caret::{Attributes, MAX_COMPARED_TEXT, RangeEnd, classic_changes, classic_runs};
 use crate::error::Error;
@@ -67,6 +69,7 @@ pub(super) fn run(state: &State<'_, '_>, index: usize) -> Ran {
 }
 
 /// The step at `index`'s result by calls, or its outcome.
+#[expect(clippy::too_many_lines, reason = "one arm per operation")]
 fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
     let uia = state.segment.uia;
     let resolver = state.segment.resolver;
@@ -93,10 +96,26 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
         Op::ReadText {
             subject,
             at,
+            unit,
+            count,
+            whole: true,
+            ..
+        } => {
+            let text = resolver.text(subject)?;
+            let by = resolver.units((None, *unit, 1), verbatim_model::TextDetails::NONE)?;
+            let from = point(state, index, text, at)?;
+            whole_units(&from, (by.unit, *count))
+                .map(Found::ReadText)
+                .map_err(call_failed)
+        }
+        Op::ReadText {
+            subject,
+            at,
             movement,
             unit,
             count,
             details,
+            ..
         } => {
             let text = resolver.text(subject)?;
             let read = resolver.units((*movement, *unit, *count), *details)?;
@@ -124,6 +143,7 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             start,
             end,
             through,
+            ..
         } => {
             let range = range(state, index, resolver.text(subject)?, (start, end, through))?;
             Ok(Found::ReadRange(
@@ -158,6 +178,61 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
                 .map_err(call_failed)
         }
         Op::WaitForCaret { .. } => wait_check(&resolver.wait_check()?).map_err(call_failed),
+        Op::Visible { subject } => visible(resolver.text(subject)?)
+            .map(Found::Visible)
+            .map_err(call_failed),
+        Op::Move {
+            subject,
+            at,
+            movement,
+        } => {
+            let text = resolver.text(subject)?;
+            let by = resolver.units((None, movement.unit, 1), verbatim_model::TextDetails::NONE)?;
+            let from = point(state, index, text, at)?;
+            let held = matches!(at, Point::At(TextPoint::At(_)));
+            moved(text, &from, (by.unit, movement.count), held).map(Found::Move)
+        }
+        Op::FindText {
+            subject,
+            at,
+            needle,
+            backward,
+            unit_start,
+            read,
+            limit,
+            calls,
+        } => {
+            let text = resolver.text(subject)?;
+            let unit = resolver
+                .units(
+                    (
+                        None,
+                        unit_start.unwrap_or(verbatim_model::TextUnit::Line),
+                        1,
+                    ),
+                    verbatim_model::TextDetails::NONE,
+                )?
+                .unit;
+            let from = point(state, index, text, at)?;
+            find_text(
+                text,
+                &from,
+                (needle, *backward),
+                (unit, unit_start.is_some(), *read),
+                (*limit, *calls),
+            )
+            .map(Found::FindText)
+            .map_err(call_failed)
+        }
+        Op::ReadColours {
+            subject,
+            at,
+            rows,
+            width,
+        } => {
+            let from = point(state, index, resolver.text(subject)?, at)?;
+            colours(state, &from, (*rows, *width)).map(Found::Colours)
+        }
         Op::MoveBySentence { subject, .. } => no_sentences(resolver.text(subject)?),
         op @ (Op::Read { .. }
         | Op::Test { .. }
@@ -421,6 +496,21 @@ fn point(
                     endpoint: Endpoint::Start,
                     collapsed: false,
                 }),
+                (
+                    Some(Ran::Done(Found::Visible(visible))),
+                    PointOf::VisibleStart | PointOf::VisibleEnd,
+                ) => Ok(FoundPoint {
+                    range: visible.range.clone(),
+                    endpoint: if which == PointOf::VisibleEnd {
+                        Endpoint::End
+                    } else {
+                        Endpoint::Start
+                    },
+                    collapsed: false,
+                }),
+                (Some(Ran::Done(Found::Move(moved))), PointOf::Moved) => {
+                    Ok(FoundPoint::collapsed(moved.to.clone()))
+                }
                 _ => Err(Defect("a point names a step that holds none").ran()),
             }
         }
@@ -588,4 +678,168 @@ fn compared(
         selection_text,
         previous_text,
     })
+}
+
+/// More units than any text holds, for counting units to the text's end.
+const FAR: i32 = 1_000_000;
+
+/// `count` units of `unit` read as one span from `from`, its end moved by
+/// them: a collapsed copy (one or two calls), the end's move (one) and the
+/// text (one).
+fn whole_units(
+    from: &FoundPoint,
+    (unit, count): (windows::Win32::UI::Accessibility::TextUnit, u16),
+) -> Result<UnitsFound, Error> {
+    let range = collapsed_copy(from)?;
+    range.move_endpoint_by_unit(Endpoint::End, unit, i32::from(count))?;
+    let text = range.text(MAX_RANGE_TEXT)?;
+    Ok(UnitsFound {
+        moved: 0,
+        units: vec![crate::text::UnitText {
+            range,
+            text,
+            offset: 0,
+            language: None,
+        }],
+        ended: false,
+        runs: Vec::new(),
+        unsupported: None,
+    })
+}
+
+/// The first visible range, or the whole text when the provider shows
+/// none: the document (one call), the visible ranges (one), its text
+/// (one), and its start compared with the text's (one).
+fn visible(text: TextTarget<'_>) -> Result<VisibleFound, Error> {
+    let document = text.pattern.document_range()?;
+    let screen = text
+        .pattern
+        .visible_ranges()?
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| document.clone());
+    let read = screen.text(MAX_RANGE_TEXT)?;
+    let at_text_start = document.compare_endpoints(Endpoint::Start, &screen, Endpoint::Start)? == 0;
+    Ok(VisibleFound {
+        range: screen,
+        text: read,
+        at_text_start,
+    })
+}
+
+/// `from` moved by `count` units of `unit` from the point itself: a
+/// collapsed copy, kept as where it started, and a copy of that moved (two
+/// calls, and one or two for the copy). A point Core holds (`held`) is
+/// first compared with the text's end (the document and one comparison),
+/// and refused past it or on any failure, as the program's arm is.
+fn moved(
+    text: TextTarget<'_>,
+    from: &FoundPoint,
+    (unit, count): (windows::Win32::UI::Accessibility::TextUnit, i32),
+    held: bool,
+) -> Result<MoveFound, Ran> {
+    let go = || -> Result<Option<MoveFound>, Error> {
+        let start = collapsed_copy(from)?;
+        if held {
+            let document = text.pattern.document_range()?;
+            if start.compare_endpoints(Endpoint::Start, &document, Endpoint::End)? > 0 {
+                return Ok(None);
+            }
+        }
+        let to = start.clone_range()?;
+        let moved = to.move_by(unit, count)?;
+        Ok(Some(MoveFound {
+            from: start,
+            to,
+            moved,
+        }))
+    };
+    match go() {
+        Ok(Some(found)) => Ok(found),
+        Ok(None) => Err(Ran::Unrun(Unrun::Refused(StepRefusal::OutsideText))),
+        Err(_) if held => Err(Ran::Unrun(Unrun::Refused(StepRefusal::OutsideText))),
+        Err(error) => Err(failed(&error)),
+    }
+}
+
+/// The matches of `needle` from `from` to the text's end, or back to its
+/// start, the nearest first: at most `limit` of them over at most `calls`
+/// `FindText` calls. With `starts`, a match that does not start its
+/// `unit` is passed over; each match answers its units to the text's end
+/// and `read` units of text from its unit's start. A failed call ends the
+/// search with what it found, as Windows Terminal's range for text not in
+/// the span fails every call.
+fn find_text(
+    text: TextTarget<'_>,
+    from: &FoundPoint,
+    (needle, backward): (&str, bool),
+    (unit, starts, read): (windows::Win32::UI::Accessibility::TextUnit, bool, u8),
+    (limit, calls): (u8, u8),
+) -> Result<Vec<TextMatch>, Error> {
+    let mut found = Vec::new();
+    if limit == 0 || calls == 0 {
+        return Ok(found);
+    }
+    let document = text.pattern.document_range()?;
+    let at = collapsed_copy(from)?;
+    let span = document.clone_range()?;
+    if backward {
+        span.move_endpoint_to(Endpoint::End, &at, Endpoint::Start)?;
+    } else {
+        span.move_endpoint_to(Endpoint::Start, &at, Endpoint::Start)?;
+    }
+    // One call: `None` when the direction has no more matches.
+    let next = || -> Result<Option<Option<TextMatch>>, Error> {
+        let Some(hit) = span.find_text(needle, backward)? else {
+            return Ok(None);
+        };
+        let row = hit.clone_range()?;
+        if starts {
+            row.expand(unit)?;
+        }
+        let order = row.compare_endpoints(Endpoint::Start, &hit, Endpoint::Start)?;
+        if backward {
+            span.move_endpoint_to(Endpoint::End, &hit, Endpoint::Start)?;
+        } else {
+            span.move_endpoint_to(Endpoint::Start, &hit, Endpoint::End)?;
+        }
+        if order != 0 {
+            return Ok(Some(None));
+        }
+        row.move_endpoint_to(Endpoint::End, &row, Endpoint::Start)?;
+        let to_end = row.clone_range()?.move_by(unit, FAR)?;
+        row.move_endpoint_by_unit(Endpoint::End, unit, i32::from(read.max(1)))?;
+        Ok(Some(Some(TextMatch {
+            to_end: to_end.unsigned_abs(),
+            text: row.text(MAX_RANGE_TEXT)?,
+        })))
+    };
+    for _ in 0..calls {
+        if found.len() >= usize::from(limit) {
+            break;
+        }
+        match next() {
+            Ok(Some(Some(one))) => found.push(one),
+            Ok(Some(None)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    Ok(found)
+}
+
+/// `ReadColours`' arms: the rows' colours from `from`'s point, by the
+/// colour programs when the segment may run programs, the fallback
+/// logged, or by the classic reads.
+fn colours(
+    state: &State<'_, '_>,
+    from: &FoundPoint,
+    (rows, width): (u32, u32),
+) -> Result<Vec<Vec<crate::ColourRun>>, Ran> {
+    let width = usize::try_from(width).unwrap_or(usize::MAX);
+    let (rows, path) = super::colours::row_colours(from, (rows, width), state.segment.remote)
+        .map_err(call_failed)?;
+    if let crate::focus::Path::Fallback(error) = &path {
+        super::remote_fell_back("read colours", state.segment.window, error);
+    }
+    Ok(rows)
 }

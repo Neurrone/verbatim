@@ -6,8 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Batch, Before, Check, MAX_BOUND_US, MAX_DEPTH, MAX_NODES, MAX_STEPS, MAX_UNITS, MIN_POLL_US,
-    Op, OpKind, Place, Point, PointOf, Step, Subject, Through,
+    Batch, Before, Check, MAX_BOUND_US, MAX_DEPTH, MAX_FIND_CALLS, MAX_FIND_MATCHES, MAX_NODES,
+    MAX_STEPS, MAX_UNITS, MAX_WHOLE_UNITS, MIN_POLL_US, Op, OpKind, Place, Point, PointOf, Step,
+    Subject, Through,
 };
 use crate::TextPoint;
 use crate::matcher::Matcher;
@@ -49,8 +50,15 @@ pub enum Bound {
     Nodes(u32),
     /// A walk's limit over its node cap.
     Limit(u32),
-    /// A read's count outside 1 to [`MAX_UNITS`].
-    Count(u8),
+    /// A read's count outside 1 to [`MAX_UNITS`], or to
+    /// [`MAX_WHOLE_UNITS`] for a whole read.
+    Count(u16),
+    /// A read that trims more than one chunk, or reads details with a
+    /// whole or trimmed text.
+    Shape,
+    /// A search's limit outside 1 to [`MAX_FIND_MATCHES`], its calls over
+    /// [`MAX_FIND_CALLS`], or its read of no unit.
+    Search,
     /// A caret wait's poll under [`MIN_POLL_US`].
     Poll(u32),
     /// A caret wait's bound over [`MAX_BOUND_US`].
@@ -275,7 +283,13 @@ impl Checking<'_> {
             ReaderKind::Outpost => true,
             ReaderKind::Plain => !matches!(
                 op.kind(),
-                OpKind::Ancestors | OpKind::FocusRead | OpKind::TerminalRead
+                OpKind::Ancestors
+                    | OpKind::FocusRead
+                    | OpKind::TerminalRead
+                    | OpKind::Visible
+                    | OpKind::Move
+                    | OpKind::FindText
+                    | OpKind::ReadColours
             ),
             ReaderKind::Listener => match op {
                 Op::Read {
@@ -302,6 +316,7 @@ impl Checking<'_> {
     }
 
     /// The operation's own inputs: its points, bounds and matchers.
+    #[expect(clippy::too_many_lines, reason = "one arm per operation")]
     fn op(&self, op: &Op) -> Result<(), Malformed> {
         let on_node = matches!(op.subject(), Some(Subject::Node(_)));
         let anchor = |named: bool| {
@@ -333,8 +348,38 @@ impl Checking<'_> {
                 }
                 Ok(())
             }
-            Op::ReadText { at, count, .. } => {
-                bound(!(1..=MAX_UNITS).contains(count), Bound::Count(*count))?;
+            Op::ReadText {
+                at,
+                count,
+                movement,
+                details,
+                whole,
+                trim,
+                ..
+            } => {
+                let most = if *whole { MAX_WHOLE_UNITS } else { MAX_UNITS };
+                bound(!(1..=most).contains(count), Bound::Count(*count))?;
+                let one_chunk = *whole || *count == 1;
+                let plain = *details == crate::TextDetails::NONE;
+                bound(
+                    (*trim && !one_chunk)
+                        || ((*whole || *trim) && !plain)
+                        || (*whole && movement.is_some()),
+                    Bound::Shape,
+                )?;
+                anchor(self.point(*at)?)
+            }
+            Op::FindText {
+                at,
+                read,
+                limit,
+                calls,
+                ..
+            } => {
+                bound(
+                    *read == 0 || *limit > MAX_FIND_MATCHES || *calls > MAX_FIND_CALLS,
+                    Bound::Search,
+                )?;
                 anchor(self.point(*at)?)
             }
             Op::ReadRange {
@@ -355,7 +400,9 @@ impl Checking<'_> {
                 }
                 anchor(named)
             }
-            Op::Locate { at, .. } => anchor(self.point(*at)?),
+            Op::Locate { at, .. } | Op::Move { at, .. } | Op::ReadColours { at, .. } => {
+                anchor(self.point(*at)?)
+            }
             Op::CompareSelection { before, after, .. } => {
                 self.names(*after, |kind| kind == OpKind::Caret)?;
                 match before {
@@ -379,7 +426,8 @@ impl Checking<'_> {
             | Op::Activate { .. }
             | Op::Follow(_)
             | Op::FocusRead { .. }
-            | Op::Caret { .. } => Ok(()),
+            | Op::Caret { .. }
+            | Op::Visible { .. } => Ok(()),
         }
     }
 
@@ -394,6 +442,14 @@ impl Checking<'_> {
             }
             Point::Of(to, PointOf::Caret | PointOf::SelectionStart | PointOf::SelectionEnd) => {
                 self.names(to, |kind| kind == OpKind::Caret)?;
+                Ok(false)
+            }
+            Point::Of(to, PointOf::VisibleStart | PointOf::VisibleEnd) => {
+                self.names(to, |kind| kind == OpKind::Visible)?;
+                Ok(false)
+            }
+            Point::Of(to, PointOf::Moved) => {
+                self.names(to, |kind| kind == OpKind::Move)?;
                 Ok(false)
             }
         }

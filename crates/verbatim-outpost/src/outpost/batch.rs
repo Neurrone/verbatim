@@ -437,7 +437,11 @@ impl Run<'_, '_> {
                 | Op::CompareSelection { subject, .. }
                 | Op::Select { subject, .. }
                 | Op::Locate { subject, .. }
-                | Op::MoveBySentence { subject, .. } => Some(subject),
+                | Op::MoveBySentence { subject, .. }
+                | Op::Visible { subject }
+                | Op::Move { subject, .. }
+                | Op::FindText { subject, .. }
+                | Op::ReadColours { subject, .. } => Some(subject),
                 _ => None,
             }
         }
@@ -1108,6 +1112,13 @@ impl Run<'_, '_> {
                 };
                 return Ok(text_reads::terminal_window_step(context, uia, node, ask));
             }
+            Op::Visible { .. }
+            | Op::Move { .. }
+            | Op::FindText { .. }
+            | Op::ReadColours { .. }
+            | Op::ReadText { whole: true, .. }
+            | Op::ReadText { trim: true, .. }
+            | Op::ReadRange { trim: true, .. } => verbatim_ia2::text::TextStep::Unsupported,
             Op::WaitForCaret { .. } => {
                 // A wait is only ever a batch's first step, and such a
                 // batch waits in the table of waiting requests.
@@ -1146,7 +1157,7 @@ impl Run<'_, '_> {
                 at: point(at)?,
                 movement: *movement,
                 unit: *unit,
-                count: *count,
+                count: u8::try_from(*count).ok()?,
             },
             Op::ReadRange {
                 start,

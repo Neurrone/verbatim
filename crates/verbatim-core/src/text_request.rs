@@ -198,7 +198,7 @@ fn local_step(op: &Op, earlier: &[StepOutcome]) -> Option<LocalStep> {
             at: point(at)?,
             movement: *movement,
             unit: *unit,
-            count: *count,
+            count: u8::try_from(*count).ok()?,
         },
         Op::ReadRange {
             start,
