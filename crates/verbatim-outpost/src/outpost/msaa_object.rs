@@ -240,13 +240,12 @@ pub(super) fn navigate(
 
 /// The outpost's side of a `FocusRead` through the MSAA executor's arm
 /// ([`verbatim_ia2::batch::focus_read`]): the ancestors Core knows, by
-/// `known`, and what the answer reads, by `set` and `details`.
+/// `known`, and what the answer reads, by `set`.
 struct MsaaFocusRead<'a, 'c> {
     nodes: MsaaNodes<'a, 'c>,
     known: &'a [KnownAncestor],
     candidates: verbatim_ia2::equality::Candidates,
     set: &'a [PropertyId],
-    details: TextDetails,
 }
 
 impl Resolve for MsaaFocusRead<'_, '_> {
@@ -278,6 +277,25 @@ impl Resolve for MsaaFocusRead<'_, '_> {
     }
     fn children(&self, node: NodeId) -> Result<(Vec<NodeSnapshot>, bool), AcquireError> {
         self.nodes.children(node)
+    }
+}
+
+impl verbatim_ia2::text::TextResolve for MsaaFocusRead<'_, '_> {
+    fn key_of(&self, node: NodeId) -> Option<(isize, i32, i32)> {
+        super::text_reads::EditFacts(self.nodes.context).key_of(node)
+    }
+
+    fn edit_anchors(
+        &self,
+        node: NodeId,
+        named: &[u64],
+        read: &mut dyn FnMut(&mut verbatim_reader_rules::text::NodeText<'_, u32>),
+    ) {
+        super::text_reads::EditFacts(self.nodes.context).edit_anchors(node, named, read);
+    }
+
+    fn now_us(&self) -> u64 {
+        self.nodes.context.observed_now()
     }
 }
 
@@ -337,10 +355,9 @@ impl FocusResolve for MsaaFocusRead<'_, '_> {
     }
 
     fn answer(&self, focus: MsaaFocus) -> FocusRead {
-        let mut client = self.nodes.client.borrow_mut();
         asked::focus_read(
-            (self.nodes.context, client.uia()),
-            &asked::Focus {
+            self.nodes.context,
+            asked::Focus {
                 node: &focus.node,
                 ancestors: &focus.ancestors,
                 met: focus.met,
@@ -349,7 +366,7 @@ impl FocusResolve for MsaaFocusRead<'_, '_> {
                 foreground: focus.foreground.as_ref(),
                 value_from_selection: false,
                 runtime_id_reused: false,
-                details: self.details,
+                caret: focus.caret,
             },
             self.set,
         )
@@ -358,18 +375,18 @@ impl FocusResolve for MsaaFocusRead<'_, '_> {
 
 /// The outpost's side of a `FocusRead` or a `Test` of the focus through
 /// the MSAA executor, its walk up stopping at the first of `known`, by
-/// `set`, its caret fetching `details`.
+/// `set`; an edit control's caret reads no formatting, so the read's
+/// details are not used.
 fn focus_resolver<'a, 'c>(
     context: &'a RequestContext<'c>,
     client: &'a mut Client,
-    (known, set, details): (&'a [KnownAncestor], &'a [PropertyId], TextDetails),
+    (known, set, _details): (&'a [KnownAncestor], &'a [PropertyId], TextDetails),
 ) -> MsaaFocusRead<'a, 'c> {
     MsaaFocusRead {
         nodes: MsaaNodes::new(context, client),
         known,
         candidates: asked::candidates_of(known),
         set,
-        details,
     }
 }
 

@@ -10,7 +10,7 @@
 use verbatim_model::batch::{Op, Relation, Walk};
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{HeldIds, MsaaIds};
+use verbatim_model::request::{FocusCaret, HeldIds, MsaaIds};
 use verbatim_model::{ActionName, NodeId, NodeSnapshot, QueryKind, WindowHandle};
 
 use crate::Interning;
@@ -685,13 +685,15 @@ pub struct MsaaFocus {
     /// The foreground window's own object, read when the focus met none of
     /// the ancestors Core knows.
     pub foreground: Option<NodeSnapshot>,
+    /// Its caret, line and selection, read last ([`focus_caret`]).
+    pub caret: FocusCaret,
 }
 
 /// The outpost's side of a `FocusRead`, or a `Test` of the focus, through MSAA: the windows it
 /// serves, the ancestors Core knows, the chain above the focus across
 /// backends, which dialogs want their text, the other backend's reads,
 /// and the answer made from what was read.
-pub trait FocusResolve: Resolve {
+pub trait FocusResolve: Resolve + crate::text::TextResolve {
     /// Whether this outpost's application serves window `hwnd`.
     fn serves(&self, hwnd: isize) -> bool;
 
@@ -728,7 +730,7 @@ pub trait FocusResolve: Resolve {
     fn held_ids(&self, node: &NodeSnapshot) -> Option<HeldIds>;
 
     /// The answer made from what the arm read: each node's properties as
-    /// Core asked, and the focus's caret.
+    /// Core asked, with the focus's caret.
     fn answer(&self, focus: MsaaFocus) -> verbatim_model::request::FocusRead;
 }
 
@@ -798,6 +800,7 @@ fn candidate_read(candidate: FocusCandidate, resolver: &dyn FocusResolve) -> Foc
         ancestors.iter_mut().chain(std::iter::once(&mut node)),
     );
     let foreground = met.is_none().then(|| resolver.foreground(&[])).flatten();
+    let caret = focus_caret(resolver, &node);
     FocusFound::Read(
         None,
         Box::new(resolver.answer(MsaaFocus {
@@ -807,6 +810,7 @@ fn candidate_read(candidate: FocusCandidate, resolver: &dyn FocusResolve) -> Foc
             nearest: window,
             msaa: Some(HeldIds { event, held_child }),
             foreground,
+            caret,
         })),
     )
 }
@@ -845,6 +849,7 @@ fn focus_now(hwnd: isize, if_focused: bool, resolver: &dyn FocusResolve) -> Focu
         ancestors.iter_mut().chain(std::iter::once(&mut node)),
     );
     let msaa = resolver.held_ids(&node);
+    let caret = focus_caret(resolver, &node);
     FocusFound::Read(
         focused,
         Box::new(resolver.answer(MsaaFocus {
@@ -854,8 +859,25 @@ fn focus_now(hwnd: isize, if_focused: bool, resolver: &dyn FocusResolve) -> Focu
             nearest: hwnd,
             msaa,
             foreground,
+            caret,
         })),
     )
+}
+
+/// The focus's caret, read last of the arm's reads: an edit control's
+/// client area's by the text arms ([`crate::text::focus_caret`]); any
+/// other object has no text.
+fn focus_caret(resolver: &dyn FocusResolve, node: &NodeSnapshot) -> FocusCaret {
+    let has_text = resolver
+        .key_of(node.id)
+        .is_some_and(|(hwnd, object, child)| {
+            crate::text::edit_version(hwnd, object, child).is_some()
+        });
+    if has_text {
+        crate::text::focus_caret(resolver, node.id)
+    } else {
+        FocusCaret::NoText
+    }
 }
 
 /// Gives every dialog among `nodes`, a focus's chain, that wants its own

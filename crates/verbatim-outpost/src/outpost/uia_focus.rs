@@ -230,11 +230,19 @@ impl FocusResolve for UiaFocusRead<'_, '_> {
         read::dialog_text_of(self.context, &mut self.client.borrow_mut(), node, None)
     }
 
+    fn caret(&self, node: &NodeSnapshot) -> verbatim_model::request::FocusCaret {
+        if super::text_reads::may_have_text(self.context, node.id, node.role) {
+            let mut client = self.client.borrow_mut();
+            super::text_reads::focus_caret(self.context, client.uia(), node.id, self.details)
+        } else {
+            verbatim_model::request::FocusCaret::NoText
+        }
+    }
+
     fn answer(&self, focus: UiaFocus) -> FocusRead {
-        let mut client = self.client.borrow_mut();
         asked::focus_read(
-            (self.context, client.uia()),
-            &asked::Focus {
+            self.context,
+            asked::Focus {
                 node: &focus.node,
                 ancestors: &focus.ancestors,
                 met: focus.met,
@@ -243,7 +251,7 @@ impl FocusResolve for UiaFocusRead<'_, '_> {
                 foreground: focus.foreground.as_ref(),
                 value_from_selection: focus.value_from_selection,
                 runtime_id_reused: focus.runtime_id_reused,
-                details: self.details,
+                caret: focus.caret,
             },
             self.set,
         )

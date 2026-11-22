@@ -63,9 +63,13 @@ the resolver finds by the route, its ancestors built from the
 listener's read with no call where its walk met one Core knows, and its
 states read again with the dialogs' children in one round trip
 (`focus_states`). Both gather the text of the dialogs the focus enters
-(`dialog::UiaDialog`); the judgements between the reads, the chaining
-above a walk's end, an MSAA dialog's text, the foreground object and the
-answer are the resolver's (`focus::FocusResolve`). `test_focus` is a
+(`dialog::UiaDialog`), and read the focus's caret last
+(`FocusResolve::caret`): one segment of this executor's `Caret`,
+`ReadText` of the line and `ReadRange` of the selection, whose text the
+outpost opens and whose answer it makes the report and baseline from.
+The judgements between the reads, the chaining above a walk's end, an
+MSAA dialog's text, the foreground object and the answer are the
+resolver's (`focus::FocusResolve`). `test_focus` is a
 `Test` of the application's focus, its matcher evaluated lazily over
 `focus_now`'s read. Its input is a `Segment`: a run of
 consecutive steps of one parsed batch, the model's own `Step`s, with the

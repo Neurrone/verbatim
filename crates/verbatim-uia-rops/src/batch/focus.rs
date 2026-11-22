@@ -20,7 +20,7 @@
 
 use std::cell::RefCell;
 
-use verbatim_model::request::FocusRead;
+use verbatim_model::request::{FocusCaret, FocusRead};
 use verbatim_model::{NodeId, NodeSnapshot, State, TableId};
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
@@ -54,6 +54,8 @@ pub struct UiaFocus {
     pub value_from_selection: bool,
     /// Whether its runtime id named another element before.
     pub runtime_id_reused: bool,
+    /// Its caret, line and selection ([`FocusResolve::caret`]).
+    pub caret: FocusCaret,
 }
 
 /// What [`focus_now`] found.
@@ -209,8 +211,15 @@ pub trait FocusResolve {
     /// The own text of a dialog read through MSAA, the other backend.
     fn other_dialog_text(&self, node: &NodeSnapshot) -> Option<String>;
 
+    /// The caret of `node`, the focus, its line and its selection, read
+    /// last of the arm's reads, as one segment of this executor's `Caret`,
+    /// `ReadText` and `ReadRange`: the outpost opens the node's text and
+    /// makes the report and the baseline it holds from the answer. A node
+    /// with no text answers [`FocusCaret::NoText`].
+    fn caret(&self, node: &NodeSnapshot) -> FocusCaret;
+
     /// The answer made from what the arm read: each node's properties as
-    /// Core asked, and the focus's caret.
+    /// Core asked, with the focus's caret.
     fn answer(&self, focus: UiaFocus) -> FocusRead;
 
     /// The element the listener's route names, found by the route and
@@ -310,6 +319,7 @@ pub fn focus_now(uia: &Uia, hwnd: isize, resolver: &dyn FocusResolve) -> FocusNo
         ancestors.iter_mut().chain(std::iter::once(&mut node)),
         Vec::new(),
     );
+    let caret = resolver.caret(&node);
     FocusNowFound::Read(Box::new(resolver.answer(UiaFocus {
         node,
         ancestors,
@@ -318,6 +328,7 @@ pub fn focus_now(uia: &Uia, hwnd: isize, resolver: &dyn FocusResolve) -> FocusNo
         foreground,
         value_from_selection,
         runtime_id_reused: false,
+        caret,
     })))
 }
 
@@ -632,6 +643,7 @@ pub fn route(uia: &Uia, resolver: &dyn FocusResolve) -> Result<Box<FocusRead>, R
         ancestors.iter_mut().chain(std::iter::once(&mut snapshot)),
         gathered,
     );
+    let caret = resolver.caret(&snapshot);
     Ok(Box::new(resolver.answer(UiaFocus {
         node: snapshot,
         ancestors,
@@ -640,6 +652,7 @@ pub fn route(uia: &Uia, resolver: &dyn FocusResolve) -> Result<Box<FocusRead>, R
         foreground,
         value_from_selection,
         runtime_id_reused: reused,
+        caret,
     })))
 }
 

@@ -22,8 +22,8 @@ use verbatim_model::request::{
     NodeRead, NodeWindow, Outcome, Probe, Question, Reply, RouteEnd, WindowVerdict,
 };
 use verbatim_model::{
-    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextDetails,
-    TextOp, TextReply,
+    Backend, NodeDetails, NodeId, NodeSnapshot, Pid, QueryKind, Role, State, StateSet, TextOp,
+    TextReply,
 };
 
 use super::RequestContext;
@@ -463,15 +463,14 @@ pub(super) struct Focus<'a> {
     pub(super) foreground: Option<&'a NodeSnapshot>,
     pub(super) value_from_selection: bool,
     pub(super) runtime_id_reused: bool,
-    /// What the focus's caret read fetches beyond the text: its line's
-    /// formatting, as Core's settings report it.
-    pub(super) details: TextDetails,
+    /// The focus's caret, read by its executor's arm.
+    pub(super) caret: FocusCaret,
 }
 
 /// The focus answer `focus` describes, by `set`.
 pub(super) fn focus_read(
-    (context, uia): (&RequestContext<'_>, Option<&verbatim_uia::Uia>),
-    focus: &Focus<'_>,
+    context: &RequestContext<'_>,
+    focus: Focus<'_>,
     set: &[PropertyId],
 ) -> FocusRead {
     let runtime_id = |node: &NodeSnapshot| context.store.runtime_id_of(node.id).map(RuntimeId);
@@ -505,26 +504,7 @@ pub(super) fn focus_read(
             .map(|window| focus_node(window, window.details.window.map(hwnd_of))),
         value_from_selection: focus.value_from_selection,
         runtime_id_reused: focus.runtime_id_reused,
-        caret: caret_of((context, uia), focus.node, focus.details),
-    }
-}
-
-/// The focus's caret, read after its states (Table 17): for a node that
-/// may have text, its caret, its line with the formatting `details`
-/// names, and its selection, the next baseline held from them; none for a
-/// node with no text. A terminal's caret is read too, so that its focus says the line
-/// the caret is on ("blank" for an empty one) as NVDA's announcement of a
-/// focused terminal does (`docs/parity/terminals.md`); its baseline read,
-/// sent after the focus, is silent.
-fn caret_of(
-    (context, uia): (&RequestContext<'_>, Option<&verbatim_uia::Uia>),
-    node: &NodeSnapshot,
-    details: TextDetails,
-) -> FocusCaret {
-    if text_reads::may_have_text(context, node.id, node.role) {
-        text_reads::focus_caret(context, uia, node.id, details)
-    } else {
-        FocusCaret::NoText
+        caret: focus.caret,
     }
 }
 

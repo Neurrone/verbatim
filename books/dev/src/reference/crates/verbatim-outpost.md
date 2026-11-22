@@ -964,10 +964,12 @@ for a step whose neighbour is read through its own window's backend,
 `asked::children` for the children of a node MSAA does not list, and
 `read::activate_walk` for an activation's walk up the parents. A second
 implementation of an operation is the one a later session copies
-(Dickson, 2026-11-22). A focus's caret through UI Automation, and a
-caret wait's check by parts with no UI Automation client, still run
-through the outpost's text adapter (`outpost/text_reads.rs`), outside
-the executors.
+(Dickson, 2026-11-22). Each executor's `FocusRead` arm reads the
+focus's caret last; through UI Automation the outpost's resolver opens
+the node's text and makes the report and baseline from the caret
+program's answer (`text_reads::focus_caret`). What still runs outside
+the executors is a caret wait's check by parts with no UI Automation
+client, and the terminal's reads.
 
 A batch is parsed once as it arrives and refused whole when it does not
 parse. A batch whose MSAA subject's window has a UI Automation verdict
