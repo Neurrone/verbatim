@@ -4345,7 +4345,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(71),
+            first_focus(68),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);
