@@ -1333,9 +1333,8 @@ fence (`keys::entry::stamp`). Two kinds of speech said outside an entry
 carry a key's number too: the time, whose `Effect::ReadClock` and
 `Input::ClockRead` carry the gesture's number; and terminal output handed
 to speech by an input handled at once (an utterance's end or failure),
-which carries the number the terminal's speech state took from the
-speech entry that queued it (`TerminalSpeechState::key`), none for output
-the quiet-period timer read. A lock key's announcement, and speech no key
+which carries the key its `SpeechEntry` answers (`SpeechEntry::key`),
+none for output no key caused. A lock key's announcement, and speech no key
 caused, carry none.
 
 ### Caret keys
@@ -1518,193 +1517,89 @@ sentence rules, and a terminal always reads by line.
 
 ## Terminals
 
-What a terminal says (`terminal.rs`; `books/dev/src/explanation/design/terminal-model.md`,
-"Features and settings"; `docs/parity/terminals.md`). Core's terminal
-model (below) gives each read to the reading rules, and what they say
-(`Said`, `TerminalItem`s and new lines) is spoken here; speech of anything
-but the focus is ignored. `TerminalItem` (output, a count of lines
-skipped, or a key's answer), `TerminalUnit`, `Skipped` and
-`TerminalKeyKind` are Core's own types (`terminal/items.rs`); none crosses
-a pipe.
+What a terminal says (`terminal.rs`; `books/dev/src/explanation/design/terminal-model.md`;
+`docs/parity/terminals.md`). Core watches the terminal the committed
+focus is, as NVDA's monitor loop does, and decides everything said; the
+outpost reads the window, two screens up to the document's end, when
+Core asks (`Op::TerminalRead`, a `WindowAsk` naming the end mark, the
+mark kept aside, the screen's height, "Lines spoken in full" and whether
+to read colours). Speech of anything but the focus is ignored.
 
-A caret key bound to a terminal takes the terminal's path ("The caret key
-on the event queue"): its starting read is the terminal's full read,
-which also mints the caret starting point, it is told to the model at its
-pass, its watch polls with no event shortcut to its multiplied bound, it
-says nothing itself, and the model takes its final read. Core drops a
-system caret tell at its arrival and at its turn while the committed
-focus is a console host's terminal (`Kept::console_terminal`), since the
-console's caret event is its caret.
-
-- The answers to keys are spoken at once, ahead of the output the same
-  speech carries: typing the terminal showed (`TerminalItem::Echo`) by the
-  echo settings, a key's answer in its unit, text the caret's line gained
-  or lost, a row away from the caret that is a key's answer, and a
-  suggestion. A caret key's watch's answer in a terminal only keeps
-  Core's caret current.
-- `caret_key_kind` and `typed_kind` say what a key is to the rules: the
-  horizontal keys a character, with Control a word, the vertical and page
-  keys a line, Delete as Delete, any other `Other`; text typed, `Enter`,
-  `Forget` for Tab, `Other` for a control character.
-- The review cursor follows the caret only when the rules say a key moved
-  it within its window (`Said::followed`), since a program moves its
-  cursor as it draws (`books/dev/src/explanation/design/terminal-model.md`, "The review
-  cursor").
-- Output is spoken queued, one line per utterance, each opening and
-  closing with an index mark; a blank line counts and waits but is never
-  spoken. Two utterances are handed to speech ahead of playback and the
-  rest wait in `TerminalSpeechState`. Newer output never cancels older.
-- The flood policy, by groups (`TerminalSpeechState::group`): the first
-  "Lines spoken in full" lines of a burst are spoken whole. Only once the
-  group's last line has been heard (its closing mark, never its start) is
-  the backlog looked at: when more lines wait than that, everything but
-  the newest "Last lines to speak" becomes one skip, spoken as
-  `Phrase::SkippedLines`, `Phrase::SkippedUncountedLines`
-  (`Skipped::Uncounted`), `Phrase::SkippedMoreThanLines`
-  (`Skipped::MoreThan`, lines lost past the terminal's history) or
-  `Phrase::SkippedAboutLines` (`Skipped::About`, counted from text after a
-  lost read); `Skipped::plus` combines kinds, "more than" winning. A lost
-  read sends a count of none of its kind ahead of its lines, each marked
-  `Counted`. The next group follows, until everything waiting has been
-  heard.
-- Bounds: behind the group being spoken, the waiting queue keeps at most
-  as many lines as either limit keeps, older ones folded into the count,
-  and at most 10 MB (`MAX_WAITING_BYTES`); a single larger line is cut on
-  a grapheme boundary and followed by `Message::TerminalLineCut`. A line
-  and its growth (`TerminalItem::Growth`) are one unit, counted and
-  dropped together.
-- Reading on demand (`docs/parity/terminals.md`, "Reading a terminal on
-  demand"; `docs/design/readers-tell-core-asks-build3.md`). The outpost
-  tells Core of every change signal; Core alone keeps "told, not yet
-  read" and sends the output read (`terminal/reading.rs`, "Core's
-  terminal model" below). Once a group's worth of lines waits, the
-  reading holds: a change told is kept, not read. When the group's last
-  line is handed to speech, one waited read is sent as the release, and
-  the backlog is decided once the release read's answer and the last
-  line have both happened (`TerminalSpeechState::deciding`). With nothing
-  waiting, reading goes live again. When the outpost ends, the reading
-  goes with its model and nothing more is asked of it; what Core had
-  already read is still spoken, as NVDA speaks the lines its monitor
-  read. A cut while holding or with a read out leaves that read
-  silent: of reads begun before the cut
-  (`TerminalSpeechState::cut_at_ms` against the read's start) only the
-  answers to keys are spoken (`Mark::Silent`).
-- Anything that cuts speech drops the output waiting and handed to
-  speech: a key's cut (`QueueInput::SpeechCut`), a step whose effects stop speech or
-  interrupt, and `Input::UtteranceCancelled`. `Input::UtteranceFailed`
-  counts as heard. The output waiting is the focus's: a focus moving to
-  another node forgets it, an outpost replaced under the same focus keeps
-  it, and output utterances carry the focus's validity.
+- The focused terminal's record, `TerminalFocus`, lives in the committed
+  focus's context, so every commit replaces it; only its pacing is
+  carried over for the same node not left (`TerminalFocus::carried`). It
+  holds the terminal (`Terminal`: its node, the window its requests name,
+  whether that window is a console host's), the watch, the reading and
+  the pacing.
+- The watch (`Watch`) is one value: `Unread { dirty }`, with no baseline
+  (refused, or its window hung); `Baselining { token, dirty }`, its
+  baseline out; `Live { old, read }`, the last window and its read,
+  `Read::Idle { dirty }` or `Read::Out { token, dirty, speaks, waited }`;
+  or `Gone`. A change told (`EventKind::TerminalChanged`, handled at once
+  in the inbox) marks it dirty, and at settle a dirty live watch with no
+  read out sends one, unless the pacing holds it. Every outcome of a
+  read is matched by name (`Ended`): the window, abandoned, failed (an
+  empty baseline, as NVDA's monitor starts from empty text), hung, not
+  there, or its reader gone. A read out whose `Speaks` is `KeysOnly`, a
+  cut having come while the pacing held it, says only the echo and the
+  keys' answers.
+- Each answer is judged against the last window by `verbatim-text`'s
+  `Reading` (the echo, the keys' answers, the output), and its rows
+  written past the end mark by the terminal's places. What it says joins
+  the event queue as one `SpeechEntry` under the fence it joins with, and
+  is spoken at its turn (build 9's design, row T2), its output through
+  the pacing. A command's own read is spoken at once in the command's
+  turn; a caret key's read joins the back of the queue.
+- A caret key bound to a terminal runs on the edit path's stage table:
+  its starting read is the window read, which also mints the caret's
+  starting point, and its final read rides in its wait's request
+  (`key_wait`). A key's or command's read is a read of the watch's too:
+  it takes over any read out, whose answer goes stale. Core drops a
+  system caret tell at its arrival and at its turn while the committed
+  focus is a console host's terminal, since the console's caret event is
+  its caret. `caret_key_kind` says what a key is to the reading rules.
+- The pacing (`terminal/pacing.rs`, `Pacing`): `Idle`, `Speaking` a
+  group, or `Due`, its group's last mark reached and the look at the
+  backlog waiting for the watch's output read (Q9). Lines go to speech a
+  few at a time, each between two index marks, and the rest wait, so the
+  backlog not yet spoken is known. The first "Lines spoken in full"
+  lines of a burst are spoken whole; once a group's last line has been
+  heard, all but the newest "Last lines to speak" become "skipped N
+  lines" when more than "Lines spoken in full" wait. Whether the watch's
+  reads are held is derived from the pacing (`Pacing::holds`), never
+  stored; the read at a group's last line is sent as the hold lifts. A
+  cut drops everything waiting, and a cut while held reads to the end
+  speaking only keys (Q15). Typing and held rows are `verbatim-text`'s,
+  their one due time in `Logic::due`.
+- The places (`terminal/places.rs`, `TerminalPlaces`), one record per
+  terminal node, kept in `SrState::terminal_places` and dropped with the
+  outpost generation that minted the node: the end mark the next read
+  counts rows written from, the mark kept aside while a full-screen
+  program's screen is up, the review position, the command marks, whether
+  the history has rotated, the screen's height, and the rows every place
+  has moved up by (`written`), by which a search's answer, counted from
+  the end mark it named, is placed. While the document grows the count
+  is exact; once the history is full and rows rotate under fixed places,
+  the mark's line is found again by its text, in the window or by the
+  outpost's search (`CurrentMark::find`, asked only on a read the pacing
+  held once a read showed rotation).
+- Commands (`terminal/commands.rs`). Each reads the window first, as a
+  key's read of the watch's, then acts on live reads. Review over a
+  terminal reads the live text as any text. Command marks: Enter on a
+  caret line holding input marks the line; Verbatim+Alt+Up and Down
+  Arrow try the marks beyond the review position, nearest first, each by
+  one line read at its place and otherwise by the outpost's search
+  outward from it. "Report status bar" (`commands::status_bar`) reads the
+  footer below the caret after the window read, or says
+  `Message::NoStatusLineFound` outside a terminal.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
   output"; off drops what waits and speaks no output, but still the
   answers to keys.
 
-The unit tests in `terminal/tests.rs` drive the flood policy and the
-reducer with simulated playback and a simulated outpost that tells a
-change per write and answers Core's reads from the start anchors it names,
-as the real one does.
-
-### Core's terminal model
-
-The reading rules run in Core (`books/dev/src/explanation/design/terminal-model.md`, "Where it
-runs"): `terminal_model.rs` and `terminal_model/review.rs` take each full
-read of a terminal (`TextReply::TerminalRead`, the snapshot with the start
-anchor it minted) and the answers to the requests they make;
-`terminal/reading.rs` is the focused terminal's life and its reading.
-
-- Public: `read_of(&TerminalSnapshot)`, the rules' `Read` of a snapshot
-  (its text without its lines' padding, and the screen, padded again
-  exactly); `snapshot_of(&Read, waited, colours)`, the snapshot of a read
-  as an outpost sends it, for tests and measurements over the simulated
-  terminal; and `read_at(&TerminalSnapshot)`, when a snapshot was taken as
-  far as keys are concerned: when the read ended, or when it began for a
-  snapshot that does not say when it ended.
-- The focused terminal is one value, `FocusedTerminal` (`terminal/reading.rs`):
-  `None`; `Baselining`, its `Follow` and baseline read out (the baseline
-  carries Core's parameters; a failed baseline is sent at the next
-  change); `WaitingForWindow`, its window hung before the baseline
-  answered, which the recovery set re-asks; or `Modelled` with its
-  `Reading`. A `Reading` is `Quiet`, `Behind` (a change told while an
-  entry's full read is out), `Out` (an output read out, with its token,
-  its `Mark` and the change told meanwhile), `Holding` (the flood
-  policy's hold) or `Stalled` (its window hung while a read was out). A
-  read's `Mark` says what its speech does: `Spoken`, `Waited` (the
-  release at a group's last line or not) or `Silent`. A change that the
-  last read, begun after it was observed, covers needs no read; every
-  other change sends one output read at once, outside the event queue,
-  as Core's own request awaited by its facts. Every full read's answer is
-  taken by the model at once, in the order the outpost's worker made the
-  reads, and its speech joins the event queue as a `SpeechEntry`, judged
-  at its turn (a cut that came after the read began, a changed focus or
-  model generation, and its reader's end silence it). A late answer is
-  dropped by its number.
-- `SrState::terminals` (`Terminals`) holds a model per terminal node
-  read, at most 16, least recently read forgotten first and an ended
-  outpost's dropped, each only through `SrState::drop_models`: the rules
-  (`TerminalReader`) behind an `Arc`, the model's generation, the keys not
-  yet given to them, the history rows that came, the review places, the
-  caret and screen shape, the start anchor the next read names (the start
-  of the last read whose screen showed text, or the first), the scope the
-  rules owe (`Fresh`, `Whole` or `HistoryBlock`, taken by the next full
-  read sent), when the newest read began, and the quiet-period timer's due
-  time. A model is made with the baseline while the terminal has the
-  focus.
-- Keys. Every key input while the focus is a modeled terminal is kept by
-  its kind, a clearing key as `Forget` then `Other`. Whether a read takes
-  the screen's colours is Core's decision from the keys kept
-  (`KEY_WINDOW_MS` from a key's time) and the last read, sent in the read's
-  request (`TerminalRead::colours`). Before a read
-  taken at S (`read_at`) is given to the rules, every kept key at or
-  before S is given in order; before the timer at T, those up to T; past
-  256 kept keys the oldest is given at once. Leaving the terminal tells
-  the rules `blur` and drops the keys; returning tells them `focus`. A
-  caret key in a terminal is Core's caret key entry with its watch, whose
-  starting and final reads are full reads of the terminal.
-- A read's speech key is the newest key given whose window holds the
-  read's time; its speech and effects go out as `Effect::ForKey` for that
-  key. A read with no speech key, and the timer's speech, carry the
-  input's trace.
-- Reads. A full read is a `TextOp::ReadTerminal(TerminalRead)`: the start
-  anchor the model names, the scope, the screen's shape from the model,
-  whether to take colours, and whether the window is a console host's. A
-  read identical to the last one given to the rules, with its times,
-  number, start and caret left out, is skipped unless it is the first
-  after the focus arrived. A read's caret report becomes Core's caret at
-  the read's time. The rules' timer is the focused model's due
-  time, which the shell reads after each step
-  (`SrState::terminal_timer_due`) and answers with `Input::TerminalTimer`
-  once it is past; another model's due time does not count, so a model
-  dropped or left has no timer, and the timer's step moves the due time
-  past the time it fired at (a debug assertion, and a postcondition of
-  the generated test).
-- Review commands. A review command in a focused modelled terminal is one
-  entry on the event queue (`terminal/commands.rs`): it sends one fresh full
-  read and answers from the memory the model then holds. Rows above the
-  memory are asked for with `TextOp::TerminalHistory { above, whole, start, height }`, a
-  screen more than needed, and placed from the start anchor Core named, which
-  the outpost holds until the answer (`NodesHeld` lets it go); an anchor whose
-  row left the memory ends the command silently, marks kept. The memory's rows carry anchors with
-  the top bit set (`TERMINAL_ANCHORS`), a range no outpost mints from, with
-  at most 64 places beyond those Core holds. "Report status bar"
-  (`terminal::commands::status_bar`) reads the focused modelled
-  terminal's footer (`review::footer`) after a fresh read, or says
-  `Message::NoStatusLineFound` outside one.
-- Command marks. Enter on a caret line holding input
-  (`TerminalReader::caret_line_input`) marks the line (`MarkLine`).
-  Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`, with
-  `terminal::commands::command_mark`) try the marks beyond the review position, nearest
-  first, by their line's hash in the memory and above it with
-  `TextOp::TerminalFind`, whose matches are placed with `review::placed`;
-  a press makes at most `review::MARK_SEARCHES` (3) searches. Output
-  written just before Control+C during a mark search can be spoken, a
-  limit Dickson accepted (2026-11-16).
-- Settings: "report new output" and "review follows caret" are given to
-  every model's rules whenever they change.
-
-`tests/terminal_reading.rs` drives `reduce` with snapshots of the
-simulated terminal (`tests/terminal_support`), whose outpost reads as the
-real one does, and holds its reading while Core's flood policy asks it to;
-`tests/terminal_floods.rs` drives the reading rules and the flood policy
-together through floods at the harness's terminal size and history.
-`tests/terminal_cost.rs` is a measurement, not a test
-(`books/dev/src/reference/performance.md`, "A terminal's reads in Core").
+The unit tests in `terminal/tests.rs` hold one test per cell of the
+watch and the pacing, a row of the places' table each, and the defects
+the rebuild fixed, each fed in the order the listener and the outpost
+give. `tests/terminal_cost.rs` is a measurement, not a test
+(`books/dev/src/reference/performance.md`, "A terminal's reads in Core"):
+the reducer's cost of a window read's answer through `reduce`, in the
+simulated terminal.
