@@ -59,6 +59,9 @@ Asked while he was present so the builds can run without him; each build acts on
 - Build 8: an act's remote program ends after the act, and when it fails the classic fallback still runs the act, so an act can run twice if the program failed after it; harmless for Select, today's only act; whether a non-repeatable act such as Invoke reruns is decided again when one is added (Dickson, 2026-11-21).
 - No end-to-end scenario, local-only or not, is deleted without Dickson's explicit approval; each proposed deletion names what still covers it (2026-11-21).
 - Build 11, the final pass, analyses what can still be reduced or simplified along the lines of the phase's work and builds it; where anything is ambiguous it waits for Dickson (2026-11-21).
+- Build 8: the generic executor's classic path (`run_calls`) is the one classic path; each old hand-written classic twin goes once the generic path is proven correct for its reads (Dickson, 2026-11-22). Cognitive complexity matters more than line count: the representations a step passes through are cut to what is needed (Dickson, 2026-11-22).
+- Build 9: the terminal's needs are met by generic operations that browsers and Word can use (a visible-range read, `FindText`, a padding-trim option) rather than terminal-specific ones, the exact list and batch size shown to Dickson first (Dickson, 2026-11-22). The terminal's classic twins stay (Dickson, 2026-11-22). The skipped-lines count is taken during the read's own turn, and output after a dropped read is compared with what was last spoken, both as defects (Claude, 2026-11-22).
+- The personal paths already in the October terminal recordings on origin are left; new recordings are checked before commit (Dickson, 2026-11-22).
 - The three refusals Core no longer logs stay unlogged until the request list closes. The 5-second figure's program stays in git history only.
 
 ### The session's defaults (REPORT.md section 9, "unless you object")
