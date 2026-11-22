@@ -973,6 +973,21 @@ once per batch, and the probe carried in the answer. Each node read
 carries its nearest window's facts (`NodeWindow`, read from Windows with
 no call into the application) and its properties by the step's set.
 
+Each operation is implemented once per backend, inside its executor:
+every step on one backend's subject is an executor's arm, the UI
+Automation executor's (`verbatim_uia_rops::batch`) or the MSAA
+executor's (`verbatim_ia2::batch`), reached through the outpost's
+resolvers, which resolve subjects and convert answers. Chaining across
+backends is the dispatcher's alone, and is itself one implementation:
+`read::chain` with its window walk-on for ancestors, `read::navigate`
+for a step whose neighbour is read through its own window's backend,
+`asked::children` for the children of a node MSAA does not list, and
+`read::activate_walk` for an activation's walk up the parents. A second
+implementation of an operation is the one a later session copies
+(Dickson, 2026-11-22). The text reads of an edit control and of a
+focus's caret still run through the outpost's text adapter
+(`outpost/text_reads.rs`), outside the executors.
+
 A batch is parsed once as it arrives and refused whole when it does not
 parse. A batch whose MSAA subject's window has a UI Automation verdict
 is refused whole `ReadThroughUia`, and one whose `Route` subject's window
@@ -986,8 +1001,10 @@ without the proxy rule, `any_window_element`), and the focus window,
 taken before any call that can block. Each step runs under its gate
 (`Step::gate`):
 
-- `Read`, `Test`, `IsOneOf` and `Activate` on a UI Automation node, and
-  every `Follow`, run through the UI Automation executor's call arms
+- `Read`, `Test`, `IsOneOf` and `Activate` on a UI Automation node, a
+  `Read` or `Test` of a window read through UI Automation, a `Read` of a
+  listener's route, and every `Follow`, run through the UI Automation
+  executor's call arms
   (`verbatim_uia_rops::batch`, its crate guide), resolved by
   `outpost/uia_object.rs`: the element filled or found again by its
   route, the properties the outpost holds (its MSAA ids, whether its
@@ -996,7 +1013,8 @@ taken before any call that can block. Each step runs under its gate
   and the summary made of what it read (`text::summary_of`), and the
   focus registration.
 - `Read`, `Test`, `Related`, `Descendants`, `IsOneOf` and `Activate` on
-  an MSAA node or an acquired MSAA object run through the MSAA executor
+  an MSAA node or an acquired MSAA object, and a `Read` or `Test` of a
+  window read through MSAA, run through the MSAA executor
   (`verbatim_ia2::batch`, the verbatim-ia2 crate guide, "The MSAA
   executor"), resolved by `outpost/msaa_object.rs`: the properties the
   outpost holds, a snapshot's values, the window facts the focused-state
@@ -1038,8 +1056,8 @@ taken before any call that can block. Each step runs under its gate
   child in one such step, taken as a step to the first child is, an
   MSAA node's the last of its children, failed when the list ends at a
   gone child; and the controller-for relation and the first selected
-  item through the program builder alone, since an MSAA object controls
-  nothing. A UI Automation node that is dead or gone answers not there,
+  item through the UI Automation executor alone
+  (`uia_object::programmed`), since an MSAA object controls nothing. A UI Automation node that is dead or gone answers not there,
   except that `Parent` answers the parent of the element's window
   (NVDA's fall back, `known_window_of`): the nearest window recorded in
   the store when the node was built, and its parent read by the object
