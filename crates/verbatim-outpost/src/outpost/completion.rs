@@ -217,7 +217,7 @@ pub(super) fn focus(
         )
     });
     Ok(Box::new(focus_read(
-        context,
+        (context, client.uia()),
         &Focus {
             node: &snapshot,
             ancestors: &ancestors,

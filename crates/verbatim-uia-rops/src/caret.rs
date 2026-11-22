@@ -1,11 +1,9 @@
-//! The caret read for a caret report (milestone M4;
-//! `books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: the caret read"): the caret and the
-//! selection, whether they moved from where they were known to be, the
-//! caret's line and the caret's place in it, another unit at the caret
-//! (a word, a paragraph), and the formatting of the text to be spoken,
-//! stretch by stretch. A remote program does it in one round trip, and a
-//! classic implementation behind the same signature does it call by call;
-//! [`caret_read`] is the one function callers use.
+//! The caret's pieces the programs share (the verbatim-uia-rops crate
+//! guide, "Layer 3: the caret read"): the caret and the selection, a unit
+//! at the caret and the caret's place in it, the formatting of the text to
+//! be spoken, stretch by stretch, and how a selection changed, each
+//! emitted into a program and read the classic way; and the caret and its
+//! line alone, as a terminal's snapshot reads them ([`CaretLineQuery`]).
 //!
 //! The caret is the start of the first selection range, as NVDA's is
 //! (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
@@ -32,10 +30,9 @@ use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::error::Error;
-use crate::focus::Path;
 use crate::instruction::TypeTest;
 use crate::opcode::Comparison;
-use crate::operation::{Import, Outcome, ProgramCache, Value};
+use crate::operation::{Outcome, Value};
 
 /// UIA's spelling error annotation type.
 pub const ANNOTATION_SPELLING_ERROR: i32 = 60001;
@@ -48,8 +45,8 @@ pub const ANNOTATION_GRAMMAR_ERROR: i32 = 60002;
 pub const MAX_RUNS: u32 = 64;
 
 /// The most UTF-16 code units read of a selection's text kept to compare
-/// ([`CaretAnswer::selection_text`]) and of what an old selection's ends
-/// hold now ([`CaretAnswer::previous_text`]): one more than the 512
+/// (a `CompareSelection`'s selection text) and of what an old selection's ends
+/// hold now (its previous text): one more than the 512
 /// characters from which a selection is spoken as a count. The two are
 /// compared only to tell whether the text changed, which typing over,
 /// cutting or pasting does in the first characters or the length, so a
@@ -195,58 +192,8 @@ impl Attributes {
     }
 }
 
-/// What [`caret_read`] and its two implementations are asked.
-#[derive(Clone, Copy)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each is a separate thing the read is asked to do"
-)]
-pub struct CaretQuery<'a> {
-    /// The element with the text, which a program starts from.
-    pub element: &'a IUIAutomationElement,
-    /// Its text pattern, which the classic implementation reads.
-    pub pattern: &'a IUIAutomationTextPattern,
-    /// Where the caret was known to be, to say whether it moved.
-    pub since: Option<RangeEnd<'a>>,
-    /// The selection's ends as they were known (both the caret when
-    /// nothing was selected), to say whether the selection changed.
-    pub previous_selection: Option<(RangeEnd<'a>, RangeEnd<'a>)>,
-    /// The previous selection held nothing, its ends being one position: a
-    /// caret report's comparison, for which a selection that holds nothing
-    /// now either has no change to tell, so nothing is compared or read and
-    /// [`CaretAnswer::selection_moved`] is false. A caret key's watch, for
-    /// which a caret that moved is a selection that moved, leaves it false.
-    pub previous_collapsed: bool,
-    /// Whether to read the caret line's formatting.
-    pub formats: bool,
-    /// The attributes to read.
-    pub attributes: Attributes,
-    /// Those of [`attributes`](Self::attributes) whose support is not yet
-    /// known: the answer says which of them the provider answered "not
-    /// supported" for ([`CaretAnswer::unsupported`]). The annotation types
-    /// are never learned this way, since a provider may answer "not
-    /// supported" for text without annotations (Windows 11 Notepad does).
-    pub learning: Attributes,
-    /// The most UTF-16 code units of text read for a line or a unit.
-    pub max_text: i32,
-    /// The most UTF-16 code units read for each selection change, when the
-    /// selection is not [`previous_selection`](Self::previous_selection).
-    pub max_change_text: i32,
-    /// Whether to read the selection's text, up to [`MAX_COMPARED_TEXT`],
-    /// when something is selected and its ends are not those of the
-    /// [`previous_selection`](Self::previous_selection), or there is none
-    /// ([`CaretAnswer::selection_text`]).
-    pub read_selection_text: bool,
-    /// Whether to read the text between the
-    /// [`previous_selection`](Self::previous_selection)'s ends as they now
-    /// are, up to [`MAX_COMPARED_TEXT`], when it was not
-    /// [`previous_collapsed`](Self::previous_collapsed)
-    /// ([`CaretAnswer::previous_text`]).
-    pub read_previous_text: bool,
-}
-
 /// Text that became selected or stopped being selected
-/// ([`CaretAnswer::changes`]).
+/// (a `CompareSelection`'s changes).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionTextChange {
     /// True for text newly selected, false for text no longer selected.
@@ -310,12 +257,8 @@ pub struct Run {
     pub attributes: RunAttributes,
 }
 
-/// The answer to a [`CaretQuery`].
+/// The caret and its line ([`CaretLineQuery`]).
 #[derive(Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each is a separate fact the read found"
-)]
 pub struct CaretAnswer {
     /// A range whose start is the caret.
     pub caret: IUIAutomationTextRange,
@@ -323,72 +266,16 @@ pub struct CaretAnswer {
     pub collapsed: bool,
     /// The selection, when text is selected.
     pub selection: Option<IUIAutomationTextRange>,
-    /// Whether the caret is not where [`CaretQuery::since`] says; false
-    /// without one.
+    /// Whether the caret is not where [`CaretLineQuery::since`] says;
+    /// false without one.
     pub moved: bool,
-    /// Where [`CaretQuery::since`] lies against the caret's line: its
-    /// order against the line's start, and against its end, each below
-    /// zero, zero or above; `None` without one. The answer's own round
-    /// trip says whether a key's baseline was on the caret's line.
-    pub since_place: Option<(i32, i32)>,
-    /// Whether the selection's ends are not those of
-    /// [`CaretQuery::previous_selection`]; false without one.
-    pub selection_moved: bool,
     /// The caret's line.
     pub line: UnitRead,
-    /// The formatting of the query's span, stretch by stretch from its
-    /// start; empty when it asked for none.
-    pub runs: Vec<Run>,
-    /// With a [`CaretQuery::previous_selection`], how the selection changed
-    /// from it, by the text protocol's rule (`books/dev/src/reference/crates/verbatim-model.md`,
-    /// "Requests and replies"): two selections that neither overlap nor
-    /// touch are an unselection then a selection; otherwise the start side
-    /// changes, then the end side. Empty when the selection did not move;
-    /// `None` without a previous selection.
-    pub changes: Option<Vec<SelectionTextChange>>,
-    /// Of the query's [`learning`](CaretQuery::learning) attributes, those
-    /// the provider answered "not supported" for in every stretch read:
-    /// attributes it does not support; the rest of them it supports.
-    /// Learned only from the formatting of a line or a unit with text, and
-    /// `None` for any other read: a character's one read, or an empty
-    /// line's, says too little about the provider.
-    pub unsupported: Option<Attributes>,
-    /// With [`CaretQuery::read_selection_text`], the selection's text up to
-    /// [`MAX_COMPARED_TEXT`] when something is selected and its ends moved
-    /// from the previous selection's, or there was none; `None` otherwise.
-    pub selection_text: Option<Vec<u16>>,
-    /// With [`CaretQuery::read_previous_text`] and a previous selection not
-    /// collapsed, the text between the previous selection's ends as they
-    /// are now, up to [`MAX_COMPARED_TEXT`], which a provider moves as the
-    /// text changes; `None` otherwise.
-    pub previous_text: Option<Vec<u16>>,
-    /// When something is selected, how many UTF-16 code units of the
-    /// caret's line come before the selection's start, the caret: the
-    /// caret's own offset; `None` otherwise.
-    pub selection_start: Option<usize>,
-    /// The line the selection starts in is the text's first, known when
-    /// the selection starts at that line's start, so that nothing comes
-    /// before the selection; false otherwise.
-    pub start_first: bool,
 }
-
-/// Whether a read with `query` reads the selection's text
-/// ([`CaretAnswer::selection_text`]): when asked, with something
-/// `selected`, and with no previous selection or one whose ends the
-/// selection's are not (`selection_moved`); the ends unchanged, the
-/// selection's text is what the previous selection's ends hold now
-/// ([`CaretAnswer::previous_text`]).
-fn selection_text_read(query: &CaretQuery<'_>, selected: bool, selection_moved: bool) -> bool {
-    query.read_selection_text && selected && (query.previous_selection.is_none() || selection_moved)
-}
-
-/// The signature both implementations share.
-pub type CaretReadFn = fn(&CaretQuery<'_>) -> Result<CaretAnswer, Error>;
 
 /// The caret and its line alone, read as part of another program (a
-/// terminal's snapshot, [`crate::SnapshotQuery::caret`]) or, classically, after it:
-/// a [`CaretQuery`] with no selection to compare and no unit or
-/// formatting.
+/// terminal's snapshot, [`crate::SnapshotQuery::caret`]) or, classically,
+/// after it, with no selection to compare and no formatting.
 #[derive(Clone, Copy)]
 pub struct CaretLineQuery<'a> {
     /// The element with the text.
@@ -412,8 +299,7 @@ pub(crate) struct CaretLineRegisters {
 }
 
 impl CaretLineRegisters {
-    /// The answer, as [`caret_read_remote`] gives it for a query with no
-    /// selection to compare and no unit or formatting.
+    /// The answer.
     pub(crate) fn read(&self, outcome: &Outcome) -> Result<CaretAnswer, Error> {
         let caret = outcome
             .get(self.caret.caret)?
@@ -431,22 +317,12 @@ impl CaretLineRegisters {
                 Some(moved) => outcome.get(moved)?,
                 None => false,
             },
-            since_place: None,
-            selection_moved: false,
             line: self.line.read(outcome)?,
-            runs: Vec::new(),
-            changes: None,
-            unsupported: None,
-            selection_text: None,
-            previous_text: None,
-            selection_start: None,
-            start_first: false,
         })
     }
 }
 
-/// Emits the caret and its line into `b`, as [`caret_read_remote`] reads
-/// them, from `element`, the query's element as the program imported it,
+/// Emits the caret and its line into `b`, from `element`, the query's element as the program imported it,
 /// with `pattern`, its text pattern as the program already has it, and, to
 /// say whether the caret moved, `since`, the query's `since` range as the
 /// program imported it. A `since` the provider will not compare with the
@@ -487,8 +363,7 @@ pub(crate) fn emit_caret_line(
     CaretLineRegisters { caret, line, moved }
 }
 
-/// The caret and its line the classic way, as [`caret_read_classic`] reads
-/// them, and whether the caret moved as [`emit_caret_line`] says it: a
+/// The caret and its line the classic way, and whether the caret moved as [`emit_caret_line`] says it: a
 /// `since` the provider will not compare with lies on the other screen.
 ///
 /// # Errors
@@ -512,40 +387,21 @@ pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnsw
 
 /// The caret and its line the classic way, with no `since` compared.
 fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
-    caret_read_classic(&CaretQuery {
-        element: query.element,
-        pattern: query.pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: false,
-        attributes: Attributes::NONE,
-        learning: Attributes::NONE,
-        max_text: query.max_text,
-        max_change_text: 0,
-        read_selection_text: false,
-        read_previous_text: false,
+    let (caret, collapsed_caret, selection) = classic_caret(query.pattern)?;
+    // A collapsed caret is its own point; the program copies it either way,
+    // which costs nothing there.
+    let point = if collapsed_caret {
+        caret.clone()
+    } else {
+        collapsed(&caret)?
+    };
+    Ok(CaretAnswer {
+        line: unit_at(&point, TextUnit_Line, query.max_text)?,
+        caret,
+        collapsed: collapsed_caret,
+        selection,
+        moved: false,
     })
-}
-
-/// The caret read, the one function call sites use: the remote program when
-/// `remote` is true, falling back to the classic implementation for this
-/// call when the program fails, and the classic implementation alone when
-/// `remote` is false. Says which path answered, as
-/// [`crate::focus_ancestry`] does.
-///
-/// # Errors
-///
-/// The classic implementation's [`Error`], when it ran and failed.
-pub fn caret_read(query: &CaretQuery<'_>, remote: bool) -> Result<(CaretAnswer, Path), Error> {
-    if !remote {
-        return caret_read_classic(query).map(|answer| (answer, Path::Classic));
-    }
-    match caret_read_remote(query) {
-        Ok(answer) => Ok((answer, Path::Remote)),
-        Err(error) if gone_or_timed_out(&error) => Err(error),
-        Err(error) => caret_read_classic(query).map(|answer| (answer, Path::Fallback(error))),
-    }
 }
 
 /// Whether a run failed because the provider's process has gone or did not
@@ -989,341 +845,6 @@ fn double(value: Option<&Value>) -> Option<f64> {
     }
 }
 
-/// Emits the caret read's program into `b`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one program, read top to bottom as it runs"
-)]
-fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
-    let element = b.import_element(query.element);
-    let known = query.since.map(|since| b.import_text_range(since.range));
-    let previous = query.previous_selection.map(|(start, end)| {
-        (
-            b.import_text_range(start.range),
-            b.import_text_range(end.range),
-        )
-    });
-    let c = Constants {
-        start: b.int(endpoint_number(Endpoint::Start)),
-        end: b.int(endpoint_number(Endpoint::End)),
-        zero: b.int(0),
-        one: b.int(1),
-        max_text: b.int(query.max_text),
-    };
-    let pattern = b.get_text_pattern(element, false);
-    let registers = emit_caret(b, &c, pattern);
-    let CaretRegisters {
-        caret,
-        has_selection,
-        selection,
-        ..
-    } = registers;
-    let point = c.collapsed(b, caret);
-
-    // The evidence.
-    let moved = b.new_bool(false);
-    let moved = b.add_to_results(moved);
-    if let (Some(since), Some(known)) = (query.since, known) {
-        let endpoint = b.int(endpoint_number(since.endpoint));
-        let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
-        let differs = b.not_equal(order, c.zero);
-        b.set(moved, differs);
-    }
-    let selection_moved = b.new_bool(false);
-    let selection_moved = b.add_to_results(selection_moved);
-    let mut changes = None;
-    if let (Some((old_start, old_end)), Some((start_range, end_range))) =
-        (query.previous_selection, previous)
-    {
-        let start_endpoint = b.int(endpoint_number(old_start.endpoint));
-        let end_endpoint = b.int(endpoint_number(old_end.endpoint));
-        let compare_ends = |b: &mut Builder,
-                            range: Reg<kind::TextRange>,
-                            start: Reg<kind::Int>,
-                            end: Reg<kind::Int>| {
-            let first = b.text_range_compare_endpoints(range, start, start_range, start_endpoint);
-            let first = b.not_equal(first, c.zero);
-            let second = b.text_range_compare_endpoints(range, end, end_range, end_endpoint);
-            let second = b.not_equal(second, c.zero);
-            let either = b.or(first, second);
-            b.set(selection_moved, either);
-        };
-        if query.previous_collapsed {
-            b.if_(has_selection, |b| {
-                compare_ends(b, selection, c.start, c.end);
-            });
-        } else {
-            b.if_else(
-                has_selection,
-                |b| compare_ends(b, selection, c.start, c.end),
-                |b| compare_ends(b, point, c.start, c.start),
-            );
-        }
-        let old_collapsed = b.bool(query.previous_collapsed);
-        changes = Some(emit_changes(
-            b,
-            &c,
-            (has_selection, selection, point),
-            (
-                ((start_range, start_endpoint), (end_range, end_endpoint)),
-                old_collapsed,
-            ),
-            (selection_moved, query.max_change_text),
-        ));
-    }
-
-    // The selection's text, when its ends are not the previous
-    // selection's, and what the previous selection's ends hold now, each
-    // read up to `MAX_COMPARED_TEXT` ([`selection_text_read`]).
-    let compared =
-        (query.read_selection_text || query.read_previous_text).then(|| b.int(MAX_COMPARED_TEXT));
-    let selection_text = compared
-        .filter(|_| query.read_selection_text)
-        .map(|compared| {
-            let text = b.new_string("");
-            let text = b.add_to_results(text);
-            let read_it = if query.previous_selection.is_some() {
-                b.and(has_selection, selection_moved)
-            } else {
-                has_selection
-            };
-            b.if_(read_it, |b| {
-                let read = b.text_range_get_text(selection, compared);
-                b.set(text, read);
-            });
-            text
-        });
-    let previous_text = match (query.previous_selection, previous, compared) {
-        (Some((old_start, old_end)), Some((start_range, end_range)), Some(compared))
-            if query.read_previous_text && !query.previous_collapsed =>
-        {
-            let start_endpoint = b.int(endpoint_number(old_start.endpoint));
-            let end_endpoint = b.int(endpoint_number(old_end.endpoint));
-            let between = b.text_range_clone(start_range);
-            b.text_range_move_endpoint_by_range(between, c.start, start_range, start_endpoint);
-            b.text_range_move_endpoint_by_range(between, c.end, end_range, end_endpoint);
-            let text = b.text_range_get_text(between, compared);
-            Some(b.add_to_results(text))
-        }
-        _ => None,
-    };
-
-    // The line, the unit, and the formatting.
-    let line_unit = b.int(TextUnit_Line.0);
-    let line = c.unit_at(b, point, line_unit);
-    let since_place = query.since.zip(known).map(|(since, known)| {
-        let endpoint = b.int(endpoint_number(since.endpoint));
-        let to_start = b.text_range_compare_endpoints(known, endpoint, line.range, c.start);
-        let to_end = b.text_range_compare_endpoints(known, endpoint, line.range, c.end);
-        (b.add_to_results(to_start), b.add_to_results(to_end))
-    });
-    // The selection starts at the caret, NVDA's caret being the selection's
-    // start (`NVDAObjects/UIA/__init__.py` 488 to 498).
-    let start_line = line.range;
-    let start_offset = line.offset;
-    // Whether that start is the text's, when it is its line's.
-    let start_first = b.new_bool(false);
-    let start_first = b.add_to_results(start_first);
-    let none = b.uint(0);
-    let at_zero = b.equal(start_offset, none);
-    let check = b.and(has_selection, at_zero);
-    b.if_(check, |b| {
-        let document = b.text_pattern_get_document_range(pattern);
-        let order = b.text_range_compare_endpoints(start_line, c.start, document, c.start);
-        let first = b.equal(order, c.zero);
-        b.set(start_first, first);
-    });
-    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
-    let runs = (query.formats && !ids.is_empty())
-        .then(|| emit_runs(b, &c, (line.range, line.text), false, &ids, query.learning));
-
-    ReadRegisters {
-        caret: registers,
-        moved,
-        since_place,
-        selection_moved,
-        changes,
-        line,
-        runs,
-        selection_text,
-        previous_text,
-        start_first,
-    }
-}
-
-/// Everything the caret read's program is built from but its imports
-/// ([`ProgramCache`]): the ends compared
-/// with, the unit, the formatting and its attributes, and the text limits.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "the query's separate things to do, each building another program"
-)]
-struct ProgramKey {
-    since: Option<i32>,
-    previous_selection: Option<(i32, i32)>,
-    previous_collapsed: bool,
-    formats: bool,
-    attributes: Attributes,
-    learning: Attributes,
-    max_text: i32,
-    max_change_text: i32,
-    read_selection_text: bool,
-    read_previous_text: bool,
-}
-
-impl ProgramKey {
-    fn of(query: &CaretQuery<'_>) -> Self {
-        Self {
-            since: query.since.map(|since| endpoint_number(since.endpoint)),
-            previous_selection: query.previous_selection.map(|(start, end)| {
-                (
-                    endpoint_number(start.endpoint),
-                    endpoint_number(end.endpoint),
-                )
-            }),
-            previous_collapsed: query.previous_collapsed,
-            formats: query.formats,
-            attributes: query.attributes,
-            learning: query.learning,
-            max_text: query.max_text,
-            max_change_text: query.max_change_text,
-            read_selection_text: query.read_selection_text,
-            read_previous_text: query.read_previous_text,
-        }
-    }
-}
-
-/// The caret read's imports, in the order its program imports them: the
-/// element, `since`, and the previous selection's ends.
-fn imports(query: &CaretQuery<'_>) -> Vec<Import> {
-    let mut imports = vec![Import::Element(query.element.clone())];
-    if let Some(since) = query.since {
-        imports.push(Import::TextRange(since.range.clone()));
-    }
-    if let Some((start, end)) = query.previous_selection {
-        imports.push(Import::TextRange(start.range.clone()));
-        imports.push(Import::TextRange(end.range.clone()));
-    }
-    imports
-}
-
-/// The registers the caret read's answer is read from.
-#[derive(Clone)]
-struct ReadRegisters {
-    caret: CaretRegisters,
-    moved: Reg<kind::Bool>,
-    since_place: Option<(Reg<kind::Int>, Reg<kind::Int>)>,
-    selection_moved: Reg<kind::Bool>,
-    changes: Option<(Reg<kind::Array>, Reg<kind::Array>)>,
-    line: UnitRegisters,
-    runs: Option<RunRegisters>,
-    selection_text: Option<Reg<kind::Str>>,
-    previous_text: Option<Reg<kind::Str>>,
-    start_first: Reg<kind::Bool>,
-}
-
-thread_local! {
-    /// The caret read programs this thread built.
-    static PROGRAMS: ProgramCache<ProgramKey, ReadRegisters> = ProgramCache::default();
-}
-
-/// The caret read in one cross-process round trip. The program is built
-/// once for each [`ProgramKey`] on a thread and run again with the next
-/// read's imports.
-///
-/// # Errors
-///
-/// Any [`Error`] from running the program.
-pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
-    let (operation, r) = PROGRAMS.with(|programs| {
-        programs.operation(
-            ProgramKey::of(query),
-            || imports(query),
-            |b| build(b, query),
-        )
-    });
-    let ReadRegisters {
-        caret:
-            CaretRegisters {
-                caret,
-                collapsed,
-                has_selection,
-                selection,
-            },
-        moved,
-        since_place,
-        selection_moved,
-        changes,
-        line,
-        runs,
-        selection_text,
-        previous_text,
-        start_first,
-    } = r;
-    let outcome = operation.execute()?;
-    let caret_range = outcome
-        .get(caret)?
-        .ok_or(Error::MissingResult(caret.id()))?;
-    let selected = outcome.get(has_selection)?;
-    let selection = if selected {
-        outcome.get(selection)?
-    } else {
-        None
-    };
-    let selection_text = match selection_text {
-        Some(text) if selection_text_read(query, selected, outcome.get(selection_moved)?) => {
-            Some(string_of(&outcome, text)?.encode_utf16().collect())
-        }
-        _ => None,
-    };
-    let previous_text = previous_text
-        .map(|text| string_of(&outcome, text).map(|text| text.encode_utf16().collect()))
-        .transpose()?;
-    let line = line.read(&outcome)?;
-    let selection_start = selected.then_some(line.offset);
-    let start_first = outcome.get(start_first)?;
-    let (runs, unsupported) = match runs {
-        Some(runs) => {
-            let unsupported = if spoken_text(query.formats, &line) {
-                Some(runs.unsupported(&outcome)?)
-            } else {
-                None
-            };
-            (runs.read(&outcome)?, unsupported)
-        }
-        None => (Vec::new(), None),
-    };
-    Ok(CaretAnswer {
-        caret: caret_range,
-        collapsed: outcome.get(collapsed)?,
-        selection,
-        moved: outcome.get(moved)?,
-        since_place: match since_place {
-            Some((to_start, to_end)) => Some((outcome.get(to_start)?, outcome.get(to_end)?)),
-            None => None,
-        },
-        selection_moved: outcome.get(selection_moved)?,
-        line,
-        runs,
-        changes: changes
-            .map(|(selected, texts)| read_changes(&outcome, selected, texts))
-            .transpose()?,
-        unsupported,
-        selection_text,
-        previous_text,
-        selection_start,
-        start_first,
-    })
-}
-
-/// Whether the formatting read was of a line with text, the only reads
-/// support is learned from: an empty line's says too little about the
-/// provider.
-fn spoken_text(formats: bool, line: &UnitRead) -> bool {
-    formats && !line.text.is_empty()
-}
-
 /// A position in a program: a range register and the endpoint's number.
 pub(crate) type ProgramEnd = (Reg<kind::TextRange>, Reg<kind::Int>);
 
@@ -1733,125 +1254,14 @@ fn classic_walk(
     }
 }
 
-// The caret read the classic way, the fallback and the reference: the
-/// same steps as the remote program, each a cross-process call, counted on
-/// the thread's `verbatim_uia::calls`.
-///
-/// # Errors
-///
-/// [`Error::Uia`] when a call fails.
-pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
-    let (caret, collapsed_caret, selection) = classic_caret(query)?;
-    // A collapsed caret is its own point; the program copies it either way,
-    // which costs nothing there.
-    let point = if collapsed_caret {
-        caret.clone()
-    } else {
-        collapsed(&caret)?
-    };
-    let moved = match query.since {
-        Some(since) => point.compare_endpoints(Endpoint::Start, since.range, since.endpoint)? != 0,
-        None => false,
-    };
-    let selection_moved = match query.previous_selection {
-        Some(_) if query.previous_collapsed && selection.is_none() => false,
-        Some((old_start, old_end)) => {
-            let (range, start, end) = match &selection {
-                Some(selection) => (selection, Endpoint::Start, Endpoint::End),
-                None => (&point, Endpoint::Start, Endpoint::Start),
-            };
-            range.compare_endpoints(start, old_start.range, old_start.endpoint)? != 0
-                || range.compare_endpoints(end, old_end.range, old_end.endpoint)? != 0
-        }
-        None => false,
-    };
-    let changes = match query.previous_selection {
-        Some(old) if selection_moved => {
-            let (range, end) = match &selection {
-                Some(selection) => (selection, Endpoint::End),
-                None => (&point, Endpoint::Start),
-            };
-            let new = (
-                RangeEnd {
-                    range,
-                    endpoint: Endpoint::Start,
-                },
-                RangeEnd {
-                    range,
-                    endpoint: end,
-                },
-            );
-            Some(classic_changes(
-                (old, new),
-                (query.previous_collapsed, selection.is_none()),
-                query.max_change_text,
-            )?)
-        }
-        Some(_) => Some(Vec::new()),
-        None => None,
-    };
-    let selection_text = match &selection {
-        Some(selection) if selection_text_read(query, true, selection_moved) => {
-            Some(selection.text(MAX_COMPARED_TEXT)?)
-        }
-        _ => None,
-    };
-    let previous_text = match query.previous_selection {
-        Some((old_start, old_end)) if query.read_previous_text && !query.previous_collapsed => {
-            let between = old_start.range.clone_range()?;
-            between.move_endpoint_to(Endpoint::Start, old_start.range, old_start.endpoint)?;
-            between.move_endpoint_to(Endpoint::End, old_end.range, old_end.endpoint)?;
-            Some(between.text(MAX_COMPARED_TEXT)?)
-        }
-        _ => None,
-    };
-    let line = unit_at(&point, TextUnit_Line, query.max_text)?;
-    let (selection_start, start_first) = match &selection {
-        None => (None, false),
-        Some(_) => (Some(line.offset), classic_first(query, &line)?),
-    };
-    let (runs, unsupported) = classic_formats(query, &line)?;
-    Ok(CaretAnswer {
-        caret,
-        collapsed: collapsed_caret,
-        selection,
-        moved,
-        // Call by call the caller tells from the line's text, with no call.
-        since_place: None,
-        selection_moved,
-        line,
-        runs,
-        changes,
-        unsupported,
-        selection_text,
-        previous_text,
-        selection_start,
-        start_first,
-    })
-}
-
-/// Whether the caret's `line`, where a selection starts, is the text's
-/// first, read only when the selection starts at the line's start, so
-/// that nothing comes before the selection, as [`build`] emits it.
-fn classic_first(query: &CaretQuery<'_>, line: &UnitRead) -> Result<bool, Error> {
-    if line.offset != 0 {
-        return Ok(false);
-    }
-    let document = query.pattern.document_range()?;
-    Ok(line
-        .range
-        .compare_endpoints(Endpoint::Start, &document, Endpoint::Start)?
-        == 0)
-}
-
 /// The caret, whether it is collapsed, and the selection, read the
 /// classic way as [`emit_caret`] emits them.
 pub(crate) fn classic_caret(
-    query: &CaretQuery<'_>,
+    pattern: &IUIAutomationTextPattern,
 ) -> Result<(IUIAutomationTextRange, bool, Option<IUIAutomationTextRange>), Error> {
-    let ranges = query.pattern.selection()?;
+    let ranges = pattern.selection()?;
     Ok(match ranges.first() {
-        None => (query.pattern.document_range()?, false, None),
+        None => (pattern.document_range()?, false, None),
         Some(first) => {
             if first.compare_endpoints(Endpoint::Start, first, Endpoint::End)? == 0 {
                 (first.clone(), true, None)
@@ -1860,33 +1270,6 @@ pub(crate) fn classic_caret(
             }
         }
     })
-}
-
-/// The formatting of the caret's `line` the query asks for, the classic
-/// way, and what was learned of the attributes' support, as
-/// [`caret_read_remote`] reads them.
-fn classic_formats(
-    query: &CaretQuery<'_>,
-    line: &UnitRead,
-) -> Result<(Vec<Run>, Option<Attributes>), Error> {
-    let ids: Vec<TextAttribute> = query.attributes.iter().collect();
-    if !query.formats || ids.is_empty() {
-        return Ok((Vec::new(), None));
-    }
-    let learns = spoken_text(true, line);
-    let learning = if learns {
-        query.learning
-    } else {
-        Attributes::NONE
-    };
-    let (runs, unsupported) = classic_runs(
-        (&line.range, line.text.len()),
-        false,
-        &ids,
-        learning,
-        query.max_text,
-    )?;
-    Ok((runs, learns.then_some(unsupported)))
 }
 
 /// The selection's changes from `old` to `new`, the classic way, as

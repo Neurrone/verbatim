@@ -338,11 +338,12 @@ fn uia_source(
     let class = element.read().class_name;
     let terminal = is_terminal_class(class.as_deref())
         || super::followed::terminal(context).is_some_and(|(followed, _)| followed == node_id);
-    let remote = context.tries_remote(super::asked::known_nearest_of(context, node_id));
+    let window = super::asked::known_nearest_of(context, node_id);
     let support = support_of(context, node_id);
     Ok(
         UiaText::new(element.live().element().clone(), text_pattern, terminal)
-            .remote(remote)
+            .remote(context.tries_remote(window))
+            .window(window)
             .details(details)
             .support(support),
     )
@@ -454,17 +455,13 @@ pub(super) fn forget_text(context: &RequestContext<'_>, node_id: NodeId) {
     );
 }
 
-/// Logs a text read of `node_id` that fell back from its remote operation
-/// to the classic reads, and stops trying remote operations in the node's
-/// window when the import failed, as the focus walk and the terminal read
-/// do.
-fn note_fallback(context: &RequestContext<'_>, node_id: NodeId, source: &mut UiaText) {
-    let Some(error) = source.take_fallback() else {
-        return;
-    };
-    let window = super::asked::known_nearest_of(context, node_id);
-    super::remote_fell_back("text read", window, &error);
-    if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (&error, window) {
+/// Stops trying remote operations in the window of a text read that
+/// found its programs cannot run at all, as the focus walk and the
+/// terminal read do; the program builder logged the fallback.
+fn note_read_classically(context: &RequestContext<'_>, source: &mut UiaText) {
+    if source.take_read_classically()
+        && let Some(window) = source.window_of()
+    {
         context.read_classically(window);
     }
 }
@@ -501,7 +498,7 @@ macro_rules! on_text {
                     $read
                 };
                 put_uia(context, node_id, call);
-                note_fallback(context, node_id, &mut source);
+                note_read_classically(context, &mut source);
                 keep_support(context, node_id, &source);
                 Ok(read)
             }
@@ -752,11 +749,12 @@ fn watch_outcome(
 /// failed, as NVDA then speaks no text.
 pub(super) fn text_summary(
     context: &RequestContext<'_>,
+    uia: Option<&verbatim_uia::Uia>,
     node_id: NodeId,
 ) -> Option<verbatim_model::property::TextSummary> {
     let read_at_us = context.observed_now();
     on_text!(context, node_id, TextDetails::NONE, &[], |source, text| {
-        text::held::summary(source, text, read_at_us)
+        text::held::summary(source, text, ((uia, node_id), read_at_us))
     })
     .ok()?
     .ok()
@@ -769,12 +767,13 @@ pub(super) fn text_summary(
 /// [`FocusCaret::NoText`], one whose read failed [`FocusCaret::NotRead`].
 pub(super) fn focus_caret(
     context: &RequestContext<'_>,
+    uia: Option<&verbatim_uia::Uia>,
     node_id: NodeId,
     details: TextDetails,
 ) -> FocusCaret {
     let read_at_us = context.observed_now();
     let read = on_text!(context, node_id, details, &[], |source, text| {
-        text::held::read_focus(source, text, read_at_us)
+        text::held::read_focus(source, text, ((uia, node_id), read_at_us))
     });
     match read {
         Err(TextReply::NoText) => FocusCaret::NoText,

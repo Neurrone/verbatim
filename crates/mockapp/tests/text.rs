@@ -40,23 +40,22 @@ use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, 
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{Answer, Found, HeldAt, Ran, run_batch, run_calls};
-use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, FoundPoint, RangeEnd, RunAttributes, TextAttribute,
-    caret_read_classic, caret_read_remote,
-};
+use verbatim_uia_rops::{Attributes, FoundPoint, RunAttributes, TextAttribute};
 use windows::Win32::Foundation::{HWND, WPARAM};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
 /// The caret's report, read as a focus's caret read reads it, at
-/// `read_at_us`.
+/// `read_at_us`: through UI Automation, by the program builder.
 fn caret_report<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     read_at_us: u64,
 ) -> CaretReport {
-    held::read_focus(source, anchors, read_at_us)
+    let uia = Uia::new().expect("a UIA client");
+    let one_go = (Some(&uia), verbatim_model::NodeId::new(1));
+    held::read_focus(source, anchors, (one_go, read_at_us))
         .expect("the caret")
         .0
 }
@@ -370,53 +369,49 @@ fn uia_text_reads_moves_and_answers_caret_keys() {
     app.quit();
 }
 
-/// Runs a caret read both ways and checks that they agree; returns the
-/// remote answer's line text and offset, unit text and offset, and runs.
-fn caret_both(query: &CaretQuery<'_>) -> CaretSummary {
-    let remote = caret_read_remote(query).expect("the remote program runs");
-    let classic = caret_read_classic(query).expect("the classic reads run");
-    let remote = summary(&remote);
-    assert_eq!(remote, summary(&classic));
-    remote
-}
-
-/// What a caret read found, comparable across the two implementations.
-#[derive(Debug, PartialEq)]
-struct CaretSummary {
-    moved: bool,
-    selection_moved: bool,
-    line: (String, usize),
-    runs: Vec<(usize, RunAttributes)>,
-    changes: Option<Vec<(bool, String)>>,
-    texts: (Option<String>, Option<String>),
-    selection_start: Option<usize>,
-    start_first: bool,
-}
-
-fn summary(answer: &CaretAnswer) -> CaretSummary {
-    let text = |text: &[u16]| String::from_utf16_lossy(text);
+/// The focus's caret read (`batch::focus_caret`) run by both executors,
+/// which agree, reading `formats` when given, else every attribute: the
+/// line and the caret's offset in it, its stretches, and, with a
+/// selection, its text and whether it starts at the text's start.
+fn caret_both(text: &batch::Text, formats: Option<(Attributes, Attributes)>) -> CaretSummary {
+    let answer = both(&|| {
+        let mut shape = batch::focus_caret(text);
+        shape.formats = formats;
+        shape
+    });
+    let utf8 = |text: &[u16]| String::from_utf16_lossy(text);
+    let [
+        Ran::Done(Found::Caret(caret)),
+        Ran::Done(Found::ReadText(line)),
+        Ran::Done(Found::ReadRange(selected)),
+    ] = &answer.steps[..]
+    else {
+        panic!("the caret, its line and the selection: {answer:?}");
+    };
     CaretSummary {
-        moved: answer.moved,
-        selection_moved: answer.selection_moved,
-        line: (text(&answer.line.text), answer.line.offset),
-        runs: answer
+        line: (utf8(&line.units[0].text), line.units[0].offset),
+        runs: line
             .runs
             .iter()
             .map(|run| (run.length, run.attributes.clone()))
             .collect(),
-        changes: answer.changes.as_ref().map(|changes| {
-            changes
-                .iter()
-                .map(|change| (change.selected, text(&change.text)))
-                .collect()
-        }),
-        texts: (
-            answer.selection_text.as_deref().map(text),
-            answer.previous_text.as_deref().map(text),
-        ),
-        selection_start: answer.selection_start,
-        start_first: answer.start_first,
+        selection: caret
+            .selection
+            .as_ref()
+            .map(|(_, start, _)| (utf8(selected), start.start)),
+        unsupported: line.unsupported,
     }
+}
+
+/// What a focus's caret read found: the line and the caret's offset in it,
+/// the stretches, and the selection's text with whether it starts at the
+/// text's start.
+#[derive(Debug, PartialEq)]
+struct CaretSummary {
+    line: (String, usize),
+    runs: Vec<(usize, RunAttributes)>,
+    selection: Option<(String, bool)>,
+    unsupported: Option<Attributes>,
 }
 
 /// The attributes mockapp reports, with these errors and weight.
@@ -436,37 +431,22 @@ fn mock_attributes(spelling_error: bool, bold: bool) -> RunAttributes {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "each read checked in turn against one running mockapp"
-)]
+/// The focus's caret read agrees as a program and by calls: the line's
+/// stretches with every attribute and with none; the selection's text,
+/// whichever end the provider's caret is at, the caret being its start;
+/// whether a selection starts at the text's start; and a selection longer
+/// than a program's compared text, read whole.
 fn remote_and_classic_caret_reads_agree() {
     common::init_com();
     let title = common::unique_title("mockapp-caret-read");
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let all = Attributes::ALL;
-    let query = |formats| CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats,
-        attributes: all,
-        learning: Attributes::NONE,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
+    let text = batch::Text::of(notes_element(hwnd));
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
     // stretches are bold "alpha", a space, the error, and the line feed.
     common::apply(&mut app, hwnd, "caret doc 7");
-    let line = caret_both(&query(true));
+    let line = caret_both(&text, None);
     assert_eq!(line.line, ("alpha beta\n".to_owned(), 7));
     assert_eq!(
         line.runs,
@@ -477,202 +457,70 @@ fn remote_and_classic_caret_reads_agree() {
             (1, mock_attributes(false, false)),
         ]
     );
+    assert_eq!(line.selection, None);
     // Only what the theme asks for: no attributes, no formatting.
-    let mut nothing = query(true);
-    nothing.attributes = Attributes::NONE;
-    assert_eq!(caret_both(&nothing).runs, []);
+    let nothing = Some((Attributes::NONE, Attributes::NONE));
+    assert_eq!(caret_both(&text, nothing).runs, []);
 
-    // The evidence: compared with where the caret was, and the selection.
-    let known = caret_read_classic(&query(false)).expect("the caret");
-    common::apply(&mut app, hwnd, "caret doc 8");
-    let mut moved = query(false);
-    moved.since = Some(RangeEnd {
-        range: &known.caret,
-        endpoint: Endpoint::Start,
-    });
-    moved.previous_selection = Some((
-        RangeEnd {
-            range: &known.caret,
-            endpoint: Endpoint::Start,
-        },
-        RangeEnd {
-            range: &known.caret,
-            endpoint: Endpoint::Start,
-        },
-    ));
-    let found = caret_both(&moved);
-    assert!(found.moved && found.selection_moved);
-    assert_eq!(
-        found.changes,
-        Some(Vec::new()),
-        "nothing was or is selected"
-    );
-    // A selection made from the caret: its text, newly selected.
-    let at_six = {
-        common::apply(&mut app, hwnd, "caret doc 6");
-        caret_read_classic(&query(false)).expect("the caret")
-    };
-    common::apply(&mut app, hwnd, "caret doc 6 10");
-    let six = RangeEnd {
-        range: &at_six.caret,
-        endpoint: Endpoint::Start,
-    };
-    let extended = caret_both(&CaretQuery {
-        previous_selection: Some((six, six)),
-        read_selection_text: true,
-        ..query(false)
-    });
-    assert_eq!(
-        extended.changes,
-        Some(vec![(true, "beta".to_owned())]),
-        "the word selected"
-    );
-    // Its ends moved, so its text is read to keep.
-    assert_eq!(extended.texts, (Some("beta".to_owned()), None));
-    common::apply(&mut app, hwnd, "caret doc 6 10");
-    let selected = caret_read_remote(&query(false)).expect("the caret");
-    assert!(selected.selection.is_some());
-    let again = caret_both(&CaretQuery {
-        since: Some(RangeEnd {
-            range: &selected.caret,
-            endpoint: Endpoint::Start,
-        }),
-        previous_selection: Some((
-            RangeEnd {
-                range: selected.selection.as_ref().expect("a selection"),
-                endpoint: Endpoint::Start,
-            },
-            RangeEnd {
-                range: selected.selection.as_ref().expect("a selection"),
-                endpoint: Endpoint::End,
-            },
-        )),
-        ..query(false)
-    });
-    assert!(!again.moved && !again.selection_moved);
-    // With the texts asked for: what the previous selection's ends hold
-    // now, and the selection's text only when its ends are not those, here
-    // not read, the ends being the same; with no previous selection, the
-    // selection's text.
-    let texts = caret_both(&CaretQuery {
-        previous_selection: Some((
-            RangeEnd {
-                range: selected.selection.as_ref().expect("a selection"),
-                endpoint: Endpoint::Start,
-            },
-            RangeEnd {
-                range: selected.selection.as_ref().expect("a selection"),
-                endpoint: Endpoint::End,
-            },
-        )),
-        read_selection_text: true,
-        read_previous_text: true,
-        ..query(false)
-    });
-    assert_eq!(texts.texts, (None, Some("beta".to_owned())));
-    let alone = caret_both(&CaretQuery {
-        read_selection_text: true,
-        ..query(false)
-    });
-    assert_eq!(alone.texts, (Some("beta".to_owned()), None));
     // The caret is the selection's start, as NVDA's is, whichever end
     // `TextPattern2`'s caret is at (Windows 11 Notepad's is the end after
-    // Shift+Control+Right Arrow): the selection starts at the caret's own
-    // offset in its line.
-    assert_eq!((alone.line.1, alone.selection_start), (6, Some(6)));
-    common::apply(&mut app, hwnd, "caret doc 6 10 end");
-    let at_end = caret_both(&query(false));
-    assert_eq!((at_end.line.1, at_end.selection_start), (6, Some(6)));
+    // Shift+Control+Right Arrow).
+    let beta = Some(("beta".to_owned(), false));
+    for caret in ["caret doc 6 10", "caret doc 6 10 end"] {
+        common::apply(&mut app, hwnd, caret);
+        let selected = caret_both(&text, nothing);
+        assert_eq!(
+            (selected.line.1, &selected.selection),
+            (6, &beta),
+            "{caret}"
+        );
+    }
     common::apply(&mut app, hwnd, "caret doc 6 13 end");
-    let below = caret_both(&query(false));
-    assert_eq!(
-        (below.line, below.selection_start),
-        (("alpha beta\n".to_owned(), 6), Some(6))
-    );
-    // A selection from the text's start: the line it starts in is known
-    // to be the first, so nothing comes before it, whichever line the
-    // provider's caret is on; one from the start of another line is not.
-    assert!(!at_end.start_first);
-    common::apply(&mut app, hwnd, "caret doc 0 5 end");
-    let first = caret_both(&query(false));
-    assert_eq!((first.selection_start, first.start_first), (Some(0), true));
-    common::apply(&mut app, hwnd, "caret doc 0 13 end");
-    let first_below = caret_both(&query(false));
-    assert_eq!(
-        (first_below.selection_start, first_below.start_first),
-        (Some(0), true)
-    );
-
-    common::apply(&mut app, hwnd, "caret doc 11 13 end");
-    let second = caret_both(&query(false));
-    assert_eq!(
-        (second.selection_start, second.start_first),
-        (Some(0), false)
-    );
-    // A selection longer than the cap for compared text: its first 513
-    // units are read, and so are those of what the old ends hold.
+    let below = caret_both(&text, nothing);
+    assert_eq!(below.line, ("alpha beta\n".to_owned(), 6));
+    // A selection from the text's start starts at it, whichever line the
+    // provider's caret is on; one from the start of another line does not.
+    for (caret, first) in [
+        ("caret doc 0 5 end", true),
+        ("caret doc 0 13 end", true),
+        ("caret doc 11 13 end", false),
+    ] {
+        common::apply(&mut app, hwnd, caret);
+        let selected = caret_both(&text, nothing);
+        assert_eq!(
+            (selected.line.1, selected.selection.map(|(_, at)| at)),
+            (0, Some(first)),
+            "{caret}"
+        );
+    }
+    // A selection longer than a program's compared text is read whole.
     common::apply(
         &mut app,
         hwnd,
         &format!(r"set-text doc {}\n", "a".repeat(600)),
     );
     common::apply(&mut app, hwnd, "caret doc 0 600");
-    let long = caret_read_remote(&query(false)).expect("the caret");
-    let long_selection = long.selection.as_ref().expect("a selection");
-    let capped = caret_both(&CaretQuery {
-        previous_selection: Some((
-            RangeEnd {
-                range: long_selection,
-                endpoint: Endpoint::Start,
-            },
-            RangeEnd {
-                range: long_selection,
-                endpoint: Endpoint::End,
-            },
-        )),
-        read_previous_text: true,
-        ..query(false)
-    });
-    assert_eq!(capped.texts, (None, Some("a".repeat(513))));
-    let capped = caret_both(&CaretQuery {
-        read_selection_text: true,
-        ..query(false)
-    });
-    assert_eq!(capped.texts, (Some("a".repeat(513)), None));
+    assert_eq!(
+        caret_both(&text, nothing).selection,
+        Some(("a".repeat(600), true))
+    );
     app.quit();
 }
 
 /// A provider whose `IsItalic` read fails: the caret line's one stretch
 /// has the failed attribute not supported and the others read, as NVDA
-/// treats a failed attribute
-/// read, both classically, where UIA answers `GetAttributeValues` for all
-/// seven in one call with the failed one not supported, and in the remote
-/// program.
+/// treats a failed attribute read, both by calls, where UIA answers
+/// `GetAttributeValues` for all seven in one call with the failed one not
+/// supported, and in the program.
 fn a_failing_attribute_is_not_supported() {
     common::init_com();
     let title = common::unique_title("mockapp-failing-attribute");
     let mut app = common::spawn("failing_attribute.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let query = CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: true,
-        attributes: Attributes::ALL,
-        learning: Attributes::NONE,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
+    let text = batch::Text::of(notes_element(hwnd));
     common::apply(&mut app, hwnd, "caret doc 1");
-    let classic = caret_read_classic(&query).expect("the classic reads run");
     assert_eq!(
-        summary(&classic).runs,
+        caret_both(&text, Some((Attributes::ALL, Attributes::NONE))).runs,
         [(
             11,
             RunAttributes {
@@ -681,43 +529,27 @@ fn a_failing_attribute_is_not_supported() {
             }
         )]
     );
-    let remote = caret_read_remote(&query).expect("the remote program runs");
-    assert_eq!(summary(&remote).runs, summary(&classic).runs);
     app.quit();
 }
 
 /// A stretch of the format unit whose italics read as UIA's "mixed", since
 /// mockapp's format unit does not end where italics do (as Windows
 /// Terminal's and the console host's do not), is walked again by words,
-/// and a mixed word by characters, the same remotely and classically; a
+/// and a mixed word by characters, the same as a program and by calls; a
 /// line of alternating italic characters stops at `MAX_RUNS` stretches.
 fn a_mixed_stretch_is_read_by_words_then_characters() {
     common::init_com();
     let title = common::unique_title("mockapp-mixed-stretch");
     let mut app = common::spawn("italic.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let query = CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: true,
-        attributes: Attributes::ALL,
-        learning: Attributes::NONE,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
+    let text = batch::Text::of(notes_element(hwnd));
+    let formats = Some((Attributes::ALL, Attributes::NONE));
     let italic = |italic| RunAttributes {
         italic: Some(italic),
         ..mock_attributes(false, false)
     };
     common::apply(&mut app, hwnd, "caret doc 0");
-    let line = caret_both(&query);
+    let line = caret_both(&text, formats);
     assert_eq!(line.line, ("plain italic text\n".to_owned(), 0));
     let mut expected = vec![(6, italic(false))];
     expected.extend(std::iter::repeat_n((1, italic(true)), 6));
@@ -725,7 +557,7 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
     assert_eq!(line.runs, expected);
 
     common::apply(&mut app, hwnd, "caret doc 18");
-    let alternating = caret_both(&query);
+    let alternating = caret_both(&text, formats);
     let expected: Vec<(usize, RunAttributes)> = (0..verbatim_uia_rops::MAX_RUNS)
         .map(|index| (1, italic(index % 2 == 1)))
         .collect();
@@ -894,22 +726,18 @@ fn remote_and_classic_text_reads_agree() {
         selected.steps.first(),
         Some(Ran::Done(Found::Select))
     ));
-    let selected = caret_read_remote(&CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: false,
-        attributes: Attributes::NONE,
-        learning: Attributes::NONE,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    })
-    .expect("the caret");
-    let selection = selected.selection.expect("the selection made");
+    let selected = run_calls(
+        &{
+            let mut shape = batch::Shape::of(Some(&text));
+            shape.step(batch::caret());
+            shape
+        }
+        .segment(&Uia::new().expect("a UIA client")),
+    );
+    let Some(Ran::Done(Found::Caret(selected))) = selected.steps.into_iter().next() else {
+        panic!("the caret");
+    };
+    let (selection, ..) = selected.selection.expect("the selection made");
     assert_eq!(
         verbatim_uia::text::TextRangeExt::text(&selection, 64).expect("its text"),
         prefix
@@ -1396,41 +1224,17 @@ fn plain_formatting() -> RunAttributes {
 /// stretch, the same remotely and classically; and, for an attribute being
 /// learned, that the provider supports it, from a line but not from a
 /// character.
-#[expect(
-    clippy::too_many_lines,
-    reason = "each line's stretches listed in full"
-)]
 fn every_attribute_is_read_both_ways() {
     common::init_com();
     let title = common::unique_title("mockapp-every-attribute");
     let mut app = common::spawn("formatting.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let text = batch::Text::of(notes_element(hwnd));
     let learning = Attributes::ALL.without(Attributes::of(&[TextAttribute::Annotations]));
-    let query = |formats| CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats,
-        attributes: Attributes::ALL,
-        learning,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
     let plain = plain_formatting;
-    let read = |formats| {
-        let remote = caret_read_remote(&query(formats)).expect("the remote program runs");
-        let classic = caret_read_classic(&query(formats)).expect("the classic reads run");
-        assert_eq!(remote.unsupported, classic.unsupported);
-        let unsupported = remote.unsupported;
-        let remote = summary(&remote);
-        assert_eq!(remote, summary(&classic));
-        (remote.runs, unsupported)
+    let read = |formats: bool| {
+        let read = caret_both(&text, formats.then_some((Attributes::ALL, learning)));
+        (read.runs, read.unsupported)
     };
 
     common::apply(&mut app, hwnd, "caret doc 0");
@@ -1520,22 +1324,7 @@ fn unsupported_attributes_are_found_both_ways() {
     let title = common::unique_title("mockapp-unsupported-attributes");
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let query = CaretQuery {
-        element: &element,
-        pattern: &pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: true,
-        attributes: Attributes::ALL,
-        learning: Attributes::ALL,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
+    let text = batch::Text::of(notes_element(hwnd));
     let unsupported = Some(Attributes::of(&[
         TextAttribute::StrikethroughStyle,
         TextAttribute::BackgroundColor,
@@ -1545,16 +1334,13 @@ fn unsupported_attributes_are_found_both_ways() {
     // "gamma", with no spelling error: its annotation types are not
     // supported, which says nothing about the provider.
     common::apply(&mut app, hwnd, "caret doc 11");
-    let remote = caret_read_remote(&query).expect("the remote program runs");
-    let classic = caret_read_classic(&query).expect("the classic reads run");
-    assert_eq!(summary(&remote), summary(&classic));
+    let read = caret_both(&text, None);
     assert_eq!(
-        summary(&remote).runs,
+        read.runs,
         [(6, mock_attributes(false, false))],
         "the unsupported attributes read as none"
     );
-    assert_eq!(remote.unsupported, unsupported);
-    assert_eq!(classic.unsupported, unsupported);
+    assert_eq!(read.unsupported, unsupported);
     app.quit();
 }
 

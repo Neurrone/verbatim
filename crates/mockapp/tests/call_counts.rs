@@ -4135,7 +4135,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             text_said(false, &line),
-            first_focus(46),
+            first_focus(53),
         ),
         (
             "UIA text field focus with a selection, remotely",
@@ -4153,7 +4153,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             text_said(false, &alpha_selected),
-            first_focus(51),
+            first_focus(59),
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
@@ -4174,7 +4174,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             text_said(true, &alpha_selected),
-            first_focus(51),
+            first_focus(59),
         ),
         (
             "UIA terminal focus, remotely",
@@ -4192,7 +4192,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(57),
+            first_focus(64),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);
@@ -4224,7 +4224,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "UIA text field focus with its caret, default details, classically",
         measured,
-        first_focus(46),
+        first_focus(53),
     );
 
     let title = common::unique_title("mockapp-counts-edit-focus");
@@ -4290,7 +4290,7 @@ fn text_field_focuses_cost_exactly() {
 /// read with the focus as the focus answer's selection baseline read
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"), its
 /// line
-/// "alpha beta". Remotely 4 UIA calls and the probe; classically 12, the
+/// "alpha beta". Remotely 4 UIA calls and the probe; classically 19, the
 /// walk ending at the desktop's root with no step above it.
 fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
     for (operation, remote, expected) in [
@@ -4302,7 +4302,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         (
             "UIA text field focus-now answer with its caret, classically",
             false,
-            calls(12, 0, 1),
+            calls(19, 0, 1),
         ),
     ] {
         let title = common::unique_title("mockapp-counts-text-focus-now");

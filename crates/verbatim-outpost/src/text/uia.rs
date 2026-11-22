@@ -17,11 +17,9 @@
 //! so a provider whose characters are code points or grapheme clusters,
 //! rather than UTF-16 code units, still lands where Core meant.
 //!
-//! The caret is read for a caret report or a caret key's answer through
-//! `verbatim-uia-rops`'s `caret_read`, in one remote operation where the
-//! provider runs them, with its classic reads behind it: the caret, the
-//! evidence, the line and the unit at the caret, and the formatting the
-//! request names ([`TextDetails`]), converted here to the model's
+//! A focus's caret is read as one segment of the program builder
+//! ([`super::fused::caret_line`]): the caret, its line, and the formatting
+//! the request names ([`TextDetails`]), converted here to the model's
 //! [`TextAttributes`] (`docs/nvda/document-formatting.md`, "UIA
 //! providers").
 //!
@@ -48,13 +46,11 @@ use verbatim_model::{
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, uia_text_unit};
 
-use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, Path, RangeEnd, RunAttributes, TextAttribute, TextTarget,
-};
+use verbatim_uia_rops::{Attributes, CaretAnswer, RunAttributes, TextAttribute, TextTarget};
 
 use super::{
-    CaretRead, CaretRequest, CaretState, Formatting, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    SelectionStart, Sentences, TextError, TextResult, TextSource, Unit, UnitRead,
+    CaretRead, CaretState, Formatting, MAX_CHUNK_UNITS, SelectionStart, Sentences, TextError,
+    TextResult, TextSource, Unit, UnitRead,
 };
 
 /// A position in UIA text: an end of a range.
@@ -177,9 +173,10 @@ pub struct UiaText {
     pattern: IUIAutomationTextPattern,
     terminal: bool,
     remote: bool,
+    window: Option<isize>,
     details: TextDetails,
     support: TextSupport,
-    fallback: Option<verbatim_uia_rops::Error>,
+    read_classically: bool,
 }
 
 /// What a control is known to support of the text attributes the caret
@@ -211,9 +208,10 @@ impl UiaText {
             pattern,
             terminal,
             remote: true,
+            window: None,
             details: TextDetails::NONE,
             support: TextSupport::default(),
-            fallback: None,
+            read_classically: false,
         }
     }
 
@@ -247,10 +245,17 @@ impl UiaText {
         self.support
     }
 
-    /// The remote operation's error, when a caret read fell back to the
-    /// classic reads, for the caller to log and remember.
-    pub fn take_fallback(&mut self) -> Option<verbatim_uia_rops::Error> {
-        self.fallback.take()
+    /// The window the text is in, for a fallback's log.
+    #[must_use]
+    pub fn window(mut self, window: Option<isize>) -> Self {
+        self.window = window;
+        self
+    }
+
+    /// Whether a read found the window's programs cannot run at all, for
+    /// the caller to read it classically from now on.
+    pub fn take_read_classically(&mut self) -> bool {
+        std::mem::take(&mut self.read_classically)
     }
 
     /// The element with the text, for reads outside the text protocol (a
@@ -268,8 +273,8 @@ impl UiaText {
     }
 
     /// The caret read another program made (a terminal's, read with its new
-    /// output, `crate::terminal`), as [`TextSource::caret_read`] gives it:
-    /// the caret, the selection, and the caret's line.
+    /// output, `crate::terminal`): the caret, the selection, and the
+    /// caret's line.
     ///
     /// # Errors
     ///
@@ -285,23 +290,28 @@ impl UiaText {
         };
         Ok(CaretRead {
             state: CaretState { caret, selection },
-            moved: answer.moved,
-            selection_moved: answer.selection_moved,
             line: unit_read(answer.line)?,
             formats: Vec::new(),
-            changes: None,
-            since_place: None,
             selection_text: None,
-            previous_text: None,
             selection_start: SelectionStart::unknown(),
         })
     }
 
-    /// A span's formatting as its stretches were read, as UTF-16 ranges of
-    /// its text: a character's one stretch has no length read; it covers
-    /// the character, as the caller takes it.
-    fn formats_of(&self, runs: Vec<verbatim_uia_rops::Run>) -> Vec<Formatting> {
-        formats_with(runs, self.details)
+    /// What reads fetch beyond the text, as the request names it.
+    #[must_use]
+    pub fn details_read(&self) -> TextDetails {
+        self.details
+    }
+
+    /// The window the text is in, for a fallback's log.
+    #[must_use]
+    pub fn window_of(&self) -> Option<isize> {
+        self.window
+    }
+
+    /// Notes that a read found the window's programs cannot run at all.
+    pub fn note_read_classically(&mut self, read_classically: bool) {
+        self.read_classically |= read_classically;
     }
 
     /// What a read of units fetching `details` reads of their formatting:
@@ -368,14 +378,6 @@ impl UiaText {
         TextTarget {
             element: &self.element,
             pattern: &self.pattern,
-        }
-    }
-
-    /// Notes which path answered: a fallback's error is kept for the
-    /// caller to log and remember.
-    fn note(&mut self, path: Path) {
-        if let Path::Fallback(error) = path {
-            self.fallback = Some(error);
         }
     }
 
@@ -621,81 +623,12 @@ impl TextSource for UiaText {
         Sentences::Unsupported
     }
 
-    fn caret_read(
+    fn caret_line(
         &mut self,
-        request: &CaretRequest<'_, UiaPos>,
+        uia: &verbatim_uia::Uia,
+        node: verbatim_model::NodeId,
     ) -> TextResult<Option<CaretRead<UiaPos>>> {
-        let since = match request.since {
-            Some(pos) => Some((pos.range()?, pos.endpoint)),
-            None => None,
-        };
-        let previous = match request.previous {
-            Some((start, end)) => Some((
-                (start.range()?, start.endpoint),
-                (end.range()?, end.endpoint),
-            )),
-            None => None,
-        };
-        let (attributes, learning) = self.format_reads(self.details);
-        let query = CaretQuery {
-            element: &self.element,
-            pattern: &self.pattern,
-            since: since.as_ref().map(end_of),
-            previous_selection: previous
-                .as_ref()
-                .map(|(start, end)| (end_of(start), end_of(end))),
-            previous_collapsed: request.previous_collapsed,
-            formats: request.formats,
-            attributes,
-            learning,
-            max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
-            max_change_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
-            read_selection_text: request.read_selection_text,
-            read_previous_text: request.read_previous_text,
-        };
-        let (answer, path) =
-            verbatim_uia_rops::caret_read(&query, self.remote).map_err(rops_failed)?;
-        self.note(path);
-        self.learned(learning, answer.unsupported);
-        let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
-        let selection = match &answer.selection {
-            Some(range) => Some((
-                UiaPos::new(range, Endpoint::Start, false)?,
-                UiaPos::new(range, Endpoint::End, false)?,
-            )),
-            None => None,
-        };
-        let line = unit_read(answer.line)?;
-        let formats = self.formats_of(answer.runs);
-        Ok(Some(CaretRead {
-            state: CaretState { caret, selection },
-            moved: answer.moved,
-            since_place: answer
-                .since_place
-                .map(|(start, end)| (start.cmp(&0), end.cmp(&0))),
-            selection_moved: answer.selection_moved,
-            line,
-            formats,
-            changes: answer.changes.map(|changes| {
-                changes
-                    .into_iter()
-                    .map(|change| (change.selected, change.text))
-                    .collect()
-            }),
-            selection_text: answer.selection_text,
-            previous_text: answer.previous_text,
-            selection_start: SelectionStart {
-                in_line: answer.selection_start,
-                first: answer.start_first,
-            },
-        }))
-    }
-}
-
-fn end_of((range, endpoint): &(IUIAutomationTextRange, Endpoint)) -> RangeEnd<'_> {
-    RangeEnd {
-        range,
-        endpoint: *endpoint,
+        super::fused::caret_line(uia, (node, self)).map(Some)
     }
 }
 
@@ -851,21 +784,6 @@ fn bullet_style(style: i32) -> BulletStyle {
         4 => BulletStyle::FilledSquare,
         5 => BulletStyle::Dash,
         _ => BulletStyle::Other,
-    }
-}
-
-/// A remote operations or UIA failure as a text error: a gone element or
-/// provider as gone.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "an adapter for `map_err`, which hands the error over by value"
-)]
-fn rops_failed(error: verbatim_uia_rops::Error) -> TextError {
-    match error.hresult() {
-        Some(code) if verbatim_uia::element_is_gone(&windows::core::Error::from(code)) => {
-            TextError::Gone
-        }
-        _ => TextError::Failed(error.to_string()),
     }
 }
 

@@ -521,49 +521,42 @@ span searched before calling it, which fails, closing that direction,
 when the hit is the not-found range (`terminal_find.rs`'s module
 documentation).
 
-## Layer 3: the caret read
+## Layer 3: the caret's emitters
 
-`caret_read(query, remote)` (`CaretReadFn`, with `caret_read_remote` and
-`caret_read_classic`) reads the caret and the selection, whether they
-moved from where they were known to be, the caret's line with the
-caret's offset in it, the formatting the theme asks for, and how the
-selection changed from one known before, in one round trip remotely. Two
-reads use it: a focus read's caret, which holds the next selection
-baseline, and report focus's text summary (`verbatim-outpost`'s
-`text::held`). Every other caret read is a batch's `Caret`, `ReadText`
-and `CompareSelection`, whose emitters the program builder takes from
-this module (`emit_caret`, `emit_runs`, `emit_changes`), so one program
-text serves both. The query and answer fields are in rustdoc
-(`CaretQuery`, `CaretAnswer`).
+`caret` holds what the program builder's `Caret`, `ReadText` and
+`CompareSelection` emit and read classically (`emit_caret`, `emit_runs`,
+`emit_changes`, `classic_runs`, `classic_changes`), and a terminal
+snapshot's caret and line (`CaretLineQuery`, `CaretAnswer`). Every caret
+read is a batch's steps, a focus's among them: the focus's caret read and
+report focus's text summary are a `Caret`, a `ReadText` of the line and
+a `ReadRange` of the selection run by the program builder, so no caret
+program is written by hand (Claude, 2026-11-22).
 
 The caret is the start of the selection's first range, as NVDA's caret
 is (`NVDAObjects/UIA/__init__.py` 488 to 498), whichever end of the
-selection the provider's own caret is at. The program gets its text
-pattern with `GetTextPattern` (opcode 10014), reads the selection with
-`GetSelection`, compares the caret and the selection with the imported
-known ones, expands a copy of the caret to the line, and reads its text
-and the text before the caret, whose length is the offset. Formatting is
-read by UIA's format unit, as NVDA reads it, until the span's end or
-`MAX_RUNS` (64) stretches. A stretch with an attribute that answers
-"mixed" (`IsMixedAttribute` in the program, `verbatim_uia::is_mixed`
-classically) is walked again by words, and a mixed word by characters,
-as NVDA walks a mixed stretch by finer units, so a provider whose format
-unit does not end where an attribute changes, such as both terminals'
-for italics, still has each part read with its own value. Values are
-appended as the provider gave them and typed by the caller, so the
-program spends no instructions on testing types. The annotation types
-are asked of the stretches only when the span has some. A selection
-that moved is compared inside the provider by the text protocol's rule,
-each change with its text up to the query's limit, and the new
-selection's text is read up to `MAX_COMPARED_TEXT` (513 UTF-16 code
+selection the provider's own caret is at. A program gets the text
+pattern with `GetTextPattern` (opcode 10014) and reads the selection
+with `GetSelection`. Formatting is read by UIA's format unit, as NVDA
+reads it, until the span's end or `MAX_RUNS` (64) stretches. A stretch
+with an attribute that answers "mixed" (`IsMixedAttribute` in the
+program, `verbatim_uia::is_mixed` classically) is walked again by words,
+and a mixed word by characters, as NVDA walks a mixed stretch by finer
+units, so a provider whose format unit does not end where an attribute
+changes, such as both terminals' for italics, still has each part read
+with its own value. Values are appended as the provider gave them and
+typed by the caller, so the program spends no instructions on testing
+types. The annotation types are asked of the stretches only when the
+span has some. A selection that moved is compared inside the provider by
+the text protocol's rule, each change with its text up to its limit, and
+the texts compared are read up to `MAX_COMPARED_TEXT` (513 UTF-16 code
 units, one more than the 512 characters from which a selection is
 spoken as a count).
 
-The classic implementation makes the same reads one call at a time, a
-stretch's attributes together in one
-`IUIAutomationTextRange3::GetAttributeValues` call as NVDA reads a
-range's formatting (`verbatim_uia::text::TextRangeExt::attributes`). An
-attribute whose read fails is not supported on both paths.
+Classically the same reads are made one call at a time, a stretch's
+attributes together in one `IUIAutomationTextRange3::GetAttributeValues`
+call as NVDA reads a range's formatting
+(`verbatim_uia::text::TextRangeExt::attributes`). An attribute whose read
+fails is not supported on both paths.
 
 ## Layer 3: a caret wait's check
 

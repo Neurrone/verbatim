@@ -22,16 +22,16 @@ use verbatim_uia::text::{Endpoint, TextPatternExt};
 use verbatim_uia::{
     Ancestor, Cached, DialogText, Fill, FocusInput, Live, Node, NodeGates, Shape, Uia,
 };
+use verbatim_uia_rops::batch::{Answer, Found, Ran, run_batch};
 use verbatim_uia_rops::{
-    Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
-    PathQuery, RangeEnd, SnapshotQuery, StatesQuery, Status, TextAttribute, caret_read_remote,
-    counting, element_by_path_remote, focus_ancestry_remote, focus_states_remote,
-    terminal_snapshot_remote,
+    Attributes, Builder, CaretLineQuery, Comparison, Error, FocusAncestry, FocusQuery, PathQuery,
+    SnapshotQuery, StatesQuery, Status, TextAttribute, counting, element_by_path_remote,
+    focus_ancestry_remote, focus_states_remote, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -337,117 +337,80 @@ fn paths_execute_exactly() {
     assert!(deepest < LIMIT / 2);
 }
 
-/// A caret read of the line at the caret with every attribute, the
-/// selection's change from `old` and the evidence against it when given.
-fn caret_query<'a>(
-    element: &'a IUIAutomationElement,
-    pattern: &'a IUIAutomationTextPattern,
-    old: Option<RangeEnd<'a>>,
-) -> CaretQuery<'a> {
-    CaretQuery {
-        element,
-        pattern,
-        since: old,
-        previous_selection: old.map(|old| (old, old)),
-        previous_collapsed: false,
-        formats: true,
-        attributes: Attributes::ALL,
-        learning: Attributes::ALL,
-        max_text: 1024,
-        max_change_text: 1024,
-        read_selection_text: false,
-        read_previous_text: false,
-    }
-}
-
-/// The caret read: a line of 64 stretches, reached by walking one mixed
-/// stretch by words and a mixed word by characters (`italic.json`), every
-/// attribute read and learned, with the evidence, a selection's
-/// change, the selection's text, and what the old selection's ends hold
-/// now, each up to the cap for compared text; and, typically, the report after a focus on a line of plain text
+/// The focus's caret read, generated from the request list's `Caret`,
+/// `ReadText` of the line and `ReadRange` of the selection: a line of 64
+/// stretches, reached by walking one mixed stretch by words and a mixed
+/// word by characters (`italic.json`), every attribute read and learned,
+/// with ten characters selected; and, typically, a line of plain text
 /// with the default theme's two attributes, the annotation types and the
 /// link, whose support is known.
 fn caret_reads_execute_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("italic.json", "mockapp-instructions-caret");
-    let notes = fixture.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 18");
-    let before = caret_read_remote(&caret_query(&notes, &pattern, None)).expect("the caret");
-    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 20 30");
-    let old = RangeEnd {
-        range: &before.caret,
-        endpoint: Endpoint::Start,
+    let text = batch::Text::of(fixture.find("Notes"));
+    let run = |shape: &batch::Shape<'_>| {
+        let mut answer = None;
+        let count = counted(|| answer = Some(run_batch(&shape.segment(&fixture.uia))));
+        (count, answer.expect("an answer"))
     };
-    let worst = counted(|| {
-        let mut worst = caret_query(&notes, &pattern, Some(old));
-        worst.read_selection_text = true;
-        worst.read_previous_text = true;
-        let answer = caret_read_remote(&worst).expect("the program runs");
-        assert_eq!(answer.runs.len(), 64);
-        assert_eq!(answer.changes.map(|changes| changes.len()), Some(1));
-    });
+    let stretches = |answer: &Answer| match answer.steps.get(1) {
+        Some(Ran::Done(Found::ReadText(line))) => line.runs.len(),
+        other => panic!("the line: {other:?}"),
+    };
+    common::apply(&mut fixture.app, fixture.hwnd, "caret doc 20 30");
+    let (worst, answer) = run(&batch::focus_caret(&text));
+    assert_eq!(stretches(&answer), 64);
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let typical = counted(|| {
-        let mut typical = caret_query(&notes, &pattern, None);
-        typical.attributes = Attributes::of(&[TextAttribute::Annotations, TextAttribute::Link]);
-        typical.learning = Attributes::NONE;
-        typical.read_selection_text = true;
-        let answer = caret_read_remote(&typical).expect("the program runs");
-        assert_eq!(answer.runs.len(), 1);
-    });
+    let mut typical = batch::focus_caret(&text);
+    typical.formats = Some((
+        Attributes::of(&[TextAttribute::Annotations, TextAttribute::Link]),
+        Attributes::NONE,
+    ));
+    let (typical, answer) = run(&typical);
+    assert_eq!(stretches(&answer), 1);
     fixture.app.quit();
-    // 4425 and 84 before the caret read began reading the selection's texts,
-    // 4434 before it read the selection's text only when its ends moved,
-    // and 4435 and 87 before it read where the selection starts, whose
-    // conditions every read with `TextPattern2` runs (2026-10-22), and
-    // 4456 before a selection holding nothing on either side was made one
-    // whole change (2026-10-23), and 4462 and 97 before the worst case read
-    // the caret again at its end, as a key's check does (2026-11-09), and
-    // 4485 and 97 before the caret became the selection's start, read with
-    // no `TextPattern2` caret and no search for where the selection starts
-    // (2026-11-17), 4453 before the word read with it went with the
-    // caret keys' starting read (2026-11-22), and 4446 before the caret read
-    // stopped reading the caret again, which a caret wait's check does
-    // instead (2026-11-22).
-    assert_eq!([worst, typical], [4429, 91], "caret read worst and typical");
+    // 4378 and 91 by the focus's hand-written caret program, which this
+    // generated read replaced, with the same calls (2026-11-22): the
+    // generated read compares each of the caret's and the selection's ends
+    // with the text's, and reads the selection between two points.
+    assert_eq!(
+        [worst, typical],
+        [4457, 158],
+        "caret read worst and typical"
+    );
 }
 
-/// The caret read where every format stretch is two characters with one
-/// in italics (`mixed.json`), so each is walked by words and its word by
-/// characters: lines of 16 and 32 characters, and their line feeds,
-/// counted, which grow by the same amount, 249 instructions, for each
-/// stretch; and a line of 80, cut at 64 stretches, about 8,000 by that
-/// growth, which the counting form cannot run, since it executes twice as
-/// many: run as Verbatim runs it, it stays under the limit.
+/// The focus's caret read where every format stretch is two characters
+/// with one in italics (`mixed.json`), so each is walked by words and its
+/// word by characters: lines of 16 and 32 characters, and their line
+/// feeds, counted, which grow by the same amount for each stretch; and a
+/// line of 80, cut at 64 stretches, about 8,000 by that growth, which the
+/// counting form cannot run, since it executes twice as many: run as
+/// Verbatim runs it, it stays under the limit.
 fn densely_mixed_formatting_executes_exactly() {
     common::init_com();
     let mut fixture = Fixture::start("mixed.json", "mockapp-instructions-mixed");
-    let notes = fixture.find("Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
-    let query = caret_query(&notes, &pattern, None);
+    let text = batch::Text::of(fixture.find("Notes"));
+    let shape = batch::focus_caret(&text);
+    let stretches = |answer: &Answer| match answer.steps.get(1) {
+        Some(Ran::Done(Found::ReadText(line))) => line.runs.len(),
+        other => panic!("the line: {other:?}"),
+    };
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
-    let sixteen = counted(|| {
-        let answer = caret_read_remote(&query).expect("the program runs");
-        assert_eq!(answer.runs.len(), 17);
-    });
+    let sixteen = counted(|| assert_eq!(stretches(&run_batch(&shape.segment(&fixture.uia))), 17));
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 17");
-    let thirty_two = counted(|| {
-        let answer = caret_read_remote(&query).expect("the program runs");
-        assert_eq!(answer.runs.len(), 33);
-    });
+    let thirty_two =
+        counted(|| assert_eq!(stretches(&run_batch(&shape.segment(&fixture.uia))), 33));
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 50");
-    let eighty = caret_read_remote(&query).map(|answer| answer.runs.len());
+    let _ = verbatim_win32::calls::take();
+    let eighty = stretches(&run_batch(&shape.segment(&fixture.uia)));
+    let calls = verbatim_win32::calls::take();
     fixture.app.quit();
-    // 2148 and 4140 before the read of where a selection starts in the
-    // caret's line, whose condition every read with `TextPattern2` ran
-    // (2026-10-22), and 2158 and 4150 before the caret became the
-    // selection's start (2026-11-17).
-    assert_eq!([sixteen, thirty_two], [2152, 4144], "17 and 33 stretches");
-    match eighty {
-        Ok(runs) => assert_eq!(runs, 64),
-        Err(error) => panic!("80 characters: {error}"),
-    }
+    // 2152 and 4144 by the focus's hand-written caret program, which this
+    // generated read replaced (2026-11-22).
+    assert_eq!([sixteen, thirty_two], [2222, 4214], "17 and 33 stretches");
+    assert_eq!(eighty, 64, "80 characters, cut at 64 stretches");
+    assert_eq!(calls.uia, 1, "the 80 characters' read, one program");
 }
 
 /// Say-all's batch of twenty lines a line on from a held position, its

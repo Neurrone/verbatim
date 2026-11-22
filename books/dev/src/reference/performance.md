@@ -1413,9 +1413,12 @@ first line has four stretches (bold "alpha", a space, the misspelt "beta",
 the line feed). It is counted in the focus's message ("A focus on a text
 field"); this entry is the read alone.
 
-- Minimum and today: 1 UIA call remotely, met; 35 classically, with the
-  default theme or every indication on: a caret report's 8, a collapsed
-  copy of the line (2), for each stretch a copy, `MoveEndpointByUnit`, a
+- Minimum and today: 1 UIA call remotely, met; classically the calls of
+  the generated read's three steps (`caret_line` in the verbatim-outpost
+  crate guide), with the default theme or every indication on: the caret,
+  a collapsed copy of it and each of its ends compared with the text's
+  ends, the line, the selection between two points, and the line's
+  formatting: a collapsed copy of the line (2), for each stretch a copy, `MoveEndpointByUnit`, a
   comparison with the line's end, its text and its attributes in one
   `GetAttributeValues` (5 each), the walk moved on after each but the
   last (3), a `MoveEndpointByRange` to cut the last stretch at the line's
@@ -1445,12 +1448,10 @@ text for every focus it queues. A UIA focus's parts:
   that may have text: 2 UIA calls and 1 connection remotely, 4 calls and
   the connection classically;
 - the enrichment: 1 UIA call;
-- the caret read: 1 remotely; classically 35 for mockapp's document, 40
-  with a selection, and 17 for its terminal, and its line's formatting
-  besides, read in the same program remotely and 27 calls more classically,
-  with the default theme's details as with every attribute: a classic
-  focus on mockapp's document costs 46 calls either way
-  (`text_field_focuses_cost_exactly`);
+- the caret read: 1 remotely; classically the generated read's calls, its
+  line's formatting read in the same program remotely and by calls
+  classically, with the default theme's details as with every attribute,
+  the same count either way (`text_field_focuses_cost_exactly`);
 - the selected text, only when something is selected, a protected field's
   too: 1 remotely, 4 classically.
 
@@ -1462,9 +1463,9 @@ its probe adds 1 window message (above):
   nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
   protected or not, each with 1 connection and no window message, so the
-  minimum is met remotely; classically 45, and 54 with a selection. A UIA
+  minimum is met remotely; classically 53, and 59 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline read after it, 11 remotely and 57 classically, each with 1
+  its baseline read after it, 11 remotely and 64 classically, each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the

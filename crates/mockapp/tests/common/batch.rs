@@ -159,6 +159,9 @@ pub struct Shape<'a> {
     pub culture: bool,
     pub max_total: u32,
     pub calls_only: bool,
+    /// The attributes a read with formatting reads and learns, every one
+    /// unless set.
+    pub formats: Option<(Attributes, Attributes)>,
 }
 
 impl<'a> Shape<'a> {
@@ -173,6 +176,7 @@ impl<'a> Shape<'a> {
             points: Vec::new(),
             wait: None,
             culture: true,
+            formats: None,
             max_total: 32 * 1024,
             calls_only: false,
         }
@@ -311,10 +315,10 @@ impl verbatim_uia_rops::batch::Resolve for Shape<'_> {
             }) => Some(Movement::Document(count)),
             Some(TextMovement { unit, count }) => Some(Movement::By(provider(unit)?, count)),
         };
-        let formats = if details == TextDetails::NONE {
-            Attributes::NONE
+        let (formats, learning) = if details == TextDetails::NONE {
+            (Attributes::NONE, Attributes::NONE)
         } else {
-            Attributes::ALL
+            self.formats.unwrap_or((Attributes::ALL, Attributes::ALL))
         };
         Ok(UnitsRead {
             movement,
@@ -323,7 +327,7 @@ impl verbatim_uia_rops::batch::Resolve for Shape<'_> {
             max_total: self.max_total,
             culture: self.culture,
             formats,
-            learning: formats,
+            learning,
         })
     }
 
@@ -504,6 +508,27 @@ pub fn wait_poll(text: &Text, start: FoundPoint, (word, last): (bool, bool)) -> 
                 true,
             ),
         );
+    shape
+}
+
+/// A focus's caret read, as the outpost runs it: the caret, its line with
+/// every attribute's formatting and no language, and the selection's text.
+pub fn focus_caret(text: &Text) -> Shape<'_> {
+    let mut shape = Shape::of(Some(text));
+    shape.culture = false;
+    let of = |which| Point::Of(Place(0), which);
+    shape
+        .step(caret())
+        .step(read_text(
+            of(PointOf::Caret),
+            (None, TextUnit::Line, 1),
+            true,
+        ))
+        .step(read_range(
+            of(PointOf::SelectionStart),
+            of(PointOf::SelectionEnd),
+            None,
+        ));
     shape
 }
 

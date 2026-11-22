@@ -24,11 +24,7 @@
 //!   and says which path answered; for terminals, [`terminal_snapshot`]:
 //!   the text from where the last read said to start to the document's
 //!   end in one `GetText`, with the screen, the caret, and the screen's
-//!   colours ([`ColourRun`]) after a key; and, for
-//!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
-//!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
-//!   and another unit at it, the formatting of the text to be spoken, and
-//!   how the selection changed; for the outpost finding its own copy of
+//!   colours ([`ColourRun`]) after a key; for the outpost finding its own copy of
 //!   an element the focus listener read, [`element_by_path`]: the element
 //!   reached from one the caller has by the runtime ids below it; and for
 //!   a focus's completion, [`focus_states`]: the focus's states, read once
@@ -62,9 +58,8 @@ mod watch;
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
     ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretLineQuery,
-    CaretQuery, CaretReadFn, MAX_COMPARED_TEXT, MAX_RUNS, RangeEnd, Run, RunAttributes,
-    SelectionTextChange, TextAttribute, UnitRead, caret_read, caret_read_classic,
-    caret_read_remote,
+    MAX_COMPARED_TEXT, MAX_RUNS, RangeEnd, Run, RunAttributes, SelectionTextChange, TextAttribute,
+    UnitRead,
 };
 pub use error::{Error, Failure};
 pub use focus::{

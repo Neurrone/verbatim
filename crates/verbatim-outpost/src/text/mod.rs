@@ -69,72 +69,19 @@ pub(crate) const MAX_CHUNK_UNITS: usize = MAX_CHUNK_BYTES;
 /// offset into the unit's text, and the attributes there.
 pub type Formatting = (usize, usize, TextAttributes);
 
-/// What a caret read covers, for [`TextSource::caret_read`]: everything a
-/// caret report or a caret key's answer needs, so a source that can read it
-/// in one go does.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each is a separate thing the read is asked to do"
-)]
-pub struct CaretRequest<'a, P> {
-    /// Where the caret was known to be, to compare it with.
-    pub since: Option<&'a P>,
-    /// The selection's ends as they were known (both the caret when nothing
-    /// was selected), to compare it with.
-    pub previous: Option<&'a (P, P)>,
-    /// `previous` held nothing: with nothing selected now either, there is
-    /// no change to tell, so the selection is not compared (a caret
-    /// report's comparison; a key's read, for which a caret that moved is a
-    /// selection that moved, leaves it false).
-    pub previous_collapsed: bool,
-    /// Whether to read the line's formatting, with the attributes the
-    /// theme asks for.
-    pub formats: bool,
-    /// Whether to read the selection's text, up to the source's cap for
-    /// compared text (513 UTF-16 code units through UIA,
-    /// `verbatim_uia_rops::MAX_COMPARED_TEXT`), when something is selected
-    /// and its ends are not `previous`'s, or there is no `previous`, which
-    /// is kept with the selection for the next comparison
-    /// ([`CaretRead::selection_text`]).
-    pub read_selection_text: bool,
-    /// Whether to read the text between `previous`'s ends as they are now,
-    /// up to the same cap, when it held something, to compare with its
-    /// text as it was reported ([`CaretRead::previous_text`]).
-    pub read_previous_text: bool,
-}
-
-/// The answer to a [`CaretRequest`].
+/// The caret, its line and the selection read at once: a focus's caret
+/// read through UI Automation ([`TextSource::caret_line`]), or a
+/// terminal's, read with its new output.
 pub struct CaretRead<P> {
     /// The caret and the selection.
     pub state: CaretState<P>,
-    /// The caret is not where [`CaretRequest::since`] says.
-    pub moved: bool,
-    /// Where [`CaretRequest::since`] lies against the caret's line: its
-    /// order against the line's start and against its end; `None` when
-    /// the source did not compare them.
-    pub since_place: Option<(Ordering, Ordering)>,
-    /// The selection is not what [`CaretRequest::previous`] says.
-    pub selection_moved: bool,
     /// The caret's line and the caret's UTF-16 offset in it.
     pub line: (Unit<P>, usize),
-    /// The formatting of the request's span, UTF-16 ranges of its text.
+    /// The formatting of the line, UTF-16 ranges of its text.
     pub formats: Vec<Formatting>,
-    /// With [`CaretRequest::previous`], how the selection changed from it
-    /// (each change selected or not, and its UTF-16 text), read with the
-    /// rest; `None` when the source did not read them, which the caller
-    /// then does.
-    pub changes: Option<Vec<(bool, Vec<u16>)>>,
-    /// With [`CaretRequest::read_selection_text`], the selection's text up
-    /// to the source's cap when something is selected and its ends are not
-    /// `previous`'s, or there was no `previous`; `None` otherwise, and from
-    /// a source that does not read it.
+    /// The selection's text, when something is selected and the read
+    /// read it, up to [`MAX_RANGE_UNITS`].
     pub selection_text: Option<Vec<u16>>,
-    /// With [`CaretRequest::read_previous_text`] and a `previous` that held
-    /// something, the text between its ends as they are now, up to the
-    /// source's cap, which a source whose positions follow edits (UIA's
-    /// ranges) moves as the text changes; `None` otherwise, and from a
-    /// source that does not read it.
-    pub previous_text: Option<Vec<u16>>,
     /// Where the selection starts, when something is selected.
     pub selection_start: SelectionStart,
 }
@@ -371,17 +318,20 @@ pub trait TextSource {
         None
     }
 
-    /// Reads the caret and everything `request` asks for at once, where the
-    /// source can do it in one round trip (UIA's remote operations, with
-    /// its classic reads behind them); `None` for a source that reads them
-    /// one at a time, which the caller then does, reading no formatting.
+    /// Reads the caret, its line with the formatting the source's details
+    /// name, and the selection's text at once, where the source can: UI
+    /// Automation's, as one segment of the program builder through `uia`
+    /// ([`fused::caret_line`]), its steps naming `node`; `None` for a
+    /// source read by parts, which the caller then does, reading no
+    /// formatting.
     ///
     /// # Errors
     ///
     /// As [`caret`](Self::caret).
-    fn caret_read(
+    fn caret_line(
         &mut self,
-        _request: &CaretRequest<'_, Self::Pos>,
+        _uia: &verbatim_uia::Uia,
+        _node: verbatim_model::NodeId,
     ) -> TextResult<Option<CaretRead<Self::Pos>>> {
         Ok(None)
     }

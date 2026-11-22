@@ -19,33 +19,32 @@ use std::sync::Arc;
 use verbatim_model::{CaretReport, SelectionChange, TextAnchor};
 
 use super::{
-    CaretRead, CaretRequest, CaretState, NodeText, TextError, TextResult, TextSource, change,
-    change_of, report_for,
+    CaretRead, CaretState, NodeText, TextError, TextResult, TextSource, change, change_of,
+    report_for,
 };
+
+/// The UI Automation client a read in one go runs through, when the
+/// outpost has one, and the node read.
+pub type OneGo<'u> = (Option<&'u verbatim_uia::Uia>, verbatim_model::NodeId);
 
 /// Reads the caret, the selection and the caret's line, and reports them,
 /// replacing the node's last read: in one go where the source can
-/// ([`TextSource::caret_read`], UI Automation's remote operations), which
-/// also finds where a selection whose caret is its end starts, in the
-/// caret's line or the line before, so Core knows what comes before the
-/// start, as a Backspace over the selection says it; else by its parts,
-/// where a selection's start lies on the caret's line only when it is the
-/// caret. A read in one go also reads the selection's text and the
-/// line's formatting.
+/// ([`TextSource::caret_line`], UI Automation's program builder through
+/// the client `one_go` gives), which also finds where the selection
+/// starts in the caret's line, so Core knows what comes before the start,
+/// as a Backspace over the selection says it, and reads the selection's
+/// text and the line's formatting; else by its parts, where a selection's
+/// start lies on the caret's line only when it is the caret.
 fn read_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
+    ((uia, node), read_at_us): (OneGo<'_>, u64),
 ) -> TextResult<CaretFound<S::Pos>> {
-    let request = CaretRequest {
-        since: None,
-        previous: None,
-        previous_collapsed: false,
-        formats: true,
-        read_selection_text: true,
-        read_previous_text: false,
+    let one_go = match uia {
+        Some(uia) => source.caret_line(uia, node)?,
+        None => None,
     };
-    if let Some(read) = source.caret_read(&request)? {
+    if let Some(read) = one_go {
         let (line, offset) = read.line;
         let report = report_for(
             source,
@@ -81,11 +80,6 @@ struct CaretFound<P> {
     /// The selection's text, as [`super::CaretRead::selection_text`].
     selection_text: Option<Vec<u16>>,
 }
-
-/// The most UTF-16 code units of a selection's text a read in one go
-/// gives (`verbatim_uia_rops::MAX_COMPARED_TEXT`, the only source that
-/// gives one): a text as long is cut, and is read whole by its range.
-const SELECTION_TEXT_CAP: usize = 513;
 
 /// A selection a batch's caret read holds: its two ends, how they were
 /// reported, and its text when read.
@@ -164,9 +158,9 @@ impl<P: Clone> NodeText<'_, P> {
 pub fn read_focus<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
+    read: (OneGo<'_>, u64),
 ) -> TextResult<(CaretReport, Option<SelectionChange>, TextAnchor)> {
-    let (report, selected) = caret_and_selected(source, anchors, read_at_us)?;
+    let (report, selected) = caret_and_selected(source, anchors, read)?;
     let baseline = anchors.hold_last()?;
     Ok((report, selected, baseline))
 }
@@ -181,9 +175,9 @@ pub fn read_focus<S: TextSource>(
 pub fn summary<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
+    read: (OneGo<'_>, u64),
 ) -> TextResult<verbatim_model::property::TextSummary> {
-    let (report, selected) = caret_and_selected(source, anchors, read_at_us)?;
+    let (report, selected) = caret_and_selected(source, anchors, read)?;
     Ok(match selected {
         Some(selected) => verbatim_model::property::TextSummary::Selected(selected.text),
         None => verbatim_model::property::TextSummary::Line(report.line.text),
@@ -195,17 +189,17 @@ pub fn summary<S: TextSource>(
 fn caret_and_selected<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
-    read_at_us: u64,
+    read: (OneGo<'_>, u64),
 ) -> TextResult<(CaretReport, Option<SelectionChange>)> {
     let CaretFound {
         state,
         report,
         selection_text,
         ..
-    } = read_caret(source, anchors, read_at_us)?;
+    } = read_caret(source, anchors, read)?;
     // A selection whose text reads as empty holds nothing to say.
     let selected = match (&state.selection, selection_text) {
-        (Some(_), Some(units)) if units.len() < SELECTION_TEXT_CAP => Some(change_of(true, &units)),
+        (Some(_), Some(units)) => Some(change_of(true, &units)),
         (Some((start, end)), _) => Some(change(source, true, start, end)?),
         (None, _) => None,
     }

@@ -898,10 +898,13 @@ anchors are (Table 16 of
 - A point is found as a `PointFrom` (caret, selection end, text end, kept
   position, or text after one, matched in the provider) and read from.
 - The caret read for a focus and for report focus's text summary
-  (`TextSource::caret_read`, `verbatim_uia_rops::caret_read`) reads, in
-  one remote operation where possible, the caret and selection, the
-  caret's line with the caret's offset, and the formatting the read
-  names. Formatting travels as `FormatRun`s: bold at weight 700 or more, underline and
+  (`text::held`, `TextSource::caret_line`) reads through UI Automation
+  one segment of the program builder (`text::fused::caret_line`): a
+  `Caret`, a `ReadText` of the line at the caret with the formatting the
+  read names and no language, and a `ReadRange` of the selection, from
+  which the selection's start in the line and whether it starts at the
+  text's start are found; an edit control's, or one with no UI Automation
+  client, is read by parts (Claude, 2026-11-22). Formatting travels as `FormatRun`s: bold at weight 700 or more, underline and
   strikethrough as `LineStyle`, size as "11.0 pt", colors by NVDA's named
   hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,
   and links.

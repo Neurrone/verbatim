@@ -4,7 +4,7 @@
 use std::sync::atomic::AtomicU64;
 
 use verbatim_model::batch::{Chunks, Done, Missing, RangeText, Selected, StepOutcome, StepRefusal};
-use verbatim_model::{CaretMotion, SelectionDifference, SentenceMoved};
+use verbatim_model::{CaretMotion, NodeId, SelectionDifference, SentenceMoved};
 
 use super::*;
 
@@ -256,9 +256,13 @@ fn store() -> Anchors<usize> {
 /// The caret's report, read as a focus's caret read reads it, holding a
 /// baseline.
 fn report(source: &mut Fake, anchors: &mut Anchors<usize>) -> CaretReport {
-    held::read_focus(source, &mut anchors.node(1), REPORTED_AT)
-        .expect("the fake answers")
-        .0
+    held::read_focus(
+        source,
+        &mut anchors.node(1),
+        ((None, NodeId::new(1)), REPORTED_AT),
+    )
+    .expect("the fake answers")
+    .0
 }
 
 /// A batch's `Caret` of the fake's caret and selection: the read held as
@@ -667,8 +671,12 @@ fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
         2,
     );
     let mut anchors = store();
-    let (report, selected, baseline) =
-        held::read_focus(&mut source, &mut anchors.node(1), REPORTED_AT).expect("the fake answers");
+    let (report, selected, baseline) = held::read_focus(
+        &mut source,
+        &mut anchors.node(1),
+        ((None, NodeId::new(1)), REPORTED_AT),
+    )
+    .expect("the fake answers");
     assert_eq!(selected, None);
     assert_eq!(
         report.line.text,

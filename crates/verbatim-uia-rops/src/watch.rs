@@ -22,7 +22,7 @@ use verbatim_uia::text::{Endpoint, TextRangeExt};
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
-    CaretQuery, Constants, RangeEnd, UnitRead, UnitRegisters, classic_caret, collapsed, emit_caret,
+    Constants, RangeEnd, UnitRead, UnitRegisters, classic_caret, collapsed, emit_caret,
     emit_caret_with, gone_or_timed_out, unit_at,
 };
 use crate::error::Error;
@@ -207,21 +207,7 @@ fn differs(
 ///
 /// [`Error::Uia`] when a call fails.
 pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error> {
-    let caret_query = CaretQuery {
-        element: query.element,
-        pattern: query.pattern,
-        since: None,
-        previous_selection: None,
-        previous_collapsed: false,
-        formats: false,
-        attributes: crate::caret::Attributes::NONE,
-        learning: crate::caret::Attributes::NONE,
-        max_text: query.max_text,
-        max_change_text: 0,
-        read_selection_text: false,
-        read_previous_text: false,
-    };
-    let (caret, collapsed_caret, selection) = classic_caret(&caret_query)?;
+    let (caret, collapsed_caret, selection) = classic_caret(query.pattern)?;
     let point = if collapsed_caret {
         caret
     } else {
@@ -239,7 +225,7 @@ pub fn watch_check_classic(query: &WatchQuery<'_>) -> Result<WatchAnswer, Error>
         .word
         .then(|| unit_at(&point, TextUnit_Word, query.max_text))
         .transpose()?;
-    let (again, _, _) = classic_caret(&caret_query)?;
+    let (again, _, _) = classic_caret(query.pattern)?;
     let moved_while_read = again
         .compare_endpoints(Endpoint::Start, &point, Endpoint::Start)
         .ok()

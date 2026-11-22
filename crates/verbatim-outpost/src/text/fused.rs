@@ -33,8 +33,8 @@ use verbatim_uia_rops::{FoundPoint, Movement, Position, TextTarget};
 
 use super::uia::{UiaPos, UiaText, character_counts, round, unit_text};
 use super::{
-    MAX_RANGE_UNITS, NodeText, PointFrom, TextError, TextResult, change, change_of, chunk_from,
-    keep_whole_characters, to_utf8,
+    CaretRead, CaretState, MAX_RANGE_UNITS, NodeText, PointFrom, SelectionStart, TextError,
+    TextResult, change, change_of, chunk_from, keep_whole_characters, to_utf8,
 };
 
 /// The most UTF-16 code units of a selection's text a program reads
@@ -200,10 +200,7 @@ struct TextResolver<'r, 'n> {
 
 impl Resolve for TextResolver<'_, '_> {
     fn text(&self, subject: &Subject) -> Result<TextTarget<'_>, Ran> {
-        match subject {
-            Subject::Node(node) if *node == self.node => Ok(self.source.target()),
-            _ => Err(defect("a text step of another subject in a node's run")),
-        }
+        node_text(self.node, self.source, subject)
     }
 
     fn point(&self, point: &Point) -> Result<HeldAt, Ran> {
@@ -246,43 +243,12 @@ impl Resolve for TextResolver<'_, '_> {
         })
     }
 
-    /// A read's units as the program reads them; the refusal when the
-    /// text has no such unit.
     fn units(
         &self,
-        (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
+        read: (Option<TextMovement>, TextUnit, u8),
         details: TextDetails,
     ) -> Result<UnitsRead, Ran> {
-        let no_such_unit = Ran::Unrun(Unrun::Refused(StepRefusal::NoSuchUnit));
-        // UI Automation has no sentence unit, and a document is not read as
-        // a unit.
-        if matches!(unit, TextUnit::Document | TextUnit::Sentence) {
-            return Err(no_such_unit);
-        }
-        let Some(by) = self.source.provider_unit(unit) else {
-            return Err(no_such_unit);
-        };
-        let movement = match movement {
-            None => None,
-            Some(TextMovement {
-                unit: TextUnit::Document,
-                count,
-            }) => Some(Movement::Document(count)),
-            Some(TextMovement { unit, count }) => match self.source.provider_unit(unit) {
-                Some(unit) => Some(Movement::By(unit, count)),
-                None => return Err(no_such_unit),
-            },
-        };
-        let (formats, learning) = self.source.format_reads(details);
-        Ok(UnitsRead {
-            movement,
-            unit: by,
-            count: u32::from(count.max(1)),
-            max_total: u32::try_from(MAX_READ_AHEAD_TEXT).unwrap_or(u32::MAX),
-            culture: true,
-            formats,
-            learning,
-        })
+        units_read(self.source, read, (details, true))
     }
 
     fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {
@@ -298,6 +264,182 @@ impl Resolve for TextResolver<'_, '_> {
             last: starting.last,
         })
     }
+}
+
+/// The text of node `node` that a text step's `subject` names.
+fn node_text<'s>(
+    node: NodeId,
+    source: &'s UiaText,
+    subject: &Subject,
+) -> Result<TextTarget<'s>, Ran> {
+    match subject {
+        Subject::Node(named) if *named == node => Ok(source.target()),
+        _ => Err(defect("a text step of another subject in a node's run")),
+    }
+}
+
+/// A read's units as the program reads them, each unit's language read
+/// when `culture`; the refusal when the text has no such unit.
+fn units_read(
+    source: &UiaText,
+    (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
+    (details, culture): (TextDetails, bool),
+) -> Result<UnitsRead, Ran> {
+    let no_such_unit = Ran::Unrun(Unrun::Refused(StepRefusal::NoSuchUnit));
+    // UI Automation has no sentence unit, and a document is not read as
+    // a unit.
+    if matches!(unit, TextUnit::Document | TextUnit::Sentence) {
+        return Err(no_such_unit);
+    }
+    let Some(by) = source.provider_unit(unit) else {
+        return Err(no_such_unit);
+    };
+    let movement = match movement {
+        None => None,
+        Some(TextMovement {
+            unit: TextUnit::Document,
+            count,
+        }) => Some(Movement::Document(count)),
+        Some(TextMovement { unit, count }) => match source.provider_unit(unit) {
+            Some(unit) => Some(Movement::By(unit, count)),
+            None => return Err(no_such_unit),
+        },
+    };
+    let (formats, learning) = source.format_reads(details);
+    Ok(UnitsRead {
+        movement,
+        unit: by,
+        count: u32::from(count.max(1)),
+        max_total: u32::try_from(MAX_READ_AHEAD_TEXT).unwrap_or(u32::MAX),
+        culture,
+        formats,
+        learning,
+    })
+}
+
+/// What a focus's caret line names: the node's text alone, its line read
+/// with no language, which a caret report does not carry.
+struct LineResolver<'r> {
+    node: NodeId,
+    source: &'r UiaText,
+}
+
+impl Resolve for LineResolver<'_> {
+    fn text(&self, subject: &Subject) -> Result<TextTarget<'_>, Ran> {
+        node_text(self.node, self.source, subject)
+    }
+
+    fn units(
+        &self,
+        read: (Option<TextMovement>, TextUnit, u8),
+        details: TextDetails,
+    ) -> Result<UnitsRead, Ran> {
+        units_read(self.source, read, (details, false))
+    }
+}
+
+/// A focus's caret, its line with the formatting the source's details
+/// name, and the selection's text, read as one segment of the program
+/// builder: the request list's `Caret`, `ReadText` of the line at the
+/// caret and `ReadRange` of the selection, its steps naming `node`, with
+/// where the selection starts, the caret being its start (the
+/// verbatim-outpost crate guide, "Text and dialog text"), so no caret
+/// program is written by hand (Claude, 2026-11-22).
+///
+/// # Errors
+///
+/// [`TextError::Gone`] when the node is gone; [`TextError::Failed`] when a
+/// step could not be read.
+pub fn caret_line(
+    uia: &Uia,
+    (node, source): (NodeId, &mut UiaText),
+) -> TextResult<CaretRead<UiaPos>> {
+    let subject = Subject::Node(node);
+    let of = |which| Point::Of(Place(0), which);
+    let step = |op| Step { op, when: None };
+    let steps = [
+        step(Op::Caret {
+            subject: subject.clone(),
+            adopt: None,
+        }),
+        step(Op::ReadText {
+            subject: subject.clone(),
+            at: of(PointOf::Caret),
+            movement: None,
+            unit: TextUnit::Line,
+            count: 1,
+            details: source.details_read(),
+        }),
+        step(Op::ReadRange {
+            subject,
+            start: of(PointOf::SelectionStart),
+            end: of(PointOf::SelectionEnd),
+            through: None,
+        }),
+    ];
+    let (_, learning) = source.format_reads(source.details_read());
+    let answer = {
+        let resolver = LineResolver { node, source };
+        verbatim_uia_rops::batch::run_batch(&Segment {
+            uia,
+            steps: &steps,
+            first: 0,
+            earlier: &[],
+            resolver: &resolver,
+            remote: source.tries_remote(),
+            window: source.window_of(),
+        })
+    };
+    source.note_read_classically(answer.read_classically);
+    let failed = |ran: Ran| match ran {
+        Ran::Gone => TextError::Gone,
+        other => TextError::Failed(format!("a focus's caret line was not read: {other:?}")),
+    };
+    let mut ran = answer.steps.into_iter();
+    let (Some(caret), Some(line), Some(selected)) = (ran.next(), ran.next(), ran.next()) else {
+        return Err(TextError::Failed(
+            "a focus's caret line answered no steps".to_owned(),
+        ));
+    };
+    let Ran::Done(Found::Caret(caret)) = caret else {
+        return Err(failed(caret));
+    };
+    let Ran::Done(Found::ReadText(mut line)) = line else {
+        return Err(failed(line));
+    };
+    let Ran::Done(Found::ReadRange(mut selected)) = selected else {
+        return Err(failed(selected));
+    };
+    source.learned(learning, line.unsupported);
+    let selection = match &caret.selection {
+        Some((range, start, _)) => Some((
+            (
+                UiaPos::new(range, Endpoint::Start, false)?,
+                UiaPos::new(range, Endpoint::End, false)?,
+            ),
+            start.start,
+        )),
+        None => None,
+    };
+    let unit = line.units.swap_remove(0);
+    // The selection starts at the caret, whose place in the line the read
+    // gives before it is cut to a chunk's limit.
+    let in_line = selection.as_ref().map(|_| unit.offset);
+    let read = unit_text(unit)?;
+    selected.truncate(MAX_RANGE_UNITS);
+    Ok(CaretRead {
+        state: CaretState {
+            caret: UiaPos::new(&caret.caret, Endpoint::Start, true)?,
+            selection: selection.as_ref().map(|(ends, _)| ends.clone()),
+        },
+        line: (read.unit, read.offset),
+        formats: UiaText::formats_read(line.runs, source.details_read(), None),
+        selection_text: selection.is_some().then_some(selected),
+        selection_start: SelectionStart {
+            in_line,
+            first: selection.is_some_and(|(_, first)| first),
+        },
+    })
 }
 
 /// The anchor of the baseline a comparison starts from outside the run:
@@ -608,7 +750,7 @@ fn selection_texts(steps: &[Step], ran: &[Ran], first: usize) -> Vec<Option<Vec<
 }
 
 /// A `Caret`'s caret and selection, as the source's positions.
-type CaretRead = (UiaPos, Option<(UiaPos, UiaPos)>);
+type CaretHeld = (UiaPos, Option<(UiaPos, UiaPos)>);
 
 /// The results of a run made the model's.
 struct Made<'m, 'n> {
@@ -621,7 +763,7 @@ struct Made<'m, 'n> {
     /// Each `Caret` of the run's caret and selection, by its index in the
     /// run, for the points later steps read from and the comparisons'
     /// whole new selection.
-    carets: Vec<Option<CaretRead>>,
+    carets: Vec<Option<CaretHeld>>,
 }
 
 impl Made<'_, '_> {

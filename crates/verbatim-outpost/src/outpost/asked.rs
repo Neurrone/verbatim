@@ -364,7 +364,8 @@ fn read_apart(
                             .map(|list| PropertyValue::Window(window_handle(list)))
                     }),
                     PropertyId::TextSummary => {
-                        text_reads::text_summary(context, node_id).map(PropertyValue::TextSummary)
+                        text_reads::text_summary(context, client.uia(), node_id)
+                            .map(PropertyValue::TextSummary)
                     }
                     PropertyId::ChildCount => context
                         .store
@@ -601,7 +602,7 @@ pub(super) struct Focus<'a> {
 
 /// The focus answer `focus` describes, by `set`.
 pub(super) fn focus_read(
-    context: &RequestContext<'_>,
+    (context, uia): (&RequestContext<'_>, Option<&verbatim_uia::Uia>),
     focus: &Focus<'_>,
     set: &[PropertyId],
 ) -> FocusRead {
@@ -636,7 +637,7 @@ pub(super) fn focus_read(
             .map(|window| focus_node(window, window.details.window.map(hwnd_of))),
         value_from_selection: focus.value_from_selection,
         runtime_id_reused: focus.runtime_id_reused,
-        caret: caret_of(context, focus.node, focus.details),
+        caret: caret_of((context, uia), focus.node, focus.details),
     }
 }
 
@@ -647,9 +648,13 @@ pub(super) fn focus_read(
 /// the caret is on ("blank" for an empty one) as NVDA's announcement of a
 /// focused terminal does (`docs/parity/terminals.md`); its baseline read,
 /// sent after the focus, is silent.
-fn caret_of(context: &RequestContext<'_>, node: &NodeSnapshot, details: TextDetails) -> FocusCaret {
+fn caret_of(
+    (context, uia): (&RequestContext<'_>, Option<&verbatim_uia::Uia>),
+    node: &NodeSnapshot,
+    details: TextDetails,
+) -> FocusCaret {
     if text_reads::may_have_text(context, node.id, node.role) {
-        text_reads::focus_caret(context, node.id, details)
+        text_reads::focus_caret(context, uia, node.id, details)
     } else {
         FocusCaret::NoText
     }
@@ -706,7 +711,7 @@ pub(super) fn candidate_read(
         .then(|| read::foreground_object(context, client))
         .flatten();
     Some(focus_read(
-        context,
+        (context, client.uia()),
         &Focus {
             node: &node,
             ancestors: &ancestors,
@@ -804,7 +809,7 @@ pub(super) fn focus_now(
         .then(|| held_ids(context, &control.node))
         .flatten();
     let read = focus_read(
-        context,
+        (context, client.uia()),
         &Focus {
             node: &control.node,
             ancestors: &ancestors,
