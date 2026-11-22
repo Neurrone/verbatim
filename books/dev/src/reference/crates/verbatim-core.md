@@ -214,8 +214,9 @@ A batch whose first step reads the focused window or the application's
 focus alone takes what the shell read in front (`Answers::in_front`). A
 batch whose answer is judged once as it is decoded, as a focus
 candidate's is, is asked through `Asked::judged`, its function given the
-judgement rather than the answers. Core judges each text batch once into
-its own `text_request::TextAnswer`, which never travels.
+judgement rather than the answers. Each text command builds its own batch
+and judges each step's `Got` itself, a step not done through the one rule
+of `text_request::got`, which reads it as refused, lost, gone or failed.
 
 Every behaviour that crosses to a reader writes a batch from the list
 and adds no request kind, reply, reader arm or decoder. Three are the
@@ -230,9 +231,9 @@ examples to copy:
   around the character before the caret, then a wait batch of
   `WaitForCaret` with the starting texts and the caret, line and unit
   read after it.
-- A text command: review's word move (`text_request.rs`, `word`), one
-  batch a press of `ReadText` steps by the provider's word, judged into
-  the word said.
+- A text command: review's word move (`review_text.rs`, `TextRead::word`
+  and `worded`), one batch a press of `ReadText` steps by the provider's
+  word, judged into the word said.
 
 Tests: `crates/verbatim-core/src/batch_tests.rs` and the queue's tests of
 a batch asked, refused as undecodable, answered in front and numbered.
@@ -847,8 +848,9 @@ object" (`navigator::no_navigator`). A review press is an event-queue
 entry too (`review_text::begin`), so it reads live and runs in press
 order with keys. An object with text is announced with its name, role
 and states, then its text, read from the known caret or by the reads
-`editing::navigator_text_start` asks and `editing::navigator_text_answered`
-takes, each in turn.
+`editing::navigator_text_start` asks: the selected text, judged by
+`editing::navigator_selection_answered`, then the line, judged by
+`editing::navigator_line_answered`.
 
 ### Verbatim+Tab
 
@@ -1457,7 +1459,7 @@ the same. Once moved, a command that answers from the cursor's line first reads
 the line where it is now (one round trip, `review_text::begin`); a move goes
 straight to the read that moves, so no press reads twice to move. A word
 command reads the text's own word with no line read first, one batch a
-press (`text_request::word`; `docs/parity/review.md`, "Review words by
+press (`review_text.rs`, `TextRead::word`; `docs/parity/review.md`, "Review words by
 the provider's word"), and a word move that crosses a line takes the
 line it lands on from the same batch. Moving
 to another line keeps a cell column in a terminal and a remembered

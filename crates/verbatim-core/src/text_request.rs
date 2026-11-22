@@ -1,21 +1,21 @@
-//! A read or move in a node's text, written as a batch of the shared list's
-//! text operations (the request list's design, section 6, the `TextOp`
-//! rows) and judged once into what the command that asked acts on. Each
-//! is asked of the node's outpost on the node's window, or answered by
-//! Core itself from text it holds: flat text and a terminal's rows
+//! A read or move in a node's text: each command builds its batch of the
+//! shared list's text operations and judges each step's result itself,
+//! through the one rule here for a step not done ([`got`]). Each batch is
+//! asked of the node's outpost on the node's window, or answered by Core
+//! itself from text it holds: flat text and a terminal's rows
 //! ([`answer_steps`]). The commands that read the committed focus's text
 //! resolve it here at their turn.
 
 use std::ops::Range;
 
-use verbatim_model::batch::{Batch, Located, Op, Point, PointOf, StepOutcome, StepRefusal};
+use verbatim_model::batch::{Batch, Missing, Op, Point, PointOf, StepOutcome, StepRefusal};
 use verbatim_model::request::Reply;
 use verbatim_model::{
-    NodeId, Pid, Role, SelectionChange, TextAnchor, TextChunk, TextDetails, TextFailure,
-    TextMovement, TextPoint, TextPosition, TextReply, TextUnit,
+    NodeId, Pid, Role, TextFailure, TextMovement, TextPoint, TextPosition, TextReply, TextUnit,
 };
 
-use crate::batch::{Answers, At, Baseline, Got, Sent, batch};
+use crate::batch::kind::Kind;
+use crate::batch::{Answers, Got, Ref, Sent};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
 use crate::state::SrState;
@@ -51,114 +51,36 @@ pub(crate) struct Span {
     pub(crate) through: Option<(TextPoint, TextPoint)>,
 }
 
-/// Which word a review word command reads (`docs/parity/review.md`,
-/// "Review words by the provider's word").
+/// Why a text step gave no result, as each command that reads text judges
+/// it: the one rule for a step not done, so every command reads an answer
+/// the same way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WordStep {
-    /// The word at the point.
-    Current,
-    /// The word before it.
-    Previous,
-    /// The word after it.
-    Next,
-}
-
-/// What a command reads or does in a node's text, the batch it is written
-/// as named by its shape.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TextAsk {
-    /// `count` units of `unit` from `at`, after `movement`: one `ReadText`.
-    Read {
-        /// Where it starts.
-        at: TextPoint,
-        /// How it moves first.
-        movement: Option<TextMovement>,
-        /// The unit read.
-        unit: TextUnit,
-        /// How many units.
-        count: u8,
-    },
-    /// A review word command at `at`, by the text's own word, one batch a
-    /// press (the request list's design, section 6, "`Read`, review's word
-    /// commands"): the current word one `ReadText`; the previous word the
-    /// word at the point, the word before it and the line it is on; the
-    /// next word the word after the point, the text between the point and
-    /// it, and its line.
-    Word {
-        /// The review position.
-        at: TextPoint,
-        /// Which word.
-        step: WordStep,
-    },
-    /// The text of a span: one `ReadRange`.
-    Range(Span),
-    /// A span selected, said by how the selection changed: the caret, the
-    /// selection, the caret again and the comparison of the two.
-    Select(Span),
-    /// The caret moved to a point, with the selection baseline the move
-    /// leaves: a `Select` of two equal points, then the caret.
-    MoveCaret(TextPoint),
-    /// Where a point is: one `Locate`.
-    Locate(TextPoint),
-}
-
-/// A word command's answer: the word to say, and, where the review cursor
-/// moves, the line it lands on, its offset at the word's start.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Worded {
-    /// The word said.
-    pub(crate) word: TextChunk,
-    /// The line landed on, `None` for the current word and for a move
-    /// that met the text's edge.
-    pub(crate) landed: Option<TextChunk>,
-}
-
-/// What a [`TextAsk`] answered, judged once from its batch's outcomes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TextAnswer {
-    /// The units read, and how far the movement went.
-    Read {
-        /// Units moved, signed like the movement.
-        moved: i32,
-        /// The units.
-        chunks: Vec<TextChunk>,
-    },
-    /// A word command's answer.
-    Word(Box<Worded>),
-    /// The text of a span.
-    Range(String),
-    /// A span selected: how the selection changed, with the selection
-    /// baseline it left.
-    Selected {
-        /// The changes.
-        changes: Vec<SelectionChange>,
-        /// The baseline.
-        baseline: TextAnchor,
-    },
-    /// The caret moved, leaving this selection baseline.
-    Moved(TextAnchor),
-    /// Where a point is.
-    Located(Located),
+pub(crate) enum Missed {
     /// The text refused it.
     Refused(StepRefusal),
     /// A position it named is no longer held.
     Lost,
     /// The node is gone.
     Gone,
-    /// A read failed, or a step was not answered.
+    /// A read failed, or the step was not run.
     Failed,
 }
 
-impl TextAnswer {
-    /// The answer a step that was not done gives, `None` for one done.
-    fn of_step<T>(got: &Got<'_, T>) -> Option<Self> {
-        Some(match got {
-            Got::Done(_) => return None,
-            Got::Refused(refusal) => Self::Refused(*refusal),
-            Got::NotThere(verbatim_model::batch::Missing::Anchor(_)) => Self::Lost,
-            Got::NotThere(_) => Self::Gone,
-            Got::Failed | Got::Skipped => Self::Failed,
-        })
+/// The answers to a text batch, or why none came: [`Missed::Gone`] for
+/// the text not there.
+pub(crate) type TextAnswers<B> = Result<Answers<B>, Missed>;
+
+/// The result of `handle`'s step in `answers`, or why it has none.
+pub(crate) fn got<B, K: Kind>(
+    answers: &TextAnswers<B>,
+    handle: Ref<B, K>,
+) -> Result<&K::Out, Missed> {
+    match answers.as_ref().map_err(|missed| *missed)?.get(handle) {
+        Got::Done(done) => Ok(done),
+        Got::Refused(refusal) => Err(Missed::Refused(refusal)),
+        Got::NotThere(Missing::Anchor(_)) => Err(Missed::Lost),
+        Got::NotThere(_) => Err(Missed::Gone),
+        Got::Failed | Got::Skipped => Err(Missed::Failed),
     }
 }
 
@@ -171,213 +93,23 @@ pub(crate) enum Answerer<'a> {
     Flat(&'a str),
 }
 
-/// Asks `ask` of `node`'s text through `by` under the due time `due_us`:
-/// its answer, or `None` when the request was stopped, refused or not
-/// answered, which says nothing.
-pub(crate) async fn ask(
-    cx: &mut Cx<Entries>,
-    (node, by): (NodeId, Answerer<'_>),
-    ask: TextAsk,
-    due_us: u64,
-) -> Option<TextAnswer> {
-    let plain = TextDetails::NONE;
-    match ask {
-        TextAsk::Read {
-            at: from,
-            movement,
-            unit,
-            count,
-        } => {
-            let mut sent = batch(|| ());
-            let read = sent.read_text(node, At::from(from), movement, unit, count, plain);
-            let answers = match answers(cx, by, sent.finish(), due_us).await? {
-                Ok(answers) => answers,
-                Err(answer) => return Some(answer),
-            };
-            Some(match answers.get(read) {
-                Got::Done(read) => TextAnswer::Read {
-                    moved: read.moved,
-                    chunks: read.chunks.clone(),
-                },
-                other => TextAnswer::of_step(&other)?,
-            })
-        }
-        TextAsk::Word { at: from, step } => word(cx, (node, by), (from, step), due_us).await,
-        TextAsk::Range(span) => {
-            let mut sent = batch(|| ());
-            let range = sent.read_range(
-                node,
-                (At::from(span.start), At::from(span.end)),
-                span.through
-                    .map(|(start, end)| (At::from(start), At::from(end))),
-            );
-            let answers = match answers(cx, by, sent.finish(), due_us).await? {
-                Ok(answers) => answers,
-                Err(answer) => return Some(answer),
-            };
-            Some(match answers.get(range) {
-                Got::Done(range) => TextAnswer::Range(range.text.clone()),
-                other => TextAnswer::of_step(&other)?,
-            })
-        }
-        TextAsk::Select(span) => {
-            // The request list's design, section 5: the reads before the
-            // act and the act are one program, the reads after it another.
-            let mut sent = batch(|| ());
-            let before = sent.caret(node, None);
-            let select = sent.select(
-                node,
-                (At::from(span.start), At::from(span.end)),
-                span.through
-                    .map(|(start, end)| (At::from(start), At::from(end))),
-            );
-            let after = sent.caret(node, None);
-            let compared = sent.compare_selection(node, Baseline::Read(before), after);
-            let answers = match answers(cx, by, sent.finish(), due_us).await? {
-                Ok(answers) => answers,
-                Err(answer) => return Some(answer),
-            };
-            Some(match (answers.get(after), answers.get(compared)) {
-                (Got::Done(after), Got::Done(compared)) => TextAnswer::Selected {
-                    changes: compared.difference.changes.clone(),
-                    baseline: after.held,
-                },
-                _ => TextAnswer::of_step(&answers.get(select))
-                    .or_else(|| TextAnswer::of_step(&answers.get(before)))
-                    .unwrap_or(TextAnswer::Failed),
-            })
-        }
-        TextAsk::MoveCaret(to) => {
-            let mut sent = batch(|| ());
-            let select = sent.select(node, (At::from(to), At::from(to)), None);
-            let caret = sent.caret(node, None);
-            let answers = match answers(cx, by, sent.finish(), due_us).await? {
-                Ok(answers) => answers,
-                Err(answer) => return Some(answer),
-            };
-            Some(match answers.get(caret) {
-                Got::Done(caret) => TextAnswer::Moved(caret.held),
-                other => TextAnswer::of_step(&answers.get(select))
-                    .or_else(|| TextAnswer::of_step(&other))
-                    .unwrap_or(TextAnswer::Failed),
-            })
-        }
-        TextAsk::Locate(point) => {
-            let mut sent = batch(|| ());
-            let located = sent.locate(node, At::from(point));
-            let answers = match answers(cx, by, sent.finish(), due_us).await? {
-                Ok(answers) => answers,
-                Err(answer) => return Some(answer),
-            };
-            Some(match answers.get(located) {
-                Got::Done(located) => TextAnswer::Located(*located),
-                other => TextAnswer::of_step(&other)?,
-            })
-        }
-    }
-}
-
-/// A review word command's batch, asked and judged (the request list's
-/// design, section 6, "The word rows' speech"): a move that went no
-/// word, or a next word that does not start after the review position
-/// (a provider that moves onto the text's end), keeps the position and
-/// says step 0's word.
-async fn word(
-    cx: &mut Cx<Entries>,
-    (node, by): (NodeId, Answerer<'_>),
-    (from, step): (TextPoint, WordStep),
-    due_us: u64,
-) -> Option<TextAnswer> {
-    let plain = TextDetails::NONE;
-    let by_word = |count| {
-        Some(TextMovement {
-            unit: TextUnit::Word,
-            count,
-        })
-    };
-    let mut sent = batch(|| ());
-    let first = match step {
-        WordStep::Current | WordStep::Previous => {
-            sent.read_text(node, from.into(), None, TextUnit::Word, 1, plain)
-        }
-        WordStep::Next => sent.read_text(node, from.into(), by_word(1), TextUnit::Word, 1, plain),
-    };
-    let (moved_to, between, line) = match step {
-        WordStep::Current => (None, None, None),
-        WordStep::Previous => {
-            let before = sent.read_text(node, first.start(), by_word(-1), TextUnit::Word, 1, plain);
-            let line = sent.read_text(node, before.start(), None, TextUnit::Line, 1, plain);
-            (Some(before), None, Some(line))
-        }
-        WordStep::Next => {
-            let between = sent.read_range(node, (from.into(), first.start()), None);
-            let line = sent.read_text(node, first.start(), None, TextUnit::Line, 1, plain);
-            (None, Some(between), Some(line))
-        }
-    };
-    let answers = match answers(cx, by, sent.finish(), due_us).await? {
-        Ok(answers) => answers,
-        Err(answer) => return Some(answer),
-    };
-    let chunk = |got: Got<'_, verbatim_model::batch::Chunks>| match got {
-        Got::Done(read) => read
-            .chunks
-            .first()
-            .map(|chunk| (read.moved, chunk.clone()))
-            .ok_or(TextAnswer::Failed),
-        other => Err(TextAnswer::of_step(&other).unwrap_or(TextAnswer::Failed)),
-    };
-    let judged = (|| {
-        let (first_moved, first) = chunk(answers.get(first))?;
-        let Some(line) = line else {
-            return Ok(Worded {
-                word: first,
-                landed: None,
-            });
-        };
-        let (moved, word) = match moved_to {
-            Some(moved_to) => chunk(answers.get(moved_to))?,
-            None => (first_moved, first.clone()),
-        };
-        // NVDA's check against a provider that moves onto the text's end:
-        // the word reached starts after the review position.
-        let after = match between.map(|between| answers.get(between)) {
-            None => true,
-            Some(Got::Done(range)) => !range.text.is_empty(),
-            Some(other) => {
-                return Err(TextAnswer::of_step(&other).unwrap_or(TextAnswer::Failed));
-            }
-        };
-        if moved == 0 || !after {
-            return Ok(Worded {
-                word: first,
-                landed: None,
-            });
-        }
-        let (_, line) = chunk(answers.get(line))?;
-        Ok(Worded {
-            word,
-            landed: Some(line),
-        })
-    })();
-    Some(judged.map_or_else(|answer| answer, |worded| TextAnswer::Word(Box::new(worded))))
-}
-
-/// `sent`'s answers from `by`, the text's answerer: `Err` with the answer
-/// for the text not there; `None` when the request was stopped, refused
-/// or not answered, or a local answer did not fit the batch, a defect.
-async fn answers<B: 'static>(
+/// Asks `sent`, a batch of text steps, of `by`, the text's answerer, under
+/// the due time `due_us`: its answers, or [`Missed::Gone`] for the text
+/// not there; `None` when the request was stopped, refused or not
+/// answered, which says nothing, or a local answer did not fit the batch,
+/// a defect.
+pub(crate) async fn ask<B: 'static>(
     cx: &mut Cx<Entries>,
     by: Answerer<'_>,
     sent: Sent<B>,
     due_us: u64,
-) -> Option<Result<Answers<B>, TextAnswer>> {
+) -> Option<TextAnswers<B>> {
     let outcomes = match by {
         Answerer::Outpost(window) => {
             let asked = sent.of(Reader::Outpost(window.process), window);
             return match cx.ask(asked, due_us).await {
                 Outcome::Result(answers) => Some(Ok(answers)),
-                Outcome::NotThere => Some(Err(TextAnswer::Gone)),
+                Outcome::NotThere => Some(Err(Missed::Gone)),
                 _ => None,
             };
         }

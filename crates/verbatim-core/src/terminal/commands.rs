@@ -5,6 +5,7 @@
 //! end with its line's text: tried at its place by one line read, and
 //! otherwise found by the outpost's search outward from it.
 
+use verbatim_model::batch::Chunks;
 use verbatim_model::request::{Question, Reply, TerminalAsk};
 use verbatim_model::{
     Effect, Message, NodeId, TextAnchor, TextDetails, TextFailure, TextMovement, TextOp, TextPoint,
@@ -16,7 +17,6 @@ use crate::entries::Entries;
 use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow};
 use crate::terminal::places::RowPlace;
 use crate::terminal::{ReadSpeech, Watch, focus_of, focused, key_read, places_mut, places_of};
-use crate::text_request::TextAnswer;
 
 /// How many searches a press makes at most; the marks not yet tried are
 /// kept once they are spent.
@@ -66,7 +66,7 @@ async fn read_row(
     (window, node): (RequestWindow, NodeId),
     (start, above): (TextAnchor, u32),
     due_us: u64,
-) -> Option<TextAnswer> {
+) -> Option<Chunks> {
     let mut batch = cx.batch(|| ());
     let movement = TextMovement {
         unit: TextUnit::Line,
@@ -85,10 +85,7 @@ async fn read_row(
         return None;
     };
     match answers.get(line) {
-        Got::Done(read) => Some(TextAnswer::Read {
-            moved: read.moved,
-            chunks: read.chunks.clone(),
-        }),
+        Got::Done(read) => Some(read.clone()),
         Got::Refused(_) | Got::NotThere(_) | Got::Failed | Got::Skipped => None,
     }
 }
@@ -112,9 +109,11 @@ fn moved_since(cx: &Cx<Entries>, node: NodeId, (above, written): (u32, u64)) -> 
 }
 
 /// Whether `answer`'s line reads `text`.
-fn reads(answer: &TextAnswer, text: &str) -> bool {
-    matches!(answer, TextAnswer::Read { chunks, .. }
-        if chunks.first().is_some_and(|line| line.text.trim_end() == text))
+fn reads(answer: &Chunks, text: &str) -> bool {
+    answer
+        .chunks
+        .first()
+        .is_some_and(|line| line.text.trim_end() == text)
 }
 
 /// The place a move by command counts from: the review position a mark
@@ -160,7 +159,7 @@ pub(crate) async fn command_mark(
     (window, node): (RequestWindow, NodeId),
     (forward, trace): (bool, TraceId),
     due_us: u64,
-) -> Option<TextAnswer> {
+) -> Option<Chunks> {
     key_read(cx, (node, window), (trace, ReadSpeech::Now), due_us).await?;
     let from = from_place(cx, node)?;
     let mut searches = 0;

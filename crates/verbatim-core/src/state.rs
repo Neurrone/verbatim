@@ -218,40 +218,6 @@ impl CaretContext {
     }
 }
 
-/// A text request made outside a review press, and what to do with its
-/// answer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PendingText {
-    pub(crate) node: NodeId,
-    pub(crate) then: TextFollowUp,
-}
-
-/// What to do with the answer to a [`PendingText`] request.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TextFollowUp {
-    /// The review cursor's line was read: place the cursor at the point
-    /// read, then run the command. `at_caret` when it was read at the
-    /// caret, from which a lost read has nowhere to start again.
-    Seed {
-        command: ReviewCommand,
-        repeat: u8,
-        at_caret: bool,
-    },
-    /// The review cursor moved to another line: land on it and speak.
-    Land(Landing),
-    /// A review word command read its word, and for a move the line it
-    /// lands on.
-    Word { command: ReviewCommand, repeat: u8 },
-    /// A select then copy selected the text.
-    Selected,
-    /// A select then copy read the text to copy: the copy clears the start
-    /// marker, and no marker can be set while its read is in flight, since
-    /// a review press holds the event queue until its last answer.
-    Copy,
-    /// A location report.
-    Location,
-}
-
 /// What the navigator object's text is read for: its announcement, or
 /// reporting the current object a second time (spelling) or a third
 /// (copying), which use the name followed by the text, as NVDA's do

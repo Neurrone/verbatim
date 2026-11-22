@@ -11,7 +11,7 @@ use verbatim_model::{Message, TextPoint, TraceId};
 
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US};
-use crate::text_request::{Answerer, CaretTarget, TextAsk};
+use crate::text_request::{Answerer, CaretTarget};
 use crate::{editing, review_text};
 
 /// A press of report caret location under `trace_id`, at its turn.
@@ -35,12 +35,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId) {
         CaretTarget::Text(text) => text,
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let by = (text.node, Answerer::Outpost(text.window));
-    let ask = TextAsk::Locate(TextPoint::Caret);
-    let Some(answer) = crate::text_request::ask(&mut cx, by, ask, due_us).await else {
+    let mut sent = crate::batch::batch(|| ());
+    let located = sent.locate(text.node, TextPoint::Caret.into());
+    let by = Answerer::Outpost(text.window);
+    let Some(answers) = crate::text_request::ask(&mut cx, by, sent.finish(), due_us).await else {
         return;
     };
-    for effect in review_text::location(trace_id, &answer) {
+    let located = crate::text_request::got(&answers, located);
+    for effect in review_text::location(trace_id, located) {
         cx.emit(effect);
     }
 }

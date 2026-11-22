@@ -16,8 +16,8 @@ use verbatim_model::batch::Relation;
 use verbatim_model::property::{PropertyId, PropertyValues};
 use verbatim_model::request::{FocusNode, NodeRead};
 use verbatim_model::{
-    Effect, Message, NodeId, NodeSnapshot, Pid, QueryKind, SegmentContent, TraceId,
-    UtteranceSegment,
+    Effect, Message, NodeId, NodeSnapshot, Pid, QueryKind, SegmentContent, TextDetails, TextPoint,
+    TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::batch::{Single, flat};
@@ -27,7 +27,7 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
 use crate::state::{Navigator, NavigatorRead, SrState};
-use crate::text_request::{Answerer, TextAsk};
+use crate::text_request::Answerer;
 
 /// The navigator object and its window, as a command finds them at its
 /// turn.
@@ -122,26 +122,39 @@ async fn text(
     read: NavigatorRead,
 ) {
     let start = editing::navigator_text_start(&mut cx.facts_mut(), trace_id, object, read);
-    let mut ask: TextAsk = match start {
+    let (start, end) = match start {
         Ok(said) => return emit_all(cx, said),
-        Err(ask) => ask,
+        Err(ends) => ends,
     };
-    let mut selection = true;
-    loop {
-        let due_us = cx.due_in(OTHER_DUE_US);
-        let by = (object.id, Answerer::Outpost(window));
-        let Some(answer) = crate::text_request::ask(cx, by, ask, due_us).await else {
-            return;
-        };
-        match editing::navigator_text_answered(trace_id, object, read, selection, answer) {
-            NavigatorText::Said(said) => return emit_all(cx, said),
-            NavigatorText::ReadLine if selection => {
-                selection = false;
-                ask = editing::navigator_line_read();
-            }
-            NavigatorText::ReadLine => return,
-        }
+    let by = Answerer::Outpost(window);
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let mut sent = crate::batch::batch(|| ());
+    let range = sent.read_range(object.id, (start.into(), end.into()), None);
+    let Some(answers) = crate::text_request::ask(cx, by, sent.finish(), due_us).await else {
+        return;
+    };
+    let range = crate::text_request::got(&answers, range);
+    if let NavigatorText::Said(said) =
+        editing::navigator_selection_answered(trace_id, object, read, range)
+    {
+        return emit_all(cx, said);
     }
+    let due_us = cx.due_in(OTHER_DUE_US);
+    let mut sent = crate::batch::batch(|| ());
+    let line = sent.read_text(
+        object.id,
+        TextPoint::Caret.into(),
+        None,
+        TextUnit::Line,
+        1,
+        TextDetails::NONE,
+    );
+    let Some(answers) = crate::text_request::ask(cx, by, sent.finish(), due_us).await else {
+        return;
+    };
+    let line = crate::text_request::got(&answers, line);
+    let said = editing::navigator_line_answered(trace_id, object, read, line);
+    emit_all(cx, said);
 }
 
 /// `object` announced as the navigator object for `reason`, its text read
