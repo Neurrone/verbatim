@@ -575,6 +575,21 @@ fn the_row_a_highlight_leaves_beside_the_count_gained_nothing() {
 }
 
 #[test]
+fn output_after_enter_that_scrolls_the_old_rows_away_is_spoken_in_order() {
+    // TM 19: Enter's answer is only new output, so a row new where the
+    // command line was is output, not a row the key changed and held.
+    let mut reading = Reading::new();
+    let old = Arc::new(window(&["$ run"], Some((1, 5)), 0));
+    reading.key(KeyKind::Enter, 0, &old);
+    let ran = window(&["one", "two", "three"], None, 50);
+    assert_eq!(
+        reading.answer(&old, &ran),
+        changed(&["one", "two", "three"])
+    );
+    assert_eq!(reading.due(), None);
+}
+
+#[test]
 fn an_inserted_line_keeps_its_leading_spaces() {
     // Only a row's padding, after its last character, is not its text
     // (TM 3): a list's unmarked entries are said as written.
@@ -583,5 +598,28 @@ fn an_inserted_line_keeps_its_leading_spaces() {
     assert_eq!(
         Reading::new().answer(&old, &new),
         output(&["> apple", "  banana", "$"])
+    );
+}
+
+#[test]
+fn rows_held_until_the_same_time_are_spoken_in_their_order() {
+    // A row held from an earlier read and a word held at a later one,
+    // both due at once: the timer speaks them top to bottom, not the
+    // newest hold first.
+    let mut reading = Reading::new();
+    let zero = window(&["Working 0s", "> "], Some((1, 2)), 0);
+    let one = window(&["Working 1s", "> "], Some((1, 2)), 1000);
+    let two = window(&["Working 2s", "> "], Some((1, 2)), 2000);
+    let three = window(&["Working 2s", "> Hello wor"], Some((1, 11)), 2500);
+    assert_eq!(reading.answer(&zero, &one), output(&["1s"]));
+    assert_eq!(reading.answer(&one, &two), quiet());
+    assert_eq!(reading.answer(&two, &three), output(&["Hello"]));
+    assert_eq!(reading.due(), Some(3_500_000));
+    assert_eq!(
+        reading.timer(3_500_000),
+        Answer {
+            output: vec!["Working 2s".to_owned(), "wor".to_owned()],
+            ..Answer::default()
+        }
     );
 }

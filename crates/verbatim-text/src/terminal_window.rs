@@ -621,13 +621,14 @@ impl Reading {
     }
 
     /// What comes due at `now_us`: each held item whose quiet period has
-    /// passed, spoken once.
+    /// passed, spoken once, top to bottom.
     pub fn timer(&mut self, now_us: u64) -> Answer {
         let mut answer = Answer::default();
-        let (due, kept): (Vec<Held>, Vec<Held>) = std::mem::take(&mut self.held)
+        let (mut due, kept): (Vec<Held>, Vec<Held>) = std::mem::take(&mut self.held)
             .into_iter()
             .partition(|held| held.due_us <= now_us);
         self.held = kept;
+        due.sort_by_key(|held| held.line);
         for held in due {
             match held.hold {
                 Hold::Word { said } => {
@@ -677,9 +678,11 @@ impl Reading {
                 ..Answer::default()
             };
         }
+        // After Enter, the answer is only new output (TM 19): the rows a
+        // read changes in its window are the program's.
         let keyed = match &self.keys {
             Some(window) if now <= window.last_us.saturating_add(KEY_WINDOW_US) => {
-                Some(window.clone())
+                Some(window.clone()).filter(|window| !window.keys.contains(&KeyKind::Enter))
             }
             Some(_) | None => {
                 self.keys = None;

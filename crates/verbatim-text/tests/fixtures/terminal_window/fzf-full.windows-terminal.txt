@@ -7,4 +7,4 @@
 8: key Line "▌ avocado"
 9: key Line "▌ date"
 10 (new): dropped
-timer 8156 (new): key Line "grapefruit"; key Line "▌ blackberry"; key Line "▌ raspberry"; key Line "▌ pineapple"; key Line "▌ nectarine"; key Line "jackfruit"; key Line "▌ kumquat"; key Line "▌ papaya"; key Line "damson"; key Line "peach"; key Line "guava"; key Line "24/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────"; key Line "mangosteen"; key Line "cranberry"; key Line "orange"; key Line "banana"; key Line "mango"
+timer 8156 (new): key Line "mangosteen"; key Line "grapefruit"; key Line "▌ blackberry"; key Line "▌ raspberry"; key Line "▌ pineapple"; key Line "▌ nectarine"; key Line "jackfruit"; key Line "cranberry"; key Line "▌ kumquat"; key Line "▌ papaya"; key Line "orange"; key Line "damson"; key Line "banana"; key Line "peach"; key Line "mango"; key Line "guava"; key Line "24/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────"

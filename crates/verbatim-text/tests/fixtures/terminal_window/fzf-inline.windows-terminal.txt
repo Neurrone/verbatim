@@ -7,4 +7,4 @@
 8: key Line "▌ avocado                                                                                                             │"
 9: key Line "▌ date                                                                                                                │"
 10 (new): dropped
-timer 8489 (new): key Line "peach"; key Line "guava"; key Line "grape"; key Line "pear"; key Line "24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────"; key Line "mango"
+timer 8489 (new): key Line "peach"; key Line "mango"; key Line "guava"; key Line "grape"; key Line "pear"; key Line "24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
