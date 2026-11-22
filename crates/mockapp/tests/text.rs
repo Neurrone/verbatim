@@ -25,6 +25,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use batch::{At, by, named};
 use common::core_driver::CoreDriver;
 use common::outpost::OutpostUnderTest;
 use verbatim_model::batch::{Chunks, Done, Located, Op, StepOutcome, StepRefusal, TextOffset};
@@ -38,15 +39,13 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{Anchors, CallStep, NodeText, TextSource, by_calls, held, ops};
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
-use verbatim_uia_rops::batch::{
-    Answer, Ends, Found, Input, Point, Ran, Segment, UnitsRead, run_batch, run_calls,
-};
+use verbatim_uia_rops::batch::{Answer, Found, HeldAt, Ran, run_batch, run_calls};
 use verbatim_uia_rops::{
-    Attributes, CaretAnswer, CaretQuery, Movement, Position, RangeEnd, RunAttributes,
-    TextAttribute, TextFrom, TextTarget, caret_read_classic, caret_read_remote,
+    Attributes, CaretAnswer, CaretQuery, FoundPoint, RangeEnd, RunAttributes, TextAttribute,
+    caret_read_classic, caret_read_remote,
 };
 use windows::Win32::Foundation::{HWND, WPARAM};
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, TextUnit_Line, TextUnit_Word};
+use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 use windows::core::w;
 
@@ -759,19 +758,13 @@ fn units_summary(answer: &Answer) -> UnitsSummary {
     )
 }
 
-/// `input` run as a batch's one step by both executors, a program and its
+/// `shape`, a batch's one step, run by both executors, a program and its
 /// calls (the request list's design, section 5): the two answers, each
 /// described, agree; the program's answer.
-fn both<'a>(input: &dyn Fn() -> Input<'a>) -> Answer {
+fn both<'a>(shape: &dyn Fn() -> batch::Shape<'a>) -> Answer {
     let uia = Uia::new().expect("a UIA client");
-    let segment = || Segment {
-        uia: &uia,
-        steps: vec![batch::step(0, input())],
-        remote: true,
-        window: None,
-    };
-    let remote = run_batch(&segment());
-    let classic = run_calls(&segment());
+    let remote = run_batch(&shape().segment(&uia));
+    let classic = run_calls(&shape().segment(&uia));
     assert_eq!(
         batch::describe(None, &remote),
         batch::describe(None, &classic),
@@ -783,28 +776,16 @@ fn both<'a>(input: &dyn Fn() -> Input<'a>) -> Answer {
 /// `count` units of `unit` from `from`, after `movement`, read by both
 /// executors, which agree, with the language when `culture`.
 fn units_both(
-    target: TextTarget<'_>,
-    from: TextFrom<'_>,
-    (movement, unit, count): (
-        Option<Movement>,
-        windows::Win32::UI::Accessibility::TextUnit,
-        u32,
-    ),
+    text: &batch::Text,
+    from: &At,
+    read: (Option<TextMovement>, TextUnit, u8),
     culture: bool,
 ) -> UnitsSummary {
-    let answer = both(&|| Input::ReadText {
-        text: target,
-        at: Point::From(from),
-        read: UnitsRead {
-            movement,
-            unit,
-            count,
-            max_text: 1024,
-            max_total: 1024,
-            culture,
-            formats: Attributes::NONE,
-            learning: Attributes::NONE,
-        },
+    let answer = both(&|| {
+        let mut shape = batch::one_read(text, from, read);
+        shape.culture = culture;
+        shape.max_total = 1024;
+        shape
     });
     units_summary(&answer)
 }
@@ -824,29 +805,30 @@ fn remote_and_classic_text_reads_agree() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let target = TextTarget {
-        element: &element,
-        pattern: &pattern,
+    let text = batch::Text {
+        element: element.clone(),
+        pattern: pattern.clone(),
     };
-    let units =
-        |from, movement, count| units_both(target, from, (movement, TextUnit_Line, count), true);
+    let units = |from: &At, movement, count| {
+        units_both(&text, from, (movement, TextUnit::Line, count), true)
+    };
     let en = || Some("en-US".to_owned());
     common::apply(&mut app, hwnd, "caret doc 7");
     assert_eq!(
-        units(TextFrom::Caret, None, 1),
+        units(&named(TextPoint::Caret), None, 1),
         (0, vec![("alpha beta\n".to_owned(), 7, en())], false)
     );
     assert_eq!(
-        units(TextFrom::Caret, Some(Movement::By(TextUnit_Line, 1)), 1),
+        units(&named(TextPoint::Caret), by(TextUnit::Line, 1), 1),
         (1, vec![("gamma\n".to_owned(), 0, en())], false)
     );
     assert_eq!(
-        units(TextFrom::Start, Some(Movement::Document(1)), 1),
+        units(&named(TextPoint::Start), by(TextUnit::Document, 1), 1),
         (1, vec![(String::new(), 0, en())], false),
         "the end of the text, on its empty last line"
     );
     assert_eq!(
-        units(TextFrom::Start, None, 16),
+        units(&named(TextPoint::Start), None, 16),
         (
             0,
             vec![
@@ -858,7 +840,7 @@ fn remote_and_classic_text_reads_agree() {
         )
     );
     assert_eq!(
-        units(TextFrom::Start, None, 2),
+        units(&named(TextPoint::Start), None, 2),
         (
             0,
             vec![
@@ -872,43 +854,41 @@ fn remote_and_classic_text_reads_agree() {
     // A position Core found inside a line: the start's range, and the
     // text before the position.
     let document = verbatim_uia::text::TextPatternExt::document_range(&pattern).expect("the text");
-    let start = Position {
-        range: &document,
+    let start = FoundPoint {
+        range: document.clone(),
         endpoint: Endpoint::Start,
         collapsed: false,
     };
     let prefix: Vec<u16> = "alpha ".encode_utf16().collect();
-    let after = TextFrom::After {
-        from: start,
-        prefix: &prefix,
-        counts: &[6],
-    };
+    let after = At::Held(HeldAt {
+        at: start,
+        prefix: prefix.clone(),
+        counts: vec![6],
+    });
     assert_eq!(
-        units(after, None, 1),
+        units(&after, None, 1),
         (0, vec![("alpha beta\n".to_owned(), 6, en())], false)
     );
 
     // The text between two points, given in either order, and selected.
-    let ends = |start, end| Ends {
-        start: Point::From(start),
-        end: Point::From(end),
-        through: None,
-    };
-    let range = |start, end| {
-        let answer = both(&|| Input::ReadRange {
-            text: target,
-            ends: ends(start, end),
-            max_text: 1024,
+    let range = |start: &At, end: &At| {
+        let answer = both(&|| {
+            let mut shape = batch::Shape::of(Some(&text));
+            let (start, end) = (shape.point(start), shape.point(end));
+            shape.step(batch::read_range(start, end, None));
+            shape
         });
         let Some(Ran::Done(Found::ReadRange(text))) = answer.steps.first() else {
             panic!("a range read, not {answer:?}");
         };
         String::from_utf16_lossy(text)
     };
-    assert_eq!(range(after, TextFrom::Start), "alpha ");
-    let selected = both(&|| Input::Select {
-        text: target,
-        ends: ends(TextFrom::Start, after),
+    assert_eq!(range(&after, &named(TextPoint::Start)), "alpha ");
+    let selected = both(&|| {
+        let mut shape = batch::Shape::of(Some(&text));
+        let (start, end) = (shape.point(&named(TextPoint::Start)), shape.point(&after));
+        shape.step(batch::select(start, end, None));
+        shape
     });
     assert!(matches!(
         selected.steps.first(),
@@ -935,7 +915,10 @@ fn remote_and_classic_text_reads_agree() {
         prefix
     );
     assert_eq!(
-        range(TextFrom::SelectionStart, TextFrom::SelectionEnd),
+        range(
+            &named(TextPoint::SelectionStart),
+            &named(TextPoint::SelectionEnd)
+        ),
         "alpha "
     );
 
@@ -946,12 +929,8 @@ fn remote_and_classic_text_reads_agree() {
     let uia = Uia::new().expect("a UIA client");
     for run in [run_batch, run_calls] {
         common::apply(&mut app, hwnd, "caret doc 0");
-        let answer = run(&Segment {
-            uia: &uia,
-            steps: batch::review_select(&text, ends(TextFrom::Start, after)),
-            remote: true,
-            window: None,
-        });
+        let shape = batch::review_select(&text, (&named(TextPoint::Start), &after), None);
+        let answer = run(&shape.segment(&uia));
         let Some(Ran::Done(Found::CompareSelection(compared))) = answer.steps.get(3) else {
             panic!("the selections compared, not {answer:?}");
         };
@@ -964,10 +943,15 @@ fn remote_and_classic_text_reads_agree() {
     }
 
     // A point's place: mockapp draws each character 8 pixels wide.
-    for (at, expected) in [(TextFrom::Start, (100.0, 200.0)), (after, (148.0, 200.0))] {
-        let answer = both(&|| Input::Locate {
-            text: target,
-            at: Point::From(at),
+    for (at, expected) in [
+        (named(TextPoint::Start), (100.0, 200.0)),
+        (after.clone(), (148.0, 200.0)),
+    ] {
+        let answer = both(&|| {
+            let mut shape = batch::Shape::of(Some(&text));
+            let at = shape.point(&at);
+            shape.step(batch::locate(at));
+            shape
         });
         let Some(Ran::Done(Found::Locate(location))) = answer.steps.first() else {
             panic!("a location, not {answer:?}");
@@ -988,15 +972,15 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let target = TextTarget {
-        element: &element,
-        pattern: &pattern,
+    let text = batch::Text {
+        element: element.clone(),
+        pattern: pattern.clone(),
     };
     let units = |movement, count| {
         units_both(
-            target,
-            TextFrom::Start,
-            (movement, TextUnit_Line, count),
+            &text,
+            &named(TextPoint::Start),
+            (movement, TextUnit::Line, count),
             true,
         )
     };
@@ -1015,13 +999,13 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
         )
     );
     assert_eq!(
-        units(Some(Movement::By(TextUnit_Line, 1)), 1),
+        units(by(TextUnit::Line, 1), 1),
         (1, vec![("bonjour\n".to_owned(), 0, tag("fr-FR"))], false)
     );
     // The French stretch now holds two whole lines.
     common::apply(&mut app, hwnd, r"set-text doc hello\nab\ncd\nef\n");
     assert_eq!(
-        units(Some(Movement::By(TextUnit_Line, 1)), 2),
+        units(by(TextUnit::Line, 1), 2),
         (
             1,
             vec![
@@ -1584,31 +1568,31 @@ fn a_backward_move_is_counted_backward_both_ways() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let target = TextTarget {
-        element: &element,
-        pattern: &pattern,
+    let text = batch::Text {
+        element: element.clone(),
+        pattern: pattern.clone(),
     };
     let units = |unit, count| {
         units_both(
-            target,
-            TextFrom::Caret,
-            (Some(Movement::By(unit, count)), unit, 1),
+            &text,
+            &named(TextPoint::Caret),
+            (by(unit, count), unit, 1),
             false,
         )
     };
     common::apply(&mut app, hwnd, "caret doc 6");
     assert_eq!(
-        units(TextUnit_Word, -1),
+        units(TextUnit::Word, -1),
         (-1, vec![("alpha ".to_owned(), 0, None)], false),
         "from \"beta\" back to \"alpha\""
     );
     common::apply(&mut app, hwnd, "caret doc 13");
     assert_eq!(
-        units(TextUnit_Line, -1),
+        units(TextUnit::Line, -1),
         (-1, vec![("alpha beta\n".to_owned(), 0, None)], false)
     );
     assert_eq!(
-        units(TextUnit_Line, 1),
+        units(TextUnit::Line, 1),
         (1, vec![(String::new(), 0, None)], false),
         "forward moves are as they were"
     );
@@ -1626,12 +1610,17 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
     let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    let target = TextTarget {
-        element: &element,
-        pattern: &pattern,
+    let text = batch::Text {
+        element: element.clone(),
+        pattern: pattern.clone(),
     };
     common::apply(&mut app, hwnd, "caret doc 0");
-    let remote = units_both(target, TextFrom::Caret, (None, TextUnit_Line, 6), false);
+    let remote = units_both(
+        &text,
+        &named(TextPoint::Caret),
+        (None, TextUnit::Line, 6),
+        false,
+    );
     assert_eq!(
         remote,
         (

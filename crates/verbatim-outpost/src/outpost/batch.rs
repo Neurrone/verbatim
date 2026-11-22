@@ -737,7 +737,7 @@ impl Run<'_, '_> {
         relation: Relation,
         set: &[PropertyId],
     ) -> Stepped {
-        use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment};
+        use verbatim_uia_rops::batch::{Found, Ran};
         let context = self.context;
         if context.store.runtime_id_of(node).is_none() {
             return Ok(StepOutcome::Done(Done::Related(Vec::new())));
@@ -754,25 +754,19 @@ impl Run<'_, '_> {
         };
         let fill = verbatim_uia::Fill::new(&nodes);
         let window = asked::known_nearest_of(context, node);
-        let segment = Segment {
-            uia,
-            steps: vec![Fused {
-                place: verbatim_model::batch::Place(0),
-                when: None,
-                input: Input::Related {
-                    subject: Object::Held {
-                        element: element.live().element(),
-                        window: read::kept_own_window(context, node).unwrap_or(0),
-                    },
-                    relation,
-                    fill: &fill,
-                },
-                calls_only: false,
-            }],
-            remote: context.tries_remote(window),
-            window,
+        let from = read::OneElement {
+            element: element.live().element(),
+            window: read::kept_own_window(context, node).unwrap_or(0),
+            calls_only: false,
+            fill: &fill,
+            judge: None,
         };
-        let answer = verbatim_uia_rops::batch::run_batch(&segment);
+        let op = Op::Related {
+            subject: Subject::Node(node),
+            relation,
+            set: Vec::new(),
+        };
+        let answer = from.run(context, uia, op, window);
         if answer.read_classically
             && let Some(window) = window
         {
@@ -917,9 +911,7 @@ impl Run<'_, '_> {
         walk: &Walk,
         walked: &mut Walked,
     ) -> Result<Result<bool, Box<StepOutcome>>, Outcome> {
-        use verbatim_uia_rops::batch::{
-            Descend, Found, Fused, Input, Judged, Object, Ran, Segment,
-        };
+        use verbatim_uia_rops::batch::{Found, Judged, Ran};
         let context = self.context;
         let Some(element) = context
             .store
@@ -944,33 +936,22 @@ impl Run<'_, '_> {
         let window = asked::known_nearest_of(context, start);
         let left =
             |cap: u32, used: usize| cap.saturating_sub(u32::try_from(used).unwrap_or(u32::MAX));
-        let segment = Segment {
-            uia,
-            steps: vec![Fused {
-                place: verbatim_model::batch::Place(0),
-                when: None,
-                input: Input::Descendants {
-                    subject: Object::Held {
-                        element: element.live().element(),
-                        window: read::kept_own_window(context, start).unwrap_or(0),
-                    },
-                    walk: Descend {
-                        depth: walk.depth,
-                        view: walk.view,
-                        include_subject: walk.include_subject,
-                        prunes: walk.prune.is_some(),
-                        limit: left(walk.limit, walked.found.len()),
-                        nodes: left(walk.nodes, walked.visited),
-                        fill: &fill,
-                        judge: &judge,
-                    },
-                },
-                calls_only: false,
-            }],
-            remote: context.tries_remote(window),
-            window,
+        let from = read::OneElement {
+            element: element.live().element(),
+            window: read::kept_own_window(context, start).unwrap_or(0),
+            calls_only: false,
+            fill: &fill,
+            judge: Some(&judge),
         };
-        let answer = verbatim_uia_rops::batch::run_batch(&segment);
+        let op = Op::Descendants {
+            subject: Subject::Node(start),
+            walk: Box::new(Walk {
+                limit: left(walk.limit, walked.found.len()),
+                nodes: left(walk.nodes, walked.visited),
+                ..walk.clone()
+            }),
+        };
+        let answer = from.run(context, uia, op, window);
         if answer.read_classically
             && let Some(window) = window
         {

@@ -1,17 +1,15 @@
 //! A run of a batch's fusable text steps on one UI Automation node, through
 //! the program builder (the verbatim-outpost crate guide, "Text and
-//! dialog text"): the steps' points resolved against the node's anchors
-//! and the batch's earlier results, run as one segment by
-//! [`verbatim_uia_rops::batch::run_batch`], and each step's result made the
+//! dialog text"): the model's steps run as one segment by
+//! [`verbatim_uia_rops::batch::run_batch`], what they name that the
+//! outpost holds resolved against the node's anchors and the batch's
+//! earlier results ([`TextResolver`]), and each step's result made the
 //! model's, its points held as anchors and its chunks minted with their
 //! formatting.
 //!
-//! A point a step names in an earlier segment is resolved here to the
-//! position it holds, so the segment names only its own steps; a step
-//! whose condition or reference is on an earlier segment is decided here
-//! before the segment runs. A `Caret`'s read is held as the next selection
-//! baseline, with the selection's text a later `CompareSelection` of the
-//! same run read for it.
+//! A `Caret`'s read is held as the next selection baseline, with the
+//! selection's text a later `CompareSelection` of the same run read for
+//! it.
 
 #![forbid(unsafe_code)]
 
@@ -29,15 +27,14 @@ use verbatim_model::{
 use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
 use verbatim_uia_rops::batch::{
-    Compared, Ends, Found, Fused, Input, Point as Spot, Prior, Ran, Segment, UnitsFound, UnitsRead,
-    Unrun, WaitCheck,
+    Compared, Found, HeldAt, Ran, Resolve, Segment, UnitsFound, UnitsRead, Unrun, WaitCheck,
 };
-use verbatim_uia_rops::{Movement, Position, TextFrom};
+use verbatim_uia_rops::{FoundPoint, Movement, Position, TextTarget};
 
 use super::uia::{UiaPos, UiaText, character_counts, round, unit_text};
 use super::{
-    MAX_CHUNK_UNITS, MAX_RANGE_UNITS, NodeText, PointFrom, TextError, TextResult, change,
-    change_of, chunk_from, keep_whole_characters, to_utf8,
+    MAX_RANGE_UNITS, NodeText, PointFrom, TextError, TextResult, change, change_of, chunk_from,
+    keep_whole_characters, to_utf8,
 };
 
 /// The most UTF-16 code units of a selection's text a program reads
@@ -142,113 +139,177 @@ fn earlier_anchor(outcome: &StepOutcome, which: PointOf) -> Option<TextAnchor> {
     }
 }
 
-/// A position held for a program to start from, with the source's
-/// position it is, so a read from it can remember where it read.
-struct HeldAt {
-    pos: UiaPos,
-    range: IUIAutomationTextRange,
-    endpoint: Endpoint,
-    collapsed: bool,
+/// The position a point outside the run names: a position Core names, or
+/// a point of an earlier segment's result as the anchor it holds.
+fn outside_position(point: &Point, earlier: &[StepOutcome]) -> Option<TextPosition> {
+    match *point {
+        Point::At(TextPoint::At(position)) => Some(position),
+        Point::Of(place, which) => earlier
+            .get(place.index())
+            .and_then(|outcome| earlier_anchor(outcome, which))
+            .map(TextPosition::at),
+        Point::At(_) => None,
+    }
 }
 
-impl HeldAt {
-    fn new(pos: UiaPos) -> TextResult<Self> {
-        let (range, endpoint) = pos.range_end()?;
-        let collapsed = pos.collapsed();
-        Ok(Self {
-            pos,
-            range,
-            endpoint,
-            collapsed,
+/// A position held, as the program builder takes it.
+fn found_point(pos: &UiaPos) -> Result<FoundPoint, Ran> {
+    let (range, endpoint) = pos.range_end().map_err(|_| Ran::Failed)?;
+    Ok(FoundPoint {
+        range,
+        endpoint,
+        collapsed: pos.collapsed(),
+    })
+}
+
+/// A defect in a batch the parse let through, logged: its step fails.
+fn defect(what: &'static str) -> Ran {
+    tracing::error!(target: verbatim_model::DEFECT_TARGET, defect = what, "a batch's text step the outpost cannot run");
+    Ran::Failed
+}
+
+/// A caret wait's starting point, for its poll's check: the caret and the
+/// selection's ends, as ranges and their ends.
+struct Starting {
+    points: [(IUIAutomationTextRange, Endpoint, bool); 3],
+    word: bool,
+    last: bool,
+}
+
+/// A held range's end as a position a check compares with.
+fn position(
+    (range, endpoint, collapsed): &(IUIAutomationTextRange, Endpoint, bool),
+) -> Position<'_> {
+    Position {
+        range,
+        endpoint: *endpoint,
+        collapsed: *collapsed,
+    }
+}
+
+/// What a run of text steps names that the outpost holds: node `node`'s
+/// text and anchors, the outcomes of the batch's steps before the run,
+/// and for a caret wait's poll its starting point.
+struct TextResolver<'r, 'n> {
+    node: NodeId,
+    source: &'r UiaText,
+    anchors: &'r NodeText<'n, UiaPos>,
+    earlier: &'r [StepOutcome],
+    starting: Option<Starting>,
+}
+
+impl Resolve for TextResolver<'_, '_> {
+    fn text(&self, subject: &Subject) -> Result<TextTarget<'_>, Ran> {
+        match subject {
+            Subject::Node(node) if *node == self.node => Ok(self.source.target()),
+            _ => Err(defect("a text step of another subject in a node's run")),
+        }
+    }
+
+    fn point(&self, point: &Point) -> Result<HeldAt, Ran> {
+        let position = outside_position(point, self.earlier)
+            .ok_or_else(|| defect("a point names a step that holds none"))?;
+        let (pos, prefix) = match self.anchors.point_from(position) {
+            None => {
+                return Err(Ran::Unrun(Unrun::NotThere(Missing::Anchor(
+                    position.anchor,
+                ))));
+            }
+            Some(PointFrom::At(pos)) => (pos, Vec::new()),
+            Some(PointFrom::After(pos, prefix)) => (pos, prefix),
+        };
+        Ok(HeldAt {
+            at: found_point(&pos)?,
+            counts: if prefix.is_empty() {
+                Vec::new()
+            } else {
+                character_counts(&prefix)
+            },
+            prefix,
         })
     }
 
-    fn position(&self) -> Position<'_> {
-        Position {
-            range: &self.range,
-            endpoint: self.endpoint,
-            collapsed: self.collapsed,
-        }
+    /// The baseline held under the anchor, as a comparison takes it: its
+    /// selection's range to its end, or its caret when nothing was
+    /// selected. A held selection's two ends are the two ends of one
+    /// range, as every read that holds one reads it.
+    fn baseline(&self, before: &Before) -> Result<FoundPoint, Ran> {
+        let anchor = baseline_anchor(before, self.earlier)
+            .ok_or_else(|| defect("a comparison names no caret read"))?;
+        let Some(read) = self.anchors.held_read(anchor) else {
+            return Err(Ran::Unrun(Unrun::NotThere(Missing::Anchor(anchor))));
+        };
+        let kept = read.kept_selection();
+        Ok(FoundPoint {
+            collapsed: kept.collapsed,
+            ..found_point(&kept.ends.1)?
+        })
     }
-}
 
-/// A point resolved for the segment.
-enum Planned {
-    /// A point the program finds: the caret, an end of the selection or
-    /// of the text.
-    Named(TextFrom<'static>),
-    /// A position held.
-    At(HeldAt),
-    /// Some text after a position held.
-    After(HeldAt, Vec<u16>, Vec<i32>),
-    /// A point of a step of the run.
-    Here(Place, PointOf),
-}
-
-impl Planned {
-    fn spot(&self) -> Spot<'_> {
-        match self {
-            Self::Named(from) => Spot::From(*from),
-            Self::At(held) => Spot::From(TextFrom::At(held.position())),
-            Self::After(held, prefix, counts) => Spot::From(TextFrom::After {
-                from: held.position(),
-                prefix,
-                counts,
-            }),
-            Self::Here(place, which) => Spot::Of(*place, *which),
-        }
-    }
-}
-
-/// A range's points resolved for the segment.
-struct PlannedEnds {
-    start: Planned,
-    end: Planned,
-    through: Option<(Planned, Planned)>,
-}
-
-impl PlannedEnds {
-    fn ends(&self) -> Ends<'_> {
-        Ends {
-            start: self.start.spot(),
-            end: self.end.spot(),
-            through: self
-                .through
-                .as_ref()
-                .map(|(start, end)| (start.spot(), end.spot())),
-        }
-    }
-}
-
-/// A step resolved for the segment, owning what its input borrows.
-enum Plan {
-    /// Decided without a call.
-    Answered(Unrun),
-    /// Failed without a call: a defect of the batch's.
-    Failed,
-    Caret,
-    ReadText {
-        at: Planned,
-        read: UnitsRead,
-        kind: TextUnit,
+    /// A read's units as the program reads them; the refusal when the
+    /// text has no such unit.
+    fn units(
+        &self,
+        (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
         details: TextDetails,
-    },
-    ReadRange(PlannedEnds),
-    Compare {
-        before: PlannedPrior,
-        after: Place,
-    },
-    Select(PlannedEnds),
-    Locate(Planned),
+    ) -> Result<UnitsRead, Ran> {
+        let no_such_unit = Ran::Unrun(Unrun::Refused(StepRefusal::NoSuchUnit));
+        // UI Automation has no sentence unit, and a document is not read as
+        // a unit.
+        if matches!(unit, TextUnit::Document | TextUnit::Sentence) {
+            return Err(no_such_unit);
+        }
+        let Some(by) = self.source.provider_unit(unit) else {
+            return Err(no_such_unit);
+        };
+        let movement = match movement {
+            None => None,
+            Some(TextMovement {
+                unit: TextUnit::Document,
+                count,
+            }) => Some(Movement::Document(count)),
+            Some(TextMovement { unit, count }) => match self.source.provider_unit(unit) {
+                Some(unit) => Some(Movement::By(unit, count)),
+                None => return Err(no_such_unit),
+            },
+        };
+        let (formats, learning) = self.source.format_reads(details);
+        Ok(UnitsRead {
+            movement,
+            unit: by,
+            count: u32::from(count.max(1)),
+            max_total: u32::try_from(MAX_READ_AHEAD_TEXT).unwrap_or(u32::MAX),
+            culture: true,
+            formats,
+            learning,
+        })
+    }
+
+    fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {
+        let starting = self
+            .starting
+            .as_ref()
+            .ok_or_else(|| defect("a caret wait outside a poll"))?;
+        Ok(WaitCheck {
+            text: self.source.target(),
+            start: position(&starting.points[0]),
+            start_selection: (position(&starting.points[1]), position(&starting.points[2])),
+            word: starting.word,
+            last: starting.last,
+        })
+    }
 }
 
-/// What a comparison compares with, resolved for the segment.
-enum PlannedPrior {
-    /// A held baseline: its selection's range, the end that is its end,
-    /// whether nothing was selected, and its text as it was read.
-    Baseline(HeldAt, Option<Vec<u16>>),
-    /// The selection a `Caret` of the run read.
-    SelectionOf(Place),
+/// The anchor of the baseline a comparison starts from outside the run:
+/// one Core names, or the read an earlier segment's `Caret` held.
+fn baseline_anchor(before: &Before, earlier: &[StepOutcome]) -> Option<TextAnchor> {
+    match *before {
+        Before::Baseline(anchor) => Some(anchor),
+        Before::SelectionOf(place) => match earlier.get(place.index()) {
+            Some(StepOutcome::Done(Done::Caret(caret))) => Some(caret.held),
+            _ => None,
+        },
+    }
 }
 
 /// Runs `steps`, the run of fusable text steps starting at place `first`,
@@ -262,45 +323,40 @@ pub fn run(
     (steps, first, earlier): (&[Step], usize, &[StepOutcome]),
     (window, read_at_us): (Option<isize>, u64),
 ) -> FusedAnswer {
-    let mut whens = Vec::with_capacity(steps.len());
-    let plans: Vec<Plan> = steps
-        .iter()
-        .map(|step| {
-            let (plan, when) = plan(source, anchors, step, first, earlier);
-            whens.push(when);
-            plan
-        })
-        .collect();
-    let target = source.target();
-    let fused: Vec<Fused<'_>> = plans
-        .iter()
-        .zip(&whens)
-        .enumerate()
-        .map(|(index, (plan, when))| fused_step(plan, target, (first + index, *when)))
-        .collect();
-    let segment = Segment {
-        uia,
-        steps: fused,
-        remote: source.tries_remote(),
-        window,
-    };
     let began_us = verbatim_process::clock::now_us();
-    let answer = verbatim_uia_rops::batch::run_batch(&segment);
-    drop(segment);
+    let answer = {
+        let resolver = TextResolver {
+            node,
+            source,
+            anchors,
+            earlier,
+            starting: None,
+        };
+        verbatim_uia_rops::batch::run_batch(&Segment {
+            uia,
+            steps,
+            first,
+            earlier,
+            resolver: &resolver,
+            remote: source.tries_remote(),
+            window,
+        })
+    };
     let mut made = Made {
         node,
         source,
         anchors,
         first,
+        earlier,
         read_at_us,
         carets: Vec::new(),
     };
-    let texts = selection_texts(&plans, &answer.steps, first);
-    let outcomes = plans
-        .into_iter()
+    let texts = selection_texts(steps, &answer.steps, first);
+    let outcomes = steps
+        .iter()
         .zip(answer.steps)
         .enumerate()
-        .map(|(index, (plan, ran))| made.outcome(index, plan, ran, (&texts, began_us)))
+        .map(|(index, (step, ran))| made.outcome(index, step, ran, (&texts, began_us)))
         .collect();
     FusedAnswer {
         outcomes,
@@ -322,16 +378,16 @@ pub struct PollAnswer {
 /// One poll of a caret wait (the request list's design, section 5,
 /// `WaitForCaret`): one program, the check of the caret against the
 /// starting point held under `wait`'s anchor followed by the fused run of
-/// the batch's `later` steps, which read only when the caret or the
+/// `later`, the batch's steps after the wait, which read only when the caret or the
 /// selection moved or at the bound (`last`), so the poll that ends the
-/// wait takes no program of its own for them. The check is judged by
-/// `wait`'s effect test ([`super::check::effect_of`]); a check whose caret
-/// moved while it read runs again, as the check by parts does. The later
-/// steps' results are taken only when the wait ends, each under its own
-/// condition on how it ended; with the effect shown only by the text,
-/// their reads did not run, and the caller runs them. Later steps that are
-/// not all fusable text steps of `node` without an act, under no
-/// condition but on the wait's effect, are left to the caller whole.
+/// wait takes no program of its own for them. The check is judged by `wait`'s effect test
+/// ([`super::check::effect_of`]); a check whose caret moved while it read
+/// runs again, as the check by parts does. The later steps' results are
+/// taken only when the wait ends, each under its own condition on how it
+/// ended; with the effect shown only by the text, their reads did not
+/// run, and the caller runs them. Later steps that are not all fusable
+/// text steps of `node` without an act, under no condition but on the
+/// wait's effect, are left to the caller whole.
 ///
 /// # Errors
 ///
@@ -350,52 +406,56 @@ pub fn poll(
         || (start.caret.clone(), start.caret.clone()),
         |selection| (selection.start.clone(), selection.end.clone()),
     );
-    let starting = [
-        HeldAt::new(start.caret.clone())?,
-        HeldAt::new(was_start)?,
-        HeldAt::new(was_end)?,
-    ];
+    let point = |pos: &UiaPos| -> TextResult<(IUIAutomationTextRange, Endpoint, bool)> {
+        let (range, endpoint) = pos.range_end()?;
+        Ok((range, endpoint, pos.collapsed()))
+    };
+    let starting = Starting {
+        points: [point(&start.caret)?, point(&was_start)?, point(&was_end)?],
+        word,
+        last,
+    };
     let fused_later = later.iter().all(|step| fusable_in_poll(step, node));
     let gate = Condition {
         on: Place(0),
         check: Check::Found,
         negated: false,
     };
-    let plans: Vec<Plan> = if fused_later {
-        later
-            .iter()
-            .map(|step| plan(source, anchors, step, 0, &[]).0)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let target = source.target();
-    let mut steps = vec![Fused {
-        place: Place(0),
+    let mut polled = vec![Step {
+        op: Op::WaitForCaret {
+            subject: Subject::Node(node),
+            wait: Box::new(wait.clone()),
+        },
         when: None,
-        input: Input::WaitCheck(WaitCheck {
-            text: target,
-            start: starting[0].position(),
-            start_selection: (starting[1].position(), starting[2].position()),
-            word,
-            last,
-            max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
-        }),
-        calls_only: false,
     }];
-    steps.extend(
-        plans
-            .iter()
-            .enumerate()
-            .map(|(index, plan)| fused_step(plan, target, (1 + index, Some(gate)))),
-    );
-    let segment = Segment {
-        uia,
-        steps,
-        remote: source.tries_remote(),
-        window,
+    if fused_later {
+        polled.extend(later.iter().map(|step| Step {
+            op: step.op.clone(),
+            when: Some(gate),
+        }));
+    }
+    let (ended, read_classically) = {
+        let resolver = TextResolver {
+            node,
+            source,
+            anchors,
+            earlier: &[],
+            starting: Some(starting),
+        };
+        run_poll(
+            &Segment {
+                uia,
+                steps: &polled,
+                first: 0,
+                earlier: &[],
+                resolver: &resolver,
+                remote: source.tries_remote(),
+                window,
+            },
+            wait,
+            last,
+        )?
     };
-    let (ended, read_classically) = run_poll(&segment, wait, last)?;
     let Some(PollRan {
         waited,
         checked,
@@ -408,7 +468,6 @@ pub fn poll(
             read_classically,
         });
     };
-    drop(segment);
     if !fused_later || !checked.reads_after {
         return Ok(PollAnswer {
             ended: Some((waited, None)),
@@ -420,10 +479,11 @@ pub fn poll(
         source,
         anchors,
         first: 1,
+        earlier: &[],
         read_at_us,
         carets: Vec::new(),
     };
-    let outcomes = made.later(waited, (later, plans), (ran, began_us));
+    let outcomes = made.later(waited, later, (ran, began_us));
     Ok(PollAnswer {
         ended: Some((waited, Some(outcomes))),
         read_classically,
@@ -524,64 +584,18 @@ fn fusable_in_poll(step: &Step, node: NodeId) -> bool {
     on_node && fusable && condition
 }
 
-/// The segment's step `plan` makes at batch place `place`, under `when`.
-fn fused_step<'p>(
-    plan: &'p Plan,
-    target: verbatim_uia_rops::TextTarget<'p>,
-    (place, when): (usize, Option<Condition>),
-) -> Fused<'p> {
-    Fused {
-        place: Place(u8::try_from(place).unwrap_or(u8::MAX)),
-        when,
-        input: match plan {
-            Plan::Answered(unrun) => Input::Answered(*unrun),
-            // Its failure replaces whatever the segment answers.
-            Plan::Failed => Input::Answered(Unrun::Skipped),
-            Plan::Caret => Input::Caret { text: target },
-            Plan::ReadText { at, read, .. } => Input::ReadText {
-                text: target,
-                at: at.spot(),
-                read: *read,
-            },
-            Plan::ReadRange(ends) => Input::ReadRange {
-                text: target,
-                ends: ends.ends(),
-                max_text: i32::try_from(MAX_RANGE_UNITS + 1).unwrap_or(i32::MAX),
-            },
-            Plan::Compare { before, after } => Input::CompareSelection {
-                text: target,
-                before: match before {
-                    PlannedPrior::Baseline(held, _) => Prior::Baseline(held.position()),
-                    PlannedPrior::SelectionOf(place) => Prior::SelectionOf(*place),
-                },
-                after: *after,
-                max_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
-            },
-            Plan::Select(ends) => Input::Select {
-                text: target,
-                ends: ends.ends(),
-            },
-            Plan::Locate(at) => Input::Locate {
-                text: target,
-                at: at.spot(),
-            },
-        },
-        calls_only: false,
-    }
-}
-
 /// The selection text a later `CompareSelection` read for each `Caret` of
 /// the run, by the caret's index in the run.
-fn selection_texts(plans: &[Plan], ran: &[Ran], first: usize) -> Vec<Option<Vec<u16>>> {
-    let mut texts = vec![None; plans.len()];
-    for (plan, ran) in plans.iter().zip(ran) {
+fn selection_texts(steps: &[Step], ran: &[Ran], first: usize) -> Vec<Option<Vec<u16>>> {
+    let mut texts = vec![None; steps.len()];
+    for (step, ran) in steps.iter().zip(ran) {
         if let (
-            Plan::Compare { after, .. },
+            Op::CompareSelection { after, .. },
             Ran::Done(Found::CompareSelection(Compared {
                 selection_text: Some(text),
                 ..
             })),
-        ) = (plan, ran)
+        ) = (&step.op, ran)
             && let Some(slot) = after
                 .index()
                 .checked_sub(first)
@@ -593,254 +607,6 @@ fn selection_texts(plans: &[Plan], ran: &[Ran], first: usize) -> Vec<Option<Vec<
     texts
 }
 
-/// `step` resolved for the segment, and the condition it carries into it:
-/// a step whose reference or condition is on an earlier segment's step is
-/// decided here.
-fn plan(
-    source: &UiaText,
-    anchors: &NodeText<'_, UiaPos>,
-    step: &Step,
-    first: usize,
-    earlier: &[StepOutcome],
-) -> (Plan, Option<Condition>) {
-    let outside = |place: Place| place.index() < first;
-    let done = |place: Place| matches!(earlier.get(place.index()), Some(StepOutcome::Done(_)));
-    if step
-        .references()
-        .into_iter()
-        .any(|place| outside(place) && !done(place))
-    {
-        return (Plan::Answered(Unrun::Skipped), None);
-    }
-    let when = match step.when {
-        Some(condition) if outside(condition.on) => {
-            match earlier
-                .get(condition.on.index())
-                .map_or(Ok(Gate::Skip), |named| condition.gate(named))
-            {
-                Ok(Gate::Run) => None,
-                Ok(Gate::Skip) => return (Plan::Answered(Unrun::Skipped), None),
-                Err(KindMismatch) => {
-                    tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
-                    return (Plan::Failed, None);
-                }
-            }
-        }
-        when => when,
-    };
-    let planned = planned_step(source, anchors, &step.op, first, earlier);
-    (planned.unwrap_or_else(Unplanned::plan), when)
-}
-
-/// `op` resolved for the segment, or the plan that answers it unrun.
-fn planned_step(
-    source: &UiaText,
-    anchors: &NodeText<'_, UiaPos>,
-    op: &Op,
-    first: usize,
-    earlier: &[StepOutcome],
-) -> Result<Plan, Unplanned> {
-    let point = |point: &Point| resolve(anchors, *point, first, earlier);
-    let ends = |start: &Point, end: &Point, through: Option<&verbatim_model::batch::Through>| {
-        Ok::<_, Unplanned>(PlannedEnds {
-            start: point(start)?,
-            end: point(end)?,
-            through: match through {
-                Some(through) => Some((point(&through.start)?, point(&through.end)?)),
-                None => None,
-            },
-        })
-    };
-    Ok(match op {
-        Op::Caret { .. } => Plan::Caret,
-        Op::ReadText {
-            at,
-            movement,
-            unit,
-            count,
-            details,
-            ..
-        } => {
-            let (read, kind) = units_read(source, (*movement, *unit, *count), *details)?;
-            Plan::ReadText {
-                at: point(at)?,
-                read,
-                kind,
-                details: *details,
-            }
-        }
-        Op::ReadRange {
-            start,
-            end,
-            through,
-            ..
-        } => Plan::ReadRange(ends(start, end, through.as_ref())?),
-        Op::Select {
-            start,
-            end,
-            through,
-            ..
-        } => Plan::Select(ends(start, end, through.as_ref())?),
-        Op::Locate { at, .. } => Plan::Locate(point(at)?),
-        Op::CompareSelection { before, after, .. } => Plan::Compare {
-            before: match before {
-                Before::Baseline(anchor) => baseline(anchors, *anchor)?,
-                Before::SelectionOf(place) if place.index() >= first => {
-                    PlannedPrior::SelectionOf(*place)
-                }
-                // The selection of an earlier segment's `Caret` is the
-                // read it held.
-                Before::SelectionOf(place) => match earlier.get(place.index()) {
-                    Some(StepOutcome::Done(Done::Caret(caret))) => baseline(anchors, caret.held)?,
-                    _ => return Err(defect("a comparison names no caret read")),
-                },
-            },
-            after: if after.index() >= first {
-                *after
-            } else {
-                return Err(defect("a comparison's caret read is not in its run"));
-            },
-        },
-        _ => return Err(defect("a step that is not a fusable text step")),
-    })
-}
-
-/// Why a step is not planned for the segment.
-#[derive(Clone, Copy)]
-enum Unplanned {
-    /// Its outcome, decided without a call.
-    Unrun(Unrun),
-    /// It failed without a call.
-    Failed,
-}
-
-impl Unplanned {
-    fn plan(self) -> Plan {
-        match self {
-            Self::Unrun(unrun) => Plan::Answered(unrun),
-            Self::Failed => Plan::Failed,
-        }
-    }
-}
-
-/// A defect in a batch the parse let through, logged: its step fails.
-fn defect(what: &'static str) -> Unplanned {
-    tracing::error!(target: verbatim_model::DEFECT_TARGET, defect = what, "a batch's text step the outpost cannot run");
-    Unplanned::Failed
-}
-
-/// A read's units as the program reads them, and the unit its chunks are
-/// reported as; the refusal when the text has no such unit.
-fn units_read(
-    source: &UiaText,
-    (movement, unit, count): (Option<TextMovement>, TextUnit, u8),
-    details: TextDetails,
-) -> Result<(UnitsRead, TextUnit), Unplanned> {
-    let no_such_unit = Unplanned::Unrun(Unrun::Refused(StepRefusal::NoSuchUnit));
-    // UI Automation has no sentence unit, and a document is not read as a
-    // unit.
-    if matches!(unit, TextUnit::Document | TextUnit::Sentence) {
-        return Err(no_such_unit);
-    }
-    let Some(by) = source.provider_unit(unit) else {
-        return Err(no_such_unit);
-    };
-    let movement = match movement {
-        None => None,
-        Some(TextMovement {
-            unit: TextUnit::Document,
-            count,
-        }) => Some(Movement::Document(count)),
-        Some(TextMovement { unit, count }) => match source.provider_unit(unit) {
-            Some(unit) => Some(Movement::By(unit, count)),
-            None => return Err(no_such_unit),
-        },
-    };
-    let (formats, learning) = source.format_reads(details);
-    Ok((
-        UnitsRead {
-            movement,
-            unit: by,
-            count: u32::from(count.max(1)),
-            max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
-            max_total: u32::try_from(MAX_READ_AHEAD_TEXT).unwrap_or(u32::MAX),
-            culture: true,
-            formats,
-            learning,
-        },
-        unit,
-    ))
-}
-
-/// The baseline held under `anchor`, as a comparison takes it: its
-/// selection's range to its end, or its caret when nothing was selected.
-/// A held selection's two ends are the two ends of one range, as every
-/// read that holds one reads it.
-fn baseline(anchors: &NodeText<'_, UiaPos>, anchor: TextAnchor) -> Result<PlannedPrior, Unplanned> {
-    let Some(read) = anchors.held_read(anchor) else {
-        return Err(Unplanned::Unrun(Unrun::NotThere(Missing::Anchor(anchor))));
-    };
-    let kept = read.kept_selection();
-    let held = HeldAt::new(kept.ends.1).map_err(|_| Unplanned::Failed)?;
-    let held = HeldAt {
-        collapsed: kept.collapsed,
-        ..held
-    };
-    let text = if kept.collapsed {
-        None
-    } else {
-        kept.text.map(|text| text.to_vec())
-    };
-    Ok(PlannedPrior::Baseline(held, text))
-}
-
-/// `point` resolved: a point of the run named by its place, any other to
-/// what the program finds or the position held.
-fn resolve(
-    anchors: &NodeText<'_, UiaPos>,
-    point: Point,
-    first: usize,
-    earlier: &[StepOutcome],
-) -> Result<Planned, Unplanned> {
-    let text_point = match point {
-        Point::Of(place, which) if place.index() >= first => {
-            return Ok(Planned::Here(place, which));
-        }
-        Point::Of(place, which) => {
-            let Some(anchor) = earlier
-                .get(place.index())
-                .and_then(|outcome| earlier_anchor(outcome, which))
-            else {
-                return Err(defect("a point names a step that holds none"));
-            };
-            TextPoint::At(TextPosition::at(anchor))
-        }
-        Point::At(point) => point,
-    };
-    Ok(match text_point {
-        TextPoint::Caret => Planned::Named(TextFrom::Caret),
-        TextPoint::SelectionStart => Planned::Named(TextFrom::SelectionStart),
-        TextPoint::SelectionEnd => Planned::Named(TextFrom::SelectionEnd),
-        TextPoint::Start => Planned::Named(TextFrom::Start),
-        TextPoint::End => Planned::Named(TextFrom::End),
-        TextPoint::At(position) => {
-            let failed = |_| Unplanned::Failed;
-            match anchors.point_from(position) {
-                None => {
-                    return Err(Unplanned::Unrun(Unrun::NotThere(Missing::Anchor(
-                        position.anchor,
-                    ))));
-                }
-                Some(PointFrom::After(pos, prefix)) => {
-                    let counts = character_counts(&prefix);
-                    Planned::After(HeldAt::new(pos).map_err(failed)?, prefix, counts)
-                }
-                Some(PointFrom::At(pos)) => Planned::At(HeldAt::new(pos).map_err(failed)?),
-            }
-        }
-    })
-}
-
 /// A `Caret`'s caret and selection, as the source's positions.
 type CaretRead = (UiaPos, Option<(UiaPos, UiaPos)>);
 
@@ -850,6 +616,7 @@ struct Made<'m, 'n> {
     source: &'m mut UiaText,
     anchors: &'m mut NodeText<'n, UiaPos>,
     first: usize,
+    earlier: &'m [StepOutcome],
     read_at_us: u64,
     /// Each `Caret` of the run's caret and selection, by its index in the
     /// run, for the points later steps read from and the comparisons'
@@ -858,40 +625,43 @@ struct Made<'m, 'n> {
 }
 
 impl Made<'_, '_> {
-    /// The outcome of the step at `index`, planned as `plan`, that ran as
-    /// `ran`; `texts` holds the selections' texts later comparisons read,
-    /// and `began_us` when the run began.
+    /// The outcome of `step`, at `index` in the run, that ran as `ran`;
+    /// `texts` holds the selections' texts later comparisons read, and
+    /// `began_us` when the run began.
     fn outcome(
         &mut self,
         index: usize,
-        plan: Plan,
+        step: &Step,
         ran: Ran,
         (texts, began_us): (&[Option<Vec<u16>>], u64),
     ) -> StepOutcome {
         self.carets.push(None);
-        let done = match (plan, ran) {
-            (Plan::Failed, _) | (_, Ran::TimedOut | Ran::Failed) => return StepOutcome::Failed,
+        let done = match (&step.op, ran) {
+            (_, Ran::TimedOut | Ran::Failed) => return StepOutcome::Failed,
             (_, Ran::Unrun(Unrun::Refused(refusal))) => return StepOutcome::Refused(refusal),
             (_, Ran::Unrun(Unrun::NotThere(missing))) => return StepOutcome::NotThere(missing),
             (_, Ran::Unrun(Unrun::Skipped)) => return StepOutcome::Skipped,
             (_, Ran::Gone) => return StepOutcome::NotThere(Missing::Node(self.node)),
-            (Plan::Caret, Ran::Done(Found::Caret(found))) => {
+            (Op::Caret { .. }, Ran::Done(Found::Caret(found))) => {
                 self.caret(index, &found, texts.get(index).cloned().flatten())
             }
             (
-                Plan::ReadText {
-                    at, kind, details, ..
+                Op::ReadText {
+                    at, unit, details, ..
                 },
                 Ran::Done(Found::ReadText(found)),
-            ) => self.read_text(&at, kind, details, found),
-            (Plan::ReadRange(_), Ran::Done(Found::ReadRange(units))) => {
+            ) => self.read_text(at, *unit, *details, found),
+            (Op::ReadRange { .. }, Ran::Done(Found::ReadRange(units))) => {
                 Ok(Done::ReadRange(range_text(&units)))
             }
-            (Plan::Compare { before, after }, Ran::Done(Found::CompareSelection(compared))) => {
-                self.compared(&before, after, compared)
+            (
+                Op::CompareSelection { before, after, .. },
+                Ran::Done(Found::CompareSelection(compared)),
+            ) => self.compared(before, *after, compared),
+            (Op::Select { .. }, Ran::Done(Found::Select)) => {
+                Ok(Done::Select(Selected { began_us }))
             }
-            (Plan::Select(_), Ran::Done(Found::Select)) => Ok(Done::Select(Selected { began_us })),
-            (Plan::Locate(_), Ran::Done(Found::Locate(screen))) => Ok(Done::Locate(Located {
+            (Op::Locate { .. }, Ran::Done(Found::Locate(screen))) => Ok(Done::Locate(Located {
                 screen: screen.map(|(x, y)| (round(x), round(y))),
                 offset: None,
             })),
@@ -909,21 +679,21 @@ impl Made<'_, '_> {
         )
     }
 
-    /// The outcomes of a caret wait's `later` steps, planned as `plans`,
-    /// that a poll which ended the wait `waited` ran as `ran` from
-    /// `began_us`: each read under the check's gate in the program, decided
-    /// now under its own condition on how the wait ended.
+    /// The outcomes of a caret wait's `later` steps, which a poll that
+    /// ended the wait `waited` ran as `ran` from `began_us`: each read under
+    /// the check's gate in the program, decided now under its own condition
+    /// on how the wait ended.
     fn later(
         &mut self,
         waited: Waited,
-        (later, plans): (&[Step], Vec<Plan>),
+        later: &[Step],
         (ran, began_us): (Vec<Ran>, u64),
     ) -> Vec<StepOutcome> {
-        let texts = selection_texts(&plans, &ran, self.first);
+        let texts = selection_texts(later, &ran, self.first);
         let mut outcomes = vec![StepOutcome::Done(Done::WaitForCaret(waited))];
-        for (index, ((step, plan), ran)) in later.iter().zip(plans).zip(ran).enumerate() {
+        for (index, (step, ran)) in later.iter().zip(ran).enumerate() {
             let outcome = match step.gate(&outcomes) {
-                Ok(Gate::Run) => self.outcome(index, plan, ran, (&texts, began_us)),
+                Ok(Gate::Run) => self.outcome(index, step, ran, (&texts, began_us)),
                 Ok(Gate::Skip) => {
                     self.carets.push(None);
                     StepOutcome::Skipped
@@ -997,14 +767,10 @@ impl Made<'_, '_> {
 
     /// The source's position of a point a step of the run read from, when
     /// known without a call.
-    fn known(&self, at: &Planned) -> Option<UiaPos> {
+    fn known(&self, at: &Point) -> Option<UiaPos> {
         match at {
-            Planned::At(held) => Some(held.pos.clone()),
-            Planned::Here(place, which) => {
-                let (caret, selection) = self
-                    .carets
-                    .get(place.index().checked_sub(self.first)?)?
-                    .as_ref()?;
+            Point::Of(place, which) if place.index() >= self.first => {
+                let (caret, selection) = self.carets.get(place.index() - self.first)?.as_ref()?;
                 Some(match (which, selection) {
                     (PointOf::SelectionStart, Some((start, _))) => start.clone(),
                     (PointOf::SelectionEnd, Some((_, end))) => end.clone(),
@@ -1012,7 +778,13 @@ impl Made<'_, '_> {
                     _ => caret.clone(),
                 })
             }
-            Planned::Named(_) | Planned::After(..) => None,
+            point => match self
+                .anchors
+                .point_from(outside_position(point, self.earlier)?)?
+            {
+                PointFrom::At(pos) => Some(pos),
+                PointFrom::After(..) => None,
+            },
         }
     }
 
@@ -1020,7 +792,7 @@ impl Made<'_, '_> {
     /// anchor minted, the first with its formatting read for `details`.
     fn read_text(
         &mut self,
-        at: &Planned,
+        at: &Point,
         kind: TextUnit,
         details: TextDetails,
         found: UnitsFound,
@@ -1072,12 +844,7 @@ impl Made<'_, '_> {
     /// A `CompareSelection`'s result: the changes, the whole new selection
     /// (read whole by its range when the program's read was cut), and
     /// whether the text the baseline selected changed since it was read.
-    fn compared(
-        &mut self,
-        before: &PlannedPrior,
-        after: Place,
-        compared: Compared,
-    ) -> TextResult<Done> {
+    fn compared(&mut self, before: &Before, after: Place, compared: Compared) -> TextResult<Done> {
         let changes = compared
             .changes
             .iter()
@@ -1096,10 +863,19 @@ impl Made<'_, '_> {
             (None, _) => None,
         }
         .filter(|selected| !selected.text.is_empty());
-        let text_changed = match (before, compared.previous_text) {
-            (PlannedPrior::Baseline(_, Some(was)), Some(now)) => {
-                change_of(false, &now).text != change_of(false, was).text
-            }
+        // The text the baseline selected as it was read, when it was held
+        // outside the run and selected something.
+        let was = match before {
+            Before::SelectionOf(place) if place.index() >= self.first => None,
+            before => baseline_anchor(before, self.earlier)
+                .and_then(|anchor| self.anchors.held_read(anchor))
+                .and_then(|read| {
+                    let kept = read.kept_selection();
+                    (!kept.collapsed).then_some(kept.text).flatten()
+                }),
+        };
+        let text_changed = match (was, compared.previous_text) {
+            (Some(was), Some(now)) => change_of(false, &now).text != change_of(false, &was).text,
             _ => false,
         };
         Ok(Done::CompareSelection(SelectionCompared {

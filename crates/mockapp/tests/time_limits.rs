@@ -19,6 +19,8 @@
 //! Each test runs in a process of its own on a desktop of its own
 //! (`common/harness.rs`), since the timeouts belong to the process.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
@@ -250,32 +252,29 @@ fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
     // The tree dump's walk of the list by calls, as a walk the program
     // builder cannot run is read.
     let walk = || {
-        use verbatim_uia_rops::batch::{Descend, Fused, Input, Object, Segment, run_batch};
+        use verbatim_model::batch::{Op, View, Walk};
+        use verbatim_uia_rops::batch::{Segment, run_batch};
+        let mut shape = batch::Shape::of(None);
+        let subject = shape.object(list.live().element());
+        shape.fills = vec![&fill];
+        shape.judge = Some(&every);
+        shape.calls_only = true;
+        shape.step(Op::Descendants {
+            subject,
+            walk: Box::new(Walk {
+                depth: 8,
+                view: View::Raw,
+                matcher: None,
+                prune: None,
+                include_subject: false,
+                limit: 64,
+                nodes: 64,
+                set: Vec::new(),
+            }),
+        });
         let answer = run_batch(&Segment {
-            uia: &uia,
-            steps: vec![Fused {
-                place: verbatim_model::batch::Place(0),
-                when: None,
-                input: Input::Descendants {
-                    subject: Object::Held {
-                        element: list.live().element(),
-                        window: 0,
-                    },
-                    walk: Descend {
-                        depth: 8,
-                        view: verbatim_model::batch::View::Raw,
-                        include_subject: false,
-                        prunes: false,
-                        limit: 64,
-                        nodes: 64,
-                        fill: &fill,
-                        judge: &every,
-                    },
-                },
-                calls_only: true,
-            }],
             remote: false,
-            window: None,
+            ..shape.segment(&uia)
         });
         answer.steps.into_iter().next().expect("the walk's outcome")
     };

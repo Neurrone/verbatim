@@ -11,20 +11,20 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use batch::{Text, after, describe, many_node_fill, node_fill, read_text, step, units};
-use verbatim_model::batch::{Relation, View};
-use verbatim_uia::text::Endpoint;
-use verbatim_uia::{Cached, Live, Node, Shape, Uia, runtime_id};
-use verbatim_uia_rops::batch::{
-    CaretFound, Ends, Found, Fused, Input, Judged, Object, Point, Ran, Segment, run_batch,
-    run_calls,
+use batch::{
+    Text, after, by, caret, describe, held, locate, many_node_fill, named, node_fill, one_read,
+    read_range,
 };
-use verbatim_uia_rops::{Movement, Position, TextFrom, work};
+use verbatim_model::batch::{Point, Relation, View};
+use verbatim_model::{TextPoint, TextUnit};
+use verbatim_uia::text::Endpoint;
+use verbatim_uia::{Cached, Live, Node, Shape as _, Uia, runtime_id};
+use verbatim_uia_rops::batch::{CaretFound, Found, Judged, Ran, run_batch, run_calls};
+use verbatim_uia_rops::work;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, TextUnit_Character, TextUnit_Line, TextUnit_Paragraph, TextUnit_Word,
-    TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -80,16 +80,7 @@ impl Fixture {
         common::apply(&mut self.app, self.hwnd, line);
     }
 
-    fn segment<'a>(&'a self, steps: Vec<Fused<'a>>) -> Segment<'a> {
-        Segment {
-            uia: &self.uia,
-            steps,
-            remote: true,
-            window: None,
-        }
-    }
-
-    /// `steps` run as programs and by calls, each after `reset`, answering
+    /// `shape` run as programs and by calls, each after `reset`, answering
     /// the same; the run as programs makes `calls_made` calls into
     /// mockapp, one for each program.
     fn agree<'s>(
@@ -97,19 +88,19 @@ impl Fixture {
         name: &str,
         text: Option<&Text>,
         (reset, calls_made): (&str, u32),
-        steps: &dyn Fn() -> Vec<Fused<'s>>,
+        shape: &dyn Fn() -> batch::Shape<'s>,
     ) {
         if !reset.is_empty() {
             self.apply(reset);
         }
         let _ = verbatim_win32::calls::take();
-        let remote = run_batch(&self.segment(steps()));
+        let remote = run_batch(&shape().segment(&self.uia));
         let calls = verbatim_win32::calls::take().uia;
         let remote = describe(text, &remote);
         if !reset.is_empty() {
             self.apply(reset);
         }
-        let classic = describe(text, &run_calls(&self.segment(steps())));
+        let classic = describe(text, &run_calls(&shape().segment(&self.uia)));
         assert_eq!(remote, classic, "{name}: the two executors differ");
         assert_eq!(calls, calls_made, "{name}: the calls made\n{remote}");
     }
@@ -118,12 +109,9 @@ impl Fixture {
 /// A caret read at the caret `reset` sets, by calls.
 fn caret_at(fixture: &mut Fixture, text: &Text, reset: &str) -> CaretFound {
     fixture.apply(reset);
-    let read = run_calls(&fixture.segment(vec![step(
-        0,
-        Input::Caret {
-            text: text.target(),
-        },
-    )]));
+    let mut shape = batch::Shape::of(Some(text));
+    shape.step(caret());
+    let read = run_calls(&shape.segment(&fixture.uia));
     let Some(Ran::Done(Found::Caret(caret))) = read.steps.into_iter().next() else {
         panic!("a caret read")
     };
@@ -138,13 +126,13 @@ fn caret_shapes_agree() {
     let mut fixture = Fixture::start("text.json", "mockapp-batch-caret");
     let text = Text::of(fixture.find("Notes"));
     for (unit, back, delete) in [
-        (TextUnit_Character, false, false),
-        (TextUnit_Word, false, false),
-        (TextUnit_Line, false, false),
-        (TextUnit_Paragraph, false, false),
-        (TextUnit_Character, true, false),
-        (TextUnit_Word, true, false),
-        (TextUnit_Character, false, true),
+        (TextUnit::Character, false, false),
+        (TextUnit::Word, false, false),
+        (TextUnit::Line, false, false),
+        (TextUnit::Paragraph, false, false),
+        (TextUnit::Character, true, false),
+        (TextUnit::Word, true, false),
+        (TextUnit::Character, false, true),
     ] {
         for caret in ["caret doc 0", "caret doc 8", "caret doc 11", "caret doc 17"] {
             let name = format!("starting read {unit:?} back {back} delete {delete} at {caret}");
@@ -155,13 +143,9 @@ fn caret_shapes_agree() {
     }
     // A caret tell against the selection a read before it held.
     let before = caret_at(&mut fixture, &text, "caret doc 2");
-    let baseline = Position {
-        range: &before.caret,
-        endpoint: Endpoint::Start,
-        collapsed: true,
-    };
+    let baseline = held(&before.caret, Endpoint::Start, true);
     fixture.agree("caret tell", Some(&text), ("caret doc 6 10", 1), &|| {
-        batch::caret_tell(&text, baseline)
+        batch::caret_tell(&text, &baseline)
     });
     fixture.app.quit();
 }
@@ -178,75 +162,50 @@ fn review_shapes_agree() {
     let counts = [4, 3];
     let at = after(&held, &prefix, &counts);
     for (name, movement, unit) in [
-        (
-            "next line",
-            Some(Movement::By(TextUnit_Line, 1)),
-            TextUnit_Line,
-        ),
+        ("next line", by(TextUnit::Line, 1), TextUnit::Line),
         (
             "previous character",
-            Some(Movement::By(TextUnit_Character, -1)),
-            TextUnit_Character,
+            by(TextUnit::Character, -1),
+            TextUnit::Character,
         ),
-        ("to the end", Some(Movement::Document(1)), TextUnit_Line),
-        ("current word", None, TextUnit_Word),
+        ("to the end", by(TextUnit::Document, 1), TextUnit::Line),
+        ("current word", None, TextUnit::Word),
     ] {
         fixture.agree(name, Some(&text), ("", 1), &|| {
-            vec![step(0, read_text(&text, at, units(movement, unit, 1)))]
+            one_read(&text, &at, (movement, unit, 1))
         });
     }
     fixture.agree("previous word", Some(&text), ("", 1), &|| {
-        batch::previous_word(&text, at)
+        batch::previous_word(&text, &at)
     });
     fixture.agree("next word", Some(&text), ("", 1), &|| {
-        batch::next_word(&text, at)
+        batch::next_word(&text, &at)
     });
     fixture.agree("say-all's lines", Some(&text), ("", 1), &|| {
-        vec![step(
-            0,
-            read_text(
-                &text,
-                Point::From(TextFrom::Start),
-                units(None, TextUnit_Line, 20),
-            ),
-        )]
+        one_read(&text, &named(TextPoint::Start), (None, TextUnit::Line, 20))
     });
-    let selection = Ends {
-        start: Point::From(TextFrom::SelectionStart),
-        end: Point::From(TextFrom::SelectionEnd),
-        through: None,
-    };
     fixture.agree("copy", Some(&text), ("caret doc 6 13", 1), &|| {
-        vec![step(
-            0,
-            Input::ReadRange {
-                text: text.target(),
-                ends: selection,
-                max_text: batch::MAX_TEXT,
-            },
-        )]
+        let mut shape = batch::Shape::of(Some(&text));
+        shape.step(read_range(
+            Point::At(TextPoint::SelectionStart),
+            Point::At(TextPoint::SelectionEnd),
+            None,
+        ));
+        shape
     });
     fixture.agree("location", Some(&text), ("caret doc 6", 1), &|| {
-        vec![step(
-            0,
-            Input::Locate {
-                text: text.target(),
-                at: Point::From(TextFrom::Caret),
-            },
-        )]
+        let mut shape = batch::Shape::of(Some(&text));
+        shape.step(locate(Point::At(TextPoint::Caret)));
+        shape
     });
-    let review = Ends {
-        start: at,
-        end: Point::From(TextFrom::End),
-        through: None,
-    };
+    let end = named(TextPoint::End);
     // Review select and say-all's caret move each end a program at their
     // act: two programs.
     fixture.agree("review select", Some(&text), ("caret doc 0", 2), &|| {
-        batch::review_select(&text, review)
+        batch::review_select(&text, (&at, &end), None)
     });
     fixture.agree("say-all's caret", Some(&text), ("caret doc 0", 2), &|| {
-        batch::say_all_move(&text, at)
+        batch::say_all_move(&text, &at)
     });
     fixture.app.quit();
 }
@@ -268,14 +227,7 @@ fn object_shapes_agree() {
     ] {
         let from = fixture.find(from);
         fixture.agree(&format!("navigation {relation:?}"), None, ("", 1), &|| {
-            vec![step(
-                0,
-                Input::Related {
-                    subject: held(&from),
-                    relation,
-                    fill: &fill,
-                },
-            )]
+            batch::related(&from, relation, &fill)
         });
     }
     let target = runtime_id(&display).expect("a runtime id");
@@ -311,17 +263,7 @@ fn walks_agree() {
             &format!("tree dump of {fixture_name}"),
             None,
             ("", programs),
-            &|| {
-                vec![step(
-                    0,
-                    batch::descendants(
-                        held(&root),
-                        &fill,
-                        &every,
-                        (View::Raw, false, false, 4_096),
-                    ),
-                )]
-            },
+            &|| batch::walk(&root, &fill, &every, (View::Raw, false, false, 4_096)),
         );
         let shown = |node: &Cached<Node>| {
             let name = node.read().name.unwrap_or_default();
@@ -334,17 +276,7 @@ fn walks_agree() {
             &format!("tray walk of {fixture_name}"),
             None,
             ("", steps),
-            &|| {
-                vec![step(
-                    0,
-                    batch::descendants(
-                        held(&root),
-                        &fill,
-                        &shown,
-                        (View::Control, true, false, 1_024),
-                    ),
-                )]
-            },
+            &|| batch::walk(&root, &fill, &shown, (View::Control, true, false, 1_024)),
         );
         fixture.app.quit();
     }
@@ -357,22 +289,17 @@ fn a_shape_run_again_binds_its_program() {
     let text = Text::of(fixture.find("Notes"));
     fixture.apply("caret doc 3");
     let first =
-        run_batch(&fixture.segment(batch::starting_read(&text, TextUnit_Word, true, false)));
+        run_batch(&batch::starting_read(&text, TextUnit::Word, true, false).segment(&fixture.uia));
     let built = (work::programs_built(), work::support_checks());
     fixture.apply("caret doc 8");
     let second =
-        run_batch(&fixture.segment(batch::starting_read(&text, TextUnit_Word, true, false)));
+        run_batch(&batch::starting_read(&text, TextUnit::Word, true, false).segment(&fixture.uia));
     assert_eq!((work::programs_built(), work::support_checks()), built);
     assert_ne!(
         describe(Some(&text), &first),
         describe(Some(&text), &second)
     );
     fixture.app.quit();
-}
-
-/// An element the outpost holds, with no window of its own.
-fn held(element: &IUIAutomationElement) -> Object<'_> {
-    Object::Held { element, window: 0 }
 }
 
 fn main() {

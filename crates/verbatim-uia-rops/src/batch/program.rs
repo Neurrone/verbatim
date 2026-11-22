@@ -10,15 +10,17 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextRange, TextUnit_Character, UIA_ControllerForPropertyId,
 };
 
-use verbatim_model::batch::{Check, PointOf, Relation, View};
+use verbatim_model::batch::{
+    Before as Prior, Check, Op, Place, Point, PointOf, Relation, Subject, View,
+};
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Cached, Fill, Node};
 
 use super::calls::caret_point;
 use super::walk::{Reads, RunRegisters, Walk, emit_run};
 use super::{
-    CaretFound, Compared, Cut, Defect, Ends, Found, Fused, Input, Object, Point, Prior, Ran,
-    Related, State, UnitsFound, UnitsRead, Unrun, failed,
+    CaretFound, Compared, Cut, Defect, Descend, Found, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
+    MAX_UNIT_TEXT, Ran, Related, State, UnitsFound, UnitsRead, Unrun, failed, named,
 };
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
@@ -59,13 +61,17 @@ pub(super) const PROLOGUE: u32 = 60;
 
 /// What the step at `index` may execute at most, from its caps, after
 /// `prior` instructions of its program, pinned by
-/// `crates/mockapp/tests/instruction_limit.rs`.
+/// `crates/mockapp/tests/instruction_limit.rs`; nothing for a step that
+/// cannot be lowered, which the program does not emit.
 fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
-    let input = &state.segment.steps[index].input;
-    match input {
-        Input::Answered(_) => 0,
-        Input::Related { relation, fill, .. } => {
-            let (setup, each) = RemoteCache::costs(*fill);
+    let resolver = state.segment.resolver;
+    let place = state.place(index);
+    match &state.step(index).op {
+        Op::Related { relation, .. } => {
+            let Some(fill) = resolver.fill(place) else {
+                return 0;
+            };
+            let (setup, each) = RemoteCache::costs(fill);
             match relation {
                 Relation::ControllerFor => 30 + setup + CONTROLLED_PER_RUN * (8 + each),
                 // The nearest window's walk, at most the tree's depth, and a
@@ -73,25 +79,50 @@ fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
                 _ => 80 + 8 * verbatim_model::batch::MAX_DEPTH + setup + each,
             }
         }
-        Input::Descendants { walk, .. } => {
-            let starts = starts_cap(state, index);
-            super::walk::run_cost(walk, starts, room(walk, starts, prior))
+        Op::Descendants { walk, .. } => match Descend::of(walk, resolver, place) {
+            Some(walk) => {
+                let starts = starts_cap(state, index);
+                super::walk::run_cost(&walk, starts, room(&walk, starts, prior))
+            }
+            None => 0,
+        },
+        Op::Caret { .. } => 60,
+        Op::ReadText {
+            at,
+            movement,
+            unit,
+            count,
+            details,
+            ..
+        } => match resolver.units((*movement, *unit, *count), *details) {
+            Ok(read) => {
+                let formats = if read.formats.is_empty() { 0 } else { 7_700 };
+                80 + point_cost(state, at) + 24 * read.count + formats
+            }
+            Err(_) => 0,
+        },
+        Op::ReadRange {
+            start,
+            end,
+            through,
+            ..
         }
-        Input::Caret { .. } => 60,
-        Input::ReadText { read, at, .. } => {
-            let formats = if read.formats.is_empty() { 0 } else { 7_700 };
-            80 + point_cost(at) + 24 * read.count + formats
+        | Op::Select {
+            start,
+            end,
+            through,
+            ..
+        } => {
+            40 + point_cost(state, start)
+                + point_cost(state, end)
+                + through.map_or(0, |through| {
+                    point_cost(state, &through.start) + point_cost(state, &through.end)
+                })
         }
-        Input::ReadRange { ends, .. } | Input::Select { ends, .. } => {
-            40 + point_cost(&ends.start)
-                + point_cost(&ends.end)
-                + ends
-                    .through
-                    .map_or(0, |(start, end)| point_cost(&start) + point_cost(&end))
-        }
-        Input::CompareSelection { .. } => 120,
-        Input::Locate { at, .. } => 20 + point_cost(at),
-        Input::WaitCheck(_) => WAIT_CHECK,
+        Op::CompareSelection { .. } => 120,
+        Op::Locate { at, .. } => 20 + point_cost(state, at),
+        Op::WaitForCaret { .. } => WAIT_CHECK,
+        _ => 0,
     }
 }
 
@@ -100,11 +131,14 @@ fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
 /// gate's test.
 const WAIT_CHECK: u32 = 120;
 
-/// What finding a point may execute at most.
-fn point_cost(point: &Point<'_>) -> u32 {
-    match point {
-        Point::From(TextFrom::After { counts, .. }) => {
-            20 + 12 * u32::try_from(counts.len()).unwrap_or(u32::MAX / 24)
+/// What finding `point` may execute at most: a held position's text after
+/// it is found by trying each count.
+fn point_cost(state: &State<'_, '_>, point: &Point) -> u32 {
+    let held =
+        named(point).is_none() && !matches!(point, Point::Of(place, _) if !state.before(*place));
+    match held.then(|| state.segment.resolver.point(point)) {
+        Some(Ok(held)) if !held.prefix.is_empty() => {
+            20 + 12 * u32::try_from(held.counts.len()).unwrap_or(u32::MAX / 24)
         }
         _ => 40,
     }
@@ -114,73 +148,81 @@ fn point_cost(point: &Point<'_>) -> u32 {
 /// list's nodes, or a relation of the program's, at most what a program
 /// reads of one.
 fn starts_cap(state: &State<'_, '_>, index: usize) -> u32 {
-    let Input::Descendants { subject, .. } = &state.segment.steps[index].input else {
-        return 0;
-    };
-    match *subject {
-        Object::Held { .. } | Object::Item(..) => 1,
-        Object::Result(place) => match state.named(place, index) {
+    match state.step(index).op.subject() {
+        Some(Subject::Result(place)) if !state.before(*place) => match state.named(*place, index) {
             Some(Ran::Done(found)) => {
                 nodes_of(found).map_or(1, |nodes| u32::try_from(nodes.len()).unwrap_or(u32::MAX))
             }
             _ => CONTROLLED_PER_RUN,
         },
+        _ => 1,
     }
 }
 
 /// How many children a walk's first run reads after `prior` instructions
 /// of its program: as many as the rest of the limit holds, at most
 /// [`CHILDREN_PER_RUN`] and the walk's node cap.
-fn room(walk: &super::Descend<'_>, starts: u32, prior: u32) -> u32 {
+fn room(walk: &Descend<'_>, starts: u32, prior: u32) -> u32 {
     super::walk::run_room(walk, starts, LIMIT.saturating_sub(prior))
 }
 
-/// Whether the step at `index` runs by calls whatever the segment's mode.
+/// Whether the step at `index` runs by calls whatever the segment's mode:
+/// its subject is one no program takes, or it walks the control view.
 fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
-    let step = &state.segment.steps[index];
-    let proxied = |object: &Object<'_>| match *object {
-        Object::Result(place) | Object::Item(place, _) => match state.named(place, index) {
-            Some(Ran::Done(Found::Related(related))) => related
-                .nodes
-                .iter()
-                .any(|node| node.served_only_by_uia_proxies() == Some(true)),
-            _ => false,
-        },
-        Object::Held { .. } => false,
-    };
-    step.calls_only
-        || match &step.input {
-            Input::Descendants { walk, subject } => walk.view == View::Control || proxied(subject),
-            Input::Related { subject, .. } => proxied(subject),
-            _ => false,
+    let op = &state.step(index).op;
+    let calls_only = |subject: &Subject| match subject {
+        Subject::Result(place) | Subject::Item { of: place, .. } if !state.before(*place) => {
+            match state.named(*place, index) {
+                Some(Ran::Done(Found::Related(related))) => related
+                    .nodes
+                    .iter()
+                    .any(|node| node.served_only_by_uia_proxies() == Some(true)),
+                _ => false,
+            }
         }
+        subject => state
+            .segment
+            .resolver
+            .object(subject)
+            .is_ok_and(|element| element.calls_only),
+    };
+    match op {
+        Op::Descendants { walk, subject } => walk.view == View::Control || calls_only(subject),
+        Op::Related { subject, .. } => calls_only(subject),
+        _ => false,
+    }
 }
 
 /// Whether a program holding the steps from `start` cannot take the step
 /// at `index`: it names a node of an earlier list of the program by its
 /// place, which a program would have to check against the list's length.
 fn names_item_inside(state: &State<'_, '_>, start: usize, index: usize) -> bool {
-    let object = match &state.segment.steps[index].input {
-        Input::Related { subject, .. } | Input::Descendants { subject, .. } => *subject,
-        _ => return false,
-    };
-    matches!(object, Object::Item(place, _) if state.index(place, index).is_some_and(|at| at >= start))
+    match &state.step(index).op {
+        Op::Related { subject, .. } | Op::Descendants { subject, .. } => matches!(
+            subject,
+            Subject::Item { of, .. } if state.index(*of, index).is_some_and(|at| at >= start)
+        ),
+        _ => false,
+    }
 }
 
 /// What runs next from step `at`: a program of the steps from it, or one
 /// step by calls.
 pub(super) fn cut(state: &State<'_, '_>, at: usize) -> Cut {
-    let steps = &state.segment.steps;
-    if matches!(steps[at].input, Input::Answered(_)) || by_calls(state, at) {
+    if by_calls(state, at) {
         return Cut::Calls(at);
     }
+    let steps = state.segment.steps;
     let mut end = at;
     let mut cost = PROLOGUE;
     while end < steps.len() {
-        let input = &steps[end].input;
+        let op = &steps[end].op;
         let step = worst(state, end, cost);
-        let walk_fits = match input {
-            Input::Descendants { walk, .. } => room(walk, starts_cap(state, end), cost) > 0,
+        let walk_fits = match op {
+            Op::Descendants { walk, .. } => {
+                Descend::of(walk, state.segment.resolver, state.place(end))
+                    .is_none_or(|walk| room(&walk, starts_cap(state, end), cost) > 0)
+            }
             _ => true,
         };
         if end > at
@@ -193,7 +235,7 @@ pub(super) fn cut(state: &State<'_, '_>, at: usize) -> Cut {
         }
         cost += step;
         end += 1;
-        if matches!(input, Input::Select { .. } | Input::Descendants { .. }) {
+        if matches!(op, Op::Select { .. } | Op::Descendants { .. }) {
             break;
         }
     }
@@ -277,7 +319,7 @@ enum Low {
     Related(Src, isize, Relation, FillKey),
     Descendants(Src, (u32, bool, bool, u32), FillKey),
     Caret(usize),
-    ReadText(usize, Pt, [i32; 9]),
+    ReadText(usize, Pt, [i32; 8]),
     ReadRange(usize, LowEnds, i32),
     Compare(usize, Before, After, i32),
     Select(usize, LowEnds),
@@ -286,6 +328,16 @@ enum Low {
     /// and whether each is its range's end, whether the word is read,
     /// whether it is the check at the bound, and the text read's limit.
     WaitCheck(usize, [(usize, bool); 3], bool, bool, i32),
+}
+
+/// What a lowered step's emitter and its answer take beyond its shape:
+/// the fill, the walk or the unit read the resolver gave it.
+#[derive(Clone, Copy)]
+enum Given<'a> {
+    Nothing,
+    Fill(&'a Fill<Node>),
+    Walk(Descend<'a>),
+    Read(UnitsRead),
 }
 
 /// A step's condition on a step of the same program.
@@ -302,11 +354,12 @@ struct Gate {
 /// A program's shape, its cache's key.
 type Key = Vec<(Low, Gate)>;
 
-/// A program planned: its shape, its imports in order, and each step's
-/// outcome decided before it ran.
-struct Plan {
+/// A program planned: its shape, its imports in order, what each step was
+/// given, and each step's outcome decided before it ran.
+struct Plan<'a> {
     key: Key,
     imports: Vec<Import>,
+    given: Vec<Given<'a>>,
     pre: Vec<Option<Ran>>,
 }
 
@@ -321,22 +374,22 @@ struct Planner<'p, 's, 'a> {
     imports: Vec<Import>,
 }
 
-impl<'p> Planner<'p, '_, '_> {
+impl<'p, 'a> Planner<'p, '_, 'a> {
     fn import(&mut self, import: Import) -> usize {
         self.imports.push(import);
         self.imports.len() - 1
     }
 
-    /// The program's place of the segment's `place`, named by the step at
+    /// The program's place of the batch's `place`, named by the step at
     /// `by`, when it is in the program.
-    fn here(&self, place: verbatim_model::batch::Place, by: usize) -> Option<usize> {
+    fn here(&self, place: Place, by: usize) -> Option<usize> {
         self.state
             .index(place, by)
             .filter(|index| self.range.contains(index))
             .map(|index| index - self.range.start)
     }
 
-    fn done(&self, place: verbatim_model::batch::Place, by: usize) -> Result<&'p Found, Ran> {
+    fn done(&self, place: Place, by: usize) -> Result<&'p Found, Ran> {
         let state: &'p State<'_, '_> = self.state;
         match state.named(place, by) {
             Some(Ran::Done(found)) => Ok(found),
@@ -345,34 +398,29 @@ impl<'p> Planner<'p, '_, '_> {
         }
     }
 
-    fn src(&mut self, object: &Object<'_>, by: usize, many: bool) -> Result<(Src, isize), Ran> {
-        match *object {
-            Object::Held { element, window } => Ok((
-                Src::Import(self.import(Import::Element(element.clone()))),
-                window,
-            )),
-            Object::Result(place) => {
+    fn src(&mut self, subject: &Subject, by: usize, many: bool) -> Result<(Src, isize), Ran> {
+        match *subject {
+            Subject::Result(place) if !self.state.before(place) => {
                 if let Some(here) = self.here(place, by) {
                     return Ok((Src::Here(here), 0));
                 }
-                match self.done(place, by)? {
-                    found if many => {
-                        let nodes = nodes_of(found)
-                            .ok_or_else(|| Defect("a walk starts from no list").ran())?;
-                        let imports = nodes
-                            .into_iter()
-                            .map(|node| self.import(Import::Element(node.live().element().clone())))
-                            .collect();
-                        Ok((Src::Imports(imports), 0))
-                    }
-                    _ => Err(Defect("a step names no node").ran()),
-                }
-            }
-            Object::Item(place, item) => {
                 let found = self.done(place, by)?;
+                if !many {
+                    return Err(Defect("a step names a list as its one subject").ran());
+                }
+                let nodes =
+                    nodes_of(found).ok_or_else(|| Defect("a walk starts from no list").ran())?;
+                let imports = nodes
+                    .into_iter()
+                    .map(|node| self.import(Import::Element(node.live().element().clone())))
+                    .collect();
+                Ok((Src::Imports(imports), 0))
+            }
+            Subject::Item { of, index } if !self.state.before(of) => {
+                let found = self.done(of, by)?;
                 let node = nodes_of(found)
                     .ok_or_else(|| Defect("an item of no list").ran())?
-                    .get(item as usize)
+                    .get(index as usize)
                     .copied()
                     .ok_or(Ran::Unrun(Unrun::NotThere(
                         verbatim_model::batch::Missing::Object,
@@ -380,6 +428,13 @@ impl<'p> Planner<'p, '_, '_> {
                 let window = node.read().role.hwnd;
                 let element = node.live().element().clone();
                 Ok((Src::Import(self.import(Import::Element(element))), window))
+            }
+            ref subject => {
+                let held = self.state.segment.resolver.object(subject)?;
+                Ok((
+                    Src::Import(self.import(Import::Element(held.element.clone()))),
+                    held.window,
+                ))
             }
         }
     }
@@ -397,74 +452,73 @@ impl<'p> Planner<'p, '_, '_> {
         )
     }
 
-    fn found_point(&mut self, point: &FoundPoint) -> Pt {
-        let (range, end, collapsed) = self.held(
+    fn found_point(&mut self, point: &FoundPoint) -> (usize, bool, bool) {
+        self.held(
             &point.range,
             point.endpoint == Endpoint::End,
             point.collapsed,
-        );
-        Pt::At(range, end, collapsed)
+        )
     }
 
-    fn point(&mut self, point: &Point<'_>, by: usize) -> Result<Pt, Ran> {
-        Ok(match *point {
-            Point::From(TextFrom::Caret) => Pt::Caret,
-            Point::From(TextFrom::SelectionStart) => Pt::SelectionStart,
-            Point::From(TextFrom::SelectionEnd) => Pt::SelectionEnd,
-            Point::From(TextFrom::Start) => Pt::Start,
-            Point::From(TextFrom::End) => Pt::End,
-            Point::From(TextFrom::At(position)) => {
-                let (range, end, collapsed) = self.held(
-                    position.range,
-                    position.endpoint == Endpoint::End,
-                    position.collapsed,
-                );
-                Pt::At(range, end, collapsed)
+    fn point(&mut self, point: &Point, by: usize) -> Result<Pt, Ran> {
+        match named(point) {
+            Some(TextFrom::Caret) => return Ok(Pt::Caret),
+            Some(TextFrom::SelectionStart) => return Ok(Pt::SelectionStart),
+            Some(TextFrom::SelectionEnd) => return Ok(Pt::SelectionEnd),
+            Some(TextFrom::Start) => return Ok(Pt::Start),
+            Some(TextFrom::End) => return Ok(Pt::End),
+            Some(TextFrom::At(_) | TextFrom::After { .. }) | None => {}
+        }
+        if let Point::Of(place, which) = *point
+            && !self.state.before(place)
+        {
+            if let Some(here) = self.here(place, by) {
+                return Ok(Pt::Here(here, which));
             }
-            Point::From(TextFrom::After {
+            return match (self.done(place, by)?, which) {
+                (Found::Caret(caret), _) => {
+                    let (range, end, collapsed) = self.found_point(&caret_point(caret, which));
+                    Ok(Pt::At(range, end, collapsed))
+                }
+                (Found::ReadText(read), PointOf::ChunkStart) => {
+                    let range = read.units[0].range.clone();
+                    Ok(Pt::At(self.import(Import::TextRange(range)), false, false))
+                }
+                _ => Err(Defect("a point of no text read").ran()),
+            };
+        }
+        let held = self.state.segment.resolver.point(point)?;
+        let from = self.found_point(&held.at);
+        Ok(if held.prefix.is_empty() {
+            Pt::At(from.0, from.1, from.2)
+        } else {
+            Pt::After {
                 from,
-                prefix,
-                counts,
-            }) => Pt::After {
-                from: self.held(from.range, from.endpoint == Endpoint::End, from.collapsed),
-                prefix: prefix.to_vec(),
-                counts: counts.to_vec(),
-            },
-            Point::Of(place, which) => {
-                if let Some(here) = self.here(place, by) {
-                    return Ok(Pt::Here(here, which));
-                }
-                match (self.done(place, by)?, which) {
-                    (Found::Caret(caret), _) => {
-                        let point = caret_point(caret, which);
-                        self.found_point(&point)
-                    }
-                    (Found::ReadText(read), PointOf::ChunkStart) => {
-                        let range = read.units[0].range.clone();
-                        Pt::At(self.import(Import::TextRange(range)), false, false)
-                    }
-                    _ => return Err(Defect("a point of no text read").ran()),
-                }
+                prefix: held.prefix,
+                counts: held.counts,
             }
         })
     }
 
-    fn ends(&mut self, ends: &Ends<'_>, by: usize) -> Result<LowEnds, Ran> {
+    fn ends(
+        &mut self,
+        (start, end, through): (&Point, &Point, Option<&verbatim_model::batch::Through>),
+        by: usize,
+    ) -> Result<LowEnds, Ran> {
         Ok(LowEnds {
-            start: self.point(&ends.start, by)?,
-            end: self.point(&ends.end, by)?,
-            through: match &ends.through {
-                Some((start, end)) => Some((self.point(start, by)?, self.point(end, by)?)),
+            start: self.point(start, by)?,
+            end: self.point(end, by)?,
+            through: match through {
+                Some(through) => Some((
+                    self.point(&through.start, by)?,
+                    self.point(&through.end, by)?,
+                )),
                 None => None,
             },
         })
     }
 
-    fn caret_of(
-        &self,
-        place: verbatim_model::batch::Place,
-        by: usize,
-    ) -> Result<&'p CaretFound, Ran> {
+    fn caret_of(&self, place: Place, by: usize) -> Result<&'p CaretFound, Ran> {
         match self.done(place, by)? {
             Found::Caret(caret) => Ok(caret),
             _ => Err(Defect("a comparison names no caret read").ran()),
@@ -475,20 +529,12 @@ impl<'p> Planner<'p, '_, '_> {
     /// imports.
     fn compared(
         &mut self,
-        before: &Prior<'_>,
-        after: verbatim_model::batch::Place,
+        before: &Prior,
+        after: Place,
         index: usize,
     ) -> Result<(Before, After), Ran> {
         let before = match *before {
-            Prior::Baseline(position) => {
-                let (range, end, collapsed) = self.held(
-                    position.range,
-                    position.endpoint == Endpoint::End,
-                    position.collapsed,
-                );
-                Before::Held(range, end, collapsed)
-            }
-            Prior::SelectionOf(place) => {
+            Prior::SelectionOf(place) if !self.state.before(place) => {
                 if let Some(here) = self.here(place, index) {
                     Before::Here(here)
                 } else {
@@ -500,6 +546,11 @@ impl<'p> Planner<'p, '_, '_> {
                     let (range, ..) = self.held(&range, end, collapsed);
                     Before::Held(range, end, collapsed)
                 }
+            }
+            ref before => {
+                let held = self.state.segment.resolver.baseline(before)?;
+                let (range, end, collapsed) = self.found_point(&held);
+                Before::Held(range, end, collapsed)
             }
         };
         let after = if let Some(here) = self.here(after, index) {
@@ -519,7 +570,8 @@ impl<'p> Planner<'p, '_, '_> {
 
     /// A caret wait's check lowered: its element and starting points as
     /// imports.
-    fn wait_check(&mut self, check: &super::WaitCheck<'_>) -> Low {
+    fn wait_check(&mut self) -> Result<Low, Ran> {
+        let check = self.state.segment.resolver.wait_check()?;
         let element = self.import(Import::Element(check.text.element.clone()));
         let mut held = |position: &crate::text::Position<'_>| {
             let (range, end, _) = self.held(
@@ -534,24 +586,46 @@ impl<'p> Planner<'p, '_, '_> {
             held(&check.start_selection.0),
             held(&check.start_selection.1),
         ];
-        Low::WaitCheck(element, points, check.word, check.last, check.max_text)
+        Ok(Low::WaitCheck(
+            element,
+            points,
+            check.word,
+            check.last,
+            MAX_UNIT_TEXT,
+        ))
     }
 
-    /// The step at `index` lowered, with its gate inside the program; its
-    /// outcome when the program does not run it.
-    fn lower(&mut self, index: usize) -> Result<(Low, Gate), Ran> {
-        let step: &Fused<'_> = &self.state.segment.steps[index];
+    /// The text `subject` names, imported.
+    fn text(&mut self, subject: &Subject) -> Result<usize, Ran> {
+        let target = self.state.segment.resolver.text(subject)?;
+        Ok(self.import(Import::Element(target.element.clone())))
+    }
+
+    /// The gate of the step at `index` inside the program; its outcome
+    /// when a step it names outside the program decides it.
+    fn gate(&self, index: usize) -> Result<Gate, Ran> {
+        let state = self.state;
+        let step = state.step(index);
         let mut gate = Gate {
             names: [None; 4],
             found: None,
         };
         // References outside the program must be done; inside it, the
         // program tests their statuses.
-        for (slot, place) in super::references(&step.input).into_iter().enumerate() {
-            match self.here(place, index) {
+        for (slot, named) in step.references().into_iter().enumerate() {
+            if state.before(named) {
+                if !matches!(
+                    state.segment.earlier.get(named.index()),
+                    Some(verbatim_model::batch::StepOutcome::Done(_))
+                ) {
+                    return Err(Ran::Unrun(Unrun::Skipped));
+                }
+                continue;
+            }
+            match self.here(named, index) {
                 Some(here) => gate.names[slot.min(3)] = Some(here),
                 None => {
-                    self.done(place, index)?;
+                    self.done(named, index)?;
                 }
             }
         }
@@ -561,76 +635,111 @@ impl<'p> Planner<'p, '_, '_> {
                 (Some(_), Check::Matched) => {
                     return Err(Defect("a condition in a program tests a match").ran());
                 }
-                (None, _) => match self.state.holds(index) {
+                (None, _) => match state.holds(index) {
                     Ok(true) => {}
                     Ok(false) => return Err(Ran::Unrun(Unrun::Skipped)),
                     Err(defect) => return Err(defect.ran()),
                 },
             }
         }
-        let text = |planner: &mut Self, target: &crate::text::TextTarget<'_>| {
-            planner.import(Import::Element(target.element.clone()))
-        };
-        let low = match &step.input {
-            Input::Answered(unrun) => return Err(Ran::Unrun(*unrun)),
-            Input::Related {
-                subject,
-                relation,
-                fill,
+        Ok(gate)
+    }
+
+    /// The step at `index` lowered, with its gate inside the program and
+    /// what it was given; its outcome when the program does not run it.
+    fn lower(&mut self, index: usize) -> Result<(Low, Gate, Given<'a>), Ran> {
+        let state: &'p State<'_, 'a> = self.state;
+        let step = state.step(index);
+        let resolver = state.segment.resolver;
+        let place = state.place(index);
+        let gate = self.gate(index)?;
+        let no_fill = || Defect("an object step the resolver gives no fill").ran();
+        let (low, given) = match &step.op {
+            Op::Related {
+                subject, relation, ..
             } => {
+                let fill = resolver.fill(place).ok_or_else(no_fill)?;
                 let (src, window) = self.src(subject, index, false)?;
-                Low::Related(src, window, *relation, fill_key(fill))
-            }
-            Input::Descendants { subject, walk } => {
-                let (src, _) = self.src(subject, index, true)?;
-                let prior = (self.range.start..index).fold(PROLOGUE, |prior, earlier| {
-                    prior + worst(self.state, earlier, prior)
-                });
-                let room = room(walk, starts_cap(self.state, index), prior);
-                Low::Descendants(
-                    src,
-                    (walk.depth, walk.prunes, walk.include_subject, room),
-                    fill_key(walk.fill),
+                (
+                    Low::Related(src, window, *relation, fill_key(fill)),
+                    Given::Fill(fill),
                 )
             }
-            Input::Caret { text: target } => Low::Caret(text(self, target)),
-            Input::ReadText {
-                text: target,
+            Op::Descendants { subject, walk } => {
+                let walk = Descend::of(walk, resolver, place).ok_or_else(no_fill)?;
+                let (src, _) = self.src(subject, index, true)?;
+                let prior = (self.range.start..index).fold(PROLOGUE, |prior, earlier| {
+                    prior + worst(state, earlier, prior)
+                });
+                let room = room(&walk, starts_cap(state, index), prior);
+                (
+                    Low::Descendants(
+                        src,
+                        (walk.depth, walk.prunes, walk.include_subject, room),
+                        fill_key(walk.fill),
+                    ),
+                    Given::Walk(walk),
+                )
+            }
+            Op::Caret { subject, .. } => (Low::Caret(self.text(subject)?), Given::Nothing),
+            Op::ReadText {
+                subject,
                 at,
-                read,
+                movement,
+                unit,
+                count,
+                details,
             } => {
-                let element = text(self, target);
-                Low::ReadText(element, self.point(at, index)?, read_key(read))
+                let read = resolver.units((*movement, *unit, *count), *details)?;
+                let element = self.text(subject)?;
+                (
+                    Low::ReadText(element, self.point(at, index)?, read_key(&read)),
+                    Given::Read(read),
+                )
             }
-            Input::ReadRange {
-                text: target,
-                ends,
-                max_text,
+            Op::ReadRange {
+                subject,
+                start,
+                end,
+                through,
             } => {
-                let element = text(self, target);
-                Low::ReadRange(element, self.ends(ends, index)?, *max_text)
+                let element = self.text(subject)?;
+                let ends = self.ends((start, end, through.as_ref()), index)?;
+                (
+                    Low::ReadRange(element, ends, MAX_RANGE_TEXT),
+                    Given::Nothing,
+                )
             }
-            Input::Select { text: target, ends } => {
-                let element = text(self, target);
-                Low::Select(element, self.ends(ends, index)?)
+            Op::Select {
+                subject,
+                start,
+                end,
+                through,
+            } => {
+                let element = self.text(subject)?;
+                let ends = self.ends((start, end, through.as_ref()), index)?;
+                (Low::Select(element, ends), Given::Nothing)
             }
-            Input::CompareSelection {
-                text: target,
+            Op::CompareSelection {
+                subject,
                 before,
                 after,
-                max_text,
             } => {
-                let element = text(self, target);
+                let element = self.text(subject)?;
                 let (before, after) = self.compared(before, *after, index)?;
-                Low::Compare(element, before, after, *max_text)
+                (
+                    Low::Compare(element, before, after, MAX_CHANGE_TEXT),
+                    Given::Nothing,
+                )
             }
-            Input::Locate { text: target, at } => {
-                let element = text(self, target);
-                Low::Locate(element, self.point(at, index)?)
+            Op::Locate { subject, at } => {
+                let element = self.text(subject)?;
+                (Low::Locate(element, self.point(at, index)?), Given::Nothing)
             }
-            Input::WaitCheck(check) => self.wait_check(check),
+            Op::WaitForCaret { .. } => (self.wait_check()?, Given::Nothing),
+            _ => return Err(Defect("a step no program runs").ran()),
         };
-        Ok((low, gate))
+        Ok((low, gate, given))
     }
 }
 
@@ -646,7 +755,7 @@ fn nodes_of(found: &Found) -> Option<Vec<&Cached<Node>>> {
 }
 
 /// A unit read's shape.
-fn read_key(read: &UnitsRead) -> [i32; 9] {
+fn read_key(read: &UnitsRead) -> [i32; 8] {
     let (movement, by, count) = match read.movement {
         None => (0, 0, 0),
         Some(Movement::By(unit, count)) => (1, unit.0, count),
@@ -658,7 +767,6 @@ fn read_key(read: &UnitsRead) -> [i32; 9] {
         count,
         read.unit.0,
         i32::try_from(read.count).unwrap_or(i32::MAX),
-        read.max_text,
         i32::try_from(read.max_total).unwrap_or(i32::MAX),
         i32::from(read.culture),
         i32::from(attribute_bits(read.formats)) | (i32::from(attribute_bits(read.learning)) << 16),
@@ -703,6 +811,8 @@ enum Regs {
         check: Box<crate::watch::CheckRegisters>,
         /// Whether the steps gated on it read.
         reads_after: Reg<kind::Bool>,
+        /// Whether it is the check at the bound.
+        last: bool,
     },
 }
 
@@ -721,10 +831,7 @@ struct Emitted {
 /// segment's steps in `range`.
 fn build(
     b: &mut Builder,
-    state: &State<'_, '_>,
-    range: &Range<usize>,
-    key: &Key,
-    imports: &[Import],
+    (key, imports, given): (&Key, &[Import], &[Given<'_>]),
     injected: Option<Injected>,
 ) -> Vec<Option<Emitted>> {
     // Every status is "not reached" before any step runs.
@@ -757,7 +864,7 @@ fn build(
             emitted.push(None);
             continue;
         };
-        let input = &state.segment.steps[range.start + place].input;
+        let given = given[place];
         inject(b, injected, Injected::Stops(place));
         inject(b, injected, Injected::Overruns(place));
         let regs = {
@@ -776,7 +883,7 @@ fn build(
                         b.try_catch(
                             |b| {
                                 inject(b, injected, Injected::StepFails(place));
-                                let emitted = e.step(b, low, input);
+                                let emitted = e.step(b, low, given);
                                 let zero = b.int(0);
                                 match &emitted {
                                     // A relation longer than a program
@@ -935,13 +1042,13 @@ impl Emit<'_> {
     }
 
     /// Emits the step's body inside its try block.
-    fn step(&self, b: &mut Builder, low: &Low, input: &Input<'_>) -> Regs {
-        match (low, input) {
-            (Low::Related(src, window, relation, _), Input::Related { fill, .. }) => {
+    fn step(&self, b: &mut Builder, low: &Low, given: Given<'_>) -> Regs {
+        match (low, given) {
+            (Low::Related(src, window, relation, _), Given::Fill(fill)) => {
                 let node = self.node(b, src);
                 Self::related(b, node, (*window, *relation), fill)
             }
-            (Low::Descendants(src, (.., room), _), Input::Descendants { walk, .. }) => {
+            (Low::Descendants(src, (.., room), _), Given::Walk(walk)) => {
                 let queue = b.new_array();
                 match src {
                     Src::Import(index) => {
@@ -973,15 +1080,15 @@ impl Emit<'_> {
                 }
                 Regs::Descendants(emit_run(
                     b,
-                    walk,
+                    &walk,
                     (queue, None),
                     *room,
                     walk.include_subject,
                 ))
             }
             (Low::Caret(text), _) => self.caret(b, *text),
-            (Low::ReadText(text, at, _), Input::ReadText { read, .. }) => {
-                self.read_text(b, (*text, at), read)
+            (Low::ReadText(text, at, _), Given::Read(read)) => {
+                self.read_text(b, (*text, at), &read)
             }
             (Low::ReadRange(text, ends, max), _) => {
                 let range = self.range_between(b, *text, ends);
@@ -1020,7 +1127,7 @@ impl Emit<'_> {
         }
     }
 
-    /// Emits [`Input::Related`] from `node`, whose own window is `window`:
+    /// Emits a `Related` from `node`, whose own window is `window`:
     /// a step through the tree as the navigation step takes it, with the
     /// subject's nearest window and a cell's table; the controller-for
     /// relation's elements, at most [`CONTROLLED_PER_RUN`]; or the first
@@ -1102,7 +1209,7 @@ impl Emit<'_> {
         regs
     }
 
-    /// Emits [`Input::WaitCheck`]: the check of the text of the element
+    /// Emits a `WaitForCaret` poll's check: the check of the text of the element
     /// imported at `text` against the starting `points`, and its gate's
     /// value, whether the steps gated on it read: the caret or the
     /// selection moved, or `last`.
@@ -1132,10 +1239,11 @@ impl Emit<'_> {
         Regs::WaitCheck {
             check: Box::new(check),
             reads_after,
+            last,
         }
     }
 
-    /// Emits [`Input::Caret`]: the caret and the selection as the classic
+    /// Emits a `Caret`: the caret and the selection as the classic
     /// reads find them, a collapsed copy at the caret, and whether each
     /// point is at the text's start or end.
     fn caret(&self, b: &mut Builder, text: usize) -> Regs {
@@ -1285,11 +1393,11 @@ impl Emit<'_> {
         emit_between(b, c, (start, end), (past_start, past_end))
     }
 
-    /// Emits [`Input::ReadText`], as the text reads read units, and the
+    /// Emits a `ReadText`, as the text reads read units, and the
     /// first unit's formatting.
     fn read_text(&self, b: &mut Builder, (text, at): (usize, &Pt), read: &UnitsRead) -> Regs {
         let c = Constants {
-            max_text: b.int(read.max_text),
+            max_text: b.int(MAX_UNIT_TEXT),
             ..*self.c
         };
         let from = self.point(b, text, at);
@@ -1308,7 +1416,7 @@ impl Emit<'_> {
         Regs::ReadText(Box::new((units, runs, character)))
     }
 
-    /// Emits [`Input::CompareSelection`].
+    /// Emits a `CompareSelection`.
     fn compare(&self, b: &mut Builder, before: &Before, after: &After, max: i32) -> Regs {
         let c = self.c;
         let old = b.new_null().assume::<kind::TextRange>();
@@ -1426,7 +1534,7 @@ fn injected(state: &State<'_, '_>, range: &Range<usize>) -> Option<Injected> {
     use verbatim_faults::{Fault, hit};
     let places: Vec<(usize, u8)> = range
         .clone()
-        .map(|index| (index - range.start, state.segment.steps[index].place.0))
+        .map(|index| (index - range.start, state.place(index).0))
         .collect();
     for &(at, place) in &places {
         if hit(Fault::ProgramStepFails, &place) {
@@ -1484,33 +1592,38 @@ impl Ended {
     }
 }
 
-impl State<'_, '_> {
+impl<'a> State<'_, 'a> {
     /// Runs the steps of `range` as one program, then what the fallback
     /// rule reruns by calls; answers where the next step to run is.
     pub(super) fn program(&mut self, range: Range<usize>) -> usize {
         let plan = self.plan(&range);
         let program_holds_act = range
             .clone()
-            .any(|index| matches!(self.segment.steps[index].input, Input::Select { .. }));
+            .any(|index| matches!(self.step(index).op, Op::Select { .. }));
         if plan.key.iter().all(|(low, _)| *low == Low::Unemitted) {
             for (index, pre) in range.clone().zip(plan.pre) {
                 self.ran[index] = pre;
             }
             return range.end;
         }
-        let Plan { key, imports, pre } = plan;
+        let Plan {
+            key,
+            imports,
+            given,
+            pre,
+        } = plan;
         let injected = injected(self, &range);
         let (operation, emitted) = if injected.is_some() {
             // A program a test makes fail is built apart, never kept.
             let mut b = Builder::new();
-            let emitted = build(&mut b, self, &range, &key, &imports, injected);
+            let emitted = build(&mut b, (&key, &imports, &given), injected);
             (b.finish(), emitted)
         } else {
             PROGRAMS.with(|programs| {
                 programs.operation(
                     key.clone(),
                     || imports.clone(),
-                    |b| build(b, self, &range, &key, &imports, None),
+                    |b| build(b, (&key, &imports, &given), None),
                 )
             })
         };
@@ -1522,7 +1635,7 @@ impl State<'_, '_> {
             )));
         }
         match &run {
-            Ok(outcome) => self.take(range, &pre, &emitted, outcome, None),
+            Ok(outcome) => self.take(range, (&pre, &given), &emitted, outcome, None),
             // A run that stopped partway leaves the statuses it wrote.
             Err(error @ Error::Failed(failure))
                 if matches!(
@@ -1537,7 +1650,13 @@ impl State<'_, '_> {
                         "a generated program passed the instruction limit its emitters declared"
                     );
                 }
-                self.take(range, &pre, &emitted, &failure.partial, Some(error))
+                self.take(
+                    range,
+                    (&pre, &given),
+                    &emitted,
+                    &failure.partial,
+                    Some(error),
+                )
             }
             Err(error) if gone_or_timed_out(error) => {
                 for (index, pre) in range.clone().zip(pre) {
@@ -1572,7 +1691,7 @@ impl State<'_, '_> {
     fn take(
         &mut self,
         range: Range<usize>,
-        pre: &[Option<Ran>],
+        (pre, given): (&[Option<Ran>], &[Given<'_>]),
         emitted: &[Option<Emitted>],
         outcome: &Outcome,
         error: Option<&Error>,
@@ -1591,7 +1710,7 @@ impl State<'_, '_> {
                 this.segment.steps.len()
             };
             let ran = match Ended::of(status) {
-                Ended::Done => match self.found(index, emitted, outcome) {
+                Ended::Done => match self.found(index, (emitted, given[place]), outcome) {
                     Ok(ran) => ran,
                     Err(why) => return rerun(self, &why),
                 },
@@ -1629,13 +1748,17 @@ impl State<'_, '_> {
     /// A done step's result, read from the run's answer; a walk down the
     /// tree goes on in later runs. `Err` when the answer is missing what
     /// the step's registers name.
-    fn found(&self, index: usize, emitted: &Emitted, outcome: &Outcome) -> Result<Ran, Error> {
+    fn found(
+        &self,
+        index: usize,
+        (emitted, given): (&Emitted, Given<'_>),
+        outcome: &Outcome,
+    ) -> Result<Ran, Error> {
         let regs = emitted
             .regs
             .as_ref()
             .ok_or(Error::MissingResult(emitted.status.id()))?;
-        let input = &self.segment.steps[index].input;
-        Ok(Ran::Done(match (regs, input) {
+        Ok(Ran::Done(match (regs, given) {
             (
                 Regs::Related {
                     nodes,
@@ -1644,7 +1767,7 @@ impl State<'_, '_> {
                     table,
                     ..
                 },
-                Input::Related { fill, .. },
+                Given::Fill(fill),
             ) => Found::Related(Related {
                 nodes: claimed(outcome, (*nodes, *absents), fill)?,
                 window: match window {
@@ -1655,8 +1778,8 @@ impl State<'_, '_> {
                 },
                 table: table_answered(outcome, *table)?,
             }),
-            (Regs::Descendants(registers), Input::Descendants { subject, walk }) => {
-                return self.walked(index, (subject, walk), outcome, registers);
+            (Regs::Descendants(registers), Given::Walk(walk)) => {
+                return self.walked(index, &walk, outcome, registers);
             }
             (
                 Regs::Caret {
@@ -1703,9 +1826,9 @@ impl State<'_, '_> {
                         .transpose()?,
                 })
             }
-            (Regs::WaitCheck { check, .. }, Input::WaitCheck(input)) => {
+            (Regs::WaitCheck { check, last, .. }, _) => {
                 let answer = check.read(outcome)?;
-                let reads_after = input.last || answer.caret_moved || answer.selection_moved;
+                let reads_after = *last || answer.caret_moved || answer.selection_moved;
                 Found::WaitCheck(super::Checked {
                     answer,
                     reads_after,
@@ -1727,11 +1850,11 @@ impl State<'_, '_> {
     fn walked(
         &self,
         index: usize,
-        (subject, walk): (&Object<'_>, &super::Descend<'_>),
+        walk: &Descend<'_>,
         outcome: &Outcome,
         registers: &RunRegisters,
     ) -> Result<Ran, Error> {
-        let starts = self.walk_starts(index, subject, outcome, registers)?;
+        let starts = self.walk_starts(index, outcome, registers)?;
         let mut walking = Walk::new(walk, starts);
         let taken = walking.starts();
         // A first element whose children fill no run is read by calls.
@@ -1750,16 +1873,17 @@ impl State<'_, '_> {
     fn walk_starts(
         &self,
         index: usize,
-        subject: &Object<'_>,
         outcome: &Outcome,
         registers: &RunRegisters,
     ) -> Result<Vec<IUIAutomationElement>, Error> {
-        let count = match *subject {
-            Object::Held { .. } | Object::Item(..) => 1,
-            Object::Result(place) => match self.named(place, index) {
-                Some(Ran::Done(found)) => nodes_of(found).map_or(0, |nodes| nodes.len()),
-                _ => 0,
-            },
+        let count = match self.step(index).op.subject() {
+            Some(Subject::Result(place)) if !self.before(*place) => {
+                match self.named(*place, index) {
+                    Some(Ran::Done(found)) => nodes_of(found).map_or(0, |nodes| nodes.len()),
+                    _ => 0,
+                }
+            }
+            _ => 1,
         };
         let queue = outcome.get(registers.queue())?;
         queue
@@ -1773,21 +1897,24 @@ impl State<'_, '_> {
     }
 
     /// The program's plan for `range`: each step lowered, or its outcome.
-    fn plan(&self, range: &Range<usize>) -> Plan {
+    fn plan(&self, range: &Range<usize>) -> Plan<'a> {
         let mut planner = Planner {
             state: self,
             range: range.clone(),
             imports: Vec::new(),
         };
         let mut key = Vec::with_capacity(range.len());
+        let mut given = Vec::with_capacity(range.len());
         let mut pre = Vec::with_capacity(range.len());
         for index in range.clone() {
             match planner.lower(index) {
-                Ok(lowered) => {
-                    key.push(lowered);
+                Ok((low, gate, giving)) => {
+                    key.push((low, gate));
+                    given.push(giving);
                     pre.push(None);
                 }
                 Err(ran) => {
+                    given.push(Given::Nothing);
                     key.push((
                         Low::Unemitted,
                         Gate {
@@ -1802,6 +1929,7 @@ impl State<'_, '_> {
         Plan {
             key,
             imports: planner.imports,
+            given,
             pre,
         }
     }

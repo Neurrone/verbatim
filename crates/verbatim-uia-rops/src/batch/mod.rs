@@ -1,20 +1,22 @@
 //! The request list's fusable operations on UI Automation subjects (the
 //! verbatim-uia-rops crate guide, "The program builder and the
-//! ordinary-calls executor"): a run of consecutive steps of one batch, its
-//! subjects resolved by the outpost ([`Segment`]), run as remote programs
-//! one builder generates from the operations ([`run_batch`]), or call by
-//! call through the UI Automation adapter ([`run_calls`]).
+//! ordinary-calls executor"): a run of consecutive steps of one batch, as
+//! the model has them ([`Segment`]), what they name outside the run
+//! resolved by the outpost ([`Resolve`]), run as remote programs one
+//! builder generates from the operations ([`run_batch`]), or call by call
+//! through the UI Automation adapter ([`run_calls`]).
 //!
 //! The builder puts consecutive steps in one program, each in a try block
 //! with a status of its own, every status written "not reached" when the
-//! program starts. A program ends after an act ([`Input::Select`]), after a
-//! walk down the tree, whose later runs come before anything reads it, and
+//! program starts. A program ends after an act (`Select`), after a walk
+//! down the tree, whose later runs come before anything reads it, and
 //! where its emitters' declared worst cases would pass the platform's
 //! limit on one run. A step whose subject no program can take, an element
 //! served only by UI Automation's proxies inside this process or a step
-//! from a top-level window ([`Fused::calls_only`]), runs by calls, as does
-//! a walk of the control view. `Read` and `Ancestors` are not fusable: the
-//! outpost reads them through its own reads (Claude, 2026-11-22).
+//! from a top-level window ([`Element::calls_only`]), runs by calls, as
+//! does a walk of the control view. `Read` and `Ancestors` are not
+//! fusable: the outpost reads them through its own reads (Claude,
+//! 2026-11-22).
 //!
 //! After a program, the fallback rule of the design's section 5 decides
 //! what runs again by calls, in batch order, before anything after it:
@@ -27,28 +29,34 @@ mod walk;
 
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange, TextUnit};
 
-use verbatim_model::TableId;
 use verbatim_model::batch::{
-    Check, Condition, Edges, Missing, Place, PointOf, Relation, StepRefusal, View,
+    Before, Check, Edges, Gate, Missing, Op, Place, Point, Step, StepOutcome, StepRefusal, Subject,
+    View, Walk,
 };
+use verbatim_model::{TableId, TextDetails, TextMovement, TextPoint};
 use verbatim_uia::{Cached, Fill, Node, Uia};
 
 use crate::caret::{Attributes, Run, SelectionTextChange};
 use crate::error::Error;
-use crate::text::{Movement, Position, TextFrom, TextTarget, UnitText};
+use crate::text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 
 pub use calls::run_calls;
 
-/// A run of consecutive fusable steps of one batch, each subject the
-/// outpost holds already resolved to its element, text pattern or held
-/// range. A [`Place`] a step names is a step of this segment: what a step
-/// names in an earlier segment the outpost resolves, and a condition on
-/// one it decides itself ([`Input::Answered`]).
+/// A run of consecutive fusable steps of one batch, the model's own, from
+/// place `first`; what they name before it, a subject, a point, a
+/// baseline, the outpost resolves ([`Resolve`]), and a condition on it is
+/// decided from `earlier`.
 pub struct Segment<'a> {
     /// The UI Automation client.
     pub uia: &'a Uia,
     /// The steps, in batch order.
-    pub steps: Vec<Fused<'a>>,
+    pub steps: &'a [Step],
+    /// The batch place of the first of them.
+    pub first: usize,
+    /// The outcomes of the batch's steps before `first`.
+    pub earlier: &'a [StepOutcome],
+    /// What the steps name that the outpost holds.
+    pub resolver: &'a dyn Resolve,
     /// Whether programs may be run: the setting allows them and the
     /// window is not marked for classic reading.
     pub remote: bool,
@@ -56,96 +64,148 @@ pub struct Segment<'a> {
     pub window: Option<isize>,
 }
 
-/// One step of a [`Segment`].
-pub struct Fused<'a> {
-    /// Its place in the batch.
-    pub place: Place,
-    /// Its condition, on a step of this segment.
-    pub when: Option<Condition>,
-    /// The operation, with its inputs resolved.
-    pub input: Input<'a>,
-    /// Whether it runs by calls whatever the segment's mode: its subject
-    /// is served only by UI Automation's proxies inside this process
-    /// (`Cached::served_only_by_uia_proxies`), which no program can import,
-    /// or it steps from a top-level window, whose relations a program's
-    /// walk does not reach.
+/// What the outpost resolves for a segment: the objects and the text its
+/// steps' subjects name, the points and baselines named outside it, how a
+/// text read reads, and a walk's fill and judgement. Each resolution that
+/// fails answers the step's outcome; a method a segment's steps need that
+/// a resolver does not give is a defect of the outpost's, logged.
+pub trait Resolve {
+    /// The element an object step's subject names.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when it names none.
+    fn object(&self, _subject: &Subject) -> Result<Element<'_>, Ran> {
+        Err(Defect("an object step on a resolver of text").ran())
+    }
+
+    /// How each node the step at `place` reaches is filled.
+    fn fill(&self, _place: Place) -> Option<&Fill<Node>> {
+        None
+    }
+
+    /// Whether `node`, read by the walk at `place`, is answered, and
+    /// whether its subtree is left out: the outpost's matchers, evaluated
+    /// in Rust on what was read.
+    fn judge(&self, _place: Place, _node: &Cached<Node>) -> Judged {
+        let _ = Defect("a walk on a resolver with no matchers").ran();
+        Judged {
+            matched: false,
+            pruned: true,
+        }
+    }
+
+    /// The text a text step's subject names.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when it names none.
+    fn text(&self, _subject: &Subject) -> Result<TextTarget<'_>, Ran> {
+        Err(Defect("a text step on a resolver of objects").ran())
+    }
+
+    /// The position a point names ([`TextPoint::At`]), or the point of a
+    /// step before the segment ([`Point::Of`]).
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when it names a position no longer held.
+    fn point(&self, _point: &Point) -> Result<HeldAt, Ran> {
+        Err(Defect("a point on a resolver of objects").ran())
+    }
+
+    /// The selection a comparison starts from, held under a baseline or a
+    /// `Caret` before the segment: its range's start to the point's end.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the baseline is no longer held.
+    fn baseline(&self, _before: &Before) -> Result<FoundPoint, Ran> {
+        Err(Defect("a baseline on a resolver of objects").ran())
+    }
+
+    /// How a `ReadText` of `count` units of `unit`, after `movement`,
+    /// fetching `details`, reads them.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the text has no such unit.
+    fn units(
+        &self,
+        _read: (Option<TextMovement>, verbatim_model::TextUnit, u8),
+        _details: TextDetails,
+    ) -> Result<UnitsRead, Ran> {
+        Err(Defect("a text read on a resolver of objects").ran())
+    }
+
+    /// What a `WaitForCaret` poll's check compares.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the starting point is no longer held.
+    fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {
+        Err(Defect("a caret wait on a resolver that holds no wait").ran())
+    }
+}
+
+/// The element an object step's subject names.
+#[derive(Clone, Copy)]
+pub struct Element<'a> {
+    /// The element.
+    pub element: &'a IUIAutomationElement,
+    /// Its own native window, 0 for none.
+    pub window: isize,
+    /// Whether the step runs by calls whatever the segment's mode: the
+    /// element is served only by UI Automation's proxies inside this
+    /// process (`Cached::served_only_by_uia_proxies`), which no program
+    /// can import, or the step goes from a top-level window, whose
+    /// relations a program's walk does not reach.
     pub calls_only: bool,
 }
 
-/// What a step's operation reads, its inputs resolved by the outpost.
-pub enum Input<'a> {
-    /// The outpost answered it without a call.
-    Answered(Unrun),
-    /// [`verbatim_model::batch::Op::Related`].
-    Related {
-        /// The object stepped from.
-        subject: Object<'a>,
-        /// Which way.
-        relation: Relation,
-        /// How each object reached is filled.
-        fill: &'a Fill<Node>,
-    },
-    /// [`verbatim_model::batch::Op::Descendants`].
-    Descendants {
-        /// Where the walk starts: one node, or every node of an earlier
-        /// list.
-        subject: Object<'a>,
-        /// How it walks.
-        walk: Descend<'a>,
-    },
-    /// [`verbatim_model::batch::Op::Caret`].
-    Caret {
-        /// The text.
-        text: TextTarget<'a>,
-    },
-    /// [`verbatim_model::batch::Op::ReadText`].
-    ReadText {
-        /// The text.
-        text: TextTarget<'a>,
-        /// Where it starts.
-        at: Point<'a>,
-        /// What it reads.
-        read: UnitsRead,
-    },
-    /// [`verbatim_model::batch::Op::ReadRange`].
-    ReadRange {
-        /// The text.
-        text: TextTarget<'a>,
-        /// The range's two points and, when set, the points just past the
-        /// characters at them ([`Ends`]).
-        ends: Ends<'a>,
-        /// The most UTF-16 code units read.
-        max_text: i32,
-    },
-    /// [`verbatim_model::batch::Op::CompareSelection`].
-    CompareSelection {
-        /// The text.
-        text: TextTarget<'a>,
-        /// What the selection is compared with.
-        before: Prior<'a>,
-        /// The earlier `Caret` of this segment whose selection is compared.
-        after: Place,
-        /// The most UTF-16 code units of each change's text read.
-        max_text: i32,
-    },
-    /// [`verbatim_model::batch::Op::Select`], the one act.
-    Select {
-        /// The text.
-        text: TextTarget<'a>,
-        /// The range's points.
-        ends: Ends<'a>,
-    },
-    /// [`verbatim_model::batch::Op::Locate`].
-    Locate {
-        /// The text.
-        text: TextTarget<'a>,
-        /// The point.
-        at: Point<'a>,
-    },
-    /// One poll's check of a [`verbatim_model::batch::Op::WaitForCaret`],
-    /// the first step of the poll's program, the batch's later steps fused
-    /// after it under its gate ([`Found::found`]).
-    WaitCheck(WaitCheck<'a>),
+/// A position the outpost holds, as a point: the position itself, or the
+/// point `prefix` after it ([`TextFrom::After`]).
+#[derive(Clone, Debug)]
+pub struct HeldAt {
+    /// The position.
+    pub at: FoundPoint,
+    /// The text between it and the point, empty for the position itself.
+    pub prefix: Vec<u16>,
+    /// The character counts `prefix` may be to the provider.
+    pub counts: Vec<i32>,
+}
+
+impl HeldAt {
+    /// The point as the text reads find it.
+    fn from(&self) -> TextFrom<'_> {
+        let position = Position {
+            range: &self.at.range,
+            endpoint: self.at.endpoint,
+            collapsed: self.at.collapsed,
+        };
+        if self.prefix.is_empty() {
+            TextFrom::At(position)
+        } else {
+            TextFrom::After {
+                from: position,
+                prefix: &self.prefix,
+                counts: &self.counts,
+            }
+        }
+    }
+}
+
+/// The point a model's point names that the program or the calls find
+/// themselves: the caret, an end of the selection or of the text.
+fn named(point: &Point) -> Option<TextFrom<'static>> {
+    match point {
+        Point::At(TextPoint::Caret) => Some(TextFrom::Caret),
+        Point::At(TextPoint::SelectionStart) => Some(TextFrom::SelectionStart),
+        Point::At(TextPoint::SelectionEnd) => Some(TextFrom::SelectionEnd),
+        Point::At(TextPoint::Start) => Some(TextFrom::Start),
+        Point::At(TextPoint::End) => Some(TextFrom::End),
+        Point::At(TextPoint::At(_)) | Point::Of(..) => None,
+    }
 }
 
 /// What a caret wait's check compares, as [`crate::WatchQuery`] takes it.
@@ -163,11 +223,9 @@ pub struct WaitCheck<'a> {
     /// Whether this is the check at the bound, after which the steps gated
     /// on it read whatever it shows.
     pub last: bool,
-    /// The most UTF-16 code units of a line or a word read.
-    pub max_text: i32,
 }
 
-/// [`Input::WaitCheck`]'s result.
+/// A `WaitForCaret` poll's check's result.
 #[derive(Debug)]
 pub struct Checked {
     /// What the check read.
@@ -178,9 +236,9 @@ pub struct Checked {
     pub reads_after: bool,
 }
 
-/// A step's outcome the outpost decided without a call: a refusal (no
-/// text, no such unit), an anchor or node it no longer holds, or a
-/// condition on an earlier segment's step that did not hold.
+/// A step's outcome decided without a call: a refusal (no text, no such
+/// unit), an anchor or node no longer held, or a condition that did not
+/// hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unrun {
     /// Refused.
@@ -191,57 +249,8 @@ pub enum Unrun {
     Skipped,
 }
 
-/// The object an object operation names.
-#[derive(Clone, Copy)]
-pub enum Object<'a> {
-    /// An element the outpost holds.
-    Held {
-        /// The element.
-        element: &'a IUIAutomationElement,
-        /// Its own native window, 0 for none.
-        window: isize,
-    },
-    /// The node an earlier step of this segment answered, or for a walk
-    /// down the tree every node of its list.
-    Result(Place),
-    /// One node of an earlier step's list.
-    Item(Place, u32),
-}
-
-/// A point in a text step's text.
-#[derive(Clone, Copy)]
-pub enum Point<'a> {
-    /// A point the outpost resolved: the caret, an end of the selection
-    /// or of the text, or a position it holds.
-    From(TextFrom<'a>),
-    /// A point of an earlier step of this segment's result.
-    Of(Place, PointOf),
-}
-
-/// A range's two points, in either order, and, when set, the points just
-/// past the characters at them, so that the range runs through the
-/// character at its later end (`verbatim_model::TextThrough`).
-#[derive(Clone, Copy)]
-pub struct Ends<'a> {
-    /// One end.
-    pub start: Point<'a>,
-    /// The other end.
-    pub end: Point<'a>,
-    /// Just past the characters at `start` and at `end`.
-    pub through: Option<(Point<'a>, Point<'a>)>,
-}
-
-/// What a [`Input::CompareSelection`] compares the selection with.
-#[derive(Clone, Copy)]
-pub enum Prior<'a> {
-    /// A held selection baseline: its range's start to the position's
-    /// end, collapsed when nothing was selected.
-    Baseline(Position<'a>),
-    /// The selection an earlier `Caret` of this segment read.
-    SelectionOf(Place),
-}
-
-/// What a [`Input::ReadText`] reads.
+/// What a `ReadText` reads, as the resolver makes it of the step's unit,
+/// count and details.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnitsRead {
     /// How it moves first, if at all.
@@ -250,8 +259,6 @@ pub struct UnitsRead {
     pub unit: TextUnit,
     /// How many units: more than one reads ahead.
     pub count: u32,
-    /// The most UTF-16 code units of one unit's text.
-    pub max_text: i32,
     /// Units after the first are read only while the text read is shorter
     /// than this.
     pub max_total: u32,
@@ -266,29 +273,73 @@ pub struct UnitsRead {
     pub learning: Attributes,
 }
 
-/// How a [`Input::Descendants`] walks.
+/// The most UTF-16 code units of one unit's text, or of a caret wait's
+/// line or word, read: one past a chunk's limit, so a longer one is known
+/// cut.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "a constant far below `i32::MAX`"
+)]
+const MAX_UNIT_TEXT: i32 = verbatim_model::MAX_CHUNK_BYTES as i32 + 1;
+
+/// The most UTF-16 code units of a range read: one past what fits in a
+/// copy's limit, so a longer one is known cut.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "a constant far below `i32::MAX`"
+)]
+const MAX_RANGE_TEXT: i32 = (verbatim_model::MAX_RANGE_BYTES / 2) as i32 + 1;
+
+/// The most UTF-16 code units of each change of a selection compared.
+const MAX_CHANGE_TEXT: i32 = MAX_RANGE_TEXT - 1;
+
+/// How a `Descendants` walks: the model's walk, with the fill and the
+/// judgement the resolver gives its step.
 #[derive(Clone, Copy)]
-pub struct Descend<'a> {
+pub(crate) struct Descend<'a> {
     /// How deep below its starts it goes.
-    pub depth: u32,
+    pub(crate) depth: u32,
     /// The view it walks: a program walks the raw view only, so a walk of
     /// the control view runs by calls.
-    pub view: View,
+    pub(crate) view: View,
     /// Whether each start is judged and answered too.
-    pub include_subject: bool,
+    pub(crate) include_subject: bool,
     /// Whether the walk leaves subtrees out, so that a program's run reads
     /// only its starts' children, each judged before its own are read.
-    pub prunes: bool,
+    pub(crate) prunes: bool,
     /// The most nodes answered: the walk stops once nothing it has still
     /// to read could come before the last of them.
-    pub limit: u32,
+    pub(crate) limit: u32,
     /// The most nodes visited.
-    pub nodes: u32,
+    pub(crate) nodes: u32,
     /// How each node's cache is filled.
-    pub fill: &'a Fill<Node>,
-    /// Whether a node, read, is answered, and whether its subtree is left
-    /// out: the outpost's matchers, evaluated in Rust on what was read.
-    pub judge: &'a dyn Fn(&Cached<Node>) -> Judged,
+    pub(crate) fill: &'a Fill<Node>,
+    /// The resolver whose matchers judge each node, and the walk's place.
+    judge: (&'a dyn Resolve, Place),
+}
+
+impl<'a> Descend<'a> {
+    /// `walk`, the step at `place`, with what `resolver` gives it; `None`
+    /// when it gives no fill.
+    fn of(walk: &Walk, resolver: &'a dyn Resolve, place: Place) -> Option<Self> {
+        Some(Self {
+            depth: walk.depth,
+            view: walk.view,
+            include_subject: walk.include_subject,
+            prunes: walk.prune.is_some(),
+            limit: walk.limit,
+            nodes: walk.nodes,
+            fill: resolver.fill(place)?,
+            judge: (resolver, place),
+        })
+    }
+
+    /// `node`'s judgement.
+    pub(crate) fn judged(&self, node: &Cached<Node>) -> Judged {
+        self.judge.0.judge(self.judge.1, node)
+    }
 }
 
 /// A node's judgement in a walk down the tree.
@@ -319,24 +370,24 @@ pub enum Ran {
 /// A step's result.
 #[derive(Debug)]
 pub enum Found {
-    /// [`Input::Related`]'s.
+    /// `Related`'s.
     Related(Related),
-    /// [`Input::Descendants`]'.
+    /// `Descendants`'.
     Descendants(Descendants),
-    /// [`Input::Caret`]'s.
+    /// `Caret`'s.
     Caret(CaretFound),
-    /// [`Input::ReadText`]'s.
+    /// `ReadText`'s.
     ReadText(UnitsFound),
-    /// [`Input::ReadRange`]'s: the text.
+    /// `ReadRange`'s: the text.
     ReadRange(Vec<u16>),
-    /// [`Input::CompareSelection`]'s.
+    /// `CompareSelection`'s.
     CompareSelection(Compared),
-    /// [`Input::Select`]'s: the selection is made.
+    /// `Select`'s: the selection is made.
     Select,
-    /// [`Input::Locate`]'s: the left and top of the character at the
+    /// `Locate`'s: the left and top of the character at the
     /// point, in screen pixels, when the provider tells.
     Locate(Option<(f64, f64)>),
-    /// [`Input::WaitCheck`]'s.
+    /// A `WaitForCaret` poll's check's.
     WaitCheck(Checked),
 }
 
@@ -358,7 +409,7 @@ impl Found {
     }
 }
 
-/// [`Input::Related`]'s result.
+/// `Related`'s result.
 #[derive(Debug)]
 pub struct Related {
     /// The objects reached, none at an edge.
@@ -372,7 +423,7 @@ pub struct Related {
     pub table: Option<TableId>,
 }
 
-/// [`Input::Descendants`]' result.
+/// `Descendants`' result.
 #[derive(Debug)]
 pub struct Descendants {
     /// The nodes answered, in tree order, at most the walk's limit.
@@ -394,7 +445,7 @@ pub struct Descendant {
     pub root: u32,
 }
 
-/// [`Input::Caret`]'s result.
+/// `Caret`'s result.
 #[derive(Debug)]
 pub struct CaretFound {
     /// A collapsed range at the caret: the start of the selection's first
@@ -407,7 +458,7 @@ pub struct CaretFound {
     pub selection: Option<(IUIAutomationTextRange, Edges, Edges)>,
 }
 
-/// [`Input::ReadText`]'s result.
+/// `ReadText`'s result.
 #[derive(Debug)]
 pub struct UnitsFound {
     /// How far the movement went: less than asked at the text's ends.
@@ -424,7 +475,7 @@ pub struct UnitsFound {
     pub unsupported: Option<Attributes>,
 }
 
-/// [`Input::CompareSelection`]'s result.
+/// `CompareSelection`'s result.
 #[derive(Debug)]
 pub struct Compared {
     /// What became selected and unselected, by the text protocol's rule.
@@ -508,12 +559,26 @@ impl<'s, 'a> State<'s, 'a> {
         }
     }
 
+    /// The step at `index`.
+    fn step(&self, index: usize) -> &'a Step {
+        &self.segment.steps[index]
+    }
+
+    /// The batch place of the step at `index`.
+    fn place(&self, index: usize) -> Place {
+        Place(u8::try_from(self.segment.first + index).unwrap_or(u8::MAX))
+    }
+
+    /// Whether `place` is a step before the segment's.
+    fn before(&self, place: Place) -> bool {
+        place.index() < self.segment.first
+    }
+
     /// The segment index of `place`, a step of the segment before `before`.
     fn index(&self, place: Place, before: usize) -> Option<usize> {
-        let first = self.segment.steps.first()?.place.index();
         place
             .index()
-            .checked_sub(first)
+            .checked_sub(self.segment.first)
             .filter(|&index| index < before)
     }
 
@@ -527,8 +592,16 @@ impl<'s, 'a> State<'s, 'a> {
     /// and its condition holds (the design's condition table). `Err` when
     /// it names a step it cannot, a defect of the segment's.
     fn gate(&self, index: usize) -> Result<bool, Defect> {
-        let step = &self.segment.steps[index];
-        for place in references(&step.input) {
+        for place in self.step(index).references() {
+            if self.before(place) {
+                if !matches!(
+                    self.segment.earlier.get(place.index()),
+                    Some(StepOutcome::Done(_))
+                ) {
+                    return Ok(false);
+                }
+                continue;
+            }
             match self.named(place, index) {
                 Some(Ran::Done(_)) => {}
                 Some(_) => return Ok(false),
@@ -541,9 +614,20 @@ impl<'s, 'a> State<'s, 'a> {
     /// Whether the condition of the step at `index` holds, its named step's
     /// outcome known.
     fn holds(&self, index: usize) -> Result<bool, Defect> {
-        let Some(condition) = self.segment.steps[index].when else {
+        let Some(condition) = self.step(index).when else {
             return Ok(true);
         };
+        if self.before(condition.on) {
+            return match self
+                .segment
+                .earlier
+                .get(condition.on.index())
+                .map_or(Ok(Gate::Skip), |named| condition.gate(named))
+            {
+                Ok(gate) => Ok(gate == Gate::Run),
+                Err(_) => Err(Defect("a condition names a result it cannot test")),
+            };
+        }
         let holds = match self.named(condition.on, index) {
             None => {
                 return Err(Defect(
@@ -564,13 +648,10 @@ impl<'s, 'a> State<'s, 'a> {
 
     /// Runs the step at `index` by calls.
     fn call(&mut self, index: usize) {
-        let ran = match &self.segment.steps[index].input {
-            Input::Answered(unrun) => Ran::Unrun(*unrun),
-            input => match self.gate(index) {
-                Ok(true) => calls::run(self, index, input),
-                Ok(false) => Ran::Unrun(Unrun::Skipped),
-                Err(defect) => defect.ran(),
-            },
+        let ran = match self.gate(index) {
+            Ok(true) => calls::run(self, index),
+            Ok(false) => Ran::Unrun(Unrun::Skipped),
+            Err(defect) => defect.ran(),
         };
         self.ran[index] = Some(ran);
     }
@@ -586,13 +667,7 @@ impl<'s, 'a> State<'s, 'a> {
     /// each logged as a fallback.
     fn rerun(&mut self, range: std::ops::Range<usize>, error: &Error) {
         for index in range {
-            if !matches!(self.segment.steps[index].input, Input::Answered(_)) {
-                remote_fell_back(
-                    kind_name(&self.segment.steps[index].input),
-                    self.segment.window,
-                    error,
-                );
-            }
+            remote_fell_back(kind_name(&self.step(index).op), self.segment.window, error);
             self.call(index);
         }
     }
@@ -621,54 +696,19 @@ impl Defect {
     }
 }
 
-/// Every earlier step `input` refers to, whose result it needs done.
-fn references(input: &Input<'_>) -> Vec<Place> {
-    let object = |object: &Object<'_>| match *object {
-        Object::Result(place) | Object::Item(place, _) => Some(place),
-        Object::Held { .. } => None,
-    };
-    let point = |point: &Point<'_>| match *point {
-        Point::Of(place, _) => Some(place),
-        Point::From(_) => None,
-    };
-    let ends = |ends: &Ends<'_>| {
-        let mut places = vec![point(&ends.start), point(&ends.end)];
-        if let Some((start, end)) = &ends.through {
-            places.extend([point(start), point(end)]);
-        }
-        places
-    };
-    let places = match input {
-        Input::Answered(_) | Input::Caret { .. } | Input::WaitCheck(_) => Vec::new(),
-        Input::Related { subject, .. } | Input::Descendants { subject, .. } => {
-            vec![object(subject)]
-        }
-        Input::ReadText { at, .. } | Input::Locate { at, .. } => vec![point(at)],
-        Input::ReadRange { ends: range, .. } | Input::Select { ends: range, .. } => ends(range),
-        Input::CompareSelection { before, after, .. } => vec![
-            match before {
-                Prior::SelectionOf(place) => Some(*place),
-                Prior::Baseline(_) => None,
-            },
-            Some(*after),
-        ],
-    };
-    places.into_iter().flatten().collect()
-}
-
 /// The operation's name, for the fallback's log.
-fn kind_name(input: &Input<'_>) -> &'static str {
-    match input {
-        Input::Answered(_) => "answered",
-        Input::Related { .. } => "related",
-        Input::Descendants { .. } => "descendants",
-        Input::Caret { .. } => "caret",
-        Input::ReadText { .. } => "read text",
-        Input::ReadRange { .. } => "read range",
-        Input::CompareSelection { .. } => "compare selection",
-        Input::Select { .. } => "select",
-        Input::Locate { .. } => "locate",
-        Input::WaitCheck(_) => "wait check",
+fn kind_name(op: &Op) -> &'static str {
+    match op {
+        Op::Related { .. } => "related",
+        Op::Descendants { .. } => "descendants",
+        Op::Caret { .. } => "caret",
+        Op::ReadText { .. } => "read text",
+        Op::ReadRange { .. } => "read range",
+        Op::CompareSelection { .. } => "compare selection",
+        Op::Select { .. } => "select",
+        Op::Locate { .. } => "locate",
+        Op::WaitForCaret { .. } => "wait check",
+        _ => "not fusable",
     }
 }
 

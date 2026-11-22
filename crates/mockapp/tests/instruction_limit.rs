@@ -24,15 +24,14 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, Error, FocusAncestry, FocusQuery,
-    Movement, PathQuery, Position, RangeEnd, SnapshotQuery, StatesQuery, Status, TextAttribute,
-    TextFrom, caret_read_remote, counting, element_by_path_remote, focus_ancestry_remote,
-    focus_states_remote, terminal_snapshot_remote,
+    PathQuery, RangeEnd, SnapshotQuery, StatesQuery, Status, TextAttribute, caret_read_remote,
+    counting, element_by_path_remote, focus_ancestry_remote, focus_states_remote,
+    terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, IUIAutomationTextPattern, TextUnit_Line, TextUnit_Word,
-    TreeScope_Descendants, UIA_NamePropertyId,
+    IUIAutomationElement, IUIAutomationTextPattern, TreeScope_Descendants, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -456,7 +455,8 @@ fn densely_mixed_formatting_executes_exactly() {
 /// batch, from the caret, in one language: each one `ReadText` of twenty
 /// lines, one generated program.
 fn say_all_batches_execute_exactly() {
-    use verbatim_uia_rops::batch::{Point, Segment, run_batch};
+    use verbatim_model::{TextPoint, TextUnit};
+    use verbatim_uia_rops::batch::run_batch;
     common::init_com();
     let mut fixture = Fixture::start("languages.json", "mockapp-instructions-say-all");
     let text = batch::Text::of(fixture.find("Notes"));
@@ -468,21 +468,10 @@ fn say_all_batches_execute_exactly() {
     );
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let document = text.pattern.document_range().expect("the document range");
-    let held = Point::From(TextFrom::At(Position {
-        range: &document,
-        endpoint: Endpoint::Start,
-        collapsed: false,
-    }));
-    let lines = |at, movement| {
-        let answer = run_batch(&Segment {
-            uia: &fixture.uia,
-            steps: vec![batch::step(
-                0,
-                batch::read_text(&text, at, batch::units(movement, TextUnit_Line, 20)),
-            )],
-            remote: true,
-            window: None,
-        });
+    let held = batch::held(&document, Endpoint::Start, false);
+    let lines = |at: &batch::At, movement| {
+        let shape = batch::one_read(&text, at, (movement, TextUnit::Line, 20));
+        let answer = run_batch(&shape.segment(&fixture.uia));
         match answer.steps.into_iter().next() {
             Some(verbatim_uia_rops::batch::Ran::Done(
                 verbatim_uia_rops::batch::Found::ReadText(read),
@@ -491,7 +480,7 @@ fn say_all_batches_execute_exactly() {
         }
     };
     let languages = counted(|| {
-        let units = lines(held, Some(Movement::By(TextUnit_Line, 1)));
+        let units = lines(&held, batch::by(TextUnit::Line, 1));
         assert_eq!(units.len(), 20);
         assert_eq!(units[1].language.as_deref(), Some("de-DE"));
     });
@@ -501,7 +490,7 @@ fn say_all_batches_execute_exactly() {
         &format!("set-text doc {more}"),
     );
     let first = counted(|| {
-        assert_eq!(lines(Point::From(TextFrom::Caret), None).len(), 20);
+        assert_eq!(lines(&batch::named(TextPoint::Caret), None).len(), 20);
     });
     fixture.app.quit();
     assert_eq!(
@@ -519,14 +508,15 @@ fn say_all_batches_execute_exactly() {
 /// the select, the caret again and the two compared, the reads before the
 /// act and the act one program, the reads after it another.
 fn range_selections_execute_exactly() {
-    use verbatim_uia_rops::batch::{Ends, Found, Point, Ran, Segment, run_batch};
+    use verbatim_uia_rops::FoundPoint;
+    use verbatim_uia_rops::batch::{Found, HeldAt, Ran, run_batch};
     common::init_com();
     let mut fixture = Fixture::start("text.json", "mockapp-instructions-range");
     let text = batch::Text::of(fixture.find("Notes"));
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 0");
     let document = text.pattern.document_range().expect("the document range");
-    let start = Position {
-        range: &document,
+    let start = FoundPoint {
+        range: document.clone(),
         endpoint: Endpoint::Start,
         collapsed: false,
     };
@@ -536,25 +526,17 @@ fn range_selections_execute_exactly() {
         .collect();
     let counts: Vec<[i32; 1]> = [4, 5, 1].map(|count| [count]).to_vec();
     let after = |index: usize| {
-        Point::From(TextFrom::After {
-            from: start,
-            prefix: &texts[index],
-            counts: &counts[index],
+        batch::At::Held(HeldAt {
+            at: start.clone(),
+            prefix: texts[index].clone(),
+            counts: counts[index].to_vec(),
         })
     };
-    let ends = Ends {
-        start: after(0),
-        end: Point::From(TextFrom::At(start)),
-        through: Some((after(1), after(2))),
-    };
+    let end = batch::held(&document, Endpoint::Start, false);
+    let shape = batch::review_select(&text, (&after(0), &end), Some((&after(1), &after(2))));
     let mut press = Vec::new();
     verbatim_uia_rops::counting::start();
-    let answer = run_batch(&Segment {
-        uia: &fixture.uia,
-        steps: batch::review_select(&text, ends),
-        remote: true,
-        window: None,
-    });
+    let answer = run_batch(&shape.segment(&fixture.uia));
     press.extend(
         verbatim_uia_rops::counting::stop()
             .into_iter()
@@ -706,7 +688,8 @@ fn terminal_colours_execute_exactly() {
 /// for the 17 stretches): a poll that finds nothing executes 139, its
 /// gated reads' tests among them.
 fn wait_polls_execute_exactly() {
-    use verbatim_uia_rops::batch::{Found, Ran, Segment, run_batch};
+    use verbatim_uia_rops::FoundPoint;
+    use verbatim_uia_rops::batch::{Found, Ran, run_batch};
     common::init_com();
     let mut plain = Fixture::start("text.json", "mockapp-instructions-poll");
     let text = batch::Text::of(plain.find("Notes"));
@@ -714,19 +697,14 @@ fn wait_polls_execute_exactly() {
     let before = verbatim_uia::text::TextPatternExt::selection(&text.pattern)
         .expect("the selection")
         .remove(0);
-    let start = Position {
-        range: &before,
+    let start = FoundPoint {
+        range: before,
         endpoint: Endpoint::Start,
         collapsed: true,
     };
     let poll = |text: &batch::Text, (word, last): (bool, bool)| {
-        let steps = batch::wait_poll(text, start, (word, last));
-        run_batch(&Segment {
-            uia: &plain.uia,
-            steps,
-            remote: true,
-            window: None,
-        })
+        let shape = batch::wait_poll(text, start.clone(), (word, last));
+        run_batch(&shape.segment(&plain.uia))
     };
     let read_after = |answer: &verbatim_uia_rops::batch::Answer| match &answer.steps[..] {
         [Ran::Done(Found::WaitCheck(checked)), ..] => checked.reads_after,
@@ -745,18 +723,13 @@ fn wait_polls_execute_exactly() {
     let before = verbatim_uia::text::TextPatternExt::selection(&text.pattern)
         .expect("the selection")
         .remove(0);
-    let start = Position {
-        range: &before,
+    let start = FoundPoint {
+        range: before,
         endpoint: Endpoint::Start,
         collapsed: true,
     };
     let at_bound = |text: &batch::Text| {
-        run_batch(&Segment {
-            uia: &mixed.uia,
-            steps: batch::wait_poll(text, start, (false, true)),
-            remote: true,
-            window: None,
-        })
+        run_batch(&batch::wait_poll(text, start.clone(), (false, true)).segment(&mixed.uia))
     };
     let stretches = |answer: &verbatim_uia_rops::batch::Answer| match answer.steps.get(2) {
         Some(Ran::Done(Found::ReadText(line))) => line.runs.len(),
@@ -858,75 +831,59 @@ fn each_counted(run: impl FnOnce()) -> Vec<u32> {
 /// found by its text; review select's two programs, through a character;
 /// a copy; and say-all's 32 lines.
 fn batch_text_shapes_execute_exactly() {
-    use verbatim_uia_rops::batch::{Ends, Input, Point, Segment, run_batch};
+    use verbatim_model::batch::Point;
+    use verbatim_model::{TextPoint, TextUnit};
+    use verbatim_uia_rops::batch::run_batch;
     common::init_com();
     let mut fixture = Fixture::start("italic.json", "mockapp-instructions-batch-text");
     let text = batch::Text::of(fixture.find("Notes"));
-    let run = |steps| {
+    let run = |shape: batch::Shape<'_>| {
         each_counted(|| {
-            let _ = run_batch(&Segment {
-                uia: &fixture.uia,
-                steps,
-                remote: true,
-                window: None,
-            });
+            let _ = run_batch(&shape.segment(&fixture.uia));
         })
     };
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 18");
     let before = text.pattern.document_range().expect("the document");
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 20 30");
-    let baseline = Position {
-        range: &before,
-        endpoint: Endpoint::Start,
-        collapsed: true,
-    };
-    let tell = run(batch::caret_tell(&text, baseline));
+    let baseline = batch::held(&before, Endpoint::Start, true);
+    let tell = run(batch::caret_tell(&text, &baseline));
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 8");
-    let delete = run(batch::starting_read(&text, TextUnit_Word, false, true));
+    let delete = run(batch::starting_read(&text, TextUnit::Word, false, true));
     let prefix: Vec<u16> = "plain ".encode_utf16().collect();
     let counts = [6, 5, 4];
     let at = batch::after(&before, &prefix, &counts);
-    let next_word = run(batch::next_word(&text, at));
-    let end = Point::From(TextFrom::End);
-    let select = run(batch::review_select(
-        &text,
-        Ends {
-            start: at,
-            end,
-            through: Some((at, end)),
-        },
+    let next_word = run(batch::next_word(&text, &at));
+    let end = batch::named(TextPoint::End);
+    let select = run(batch::review_select(&text, (&at, &end), Some((&at, &end))));
+    let mut copy = batch::Shape::of(Some(&text));
+    copy.step(batch::read_range(
+        Point::At(TextPoint::SelectionStart),
+        Point::At(TextPoint::SelectionEnd),
+        None,
     ));
-    let selection = Ends {
-        start: Point::From(TextFrom::SelectionStart),
-        end: Point::From(TextFrom::SelectionEnd),
-        through: None,
-    };
-    let copy = run(vec![batch::step(
-        0,
-        Input::ReadRange {
-            text: text.target(),
-            ends: selection,
-            max_text: 1 << 20,
-        },
-    )]);
+    let copy = run(copy);
     common::apply(
         &mut fixture.app,
         fixture.hwnd,
         &format!("set-text doc {}", numbered(40)),
     );
-    let read = batch::units(None, TextUnit_Line, 32);
-    let say_all = run(vec![batch::step(
-        0,
-        batch::read_text(&text, Point::From(TextFrom::Start), read),
-    )]);
+    let say_all = run(batch::one_read(
+        &text,
+        &batch::named(TextPoint::Start),
+        (None, TextUnit::Line, 32),
+    ));
     fixture.app.quit();
     let counts = [tell, delete, next_word, select, copy, say_all];
     assert_eq!(
         counts,
         [
-            vec![4493],
+            // 4493 and 147 while the test gave a unit read and a range or
+            // comparison one cap, which the outpost never did: the
+            // program builder's own caps differ, so each takes its own
+            // constant (2026-11-22).
+            vec![4494],
             vec![162],
-            vec![147],
+            vec![148],
             vec![126, 119],
             vec![53],
             vec![749],
@@ -945,17 +902,11 @@ fn batch_text_shapes_execute_exactly() {
 /// elements.
 fn batch_object_shapes_execute_exactly() {
     use verbatim_model::batch::{Relation, View};
-    use verbatim_uia_rops::batch::{Input, Judged, Object, Segment, run_batch};
+    use verbatim_uia_rops::batch::{Judged, run_batch};
     common::init_com();
-    let held = |element| Object::Held { element, window: 0 };
-    let run = |uia: &Uia, steps| {
+    let run = |uia: &Uia, shape: batch::Shape<'_>| {
         each_counted(|| {
-            let _ = run_batch(&Segment {
-                uia,
-                steps,
-                remote: true,
-                window: None,
-            });
+            let _ = run_batch(&shape.segment(uia));
         })
     };
     let fixture = Fixture::start("deep.json", "mockapp-instructions-batch-deep");
@@ -963,14 +914,7 @@ fn batch_object_shapes_execute_exactly() {
     let apple = fixture.find("Apple");
     let navigation = run(
         &fixture.uia,
-        vec![batch::step(
-            0,
-            Input::Related {
-                subject: held(&apple),
-                relation: Relation::Parent,
-                fill: &fill,
-            },
-        )],
+        batch::related(&apple, Relation::Parent, &fill),
     );
     fixture.app.quit();
 
@@ -996,13 +940,7 @@ fn batch_object_shapes_execute_exactly() {
         batch::controlled_selection(&item, (&fill, &many), &none),
     );
     let walk = (View::Raw, false, false, 4_096);
-    let dump = run(
-        &fixture.uia,
-        vec![batch::step(
-            0,
-            batch::descendants(held(&root), &many, &every, walk),
-        )],
-    );
+    let dump = run(&fixture.uia, batch::walk(&root, &many, &every, walk));
     fixture.app.quit();
 
     let counts = [navigation, controlled, dump];

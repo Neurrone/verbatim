@@ -18,11 +18,11 @@ mod harness;
 
 use std::sync::{Arc, Mutex};
 
-use batch::{Text, describe};
+use batch::{Text, describe, named};
 use verbatim_faults::Fault;
-use verbatim_uia::{Live, Node, Shape, Uia};
-use verbatim_uia_rops::TextFrom;
-use verbatim_uia_rops::batch::{Ends, Fused, Point, Segment, run_batch, run_calls};
+use verbatim_model::{TextPoint, TextUnit};
+use verbatim_uia::{Live, Node, Shape as _, Uia};
+use verbatim_uia_rops::batch::{run_batch, run_calls};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_NamePropertyId};
@@ -86,16 +86,7 @@ impl Fixture {
         }
     }
 
-    fn segment<'a>(&'a self, steps: Vec<Fused<'a>>) -> Segment<'a> {
-        Segment {
-            uia: &self.uia,
-            steps,
-            remote: true,
-            window: None,
-        }
-    }
-
-    /// `steps` run as programs, with `fault` armed on step `place`, from
+    /// `shape` run as programs, with `fault` armed on step `place`, from
     /// the caret `reset` sets: they answer `expected`, or as the calls
     /// alone do from the same caret when it is `None`; the provider selects
     /// `selects` times, and the run logs these lines.
@@ -104,7 +95,7 @@ impl Fixture {
         (fault, place): (Fault, u8),
         (reset, expected): (&str, Option<&str>),
         (selects, logged): (u32, &[&str]),
-        steps: &dyn Fn(&Text) -> Vec<Fused<'_>>,
+        shape: &dyn Fn(&Text) -> batch::Shape<'_>,
     ) {
         common::apply(&mut self.app, self.hwnd, reset);
         common::reset_hits(self.hwnd);
@@ -112,7 +103,7 @@ impl Fixture {
         let ran = {
             let armed = verbatim_faults::arm(fault, move |subject: &u8| *subject == place, 1);
             let ran = tracing::subscriber::with_default(Arc::clone(&targets), || {
-                run_batch(&self.segment(steps(&self.text)))
+                run_batch(&shape(&self.text).segment(&self.uia))
             });
             drop(armed);
             ran
@@ -127,7 +118,7 @@ impl Fixture {
             || {
                 describe(
                     Some(&self.text),
-                    &run_calls(&self.segment(steps(&self.text))),
+                    &run_calls(&shape(&self.text).segment(&self.uia)),
                 )
             },
             str::to_owned,
@@ -144,14 +135,11 @@ impl Fixture {
 
 /// The review select of `batch::review_select`, from the text's start to its
 /// end.
-fn review_select(text: &Text) -> Vec<Fused<'_>> {
+fn review_select(text: &Text) -> batch::Shape<'_> {
     batch::review_select(
         text,
-        Ends {
-            start: Point::From(TextFrom::Start),
-            end: Point::From(TextFrom::End),
-            through: None,
-        },
+        (&named(TextPoint::Start), &named(TextPoint::End)),
+        None,
     )
 }
 
@@ -218,14 +206,7 @@ fn a_run_stopped_partway_reruns_what_it_did_not_reach() {
         (Fault::ProgramStops, 1),
         calls,
         (0, &[FALLBACK; 2]),
-        &|text| {
-            batch::starting_read(
-                text,
-                windows::Win32::UI::Accessibility::TextUnit_Word,
-                true,
-                false,
-            )
-        },
+        &|text| batch::starting_read(text, TextUnit::Word, true, false),
     );
     fixture.app.quit();
 }
@@ -238,12 +219,7 @@ fn an_overrun_is_a_defect() {
     let logged = [verbatim_model::DEFECT_TARGET, FALLBACK, FALLBACK];
     let calls = ("caret doc 8", None);
     fixture.fails((Fault::ProgramOverruns, 1), calls, (0, &logged), &|text| {
-        batch::starting_read(
-            text,
-            windows::Win32::UI::Accessibility::TextUnit_Word,
-            false,
-            false,
-        )
+        batch::starting_read(text, TextUnit::Word, false, false)
     });
     fixture.app.quit();
 }

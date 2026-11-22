@@ -5,14 +5,16 @@
 
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
-use verbatim_model::batch::{Edges, Missing, PointOf, Relation, View};
+use verbatim_model::batch::{
+    Before, Edges, Missing, Op, Place, Point, PointOf, Relation, Subject, Through, View,
+};
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt};
 use verbatim_uia::{Cached, Direction, ElementExt, Fill, Live, Node};
 
 use super::walk::{Reads, Walk};
 use super::{
-    Answer, CaretFound, Compared, Ends, Found, Input, Object, Point, Prior, Ran, Related, Segment,
-    State, UnitsFound, Unrun, failed,
+    Answer, CaretFound, Compared, Defect, Descend, Found, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
+    MAX_UNIT_TEXT, Ran, Related, Segment, State, UnitsFound, Unrun, failed, named,
 };
 use crate::caret::{Attributes, MAX_COMPARED_TEXT, RangeEnd, classic_changes, classic_runs};
 use crate::error::Error;
@@ -25,10 +27,7 @@ use crate::text::{
 /// (`verbatim_faults::Fault::StepCallsFail`).
 #[cfg(any(test, feature = "faults"))]
 fn injected_failure(state: &State<'_, '_>, index: usize) -> bool {
-    verbatim_faults::hit(
-        verbatim_faults::Fault::StepCallsFail,
-        &state.segment.steps[index].place.0,
-    )
+    verbatim_faults::hit(verbatim_faults::Fault::StepCallsFail, &state.place(index).0)
 }
 
 /// No test arms a failure in a build without fault points.
@@ -46,46 +45,71 @@ pub fn run_calls(segment: &Segment<'_>) -> Answer {
     state.answer()
 }
 
-/// Runs `input`, the step at `index` of `state`'s segment, by calls, its
-/// gate already passed.
-pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran {
+/// A call's failure as its step's outcome.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "an adapter for `map_err`, which hands the error over by value"
+)]
+fn call_failed(error: Error) -> Ran {
+    failed(&error)
+}
+
+/// Runs the step at `index` of `state`'s segment by calls, its gate
+/// already passed.
+pub(super) fn run(state: &State<'_, '_>, index: usize) -> Ran {
     if injected_failure(state, index) {
         return failed(&Error::Uia(windows::Win32::Foundation::E_FAIL.into()));
     }
+    match found(state, index) {
+        Ok(found) => Ran::Done(found),
+        Err(ran) => ran,
+    }
+}
+
+/// The step at `index`'s result by calls, or its outcome.
+fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
     let uia = state.segment.uia;
-    let found = match input {
-        Input::Answered(unrun) => return Ran::Unrun(*unrun),
-        Input::Related {
+    let resolver = state.segment.resolver;
+    let place = state.place(index);
+    let no_fill = || Defect("an object step the resolver gives no fill").ran();
+    match &state.step(index).op {
+        Op::Related {
+            subject, relation, ..
+        } => {
+            let fill = resolver.fill(place).ok_or_else(no_fill)?;
+            let (element, window) = one(state, index, subject)?;
+            related(uia, &element, window, *relation, fill).map_err(call_failed)
+        }
+        Op::Descendants { subject, walk } => {
+            let walk = Descend::of(walk, resolver, place).ok_or_else(no_fill)?;
+            let mut walking = Walk::new(&walk, starts(state, index, subject)?);
+            walking.run(uia, Reads::Calls).map_err(call_failed)?;
+            Ok(Found::Descendants(walking.finish()))
+        }
+        Op::Caret { subject, .. } => caret(resolver.text(subject)?)
+            .map(Found::Caret)
+            .map_err(call_failed),
+        Op::ReadText {
             subject,
-            relation,
-            fill,
-        } => match one(state, index, subject) {
-            Ok((element, window)) => related(uia, &element, window, *relation, fill),
-            Err(ran) => return ran,
-        },
-        Input::Descendants { subject, walk } => match starts(state, index, subject) {
-            Ok(starts) => {
-                let mut walk = Walk::new(walk, starts);
-                walk.run(uia, Reads::Calls)
-                    .map(|()| Found::Descendants(walk.finish()))
-            }
-            Err(ran) => return ran,
-        },
-        Input::Caret { text } => caret(*text).map(Found::Caret),
-        Input::ReadText { text, at, read } => point(state, index, *text, at).and_then(|from| {
+            at,
+            movement,
+            unit,
+            count,
+            details,
+        } => {
+            let text = resolver.text(subject)?;
+            let read = resolver.units((*movement, *unit, *count), *details)?;
+            let from = point(state, index, text, at)?;
             let answer = classic_units(
-                *text,
+                text,
                 from,
                 (read.movement, read.unit, read.count),
-                (read.max_text, read.max_total, read.culture),
-            )?;
-            let (runs, unsupported) = formats(
-                &answer.units[0],
-                read.formats,
-                read.learning,
-                read.unit,
-                read.max_text,
-            )?;
+                (MAX_UNIT_TEXT, read.max_total, read.culture),
+            )
+            .map_err(call_failed)?;
+            let (runs, unsupported) =
+                formats(&answer.units[0], read.formats, read.learning, read.unit)
+                    .map_err(call_failed)?;
             Ok(Found::ReadText(UnitsFound {
                 moved: answer.moved,
                 units: answer.units,
@@ -93,40 +117,47 @@ pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran
                 runs,
                 unsupported,
             }))
-        }),
-        Input::ReadRange {
-            text,
-            ends,
-            max_text,
-        } => range(state, index, *text, ends)
-            .and_then(|range| Ok(Found::ReadRange(range.text(*max_text)?))),
-        Input::Select { text, ends } => match range(state, index, *text, ends) {
+        }
+        Op::ReadRange {
+            subject,
+            start,
+            end,
+            through,
+        } => {
+            let range = range(state, index, resolver.text(subject)?, (start, end, through))?;
+            Ok(Found::ReadRange(
+                range
+                    .text(MAX_RANGE_TEXT)
+                    .map_err(|error| failed(&error.into()))?,
+            ))
+        }
+        Op::Select {
+            subject,
+            start,
+            end,
+            through,
+        } => {
+            let range = range(state, index, resolver.text(subject)?, (start, end, through))?;
             // A refused selection is the step's refusal, as the program's
             // catch answers it.
-            Ok(range) => match range.select() {
+            match range.select() {
                 Ok(()) => Ok(Found::Select),
-                Err(_) => {
-                    return Ran::Unrun(Unrun::Refused(
-                        verbatim_model::batch::StepRefusal::Unsupported,
-                    ));
-                }
-            },
-            Err(error) => Err(error),
-        },
-        Input::CompareSelection {
-            before,
-            after,
-            max_text,
-            ..
-        } => compare(state, index, before, *after, *max_text).map(Found::CompareSelection),
-        Input::Locate { text, at } => point(state, index, *text, at)
-            .and_then(|at| classic_location(&at))
-            .map(Found::Locate),
-        Input::WaitCheck(check) => wait_check(check),
-    };
-    match found {
-        Ok(found) => Ran::Done(found),
-        Err(error) => failed(&error),
+                Err(_) => Err(Ran::Unrun(Unrun::Refused(
+                    verbatim_model::batch::StepRefusal::Unsupported,
+                ))),
+            }
+        }
+        Op::CompareSelection { before, after, .. } => {
+            compare(state, index, before, *after).map(Found::CompareSelection)
+        }
+        Op::Locate { subject, at } => {
+            let at = point(state, index, resolver.text(subject)?, at)?;
+            classic_location(&at)
+                .map(Found::Locate)
+                .map_err(call_failed)
+        }
+        Op::WaitForCaret { .. } => wait_check(&resolver.wait_check()?).map_err(call_failed),
+        _ => Err(Defect("a step no executor of fusable steps runs").ran()),
     }
 }
 
@@ -135,15 +166,22 @@ pub(super) fn run(state: &State<'_, '_>, index: usize, input: &Input<'_>) -> Ran
 fn one(
     state: &State<'_, '_>,
     index: usize,
-    subject: &Object<'_>,
+    subject: &Subject,
 ) -> Result<(IUIAutomationElement, isize), Ran> {
     match *subject {
-        Object::Held { element, window } => Ok((element.clone(), window)),
-        Object::Result(_) => Err(super::Defect("a step names a list as its one subject").ran()),
-        Object::Item(place, item) => match list(state, place, index)?.get(item as usize) {
-            Some(node) => Ok(node_of(node)),
-            None => Err(Ran::Unrun(Unrun::NotThere(Missing::Object))),
-        },
+        Subject::Result(place) if !state.before(place) => {
+            Err(Defect("a step names a list as its one subject").ran())
+        }
+        Subject::Item { of, index: item } if !state.before(of) => {
+            match list(state, of, index)?.get(item as usize) {
+                Some(node) => Ok(node_of(node)),
+                None => Err(Ran::Unrun(Unrun::NotThere(Missing::Object))),
+            }
+        }
+        ref subject => {
+            let held = state.segment.resolver.object(subject)?;
+            Ok((held.element.clone(), held.window))
+        }
     }
 }
 
@@ -155,7 +193,7 @@ fn node_of(node: &Cached<Node>) -> (IUIAutomationElement, isize) {
 /// The nodes of the list an earlier step of the segment answered.
 fn list<'r>(
     state: &'r State<'_, '_>,
-    place: verbatim_model::batch::Place,
+    place: Place,
     index: usize,
 ) -> Result<Vec<&'r Cached<Node>>, Ran> {
     match state.named(place, index) {
@@ -165,7 +203,7 @@ fn list<'r>(
             .iter()
             .map(|descendant| &descendant.node)
             .collect()),
-        _ => Err(super::Defect("a step names no list of elements").ran()),
+        _ => Err(Defect("a step names no list of elements").ran()),
     }
 }
 
@@ -174,10 +212,10 @@ fn list<'r>(
 fn starts(
     state: &State<'_, '_>,
     index: usize,
-    subject: &Object<'_>,
+    subject: &Subject,
 ) -> Result<Vec<IUIAutomationElement>, Ran> {
     match *subject {
-        Object::Result(place) => Ok(list(state, place, index)?
+        Subject::Result(place) if !state.before(place) => Ok(list(state, place, index)?
             .into_iter()
             .map(|node| node.live().element().clone())
             .collect()),
@@ -337,19 +375,27 @@ fn point(
     state: &State<'_, '_>,
     index: usize,
     text: TextTarget<'_>,
-    at: &Point<'_>,
-) -> Result<FoundPoint, Error> {
+    at: &Point,
+) -> Result<FoundPoint, Ran> {
+    if let Some(from) = named(at) {
+        return classic_point(text, from, &mut None).map_err(call_failed);
+    }
     match *at {
-        Point::From(from) => classic_point(text, from, &mut None),
-        Point::Of(place, which) => match (state.named(place, index), which) {
-            (Some(Ran::Done(Found::Caret(caret))), _) => Ok(caret_point(caret, which)),
-            (Some(Ran::Done(Found::ReadText(read))), PointOf::ChunkStart) => Ok(FoundPoint {
-                range: read.units[0].range.clone(),
-                endpoint: Endpoint::Start,
-                collapsed: false,
-            }),
-            _ => Err(defect("a point names a step that holds none")),
-        },
+        Point::Of(place, which) if !state.before(place) => {
+            match (state.named(place, index), which) {
+                (Some(Ran::Done(Found::Caret(caret))), _) => Ok(caret_point(caret, which)),
+                (Some(Ran::Done(Found::ReadText(read))), PointOf::ChunkStart) => Ok(FoundPoint {
+                    range: read.units[0].range.clone(),
+                    endpoint: Endpoint::Start,
+                    collapsed: false,
+                }),
+                _ => Err(Defect("a point names a step that holds none").ran()),
+            }
+        }
+        _ => {
+            let held = state.segment.resolver.point(at)?;
+            classic_point(text, held.from(), &mut None).map_err(call_failed)
+        }
     }
 }
 
@@ -369,27 +415,19 @@ pub(super) fn caret_point(caret: &CaretFound, which: PointOf) -> FoundPoint {
     }
 }
 
-/// A defect of the segment's, as an error that fails its step.
-fn defect(what: &'static str) -> Error {
-    let _ = super::Defect(what).ran();
-    Error::Uia(windows::core::Error::from(
-        windows::Win32::Foundation::E_INVALIDARG,
-    ))
-}
-
 /// The range `ends` names in `text`.
 fn range(
     state: &State<'_, '_>,
     index: usize,
     text: TextTarget<'_>,
-    ends: &Ends<'_>,
-) -> Result<IUIAutomationTextRange, Error> {
-    let start = point(state, index, text, &ends.start)?;
-    let end = point(state, index, text, &ends.end)?;
-    let through = match &ends.through {
-        Some((past_start, past_end)) => Some((
-            point(state, index, text, past_start)?,
-            point(state, index, text, past_end)?,
+    (start, end, through): (&Point, &Point, &Option<Through>),
+) -> Result<IUIAutomationTextRange, Ran> {
+    let start = point(state, index, text, start)?;
+    let end = point(state, index, text, end)?;
+    let through = match through {
+        Some(through) => Some((
+            point(state, index, text, &through.start)?,
+            point(state, index, text, &through.end)?,
         )),
         None => None,
     };
@@ -398,6 +436,7 @@ fn range(
         &end,
         through.as_ref().map(|(start, end)| (start, end)),
     )
+    .map_err(call_failed)
 }
 
 /// A caret wait's check the classic way ([`crate::watch_check_classic`]).
@@ -414,7 +453,7 @@ fn wait_check(check: &super::WaitCheck<'_>) -> Result<Found, Error> {
         start: end(&check.start),
         start_selection: (end(&check.start_selection.0), end(&check.start_selection.1)),
         word: check.word,
-        max_text: check.max_text,
+        max_text: MAX_UNIT_TEXT,
     })?;
     let reads_after = check.last || answer.caret_moved || answer.selection_moved;
     Ok(Found::WaitCheck(super::Checked {
@@ -430,7 +469,6 @@ fn formats(
     attributes: Attributes,
     learning: Attributes,
     kind: windows::Win32::UI::Accessibility::TextUnit,
-    max_text: i32,
 ) -> Result<(Vec<crate::caret::Run>, Option<Attributes>), Error> {
     let ids: Vec<_> = attributes.iter().collect();
     if ids.is_empty() {
@@ -444,7 +482,7 @@ fn formats(
         character,
         &ids,
         learning,
-        max_text,
+        MAX_UNIT_TEXT,
     )?;
     Ok((runs, learns.then_some(unsupported)))
 }
@@ -464,24 +502,35 @@ fn ends_of(caret: &CaretFound) -> (IUIAutomationTextRange, Endpoint, bool) {
 fn compare(
     state: &State<'_, '_>,
     index: usize,
-    before: &Prior<'_>,
-    after: verbatim_model::batch::Place,
-    max_text: i32,
-) -> Result<Compared, Error> {
+    before: &Before,
+    after: Place,
+) -> Result<Compared, Ran> {
     let caret_of = |place| match state.named(place, index) {
         Some(Ran::Done(Found::Caret(caret))) => Ok(caret),
-        _ => Err(defect("a comparison names no caret read")),
+        _ => Err(Defect("a comparison names no caret read").ran()),
     };
     let (old, old_end, old_collapsed) = match *before {
-        Prior::Baseline(position) => (
-            position.range.clone(),
-            position.endpoint,
-            position.collapsed,
-        ),
-        Prior::SelectionOf(place) => ends_of(caret_of(place)?),
+        Before::SelectionOf(place) if !state.before(place) => ends_of(caret_of(place)?),
+        ref before => {
+            let held = state.segment.resolver.baseline(before)?;
+            (held.range, held.endpoint, held.collapsed)
+        }
     };
     let after = caret_of(after)?;
     let (new, new_end, new_collapsed) = ends_of(after);
+    compared(
+        (old, old_end, old_collapsed),
+        (after, new, new_end, new_collapsed),
+    )
+    .map_err(call_failed)
+}
+
+/// The selection `after` read, whose ends are `new` to `new_end`, compared
+/// with the one from `old` to `old_end`, each collapsed or not.
+fn compared(
+    (old, old_end, old_collapsed): (IUIAutomationTextRange, Endpoint, bool),
+    (after, new, new_end, new_collapsed): (&CaretFound, IUIAutomationTextRange, Endpoint, bool),
+) -> Result<Compared, Error> {
     let at = |range, endpoint| RangeEnd { range, endpoint };
     let changes = classic_changes(
         (
@@ -489,7 +538,7 @@ fn compare(
             (at(&new, Endpoint::Start), at(&new, new_end)),
         ),
         (old_collapsed, new_collapsed),
-        max_text,
+        MAX_CHANGE_TEXT,
     )?;
     let previous_text = if old_collapsed {
         None

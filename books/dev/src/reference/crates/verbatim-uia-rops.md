@@ -36,21 +36,26 @@ subjects (`Related`, `Descendants`, `Caret`, `ReadText`, `ReadRange`,
 `CompareSelection`, `Select`, `Locate`; `verbatim_model::batch`). `Read`
 and `Ancestors` are not among them: the outpost answers them through its
 own object reads, so no program arm or call arm of theirs is kept for
-tests alone (Claude, 2026-11-22). Its input is a `Segment`: consecutive steps of
-one parsed batch, each a `Fused` holding its place, its condition and an
-`Input`, the operation with the subjects the outpost resolved: an
-`Object` (an element it holds, or an earlier step's node or list), a
-`TextTarget`, a `Point` (one the outpost resolved as a `TextFrom`, or a
-point of an earlier step's result), a `Prior` selection, and the `Fill`
-each node read takes. A step the outpost answers itself, a refusal, a
-node or anchor it no longer holds, or a condition on an earlier segment
-that does not hold, is `Input::Answered`. `Fused::calls_only` sends a
-step to the calls whatever the mode: its subject is served only by UI
-Automation's proxies inside the outpost, or it steps from a top-level
-window. A `Descend` carries the walk's caps and its `judge`, the
-outpost's matchers evaluated in Rust on each node read. The answer is a
-`Ran` for each step (`Done(Found)`, `Unrun`, `Gone`, `TimedOut`,
-`Failed`) and whether the window is to be read classically from now on.
+tests alone (Claude, 2026-11-22). Its input is a `Segment`: a run of
+consecutive steps of one parsed batch, the model's own `Step`s, with the
+place of the first, the outcomes of the batch's steps before it, and a
+resolver (`Resolve`) for what the steps name that the outpost holds: the
+element an object step's subject names (`Element`, whose `calls_only`
+sends the step to the calls whatever the mode, for a subject served only
+by UI Automation's proxies inside the outpost or a step from a top-level
+window), the text a text step's subject names, a position Core names or
+a point of a step before the run (`HeldAt`, the position and any text
+after it), a baseline, how a `ReadText`'s unit and details are read
+(`UnitsRead`), the `Fill` each node reached takes, a walk's judgement
+(the outpost's matchers evaluated in Rust on each node read), and a
+caret wait's starting point. A reference or condition on a step before
+the run is decided from the earlier outcomes. Each resolution that
+fails, a refusal or an anchor no longer held, is the step's outcome. The
+executors read every other input from the step itself, so no second
+description of the operations sits between the model and the programs
+(Claude, 2026-11-22). The answer is a `Ran` for each step
+(`Done(Found)`, `Unrun`, `Gone`, `TimedOut`, `Failed`) and whether the
+window is to be read classically from now on.
 
 `run_batch` cuts the segment into programs. A program ends after the
 act, `Select`, so the act is its program's last step and runs only if
@@ -210,7 +215,7 @@ A failed run is an `Error`:
   the application's, so a step whose subject a tree-walker step fetched
   and whose cached provider description names only UIA's proxies
   (`Cached::served_only_by_uia_proxies`) is marked by the outpost for the
-  ordinary calls (`Fused::calls_only`), rather than fail the import and
+  ordinary calls (`Element::calls_only`), rather than fail the import and
   fall back (Claude, 2026-11-21).
 - `Unsupported(opcode)`: the provider lacks an instruction.
 - `Execute`: the call itself failed.

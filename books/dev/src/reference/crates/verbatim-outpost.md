@@ -825,9 +825,11 @@ anchors are (Table 16 of
 - A run of consecutive text steps (`Caret`, `ReadText`, `ReadRange`,
   `CompareSelection`, `Select`, `Locate`) on one UI Automation node is
   one segment of the program builder (`text_reads::fused_steps`,
-  `text::fused::run`): points the run names in an earlier segment are
-  resolved to the positions held, a condition or reference on an earlier
-  segment is decided before it runs, and each result is made the
+  `text::fused::run`), the batch's own steps with the node's text as
+  their resolver (`TextResolver`): a position Core names, a point of an
+  earlier segment's result and a baseline are resolved to the positions
+  held, a unit to the provider's with the formatting its details name,
+  and each result is made the
   model's, a `Caret`'s points held as anchors and its read held as the
   next selection baseline (`NodeText::hold_caret`), with the selection's
   text a `CompareSelection` of the run read, a `ReadText`'s chunks minted

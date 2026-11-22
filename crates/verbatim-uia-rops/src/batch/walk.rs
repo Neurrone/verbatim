@@ -1,7 +1,7 @@
-//! A walk down the tree ([`super::Input::Descendants`]): breadth first from
+//! A walk down the tree (`Descendants`): breadth first from
 //! its starts, each run reading the children of the elements waiting, by
 //! one call an element or by one program for up to [`CHILDREN_PER_RUN`]
-//! children, its matchers judged in Rust between runs ([`Descend::judge`]),
+//! children, its matchers judged in Rust between runs ([`Descend::judged`]),
 //! and answered in tree order. A program's run reads on into the children
 //! it found unless the walk prunes, whose judgement it waits for.
 //!
@@ -179,7 +179,7 @@ impl<'w, 'a> Walk<'w, 'a> {
 
     /// Judges start `at`, read as `node`.
     fn judge_start(&mut self, at: usize, node: Cached<Node>) {
-        let judged = (self.descend.judge)(&node);
+        let judged = self.descend.judged(&node);
         let entry = &mut self.listed[at];
         entry.judged = judged;
         entry.node = Some(node);
@@ -197,7 +197,7 @@ impl<'w, 'a> Walk<'w, 'a> {
             self.complete = false;
             return None;
         }
-        let judged = (self.descend.judge)(&child);
+        let judged = self.descend.judged(&child);
         let above = &mut self.listed[parent];
         let mut path = above.path.clone();
         path.push(above.children);

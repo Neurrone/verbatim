@@ -2036,7 +2036,7 @@ fn uia_step(
             element.read().hwnd,
             element.served_only_by_uia_proxies() == Some(true),
         );
-        if let Some(stepped) = related_step(context, uia, &nodes, (from, kind))? {
+        if let Some(stepped) = related_step(context, uia, &nodes, (node_id, from, kind))? {
             return Ok(stepped);
         }
         context.store.evict_element(node_id);
@@ -2047,11 +2047,83 @@ fn uia_step(
         element.read().role.hwnd,
         element.served_only_by_uia_proxies() == Some(true),
     );
-    related_step(context, uia, &nodes, (from, kind))?.ok_or(ReadError::Gone)
+    related_step(context, uia, &nodes, (node_id, from, kind))?.ok_or(ReadError::Gone)
+}
+
+/// The matchers a walk down the tree judges each node it reads by.
+type Judge<'a> = &'a dyn Fn(&verbatim_uia::Cached<Node>) -> verbatim_uia_rops::batch::Judged;
+
+/// The one element a batch's object step goes from, as the program
+/// builder resolves it ([`verbatim_uia_rops::batch::Resolve`]): its own
+/// window, whether the step runs by calls whatever the mode, how each node
+/// it reaches is filled, and for a walk down the tree the matchers that
+/// judge each node.
+pub(super) struct OneElement<'a> {
+    pub(super) element: &'a windows::Win32::UI::Accessibility::IUIAutomationElement,
+    pub(super) window: isize,
+    pub(super) calls_only: bool,
+    pub(super) fill: &'a Fill<Node>,
+    pub(super) judge: Option<Judge<'a>>,
+}
+
+impl verbatim_uia_rops::batch::Resolve for OneElement<'_> {
+    fn object(
+        &self,
+        _subject: &verbatim_model::batch::Subject,
+    ) -> Result<verbatim_uia_rops::batch::Element<'_>, verbatim_uia_rops::batch::Ran> {
+        Ok(verbatim_uia_rops::batch::Element {
+            element: self.element,
+            window: self.window,
+            calls_only: self.calls_only,
+        })
+    }
+
+    fn fill(&self, _place: verbatim_model::batch::Place) -> Option<&Fill<Node>> {
+        Some(self.fill)
+    }
+
+    fn judge(
+        &self,
+        _place: verbatim_model::batch::Place,
+        node: &verbatim_uia::Cached<Node>,
+    ) -> verbatim_uia_rops::batch::Judged {
+        if let Some(judge) = self.judge {
+            return judge(node);
+        }
+        tracing::error!(target: verbatim_model::DEFECT_TARGET, "a walk from an element given no matchers");
+        verbatim_uia_rops::batch::Judged {
+            matched: false,
+            pruned: true,
+        }
+    }
+}
+
+impl OneElement<'_> {
+    /// Runs `op`, a batch's object step from this element, alone, through
+    /// the program builder, in a window of the application whose programs
+    /// `window` says may run.
+    pub(super) fn run(
+        &self,
+        context: &RequestContext<'_>,
+        uia: &Uia,
+        op: verbatim_model::batch::Op,
+        window: Option<isize>,
+    ) -> verbatim_uia_rops::batch::Answer {
+        let steps = [verbatim_model::batch::Step { op, when: None }];
+        verbatim_uia_rops::batch::run_batch(&verbatim_uia_rops::batch::Segment {
+            uia,
+            steps: &steps,
+            first: 0,
+            earlier: &[],
+            resolver: self,
+            remote: context.tries_remote(window),
+            window,
+        })
+    }
 }
 
 /// One navigation step `kind` through the program builder
-/// (`verbatim_uia_rops::batch`, `Related`) from `element`, whose own
+/// (`verbatim_uia_rops::batch`, `Related`) from `element`, node `node_id`'s, whose own
 /// window is `own`, 0 for none, each node reached filled as `nodes` asks:
 /// `None` when the element is gone. A step from a top-level window, whose
 /// relations a program's walk does not reach, or from an element only UI
@@ -2061,7 +2133,8 @@ fn related_step(
     context: &RequestContext<'_>,
     uia: &Uia,
     nodes: &Request<Node>,
-    ((element, own, proxied), kind): (
+    (node_id, (element, own, proxied), kind): (
+        NodeId,
         (
             &windows::Win32::UI::Accessibility::IUIAutomationElement,
             isize,
@@ -2070,8 +2143,8 @@ fn related_step(
         QueryKind,
     ),
 ) -> Result<Option<Stepped>, ReadError> {
-    use verbatim_model::batch::{Place, Relation};
-    use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment};
+    use verbatim_model::batch::{Op, Relation};
+    use verbatim_uia_rops::batch::{Found, Ran};
     let relation = match kind {
         QueryKind::Parent => Relation::Parent,
         QueryKind::NextSibling => Relation::NextSibling,
@@ -2080,25 +2153,19 @@ fn related_step(
     };
     let window = (own != 0).then_some(own);
     let fill = Fill::new(nodes);
-    let segment = Segment {
-        uia,
-        steps: vec![Fused {
-            place: Place(0),
-            when: None,
-            input: Input::Related {
-                subject: Object::Held {
-                    element,
-                    window: own,
-                },
-                relation,
-                fill: &fill,
-            },
-            calls_only: proxied || (own != 0 && top_level_of(own) == own),
-        }],
-        remote: context.tries_remote(window),
-        window,
+    let from = OneElement {
+        element,
+        window: own,
+        calls_only: proxied || (own != 0 && top_level_of(own) == own),
+        fill: &fill,
+        judge: None,
     };
-    let answer = verbatim_uia_rops::batch::run_batch(&segment);
+    let op = Op::Related {
+        subject: verbatim_model::batch::Subject::Node(node_id),
+        relation,
+        set: Vec::new(),
+    };
+    let answer = from.run(context, uia, op, window);
     let related = match answer.steps.into_iter().next() {
         Some(Ran::Done(Found::Related(related))) => related,
         Some(Ran::Gone) => return Ok(None),

@@ -7,6 +7,8 @@
 //! containers are unknown. mockapp's providers are server-side, so
 //! programs run in its process.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
@@ -550,21 +552,18 @@ fn related_step(
     (relation, fill): (verbatim_model::batch::Relation, &Fill<Node>),
     remote: bool,
 ) -> verbatim_uia_rops::batch::Related {
-    use verbatim_uia_rops::batch::{Found, Fused, Input, Object, Ran, Segment, run_batch};
+    use verbatim_uia_rops::batch::{Found, Ran, Segment, run_batch};
+    let mut shape = batch::Shape::of(None);
+    let subject = shape.object_in(element, window);
+    shape.fills = vec![fill];
+    shape.step(verbatim_model::batch::Op::Related {
+        subject,
+        relation,
+        set: Vec::new(),
+    });
     let answer = run_batch(&Segment {
-        uia,
-        steps: vec![Fused {
-            place: verbatim_model::batch::Place(0),
-            when: None,
-            input: Input::Related {
-                subject: Object::Held { element, window },
-                relation,
-                fill,
-            },
-            calls_only: false,
-        }],
         remote,
-        window: None,
+        ..shape.segment(uia)
     });
     match answer.steps.into_iter().next() {
         Some(Ran::Done(Found::Related(related))) => related,

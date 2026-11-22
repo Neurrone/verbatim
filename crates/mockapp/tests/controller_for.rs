@@ -27,6 +27,8 @@
 //! focus's own message, ahead of a controlled selection that arrived after
 //! the focus.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
@@ -84,54 +86,15 @@ fn controlled(
             .expect("a cache request"),
     );
     let run = |remote| {
-        use verbatim_uia_rops::batch::{
-            Descend, Found, Fused, Input, Judged, Object, Ran, Segment, run_batch,
-        };
+        use verbatim_uia_rops::batch::{Found, Judged, Ran, Segment, run_batch};
         let judge = |node: &Cached<Node>| Judged {
             matched: node.runtime_id() == selected,
             pruned: false,
         };
+        let shape = batch::controlled_selection(focused, (&fill, &fill), &judge);
         let answer = run_batch(&Segment {
-            uia,
-            steps: vec![
-                Fused {
-                    place: verbatim_model::batch::Place(0),
-                    when: None,
-                    input: Input::Related {
-                        subject: Object::Held {
-                            element: focused,
-                            window: 0,
-                        },
-                        relation: verbatim_model::batch::Relation::ControllerFor,
-                        fill: &fill,
-                    },
-                    calls_only: false,
-                },
-                Fused {
-                    place: verbatim_model::batch::Place(1),
-                    when: Some(verbatim_model::batch::Condition {
-                        on: verbatim_model::batch::Place(0),
-                        check: verbatim_model::batch::Check::Found,
-                        negated: false,
-                    }),
-                    input: Input::Descendants {
-                        subject: Object::Result(verbatim_model::batch::Place(0)),
-                        walk: Descend {
-                            depth: 64,
-                            view: verbatim_model::batch::View::Raw,
-                            include_subject: true,
-                            prunes: false,
-                            limit: 1,
-                            nodes: 4_096,
-                            fill: &fill,
-                            judge: &judge,
-                        },
-                    },
-                    calls_only: false,
-                },
-            ],
             remote,
-            window: None,
+            ..shape.segment(uia)
         });
         let mut steps = answer.steps.into_iter();
         let controlled: Vec<Vec<i32>> = match steps.next() {

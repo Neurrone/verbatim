@@ -13,21 +13,21 @@
 //! element's later siblings when the element is gone during it, by either
 //! path, and reads no element's location or off-screen state.
 
+#[path = "common/batch.rs"]
+mod batch;
 mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
 use common::outpost::OutpostUnderTest;
-use verbatim_model::batch::{Place, Relation, View};
+use verbatim_model::batch::{Op, Relation, View, Walk};
 use verbatim_model::request::{Outcome, WindowVerdict};
 use verbatim_model::{NodeDetails, Role, State, StateSet, WindowHandle};
 use verbatim_uia::{
     Cached, DialogText, Fill, Live, NodeIdRegistry, PropertyEvent, Request, RoleCore, Shape,
     TextEvent, Uia, map,
 };
-use verbatim_uia_rops::batch::{
-    Descend, Found, Fused, Input, Judged, Object, Ran, Segment, run_batch,
-};
+use verbatim_uia_rops::batch::{Found, Judged, Ran, Segment, run_batch};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     TreeScope_Descendants, TreeScope_Subtree, UIA_NamePropertyId,
@@ -438,20 +438,18 @@ fn related(
     (relation, fill): (Relation, &Fill<verbatim_uia::Node>),
     (remote, calls_only): (bool, bool),
 ) -> Ran {
+    let mut shape = batch::Shape::of(None);
+    let subject = shape.object_in(element, window);
+    shape.fills = vec![fill];
+    shape.calls_only = calls_only;
+    shape.step(Op::Related {
+        subject,
+        relation,
+        set: Vec::new(),
+    });
     let answer = run_batch(&Segment {
-        uia,
-        steps: vec![Fused {
-            place: Place(0),
-            when: None,
-            input: Input::Related {
-                subject: Object::Held { element, window },
-                relation,
-                fill,
-            },
-            calls_only,
-        }],
         remote,
-        window: None,
+        ..shape.segment(uia)
     });
     answer.steps.into_iter().next().expect("the step's outcome")
 }
@@ -484,31 +482,26 @@ fn dump(
         pruned: false,
     };
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let mut shape = batch::Shape::of(None);
+    let subject = shape.object(root);
+    shape.fills = vec![fill];
+    shape.judge = Some(&every);
+    shape.step(Op::Descendants {
+        subject,
+        walk: Box::new(Walk {
+            depth: 64,
+            view: View::Raw,
+            matcher: None,
+            prune: None,
+            include_subject: true,
+            limit: nodes,
+            nodes,
+            set: Vec::new(),
+        }),
+    });
     let answer = run_batch(&Segment {
-        uia,
-        steps: vec![Fused {
-            place: Place(0),
-            when: None,
-            input: Input::Descendants {
-                subject: Object::Held {
-                    element: root,
-                    window: 0,
-                },
-                walk: Descend {
-                    depth: 64,
-                    view: View::Raw,
-                    include_subject: true,
-                    prunes: false,
-                    limit: nodes,
-                    nodes,
-                    fill,
-                    judge: &every,
-                },
-            },
-            calls_only: false,
-        }],
         remote,
-        window: None,
+        ..shape.segment(uia)
     });
     let walked = match answer.steps.into_iter().next() {
         Some(Ran::Done(Found::Descendants(walked))) => walked,
