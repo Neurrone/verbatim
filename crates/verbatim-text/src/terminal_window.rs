@@ -325,6 +325,18 @@ impl Window {
             .unwrap_or_default()
     }
 
+    /// The place of the first row of every line reading `text`, lowest
+    /// first.
+    #[must_use]
+    pub fn places_of(&self, text: &str) -> Vec<u32> {
+        self.lines
+            .iter()
+            .rev()
+            .filter(|line| line.text == text)
+            .map(Line::top)
+            .collect()
+    }
+
     /// The place of the first row of the lowest line reading `text`, when
     /// the window holds one: whether a mark's line is in the window.
     #[must_use]
@@ -692,18 +704,26 @@ impl Reading {
 
     /// What the read `new` says, against `old`, the watch's last window.
     pub fn answer(&mut self, old: &Window, new: &Window) -> Answer {
-        self.judge(old, new, false)
+        self.judge(old, new, (false, false))
     }
 
     /// What the read `new` says, against `old`, when it waited for speech:
     /// a row its program rewrote at `old` too is volatile however long
     /// apart the two reads were (TM 17), since the reads between were held.
     pub fn answer_waited(&mut self, old: &Window, new: &Window) -> Answer {
-        self.judge(old, new, true)
+        self.judge(old, new, (true, false))
     }
 
-    /// [`Reading::answer`], `waited` when the read waited for speech.
-    fn judge(&mut self, old: &Window, new: &Window, waited: bool) -> Answer {
+    /// What the read `new` says, against `old`, when a key sent it: the
+    /// key's own read, in the keys' window however long it waited for the
+    /// caret (TM 18).
+    pub fn answer_key(&mut self, old: &Window, new: &Window) -> Answer {
+        self.judge(old, new, (false, true))
+    }
+
+    /// [`Reading::answer`], `waited` when the read waited for speech, `key`
+    /// when a key sent it.
+    fn judge(&mut self, old: &Window, new: &Window, (waited, key): (bool, bool)) -> Answer {
         let now = new.ended_us;
         self.lingering.retain(|(_, until)| *until >= now);
         if old.screen_has_text() && !new.screen_has_text() {
@@ -715,7 +735,7 @@ impl Reading {
         // After Enter, the answer is only new output (TM 19): the rows a
         // read changes in its window are the program's.
         let keyed = match &self.keys {
-            Some(window) if now <= window.last_us.saturating_add(KEY_WINDOW_US) => {
+            Some(window) if key || now <= window.last_us.saturating_add(KEY_WINDOW_US) => {
                 Some(window.clone()).filter(|window| !window.keys.contains(&KeyKind::Enter))
             }
             Some(_) | None => {

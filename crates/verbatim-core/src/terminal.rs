@@ -91,10 +91,30 @@ pub(crate) enum Read {
         token: u64,
         dirty: bool,
         speaks: Speaks,
-        /// Whether it was sent once the pacing's group had handed on its
-        /// last line, a read that waited for speech (TM 17).
-        waited: bool,
+        /// Why it was sent, by which its answer is judged.
+        sent: Sent,
     },
+}
+
+/// Why a read of the watch's was sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Sent {
+    /// A change told.
+    Change,
+    /// Once the pacing's group had handed on its last line: a read that
+    /// waited for speech (TM 17).
+    Waited,
+    /// For a key or a command: its answer is the key's, in the key's
+    /// window however long the read waited for the caret (TM 18).
+    Key,
+}
+
+impl Sent {
+    /// A read the watch sends, `released` when the pacing's group has
+    /// handed on its last line.
+    fn of(released: bool) -> Self {
+        if released { Self::Waited } else { Self::Change }
+    }
 }
 
 /// What a read out says when it answers.
@@ -123,6 +143,25 @@ pub(crate) struct TerminalFocus {
     /// The newest key passed to the terminal: its trace and when it reached
     /// the program, by which a read is the key's answer.
     key: Option<(TraceId, u64)>,
+    /// The command entered last, while its program may print it elsewhere
+    /// (F12).
+    reprint: Option<Reprint>,
+}
+
+/// A command entered at Enter, marked on its line, until the quiet period
+/// after the key ends: a read that shows the line gone from the mark's
+/// place and printed on a new row, as Pi and Claude Code print the input,
+/// marks that row instead (TM, "Moving by command").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Reprint {
+    /// The line's text.
+    text: String,
+    /// The mark's place when it was set, in rows above the document's end.
+    place: u32,
+    /// The rows every place had moved by then ([`places::TerminalPlaces::written`]).
+    written: u64,
+    /// When the quiet period after the Enter ends.
+    until_us: u64,
 }
 
 impl TerminalFocus {
@@ -143,6 +182,7 @@ impl TerminalFocus {
             reading: Reading::new(),
             pacing: self.pacing.clone(),
             key: None,
+            reprint: None,
         }
     }
 }
@@ -397,6 +437,7 @@ pub(crate) fn committed(
         reading: Reading::new(),
         pacing,
         key: None,
+        reprint: None,
     };
     focus.watch = match old {
         // The same node not left reads on from the window last spoken, so
@@ -411,7 +452,7 @@ pub(crate) fn committed(
                     token,
                     dirty: false,
                     speaks: Speaks::Output,
-                    waited,
+                    sent: Sent::of(waited),
                 },
             }
         }
@@ -486,7 +527,7 @@ fn settle(state: &mut SrState, focus: &mut TerminalFocus, now_us: u64) {
                     token,
                     dirty: false,
                     speaks: Speaks::Output,
-                    waited,
+                    sent: Sent::of(waited),
                 };
             }
         }
@@ -622,12 +663,12 @@ fn answered(
                     token: out,
                     dirty,
                     speaks,
-                    waited,
+                    sent,
                 },
         } if out == token => {
             let (old, read, entry) = match ended {
                 Ended::Read(read) => {
-                    let (old, entry) = judged(state, focus, (&old, &read), (speaks, waited), trace);
+                    let (old, entry) = judged(state, focus, (&old, &read), (speaks, sent), trace);
                     (old, Read::Idle { dirty }, Some(entry))
                 }
                 Ended::Abandoned { due } => (
@@ -708,16 +749,16 @@ fn judged(
     state: &mut SrState,
     focus: &mut TerminalFocus,
     (old, read): (&Arc<Window>, &TerminalWindow),
-    (speaks, waited): (Speaks, bool),
+    (speaks, sent): (Speaks, Sent),
     trace: TraceId,
 ) -> (Arc<Window>, SpeechEntry) {
     let node = focus.terminal.node;
     let window = Arc::new(parse(read));
     take_caret(state, node, read);
-    let answer = if waited {
-        focus.reading.answer_waited(old, &window)
-    } else {
-        focus.reading.answer(old, &window)
+    let answer = match sent {
+        Sent::Change => focus.reading.answer(old, &window),
+        Sent::Waited => focus.reading.answer_waited(old, &window),
+        Sent::Key => focus.reading.answer_key(old, &window),
     };
     let mut output = Vec::new();
     let kept = if answer.dropped {
@@ -752,6 +793,7 @@ fn judged(
         if !speaks_output {
             output.clear();
         }
+        reprinted(state, focus, (old, &window));
         Arc::clone(&window)
     };
     let key = focus
@@ -777,6 +819,56 @@ fn judged(
         fence: Fence::default(),
     };
     (kept, entry)
+}
+
+/// After a read of `focus`'s terminal, `new` against `old`, the command
+/// entered last (F12): forgotten once the read ends past the quiet period
+/// after its Enter, or once the read shows its line still at the mark's
+/// place; else, when a new row of the read holds the line, the nearest the
+/// caret, the mark moves there, as where the program printed the input.
+fn reprinted(state: &mut SrState, focus: &mut TerminalFocus, (old, new): (&Window, &Window)) {
+    let Some(reprint) = focus.reprint.take() else {
+        return;
+    };
+    if new.ended_us() > reprint.until_us {
+        return;
+    }
+    let node = focus.terminal.node;
+    let moved = places_mut(state, node)
+        .written()
+        .saturating_sub(reprint.written);
+    let Ok(moved) = u32::try_from(moved) else {
+        return;
+    };
+    let place = reprint.place.saturating_add(moved);
+    let at = new.places_of(&reprint.text);
+    if at.contains(&place) {
+        return;
+    }
+    // A row the last read had at its place, moved with the places, is no
+    // new row: an older line with the same text does not count.
+    let before = old.places_of(&reprint.text);
+    let caret = new.caret_line().map_or(0, |(_, above)| above);
+    let Some(found) = at
+        .into_iter()
+        .filter(|&at| {
+            at.checked_sub(moved)
+                .is_none_or(|was| !before.contains(&was))
+        })
+        .min_by_key(|at| at.abs_diff(caret))
+    else {
+        focus.reprint = Some(reprint);
+        return;
+    };
+    let places = places_mut(state, node);
+    places
+        .marks
+        .retain(|mark| !(mark.above == place && mark.text == reprint.text));
+    places.mark(places::RowPlace {
+        above: found,
+        column: 0,
+        text: reprint.text,
+    });
 }
 
 /// The read `read` as the control plane's event stream carries it, for the
@@ -886,7 +978,7 @@ fn key_read_sent(state: &mut SrState, node: NodeId, now_us: u64) -> Option<KeySe
                     token,
                     dirty: *dirty,
                     speaks: Speaks::Output,
-                    waited: false,
+                    sent: Sent::Key,
                 },
             },
             Watch::Gone => return None,
@@ -1156,7 +1248,7 @@ pub(crate) fn cut(state: &mut SrState, now_us: u64) {
                             token,
                             dirty: false,
                             speaks: Speaks::KeysOnly,
-                            waited: true,
+                            sent: Sent::Waited,
                         };
                     }
                 }
@@ -1327,10 +1419,17 @@ pub(crate) fn key_passed(
                 && let Some((line, above)) = old.caret_line()
                 && !line.trim().is_empty()
             {
-                places_mut(state, focus.terminal.node).mark(places::RowPlace {
+                let places = places_mut(state, focus.terminal.node);
+                places.mark(places::RowPlace {
                     above,
                     column: 0,
                     text: line.to_owned(),
+                });
+                focus.reprint = Some(Reprint {
+                    text: line.to_owned(),
+                    place: above,
+                    written: places.written(),
+                    until_us: at_us.saturating_add(verbatim_text::terminal_window::QUIET_US),
                 });
             }
             focus.reading.key(kind, at_us, old);
@@ -1394,6 +1493,7 @@ pub(crate) fn live_for_tests(state: &mut SrState, node: NodeId, window: RequestW
         reading: Reading::new(),
         pacing: Pacing::Idle,
         key: None,
+        reprint: None,
     }));
 }
 

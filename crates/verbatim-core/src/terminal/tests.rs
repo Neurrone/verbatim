@@ -1306,6 +1306,35 @@ fn a_first_screen_over_no_text_sets_no_mark_aside() {
     );
 }
 
+#[test]
+fn input_a_program_prints_elsewhere_is_marked_where_it_is_printed() {
+    // F12: Enter on "> hello" marks its row; within the quiet period the
+    // program clears its input row and prints the input on a new row of its
+    // transcript, as Pi and Claude Code do, so the mark moves there.
+    let mut state = terminal();
+    let token = one_read(&mut state);
+    let _ = answer(
+        &mut state,
+        token,
+        read_of(window(&["(empty)", "", "> hello"], 10, (3, None))),
+    );
+    key_passed(&mut state, (KeyKind::Enter, None), 15_000, TRACE);
+    let read = changed(&mut state);
+    let _ = answer(
+        &mut state,
+        read,
+        read_of(grown(&["> hello", "thinking", "> "], 20, 3)),
+    );
+    let node = node_of(&state);
+    let marks: Vec<(u32, String)> = places_of(&state, node)
+        .unwrap()
+        .marks
+        .iter()
+        .map(|mark| (mark.above, mark.text.clone()))
+        .collect();
+    assert_eq!(marks, [(2, "> hello".to_owned())]);
+}
+
 // Defects.
 
 #[test]

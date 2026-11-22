@@ -664,3 +664,25 @@ fn a_line_keys_answer_is_spoken_once_however_many_reads_its_window_holds() {
     let again = window(&["  apple", "> banana"], Some((1, 2)), 40);
     assert_eq!(reading.answer(&moved, &again), quiet());
 }
+
+#[test]
+fn a_keys_own_read_after_its_caret_wait_is_the_keys() {
+    // TM 18: the read a key sends is the key's, though its wait for the
+    // caret, which a list redrawn below the caret never moves, ended past
+    // the 300 milliseconds; judged by its time alone, the marker's change
+    // was a program's spinner glyph, and silent.
+    let mut reading = Reading::new();
+    let old = Arc::new(window(
+        &["Pick a fruit:", "> apple", "  banana", "  cherry", ""],
+        Some((1, 0)),
+        0,
+    ));
+    reading.key(KeyKind::Caret(Unit::Line), 0, &old);
+    let new = window(
+        &["Pick a fruit:", "  apple", "> banana", "  cherry", ""],
+        Some((1, 0)),
+        310,
+    );
+    let answer = reading.answer_key(&old, &new);
+    assert_eq!(answer.keys, [said("> banana")], "{answer:?}");
+}
