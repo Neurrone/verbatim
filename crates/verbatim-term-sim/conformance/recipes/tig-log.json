@@ -1,0 +1,19 @@
+{
+  "about": "tig 2.6.1 from Git for Windows over a repository of twelve commits by one neutral author: the log drawn with its selected row highlighted, j three times and k once moving the selection, Enter opening the commit's diff below it, j twice scrolling it, q closing the diff and q leaving.",
+  "command": "cmd.exe /d /c cd /d C:\\vbrec\\tig-repo && tig.exe",
+  "steps": [
+    {"quiet": 2000},
+    {"type": {"text": "j", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "j", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "j", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "k", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\r", "each": 0}},
+    {"quiet": 1000},
+    {"type": {"text": "j", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "j", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "q", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "q", "each": 0}},
+    {"quiet": 1000}
+  ]
+}

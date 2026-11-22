@@ -1,0 +1,2341 @@
+{
+  "flavor": "WindowsTerminal",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "▌ coconut                                                                                                               \r\n▌ clementine                                                                                                            \r\n▌ cherry                                                                                                                \r\n▌ blueberry                                                                                                             \r\n▌ blackberry                                                                                                            \r\n▌ bilberry                                                                                                              \r\n▌ banana                                                                                                                \r\n▌ avocado                                                                                                               \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  40/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n>                                                                                                                       \r\n",
+      "screen": "▌ coconut                                                                                                               \r\n▌ clementine                                                                                                            \r\n▌ cherry                                                                                                                \r\n▌ blueberry                                                                                                             \r\n▌ blackberry                                                                                                            \r\n▌ bilberry                                                                                                              \r\n▌ banana                                                                                                                \r\n▌ avocado                                                                                                               \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  40/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n>                                                                                                                       \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ coconut                                                                                                               \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": ">                                                                                                                       \r\n",
+      "caret_column": 2,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 5,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "▌ coconut                                                                                                               \r\n▌ clementine                                                                                                            \r\n▌ cherry                                                                                                                \r\n▌ blueberry                                                                                                             \r\n▌ blackberry                                                                                                            \r\n▌ bilberry                                                                                                              \r\n▌ banana                                                                                                                \r\n▌ avocado                                                                                                               \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  40/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n>                                                                                                                       \r\n",
+      "screen": "▌ coconut                                                                                                               \r\n▌ clementine                                                                                                            \r\n▌ cherry                                                                                                                \r\n▌ blueberry                                                                                                             \r\n▌ blackberry                                                                                                            \r\n▌ bilberry                                                                                                              \r\n▌ banana                                                                                                                \r\n▌ avocado                                                                                                               \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  40/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n>                                                                                                                       \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ coconut                                                                                                               \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": ">                                                                                                                       \r\n",
+      "caret_column": 2,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 5,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n",
+      "screen": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ banana                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> a                                                                                                                     \r\n",
+      "caret_column": 3,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 5,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n",
+      "screen": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> an                                                                                                                    \r\n",
+      "caret_column": 4,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 5,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 7,
+            "length": 113,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 6,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 6,
+            "length": 112,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 2,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 4,
+            "length": 116,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n",
+      "screen": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> an                                                                                                                    \r\n",
+      "caret_column": 4,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 6,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 8,
+            "length": 112,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 6,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 6,
+            "length": 112,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 2,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 4,
+            "length": 116,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n",
+      "screen": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> an                                                                                                                    \r\n",
+      "caret_column": 4,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 6,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 8,
+            "length": 112,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 6,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 6,
+            "length": 112,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 2,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 4,
+            "length": 116,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n",
+      "screen": "                                                                                                                        \r\n▌ damson                                                                                                                \r\n▌ dragonfruit                                                                                                           \r\n▌ nectarine                                                                                                             \r\n▌ mangosteen                                                                                                            \r\n▌ cranberry                                                                                                             \r\n▌ mandarin                                                                                                              \r\n▌ orange                                                                                                                \r\n▌ banana                                                                                                                \r\n▌ mango                                                                                                                 \r\n  9/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> an                                                                                                                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> an                                                                                                                    \r\n",
+      "caret_column": 4,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 6,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 8,
+            "length": 112,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 6,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 6,
+            "length": 112,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 2,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 4,
+            "length": 116,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n",
+      "screen": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ banana                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> a                                                                                                                     \r\n",
+      "caret_column": 3,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 7,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 9,
+            "length": 109,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n",
+      "screen": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ banana                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> a                                                                                                                     \r\n",
+      "caret_column": 3,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 7,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 9,
+            "length": 109,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n",
+      "screen": "▌ banana                                                                                                                \r\n▌ peach                                                                                                                 \r\n▌ mango                                                                                                                 \r\n▌ guava                                                                                                                 \r\n▌ grape                                                                                                                 \r\n▌ pear                                                                                                                  \r\n▌ date                                                                                                                │ \r\n▌ avocado                                                                                                             │ \r\n▌ apricot                                                                                                             │ \r\n▌ apple                                                                                                               │ \r\n  24/40 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────  \r\n> a                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "▌ banana                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "> a                                                                                                                     \r\n",
+      "caret_column": 3,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 119,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 4,
+            "foreground": 789516,
+            "background": 15921906
+          },
+          {
+            "column": 6,
+            "length": 112,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 1,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 119,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 7,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 7,
+            "length": 111,
+            "foreground": 6710886,
+            "background": 789516
+          },
+          {
+            "column": 118,
+            "length": 2,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 1,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 2,
+            "length": 1,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

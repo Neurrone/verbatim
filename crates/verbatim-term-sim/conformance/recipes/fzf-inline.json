@@ -1,0 +1,20 @@
+{
+  "about": "fzf 0.75.0 drawn inline below the prompt at 40 percent of the screen's height, the same keys as fzf-full: a list redrawn on the main screen with the caret on its input line.",
+  "command": "cmd.exe /d /c type C:\\vbrec\\fruits.txt | fzf.exe --no-mouse --height=40%",
+  "steps": [
+    {"quiet": 1500},
+    {"type": {"text": "a", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "n", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u000e", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u007f", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b", "each": 0}},
+    {"quiet": 1000}
+  ]
+}

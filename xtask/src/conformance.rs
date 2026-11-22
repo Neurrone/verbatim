@@ -330,7 +330,7 @@ fn read_stream(
     let mut start: Option<IUIAutomationTextRange> = None;
     let mut screen_rows = 0;
     let mut answers = Vec::new();
-    let mut size = (0, 0);
+    let size = empty_screen_size(&pattern)?;
     let inside = inside_character(stream);
     for (index, (chunk, inside)) in stream.chunks.iter().zip(inside).enumerate() {
         let hex = chunk
@@ -376,9 +376,6 @@ fn read_stream(
             return Err(format!("the read program failed and fell back: {error}"));
         }
         let screen = String::from_utf16_lossy(&snapshot.screen);
-        if size == (0, 0) {
-            size = screen_size(&screen);
-        }
         screen_rows = verbatim_term_sim::screen_rows(&screen);
         start.clone_from(&snapshot.next_start);
         let (caret_line, caret_column) = caret(&pattern).map_err(|error| error.to_string())?;
@@ -431,6 +428,21 @@ fn read_stream(
         height: size.1,
         answers,
     })
+}
+
+/// The screen's size, read from the empty terminal before the first chunk,
+/// when each row is a line of its own: a program that fills every row to its
+/// last column, as Microsoft Edit does, wraps each row into the next, so its
+/// screen reads as one line.
+fn empty_screen_size(pattern: &IUIAutomationTextPattern) -> Result<(usize, usize), String> {
+    let screen = pattern
+        .visible_ranges()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .next()
+        .ok_or("the terminal has no visible range")?;
+    let text = screen.text(-1).map_err(|error| error.to_string())?;
+    Ok(screen_size(&String::from_utf16_lossy(&text)))
 }
 
 /// The screen's width and height from its first text: the narrowest line's
@@ -512,11 +524,12 @@ fn cells(
 /// 2026-10-24). A cell whose colour is not a number reads as `u32::MAX`.
 fn stretches(
     start: &IUIAutomationTextRange,
+    offset: usize,
     width: usize,
     runs: &mut Vec<Run>,
 ) -> windows::core::Result<()> {
     for column in 0..width {
-        let cell = cells(start, column, column + 1)?;
+        let cell = cells(start, offset + column, offset + column + 1)?;
         let foreground = colour(&cell, UIA_ForegroundColorAttributeId)?.unwrap_or(u32::MAX);
         let background = colour(&cell, UIA_BackgroundColorAttributeId)?.unwrap_or(u32::MAX);
         match runs.last_mut() {
@@ -535,7 +548,9 @@ fn stretches(
 }
 
 /// Each screen row's stretches of one foreground and background, from the
-/// screen's top to the document's last row.
+/// screen's top to the document's last row. A line wrapped over several
+/// rows, as a program that fills each row to its last column writes them,
+/// is read as those rows, each `size.0` cells from the line's start.
 fn colours(
     pattern: &IUIAutomationTextPattern,
     size: (usize, usize),
@@ -546,13 +561,21 @@ fn colours(
     let mut rows = Vec::new();
     let row = screen.clone_range()?;
     row.move_endpoint_to(Endpoint::End, &screen, Endpoint::Start)?;
-    for _ in 0..size.1 {
+    while rows.len() < size.1 {
         row.expand(TextUnit_Line)?;
         let start = row.clone_range()?;
         start.move_endpoint_to(Endpoint::End, &row, Endpoint::Start)?;
-        let mut runs = Vec::new();
-        stretches(&start, size.0, &mut runs)?;
-        rows.push(runs);
+        let text = String::from_utf16_lossy(&row.text(-1)?);
+        let cells = text.trim_end_matches(['\r', '\n']).chars().count();
+        let wrapped = cells.div_ceil(size.0.max(1)).max(1);
+        for part in 0..wrapped {
+            if rows.len() == size.1 {
+                break;
+            }
+            let mut runs = Vec::new();
+            stretches(&start, part * size.0, size.0, &mut runs)?;
+            rows.push(runs);
+        }
         if row.move_by(TextUnit_Line, 1)? == 0 {
             break;
         }

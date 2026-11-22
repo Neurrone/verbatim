@@ -1,0 +1,29 @@
+{
+  "about": "tig 2.6.1 from Git for Windows over a repository of twelve commits by one neutral author: the log drawn with its selected row highlighted, j three times and k once moving the selection, Enter opening the commit's diff below it, j twice scrolling it, q closing the diff and q leaving.",
+  "chunks": [
+    "\u001b[?25l\u001b[2J\u001b[m\u001b[H\u001b[?25h\u001b[?1049h\u001b[?25l\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h\u001b[22;0;0t\u001b[?1h\u001b=\u001b[?25l",
+    "\u001b[2J\u001b[1m2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list\u001b[22m\u001b[K\r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list\u001b[K\r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list\u001b[K\r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list\u001b[K\r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list\u001b[K\r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list\u001b[K\r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list\u001b[K\r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list\u001b[K\r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list\u001b[K\r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list\u001b[K\r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list\u001b[K\r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[1m\r\n[main] d73fc898f0795afa22359c0c474d83fc29da602d - commit 1 of 12\u001b[22m                                                    \u001b[K\u001b[1m100%\u001b[22m\r\n\u001b[K\u001b[120C",
+    "\u001b[H2026-01-12 09:00 +0000 Recorder o \u001b[6C Add note 12 to the list\u001b[1m\r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list\u001b[29;8Hfb56f3a53e6f5c5a798af1653b74cd7def1646ca\u001b[10C2\u001b[22m\r\n\u001b[K\u001b[120C",
+    "\u001b[2;1H2026-01-11 09:00 +0000 Recorder o Add note 11 to the list\u001b[1m\r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list\u001b[29;8H711c45fa56fa3a61286c3a9962ab07267617c8be\u001b[10C3",
+    "\u001b[22m\u001b[3;1H2026-01-10 09:00 +0000 Recorder o Add note 10 to the list\u001b[1m\r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list\u001b[29;8H5febcdcf99de2c6631b2b664cf3d3987a4fcb58\u001b[11C4",
+    "\u001b[22m\u001b[1m\u001b[3;1H2026-01-10 09:00 +0000 Recorder o Add note 10 to the list\u001b[22m\r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list\u001b[1m\u001b[29;8H711c45fa56fa3a61286c3a9962ab07267617c8b\u001b[11C3",
+    "\u001b[22m\u001b[1;61H│\u001b[2;61H│\r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │\u001b[4;61H│\u001b[5;61H│\u001b[6;61H│\u001b[7;61H│\u001b[8;61H│\u001b[9;61H│\u001b[10;61H│\u001b[11;61H│\u001b[12;61H│\u001b[13;61H│\u001b[14;61H│\u001b[15;61H│\u001b[16;61H│\u001b[17;61H│\u001b[18;61H│\u001b[19;61H│\u001b[20;61H│\u001b[21;61H│\u001b[22;61H│\u001b[23;61H│\u001b[24;61H│\u001b[25;61H│\u001b[26;61H│\u001b[27;61H│\u001b[28;61H│\r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│\u001b[1m[diff]\u001b[49C  0\u001b[22m\u001b[1m\u001b[1;62Hcommit 711c45fa56fa3a61286c3a9962ab07267617c8be\u001b[22m\u001b[2;62HAuthor:     Recorder <recorder@example.invalid>\u001b[3;62HAuthorDate: Sat Jan 10 09:00:00 2026 +0000\u001b[4;62HCommit:     Recorder <recorder@example.invalid>\u001b[5;62HCommitDate: Sat Jan 10 09:00:00 2026 +0000\u001b[7;66HAdd note 10 to the list\u001b[8;62H---\u001b[9;63Hnotes.txt | 1 +\u001b[10;63H1 file changed, 1 insertion(+)\u001b[12;62Hdiff --git a/notes.txt b/notes.txt\u001b[13;62Hindex c52d007..701eb83 100644\u001b[K\u001b[14;62H--- a/notes.txt\u001b[K\u001b[15;62H+++ b/notes.txt\u001b[K\u001b[16;62H@@ -7,3 +7,4 @@ note 6\u001b[K\u001b[17;62H note 7\u001b[K\u001b[18;62H note 8\u001b[K\u001b[19;62H note 9\u001b[K\u001b[20;62H+note 10\u001b[K\u001b[1m\u001b[29;69H711c45fa56fa3a61286c3a9962ab07267617c8be - line 100",
+    "\u001b[22m\u001b[1;62Hcommit 711c45fa56fa3a61286c3a9962ab07267617c8be\u001b[1m\u001b[2;62HAuthor:     Recorder <recorder@example.invalid>",
+    "\u001b[22m\u001b[2;62HAuthor:     Recorder <recorder@example.invalid>\u001b[1m\u001b[3;62HAuthorDate: Sat Jan 10 09:00:00 2026 +0000",
+    "\u001b[22m\u001b[1;61Hlist\u001b[K\u001b[2;61H\u001b[K\u001b[1m\r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list\u001b[22m\u001b[K\u001b[4;61H\u001b[K\n\u001b[K\n \u001b[7;61H\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K\n \u001b[12;61H\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[1m\r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12\u001b[22m\u001b[51X\u001b[51C",
+    "\u001b[?12l\r\n\u001b[?25h\u001b[?1049l\u001b[23;0;0t\u001b[?1l\u001b>\u001b[?25l\u001b[H\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h"
+  ],
+  "at_ms": [
+    264,
+    327,
+    2366,
+    2985,
+    3586,
+    4203,
+    4838,
+    5898,
+    6516,
+    7133,
+    7958
+  ]
+}

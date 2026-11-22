@@ -1,0 +1,29 @@
+{
+  "about": "fzf 0.75.0 drawn inline below the prompt at 40 percent of the screen's height, the same keys as fzf-full: a list redrawn on the main screen with the caret on its input line.",
+  "chunks": [
+    "\u001b[?2026h\u001b[?2004h\u001b[?2026l\u001b[?25l\u001b[2J\u001b[m\u001b[2m\u001b[H▌\u001b[22m coconut\u001b[2m\r\n▌\u001b[22m clementine\u001b[2m\r\n▌\u001b[22m cherry\u001b[2m\r\n▌\u001b[22m blueberry\u001b[2m\r\n▌\u001b[22m blackberry\u001b[2m\r\n▌\u001b[22m bilberry\u001b[2m\r\n▌\u001b[22m banana\u001b[2m\r\n▌\u001b[22m avocado\u001b[2m\r\n▌\u001b[22m apricot\u001b[2m\u001b[109C│\u001b[22m\u001b[1m\r\n▌\u001b[22m\u001b[1m\u001b[7m\u001b[1Capple\u001b[22m\u001b[27m\u001b[2m\u001b[111C│\u001b[22m\r\n  40/40\u001b[2m ──────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[22m\u001b[1m\r\n>\u001b[22m\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\u001b[12;3H\u001b[?25h\u001b[?2026h\u001b[?2026l",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[11;1H  40/40\u001b[2m ──────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[22m \u001b[12;3H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[2m\u001b[H▌\u001b[22m banana \u001b[2m\r\n▌\u001b[22m peach     \u001b[2m\r\n▌\u001b[22m mango \u001b[2m\r\n▌\u001b[22m guava    \u001b[2m\r\n▌\u001b[22m grape     \u001b[2m\r\n▌\u001b[22m pear    \u001b[2m\r\n▌\u001b[22m date  \u001b[2m\u001b[110C│\r\n▌\u001b[22m avocado\u001b[2m\u001b[109C│\r\n▌\u001b[22m apricot\u001b[1m\r\n▌\u001b[22m \u001b[1m\u001b[4m\u001b[7ma\u001b[24mpple\u001b[22m\u001b[27m\r\n  24/40\u001b[2m ──────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[22m \u001b[1m\r\n>\u001b[22m \u001b[1ma\u001b[22m\u001b[116X\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[H\u001b[119X\u001b[2m\r\n▌\u001b[22m damson\u001b[2m\r\n▌\u001b[22m dragonfruit\u001b[2m\r\n▌\u001b[22m nectarine\u001b[2m\r\n▌\u001b[22m mangosteen\u001b[2m\r\n▌\u001b[22m cranberry\u001b[2m\r\n▌\u001b[22m mandarin\u001b[108C \u001b[2m\r\n▌\u001b[22m orange \u001b[109C \u001b[2m\r\n▌\u001b[22m banana \u001b[109C \u001b[1m\r\n▌\u001b[22m \u001b[1m\u001b[7mm\u001b[4man\u001b[24mgo\u001b[22m\u001b[27m\u001b[111C \r\n  9/40\u001b[2m ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[22m \u001b[1m\r\n>\u001b[22m \u001b[1man\u001b[22m\u001b[115X\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[9;1H▌\u001b[22m \u001b[1m\u001b[7mb\u001b[4man\u001b[24mana\u001b[22m\u001b[2m\u001b[27m\r\n▌\u001b[22m mango\u001b[12;5H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[8;1H▌\u001b[22m \u001b[1m\u001b[7mor\u001b[4man\u001b[24mge\u001b[22m\u001b[2m\u001b[27m\r\n▌\u001b[22m banana\u001b[12;5H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[2m\u001b[8;1H▌\u001b[22m orange\u001b[1m\r\n▌\u001b[22m \u001b[1m\u001b[7mb\u001b[4man\u001b[24mana\u001b[12;5H\u001b[?25h\u001b[22m\u001b[27m",
+    "\u001b[?2026h\u001b[?2026l\u001b[1m\r>\u001b[22m \u001b[1ma\u001b[22m\u001b[116X\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[2m\u001b[H▌\u001b[22m banana\u001b[2m\r\n▌\u001b[22m peach \u001b[2m\r\n▌\u001b[22m mango      \u001b[2m\r\n▌\u001b[22m guava    \u001b[2m\r\n▌\u001b[22m grape     \u001b[2m\r\n▌\u001b[22m pear     \u001b[2m\r\n▌\u001b[22m date    \u001b[2m\u001b[108C│\r\n▌\u001b[22m avocado\u001b[2m\u001b[109C│\u001b[22m\u001b[1m\r\n▌\u001b[22m \u001b[1m\u001b[4m\u001b[7ma\u001b[24mpricot\u001b[22m\u001b[2m\u001b[27m\u001b[109C│\r\n▌\u001b[22m apple\u001b[2m\u001b[111C│\u001b[22m\r\n  24/40\u001b[2m ──────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[22m \u001b[12;4H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[8;1H▌\u001b[22m \u001b[1m\u001b[4m\u001b[7ma\u001b[24mvocado\u001b[22m\u001b[2m\u001b[27m\r\n▌\u001b[22m apricot\u001b[12;4H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2026l\u001b[?25l\u001b[1m\u001b[7;1H▌\u001b[22m \u001b[1m\u001b[7md\u001b[4ma\u001b[24mte\u001b[22m\u001b[2m\u001b[27m\r\n▌\u001b[22m avocado\u001b[12;4H\u001b[?25h",
+    "\u001b[?2026h\u001b[?2004l\u001b[?2026l\u001b[?25l\u001b[H\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h"
+  ],
+  "at_ms": [
+    46,
+    136,
+    1648,
+    2468,
+    3288,
+    3906,
+    4521,
+    5166,
+    6003,
+    6617,
+    7539
+  ]
+}

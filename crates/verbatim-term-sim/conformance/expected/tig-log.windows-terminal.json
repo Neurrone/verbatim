@@ -1,0 +1,2575 @@
+{
+  "flavor": "WindowsTerminal",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                       ",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] d73fc898f0795afa22359c0c474d83fc29da602d - commit 1 of 12                                                    100%\r\n                                                                                                                       ",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] d73fc898f0795afa22359c0c474d83fc29da602d - commit 1 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                       ",
+      "caret_column": 119,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 56,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 52,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 116,
+            "length": 4,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] fb56f3a53e6f5c5a798af1653b74cd7def1646ca - commit 2 of 12                                                    100%\r\n                                                                                                                       ",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] fb56f3a53e6f5c5a798af1653b74cd7def1646ca - commit 2 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                       ",
+      "caret_column": 119,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 57,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 57,
+            "length": 63,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 52,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 116,
+            "length": 4,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "caret_column": 58,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 57,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 57,
+            "length": 63,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 52,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 116,
+            "length": 4,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 5febcdcf99de2c6631b2b664cf3d3987a4fcb58e - commit 4 of 12                                                    100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 5febcdcf99de2c6631b2b664cf3d3987a4fcb58e - commit 4 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "[main] 5febcdcf99de2c6631b2b664cf3d3987a4fcb58e - commit 4 of 12                                                    100%\r\n",
+      "caret_column": 58,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 56,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 56,
+            "length": 64,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 52,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 116,
+            "length": 4,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "caret_column": 58,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 57,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 57,
+            "length": 63,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 52,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 116,
+            "length": 4,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n",
+      "caret_column": 119,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 21,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 47,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 108,
+            "length": 12,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 61,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 67,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 68,
+            "length": 52,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n",
+      "caret_rows_to_end": 28,
+      "caret_line": "2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n",
+      "caret_column": 108,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 61,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 47,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 108,
+            "length": 12,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 61,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 67,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 68,
+            "length": 52,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list   │Author:     Recorder <recorder@example.invalid>            \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list    │Commit:     Recorder <recorder@example.invalid>            \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list    │CommitDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list    │                                                           \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list    │    Add note 10 to the list                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list    │---                                                        \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list    │ notes.txt | 1 +                                           \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list    │ 1 file changed, 1 insertion(+)                            \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list    │                                                           \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list    │diff --git a/notes.txt b/notes.txt                         \r\n                                                            │index c52d007..701eb83 100644                              \r\n                                                            │--- a/notes.txt                                            \r\n                                                            │+++ b/notes.txt                                            \r\n                                                            │@@ -7,3 +7,4 @@ note 6                                     \r\n                                                            │ note 7                                                    \r\n                                                            │ note 8                                                    \r\n                                                            │ note 9                                                    \r\n                                                            │+note 10                                                   \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n                                                            │                                                           \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commi 100%│[diff] 711c45fa56fa3a61286c3a9962ab07267617c8be - line 100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the │commit 711c45fa56fa3a61286c3a9962ab07267617c8be            \r\n",
+      "caret_rows_to_end": 27,
+      "caret_line": "2026-01-10 09:00 +0000 Recorder o Add note 10 to the list   │AuthorDate: Sat Jan 10 09:00:00 2026 +0000                 \r\n",
+      "caret_column": 103,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 61,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 42,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 103,
+            "length": 17,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 61,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 61,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 67,
+            "length": 1,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 68,
+            "length": 52,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "screen": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n2026-01-11 09:00 +0000 Recorder o Add note 11 to the list                                                               \r\n2026-01-10 09:00 +0000 Recorder o Add note 10 to the list                                                               \r\n2026-01-09 09:00 +0000 Recorder o Add note 9 to the list                                                                \r\n2026-01-08 09:00 +0000 Recorder o Add note 8 to the list                                                                \r\n2026-01-07 09:00 +0000 Recorder o Add note 7 to the list                                                                \r\n2026-01-06 09:00 +0000 Recorder o Add note 6 to the list                                                                \r\n2026-01-05 09:00 +0000 Recorder o Add note 5 to the list                                                                \r\n2026-01-04 09:00 +0000 Recorder o Add note 4 to the list                                                                \r\n2026-01-03 09:00 +0000 Recorder o Add note 3 to the list                                                                \r\n2026-01-02 09:00 +0000 Recorder o Add note 2 to the list                                                                \r\n2026-01-01 09:00 +0000 Recorder I Add note 1 to the list                                                                \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n                                                                                                                       ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "2026-01-12 09:00 +0000 Recorder o [main] Add note 12 to the list                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "[main] 711c45fa56fa3a61286c3a9962ab07267617c8be - commit 3 of 12                                                    100%\r\n",
+      "caret_column": 115,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 34,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 34,
+            "length": 6,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 40,
+            "length": 80,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 57,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 57,
+            "length": 63,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 64,
+            "foreground": 15921906,
+            "background": 789516
+          },
+          {
+            "column": 64,
+            "length": 51,
+            "foreground": 13421772,
+            "background": 789516
+          },
+          {
+            "column": 115,
+            "length": 5,
+            "foreground": 15921906,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

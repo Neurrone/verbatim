@@ -1,0 +1,26 @@
+{
+  "about": "Microsoft Edit opening a three-line file: Down Arrow twice and End, Alt+F opening the File menu with its highlighted entry moved by Down Arrow twice, Escape, Control+O opening the file dialog over a folder of three files with its list moved by Down and Up Arrow, Escape, and Control+Q leaving the unchanged file.",
+  "command": "edit.exe C:\\vbrec\\edit\\notes.txt",
+  "steps": [
+    {"quiet": 1500},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b[F", "each": 0}},
+    {"quiet": 600},
+    {"type": {"text": "\u001bf", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u000f", "each": 0}},
+    {"quiet": 1200},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b[B", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b[A", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u0011", "each": 0}},
+    {"quiet": 1000}
+  ]
+}

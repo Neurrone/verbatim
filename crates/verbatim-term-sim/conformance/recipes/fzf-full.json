@@ -1,0 +1,20 @@
+{
+  "about": "fzf 0.75.0 on its alternate screen over forty fruit names: the list drawn with its marker on the first entry, \"an\" typed and the list filtered after each character, Control+P and Control+N moving the marker and its highlight, Backspace widening the list, then Escape.",
+  "command": "cmd.exe /d /c type C:\\vbrec\\fruits.txt | fzf.exe --no-mouse",
+  "steps": [
+    {"quiet": 1500},
+    {"type": {"text": "a", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "n", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u000e", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u007f", "each": 0}},
+    {"quiet": 800},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u0010", "each": 0}}, {"quiet": 600},
+    {"type": {"text": "\u001b", "each": 0}},
+    {"quiet": 1000}
+  ]
+}

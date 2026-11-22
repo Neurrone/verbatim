@@ -1,0 +1,29 @@
+{
+  "about": "fzf 0.75.0 on its alternate screen over forty fruit names: the list drawn with its marker on the first entry, \"an\" typed and the list filtered after each character, Control+P and Control+N moving the marker and its highlight, Backspace widening the list, then Escape.",
+  "chunks": [
+    "\u001b[?25l\u001b[2J\u001b[m\u001b[H\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\u001b[H\u001b[?25h\u001b[22;2t\u001b[?1049h\u001b[22;0;0t\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[?25l\u001b[120C\u001b[0 q\u001b[0 q\u001b[0 q\u001b[0 q\u001b[H▌\u001b[1Cmandarin\r\n▌\u001b[1Clychee\r\n▌\u001b[1Clime\r\n▌\u001b[1Clemon\r\n▌\u001b[1Ckumquat\r\n▌\u001b[1Ckiwi\r\n▌\u001b[1Cjackfruit\r\n▌\u001b[1Choneydew\r\n▌\u001b[1Cguava\r\n▌\u001b[1Cgrapefruit\u001b[107C│\r\n▌\u001b[1Cgrape\u001b[112C│\r\n▌\u001b[1Cgooseberry\u001b[107C│\r\n▌\u001b[1Cfig\u001b[114C│\r\n▌\u001b[1Celderberry\u001b[107C│\r\n▌\u001b[1Cdragonfruit\u001b[106C│\r\n▌\u001b[1Cdate\u001b[113C│\r\n▌\u001b[1Cdamson\u001b[111C│\r\n▌\u001b[1Ccranberry\u001b[108C│\r\n▌\u001b[1Ccoconut\u001b[110C│\r\n▌\u001b[1Cclementine\u001b[107C│\r\n▌\u001b[1Ccherry\u001b[111C│\r\n▌\u001b[1Cblueberry\u001b[108C│\r\n▌\u001b[1Cblackberry\u001b[107C│\r\n▌\u001b[1Cbilberry\u001b[109C│\r\n▌\u001b[1Cbanana\u001b[111C│\r\n▌\u001b[1Cavocado\u001b[110C│\r\n▌\u001b[1Capricot\u001b[110C│\r\n▌\u001b[7m\u001b[1Capple\u001b[27m\u001b[112C│\r\n \u001b[1C40/40 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n>\u001b[1C\u001b[?25h",
+    "\u001b[0 q\u001b[0 q",
+    "\u001b[1C\u001b[0 q\u001b[0 q\u001b[?25l\u001b[H \u001b[1C        \r\n \u001b[1C      \r\n \u001b[1C    \r\n \u001b[1C     \u001b[5;3Hdragonfruit\u001b[6;3Hmangosteen\u001b[7;3Hgrapefruit\u001b[8;3Hblackb\u001b[1Crry\u001b[9;3Hraspberry\u001b[10;3Hpineapple \u001b[107C \u001b[11;3Hnectarine\u001b[108C \u001b[12;3Hjackfruit \u001b[107C \u001b[13;3Hcranberry\u001b[108C \u001b[14;3Hmandarin  \u001b[107C \u001b[15;3Hkumquat    \u001b[106C \u001b[16;3Hp\u001b[1Cpaya\u001b[111C \u001b[17;3Horange\u001b[111C \u001b[18;3Hdamson   \u001b[108C \u001b[19;3Hbana\u001b[1Ca \u001b[110C \u001b[20;3Hpeach     \u001b[107C \u001b[21;3Hmango \u001b[111C \u001b[22;3Hguava    \u001b[108C \u001b[23;3Hgr\u001b[1Cpe     \u001b[107C \u001b[24;3Hpear    \u001b[109C \u001b[25;3Hd\u001b[1Cte  \u001b[111C \u001b[26;120H \u001b[27;120H \u001b[4m\u001b[7m\u001b[28;3Ha\u001b[24m\u001b[27m\u001b[116C \u001b[29;3H24\r\n>\u001b[1Ca\u001b[?25h",
+    "\u001b[1C\u001b[0 q\u001b[0 q\u001b[?25l\u001b[5;1H \u001b[1C\u001b[11X\r\n \u001b[1C\u001b[10X\r\n \u001b[1C\u001b[10X\r\n \u001b[1C\u001b[10X\r\n \u001b[1C\u001b[9X\r\n \u001b[1C\u001b[9X\r\n \u001b[1C\u001b[9X\r\n \u001b[1C\u001b[9X\r\n \u001b[1C\u001b[9X\r\n \u001b[1C        \r\n \u001b[1C       \r\n \u001b[1C      \r\n \u001b[1C      \r\n \u001b[1C      \r\n \u001b[1C      \u001b[20;3Hdamson\u001b[21;3Hdra\u001b[2Cnfruit\u001b[22;3Hnect\u001b[1Crine\u001b[23;3Hmangosteen\u001b[24;3Hcr\u001b[1Cnberry\u001b[25;3Hm\u001b[1Cndarin\u001b[26;3Horange \u001b[27;3Hbanana \u001b[7m\u001b[28;3Hm\u001b[4man\u001b[24mgo\u001b[27m\u001b[29;3H9/40 ─\r\n>\u001b[1Can\u001b[?25h",
+    "\u001b[0 q\u001b[0 q\u001b[?25l\u001b[27;1H▌\u001b[7m\u001b[1Cb\u001b[4man\u001b[24mana\u001b[27m\r\n▌\u001b[1Cmango\u001b[30;5H\u001b[?25h",
+    "\u001b[0 q\u001b[0 q\u001b[?25l\u001b[26;1H▌\u001b[7m\u001b[1Cor\u001b[4man\u001b[24mge\u001b[27m\r\n▌\u001b[1Cbanana\u001b[30;5H\u001b[?25h",
+    "\u001b[0 q\u001b[0 q\u001b[?25l\u001b[26;1H▌\u001b[1Corange\r\n▌\u001b[7m\u001b[1Cb\u001b[4man\u001b[24mana\u001b[30;5H\u001b[?25h",
+    "\u001b[27m\b\u001b[0 q\u001b[0 q\u001b[?25l\u001b[5;1H▌\u001b[1Cdragonfruit\r\n▌\u001b[1Cmangosteen\r\n▌\u001b[1Cgrapefruit\r\n▌\u001b[1Cblackberry\r\n▌\u001b[1Craspberry\r\n▌\u001b[1Cpineapple\r\n▌\u001b[1Cnectarine\r\n▌\u001b[1Cjackfruit\r\n▌\u001b[1Ccranberry\r\n▌\u001b[1Cmandarin\r\n▌\u001b[1Ckumquat\r\n▌\u001b[1Cpapaya\r\n▌\u001b[1Corange\r\n▌\u001b[1Cdamson\r\n▌\u001b[1Cbanana\u001b[20;3Hpeach \u001b[21;3Hman\u001b[2C      \u001b[22;3Hguav\u001b[1C    \u001b[23;3Hgrape     \u001b[24;3Hpe\u001b[1Cr     \u001b[25;3Hd\u001b[1Cte    \u001b[26;3Havocado\u001b[4m\u001b[7m\u001b[27;3Ha\u001b[24mpricot\u001b[27m\u001b[28;3Happle\u001b[29;3H24/40 \r\n>\u001b[1Ca \b\u001b[?25h",
+    "\u001b[0 q\u001b[0 q\u001b[?25l\u001b[26;1H▌\u001b[4m\u001b[7m\u001b[1Ca\u001b[24mvocado\u001b[27m\r\n▌\u001b[1Capricot\u001b[30;4H\u001b[?25h",
+    "\u001b[0 q\u001b[0 q\u001b[?25l\u001b[25;1H▌\u001b[7m\u001b[1Cd\u001b[4ma\u001b[24mte\u001b[27m\r\n▌\u001b[1Cavocado\u001b[30;4H\u001b[?25h",
+    "\u001b[0 q\u001b[23;2t\u001b[?1049l\u001b[23;0;0t\u001b[?25l\u001b[H\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h"
+  ],
+  "at_ms": [
+    8,
+    141,
+    1651,
+    2474,
+    3298,
+    3914,
+    4533,
+    5153,
+    5971,
+    6587,
+    7206
+  ]
+}
