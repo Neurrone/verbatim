@@ -108,7 +108,8 @@ Public API:
   the `WinEventHook` removes whichever are hooked then.
 - `dialog` — `DialogObject`, the objects a dialog's own text is gathered
   from (`docs/nvda/object-model.md`, "A dialog's own text"; the gathering
-  is `verbatim-outpost`'s `dialog_text`). `DialogObject::of_node(node,
+  rule is `verbatim_reader_rules::dialog`'s, whose `DialogParent` and
+  `DialogObject` traits it implements). `DialogObject::of_node(node,
   registry)` is the kept object behind a dialog this outpost reported;
   `children()` reads its children in order (`accChildCount` and
   `AccessibleChildren`), standing in a window's client area for each child

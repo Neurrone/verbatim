@@ -713,6 +713,13 @@ unread (`None`), for the caller to read classically. The classic
 implementation refreshes the focus and reads each dialog's children, one
 call each.
 
+`dialog::UiaDialog` and `dialog::UiaObject` are a dialog and its objects
+through UI Automation, as `verbatim_reader_rules::dialog`'s rule gathers a
+dialog's own text from them: nothing of the dialog's own element is read,
+only its children, each a `verbatim_uia::DialogText` (one call per
+container, or none for the dialog whose children this read fetched
+already, `UiaDialog::with_children`).
+
 ## The walk down the tree
 
 A `Descendants` step (`batch::Input::Descendants`, `batch/walk.rs`)

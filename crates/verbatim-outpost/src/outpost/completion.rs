@@ -477,7 +477,8 @@ fn states_and_dialogs(
     window: isize,
     (snapshot, ancestors): (&mut NodeSnapshot, &[NodeSnapshot]),
 ) -> Vec<(NodeId, Option<String>)> {
-    use crate::dialog_text::{UiaDialog, dialog_text};
+    use verbatim_reader_rules::dialog::dialog_text;
+    use verbatim_uia_rops::dialog::UiaDialog;
     let dialogs: Vec<(NodeId, verbatim_uia::Live)> = ancestors
         .iter()
         .chain(std::iter::once(&*snapshot))

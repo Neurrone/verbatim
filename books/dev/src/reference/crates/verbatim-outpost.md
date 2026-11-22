@@ -554,19 +554,10 @@ and the inherited pipe handles.
   (`NodeTextCopy::finish`); `fused::named` lists the anchors of the
   positions a run of steps names, which a copy must hold, from the
   batch's one list (`Batch::anchors`).
-- `dialog_text(&dialog)` gathers a dialog's own text by NVDA's rules
-  (`docs/nvda/object-model.md`, "A dialog's own text") over a
-  `DialogParent` whose children are `DialogObject`s: MSAA through
-  `verbatim_ia2::dialog::DialogObject`, UIA through
-  `UiaDialog::new(uia, request, element)` and `UiaObject`, each child read as
-  a `verbatim_uia::DialogText` with its description whatever the theme
-  (`books/dev/src/explanation/design/uia-shapes.md`, decision 5). `is_dialog(role)` says which
-  roles have such text. The walk counts every child it fetches against
-  `MAX_OBJECTS` (65,536) and stops at an object it visited before
-  (`Visited`, by runtime id for UIA and by window, object id and child id
-  for an MSAA window's client area, `verbatim_ia2::dialog::DialogObject::address`,
-  the one object of the walk with an address of its own; Claude,
-  2026-11-21), giving the text read up to either.
+- A dialog's own text is gathered by `verbatim_reader_rules::dialog`'s
+  rule over `verbatim_ia2::dialog::DialogObject` and
+  `verbatim_uia_rops::dialog::UiaDialog`; the outpost reports it as the
+  dialog's description.
 
 ## Implementation notes
 

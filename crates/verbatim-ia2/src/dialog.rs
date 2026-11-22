@@ -1,7 +1,8 @@
 //! The objects a dialog's own text is gathered from, through MSAA
 //! (`docs/nvda/object-model.md`, "A dialog's own text").
 //!
-//! The gathering itself is the outpost's; this module only reads. A
+//! The gathering's rule is `verbatim_reader_rules::dialog`'s, which this
+//! module's [`DialogObject`] implements for MSAA; it only reads. A
 //! [`DialogObject`] reads each property the first time it is asked for and
 //! keeps it, since the gathering looks at a child's neighbors as well as
 //! the child, and reads nothing it is not asked for: most children are
@@ -207,5 +208,42 @@ impl DialogObject {
     #[must_use]
     pub fn description(&self) -> Option<String> {
         non_empty(self.acc().description())
+    }
+}
+
+impl verbatim_reader_rules::dialog::DialogParent for DialogObject {
+    type Child = Self;
+    fn children(&self, room: usize) -> Vec<Self> {
+        Self::children(self, room)
+    }
+}
+
+impl verbatim_reader_rules::dialog::DialogObject for DialogObject {
+    fn role(&self) -> Role {
+        Self::role(self)
+    }
+    fn states(&self) -> StateSet {
+        Self::states(self)
+    }
+    fn invisible(&self) -> bool {
+        Self::invisible(self)
+    }
+    fn name(&self) -> Option<String> {
+        Self::name(self)
+    }
+    fn value(&self) -> Option<String> {
+        Self::value(self)
+    }
+    fn description(&self) -> Option<String> {
+        Self::description(self)
+    }
+    fn visited(&self) -> Option<verbatim_reader_rules::dialog::Visited> {
+        self.address().map(
+            |(window, object, child)| verbatim_reader_rules::dialog::Visited::Msaa {
+                window,
+                object,
+                child,
+            },
+        )
     }
 }

@@ -1,23 +1,20 @@
 //! A dialog's own text, such as a message box's question, gathered from the
 //! dialog's children as NVDA gathers it (`docs/nvda/object-model.md`, "A
-//! dialog's own text"). Public, so mockapp's tests gather it as the worker
-//! does.
+//! dialog's own text").
 //!
-//! The rules are written once, over [`DialogParent`] and [`DialogObject`],
-//! which each backend implements: MSAA through
-//! [`verbatim_ia2::dialog::DialogObject`], and UI Automation through
-//! [`UiaDialog`], the dialog, of which nothing is read but its children,
-//! and [`UiaObject`], each child, whose properties come from one cache
-//! request per container ([`verbatim_uia::DialogText`]). The worker
-//! gathers the text for a dialog the focus has newly entered and reports
-//! it as the dialog's description, as NVDA does, so Core speaks it after
-//! the dialog's name, role, and states and before the focused control.
+//! The rule is written once, over [`DialogParent`] and [`DialogObject`],
+//! which each backend implements beside its own reads: MSAA in
+//! `verbatim-ia2` (`dialog::DialogObject`), and UI Automation in
+//! `verbatim-uia-rops` (`dialog::UiaDialog`, the dialog, of which nothing
+//! is read but its children, and `dialog::UiaObject`, each child). The
+//! outpost gathers the text for a dialog the focus has newly entered and
+//! reports it as the dialog's description, as NVDA does, so Core speaks it
+//! after the dialog's name, role, and states and before the focused
+//! control.
 
 use std::collections::BTreeSet;
 
 use verbatim_model::{Role, State, StateSet};
-use verbatim_uia::map::CachedUiaParts;
-use verbatim_uia::{DialogText, Live, Request, Uia};
 
 /// The most objects one gathering fetches, every child counted as it is
 /// fetched: a safety bound against a tree with no identity that loops,
@@ -74,41 +71,6 @@ pub trait DialogObject: DialogParent<Child = Self> + Sized {
     fn description(&self) -> Option<String>;
     /// What identifies it, `None` for an object with no identity.
     fn visited(&self) -> Option<Visited>;
-}
-
-impl DialogParent for verbatim_ia2::dialog::DialogObject {
-    type Child = Self;
-    fn children(&self, room: usize) -> Vec<Self> {
-        Self::children(self, room)
-    }
-}
-
-impl DialogObject for verbatim_ia2::dialog::DialogObject {
-    fn role(&self) -> Role {
-        Self::role(self)
-    }
-    fn states(&self) -> StateSet {
-        Self::states(self)
-    }
-    fn invisible(&self) -> bool {
-        Self::invisible(self)
-    }
-    fn name(&self) -> Option<String> {
-        Self::name(self)
-    }
-    fn value(&self) -> Option<String> {
-        Self::value(self)
-    }
-    fn description(&self) -> Option<String> {
-        Self::description(self)
-    }
-    fn visited(&self) -> Option<Visited> {
-        self.address().map(|(window, object, child)| Visited::Msaa {
-            window,
-            object,
-            child,
-        })
-    }
 }
 
 /// Whether a node of `role` is a dialog, whose description is its own text
@@ -210,7 +172,7 @@ fn gather<P: DialogParent>(
         return Ok(Vec::new());
     }
     let children = parent.children(room);
-    walk.fetched += children.len();
+    walk.fetched = walk.fetched.saturating_add(children.len());
     let mut pieces = Vec::new();
     for (index, child) in children.iter().enumerate() {
         if let Some(visited) = child.visited()
@@ -240,7 +202,12 @@ fn gather<P: DialogParent>(
             continue;
         }
         // A grouping's description, right after it or after its graphic.
-        let before = |back: usize| index.checked_sub(back).map(|at| children[at].role());
+        let before = |back: usize| {
+            index
+                .checked_sub(back)
+                .and_then(|at| children.get(at))
+                .map(DialogObject::role)
+        };
         if before(1) == Some(Role::Group)
             || (before(1) == Some(Role::Graphic) && before(2) == Some(Role::Group))
         {
@@ -248,8 +215,10 @@ fn gather<P: DialogParent>(
         }
         let name = child.name();
         // The label of the control after it.
-        if let (Some(name), Some(next)) = (name.as_deref(), children.get(index + 1))
-            && !is_never_labelled(next.role())
+        if let (Some(name), Some(next)) = (
+            name.as_deref(),
+            index.checked_add(1).and_then(|next| children.get(next)),
+        ) && !is_never_labelled(next.role())
             && next.name().as_deref() == Some(name)
         {
             continue;
@@ -278,153 +247,6 @@ fn text_of<O: DialogObject>(child: &O, role: Role, name: Option<String>) -> Opti
         .filter(|part| !part.trim().is_empty())
         .collect();
     (!parts.is_empty()).then(|| parts.join(" "))
-}
-
-/// A UI Automation dialog whose text is gathered: nothing of its own
-/// element is read, only its children, each read as a
-/// [`verbatim_uia::DialogText`] (Dickson, 2026-10-13, decision 5 of
-/// `books/dev/src/explanation/design/uia-shapes.md`).
-pub struct UiaDialog<'a> {
-    uia: &'a Uia,
-    request: &'a Request<DialogText>,
-    element: Live,
-    /// Its children, when they were read already, filled by `request`.
-    read: Option<Vec<verbatim_uia::Cached<DialogText>>>,
-}
-
-impl<'a> UiaDialog<'a> {
-    /// The dialog `element`, whose children, and theirs, are read with
-    /// `request`.
-    #[must_use]
-    pub fn new(uia: &'a Uia, request: &'a Request<DialogText>, element: Live) -> Self {
-        Self {
-            uia,
-            request,
-            element,
-            read: None,
-        }
-    }
-
-    /// The dialog `element` whose children, `children`, were read already
-    /// with `request`, which reads their own children.
-    #[must_use]
-    pub fn with_children(
-        uia: &'a Uia,
-        request: &'a Request<DialogText>,
-        element: Live,
-        children: Vec<verbatim_uia::Cached<DialogText>>,
-    ) -> Self {
-        Self {
-            uia,
-            request,
-            element,
-            read: Some(children),
-        }
-    }
-}
-
-impl<'a> DialogParent for UiaDialog<'a> {
-    type Child = UiaObject<'a>;
-    /// One call: the dialog's first children with their properties
-    /// cached, or those read already; none at a `room` of 0.
-    fn children(&self, room: usize) -> Vec<UiaObject<'a>> {
-        match &self.read {
-            Some(children) => children
-                .iter()
-                .take(room)
-                .map(|child| object(self.uia, self.request, child))
-                .collect(),
-            None => children_of(self.uia, self.request, &self.element, room),
-        }
-    }
-}
-
-/// A UI Automation element a dialog's text is gathered from, with the
-/// properties read when its parent's children were.
-pub struct UiaObject<'a> {
-    uia: &'a Uia,
-    request: &'a Request<DialogText>,
-    element: Live,
-    parts: CachedUiaParts,
-}
-
-/// `parent`'s first children, at most `room`, each read with `request`,
-/// in one call; none when they cannot be read, and no call at a `room` of
-/// 0. UI Automation's call returns every child, so past the room the
-/// children are fetched and let go of unread.
-fn children_of<'a>(
-    uia: &'a Uia,
-    request: &'a Request<DialogText>,
-    parent: &Live,
-    room: usize,
-) -> Vec<UiaObject<'a>> {
-    if room == 0 {
-        return Vec::new();
-    }
-    uia.children(parent, request)
-        .unwrap_or_default()
-        .iter()
-        .take(room)
-        .map(|child| object(uia, request, child))
-        .collect()
-}
-
-/// The object a child read with `request` is.
-fn object<'a>(
-    uia: &'a Uia,
-    request: &'a Request<DialogText>,
-    child: &verbatim_uia::Cached<DialogText>,
-) -> UiaObject<'a> {
-    UiaObject {
-        uia,
-        request,
-        parts: child.read().parts(child.runtime_id()),
-        element: child.live().clone(),
-    }
-}
-
-impl DialogParent for UiaObject<'_> {
-    type Child = Self;
-    /// One call: the element's first children with their properties
-    /// cached.
-    fn children(&self, room: usize) -> Vec<Self> {
-        children_of(self.uia, self.request, &self.element, room)
-    }
-}
-
-impl DialogObject for UiaObject<'_> {
-    fn role(&self) -> Role {
-        self.parts.role
-    }
-    fn states(&self) -> StateSet {
-        self.parts.states
-    }
-    /// UI Automation has no invisible state; an element off the screen is
-    /// still read, as NVDA reads it.
-    fn invisible(&self) -> bool {
-        false
-    }
-    fn name(&self) -> Option<String> {
-        visible(self.parts.name.clone())
-    }
-    fn value(&self) -> Option<String> {
-        visible(self.parts.value.clone())
-    }
-    fn description(&self) -> Option<String> {
-        self.parts
-            .details
-            .description
-            .clone()
-            .filter(|description| !description.is_empty())
-    }
-    fn visited(&self) -> Option<Visited> {
-        (!self.parts.runtime_id.is_empty()).then(|| Visited::Uia(self.parts.runtime_id.clone()))
-    }
-}
-
-/// `text`, unless it is empty or blank.
-fn visible(text: Option<String>) -> Option<String> {
-    text.filter(|text| !text.trim().is_empty())
 }
 
 #[cfg(test)]

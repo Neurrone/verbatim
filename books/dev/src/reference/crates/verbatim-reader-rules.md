@@ -8,9 +8,9 @@ since Core judges every tell. A rule both readers apply is defined here once, be
 readers' crates may not depend on each other and no test could tie two
 copies (decision D14, "Where the rules run"). It is a logic crate: pure,
 in the GPL tier, with no Windows dependency, so it builds and is tested on
-Linux. It depends on `verbatim-model` alone, whose `class` module holds
+Linux. It depends on `verbatim-model`, whose `class` module holds
 NVDA's class lists and the class name normalization the verdict is
-judged on.
+judged on, and on `tracing`.
 
 Public API:
 
@@ -32,6 +32,21 @@ Public API:
   listener's answer from them, the one its check threads' probes and its
   value changes are judged by: a list view's provider counts only from
   Windows Forms, and a console's with no check, a limit its guide states.
+- `dialog` — a dialog's own text, gathered as NVDA gathers it
+  (`docs/nvda/object-model.md`, "A dialog's own text"): `dialog_text(&dialog)`
+  over a `DialogParent` whose children are `DialogObject`s, which each
+  backend implements beside its reads (`verbatim_ia2::dialog::DialogObject`
+  for MSAA, `verbatim_uia_rops::dialog::UiaDialog` and `UiaObject` for UI
+  Automation, each child read as a `verbatim_uia::DialogText` with its
+  description whatever the theme,
+  `books/dev/src/explanation/design/uia-shapes.md`, decision 5).
+  `is_dialog(role)` says which roles have such text. The walk counts every
+  child it fetches against `MAX_OBJECTS` (65,536) and stops at an object
+  it visited before (`Visited`, by runtime id for UIA and by window,
+  object id and child id for an MSAA window's client area, the one object
+  of the walk with an address of its own; Claude, 2026-11-21), giving the
+  text read up to either. The traits' methods may call into the
+  application; the rule itself makes no call.
 - `numbered` — a reader's numbering of the messages it writes to Core
   that carry what it keeps for Core: `Numbered<K>` (`queued`, `written`,
   `withdrawn`, `report`, `forget`, `position`) gives each key's `Report`,
@@ -47,7 +62,7 @@ Public API:
   a 0 as none.
 - `CONSOLE_WINDOW_CLASS` — the console host's window class.
 
-Tests: the class normalization, the class lists pinned to their NVDA
+Tests: the dialog text rule over scripted objects, the class normalization, the class lists pinned to their NVDA
 sources so an NVDA sync is a diff, the class verdict `classify_with` gives
 with NVDA's lists (the good, bad and shell rules), the numbering, the
 limit per thread, and a window's handle parsed.

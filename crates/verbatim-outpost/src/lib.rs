@@ -4,9 +4,7 @@
 //! [`outpost`] is its runtime: the mailbox, the worker generations, the
 //! reader, and the writer around its reducer, which is
 //! `verbatim-outpost-logic`'s. [`arbitration`] holds the per-window backend
-//! arbitration the outpost uses. [`dialog_text`] gathers a dialog's own
-//! text, such as a message box's question, which the outpost reports as the
-//! dialog's description. [`text`] is the outpost's side of the text
+//! arbitration the outpost uses. [`text`] is the outpost's side of the text
 //! protocol (milestone M4): reading, waiting for the caret, and selecting in
 //! a node's text, over UIA's text pattern and the Win32 edit controls'
 //! messages. [`driver`] sends an outpost Core's requests where no Core
@@ -15,7 +13,6 @@
 //! `verbatim_process::message`.
 
 pub mod arbitration;
-pub mod dialog_text;
 pub mod driver;
 mod gates;
 pub mod outpost;

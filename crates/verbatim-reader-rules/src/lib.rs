@@ -1,7 +1,8 @@
 //! What both of Verbatim's readers, an outpost and the focus listener,
 //! apply before reading: NVDA's class verdict and the class name
-//! normalization it is judged on ([`class`]), a window's handle that is
-//! never 0 ([`Window`]), the console window's class, and the numbering of
+//! normalization it is judged on ([`class`]), the rule a dialog's own text
+//! is gathered by, over each backend's objects ([`dialog`]), a window's
+//! handle that is never 0 ([`Window`]), the console window's class, and the numbering of
 //! what a reader writes to Core ([`Numbered`]). A
 //! rule both apply is defined here once, since the two readers' crates may
 //! not depend on each other and no test could tie two copies (decision
@@ -47,6 +48,7 @@
 )]
 
 pub mod class;
+pub mod dialog;
 pub mod numbered;
 mod window;
 

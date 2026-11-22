@@ -30,6 +30,8 @@
 //!   a focus's completion, [`focus_states`]: the focus's states, read once
 //!   its event registration is in, with the children of the dialogs it
 //!   enters.
+//! - A dialog's objects through UI Automation ([`dialog`]), which
+//!   `verbatim_reader_rules::dialog` gathers a dialog's own text from.
 //! - The request list's executors ([`batch`]): a run of a batch's
 //!   fusable steps as programs one builder generates from the operations,
 //!   with the fallback rule's reruns, or call by call.
@@ -41,6 +43,7 @@
 pub mod batch;
 mod builder;
 mod caret;
+pub mod dialog;
 mod error;
 mod focus;
 mod focus_states;

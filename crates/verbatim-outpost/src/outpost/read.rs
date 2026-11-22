@@ -25,7 +25,7 @@ use verbatim_uia::{
 };
 use verbatim_uia_rops::{FocusAncestry, FocusQuery, Path, focus_ancestry};
 
-use crate::dialog_text::{Visited as Identity, is_dialog};
+use verbatim_reader_rules::dialog::{Visited as Identity, is_dialog};
 
 use crate::gates;
 use verbatim_model::protocol::UiaSnapshotFact;
@@ -1403,7 +1403,8 @@ fn dialog_text_of(
     node: &NodeSnapshot,
     path: Option<&super::focus_path::FocusPath>,
 ) -> Option<String> {
-    use crate::dialog_text::{UiaDialog, dialog_text};
+    use verbatim_reader_rules::dialog::dialog_text;
+    use verbatim_uia_rops::dialog::UiaDialog;
     match node.backend {
         Backend::Msaa => verbatim_ia2::dialog::DialogObject::of_node(node.id, context.nodes())
             .and_then(|dialog| dialog_text(&dialog)),

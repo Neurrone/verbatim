@@ -66,16 +66,17 @@ use verbatim_model::{
     CallCounts, QueryKind, ReportedDetails, Role, SegmentContent, StateSet, WindowHandle,
 };
 use verbatim_model::{TextMovement, TextPoint, TextPosition, TextUnit, Theme};
-use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{Anchors, TextSource};
 use verbatim_process::arguments::OutpostOptions;
+use verbatim_reader_rules::dialog::dialog_text;
 use verbatim_uia::{
     Ancestor, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
     ListenerSelection, Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape,
     Subscription, TextEvent, Uia,
 };
+use verbatim_uia_rops::dialog::UiaDialog;
 use verbatim_uia_rops::{FocusAncestry, FocusQuery, focus_ancestry, focus_ancestry_classic};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -464,7 +465,7 @@ fn msaa_state_change_costs_exactly() {
 }
 
 /// A focus entering a message box gathers its text
-/// (`verbatim_outpost::dialog_text`): the dialog's children, each child's
+/// (`verbatim_reader_rules::dialog`): the dialog's children, each child's
 /// role and states, and the question's name, value, and description, on top
 /// of a cold focus's calls. A focus moving within it is not measured:
 /// the dialog reached from the next button through `accParent` is a new

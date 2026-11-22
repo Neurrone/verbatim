@@ -2210,6 +2210,7 @@ dependencies = [
 name = "verbatim-reader-rules"
 version = "0.1.0"
 dependencies = [
+ "tracing",
  "verbatim-model",
  "workspace-hack",
 ]
@@ -2389,6 +2390,7 @@ dependencies = [
  "tracing",
  "verbatim-faults",
  "verbatim-model",
+ "verbatim-reader-rules",
  "verbatim-uia",
  "verbatim-win32",
  "windows",
