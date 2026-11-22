@@ -1,6 +1,6 @@
 //! The MSAA executor: the request list's object operations on MSAA
-//! subjects, `Read`, `Test`, `Related`, `Descendants`, `IsOneOf` and
-//! `Activate`, each one step at a time by calls, as the UI Automation
+//! subjects, `Read`, `Test`, `Related`, `Ancestors`, `Descendants`,
+//! `IsOneOf` and `Activate`, each one step at a time by calls, as the UI Automation
 //! executor's call arms run theirs (the verbatim-ia2 crate guide, "The
 //! MSAA executor"). Its subject is a node the outpost holds or an object
 //! acquired at its event's ids ([`Object`]); what the outpost holds, the
@@ -88,6 +88,9 @@ pub enum Found {
     IsOneOf(Option<u32>),
     /// `Activate`'s: the action performed.
     Activate(Option<ActionName>),
+    /// `Ancestors`': the ancestors, outermost first, and how the walk
+    /// ended.
+    Ancestors(Vec<NodeSnapshot>, acquire::Walked),
 }
 
 /// Why a step answers no result.
@@ -146,8 +149,37 @@ pub fn run(op: &Op, object: Object<'_>, resolver: &dyn Resolve) -> Result<Found,
             node,
             resolver.registry(),
         )?)),
+        (Op::Ancestors { .. }, Object::Node(node)) => {
+            let (chain, walked) = ancestors(
+                node,
+                resolver.registry(),
+                &acquire::AncestorLimits {
+                    max_hops: resolver.hops(),
+                    known: &|_| false,
+                    read_by_other_api: &|_| false,
+                    plain: &|_| false,
+                    candidates: None,
+                },
+            )?;
+            Ok(Found::Ancestors(chain, walked))
+        }
         _ => Err(Unrun::Unsupported),
     }
+}
+
+/// `Ancestors`' arm: the walk up `node`'s parents by `accParent`, one call
+/// a hop, stopping as `limits` say: at nothing for a batch's own step, and
+/// at the outpost's stops where it chains a focus's ancestors.
+///
+/// # Errors
+///
+/// The node's read failure when it can no longer be reached.
+pub fn ancestors(
+    node: NodeId,
+    registry: &dyn Interning,
+    limits: &acquire::AncestorLimits<'_>,
+) -> Result<(Vec<NodeSnapshot>, acquire::Walked), AcquireError> {
+    acquire::ancestor_chain_until(node, registry, limits)
 }
 
 /// Whether `Read` reads property `id` apart from the node's snapshot.

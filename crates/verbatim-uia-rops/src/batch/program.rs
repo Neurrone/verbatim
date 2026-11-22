@@ -195,6 +195,7 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
         | Op::IsOneOf { .. }
         | Op::Activate { .. }
         | Op::Follow(_)
+        | Op::Ancestors { .. }
         | Op::MoveBySentence { .. } => true,
         _ => false,
     }

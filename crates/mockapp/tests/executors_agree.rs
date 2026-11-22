@@ -414,6 +414,27 @@ fn object_operations(_: HWND, named: &Named) -> Vec<Labelled> {
         None,
     ));
     batches.push((
+        "the ancestors of Recent, to the top, and of Display settings, cut at a known one"
+            .to_owned(),
+        batch(vec![
+            Op::Ancestors {
+                subject: named.node("Recent"),
+                until: Vec::new(),
+                depth: verbatim_model::batch::MAX_DEPTH,
+                set: vec![PropertyId::Name, PropertyId::Role],
+            },
+            Op::Ancestors {
+                subject: named.node("Display settings"),
+                until: vec![verbatim_model::request::KnownAncestor::Node(
+                    named.id("Suggestions"),
+                )],
+                depth: verbatim_model::batch::MAX_DEPTH,
+                set: vec![PropertyId::Name],
+            },
+        ]),
+        None,
+    ));
+    batches.push((
         "the first selected item and an item of a result".to_owned(),
         batch(vec![
             Op::Related {

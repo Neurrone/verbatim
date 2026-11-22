@@ -80,6 +80,7 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             let (element, window) = one(state, index, subject)?;
             related(uia, &element, window, *relation, fill).map_err(call_failed)
         }
+        Op::Ancestors { subject, .. } => ancestors(uia, &resolver.ancestry(subject)?),
         Op::Descendants { subject, walk } => {
             let walk = Descend::of(walk, resolver, place).ok_or_else(no_fill)?;
             let mut walking = Walk::new(&walk, starts(state, index, subject)?);
@@ -157,14 +158,7 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
                 .map_err(call_failed)
         }
         Op::WaitForCaret { .. } => wait_check(&resolver.wait_check()?).map_err(call_failed),
-        // UI Automation has no sentence unit: once the subject's text is
-        // found, the move is refused, as NVDA's UIA text has none.
-        Op::MoveBySentence { subject, .. } => {
-            resolver.text(subject)?;
-            Err(Ran::Unrun(Unrun::Refused(
-                verbatim_model::batch::StepRefusal::NoSuchUnit,
-            )))
-        }
+        Op::MoveBySentence { subject, .. } => no_sentences(resolver.text(subject)?),
         op @ (Op::Read { .. }
         | Op::Test { .. }
         | Op::IsOneOf { .. }
@@ -340,6 +334,40 @@ pub(super) fn children(
         Err(error) if error.code().is_err() => Err(Error::Uia(error)),
         _ => Ok((children, true)),
     }
+}
+
+/// `MoveBySentence`'s call arm, its subject's text found: UI Automation
+/// has no sentence unit, so the move is refused as no such unit, as
+/// NVDA's UIA text has none.
+fn no_sentences(_text: TextTarget<'_>) -> Result<Found, Ran> {
+    Err(Ran::Unrun(Unrun::Refused(
+        verbatim_model::batch::StepRefusal::NoSuchUnit,
+    )))
+}
+
+/// `Ancestors`' call arm: the raw view's walk up from where `from` starts,
+/// one call a hop, stopping where it says.
+fn ancestors(uia: &verbatim_uia::Uia, from: &super::AncestryFrom<'_>) -> Result<Found, Ran> {
+    let mut parent_automation_id = None;
+    let (chain, crossed, walk) = uia
+        .ancestors(
+            (
+                &Live::new(from.element.clone()),
+                from.own_window,
+                from.nearest,
+            ),
+            from.request,
+            from.registry,
+            (from.max_hops, &mut parent_automation_id),
+            &from.stops,
+        )
+        .map_err(|error| failed(&error.into()))?;
+    Ok(Found::Ancestors(super::Ancestors {
+        chain,
+        crossed,
+        walk,
+        parent_automation_id,
+    }))
 }
 
 /// `element` filled by `fill`, for a walk's start judged with its subtree.

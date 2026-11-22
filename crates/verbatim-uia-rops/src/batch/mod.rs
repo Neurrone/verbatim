@@ -16,8 +16,10 @@
 //! from a top-level window ([`Element::calls_only`]), runs by calls, as
 //! does a walk of the control view. `Read`, `Test`, `IsOneOf`, `Activate`
 //! and `Follow` have call arms only, and each runs alone by calls
-//! ([`object`]'s module documentation says why). `Ancestors` is not here:
-//! the outpost reads it through its own reads (Claude, 2026-11-22).
+//! ([`object`]'s module documentation says why). `Ancestors` has a call
+//! arm only, the raw view's walk up with the outpost's stops between its
+//! steps ([`AncestryFrom`]), which no program can judge (Claude,
+//! 2026-11-22); the outpost chains what is above where it ended.
 //!
 //! After a program, the fallback rule of the design's section 5 decides
 //! what runs again by calls, in batch order, before anything after it:
@@ -180,6 +182,15 @@ pub trait Resolve {
         None
     }
 
+    /// Where an `Ancestors` walk of `subject` starts and how it stops.
+    ///
+    /// # Errors
+    ///
+    /// The step's outcome when the subject names no element.
+    fn ancestry(&self, _subject: &Subject) -> Result<AncestryFrom<'_>, Ran> {
+        Err(Defect("an ancestor walk on a resolver that starts none").ran())
+    }
+
     /// A text summary's value, made of the UTF-16 text of the caret's
     /// line and of the selection when text is selected; `read_classically`
     /// when a program of its read could not run at all, so the window is
@@ -213,6 +224,41 @@ pub trait Resolve {
     fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {
         Err(Defect("a caret wait on a resolver that holds no wait").ran())
     }
+}
+
+/// Where an `Ancestors` walk starts and how it stops, as the outpost
+/// gives it ([`Resolve::ancestry`]): the walk is
+/// [`verbatim_uia::Uia::ancestors`].
+pub struct AncestryFrom<'a> {
+    /// The element walked from.
+    pub element: IUIAutomationElement,
+    /// Its own native window, 0 for none.
+    pub own_window: isize,
+    /// Its nearest window, 0 when not known.
+    pub nearest: isize,
+    /// How each ancestor's cache is filled.
+    pub request: &'a verbatim_uia::Request<verbatim_uia::Ancestor>,
+    /// Mints each ancestor's node.
+    pub registry: &'a dyn verbatim_uia::Interning,
+    /// The most hops.
+    pub max_hops: u32,
+    /// Where the walk stops: a window read through the other API, an
+    /// ancestor Core knows, and the routes kept of each ancestor visited.
+    pub stops: verbatim_uia::AncestorStops<'a>,
+}
+
+/// `Ancestors`' result, as [`verbatim_uia::Uia::ancestors`] answers it.
+#[derive(Debug)]
+pub struct Ancestors {
+    /// The ancestors, outermost first.
+    pub chain: Vec<verbatim_model::NodeSnapshot>,
+    /// The window the walk stopped below, for the chain to go on from.
+    pub crossed: Option<isize>,
+    /// How the walk ended.
+    pub walk: verbatim_uia::AncestorWalk,
+    /// The automation id of the subject's raw-view parent, when the walk's
+    /// first step read it.
+    pub parent_automation_id: Option<String>,
 }
 
 /// The element an object step's subject names.
@@ -439,6 +485,8 @@ pub enum Ran {
 pub enum Found {
     /// `Related`'s.
     Related(Related),
+    /// `Ancestors`'.
+    Ancestors(Ancestors),
     /// `Descendants`'.
     Descendants(Descendants),
     /// `Caret`'s.
@@ -486,7 +534,8 @@ impl Found {
             | Self::Test(_)
             | Self::IsOneOf(_)
             | Self::Activate(_)
-            | Self::Follow => None,
+            | Self::Follow
+            | Self::Ancestors(_) => None,
         }
     }
 }
@@ -831,6 +880,7 @@ fn kind_name(op: &Op) -> &'static str {
         Op::IsOneOf { .. } => "is one of",
         Op::Activate { .. } => "activate",
         Op::Follow(_) => "follow",
+        Op::Ancestors { .. } => "ancestors",
         Op::MoveBySentence { .. } => "move by sentence",
         _ => "not fusable",
     }

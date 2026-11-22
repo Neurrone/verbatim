@@ -142,6 +142,11 @@ pub(super) fn step(
         )),
         Ok(Found::IsOneOf(place)) => StepOutcome::Done(Done::IsOneOf(place)),
         Ok(Found::Activate(action)) => StepOutcome::Done(Done::Activate(action)),
+        // The dispatcher chains a batch's ancestors itself ([`ancestors`]).
+        Ok(Found::Ancestors(..)) => {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, "an ancestor walk reached the MSAA object steps");
+            StepOutcome::Failed
+        }
         Err(failure) => unrun(failure, node),
     }
 }
@@ -164,6 +169,30 @@ pub(super) fn activate(
         ))),
         Err(Unrun::Failed(error)) => Err(ReadError::from(error)),
         Err(Unrun::Unsupported) => Err(ReadError::Failed("nothing to activate".to_owned())),
+    }
+}
+
+/// The ancestors of the MSAA node `node`, outermost first, through the
+/// executor's `Ancestors` arm, to the top.
+pub(super) fn ancestors(
+    context: &RequestContext<'_>,
+    client: &mut Client,
+    node: NodeId,
+) -> Result<Vec<NodeSnapshot>, ReadError> {
+    let resolver = MsaaNodes::new(context, client);
+    let op = Op::Ancestors {
+        subject: verbatim_model::batch::Subject::Node(node),
+        until: Vec::new(),
+        depth: verbatim_model::batch::MAX_DEPTH,
+        set: Vec::new(),
+    };
+    match verbatim_ia2::batch::run(&op, Object::Node(node), &resolver) {
+        Ok(Found::Ancestors(chain, _)) => Ok(chain),
+        Ok(other) => Err(ReadError::Failed(format!(
+            "an ancestor walk answered {other:?}"
+        ))),
+        Err(Unrun::Failed(error)) => Err(ReadError::from(error)),
+        Err(Unrun::Unsupported) => Err(ReadError::Failed("no ancestors to walk".to_owned())),
     }
 }
 

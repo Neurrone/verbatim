@@ -13,7 +13,7 @@
 //! `SysTreeView32` seam: a Win32 common-control tree view (comctl32) exposes
 //! every visible item to MSAA as a flat sibling list directly under the tree
 //! control, not nested under its logical parent — confirmed live against
-//! msinfo32. [`navigate`] and [`ancestor_chain`] detect this window class and
+//! msinfo32. [`navigate`] and [`ancestor_chain_until`] detect this window class and
 //! route a tree item's navigation through the control's own `TVM_*` window
 //! messages instead of `accNavigate`/`accParent`, mirroring NVDA's
 //! `sysTreeView32.py`. Those messages are sent with `SendMessageTimeoutW`
@@ -861,51 +861,6 @@ fn focus_event_names_list((hwnd, id_object, id_child): MsaaKey, role: Option<i32
     id_object == OBJID_CLIENT.0 && window::window_class_name(hwnd).contains("SysListView32")
 }
 
-/// Walks the chain of ancestors of the node named by `key`, nearest first,
-/// as [`NodeSnapshot`]s. Every hop is its own cross-process round trip
-/// (architecture section 4's IA2 cost model: no cache requests on this
-/// backend), via `IAccessible::accParent` — except the first hop for a node
-/// addressed as a "simple child" (a bare child id, not its own `IDispatch`),
-/// whose immediate parent is the object it is a child of, since plain MSAA
-/// has no `accParent` for a child id, only for a full object. Capped at
-/// `max_hops` ancestors; stops early, without error, once a hop finds no
-/// further parent or fails. Blocking; worker only.
-///
-/// For a `SysTreeView32` item addressed as a simple child (see this module's
-/// top doc comment), the walk first follows the item's own logical
-/// ancestors through `TVGN_PARENT` (the same relation [`navigate`] uses for
-/// `Parent`), then continues with the tree control itself and its own
-/// window ancestry through the normal `accParent` walk below — so a
-/// focus-ancestry announcement for a deeply nested tree item reads its full
-/// logical path, not the flat MSAA sibling list the control otherwise
-/// exposes. Both stages share the one `max_hops` budget.
-///
-/// This is deliberately the simplest correct implementation, behind this
-/// function as a seam: milestone M4's remote-operations work replaces
-/// UIA's equivalent per-hop walk with a single batched round trip, and MSAA
-/// has no remote-operations analog to migrate to, so this stays the
-/// permanent MSAA implementation — but callers should still depend only on
-/// the result, never on how many round trips producing it took.
-///
-/// # Errors
-///
-/// [`AcquireError::Gone`] when `node` is no longer reachable; a hop that
-/// fails after that only ends the chain early.
-pub fn ancestor_chain(
-    node: NodeId,
-    registry: &dyn Interning,
-    max_hops: u32,
-) -> Result<Vec<NodeSnapshot>, AcquireError> {
-    let limits = AncestorLimits {
-        max_hops,
-        known: &|_| false,
-        read_by_other_api: &|_| false,
-        plain: &|_| false,
-        candidates: None,
-    };
-    ancestor_chain_until(node, registry, &limits).map(|(chain, _)| chain)
-}
-
 /// What bounds an ancestor walk besides reaching the root.
 pub struct AncestorLimits<'a> {
     /// The most ancestors to read: the walk is then cut
@@ -952,9 +907,26 @@ pub enum Walked {
     Onward(isize),
 }
 
-/// [`ancestor_chain`] within `limits`: the chain, outermost first, and how
-/// the walk ended. A walk that meets a known ancestor ends with it as the
-/// chain's outermost entry.
+/// Walks the chain of ancestors of `node` within `limits`: the chain,
+/// outermost first, and how the walk ended; a walk that meets a known
+/// ancestor ends with it as the chain's outermost entry. Every hop is its
+/// own cross-process round trip (architecture section 4's IA2 cost model:
+/// no cache requests on this backend), via `IAccessible::accParent`,
+/// except the first hop for a node addressed as a "simple child" (a bare
+/// child id, not its own `IDispatch`), whose immediate parent is the
+/// object it is a child of, since plain MSAA has no `accParent` for a
+/// child id, only for a full object. A hop that finds no further parent
+/// or fails ends the walk early. Blocking; worker only. The MSAA
+/// executor's `Ancestors` arm (`batch::ancestors`).
+///
+/// For a `SysTreeView32` item addressed as a simple child (see this module's
+/// top doc comment), the walk first follows the item's own logical
+/// ancestors through `TVGN_PARENT` (the same relation [`navigate`] uses for
+/// `Parent`), then continues with the tree control itself and its own
+/// window ancestry through the normal `accParent` walk below, so a
+/// focus-ancestry announcement for a deeply nested tree item reads its full
+/// logical path, not the flat MSAA sibling list the control otherwise
+/// exposes. Both stages share the one `max_hops` budget.
 ///
 /// # Errors
 ///
@@ -1282,7 +1254,7 @@ fn acc_id_for_htreeitem(hwnd: isize, hitem: isize) -> Option<i32> {
 /// relation properties. `None` for a 0 result at either step: a 0
 /// `HTREEITEM` lookup means `acc_id` no longer resolves; a 0 relation
 /// result means a genuine "no such neighbor" (or, for `TVGN_PARENT`, that
-/// the item is a root — see [`navigate`] and [`ancestor_chain`] for how
+/// the item is a root — see [`navigate`] and [`ancestor_chain_until`] for how
 /// each caller handles that case).
 fn tree_view_relation_acc_id(hwnd: isize, acc_id: i32, relation: u32) -> Option<i32> {
     let hitem = htreeitem_for_acc_id(hwnd, acc_id);
@@ -1338,7 +1310,7 @@ pub fn read_node(node: NodeId, registry: &dyn Interning) -> Result<NodeSnapshot,
 ///
 /// Every other node goes through `IAccessible::accParent` for `Parent`
 /// (with the same "simple child's immediate parent is the object it is a
-/// child of" handling [`ancestor_chain`] uses, since plain MSAA has no
+/// child of" handling [`ancestor_chain_until`] uses, since plain MSAA has no
 /// `accParent` for a child id) and `IAccessible::accNavigate` for the other
 /// three directions.
 ///
@@ -1406,7 +1378,7 @@ pub fn navigate(
         if is_simple_child {
             // The immediate parent of a simple child (addressed only by a
             // child id, not its own IDispatch) is the object it is a child
-            // of; see this module's `ancestor_chain` doc for the same case.
+            // of; see this module's `ancestor_chain_until` doc for the same case.
             let self_hwnd = acc.window().unwrap_or(hwnd);
             let self_key = (self_hwnd, OBJID_CLIENT.0, CHILDID_SELF);
             let self_at = at && id_object == OBJID_CLIENT.0 && self_hwnd == hwnd;

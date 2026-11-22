@@ -40,8 +40,13 @@ program arm and a call arm each, and `Read`, `Test`, `IsOneOf`,
 (`batch/object.rs`): a `Read` adds reads a program would drop or cut its
 segment for, a menu item's legacy state, a selected item's value and
 refreshes of its own, and a `Test` reads only what its matcher asks next
-(Claude, 2026-11-22). `Ancestors` is not among them: the outpost answers
-it through its own reads. Its input is a `Segment`: a run of
+(Claude, 2026-11-22). `Ancestors` has a call arm only, the raw view's
+walk up (`verbatim_uia::Uia::ancestors`) from where the resolver says,
+with the outpost's stops between its steps (`AncestryFrom`: a window
+read through the other API, an ancestor Core knows, the routes kept of
+each ancestor visited), which no program can judge (Claude, 2026-11-22);
+it answers the chain, the window it stopped below and how it ended, and
+the outpost chains what is above. Its input is a `Segment`: a run of
 consecutive steps of one parsed batch, the model's own `Step`s, with the
 place of the first, the outcomes of the batch's steps before it, and a
 resolver (`Resolve`) for what the steps name that the outpost holds: the

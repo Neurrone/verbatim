@@ -1044,8 +1044,11 @@ taken before any call that can block. Each step runs under its gate
   the store when the node was built, and its parent read by the object
   `window_object` chooses as NVDA does, the desktop carried as
   `NodeDetails::desktop_window` for Core to name.
-- `Ancestors` by the ancestor walk, stopping at the first ancestor Core
-  already knows, its end answered as the walk's.
+- `Ancestors` by each backend's executor's `Ancestors` arm, the UI
+  Automation walk chained above where it ends by the window walk-on
+  (`read::ancestors`), cut at the first ancestor Core already knows, its
+  end answered as the walk's. A focus's ancestors are walked by the same
+  arms with the focus's stops.
 - `Descendants` of a UI Automation node by the program builder's walk
   (`verbatim_uia_rops::batch::run_batch`), its matchers judged between
   runs; of an MSAA object by the MSAA executor's children walk

@@ -317,10 +317,10 @@ Public API:
   node-relative operations, which take a `NodeId` and
   read through the object the registry kept for it (a node issued from
   local window data, which has no object, is acquired at its address).
-  `navigate`, `activate`, and `ancestor_chain` answer `AcquireError::Gone`
+  `navigate`, `activate`, and `ancestor_chain_until` answer `AcquireError::Gone`
   when the node is no longer kept, its window no longer exists, or its
   object has disconnected:
-  `ancestor_chain`, and `ancestor_chain_until` with `AncestorLimits`
+  `ancestor_chain_until` with `AncestorLimits`
   (stopping at a known ancestor, `Walked::MetKnown`; at `max_hops`, `Walked::Cut`
   with the outermost ancestor's window, which the outpost completes by
   plain windows; and `Walked::Onward` with the window the chain goes on
@@ -634,6 +634,9 @@ step runs alone, by calls:
   through its window's backend (`Resolve::corrected`); a last child is
   the last of the children; an MSAA object controls nothing and has no
   selected item of its own.
+- `Ancestors` walks up by `accParent` (`ancestor_chain_until`), to the
+  top for a batch's own step; the outpost's chaining of a focus's
+  ancestors calls the same arm (`batch::ancestors`) with its stops.
 - `Descendants` walks depth first in tree order, judging each node by
   the walk's matchers on its snapshot's values: an object's children as
   it lists them (`acquire::children`), each through its window's backend,

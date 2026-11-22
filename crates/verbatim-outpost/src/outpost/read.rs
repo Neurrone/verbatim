@@ -327,18 +327,17 @@ fn uia_ancestors(
 ) -> Result<Vec<NodeSnapshot>, FocusLost> {
     let read_by_msaa = |hwnd: isize| uia_walk_leaves(context, nearest, hwnd);
     let known = |id: NodeId| knows(previous, id);
-    let Ok((chain, crossed, walked)) = uia.ancestors(
-        (element, element_window, nearest),
+    let start = AncestryStart {
+        element: element.element().clone(),
+        own_window: element_window,
+        nearest,
         request,
-        context.nodes(),
-        (MAX_ANCESTOR_HOPS, parent_automation_id),
-        &verbatim_uia::AncestorStops {
-            read_by_other_api: &read_by_msaa,
-            known: &known,
-            out_of_time: None,
-            visited,
-        },
-    ) else {
+        registry: context.nodes(),
+        read_by_other_api: &read_by_msaa,
+        known: &known,
+        visited,
+    };
+    let Some(walked) = start.walk(uia) else {
         return onward_after_failure(
             context,
             Some((uia, request)),
@@ -346,15 +345,82 @@ fn uia_ancestors(
             (previous, None),
         );
     };
+    parent_automation_id.clone_from(&walked.parent_automation_id);
     // The walk stops below the process boundary itself and answers the
     // parent or owner window there as `crossed`.
-    let above = uia_above(crossed, walked, None);
+    let above = uia_above(walked.crossed, walked.walk, None);
     complete(
         context,
         Some((uia, request)),
-        (chain, above),
+        (walked.chain, above),
         (previous, None),
     )
+}
+
+/// Where a UI Automation `Ancestors` arm walks from and where it stops,
+/// the executor's resolver ([`verbatim_uia_rops::batch::AncestryFrom`]).
+struct AncestryStart<'a> {
+    element: windows::Win32::UI::Accessibility::IUIAutomationElement,
+    own_window: isize,
+    nearest: isize,
+    request: &'a Request<Ancestor>,
+    registry: &'a dyn verbatim_uia::Interning,
+    read_by_other_api: &'a dyn Fn(isize) -> bool,
+    known: &'a dyn Fn(NodeId) -> bool,
+    visited: Visited<'a>,
+}
+
+impl AncestryStart<'_> {
+    /// The walk, run alone through the UI Automation executor's
+    /// `Ancestors` arm: `None` when a step failed before the walk could
+    /// answer.
+    fn walk(&self, uia: &Uia) -> Option<verbatim_uia_rops::batch::Ancestors> {
+        use verbatim_uia_rops::batch::{Found, Ran, Segment};
+        let steps = [verbatim_model::batch::Step {
+            op: verbatim_model::batch::Op::Ancestors {
+                subject: verbatim_model::batch::Subject::Focus,
+                until: Vec::new(),
+                depth: MAX_ANCESTOR_HOPS,
+                set: Vec::new(),
+            },
+            when: None,
+        }];
+        let answer = verbatim_uia_rops::batch::run_calls(&Segment {
+            uia,
+            steps: &steps,
+            first: 0,
+            earlier: &[],
+            resolver: self,
+            remote: false,
+            window: None,
+        });
+        match answer.steps.into_iter().next() {
+            Some(Ran::Done(Found::Ancestors(walked))) => Some(walked),
+            _ => None,
+        }
+    }
+}
+
+impl verbatim_uia_rops::batch::Resolve for AncestryStart<'_> {
+    fn ancestry(
+        &self,
+        _subject: &verbatim_model::batch::Subject,
+    ) -> Result<verbatim_uia_rops::batch::AncestryFrom<'_>, verbatim_uia_rops::batch::Ran> {
+        Ok(verbatim_uia_rops::batch::AncestryFrom {
+            element: self.element.clone(),
+            own_window: self.own_window,
+            nearest: self.nearest,
+            request: self.request,
+            registry: self.registry,
+            max_hops: MAX_ANCESTOR_HOPS,
+            stops: verbatim_uia::AncestorStops {
+                read_by_other_api: self.read_by_other_api,
+                known: self.known,
+                out_of_time: None,
+                visited: self.visited,
+            },
+        })
+    }
 }
 
 /// Whether a UIA walk stops at the root element of window `hwnd`, the
@@ -1159,18 +1225,17 @@ fn msaa_ancestors(
         plain: &plain,
         candidates,
     };
-    let (chain, walked) =
-        match verbatim_ia2::acquire::ancestor_chain_until(node.id, context.nodes(), &limits) {
-            Ok(walk) => walk,
-            // The node can no longer be reached: its chain goes on from its
-            // window's parent, read live.
-            Err(error) => {
-                tracing::debug!(?error, "the MSAA ancestors could not be read");
-                let own = node.details.window.map_or(0, super::window::hwnd_of);
-                let nearest = context.store.key_of(node.id).map_or(0, |(hwnd, _, _)| hwnd);
-                return onward_after_failure(context, uia, (own, nearest), (previous, candidates));
-            }
-        };
+    let (chain, walked) = match verbatim_ia2::batch::ancestors(node.id, context.nodes(), &limits) {
+        Ok(walk) => walk,
+        // The node can no longer be reached: its chain goes on from its
+        // window's parent, read live.
+        Err(error) => {
+            tracing::debug!(?error, "the MSAA ancestors could not be read");
+            let own = node.details.window.map_or(0, super::window::hwnd_of);
+            let nearest = context.store.key_of(node.id).map_or(0, |(hwnd, _, _)| hwnd);
+            return onward_after_failure(context, uia, (own, nearest), (previous, candidates));
+        }
+    };
     let chain: Vec<NodeSnapshot> = chain
         .into_iter()
         .filter(|ancestor| ancestor.role != Role::Window)
@@ -1801,8 +1866,7 @@ pub(super) fn ancestors(
             ReadError::Failed("a UIA window's element on the way could not be read".to_owned())
         });
     }
-    verbatim_ia2::acquire::ancestor_chain(node_id, context.nodes(), MAX_ANCESTOR_HOPS)
-        .map_err(ReadError::from)
+    super::msaa_object::ancestors(context, client, node_id)
 }
 
 /// The UI Automation element of node `node_id`, for a registration: the
