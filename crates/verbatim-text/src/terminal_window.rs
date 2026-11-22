@@ -744,8 +744,10 @@ impl Reading {
             self.lingering.remove(at);
             return;
         }
+        // Only padding, the spaces after a row's last character, is not
+        // its text (TM 3): a list's unmarked entries keep their indent.
         let rest = self.echo_typing(read, j, "");
-        push_output(read.answer, rest.trim_start());
+        push_output(read.answer, rest.trim_end_matches(' '));
     }
 
     /// A kept line: a held word whose line the caret left is spoken.

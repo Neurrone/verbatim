@@ -573,3 +573,15 @@ fn the_row_a_highlight_leaves_beside_the_count_gained_nothing() {
         }
     );
 }
+
+#[test]
+fn an_inserted_line_keeps_its_leading_spaces() {
+    // Only a row's padding, after its last character, is not its text
+    // (TM 3): a list's unmarked entries are said as written.
+    let old = window(&["$ pick"], None, 0);
+    let new = window(&["$ pick", "> apple", "  banana", "$"], None, 10);
+    assert_eq!(
+        Reading::new().answer(&old, &new),
+        output(&["> apple", "  banana", "$"])
+    );
+}
