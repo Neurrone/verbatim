@@ -162,6 +162,8 @@ pub mod kind {
         MoveBySentence => SentenceMoved, MoveBySentence;
         /// A caret wait's.
         WaitForCaret => Waited, WaitForCaret;
+        /// A terminal's window read's.
+        TerminalRead => Box<verbatim_model::TerminalWindow>, TerminalRead;
     }
 
     /// A follow's: applied, with nothing read.
@@ -956,6 +958,18 @@ impl<B> Builder<B> {
             from,
             forward,
             details,
+        }))
+    }
+
+    /// Reads terminal `node`'s window as `ask` names it.
+    pub fn terminal_read(
+        &mut self,
+        node: NodeId,
+        ask: verbatim_model::WindowAsk,
+    ) -> Ref<B, kind::TerminalRead> {
+        self.push(Some(Op::TerminalRead {
+            subject: Subject::Node(node),
+            ask: Box::new(ask),
         }))
     }
 

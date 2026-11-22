@@ -206,3 +206,59 @@ fn a_wanted_batch_is_answered_by_its_named_handles() {
     }))]);
     assert!(Answers::parse(&bar_read(), tested).is_none());
 }
+
+/// A terminal's window read goes out as one step naming its marks, and its
+/// answer is read by its handle.
+#[test]
+fn a_terminal_read_is_one_step_read_by_its_handle() {
+    let ask = verbatim_model::WindowAsk {
+        end: Some(verbatim_model::CurrentMark {
+            mark: verbatim_model::EndMark {
+                anchor: TextAnchor(7),
+                line: "ready>".into(),
+                line_above: 0,
+            },
+            find: true,
+        }),
+        aside: None,
+        height: 30,
+        opening: 30,
+        colours: Some(vec![verbatim_model::row_hash("ready>")]),
+    };
+    let mut read = Builder::<Bar>::named();
+    let window = read.terminal_read(node(), ask.clone());
+    let sent = read.finish();
+    assert_eq!(
+        sent.batch().steps,
+        [step(
+            Op::TerminalRead {
+                subject: Subject::Node(node()),
+                ask: Box::new(ask),
+            },
+            None
+        )]
+    );
+    let answer = Box::new(verbatim_model::TerminalWindow {
+        rows: verbatim_model::TerminalText::unpadded("ready>"),
+        above: 1,
+        screen_top: 1,
+        screen_rows: 30,
+        screen_at_start: true,
+        caret: None,
+        end: TextAnchor(8),
+        first_row: verbatim_model::TerminalText::unpadded("ready>"),
+        document_rows: 1,
+        end_place: Some(verbatim_model::MarkPlace::Rows {
+            written: 0,
+            opening: None,
+        }),
+        aside_place: None,
+        found: verbatim_model::MarkSearch::InWindow,
+        colours: Some(vec![None]),
+        began_us: 1,
+        ended_us: 2,
+    });
+    let reply = Reply::Steps(vec![StepOutcome::Done(Done::TerminalRead(answer.clone()))]);
+    let answers = Answers::parse(&sent, reply).unwrap();
+    assert_eq!(answers.get(window), Got::Done(&answer));
+}

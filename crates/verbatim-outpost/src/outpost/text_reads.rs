@@ -1015,6 +1015,152 @@ pub(super) fn terminal_find(
     }
 }
 
+/// A batch's `TerminalRead` of terminal `node_id` as Core asks (`ask`):
+/// the window read ([`crate::terminal::window`]) from the end marks Core
+/// names, held as text anchors, with the caret given as a caret report
+/// and the point held at it, a caret key's starting point, and the new end
+/// mark held at the document's end. A mark no longer held is the step's
+/// not there.
+pub(super) fn terminal_window_step(
+    context: &RequestContext<'_>,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    ask: &verbatim_model::WindowAsk,
+) -> verbatim_model::batch::StepOutcome {
+    use verbatim_model::batch::{Done, Missing, StepOutcome};
+    let mut source = match uia_source(context, node_id, TextDetails::NONE) {
+        Ok(source) => source,
+        Err(reply) => return refused_step(&reply, node_id),
+    };
+    let end_anchor = ask.end.as_ref().map(|end| end.mark.anchor);
+    let aside_anchor = ask.aside.as_ref().map(|aside| aside.anchor);
+    let named: Vec<u64> = end_anchor
+        .into_iter()
+        .chain(aside_anchor)
+        .map(|anchor| anchor.0)
+        .collect();
+    let mut call = uia_call(context, node_id, &named);
+    let mut range_of = |anchor: Option<verbatim_model::TextAnchor>| match anchor {
+        None => Ok(None),
+        Some(anchor) => match named_start(&mut call, anchor) {
+            Ok(range) => Ok(Some(range)),
+            Err(TextReply::Gone) => Err(Box::new(StepOutcome::NotThere(Missing::Anchor(anchor)))),
+            Err(reply) => Err(Box::new(refused_step(&reply, node_id))),
+        },
+    };
+    let (end, aside) = match (range_of(end_anchor), range_of(aside_anchor)) {
+        (Ok(end), Ok(aside)) => (end, aside),
+        (Err(outcome), _) | (_, Err(outcome)) => return *outcome,
+    };
+    let window = super::asked::known_nearest_of(context, node_id);
+    let remote = context.tries_remote(window);
+    let caret = verbatim_uia_rops::CaretLineQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+        max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+        since: None,
+    };
+    let read = crate::terminal::WindowRead {
+        end: end
+            .as_ref()
+            .zip(ask.end.as_ref())
+            .map(|(range, end)| (range, end.mark.line.as_str(), end.find)),
+        aside: aside.as_ref(),
+        height: ask.height,
+        opening: ask.opening,
+        colours: ask.colours.as_deref(),
+    };
+    let answer = crate::terminal::window(
+        uia,
+        (source.element(), source.pattern()),
+        caret,
+        &read,
+        (remote, window),
+    );
+    let mut answer = match answer {
+        Ok(answer) => answer,
+        Err(TextError::Gone) => return StepOutcome::NotThere(Missing::Node(node_id)),
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's window was not read");
+            return StepOutcome::Failed;
+        }
+    };
+    if answer.import_failed
+        && let Some(window) = window
+    {
+        context.read_classically(window);
+    }
+    let end = match UiaPos::start_of(&answer.end) {
+        Ok(end) => call.text().hold_point(end),
+        Err(TextError::Gone) => return StepOutcome::NotThere(Missing::Node(node_id)),
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's document end was not held");
+            return StepOutcome::Failed;
+        }
+    };
+    let Ok(caret) = held_caret(&mut source, &mut call, answer.caret.take(), answer.began_us) else {
+        return StepOutcome::NotThere(Missing::Node(node_id));
+    };
+    put_uia(context, node_id, call);
+    keep_support(context, node_id, &source);
+    StepOutcome::Done(Done::TerminalRead(Box::new(
+        verbatim_model::TerminalWindow {
+            rows: answer.rows,
+            above: answer.above,
+            screen_top: answer.screen_top,
+            screen_rows: answer.screen_rows,
+            screen_at_start: answer.screen_at_start,
+            caret,
+            end,
+            first_row: answer.first_row,
+            document_rows: answer.document_rows,
+            end_place: answer.end_place,
+            aside_place: answer.aside_place,
+            found: answer.found,
+            colours: answer.colours,
+            began_us: answer.began_us,
+            ended_us: answer.ended_us,
+        },
+    )))
+}
+
+/// The caret a window read found, `found`, as a caret report with the
+/// point held at it; `None` for no caret or one not read, `Err` for the
+/// node gone.
+fn held_caret(
+    source: &mut UiaText,
+    call: &mut TextCall<UiaPos, RangeKey>,
+    found: Option<verbatim_uia_rops::CaretAnswer>,
+    began_us: u64,
+) -> Result<Option<verbatim_model::WindowCaret>, ()> {
+    let Some(Ok(found)) = found.map(|found| source.caret_read_from(found)) else {
+        return Ok(None);
+    };
+    match text::held::starting_from(source, &mut call.text(), found, began_us) {
+        Ok((report, point)) => Ok(Some(verbatim_model::WindowCaret { report, point })),
+        Err(TextError::Gone) => Err(()),
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's caret was not held");
+            Ok(None)
+        }
+    }
+}
+
+/// The outcome of a terminal step whose text could not be opened, `reply`
+/// saying why.
+fn refused_step(reply: &TextReply, node_id: NodeId) -> verbatim_model::batch::StepOutcome {
+    use verbatim_model::batch::{Missing, StepOutcome, StepRefusal};
+    match reply {
+        TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
+        TextReply::Gone => StepOutcome::NotThere(Missing::Node(node_id)),
+        TextReply::Unanswered => StepOutcome::Failed,
+        other => {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a terminal step answered with a reply of another request");
+            StepOutcome::Failed
+        }
+    }
+}
+
 #[cfg(test)]
 mod watch_tests {
     use super::*;

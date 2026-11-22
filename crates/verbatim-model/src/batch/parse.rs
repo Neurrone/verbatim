@@ -273,7 +273,10 @@ impl Checking<'_> {
     fn runs(&self, reader: ReaderKind, op: &Op) -> Result<(), Malformed> {
         let runs = match reader {
             ReaderKind::Outpost => true,
-            ReaderKind::Plain => !matches!(op.kind(), OpKind::Ancestors | OpKind::FocusRead),
+            ReaderKind::Plain => !matches!(
+                op.kind(),
+                OpKind::Ancestors | OpKind::FocusRead | OpKind::TerminalRead
+            ),
             ReaderKind::Listener => match op {
                 Op::Read {
                     subject: Subject::Msaa { .. },
@@ -361,6 +364,7 @@ impl Checking<'_> {
                 }
             }
             Op::MoveBySentence { .. } => anchor(true),
+            Op::TerminalRead { ask, .. } => anchor(ask.end.is_some() || ask.aside.is_some()),
             Op::WaitForCaret { wait, .. } => {
                 if self.place != Place(0) {
                     return Err(Malformed::WaitNotFirst(self.place));

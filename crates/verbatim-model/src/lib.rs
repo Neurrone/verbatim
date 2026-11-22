@@ -65,6 +65,7 @@ mod speech;
 pub mod stroke;
 pub mod tell;
 mod terminal;
+mod terminal_window;
 mod text;
 mod theme;
 mod tree;
@@ -90,6 +91,9 @@ pub use speech::{
 };
 pub use terminal::{
     TerminalColourRun, TerminalMatch, TerminalScope, TerminalSnapshot, TerminalText,
+};
+pub use terminal_window::{
+    CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, WindowCaret, row_hash,
 };
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReport, CaretSelection, Compared, EditSelection,

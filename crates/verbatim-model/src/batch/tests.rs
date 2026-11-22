@@ -1069,7 +1069,59 @@ fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
         })),
         StepOutcome::NotThere(Missing::Node(node(9))),
         StepOutcome::NotThere(Missing::Anchor(TextAnchor(13))),
+        done(Done::TerminalRead(Box::new(terminal_window(14)))),
     ]
+}
+
+/// A terminal's window read whose caret's line starts at anchor `first`,
+/// its caret point the next and its end mark the one after.
+fn terminal_window(first: u64) -> crate::TerminalWindow {
+    crate::TerminalWindow {
+        rows: crate::TerminalText::unpadded("ready>"),
+        above: 1,
+        screen_top: 1,
+        screen_rows: 1,
+        screen_at_start: true,
+        caret: Some(crate::WindowCaret {
+            report: CaretReport {
+                line: chunk(first),
+                selection: None,
+            },
+            point: TextAnchor(first + 1),
+        }),
+        end: TextAnchor(first + 2),
+        first_row: crate::TerminalText::unpadded("ready>"),
+        document_rows: 1,
+        end_place: None,
+        aside_place: None,
+        found: crate::MarkSearch::NotAsked,
+        colours: None,
+        began_us: 0,
+        ended_us: 0,
+    }
+}
+
+/// A terminal's window read of `subject` naming end marks `end` and
+/// `aside`.
+fn terminal_read(subject: Subject, (end, aside): (Option<u64>, Option<u64>)) -> Op {
+    let mark = |anchor| crate::EndMark {
+        anchor: TextAnchor(anchor),
+        line: "ready>".into(),
+        line_above: 0,
+    };
+    Op::TerminalRead {
+        subject,
+        ask: Box::new(crate::WindowAsk {
+            end: end.map(|anchor| crate::CurrentMark {
+                mark: mark(anchor),
+                find: false,
+            }),
+            aside: aside.map(mark),
+            height: 30,
+            opening: 30,
+            colours: None,
+        }),
+    }
 }
 
 #[test]
@@ -1084,7 +1136,7 @@ fn the_outcome_walk_meets_every_node_and_anchor_and_an_answer_stamps_them() {
         },
     );
     assert_eq!(nodes, (1..=9).collect::<Vec<_>>());
-    assert_eq!(anchors, (1..=13).collect::<Vec<_>>());
+    assert_eq!(anchors, (1..=16).collect::<Vec<_>>());
 
     let mut answer = Answer {
         number: RequestNumber(1),
@@ -1094,7 +1146,7 @@ fn the_outcome_walk_meets_every_node_and_anchor_and_an_answer_stamps_them() {
     };
     assert_eq!(
         answer.named().1,
-        (1..=13).map(TextAnchor).collect::<Vec<_>>()
+        (1..=16).map(TextAnchor).collect::<Vec<_>>()
     );
     answer.assign_outpost(OutpostId(3));
     let (stamped, _) = answer.named();
@@ -1206,6 +1258,44 @@ fn a_batch_names_every_anchor_of_its_points_baselines_and_starting_points() {
         details: TextDetails::NONE,
     })]);
     assert_eq!(sentence.anchors(), [(node(12), vec![TextAnchor(41)])]);
+    let terminal = batch(vec![step(terminal_read(
+        Subject::Node(node(12)),
+        (Some(42), Some(43)),
+    ))]);
+    assert_eq!(
+        terminal.anchors(),
+        [(node(12), vec![TextAnchor(42), TextAnchor(43)])]
+    );
+}
+
+/// A terminal's window read runs only in an outpost, and names its end
+/// marks only on a node.
+#[test]
+fn a_terminal_read_runs_in_an_outpost_and_names_its_marks_on_a_node() {
+    let read = |subject, marks| vec![step(terminal_read(subject, marks))];
+    assert!(
+        parse(
+            batch(read(Subject::Node(node(12)), (Some(1), None))),
+            ReaderKind::Outpost
+        )
+        .is_ok()
+    );
+    refused(
+        read(Subject::Node(node(12)), (None, None)),
+        ReaderKind::Plain,
+        Malformed::NotRun {
+            step: Place(0),
+            op: OpKind::TerminalRead,
+        },
+    );
+    refused(
+        vec![
+            step(self::read(Subject::Node(node(12)))),
+            step(terminal_read(Subject::Result(Place(0)), (None, Some(1)))),
+        ],
+        ReaderKind::Outpost,
+        Malformed::AnchorWithoutNode(Place(1)),
+    );
 }
 
 #[test]

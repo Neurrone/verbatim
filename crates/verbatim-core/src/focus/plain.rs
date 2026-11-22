@@ -339,8 +339,8 @@ impl PlainObject {
             | Op::Locate { .. }
             | Op::MoveBySentence { .. }
             | Op::WaitForCaret { .. } => return StepOutcome::Refused(StepRefusal::NoText),
-            // Not run by the plain reader, whose parse refuses both.
-            Op::Ancestors { .. } | Op::FocusRead { .. } => {
+            // Not run by the plain reader, whose parse refuses them.
+            Op::Ancestors { .. } | Op::FocusRead { .. } | Op::TerminalRead { .. } => {
                 return StepOutcome::Refused(StepRefusal::Unsupported);
             }
         })

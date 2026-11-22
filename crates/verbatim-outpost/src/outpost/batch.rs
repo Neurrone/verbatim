@@ -1247,6 +1247,12 @@ impl Run<'_, '_> {
                     },
                 );
             }
+            Op::TerminalRead { ask, .. } => {
+                let Some(uia) = self.client.uia() else {
+                    return Ok(StepOutcome::Refused(StepRefusal::NoText));
+                };
+                return Ok(text_reads::terminal_window_step(context, uia, node, ask));
+            }
             Op::WaitForCaret { .. } => {
                 // A wait is only ever a batch's first step, and such a
                 // batch waits in the table of waiting requests.

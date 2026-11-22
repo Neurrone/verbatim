@@ -290,9 +290,28 @@ tell, Core asks", which the protocol below carries.
   `AcceptanceFacts::in_foreground` is the one test of their relation to
   the foreground) and what the
   listener's check thread found at delivery (`Checked`).
+- `terminal_window`: the shared operation `TerminalRead`'s input and
+  answer. Core names a `WindowAsk`: the current `EndMark` (a held anchor
+  at an earlier read's document end, with the last line with text at or
+  above it and that line's distance) and whether to search for its line
+  (`CurrentMark::find`), the aside mark, the screen's height as last
+  read, "Lines spoken in full" as `opening`, and, for colours, the
+  `row_hash` of each screen row it holds. The outpost answers a
+  `TerminalWindow`: the rows from two screens above the document's end
+  to its end without padding, where the screen's top lies counted from
+  the end (`screen_top`, since a screen not yet full or after a clear
+  runs past the end in blank rows) with its height and whether it starts
+  at the document's start, the caret as a `WindowCaret` (a caret report
+  and the point held at it), the new end mark, the first row and the
+  document's row count (by which Core tells a full history's rotation), a
+  `MarkPlace` per mark (refused, or the rows written past it with the
+  opening rows when more follow than those and the window), the
+  `MarkSearch`, the colours of the changed screen rows, and the read's
+  begin and end. Every count is a fact read; what it means for speech is
+  Core's.
 - `batch`: the request list, closed (ADR 0003, "A new command adds no
   kind of request"). A `Batch` is at most four `Step`s, each an `Op` of
-  seventeen (`OpKind`) with an optional `Condition` on one earlier step
+  eighteen (`OpKind`) with an optional `Condition` on one earlier step
   (`Check::Matched` of a `Test`, `Check::Found`, or their negation;
   `Condition::gate` gives the condition table: a skipped step skips its
   dependants, a refused, missing or failed one makes the check false;
@@ -309,7 +328,7 @@ tell, Core asks", which the protocol below carries.
   starts at a `Point`, one Core names or `Point::Of` an earlier caret or
   chunk start. Each step answers a `StepOutcome`: `Done` with its kind's
   result (`Done`: today's `NodeRead`, `FocusRead` and `SentenceMoved`
-  among them, and `Tested`, `Ancestry`, `Descended`, `CaretAt`, `Chunks`,
+  among them, a terminal's `TerminalWindow`, and `Tested`, `Ancestry`, `Descended`, `CaretAt`, `Chunks`,
   `RangeText`, `SelectionCompared`, `Selected`, `Located`, `Waited`),
   `Refused` (`StepRefusal`), `NotThere` (`Missing`), `Failed` or
   `Skipped`. `parse` turns a batch as it arrives into a `Parsed` one for

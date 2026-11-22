@@ -859,6 +859,19 @@ anchors are (Table 16 of
   sentence; the next baseline held. A source with no sentence unit
   refuses it as no such unit, and a starting point no longer held is not
   there, by its anchor.
+- `TerminalRead` (`text_reads::terminal_window_step`, on
+  `terminal::window`, public for mockapp's tests): the end marks Core
+  names are resolved from their held anchors (one no longer held is not
+  there, by its anchor), the window read runs as one program or its
+  classic calls (`verbatim-uia-rops`'s `terminal_read`, its fallback
+  logged as every fallback is), and then, only when Core asked, the
+  search for the current mark's line by classic calls alone, made only
+  when the window lacks the line, and the colours of the screen rows
+  whose text hashes otherwise than Core's. Every text is converted once,
+  by `terminal::unpadded_utf16`; the read's end is taken when its calls
+  are done. The caret becomes a caret report with the point held at it,
+  and the document's end is held as the next end mark; both are dropped
+  through `held_anchors` as every anchor is.
 - A batch whose first step is `WaitForCaret`, a caret key's wait, waits
   in the reducer's table (`verbatim-outpost-logic`'s `watch`), whose
   polls run as programs of their own (`batch::poll`): through UI

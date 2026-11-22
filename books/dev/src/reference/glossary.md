@@ -162,11 +162,11 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Object store** — the outpost's monitor that owns node identity,
   the application objects it keeps, and releases a node only between
   programs, when no program and no message can still name it. [verbatim-outpost](crates/verbatim-outpost.md).
-- **Operation** — one of the request list's seventeen kinds of step:
+- **Operation** — one of the request list's eighteen kinds of step:
   `Read`, `Test`, `Related`, `Ancestors`, `Descendants`, `IsOneOf`,
   `Activate`, `Follow`, `FocusRead`, `Caret`, `ReadText`, `ReadRange`,
-  `CompareSelection`, `Select`, `Locate`, `MoveBySentence` and
-  `WaitForCaret`. A new behaviour writes a batch of them and adds no
+  `CompareSelection`, `Select`, `Locate`, `MoveBySentence`,
+  `WaitForCaret` and `TerminalRead`. A new behaviour writes a batch of them and adds no
   kind of request (ADR 0003).
   [verbatim-model](crates/verbatim-model.md), "Tells, requests and the tables".
 - **Ordinary-calls executor** — `run_calls`: a batch's fusable

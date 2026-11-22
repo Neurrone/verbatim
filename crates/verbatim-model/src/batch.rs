@@ -1,5 +1,5 @@
 //! The request list: every request Core sends a reader is a batch of at
-//! most four operations from one closed list of seventeen, sent together
+//! most four operations from one closed list of eighteen, sent together
 //! and answered together (ADR 0003, "Properties, event kinds and
 //! requests": "A new command adds no kind of request").
 //!
@@ -31,8 +31,8 @@ use crate::property::PropertyId;
 use crate::request::{FocusRead, FollowGroup, KnownAncestor, MsaaIds, NodeRead, Route};
 use crate::tell::ElementToken;
 use crate::{
-    ActionName, Backend, EditSelection, NodeId, SelectionDifference, SentenceMoved, TextAnchor,
-    TextChunk, TextDetails, TextMovement, TextPoint, TextUnit, WindowHandle,
+    ActionName, Backend, EditSelection, NodeId, SelectionDifference, SentenceMoved, TerminalWindow,
+    TextAnchor, TextChunk, TextDetails, TextMovement, TextPoint, TextUnit, WindowAsk, WindowHandle,
 };
 
 pub use parse::{Bound, LISTENER_MSAA_SET, Malformed, Parsed, ReaderKind, parse};
@@ -475,9 +475,17 @@ pub enum Op {
         /// How it waits.
         wait: Box<CaretWait>,
     },
+    /// A terminal's window read: the outpost's terminal read, with every
+    /// rule it holds, as one operation ([`TerminalWindow`]).
+    TerminalRead {
+        /// The terminal.
+        subject: Subject,
+        /// What Core names to it.
+        ask: Box<WindowAsk>,
+    },
 }
 
-/// The seventeen operations, by name: each one's result kind.
+/// The eighteen operations, by name: each one's result kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpKind {
     /// [`Op::Read`].
@@ -514,6 +522,8 @@ pub enum OpKind {
     MoveBySentence,
     /// [`Op::WaitForCaret`].
     WaitForCaret,
+    /// [`Op::TerminalRead`].
+    TerminalRead,
 }
 
 impl OpKind {
@@ -531,6 +541,7 @@ impl OpKind {
                 | Self::Locate
                 | Self::MoveBySentence
                 | Self::WaitForCaret
+                | Self::TerminalRead
         )
     }
 
@@ -576,6 +587,7 @@ impl Op {
             Self::Locate { .. } => OpKind::Locate,
             Self::MoveBySentence { .. } => OpKind::MoveBySentence,
             Self::WaitForCaret { .. } => OpKind::WaitForCaret,
+            Self::TerminalRead { .. } => OpKind::TerminalRead,
         }
     }
 
@@ -599,7 +611,8 @@ impl Op {
             | Self::Locate { subject, .. }
             | Self::MoveBySentence { subject, .. }
             | Self::Descendants { subject, .. }
-            | Self::WaitForCaret { subject, .. } => Some(subject),
+            | Self::WaitForCaret { subject, .. }
+            | Self::TerminalRead { subject, .. } => Some(subject),
             Self::Follow(target) => target.as_ref().map(|target| &target.subject),
         }
     }
@@ -1016,6 +1029,8 @@ pub enum Done {
     MoveBySentence(SentenceMoved),
     /// [`Op::WaitForCaret`]'s.
     WaitForCaret(Waited),
+    /// [`Op::TerminalRead`]'s.
+    TerminalRead(Box<TerminalWindow>),
 }
 
 impl Done {
@@ -1040,6 +1055,7 @@ impl Done {
             Self::Locate(_) => OpKind::Locate,
             Self::MoveBySentence(_) => OpKind::MoveBySentence,
             Self::WaitForCaret(_) => OpKind::WaitForCaret,
+            Self::TerminalRead(_) => OpKind::TerminalRead,
         }
     }
 
@@ -1065,7 +1081,8 @@ impl Done {
             | Self::Select(_)
             | Self::Locate(_)
             | Self::MoveBySentence(_)
-            | Self::WaitForCaret(_) => Vec::new(),
+            | Self::WaitForCaret(_)
+            | Self::TerminalRead(_) => Vec::new(),
         }
     }
 
@@ -1097,7 +1114,8 @@ impl Done {
             | Self::CompareSelection(_)
             | Self::Select(_)
             | Self::Locate(_)
-            | Self::MoveBySentence(_) => None,
+            | Self::MoveBySentence(_)
+            | Self::TerminalRead(_) => None,
         }
     }
 }

@@ -96,6 +96,9 @@ impl Batch {
                 }
                 | Op::WaitForCaret {
                     subject: object, ..
+                }
+                | Op::TerminalRead {
+                    subject: object, ..
                 } => subject(object, visit),
             }
         }
@@ -158,6 +161,12 @@ impl Batch {
                 } => vec![*baseline],
                 Op::MoveBySentence { from, .. } => vec![*from],
                 Op::WaitForCaret { wait, .. } => vec![wait.from],
+                Op::TerminalRead { ask, .. } => ask
+                    .end
+                    .iter()
+                    .map(|end| end.mark.anchor)
+                    .chain(ask.aside.iter().map(|aside| aside.anchor))
+                    .collect(),
                 Op::CompareSelection {
                     before: Before::SelectionOf(_),
                     ..
@@ -241,6 +250,7 @@ pub fn visit_outcomes(
                     anchors(baseline);
                 }
             },
+            Done::TerminalRead(window) => window.visit(anchors),
             Done::IsOneOf(_)
             | Done::Activate(_)
             | Done::Follow

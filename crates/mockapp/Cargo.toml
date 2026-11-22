@@ -151,6 +151,10 @@ name = "terminal_snapshot"
 harness = false
 
 [[test]]
+name = "terminal_window"
+harness = false
+
+[[test]]
 name = "text"
 harness = false
 
