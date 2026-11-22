@@ -76,8 +76,8 @@ pub(crate) struct Placed {
     /// More was written than the window holds: the output in its place,
     /// in order, the diff's output not spoken.
     pub(crate) past: Option<Vec<Waiting>>,
-    /// The rows written past the mark lie within the window, so a read
-    /// sharing no line with the last is a new screen (F14).
+    /// The last read's last row lies within the window, so a read sharing
+    /// no line with the last is a new screen (F14).
     pub(crate) within: bool,
 }
 
@@ -204,7 +204,8 @@ impl TerminalPlaces {
                 )
             }
         };
-        let within = written.is_some_and(|written| written <= window_rows);
+        // The last read's last row, `added` rows up, lies in this window.
+        let within = added.is_some_and(|added| added < window_rows);
         if from_aside {
             self.aside = None;
         } else {

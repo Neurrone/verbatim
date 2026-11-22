@@ -1335,6 +1335,38 @@ fn input_a_program_prints_elsewhere_is_marked_where_it_is_printed() {
     assert_eq!(marks, [(2, "> hello".to_owned())]);
 }
 
+#[test]
+fn output_that_just_fills_the_window_is_no_new_screen() {
+    // F14 needs the last read's rows in this window: when exactly a
+    // window's worth of rows was written, the command line lies just above
+    // it, so sharing no line with the last read is no new screen, and the
+    // output is spoken from its first line.
+    let mut state = live(&["$ run"]);
+    let read = changed(&mut state);
+    let lines = numbered("out", 1, 30);
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    // The screen, the window's last fifteen rows.
+    let mut filled = grown(&lines, 20, 31);
+    (filled.screen_top, filled.screen_rows) = (15, 15);
+    let outcome = outcome_of(&mut state, read_of(filled));
+    let mut said = Vec::new();
+    let at_us = state.queue.now_us();
+    let entries = facts_answered(&mut state, read, outcome, (at_us, TRACE, &mut said));
+    let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
+        panic!("speech");
+    };
+    let expected: Vec<Waiting> = numbered("out", 1, 30)
+        .into_iter()
+        .map(Waiting::Line)
+        .collect();
+    assert_eq!(entry.output, expected);
+    let node = node_of(&state);
+    assert_eq!(
+        places_of(&state, node).unwrap().ask(false, 30, false).aside,
+        None
+    );
+}
+
 // Defects.
 
 #[test]
