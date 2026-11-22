@@ -686,3 +686,15 @@ fn a_keys_own_read_after_its_caret_wait_is_the_keys() {
     let answer = reading.answer_key(&old, &new);
     assert_eq!(answer.keys, [said("> banana")], "{answer:?}");
 }
+
+#[test]
+fn a_key_after_enter_opens_its_own_window() {
+    // TM 19: Enter's answer is only new output, but a line key pressed
+    // within 300 milliseconds after it is answered as a key.
+    let mut reading = Reading::new();
+    let old = Arc::new(window(&["> apple", "  banana"], Some((2, 2)), 0));
+    reading.key(KeyKind::Enter, 0, &old);
+    reading.key(KeyKind::Caret(Unit::Line), 100_000, &old);
+    let moved = window(&["  apple", "> banana"], Some((1, 2)), 150);
+    assert_eq!(reading.answer(&old, &moved).keys, [said("> banana")]);
+}

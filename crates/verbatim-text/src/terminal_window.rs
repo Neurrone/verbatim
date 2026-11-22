@@ -604,8 +604,13 @@ impl Reading {
         if matches!(kind, KeyKind::Enter | KeyKind::Forget) {
             self.typed.clear();
         }
+        // A window holding Enter is Enter's answer, only new output (TM
+        // 19): a key after it opens a window of its own.
         match &mut self.keys {
-            Some(window) if at_us <= window.last_us.saturating_add(KEY_WINDOW_US) => {
+            Some(window)
+                if at_us <= window.last_us.saturating_add(KEY_WINDOW_US)
+                    && !window.keys.contains(&KeyKind::Enter) =>
+            {
                 window.last_us = at_us;
                 window.keys.push(kind);
             }

@@ -104,8 +104,8 @@ pub(crate) enum Sent {
     /// Once the pacing's group had handed on its last line: a read that
     /// waited for speech (TM 17).
     Waited,
-    /// For a key or a command: its answer is the key's, in the key's
-    /// window however long the read waited for the caret (TM 18).
+    /// A caret key's final read, after its wait for the caret: its answer
+    /// is the key's, in the key's window however long the wait took.
     Key,
 }
 
@@ -958,7 +958,11 @@ fn watch_token(watch: &Watch) -> Option<u64> {
 /// Column K: a key's or command's read of terminal `node` sent under a new
 /// token, which takes over the read out, its answer stale. `None` when
 /// `node` is not the focused terminal, or its watch is gone.
-fn key_read_sent(state: &mut SrState, node: NodeId, now_us: u64) -> Option<KeySent> {
+fn key_read_sent(
+    state: &mut SrState,
+    node: NodeId,
+    (now_us, sent): (u64, Sent),
+) -> Option<KeySent> {
     with_focus(state, |state, focus| {
         if focus.terminal.node != node {
             return None;
@@ -978,7 +982,7 @@ fn key_read_sent(state: &mut SrState, node: NodeId, now_us: u64) -> Option<KeySe
                     token,
                     dirty: *dirty,
                     speaks: Speaks::Output,
-                    sent: Sent::Key,
+                    sent,
                 },
             },
             Watch::Gone => return None,
@@ -1085,7 +1089,9 @@ pub(crate) async fn key_read(
     due_us: u64,
 ) -> Option<KeyRead> {
     let now_us = cx.now_us();
-    let KeySent { token, ask } = key_read_sent(&mut cx.facts_mut(), node, now_us)?;
+    // A command's read, or a caret key's before the key reaches the
+    // program, is judged by its time, as a change's is.
+    let KeySent { token, ask } = key_read_sent(&mut cx.facts_mut(), node, (now_us, Sent::Change))?;
     let mut batch = cx.batch(|| ());
     add_steps(&mut batch, node, &ask);
     let request = batch.finish().of(Reader::Outpost(window.process), window);
@@ -1116,7 +1122,9 @@ pub(crate) async fn key_wait(
     (trace, due_us): (TraceId, u64),
 ) -> KeyWait {
     let now_us = cx.now_us();
-    let Some(KeySent { token, ask }) = key_read_sent(&mut cx.facts_mut(), node, now_us) else {
+    let Some(KeySent { token, ask }) =
+        key_read_sent(&mut cx.facts_mut(), node, (now_us, Sent::Key))
+    else {
         return KeyWait::Ended;
     };
     let mut batch = cx.batch(|| ());

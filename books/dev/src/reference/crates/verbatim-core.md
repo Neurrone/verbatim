@@ -1562,7 +1562,10 @@ match's rows. Speech of anything but the focus is ignored.
 - The watch (`Watch`) is one value: `Unread { dirty }`, with no baseline
   (refused, or its window hung); `Baselining { token, dirty }`, its
   baseline out; `Live { old, read }`, the last window and its read,
-  `Read::Idle { dirty }` or `Read::Out { token, dirty, speaks, waited }`;
+  `Read::Idle { dirty }` or `Read::Out { token, dirty, speaks, sent }`, `Sent` saying whether a
+  change, a read at a group's last line or a caret key's final read sent
+  it, the last judged in the key's window however long its wait for the
+  caret took;
   or `Gone`. A change told (`EventKind::TerminalChanged`, handled at once
   in the inbox) marks it dirty, and at settle a dirty live watch with no
   read out sends one, unless the pacing holds it. Every outcome of a
@@ -1623,7 +1626,9 @@ match's rows. Speech of anything but the focus is ignored.
 - Commands (`terminal/commands.rs`). Each reads the window first, as a
   key's read of the watch's, then acts on live reads. Review over a
   terminal reads the live text as any text. Command marks: Enter on a
-  caret line holding input marks the line; Verbatim+Alt+Up and Down
+  caret line holding input marks the line, and when the program prints
+  that input on a new row within the quiet period, as Pi and Claude Code
+  do, the mark moves there (`Reprint`, `reprinted`); Verbatim+Alt+Up and Down
   Arrow try the marks beyond the review position, nearest first, each by
   one line read at its place and otherwise by the outpost's search
   outward from it. "Report status bar" (`commands::status_bar`) reads the

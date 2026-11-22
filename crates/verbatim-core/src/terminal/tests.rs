@@ -662,7 +662,7 @@ fn live_out_not_there_is_gone_and_a_gone_watch_reads_nothing() {
     assert_eq!(
         {
             let now = state.queue.now_us();
-            key_read_sent(&mut state, node, now)
+            key_read_sent(&mut state, node, (now, Sent::Key))
         },
         None
     );
@@ -702,7 +702,7 @@ fn a_keys_read_takes_over_the_read_out_whose_answer_goes_stale() {
     let node = focused(&state).unwrap().node;
     let key = {
         let now = state.queue.now_us();
-        key_read_sent(&mut state, node, now)
+        key_read_sent(&mut state, node, (now, Sent::Key))
     }
     .unwrap()
     .token;
@@ -734,7 +734,7 @@ fn a_keys_read_in_unread_or_baselining_is_the_silent_baseline() {
         let node = focused(&state).unwrap().node;
         let key = {
             let now = state.queue.now_us();
-            key_read_sent(&mut state, node, now)
+            key_read_sent(&mut state, node, (now, Sent::Key))
         }
         .unwrap()
         .token;
@@ -1412,7 +1412,7 @@ fn typing_shown_by_a_keys_final_read_joins_under_the_later_keys_fence() {
     let node = focused(&state).unwrap().node;
     let key = {
         let now = state.queue.now_us();
-        key_read_sent(&mut state, node, now)
+        key_read_sent(&mut state, node, (now, Sent::Key))
     }
     .unwrap()
     .token;
@@ -1519,7 +1519,7 @@ fn up_arrow_then_a_typed_letter_speak_once_in_their_window() {
     key_passed(&mut state, (KeyKind::Typed, Some("t")), 16_000, TRACE);
     let key = {
         let now = state.queue.now_us();
-        key_read_sent(&mut state, node, now)
+        key_read_sent(&mut state, node, (now, Sent::Key))
     }
     .unwrap()
     .token;
