@@ -57,6 +57,11 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     // inputs and are handled at once, as the inputs they stand for, from
     // here on (`crate::entries::Routed::AtOnce`).
     let at_once;
+    // The input's time: a queue input's own, else the last input's.
+    let now_us = match input {
+        Input::Queue { at_us, .. } => *at_us,
+        _ => state.queue.now_us(),
+    };
     let (input, mut effects) = match input {
         Input::Queue {
             trace_id,
@@ -66,17 +71,17 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
             crate::entries::Routed::Said(said) => (input, said),
             crate::entries::Routed::AtOnce(standing_for) => {
                 at_once = *standing_for;
-                (&at_once, reduce_input(state, &at_once))
+                (&at_once, reduce_input(state, &at_once, now_us))
             }
         },
-        _ => (input, reduce_input(state, input)),
+        _ => (input, reduce_input(state, input, now_us)),
     };
     // A press whose read ended with no answer, its terminal's model gone,
     // says nothing and ends.
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
-        let cut = terminal::cut(state);
+        let cut = terminal::cut(state, now_us);
         effects.extend(cut);
     }
     // A say-all in the event queue changed by an input outside it, such as
@@ -89,13 +94,13 @@ pub fn reduce(state: &mut SrState, runtime: &mut crate::Runtime, input: &Input) 
     effects
 }
 
-/// [`reduce`]'s dispatch, by input.
-fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+/// [`reduce`]'s dispatch, by input, at `now_us`.
+fn reduce_input(state: &mut SrState, input: &Input, now_us: u64) -> Vec<Effect> {
     match input {
         Input::Settings(settings) => {
             let effects =
                 if state.settings.report_terminal_output && !settings.report_terminal_output {
-                    crate::terminal::drop_waiting(state)
+                    crate::terminal::drop_waiting(state, now_us)
                 } else {
                     Vec::new()
                 };
@@ -110,7 +115,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // reached: say-all stops, as on any cut, and terminal output drops
         // what waits, as anything that cuts speech off does.
         Input::UtteranceCancelled { marks, .. } => {
-            let mut effects = terminal::utterance_cancelled(state, marks);
+            let mut effects = terminal::utterance_cancelled(state, marks, now_us);
             effects.extend(say_all::utterance_cancelled(state, marks));
             effects
         }
@@ -119,7 +124,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::UtteranceFailed { marks } => {
             let mut effects = say_all::utterance_failed(state, marks);
             for mark in marks {
-                effects.extend(terminal::mark_reached(state, *mark));
+                effects.extend(terminal::mark_reached(state, *mark, now_us));
             }
             effects
         }

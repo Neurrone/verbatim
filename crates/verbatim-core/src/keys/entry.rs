@@ -194,6 +194,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         }
         return;
     }
+    let now_us = cx.now_us();
     let effects = {
         let mut facts = cx.facts_mut();
         // A held stroke is sent at its turn.
@@ -215,7 +216,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
                         crate::reduce::toggle_setting(facts, trace_id, *command)
                     }
                     ReviewCommand::ToggleReportNewOutput => {
-                        crate::terminal::toggle(facts, trace_id)
+                        crate::terminal::toggle(facts, trace_id, now_us)
                     }
                     _ => Vec::new(),
                 });

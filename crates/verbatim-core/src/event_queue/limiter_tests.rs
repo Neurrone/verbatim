@@ -186,7 +186,7 @@ impl Logic for Limited {
         None
     }
 
-    fn recovered(_: &mut Option<i32>, _: &RequestWindow) -> Option<Entry> {
+    fn recovered(_: &mut Option<i32>, _: &RequestWindow, _: u64) -> Option<Entry> {
         None
     }
 

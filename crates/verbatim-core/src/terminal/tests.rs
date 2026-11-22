@@ -150,7 +150,10 @@ fn outcome_of(state: &mut SrState, answered: impl Into<Answered>) -> Outcome<Rep
         Answered::Window(window) => {
             state.queue.set_now_for_tests(window.ended_us);
             let focus = focus_of(state).expect("a terminal read").clone();
-            let ask = ask_now(state, &focus, false);
+            let ask = {
+                let now = state.queue.now_us();
+                ask_now(state, &focus, false, Some(now))
+            };
             Outcome::Result(Reply::Steps(outcomes_making(&window, &ask)))
         }
     }
@@ -168,7 +171,10 @@ fn answer(state: &mut SrState, token: u64, answered: impl Into<Answered>) -> Vec
         let Entry::TerminalSpeech(entry) = entry else {
             panic!("a speech entry");
         };
-        said.extend(speak(state, *entry));
+        said.extend({
+            let now = state.queue.now_us();
+            speak(state, *entry, now)
+        });
     }
     words(&said)
 }
@@ -248,7 +254,10 @@ fn node_of(state: &SrState) -> NodeId {
 /// A change of the focused terminal told.
 fn tell(state: &mut SrState) {
     let node = node_of(state);
-    let _ = told(state, node);
+    let _ = {
+        let now = state.queue.now_us();
+        told(state, node, now)
+    };
 }
 
 /// A change told, and the read it sends.
@@ -266,7 +275,10 @@ fn play(state: &mut SrState, mut effects: Vec<Effect>) -> Vec<String> {
         let reached = marks(&effects);
         effects = reached
             .into_iter()
-            .flat_map(|mark| mark_reached(state, mark))
+            .flat_map(|mark| {
+                let now = state.queue.now_us();
+                mark_reached(state, mark, now)
+            })
             .collect();
     }
     heard
@@ -302,7 +314,10 @@ fn unread_on_the_window_answering_again_sends_its_baseline() {
     let _ = answer(&mut state, token, Outcome::NotResponding);
     assert_eq!(watch(&state), Watch::Unread { dirty: false });
     let window = focused(&state).unwrap().window;
-    let _ = recovered(&mut state, &window);
+    let _ = {
+        let now = state.queue.now_us();
+        recovered(&mut state, &window, now)
+    };
     let baseline = one_read(&mut state);
     assert_eq!(
         watch(&state),
@@ -580,7 +595,10 @@ fn a_hung_terminal_speaks_its_output_once_the_window_answers() {
     assert_eq!(read_state(&state), Read::Idle { dirty: false });
     assert_eq!(wanted(&mut state), []);
     let window = focused(&state).unwrap().window;
-    let _ = recovered(&mut state, &window);
+    let _ = {
+        let now = state.queue.now_us();
+        recovered(&mut state, &window, now)
+    };
     let again = one_read(&mut state);
     assert_eq!(
         answer(
@@ -601,7 +619,13 @@ fn live_out_not_there_is_gone_and_a_gone_watch_reads_nothing() {
     tell(&mut state);
     assert_eq!(wanted(&mut state), []);
     let node = node_of(&state);
-    assert_eq!(key_read_sent(&mut state, node), None);
+    assert_eq!(
+        {
+            let now = state.queue.now_us();
+            key_read_sent(&mut state, node, now)
+        },
+        None
+    );
 }
 
 #[test]
@@ -636,7 +660,12 @@ fn a_keys_read_takes_over_the_read_out_whose_answer_goes_stale() {
     let mut state = live(&["$"]);
     let read = changed(&mut state);
     let node = focused(&state).unwrap().node;
-    let key = key_read_sent(&mut state, node).unwrap().token;
+    let key = {
+        let now = state.queue.now_us();
+        key_read_sent(&mut state, node, now)
+    }
+    .unwrap()
+    .token;
     assert!(matches!(read_state(&state), Read::Out { token, .. } if token == key));
     assert_eq!(
         answer(&mut state, read, read_of(grown(&["$", "x"], 20, (2, 1)))),
@@ -663,7 +692,12 @@ fn a_keys_read_in_unread_or_baselining_is_the_silent_baseline() {
             );
         }
         let node = focused(&state).unwrap().node;
-        let key = key_read_sent(&mut state, node).unwrap().token;
+        let key = {
+            let now = state.queue.now_us();
+            key_read_sent(&mut state, node, now)
+        }
+        .unwrap()
+        .token;
         assert!(matches!(watch(&state), Watch::Baselining { token, .. } if token == key));
         let _ = answer(&mut state, token, read_of(window(&["old"], 10, (1, None))));
         assert_eq!(
@@ -703,7 +737,10 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
-    let handed = speak(&mut state, *entry);
+    let handed = {
+        let now = state.queue.now_us();
+        speak(&mut state, *entry, now)
+    };
     assert_eq!(words(&handed), ["line 1", "line 2"]);
     // Thirty lines wait past the group: held, so a change reads nothing.
     tell(&mut state);
@@ -717,7 +754,10 @@ fn a_flood_is_held_while_a_group_speaks_and_read_at_its_last_line() {
         let reached = marks(&effects);
         effects = reached
             .into_iter()
-            .flat_map(|mark| mark_reached(&mut state, mark))
+            .flat_map(|mark| {
+                let now = state.queue.now_us();
+                mark_reached(&mut state, mark, now)
+            })
             .collect();
         release = wanted(&mut state)
             .first()
@@ -757,10 +797,16 @@ fn a_cut_while_held_reads_to_the_end_speaking_only_keys() {
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
-    let _ = speak(&mut state, *entry);
+    let _ = {
+        let now = state.queue.now_us();
+        speak(&mut state, *entry, now)
+    };
     tell(&mut state);
     assert_eq!(wanted(&mut state), []);
-    let _ = cut(&mut state);
+    let _ = {
+        let now = state.queue.now_us();
+        cut(&mut state, now)
+    };
     let reads = wanted(&mut state);
     assert_eq!(reads.len(), 1);
     assert!(matches!(
@@ -789,7 +835,10 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
     let mut state = live(&["Reply from ::1: time<1ms"]);
     let read = changed(&mut state);
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(1));
-    let _ = cut(&mut state);
+    let _ = {
+        let now = state.queue.now_us();
+        cut(&mut state, now)
+    };
     let mut said = Vec::new();
     let outcome = outcome_of(
         &mut state,
@@ -807,7 +856,10 @@ fn a_read_out_at_a_cut_while_not_held_is_spoken() {
     // It joins after the cut, under the cut's fence.
     entry.fence = state.arrivals.fence();
     assert_eq!(
-        words(&speak(&mut state, *entry)),
+        words(&{
+            let now = state.queue.now_us();
+            speak(&mut state, *entry, now)
+        }),
         ["Reply from ::1: time<2ms"]
     );
 }
@@ -826,7 +878,13 @@ fn output_fenced_off_by_a_later_cut_speaks_nothing() {
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
-    assert_eq!(words(&speak(&mut state, *entry)), Vec::<String>::new());
+    assert_eq!(
+        words(&{
+            let now = state.queue.now_us();
+            speak(&mut state, *entry, now)
+        }),
+        Vec::<String>::new()
+    );
 }
 
 // The places, 5.6: one test a row.
@@ -967,7 +1025,10 @@ fn a_new_screen_speaks_its_screen_and_sets_the_shells_mark_aside() {
     let ask = places_of(&state, node).unwrap().ask(false, 30, false);
     assert!(ask.aside.is_some_and(|aside| aside.line == "$ less file"));
     // Speech cut off, so the next screen is handed on at once.
-    let _ = cut(&mut state);
+    let _ = {
+        let now = state.queue.now_us();
+        cut(&mut state, now)
+    };
     let read = changed(&mut state);
     let mut closed = window(&["$ less file", "$"], 30, (9000, None));
     closed.screen_at_start = false;
@@ -1003,7 +1064,10 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
-    let mut effects = speak(&mut state, *entry);
+    let mut effects = {
+        let now = state.queue.now_us();
+        speak(&mut state, *entry, now)
+    };
     tell(&mut state);
     let mut heard = Vec::new();
     while wanted(&mut state).is_empty() {
@@ -1011,7 +1075,10 @@ fn a_retaken_terminal_reads_its_waiting_lines_after_the_listener_dies() {
         let reached = marks(&effects);
         effects = reached
             .into_iter()
-            .flat_map(|mark| mark_reached(&mut state, mark))
+            .flat_map(|mark| {
+                let now = state.queue.now_us();
+                mark_reached(&mut state, mark, now)
+            })
             .collect();
     }
     // The re-take of the same node commits: the pacing is carried.
@@ -1035,7 +1102,12 @@ fn typing_shown_by_a_keys_final_read_joins_under_the_later_keys_fence() {
     // key 9's fence, so key 9's cut does not drop it.
     let mut state = live(&["$ "]);
     let node = focused(&state).unwrap().node;
-    let key = key_read_sent(&mut state, node).unwrap().token;
+    let key = {
+        let now = state.queue.now_us();
+        key_read_sent(&mut state, node, now)
+    }
+    .unwrap()
+    .token;
     state.arrivals.key_joined(verbatim_model::KeySeq::new(8));
     key_passed(&mut state, (KeyKind::Typed, Some("z")), 15_000, TRACE);
     state.arrivals.key_joined(verbatim_model::KeySeq::new(9));
@@ -1070,7 +1142,10 @@ fn a_modifiers_cut_then_output_is_spoken() {
     // 6a9e55dc: a modifier's cut with nothing held drops nothing later.
     let mut state = live(&["$"]);
     state.arrivals.speech_cut(verbatim_model::KeySeq::new(1));
-    let _ = cut(&mut state);
+    let _ = {
+        let now = state.queue.now_us();
+        cut(&mut state, now)
+    };
     let read = changed(&mut state);
     let mut said = Vec::new();
     let outcome = outcome_of(&mut state, read_of(grown(&["$", "out"], 20, (2, 1))));
@@ -1080,7 +1155,13 @@ fn a_modifiers_cut_then_output_is_spoken() {
         panic!("speech");
     };
     entry.fence = state.arrivals.fence();
-    assert_eq!(words(&speak(&mut state, *entry)), ["out"]);
+    assert_eq!(
+        words(&{
+            let now = state.queue.now_us();
+            speak(&mut state, *entry, now)
+        }),
+        ["out"]
+    );
 }
 
 #[test]
@@ -1111,7 +1192,10 @@ fn what_was_read_is_spoken_after_the_outpost_ends() {
     let Some(Entry::TerminalSpeech(entry)) = entries.into_iter().next() else {
         panic!("speech");
     };
-    let effects = speak(&mut state, *entry);
+    let effects = {
+        let now = state.queue.now_us();
+        speak(&mut state, *entry, now)
+    };
     let outpost = node_of(&state).outpost().unwrap();
     outpost_ended(&mut state, outpost);
     assert_eq!(play(&mut state, effects), ["a", "b", "c"]);
@@ -1131,7 +1215,12 @@ fn up_arrow_then_a_typed_letter_speak_once_in_their_window() {
         TRACE,
     );
     key_passed(&mut state, (KeyKind::Typed, Some("t")), 16_000, TRACE);
-    let key = key_read_sent(&mut state, node).unwrap().token;
+    let key = {
+        let now = state.queue.now_us();
+        key_read_sent(&mut state, node, now)
+    }
+    .unwrap()
+    .token;
     let recalled = window(
         &["$ echo onet"],
         20,

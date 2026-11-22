@@ -312,7 +312,7 @@ impl Logic for Test {
         }
     }
 
-    fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
+    fn recovered(_: &mut u32, window: &RequestWindow, _: u64) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
     }
 
@@ -1706,7 +1706,7 @@ impl Logic for Probing {
         }
     }
 
-    fn recovered((): &mut (), _: &RequestWindow) -> Option<Withdraws> {
+    fn recovered((): &mut (), _: &RequestWindow, _: u64) -> Option<Withdraws> {
         None
     }
 

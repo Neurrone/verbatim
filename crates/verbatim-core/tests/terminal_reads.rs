@@ -167,3 +167,52 @@ fn a_row_rewritten_seconds_apart_is_spoken_at_each_read() {
     let heard = read_at(&mut desk, at + 2_000, &["$ watch", "status: three"], 3);
     assert_eq!(said(&heard), ["three"]);
 }
+
+/// A read Core sends long after the last key passed to the terminal asks
+/// for no colours: the keys' window (`verbatim_text::terminal_window`,
+/// `KEY_WINDOW_US`) is judged at the time of the input that sends the
+/// read, not at the time of an earlier input.
+#[test]
+fn a_read_sent_long_after_the_last_key_asks_for_no_colours() {
+    let mut desk = Desk::new();
+    let terminal = NodeSnapshot {
+        id: ONE.node(TERMINAL),
+        backend: Backend::Uia,
+        role: Role::Terminal,
+        name: Some("Terminal".to_owned()),
+        value: None,
+        states: StateSet::new(),
+        details: NodeDetails::default(),
+    };
+    let _ = desk.focus_read(ONE, focus_read_of(ONE, &terminal, &[]));
+    let start = desk.at_us;
+    let _ = read_at(&mut desk, start + 1_000, &["$ "], 1);
+    let _ = desk.press(verbatim_model::request::PressAction::Typed {
+        text: "a".to_owned(),
+    });
+    let typed = desk.at_us;
+    let _ = desk.step_at(
+        typed + 1_000,
+        QueueInput::Tell {
+            from: ONE.instance(),
+            tell: Box::new(changed(typed + 1_000)),
+        },
+    );
+    let (_, ask) = window_ask(&desk).expect("the typing's read");
+    assert!(
+        ask.colours,
+        "a read within the keys' window asks for colours"
+    );
+    let _ = read_at(&mut desk, typed + 2_000, &["$ a"], 2);
+
+    let later = typed + 10_000_000;
+    let _ = desk.step_at(
+        later,
+        QueueInput::Tell {
+            from: ONE.instance(),
+            tell: Box::new(changed(later)),
+        },
+    );
+    let (_, ask) = window_ask(&desk).expect("the later read");
+    assert!(!ask.colours, "ten seconds after the key, no colours");
+}
