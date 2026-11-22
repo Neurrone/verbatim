@@ -1593,19 +1593,23 @@ The echo itself makes no call: the hook translates the key locally
 
 ### A terminal output line
 
-A focused terminal's text changed: the outpost reads it and sends the read
-to Core, whose rules judge it (`books/dev/src/explanation/design/terminal-model.md`, "The read"
-and "Where it runs"): one snapshot (`verbatim_uia_rops::terminal_snapshot`)
-of the text from a screen above the last read's screen to the document's
-end in one `GetText`, with the screen, where the next read starts, the
-document's first row, and the caret and its line. Measured against
-mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
+A focused terminal's text changed: the outpost tells Core, and Core asks
+the window read, the request list's steps (`verbatim_core::terminal_window`),
+whose outcomes Core judges (`books/dev/src/explanation/design/terminal-model.md`,
+"The read" and "Where it runs"): the visible range, the window's text
+from twice the screen's height above the document's end in one
+`GetText`, the moves that count the screen's top, the document's rows,
+the caret's rows and each mark's, the first row, and the caret and its
+line. Measured against mockapp's `tests/fixtures/terminal.json`
+(`tests/terminal.rs`).
 
 - Minimum and today: 1 UIA call for every read, the first after the focus
-  included (`new_output_is_said_line_by_line_remote`). Classically, one
-  call per provider method of the snapshot's classic implementation.
-- Bound: one call whatever the history and however many lines changed; the
-  text read grows only with the output since the last read.
+  included (`new_output_is_said_line_by_line_remote`), the steps one
+  program; its instructions are pinned in `instruction_limit.rs`
+  (`terminal_window_reads_execute_exactly`). Classically, one call per
+  provider method of each step's call arm.
+- Bound: one call whatever the history and however many lines changed;
+  the text read is the window's, two screens.
 - A caret key is held for a read before it is sent on, which in a terminal
   is a snapshot. A terminal's text change forgets no selection and takes no
   lock on the anchors.
@@ -1829,41 +1833,25 @@ character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
 ### A terminal's upward search
 
 Moving to a command mark above the rows Core keeps searches for the mark's
-line's first row, unpadded (`verbatim_uia_rops::terminal_find`; Dickson,
-2026-10-26), outward from the mark's place, alternately below and above,
-in one remote operation of at most 20 matches, each checked by its line's
-hash in Core, because the console host's `FindText` also matches a longer
-row with the same start. A failing call ends that direction, and the
-program makes none of the calls on the range Windows Terminal returns for
-nothing found that would end it (`terminal_find.rs`'s module
-documentation). A hit within a row is passed over uncounted, so the search is
-bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`), the
-remote program's two over the whole document among them,
-because a one-letter needle would otherwise walk the whole history.
+line's first row, unpadded (Dickson, 2026-10-26), from the mark's place
+down to the document's end and up to its start, each way the request
+list's `FindText` by calls alone (Dickson, 2026-11-22), at most 20
+matches that start a row over at most 100 `FindText` calls, so a
+one-letter needle found mostly within rows ends rather than walking the
+whole history; Core takes the match nearest the place that starts with
+the line's text, because the console host's `FindText` also matches a
+longer row with the same start. A failed call ends that way with what it
+found: Windows Terminal answers a search that finds nothing in its span
+with a range whose calls fail, and inside a remote operation that
+failure would end the run.
 
-- Instructions: at the bound with 19 matches taken, its worst case, 3,065
-  against mockapp, under a third of the limit.
+- Calls: at most 100 `FindText` calls each way, 200 in all, and the two
+  moves; each way's bound is pinned in `terminal.rs`
+  (`the_search_ends_after_its_calls`).
 - Time: one `FindText` costs 0.1 to 0.2 ms classically wherever the text
-  is, and about 3 inside a program, against either terminal with a full
-  scrollback of 9,001 lines. The search is not measured in a real
-  terminal; it is estimated at about 60 ms for 20 calls and about 300 at
-  the bound of 100. Against mockapp, debug, a search at the bound took 1.2
-  ms remotely and 61 classically.
-
-The reading itself never searches: its read program keeps a range where
-the next read starts.
-
-### A terminal review command above the last read
-
-Figures in this entry and the next follow from the code and were not
-measured. Nothing in either is on the event or speech path.
-
-- A review command whose place lies above the rows a terminal's memory
-  keeps makes at most one history read, one remote operation
-  (`review::History`, `verbatim_uia_rops::terminal_snapshot`) from two
-  screens above the place to the document's end (Dickson, 2026-10-25).
-- The second screen above lets up to a screen of output scroll while the
-  read is out without a second read, at about 0.12 ms.
+  is, against either terminal with a full scrollback of 9,001 lines, so
+  the bound is about 20 to 40 ms; the search is not measured in a real
+  terminal.
 
 ### A terminal's command marks
 
@@ -1902,7 +1890,7 @@ console host and the pinned Windows Terminal 1.24.12741, medians of 20
 reads against the same read without colours:
 
 - A plain shell screen (bash's, 30 rows, 30 runs): 1,349 instructions in
-  the snapshot's own program; 2.6 ms more in the console host (2.9 against
+  the snapshot's own program, measured then; 2.6 ms more in the console host (2.9 against
   0.35) and 1.6 in Windows Terminal (2.1 against 0.48).
 - PSReadLine's coloured command line (2 rows, 4 runs): 555 instructions;
   1.9 ms more in the console host and 1.2 in Windows Terminal.
@@ -2126,15 +2114,17 @@ first, the share of the limit in brackets:
   caret key's starting read for Delete, review's next word, review
   select, a copy and say-all's 32 lines, each under a tenth of the limit
   but the caret tell.
-- A terminal's snapshot: 50 for a first read, 90 with a start and the caret
-  and its line; no loop, so it does not grow with the history.
-- A terminal's colours on a 120 by 30 screen: 1,349 for a plain screen; in
-  the worst case six programs of 4,151 (42 percent), 4,099, 4,099, 4,099,
-  4,099 and 4,097. A program reads rows while a worst-case row (887 at 120
-  cells) fits its budget of 4,600, so a row wider than about 300 cells is
-  read alone, and one wider than about 1,300 is answered classically.
-- A terminal's upward search: 2,952 at its bound (`mockapp`'s
-  `the_search_ends_after_its_calls_remote`), measured, not pinned.
+- A terminal's window read, the request list's steps in one program:
+  pinned in `instruction_limit.rs`'s `terminal_window_reads_execute_exactly`,
+  a first read and one naming both marks; no loop, so it does not grow
+  with the history.
+- A terminal's colours on a 120 by 30 screen, `ReadColours`' programs
+  after the window read's: pinned in `terminal_colours_execute_exactly`,
+  one program for a plain screen and six in the worst case. A program
+  reads rows while a worst-case row (887 at 120 cells) fits its budget of
+  4,600, so a row wider than about 300 cells is read alone, and one wider
+  than about 1,300 is answered classically.
+- A terminal's upward search runs no program: `FindText` is by calls.
 
 ## Memory use
 

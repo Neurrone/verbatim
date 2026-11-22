@@ -614,10 +614,20 @@ by Core on entering the window: one acquisition) (per-hop `accParent` walks, out
 
 ## The MSAA executor
 
-`batch` is the one implementation of the request list's object
+`batch` and `text` are the one implementation of the request list's
 operations on MSAA subjects, as `verbatim-uia-rops`' executor is UI
-Automation's (the one-path rule, the verbatim-outpost crate guide). Each
-step runs alone, by calls:
+Automation's (the one-path rule, the verbatim-outpost crate guide). The
+executor's list, each step run alone, by calls:
+
+- `batch`'s object arms: `Read`, `Test`, `Related`, `Ancestors`,
+  `Descendants`, `IsOneOf`, `Activate` and `FocusRead`;
+- `text`'s arms on an edit control: `Caret`, `ReadText`, `ReadRange`,
+  `Select`, `Locate`, `CompareSelection`, `MoveBySentence` and
+  `WaitForCaret`'s check;
+- refused as unsupported (`TextStep::Unsupported`): `Visible`, `Move`,
+  `FindText`, `ReadColours`, and a whole or trimmed read, which only a
+  terminal's text asks and no MSAA text is; `Follow` is UI Automation's
+  alone.
 
 - `Read` of a node reads its snapshot (`acquire::read_node`) only when
   the set names a property a snapshot holds, a tree view item's children

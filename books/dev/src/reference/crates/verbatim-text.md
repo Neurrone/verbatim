@@ -427,8 +427,8 @@ includes it (`books/dev/src/reference/performance.md`, "A terminal's rotation").
 
 ## A terminal's window read, judged
 
-`terminal_window` is what a terminal's window read (`TerminalRead`, the
-rows from two screens above the document's end) says against the read
+`terminal_window` is what a terminal's window read (the rows from two
+screens above the document's end, Core's `terminal_window`) says against the read
 before it, for Core's watch of the focused terminal. It replaces the row
 memory and the reading rules above once Core switches to it; until then
 nothing in the product calls it. It is written from

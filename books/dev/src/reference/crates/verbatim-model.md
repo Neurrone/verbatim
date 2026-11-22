@@ -290,32 +290,9 @@ tell, Core asks", which the protocol below carries.
   `AcceptanceFacts::in_foreground` is the one test of their relation to
   the foreground) and what the
   listener's check thread found at delivery (`Checked`).
-- `terminal_window`: the shared operation `TerminalRead`'s input and
-  answer. Core names a `WindowAsk`: the current `EndMark` (a held anchor
-  at an earlier read's document end, with the last line with text at or
-  above it and that line's distance) and whether to search for its line
-  (`CurrentMark::find`), the aside mark, the screen's height as last
-  read, "Lines spoken in full" as `opening`, and whether to read the
-  screen's colours. The outpost answers a
-  `TerminalWindow`: the rows from two screens above the document's end
-  to its end without padding, where the screen's top lies counted from
-  the end (`screen_top`, since a screen not yet full or after a clear
-  runs past the end in blank rows) with its height, its width in cells
-  (a wrapped line is one line of the text but several rows, which every
-  count is in) and whether it starts at the document's start, the caret
-  as a `WindowCaret` (a caret report and the point held at it) with
-  `caret_rows_to_end`, the rows from the caret's row to the end, the new
-  end mark, the first row and the
-  document's row count (by which Core tells a full history's rotation), a
-  `MarkPlace` per mark (refused, or the rows written past it with the
-  opening rows when more follow than those and the window), the
-  `MarkSearch`, every screen row's colours when asked, a wrapped line's
-  rows each its own, and the read's
-  begin and end. Every count is a fact read; what it means for speech is
-  Core's.
 - `batch`: the request list, closed (ADR 0003, "A new command adds no
-  kind of request"). A `Batch` is at most four `Step`s, each an `Op` of
-  eighteen (`OpKind`) with an optional `Condition` on one earlier step
+  kind of request"). A `Batch` is at most sixteen `Step`s, each an `Op`
+  of twenty-one (`OpKind`) with an optional `Condition` on one earlier step
   (`Check::Matched` of a `Test`, `Check::Found`, or their negation;
   `Condition::gate` gives the condition table: a skipped step skips its
   dependants, a refused, missing or failed one makes the check false;
@@ -359,9 +336,7 @@ tell, Core asks", which the protocol below carries.
 - `request`: the shared request list's envelope. `Ask` is a request as
   Core sends it, numbered (`RequestNumber`) and naming its window,
   asking a `Question`: a `Batch`, answered `Reply::Steps`, one outcome
-  per step, and refused `Refusal::Malformed` when it does not parse; or
-  one of a terminal's three text operations (`Question::Terminal`, a
-  `TerminalAsk` of its node and `TextOp`), answered `Reply::Text`. The
+  per step, and refused `Refusal::Malformed` when it does not parse. The
   focus reads are batches: a `FocusRead` of an MSAA candidate, the
   application's focus or a `Route`, the outpost's own copy of an element
   the listener read, which carries the route's steps, where its walk
@@ -628,8 +603,7 @@ control plane's event stream; no reader sends them.
 A text request is a batch of the request list's text operations,
 which Core's event queue sends to the node's outpost
 (`QueueEffect::Send`); its answer reaches Core as `QueueInput::Answer`
-carrying one outcome per step. A terminal's three reads are its own
-`TextOp`s, answered with a `TextReply`. The operations:
+carrying one outcome per step. The operations:
 
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
@@ -656,33 +630,27 @@ carrying one outcome per step. A terminal's three reads are its own
   selects, two equal points moving the caret, and a `Caret` after it holds
   the next baseline; `Locate` a point's place on the screen, with its
   offset and the text's length in text measured by character offsets.
-- `ReadTerminal(TerminalRead)`: a full read of the focused terminal from a
-  screen above the start anchor Core names (`None` for a first read) to the
-  document's end, answered `TerminalRead(TerminalReadReply)`: the
-  `TerminalSnapshot` with the screen, the caret and its line, the start
-  anchor the read minted at the top of its screen for a later read to name,
-  when the read began (`started_us`, on the shared clock, so a change
-  observed before it is covered by it), and the caret starting point when
-  `starting` named a unit. The request carries every fact Core owns that the
-  read uses: the scope (`Fresh`, `Whole`, or `HistoryBlock { height }`), the
-  screen's `height` and `width`, whether to take the screen's `colours`,
-  whether the window is a console host's (`console`), and whether it is an
-  output read (`output`), which Core asks outside the event queue
-  (`docs/design/readers-tell-core-asks-build3.md`).
-- `TerminalHistory { above, whole, start, height }`: the text from `above`
-  rows above the start anchor Core names to the document's end, or the whole
-  document, answered `TerminalHistory { text, above }`.
-- `TerminalFind { needle, from, rows, start }`: a command mark's line sought
-  by its first row's text outward from `from` rows above the start anchor,
-  at most 20 matches, `rows` rows read from each, answered
-  `TerminalFound { matches }` with a `TerminalMatch` for each.
+- A terminal's reads are the list's generic text operations
+  (`verbatim_core::terminal_window`): `Visible`, the first visible range,
+  its ends held, whether it starts at the text's start, and its text
+  trimmed; `Move`, a point moved by units from the point itself, its
+  start and landing held, refused (`StepRefusal::OutsideText`) for a held
+  point past the text's end or one the provider will not compare; a
+  whole `ReadText`, units read as one span from the point, up to
+  `MAX_WHOLE_UNITS`; `trim` on `ReadText` and `ReadRange`, each line
+  without its padding and the padded lengths answered (`padded`);
+  `FindText`, a needle sought from a point to the text's end or back to
+  its start, by calls, at most `MAX_FIND_MATCHES` matches over at most
+  `MAX_FIND_CALLS` calls, each with its units to the text's end and its
+  text (`FoundText`); and `ReadColours`, the one operation for terminals
+  alone, each row's colour runs (`TerminalColourRun`) from a point, for
+  as many rows of as many cells as Core names, since the terminals answer
+  a stretch whose last cell differs as one colour (Dickson, 2026-11-22).
 
-A terminal's three reads can also be answered `NoText` (no text
-interface), `Gone` (the node no longer exists) or `Unanswered` (no answer
-in time, or the read failed). These three are the `TextFailure`s
-(`TextReply::into_failure`), which Core decodes beside the operation's
-own reply, so no answer of them fails to decode. A batch's text step
-answers its refusals and failures as its own outcome (`StepOutcome`).
+A batch's text step answers its refusals and failures as its own outcome
+(`StepOutcome`). `TextReply` is why a node's text could not be opened
+(`NoText`, `Gone`, `Unanswered`), which the outpost and the MSAA text
+arms turn into a step's outcome.
 
 ### Inputs from the shell
 

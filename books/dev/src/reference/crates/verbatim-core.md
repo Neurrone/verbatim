@@ -1523,9 +1523,22 @@ What a terminal says (`terminal.rs`; `books/dev/src/explanation/design/terminal-
 `docs/parity/terminals.md`). Core watches the terminal the committed
 focus is, as NVDA's monitor loop does, and decides everything said; the
 outpost reads the window, two screens up to the document's end, when
-Core asks (`Op::TerminalRead`, a `WindowAsk` naming the end mark, the
-mark kept aside, the screen's height, "Lines spoken in full" and whether
-to read colours). Speech of anything but the focus is ignored.
+Core asks, by the request list's generic steps (`terminal_window`): a
+`WindowAsk` names the end mark, the mark kept aside, the screen's height,
+"Lines spoken in full" and whether to read colours, `add_steps` writes
+the steps (the visible range, a move from the screen's top and from the
+text's end, the window's text, the first row, the caret and its line and
+rows, a move from each mark with its opening rows, the search for the
+mark's line, and the colours, at most sixteen steps with a key's wait),
+and `window_of` makes the window of their outcomes, a step that failed
+failing the read. The watch's own read is answered with its reply alone,
+so its steps are recomputed from what Core names when the answer
+arrives, the search and the colours, last, telling themselves by their
+kinds; a read's time is when its answer reaches Core. A move by command
+mark searches by `add_search`: a move to the mark's row, `FindText` down
+and up from it, each to 20 matches over 100 calls, and a move from the
+end mark to the text's end, against which `matches_of` counts each
+match's rows. Speech of anything but the focus is ignored.
 
 - The focused terminal's record, `TerminalFocus`, lives in the committed
   focus's context, so every commit replaces it; only its pacing is

@@ -23,9 +23,8 @@ for the fallback rule, which is per operation. The reads that are not
 operations of the list keep a remote program and a classic
 implementation of the same signature behind one entry point that
 chooses between them and answers with a `Path`: the focus ancestry, an
-element found by its path, a focus's states after its registration, the
-caret read, a terminal's snapshot, colours and search, and the shared
-operation `TerminalRead`'s window read. Every UIA
+element found by its path, and a focus's states after its registration.
+Every UIA
 path in the outpost that makes a sequence of calls to the application
 runs through one or the other; "Where remote operations are not used"
 lists the rest.
@@ -33,10 +32,20 @@ lists the rest.
 ## The program builder and the ordinary-calls executor
 
 `batch` runs the request list's operations on UI Automation subjects
-(`verbatim_model::batch`): `Related`, `Descendants`, `Caret`,
-`ReadText`, `ReadRange`, `CompareSelection`, `Select` and `Locate` with a
-program arm and a call arm each, and `Read`, `Test`, `IsOneOf`,
-`Activate` and `Follow` with a call arm only, each run alone by calls
+(`verbatim_model::batch`), each operation's arms in one place. The
+executor's list:
+
+- a program arm and a call arm: `Related`, `Descendants`, `Caret`,
+  `ReadText` (a whole read and a trimmed one among them), `ReadRange`,
+  `CompareSelection`, `Select`, `Locate`, `Visible`, `Move`,
+  `WaitForCaret`'s check and `FocusRead`;
+- programs of its own and a call arm: `ReadColours` (`batch/colours.rs`),
+  the terminal's colours, its programs run after the segment's;
+- a call arm only: `Read`, `Test`, `IsOneOf`, `Activate`, `Follow`,
+  `Ancestors`, `FindText` and `MoveBySentence`, the last refused as no
+  such unit, since UI Automation's text has no sentence.
+
+`Read`, `Test`, `IsOneOf`, `Activate` and `Follow` each run alone by calls
 (`batch/object.rs`): a `Read` adds reads a program would drop or cut its
 segment for, a menu item's legacy state, a selected item's value and
 refreshes of its own, and a `Test` reads only what its matcher asks next
@@ -454,155 +463,70 @@ Every program here that fills a cache builds its requests from the
 `Fill`'s properties and patterns (`RemoteCache`), and the classic
 fallbacks fill with its request, so both come from one shape.
 
-## Layer 3: a terminal's snapshot
+## The terminal's operations
 
-`terminal_snapshot(uia, query, remote)` (`TerminalSnapshotFn`) is the
-read of `books/dev/src/explanation/design/terminal-model.md`, "The read", which gives the
-reasons for its fields: the outpost reads every focused terminal with
-it, and `cargo xtask regenerate-terminal-conformance-expectations` reads
-the real terminals with it. A `SnapshotQuery` names the element and its
-text pattern; `start`, where the last read said to start (none for a
-first read); `screen_rows`, the screen's height as last found, 0 when not
-known; `whole`, to read the whole text instead; `above`, how many rows
-above the start to begin (`books/dev/src/explanation/design/terminal-model.md`, "Positions");
-`caret`, a `CaretLineQuery`, for the caret and its line; and `colours`,
-for the screen's colours, with the screen's width as last found.
+Core reads a terminal's window by the list's generic operations
+(`verbatim_core::terminal_window`), each answered by the arms above:
 
-The unit of reading is one `GetText`: both terminals answer one from one
-locked state of their buffer, while separate calls are not atomic with
-each other. So the snapshot's text is the only thing anything spoken or
-counted comes from, and every other field is a hint. The `Snapshot` gives
-text as the provider gave it, padding and line breaks included (the
-conformance expectations record each provider's,
-`books/dev/src/reference/crates/verbatim-term-sim.md`):
-
-- `text`: from the start to the document's end, in one call. The start is
-  the query's `start` when it lies no lower than where the next read
-  starts (`from_start`); otherwise it is refused (`shrank`), since the
-  text was cleared or switched, and the snapshot starts where the next
-  read will. A first read starts at the screen's top, a `whole` read at
-  the document's start, and the snapshot then starts `above` rows higher,
-  as far as the document's start allows.
-- `above`: how many rows the snapshot holds above its start.
-- `screen`: the first visible range's text.
-- `next_start`: the document's end moved back by `screen_rows` lines, the
-  top of the screen output is written to, wherever the view is scrolled.
-- `at_document_start` and `alternate`: whether the snapshot, and the
-  screen, start at the document's start.
-- `first_row`: the document's first row; when it reads otherwise, the
-  history rotated.
-- `caret_rows_to_end`: how many lines the caret is from the document's
-  end.
-- `caret`: when asked, the caret and its line, and whether it is not where
-  the query's `since` says. A terminal refuses to compare the caret with a
-  `since` on the other screen, which means it moved; the comparison runs
-  in a try block, so the refusal does not fail the read.
-- `colours`: when asked, each screen row's runs of one foreground and
-  background (`ColourRun`: first column, length in cells, and two colours
-  as `0x00BBGGRR`), the form the terminal reading rules take
-  (`books/dev/src/explanation/design/terminal-model.md`, "Lists and colours").
-
-Without colours the program has no loop: 50 instructions for a first read
-and 90 with a start and the caret.
+- `Visible`: the first visible range, or the whole text's when the
+  provider shows none, its text, and whether it starts at the text's
+  start, one program of no loop, or four calls.
+- `Move`: a collapsed copy of a point moved by units from the point
+  itself, as the provider moves a range, the copy kept as where it
+  started. A point Core holds is first compared with the text's end, and
+  the move is refused past it, or on any failure of its calls, as a
+  mark's read always was: a terminal's mark lies past the end after a
+  clear, and on the other screen the provider will not compare it.
+- A whole `ReadText`: the units read as one span from the point itself,
+  its end moved by their count, in one `GetText`; a trimmed read's text
+  loses each line's padding in the outpost, which answers the padded
+  lengths, and reads no languages, which its chunk never answers.
+- `FindText` runs by calls alone: Windows Terminal answers a search that
+  finds nothing in its span with a range some of whose calls fail with
+  `RPC_E_SERVERFAULT`, which ends a remote run whatever try block holds
+  the call, while a failed call answered as such only ends the search,
+  with what it found. Each match that starts its unit, when the search
+  asks so, is answered with its units to the text's end and its text; a
+  hit within a unit is passed over, and counts within the search's
+  `calls`, so a needle found mostly within rows ends rather than walking
+  the whole history (`books/dev/src/reference/performance.md`, "A
+  terminal's upward search").
 
 ### The colours
 
-A cell's colour attribute is its own colour; a stretch of cells answers
-its first cell's colour when every cell but its last has it, and UIA's
-"mixed" otherwise, since neither terminal compares a stretch's last cell;
-their format unit stops only at rows; and Windows Terminal does not
-implement `FindAttribute`. So a stretch is of one colour exactly when its
-answer is a number and its last cell, read alone, answers the same: four
-attribute reads, whatever the stretch's length.
+`ReadColours` is the one operation for terminals alone: a cell's colour
+attribute is its own colour; a stretch of cells answers its first cell's
+colour when every cell but its last has it, and UIA's "mixed" otherwise,
+since neither terminal compares a stretch's last cell; their format unit
+stops only at rows; and Windows Terminal does not implement
+`FindAttribute`. So no read of formatting gives a row's colours, and a
+stretch is of one colour exactly when its answer is a number and its last
+cell, read alone, answers the same: four attribute reads, whatever the
+stretch's length (Dickson, 2026-11-22).
 
-The read (`terminal_colours.rs`) takes rows as wide as the screen's top
-row as the provider expands it to a line (`row_width`), since a screen
-written to its last column on every row reads in the console host as one
-line. Each row is checked whole; a row of several colours is checked in
-chunks of `COLOUR_CHUNK` (16) cells; a chunk of several colours is read
-cell by cell. A check's last cell is made as the conformance runner makes
-a cell. On the buffer's last row moving by characters stops a cell short
-of the width, which the move to the row's end reveals, and that row is
-then read cell by cell. The rows stop at the earlier of the document's
-end and the screen's, and at most at the screen's height at that width
-(`screen_height`).
-
-The snapshot's own program reads the first rows after everything else. A
-program reads rows while a worst-case row still fits in `COLOUR_BUDGET`
-(4,600) instructions, so it stays under half the platform's limit, and
-the next program, built once a width and kept, goes on from the row where
-the last stopped. A screen at another width than the query's is read by
-these programs alone. A row wider than about 300 cells is read alone, and
-one wider than about 1,300 is answered classically. The classic
-implementation makes the same checks call by call. On a 120 by 30 screen
-a plain screen adds 1.6 to 2.6 milliseconds to the read, and the worst
-case, every cell's colours differing from its neighbours', is six
-programs and 31 to 72 milliseconds (`books/dev/src/reference/performance.md`, "A terminal's
-colours").
-
-### A command mark's line
-
-`terminal_find(uia, query, remote)` looks for a command mark's line by its
-first row's text (`FindQuery`): outward from the row `from` rows above
-where the next read starts, alternately the next match at or below it and
-the next above it, at most `FIND_MATCHES` (20) matches that start a row
-over at most `FIND_CALLS` (100) `FindText` calls, so that a needle found
-mostly within rows ends rather than walking the whole history
-(`books/dev/src/reference/performance.md`, "A terminal's upward search"). Each match that
-starts a row gives a `FindMatch`: its rows above that start, and the text
-of `rows` rows from it, for the caller to check by its line's hash. A
-failing call means nothing more is found in that direction. The program
-is built for each search, about 30 instructions a `FindText` call.
-Windows Terminal answers a search that finds nothing with a range on
-which some calls fail with `RPC_E_SERVERFAULT`, which ends a remote
-operation whatever try block holds the call, so the program makes none
-of those calls: it first searches the whole document and compares the hit
-with the range a search for text no terminal holds answers, ending with
-nothing found when they are equal, and compares each later hit with the
-span searched before calling it, which fails, closing that direction,
-when the hit is the not-found range (`terminal_find.rs`'s module
-documentation).
-
-### The window read
-
-`terminal_read(uia, query, remote)` (`TerminalReadFn`) is the shared
-operation `TerminalRead`'s read (`verbatim_model::TerminalWindow`). A
-`ReadQuery` names the element and pattern, the screen's height as last
-read (0 at first), up to two end marks as held ranges, "Lines spoken in
-full" as `opening`, and the caret's `CaretLineQuery`. One program, with
-no loop, answers a `Window`: the rows from twice the height above the
-document's end to its end in one `GetText` (from the screen's top when
-the height is 0), how many rows above the end the window and the
-screen's top start, the screen's text and top, its top row as the
-provider expands the top to a line (for the width, a wrapped line's
-first row alone), whether the screen starts
-at the document's start, the document's end collapsed, its first row and
-its row count (one move by line from the end to the start), and for each
-mark a `MarkRows`: refused when it lies past the document's end or the
-provider will not compare it, otherwise the rows from it to the end, with
-the `opening` rows after it when more than those and the window follow,
-and the caret's rows to the end, counted from the selection's first
-range as the snapshot program counts them. The classic implementation
-makes the same calls. The program executes 78 instructions naming no
-mark and 128 at its cap, both marks with their opening rows
-(`instruction_limit.rs`).
-
-Two reads sit beside it, outside the program. `terminal_row_colours`
-reads the colours of screen rows, counted from the screen's top by the
-line unit, so a wrapped line's rows are each read as a row, with the
-colour read's emitter and classic checks (`emit_rows`,
-`classic_rows`). And `terminal_read_find` searches for a mark's line by the
-classic search alone (`classic_search`, taking the nearest match):
-output that trims the history between a search's calls makes a miss
-Windows Terminal's nowhere range, whose calls end a remote run, while the
-classic calls answer it as not found.
+The read (`terminal_colours.rs`, run by `batch/colours.rs`) takes the
+rows Core names, each as wide as Core names, from a point, counted by the
+line unit, so a wrapped line's rows are each read as a row, stopping at
+the document's end. Each row is checked whole; a row of several colours
+is checked in chunks of `COLOUR_CHUNK` (16) cells; a chunk of several
+colours is read cell by cell. A check's last cell is made as the
+conformance runner makes a cell. On the buffer's last row moving by
+characters stops a cell short of the width, which the move to the row's
+end reveals, and that row is then read cell by cell. A program reads
+rows while a worst-case row still fits in `COLOUR_BUDGET` (4,600)
+instructions, so it stays under half the platform's limit, and the next
+program, built once a width and kept, goes on from the row where the
+last stopped. A row wider than about 300 cells is read alone, and one
+wider than about 1,300 is answered classically. The call arm makes the
+same checks call by call. On a 120 by 30 screen the worst case, every
+cell's colours differing from its neighbours', is six programs
+(`books/dev/src/reference/performance.md`, "A terminal's colours").
 
 ## Layer 3: the caret's emitters
 
 `caret` holds what the program builder's `Caret`, `ReadText` and
 `CompareSelection` emit and read classically (`emit_caret`, `emit_runs`,
-`emit_changes`, `classic_runs`, `classic_changes`), and a terminal
-snapshot's caret and line (`CaretLineQuery`, `CaretAnswer`). Every caret
+`emit_changes`, `classic_runs`, `classic_changes`). Every caret
 read is a batch's steps, a focus's among them: the focus's caret read and
 report focus's text summary are a `Caret`, a `ReadText` of the line and
 a `ReadRange` of the selection run by the program builder, so no caret
@@ -892,10 +816,10 @@ shape, a shape's program bound again, absent properties),
 `remote_ops.rs` (the focus ancestry, a navigation step, cached
 properties, a stalled and an exited provider), `call_counts.rs` (the
 calls of each read), `text.rs` (the caret read and the text steps),
-`watch_checks.rs` (a wait's polls), `terminal.rs`,
-`terminal_snapshot.rs` and `terminal_window.rs` (the window read, its
-marks, a wrapped line's rows and colours, and the classic search against Windows Terminal's
-two kinds of miss), `controller_for.rs`, `uia_tree.rs` and
+`watch_checks.rs` (a wait's polls), `terminal.rs` (the command search
+each way) and `terminal_window.rs` (the window read's steps both ways,
+its marks, a wrapped line's rows and colours, and the search against
+Windows Terminal's two kinds of miss), `controller_for.rs`, `uia_tree.rs` and
 `time_limits.rs` (the tree dump), and `instruction_limit.rs` (the
 platform's limit and every program's count, a batch's shapes at their
 caps among them), all under `crates/mockapp/tests/`. `cargo xtask

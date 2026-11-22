@@ -834,21 +834,15 @@ anchors are (Table 16 of
   sentence; the next baseline held. A starting point no longer held is
   not there, by its anchor. UI Automation's text has no sentence unit,
   and its executor refuses the move as no such unit.
-- `TerminalRead` (`text_reads::terminal_window_step`, on
-  `terminal::window`, public for mockapp's tests): the end marks Core
-  names are resolved from their held anchors (one no longer held is not
-  there, by its anchor), the window read runs as one program or its
-  classic calls (`verbatim-uia-rops`'s `terminal_read`, its fallback
-  logged as every fallback is), and then, only when Core asked, the
-  search for the current mark's line by classic calls alone, made only
-  when the window lacks the line, and the colours of every screen row by
-  row, from the screen's top. The screen's width is its top row's, as
-  the provider expands the screen's start to a line, since the screen's
-  text gives a wrapped line whole. Every text is converted once,
-  by `terminal::unpadded_utf16`; the read's end is taken when its calls
-  are done. The caret becomes a caret report with the point held at it,
-  and the document's end is held as the next end mark; both are dropped
-  through `held_anchors` as every anchor is.
+- `Visible`, `Move`, `FindText` and `ReadColours`, and a whole or
+  trimmed `ReadText` and a trimmed `ReadRange`, the steps Core reads a
+  terminal's window and searches a command mark's line by
+  (`verbatim_core::terminal_window`), run in the UI Automation executor
+  as every text step does (`text::fused`): `Visible`'s ends and a move's
+  start and landing held as anchors, a trimmed text made by
+  `text::trim::unpadded_utf16` with each line's padded length, a search's
+  matches and a colour read's runs answered as read. The MSAA executor
+  refuses them as unsupported.
 - A batch whose first step is `WaitForCaret`, a caret key's wait, waits
   in the reducer's table (`verbatim-outpost-logic`'s `watch`), whose
   polls run as programs of their own (`batch::poll`): through UI
@@ -860,8 +854,6 @@ anchors are (Table 16 of
   (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and Table
   15). The starting texts the effect test compares come with the wait,
   from Core.
-- A terminal's three text operations (`Question::Terminal`) are the
-  terminal's own, under "Terminals" below.
 
 - A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event
@@ -947,8 +939,7 @@ shown root and two for a hidden one.
 
 Each `CoreToOutpost::Request` is one program on the worker
 (`outpost/asked.rs`), answered once with one of the five outcomes: a
-batch (`outpost/batch.rs`), or one of a terminal's three text
-operations. A window with no verdict in force in Core is probed first,
+batch (`outpost/batch.rs`). A window with no verdict in force in Core is probed first,
 once per batch, and the probe carried in the answer. Each node read
 carries its nearest window's facts (`NodeWindow`, read from Windows with
 no call into the application) and its properties by the step's set.
@@ -967,9 +958,23 @@ implementation of an operation is the one a later session copies
 (Dickson, 2026-11-22). Each executor's `FocusRead` arm reads the
 focus's caret last; through UI Automation the outpost's resolver opens
 the node's text and makes the report and baseline from the caret
-program's answer (`text_reads::focus_caret`). What still runs outside
-the executors is a caret wait's check by parts with no UI Automation
-client, and the terminal's reads.
+program's answer (`text_reads::focus_caret`).
+
+`ReadColours` is the one operation for terminals alone, and its arms are
+the UI Automation executor's (Dickson, 2026-11-22): the terminals answer a
+stretch whose last cell differs as one colour, and their format unit
+stops only at rows, so no read of formatting gives a row's colours. Every
+other read of a terminal is a generic operation.
+
+What still runs outside the executors, counted at the one-path change's
+end (2026-11-22), is the dispatcher's chaining across backends (four
+functions, above) and, with no UI Automation client, a caret wait's check
+by parts (`text_reads::watch`'s fallback, `text::check` over
+`TextSource`). `UiaText` implements `TextSource` for that fallback, for
+`chunk_from`, which mints a read chunk's anchor with the text it holds,
+and for `InOneGo`'s bound: these are its last uses, kept because the
+check by parts and the chunk's anchor are `verbatim_reader_rules`' one
+implementation over any text, which the MSAA executor shares.
 
 A batch is parsed once as it arrives and refused whole when it does not
 parse. A batch whose MSAA subject's window has a UI Automation verdict
@@ -1285,17 +1290,16 @@ clean exit). The end-to-end suite checks every child exited with code 0.
 
 ## Terminals
 
-The `terminal` module (public, so mockapp drives it) reads a focused
-terminal as Core asks and sends each read to Core, whose terminal model
-aligns it and applies the reading rules (`books/dev/src/explanation/design/terminal-model.md`,
+The outpost reads a focused terminal only as Core asks, by the request
+list's generic steps, and keeps nothing of a terminal but the anchors its
+answers hold, until `NodesHeld` lets them go; Core makes the window of
+the outcomes and judges every read (`books/dev/src/explanation/design/terminal-model.md`,
 "Where it runs"; [verbatim-core](verbatim-core.md), "Core's terminal
-model"); the outpost judges nothing a read says and keeps nothing of a
-terminal between reads but the start anchors Core names, held as text
-anchors until `NodesHeld` lets them go. A UIA element of class `TermControl` (Windows
-Terminal) or `WPFTermControl` (Visual Studio), or a focus in a
-`ConsoleWindowClass` window, is `Role::Terminal`, never by title. The
-console host's text area is read through UIA; inside a remote operation its
-provider gives no handle for the window, which the classic walk finds.
+model"). A UIA element of class `TermControl` (Windows Terminal) or
+`WPFTermControl` (Visual Studio), or a focus in a `ConsoleWindowClass`
+window, is `Role::Terminal`, never by title. The console host's text area
+is read through UIA; inside a remote operation its provider gives no
+handle for the window, which the classic walk finds.
 
 - A change is a tell. Every change signal of the terminal `Follow` names
   (the console host's `EVENT_CONSOLE_UPDATE_REGION`, `_SIMPLE`, `_SCROLL`,
@@ -1306,29 +1310,11 @@ provider gives no handle for the window, which the classic walk finds.
   the signals of the same window or element and kind that wait together
   (`a_windows_console_updates_merge_into_one_while_they_wait`). The outpost
   keeps no "changed, not yet read" flag: Core alone does.
-- A read is one `TextOp::ReadTerminal(TerminalRead)` of Core's
-  (`text_reads::terminal_read`, through `terminal::read`, `verbatim_uia_rops::terminal_snapshot`, classic fallback
-  behind it): text from a screen above the start anchor Core names to the
-  end in one `GetText`, the screen, the caret and its line, and colours when
-  Core asks, in one remote operation. Every fact of the read is Core's
-  (`terminal::ReadAsk`): the start anchor, the scope (`Fresh`, `Whole`, or
-  `HistoryBlock`), the screen's height and width, and whether to take colours.
-  The answer is `TextReply::TerminalRead` (`TerminalReadReply`): the
-  `TerminalSnapshot` (`terminal::snapshot_of`: UTF-8 text without line
-  padding, each line's padded length from one pass,
-  `terminal::unpadded_utf16`, the caret's row and column, colours from
-  `verbatim_uia_rops::ColourRun`, and when the read began), the start
-  anchor the read minted at the top of its screen unless the screen shows
-  no text where the last read's did (`verbatim_text::terminal_rows::shows_text`),
-  when the read began on the shared clock, and the caret starting point
-  when the request named a unit, held from the caret the read found
-  (`text::held::starting_from`), so a caret key's starting read is one
-  round trip. The caret read is a caret report inside the snapshot.
-  Output reads are the worker's own after the event queue's requests; a
-  read waits for the worker's current request, up to a search's length.
-- Keys and reading settings are Core's, and so is whether a read takes
-  colours. A caret key's starting and final reads in a terminal are
-  `ReadTerminal` requests of Core's caret key entry.
+- A read, a key's wait and a command mark's search are batches of the
+  list's steps, answered as every batch is ("Core's requests" above). A
+  caret key's wait in a terminal polls its check in programs of its own;
+  the window read after it runs as its own segment once the wait ends,
+  its steps not among the polls' gated reads.
 - Windows Terminal's reads never wait for a frame. Windows Terminal raises
   no change for writes of blank lines only, so such a scroll is read at
   the next change.
@@ -1336,20 +1322,10 @@ provider gives no handle for the window, which the classic walk finds.
   worker waits for the move (`Registration::settle`) before the first
   read. The console host's console events are hooked when `Follow` first
   names it ("The console host's events", above).
-- History: `TextOp::TerminalHistory { above, whole, start, height }` reads rows
-  above the start anchor Core names, padding kept, answered
-  `TextReply::TerminalHistory` with the rows above the start and the read
-  number whose start it is (`terminal::history`, `History`);
-  `TextOp::TerminalFind` (`terminal::find`,
-  `verbatim_uia_rops::terminal_find`) finds a command mark's line from the
-  named start, answered `TextReply::TerminalFound`, and Core picks the
-  match. A start anchor released while a request names it is held until
-  the answer; one that no longer exists ends the request as the anchor lost.
-- Each snapshot and read logs its cost at debug (`terminal snapshot
-  timing`, `terminal read timing`).
 - The listener ignores every UIA notification from a terminal
   (`verbatim_uia::map::ignores_notifications`), as NVDA's terminal overlays
   do, or output would be spoken twice.
-- Tests: `terminal/tests.rs` checks the one-pass conversion over
-  `verbatim-term-sim`; mockapp's `terminal`, `terminal_reading`
-  and `terminal_snapshot` tests drive a real outpost through its request driver.
+- Tests: `text/trim/tests.rs` checks the trimmed text's one-pass
+  conversion over `verbatim-term-sim`; mockapp's `terminal`,
+  `terminal_reading` and `terminal_window` tests drive a real outpost
+  through its request driver.
