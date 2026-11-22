@@ -46,6 +46,13 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the VM renders the desktop in software (WARP), so the Desktop Window Manager works through a flooded console's repaints for about 40 seconds after the flood, and a minimize waits for it in `win32kfull!DwmSyncNotifyMinimizing` while the console's window thread is idle. It happens with no Verbatim running ([troubleshooting](../books/dev/src/how-to/troubleshooting.md), "Minimizing a console after a flood takes 30 to 45 seconds").
   - Fix: none planned for the manager's backlog (Dickson decided to leave it unaddressed); the harness does not wait for the manager (Dickson, 2026-10-26).
 
+## A terminal's window not opening after a flood
+
+- `windows_terminal_flood` and `conhost_flood`, locally: `windows_terminal_flood` failed its setup in runs 2 and 3 of a batch on 2026-11-23, each run straight after `conhost_flood`'s.
+  - How: the setup fails with `no window titled "verbatim-e2e-flood-..." opened within 30s`, before any step; no speech is asserted. Report it apart from a speech failure.
+  - Cause: the Desktop Window Manager's backlog after a flood. The new terminal's window thread waits on the manager's API port (`\Sessions\<n>\Windows\DwmApiPort`) before its first `ShowWindow` for more than 30 seconds, so its window is not shown in time ([troubleshooting](../books/dev/src/how-to/troubleshooting.md), "A scenario run soon after a flood fails its setup"). Any `conhost_` or `windows_terminal_` scenario run soon after a flood can meet it; the floods meet it most, since each runs after another's in a batch.
+  - Fix: build 6, the tests and the harness, which owns the scenarios' setup. Until then, before a flood scenario's setup, wait until `\Process(dwm)\% Processor Time` reads under 130 percent, as troubleshooting says; the harness does not wait for the manager (Dickson, 2026-10-26).
+
 ## Terminal scenarios, single failures on GitHub's runner
 
 - `conhost_long_lines` (run 41333390347, 2026-11-01)
