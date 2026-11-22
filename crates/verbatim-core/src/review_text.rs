@@ -102,7 +102,7 @@ pub(crate) enum Next {
     /// These words, and the press ends.
     Said(Vec<Effect>),
     /// A read or move of `node`'s text, followed up as the read says.
-    Text(NodeId, TextRead),
+    Text(NodeId, Box<TextRead>),
     /// A live read of the navigator object, whose text is reviewed flat.
     ReadObject,
     /// The press run on this flat text of the navigator object, every
@@ -118,12 +118,49 @@ pub(crate) enum Next {
 #[derive(Debug)]
 pub(crate) enum Review {}
 
-/// A read or move of the navigator's text: its batch, and what follows
-/// the answer.
+/// A read or move of the navigator's text: its batch, what follows the
+/// answer, and, in the focused terminal, the move that places the line it
+/// lands on.
 #[derive(Debug)]
 pub(crate) struct TextRead {
     sent: Sent<Review>,
     then: Then,
+    placed: Option<Placed>,
+}
+
+/// In the focused terminal, the line a review read lands on and a move from
+/// its start to the text's end, which counts the rows from it to the
+/// document's end: the review position's place, which moves with its row
+/// as output moves it (`books/dev/src/explanation/design/terminal-model.md`,
+/// "The review cursor").
+#[derive(Clone, Copy, Debug)]
+struct Placed {
+    line: Ref<Review, kind::ReadText>,
+    to_end: Ref<Review, kind::Move>,
+}
+
+/// A move of more rows than any terminal holds.
+const FAR: i32 = 1_000_000;
+
+/// Adds to `sent` the move from the start of `line` to the text's end that
+/// places it, when `rows`.
+fn placed(
+    sent: &mut Builder<Review>,
+    node: NodeId,
+    line: Ref<Review, kind::ReadText>,
+    rows: bool,
+) -> Option<Placed> {
+    rows.then(|| Placed {
+        line,
+        to_end: sent.move_point(
+            node,
+            line.start(),
+            TextMovement {
+                unit: TextUnit::Line,
+                count: FAR,
+            },
+        ),
+    })
 }
 
 /// What a press does with the answers to its [`TextRead`], with the
@@ -204,8 +241,14 @@ struct Worded {
 }
 
 impl TextRead {
-    /// The line of `node`'s text at `at`, after `movement`.
-    fn line(node: NodeId, at: TextPoint, movement: Option<TextMovement>, then: LineThen) -> Self {
+    /// The line of `node`'s text at `at`, after `movement`, placed when
+    /// `rows`.
+    fn line(
+        node: NodeId,
+        (at, movement): (TextPoint, Option<TextMovement>),
+        then: LineThen,
+        rows: bool,
+    ) -> Self {
         let mut sent = Builder::named();
         let line = sent.read_text(
             node,
@@ -215,14 +258,22 @@ impl TextRead {
             1,
             TextDetails::NONE,
         );
+        let placed = placed(&mut sent, node, line, rows);
         Self {
             sent: sent.finish(),
             then: Then::Line(line, then),
+            placed,
         }
     }
 
-    /// A review word command at `at`, by the text's own word.
-    fn word(node: NodeId, at: TextPoint, step: WordStep, press: ReviewPress) -> Self {
+    /// A review word command at `at`, by the text's own word, the line it
+    /// lands on placed when `rows`.
+    fn word(
+        node: NodeId,
+        at: TextPoint,
+        step: WordStep,
+        (press, rows): (ReviewPress, bool),
+    ) -> Self {
         let plain = TextDetails::NONE;
         let by_word = |count| {
             Some(TextMovement {
@@ -251,8 +302,10 @@ impl TextRead {
                 (None, Some(between), Some(line))
             }
         };
+        let placed = line.and_then(|line| placed(&mut sent, node, line, rows));
         Self {
             sent: sent.finish(),
+            placed,
             then: Then::Word(WordRead {
                 command: press.command,
                 repeat: press.repeat,
@@ -275,6 +328,7 @@ impl TextRead {
         let compared = sent.compare_selection(node, Baseline::Read(before), after);
         Self {
             sent: sent.finish(),
+            placed: None,
             then: Then::Selected {
                 before,
                 select,
@@ -290,6 +344,7 @@ impl TextRead {
         let range = sent.read_range(node, span_ends(span), span_through(span));
         Self {
             sent: sent.finish(),
+            placed: None,
             then: Then::Copy(range),
         }
     }
@@ -300,6 +355,7 @@ impl TextRead {
         let located = sent.locate(node, at.into());
         Self {
             sent: sent.finish(),
+            placed: None,
             then: Then::Location(located),
         }
     }
@@ -324,24 +380,29 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
         return Next::Said(Vec::new());
     };
     let node = navigator.object.id;
-    match navigator.text.clone() {
+    let text = navigator.text.clone();
+    let rows = terminal_rows(state, node);
+    match text {
         ReviewText::At(position) if answers_from_line(press.command) => {
-            seed(press, node, TextPoint::At(point_of(&position)))
+            seed(press, node, TextPoint::At(point_of(&position)), rows)
         }
         ReviewText::At(position) => execute(state, press.trace_id, press, node, &position),
-        ReviewText::Point(point) => seed(press, node, TextPoint::At(point)),
+        ReviewText::Point(point) => seed(press, node, TextPoint::At(point), rows),
         ReviewText::Flat(_) => Next::ReadObject,
         // The caret as the outpost finds it, never Core's copy, which can
         // lag behind a key the application has already handled.
-        ReviewText::Caret => seed(press, node, TextPoint::Caret),
+        ReviewText::Caret => seed(press, node, TextPoint::Caret, rows),
         ReviewText::Unknown => {
+            let Some(navigator) = state.navigator.as_mut() else {
+                return Next::Said(Vec::new());
+            };
             let has_caret = state
                 .versions
                 .focus()
                 .map(|focus| &focus.context)
                 .is_some_and(|focus| focus.snapshot.id == node && focus.caret.is_some());
             if has_caret || may_have_text(navigator.object.role) {
-                seed(press, node, TextPoint::Caret)
+                seed(press, node, TextPoint::Caret, rows)
             } else {
                 navigator.text = ReviewText::Flat(FlatPosition::default());
                 Next::ReadObject
@@ -367,8 +428,167 @@ pub(crate) async fn entry(mut cx: Cx<Entries>, press: ReviewPress, fence: Fence)
         Found::On(on) => on.window,
     };
     let due_us = cx.due_in(OTHER_DUE_US);
-    let next = begin(&mut cx.facts_mut(), press);
+    let next = match terminal_start(&mut cx, press, window, due_us).await {
+        Start::Begin => begin(&mut cx.facts_mut(), press),
+        Start::At(next) => next,
+        Start::End => return,
+    };
     run_next(cx, (press, fence), window, next, due_us).await;
+}
+
+/// Where a review press starts.
+enum Start {
+    /// As any text's review starts ([`begin`]).
+    Begin,
+    /// At the review position found again at its place.
+    At(Next),
+    /// Nowhere: the read of the rows around the place failed, and the press
+    /// says nothing.
+    End,
+}
+
+/// Whether `command` starts from the review position: every command but
+/// those that go to a point of their own.
+fn from_position(command: ReviewCommand) -> bool {
+    !matches!(
+        command,
+        ReviewCommand::ReviewTop
+            | ReviewCommand::ReviewBottom
+            | ReviewCommand::ReviewSelectionStart
+            | ReviewCommand::ReviewSelectionEnd
+            | ReviewCommand::MoveToStartMarker
+    )
+}
+
+/// How many rows the read around a review position's place reads: from
+/// [`ABOVE_PLACE`] above it to 16 below it.
+const AROUND: u8 = 32;
+
+/// How many rows above a review position's place the read around it
+/// starts.
+const ABOVE_PLACE: u32 = 15;
+
+/// Where a review press in the focused terminal starts
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The review
+/// cursor"; build 9's design, 5.6, F11): the press reads the window first,
+/// as a command's read of the watch's, so that the output it finds is said
+/// before the press's answer and every place moves by the rows written
+/// past the end mark. A press from the review position then reads the rows
+/// around the position's place, counted from the document's end, and finds
+/// its line again on the nearest row with its text, the higher at one
+/// distance, or else keeps its place and takes the row there; a read that
+/// fails ends the press saying nothing. Anywhere else, and with no place,
+/// the press starts as any text's does.
+async fn terminal_start(
+    cx: &mut Cx<Entries>,
+    press: ReviewPress,
+    window: crate::event_queue::RequestWindow,
+    due_us: u64,
+) -> Start {
+    let Some(node) = cx
+        .facts()
+        .navigator
+        .as_ref()
+        .map(|navigator| navigator.object.id)
+    else {
+        return Start::Begin;
+    };
+    if !terminal_rows(&cx.facts(), node) {
+        return Start::Begin;
+    }
+    let _ = crate::terminal::key_read(
+        cx,
+        (node, window),
+        (press.trace_id, crate::terminal::ReadSpeech::Now),
+        due_us,
+    )
+    .await;
+    if !from_position(press.command) {
+        return Start::Begin;
+    }
+    let place = {
+        let facts = cx.facts();
+        let at = matches!(
+            facts.navigator.as_ref().map(|navigator| &navigator.text),
+            Some(ReviewText::At(_))
+        );
+        match crate::terminal::review_place(&facts, node) {
+            Some(place) if at && terminal_rows(&facts, node) => place,
+            _ => return Start::Begin,
+        }
+    };
+    let Some(read) = crate::terminal::commands::read_around(
+        cx,
+        (window, node),
+        (place.above, ABOVE_PLACE, AROUND),
+        due_us,
+    )
+    .await
+    else {
+        return Start::End;
+    };
+    // The rows read, each with how far above the document's end it lies:
+    // the read moved from the last row to the first it reads.
+    let top = read.moved.unsigned_abs();
+    let rows: Vec<(&verbatim_model::TextChunk, u32)> =
+        read.chunks.iter().zip((0..=top).rev()).collect();
+    let found = rows
+        .iter()
+        .filter(|(chunk, _)| text::line_content(&chunk.text, true) == place.text)
+        .min_by_key(|(_, above)| (above.abs_diff(place.above), std::cmp::Reverse(*above)))
+        .or_else(|| rows.iter().find(|(_, above)| *above == place.above));
+    let Some(&(chunk, above)) = found else {
+        return Start::Begin;
+    };
+    let mut facts = cx.facts_mut();
+    let line = Arc::new(chunk.clone());
+    let content = text::line_content(&line.text, true);
+    let column = usize::try_from(place.column).unwrap_or(usize::MAX);
+    let position = ReviewPosition {
+        offset: text::offset_at_column(content, column, true),
+        column,
+        line,
+    };
+    set_position(&mut facts, position.clone());
+    crate::terminal::set_review_place(
+        &mut facts,
+        node,
+        crate::terminal::places::RowPlace { above, ..place },
+    );
+    Start::At(execute(&mut facts, press.trace_id, press, node, &position))
+}
+
+/// Places the review position in the focused terminal `node` by the move
+/// `placed` asked: when the position is on the line the read landed on, its
+/// place is that line's rows above the document's end, its column and its
+/// text.
+fn place_review(
+    state: &mut SrState,
+    node: NodeId,
+    placed: Placed,
+    answers: &crate::text_request::TextAnswers<Review>,
+) {
+    let (Ok(line), Ok(moved)) = (got(answers, placed.line), got(answers, placed.to_end)) else {
+        return;
+    };
+    let Some(chunk) = line.chunks.first() else {
+        return;
+    };
+    let Some(ReviewText::At(position)) = state.navigator.as_ref().map(|navigator| &navigator.text)
+    else {
+        return;
+    };
+    if !on_navigator(state, node) || position.line.start != chunk.start {
+        return;
+    }
+    // A move from a row's start to the text's end goes a row for each row
+    // below it, and one more from the last row's start to its end.
+    let place = crate::terminal::places::RowPlace {
+        above: moved.moved.unsigned_abs().saturating_sub(1),
+        column: u32::try_from(position.column).unwrap_or(u32::MAX),
+        text: text::line_content(&position.line.text, true).to_owned(),
+    };
+    crate::terminal::set_review_place(state, node, place);
 }
 
 /// Runs a review press from `next` on: each read of its text, or the live
@@ -405,7 +625,8 @@ async fn run_next(
                 let rest = proven::text_in(text, flat_offset(text, at)..);
                 Next::Said(vec![speak(trace_id, text::text_segments(rest, None))])
             }
-            Next::Text(node, TextRead { sent, then }) => {
+            Next::Text(node, read) => {
+                let TextRead { sent, then, placed } = *read;
                 let by = if let Some(text) = flat.as_deref() {
                     Answerer::Flat(text)
                 } else {
@@ -415,7 +636,12 @@ async fn run_next(
                 else {
                     return;
                 };
-                answered(&mut cx.facts_mut(), trace_id, (node, press), then, &answers)
+                let mut facts = cx.facts_mut();
+                let next = answered(&mut facts, trace_id, (node, press), then, &answers);
+                if let Some(placed) = placed {
+                    place_review(&mut facts, node, placed, &answers);
+                }
+                next
             }
             Next::ReadObject => {
                 let Some(object) = cx
@@ -528,17 +754,25 @@ fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition 
 }
 
 /// Reads the line at `at` to place the review cursor there, then runs the
-/// command; a word command reads its word there at once.
-fn seed(press: ReviewPress, node: NodeId, at: TextPoint) -> Next {
+/// command; a word command reads its word there at once. In the focused
+/// terminal (`rows`) the line read is placed.
+fn seed(press: ReviewPress, node: NodeId, at: TextPoint, rows: bool) -> Next {
     if let Some(step) = word_step(press.command) {
-        return word(press, node, at, step);
+        return word(press, node, at, (step, rows));
     }
     let then = LineThen::Seed {
         command: press.command,
         repeat: press.repeat,
         at_caret: at == TextPoint::Caret,
     };
-    Next::Text(node, TextRead::line(node, at, None, then))
+    Next::Text(node, Box::new(TextRead::line(node, (at, None), then, rows)))
+}
+
+/// Whether `node`'s text is the focused terminal's, reviewed by its rows,
+/// so that each line a review read lands on is placed.
+fn terminal_rows(state: &SrState, node: NodeId) -> bool {
+    !reviewing_flat(state)
+        && crate::terminal::focused(state).is_some_and(|terminal| terminal.node == node)
 }
 
 /// The word a review word command reads, `None` for any other command.
@@ -553,9 +787,12 @@ fn word_step(command: ReviewCommand) -> Option<WordStep> {
 
 /// A review word command at `at`, by the text's own word: one batch a
 /// press (`docs/parity/review.md`, "Review words by the provider's
-/// word").
-fn word(press: ReviewPress, node: NodeId, at: TextPoint, step: WordStep) -> Next {
-    Next::Text(node, TextRead::word(node, at, step, press))
+/// word"), the line it lands on placed in the focused terminal (`rows`).
+fn word(press: ReviewPress, node: NodeId, at: TextPoint, (step, rows): (WordStep, bool)) -> Next {
+    Next::Text(
+        node,
+        Box::new(TextRead::word(node, at, step, (press, rows))),
+    )
 }
 
 /// The point the review cursor is at, as a position the outpost resolves.
@@ -596,8 +833,9 @@ fn execute(
         )
         .unwrap_or(u32::MAX),
     };
+    let rows = terminal_rows(state, node);
     let read_line = |movement: Option<TextMovement>, at: TextPoint, landing: Landing| {
-        TextRead::line(node, at, movement, LineThen::Land(landing))
+        TextRead::line(node, (at, movement), LineThen::Land(landing), rows)
     };
     let landing = |place, speak, edge| Landing {
         place,
@@ -691,7 +929,7 @@ fn execute(
         | ReviewCommand::ReviewPreviousWord
         | ReviewCommand::ReviewNextWord => {
             return match word_step(command) {
-                Some(step) => word(press, node, TextPoint::At(cursor), step),
+                Some(step) => word(press, node, TextPoint::At(cursor), (step, rows)),
                 None => Next::Said(Vec::new()),
             };
         }
@@ -821,7 +1059,7 @@ fn execute(
         }
         _ => return Next::Said(Vec::new()),
     };
-    Next::Text(node, read)
+    Next::Text(node, Box::new(read))
 }
 
 /// Whether the navigator's text is reviewed flat, the text a press on it
@@ -1166,7 +1404,7 @@ fn read_missed(
                 command,
                 repeat: 0,
             };
-            seed(press, node, TextPoint::Caret)
+            seed(press, node, TextPoint::Caret, terminal_rows(state, node))
         }
         _ => Next::Said(Vec::new()),
     }

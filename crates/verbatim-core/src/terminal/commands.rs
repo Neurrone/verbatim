@@ -75,6 +75,40 @@ async fn read_row(
     }
 }
 
+/// `count` rows of terminal `node` read live downward from the row
+/// `above + from` rows above the document's end: the read a review press
+/// makes around its position's place ([`crate::review_text`]), its answer's
+/// move counting how far above the end its first row lies; `None` when it
+/// gave no rows.
+pub(crate) async fn read_around(
+    cx: &mut Cx<Entries>,
+    (window, node): (RequestWindow, NodeId),
+    (above, from, count): (u32, u32, u8),
+    due_us: u64,
+) -> Option<Chunks> {
+    let mut batch = cx.batch(|| ());
+    let up = above.saturating_add(from);
+    let lines = batch.read_text(
+        node,
+        TextPoint::End.into(),
+        Some(TextMovement {
+            unit: TextUnit::Line,
+            count: 0i32.checked_sub(i32::try_from(up).ok()?)?,
+        }),
+        TextUnit::Line,
+        count,
+        TextDetails::NONE,
+    );
+    let request = batch.finish().of(Reader::Outpost(window.process), window);
+    let Outcome::Result(answers) = cx.ask(request, due_us).await else {
+        return None;
+    };
+    match answers.get(lines) {
+        Got::Done(read) if !read.chunks.is_empty() => Some(read.clone()),
+        Got::Done(_) | Got::Refused(_) | Got::NotThere(_) | Got::Failed | Got::Skipped => None,
+    }
+}
+
 /// Terminal `node`'s end mark and the rows its places have moved by so
 /// far, the frame a place's rows are counted in when a request is sent.
 fn frame(cx: &Cx<Entries>, node: NodeId) -> Option<(TextAnchor, u64)> {

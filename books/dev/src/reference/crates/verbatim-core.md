@@ -1624,8 +1624,14 @@ match's rows. Speech of anything but the focus is ignored.
   outpost's search (`CurrentMark::find`, asked only on a read the pacing
   held once a read showed rotation).
 - Commands (`terminal/commands.rs`). Each reads the window first, as a
-  key's read of the watch's, then acts on live reads. Review over a
-  terminal reads the live text as any text. Command marks: Enter on a
+  key's read of the watch's, then acts on live reads. A review press in
+  the focused terminal reads the window first too (`review_text`'s
+  `terminal_start`); from the review position it then reads the 32 rows
+  around the position's place (`commands::read_around`) and takes the
+  nearest row with its line's text, or the row at the place, and each
+  line a review read lands on is placed by a move from its start to the
+  text's end in the same batch (`Placed`), so the position moves with its
+  row as reads move every place. Command marks: Enter on a
   caret line holding input marks the line, and when the program prints
   that input on a new row within the quiet period, as Pi and Claude Code
   do, the mark moves there (`Reprint`, `reprinted`); Verbatim+Alt+Up and Down

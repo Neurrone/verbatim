@@ -337,11 +337,11 @@ fn command_marks_are_found_while_output_scrolls_classic() {
 
 /// The review cursor on the command's line above the rows Core keeps, as
 /// [`command_marks_move_the_review_cursor`] puts it there; the program
-/// prints three more lines as the line read the next line needs is on its
-/// way, told to Core while it is out: the read moves from the review
-/// cursor's held position, so the output moves nothing, and the review
-/// cursor moves to the command's output, with one line read on the remote
-/// path.
+/// prints three more lines as the first line read the next line needs is
+/// on its way, told to Core while it is out: that read, of the rows around
+/// the review position's place, finds the command's line by its text near
+/// its place, and the move from it lands on the command's output, with two
+/// line reads on the remote path, the place's and the move's.
 fn the_history_is_placed_while_output_scrolls_remote() {
     let mut driven = with_a_command("mockapp-terminal-history-scrolling", true);
     let step = driven.core.command(ReviewCommand::PreviousCommandMark);
@@ -355,7 +355,11 @@ fn the_history_is_placed_while_output_scrolls_remote() {
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
     let step = driven.core.command(ReviewCommand::ReviewNextLine);
-    assert_eq!(*histories.borrow(), 1, "one live line read");
+    assert_eq!(
+        *histories.borrow(),
+        2,
+        "the place's line read and the move's"
+    );
     // The new output waits in the flood policy's queue, which this test
     // never plays.
     assert_eq!(step.spoken(), [text("a.txt")]);

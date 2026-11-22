@@ -327,6 +327,17 @@ pub(crate) fn places_of(state: &SrState, node: NodeId) -> Option<&TerminalPlaces
         .find_map(|(of, places)| (*of == node).then_some(places))
 }
 
+/// The review position's place in terminal `node`, once a review read or
+/// a command mark placed it.
+pub(crate) fn review_place(state: &SrState, node: NodeId) -> Option<places::RowPlace> {
+    places_of(state, node)?.review.clone()
+}
+
+/// Puts terminal `node`'s review position at `place`.
+pub(crate) fn set_review_place(state: &mut SrState, node: NodeId, place: places::RowPlace) {
+    places_mut(state, node).review = Some(place);
+}
+
 /// Every anchor the terminals' places hold, with its node.
 pub(crate) fn held(
     state: &SrState,
