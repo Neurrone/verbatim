@@ -102,15 +102,9 @@ The logic crates, `verbatim-reader-rules`, `verbatim-outpost-logic` and `verbati
 
 ## Coding Standards
 
-We use Rust 2024 edition.
-
 Arm64 is a first-class target. Builds and tests always use the host's own architecture (no command names a target), so ARM64 is built and tested on an ARM64 machine, which GitHub Actions provides (the `ci-arm64` job); this machine is x64. Two stated exceptions, since neither builds a binary or runs a test: a check-only `cargo check` or `cargo clippy` with `--target x86_64-unknown-linux-gnu` on this machine, to check a crate's Linux build, and the tier check's `cargo metadata` with no platform filter, which reads every target's graph so its answer does not depend on the host.
 
-Use Clippy with the pedantic lint group from the start. Public Rust APIs should have doc comments so the workspace can be browsed with Rustdoc.
-
 Code reaches no fallback that could only be a logic bug: a miss is removed by construction, or passed up as an error, never defaulted silently.
-
-We are using GitHub actions for CI.
 
 ## Commands
 
@@ -121,7 +115,5 @@ We are using GitHub actions for CI.
 The end-to-end suite runs against this machine, or another one through `--endpoint` (`books/dev/src/explanation/architecture.md`, section 14), by pointing it at a locally running `verbatim-agent`. It launches a real Verbatim and injects real keystrokes, so it takes over the desktop while it runs and does nothing useful on a locked one; `books/dev/src/how-to/e2e.md` has the details. Run scenarios locally with `cargo xtask e2e <scenario>... --runs <n>`, which builds and starts the agent, runs each scenario and ends the agent (`books/dev/src/how-to/e2e.md`); "How work is done" says which scenarios, and GitHub's run from the push is the wider check.
 
 The `port` skill (`/port <scope>`, in `.claude/skills/port/`) is the protocol for porting an NVDA behavior or subsystem; its `references/` folder holds the brief template every subagent brief is written from.
-
-The GUI's wxWidgets is built from source by `verbatim-gui`'s build script the first time anything builds that crate: it downloads the pinned release, builds static libraries with CMake (Ninja on x64), and keeps them in `target/wxwidgets`, or under `VERBATIM_WX_DIR` when that is set, so later builds reuse them. Nothing has to be set up by hand beyond CMake and the Visual Studio C++ tools.
 
 Work on main, with no pull requests or feature branches unless asked, so that every session and subagent builds on the same history. When a scenario is added, removed or changes length, run `cargo xtask e2e-durations` once its GitHub run finishes and commit the table.
