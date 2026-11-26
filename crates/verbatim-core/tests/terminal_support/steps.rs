@@ -2,31 +2,26 @@
 //! batch (`Visible`, `Move`, `ReadText` with `whole` and `trim`,
 //! `ReadRange`, `Caret`, `FindText` and `ReadColours`) answered as the
 //! terminal's UI Automation provider answers the step's calls
-//! ([`Outpost::run`]), and the terminal's old search composed of those
-//! steps ([`add_search`] with [`matches_of`]).
+//! ([`Outpost::run`]).
 //!
 //! Core reads a terminal by the batches of its terminal reader
 //! (`verbatim_core::terminal::reader`), which a session gives this
 //! answerer. `terminal_answerers.rs` drives it with those batches too and
 //! compares what the reader reads back with the reference read, field by
-//! field; the command search stays on its old operation, which
-//! `Outpost::find` answers, and is compared as composed here (Dickson,
-//! 2026-11-26, `docs/simplification-review/builds.md`).
+//! field, and the reader's command search with the old search, which
+//! `Outpost::find` answers (Dickson, 2026-11-26,
+//! `docs/simplification-review/builds.md`).
 
 #![expect(
     clippy::result_large_err,
     reason = "a step's outcome is what ends it, as the outpost answers it"
 )]
 
-use verbatim_core::batch::{Answers, Builder, Got, Ref, Search, kind};
 use verbatim_model::batch::{
     Batch, CaretAt, Chunks, Done, FoundText, Gate, Missing, Moved, Op, Point, PointOf, RangeText,
     StepOutcome, StepRefusal, VisibleText,
 };
-use verbatim_model::{
-    NodeId, TerminalColourRun, TerminalMatch, TerminalText, TextAnchor, TextChunk, TextMovement,
-    TextPoint, TextPosition, TextUnit,
-};
+use verbatim_model::{TerminalColourRun, TerminalText, TextAnchor, TextChunk, TextPoint, TextUnit};
 use verbatim_term_sim::{Position, Range};
 
 use super::Outpost;
@@ -511,92 +506,4 @@ pub fn answers(batch: &Batch) -> bool {
                 | Op::ReadColours { .. }
         )
     )
-}
-
-/// A move by `count` lines.
-fn lines(count: i32) -> TextMovement {
-    TextMovement {
-        unit: TextUnit::Line,
-        count,
-    }
-}
-
-/// A step's result, when it was done.
-fn done<'a, T>(got: &Got<'a, T>) -> Option<&'a T> {
-    match got {
-        Got::Done(done) => Some(done),
-        _ => None,
-    }
-}
-
-/// How many rows a move went.
-fn rows(moved: &Moved) -> u32 {
-    moved.moved.unsigned_abs()
-}
-
-/// How each way of a composed search bounds it: the matches that start a
-/// row, at most 20 over at most 100 `FindText` calls, as the search of
-/// `crates/mockapp/tests/common/window_steps.rs` bounds it.
-fn way(read: u8) -> Search {
-    Search {
-        unit_start: Some(TextUnit::Line),
-        read,
-        limit: 20,
-        calls: 100,
-    }
-}
-
-/// The steps of a composed search ([`add_search`]).
-pub struct SearchSteps<B> {
-    down: Ref<B, kind::FindText>,
-    up: Ref<B, kind::FindText>,
-    to_end: Ref<B, kind::Move>,
-}
-
-/// Adds to `batch` the old search for the rows of terminal `node` that
-/// start with `needle`, outward from the row `from` rows above the held
-/// start `start`, each read for `read` rows: a move to that row, a search
-/// down from it and one up, and a move from the start to the text's end,
-/// which the matches are counted against.
-pub fn add_search<B>(
-    batch: &mut Builder<B>,
-    node: NodeId,
-    (start, from): (TextAnchor, i32),
-    (needle, read): (&str, u8),
-) -> SearchSteps<B> {
-    let mark = || TextPoint::At(TextPosition::at(start)).into();
-    let row = batch.move_point(node, mark(), lines(from.checked_neg().expect("rows")));
-    let down = batch.find_text(node, row.landed(), (needle.to_owned(), false), way(read));
-    let up = batch.find_text(node, row.landed(), (needle.to_owned(), true), way(read));
-    let to_end = batch.move_point(node, mark(), lines(FAR));
-    SearchSteps { down, up, to_end }
-}
-
-/// The old search's matches the answers to `steps` compose: alternately
-/// the next below the row searched from and the next above it, one way's
-/// when the other has no more, at most 20, each counted in rows above the
-/// start; `None` when a step was not done.
-pub fn matches_of<B>(answers: &Answers<B>, steps: &SearchSteps<B>) -> Option<Vec<TerminalMatch>> {
-    let down = done(&answers.get(steps.down))?;
-    let up = done(&answers.get(steps.up))?;
-    let from_end = i64::from(rows(done(&answers.get(steps.to_end))?));
-    let (mut down, mut up) = (down.iter(), up.iter());
-    let mut taken = Vec::new();
-    let mut going_down = true;
-    while taken.len() < 20 {
-        let next = if going_down {
-            down.next().or_else(|| up.next())
-        } else {
-            up.next().or_else(|| down.next())
-        };
-        let Some(found) = next else {
-            break;
-        };
-        taken.push(TerminalMatch {
-            above: i32::try_from(i64::from(found.to_end) - from_end).ok()?,
-            text: found.text.clone(),
-        });
-        going_down = !going_down;
-    }
-    Some(taken)
 }

@@ -263,7 +263,7 @@ impl TerminalStage {
             Question::Batch(batch) => match crate::terminal::reader::asked(batch) {
                 Some(Asked::Window(ask)) if ask.starting => Some(Self::Starting),
                 Some(Asked::Window(_)) => Some(Self::Final),
-                Some(Asked::History(_)) | None => None,
+                Some(Asked::History(_) | Asked::Search(_)) | None => None,
             },
             Question::Terminal(_) => None,
         }

@@ -808,48 +808,30 @@ fn terminal_reader_batches_execute_exactly() {
     );
 }
 
-/// A search each way from a row of mockapp's terminal `text`, as a shape
-/// the executor runs here: a move from `start` to the text's end, a move
-/// from it to the row `from` rows above it, and from where that landed a
-/// `FindText` for `needle` toward the text's end and one toward its start,
-/// each taking the matches that start a row, at most `bounds`' matches
-/// over its calls.
+/// The command search of Core's terminal reader
+/// (`verbatim_core::terminal::reader::search_batch`) for `needle`, each
+/// way from the row `from` rows above `start` in mockapp's terminal
+/// `text`, as a shape the executor runs here; each way makes at most
+/// `calls` calls where the reader's hundred are not asked.
 fn search_shape<'t>(
     text: &'t batch::Text,
     start: &IUIAutomationTextRange,
     (needle, from): (&str, i32),
-    (limit, calls): (u8, u8),
+    calls: u8,
 ) -> batch::Shape<'t> {
-    use verbatim_model::batch::{Op, Place, Point, PointOf, Subject};
-    use verbatim_model::{TextMovement, TextUnit};
-    let mut shape = batch::Shape::of(Some(text));
-    shape.culture = false;
-    let start = shape.point(&batch::held(start, Endpoint::Start, true));
-    let subject = Subject::Node(batch::TEXT);
-    let lines = |count| TextMovement {
-        unit: TextUnit::Line,
-        count,
-    };
-    let moved = |movement| Op::Move {
-        subject: subject.clone(),
-        at: start,
-        movement,
-    };
-    let find = |backward| Op::FindText {
-        subject: subject.clone(),
-        at: Point::Of(Place(1), PointOf::Moved),
-        needle: needle.to_owned(),
-        backward,
-        unit_start: Some(TextUnit::Line),
-        read: 1,
-        limit,
-        calls,
-    };
-    shape
-        .step(moved(lines(1_000_000)))
-        .step(moved(lines(-from)))
-        .step(find(false))
-        .step(find(true));
+    use verbatim_core::terminal::reader::{SearchAsk, search_batch};
+    let mut shape = reader_shape(text, Some(start), |start| {
+        let ask = SearchAsk::new(start, needle.to_owned(), from, 1);
+        search_batch(verbatim_model::NodeId::new(1), &ask)
+            .0
+            .batch()
+            .clone()
+    });
+    for step in &mut shape.steps {
+        if let verbatim_model::batch::Op::FindText { calls: most, .. } = &mut step.op {
+            *most = calls;
+        }
+    }
     shape
 }
 
@@ -903,8 +885,8 @@ fn text_start(text: &batch::Text) -> IUIAutomationTextRange {
     start
 }
 
-/// A command search (`search_shape`), `FindText` each way from a row, is
-/// one program that makes exactly the calls its steps ask: typically, a
+/// The command search of Core's terminal reader, `FindText` each way from
+/// a row, is one program that makes exactly the calls its steps ask: typically, a
 /// line found once at its own row, each way ending at its first miss; a
 /// line found nowhere, which makes no call but the search of the whole
 /// text for each way; and at its bound, each way's hundred calls spent
@@ -930,14 +912,14 @@ fn searches_execute_exactly() {
     );
     let start = text_start(&text);
     let run =
-        |needle_from, bounds| searched(&fixture, &search_shape(&text, &start, needle_from, bounds));
-    let typical = run(("end", -80), (20, 100));
-    let nowhere = run(("q", -40), (20, 100));
-    let bound = run(("y", -40), (20, 100));
+        |needle_from, calls| searched(&fixture, &search_shape(&text, &start, needle_from, calls));
+    let typical = run(("end", -80), 100);
+    let nowhere = run(("q", -40), 100);
+    let bound = run(("y", -40), 100);
     // Each way's first 19 hits are matches and its next 80 are within
     // rows: 19 calls take 19 matches, and 23 pass 4 more hits over.
     let counts = [1, 19, 23].map(|calls| {
-        let ran = run(("y", -40), (20, calls));
+        let ran = run(("y", -40), calls);
         assert_eq!(
             (ran.down.len(), ran.up.len(), ran.find_calls),
             (
@@ -1020,12 +1002,7 @@ fn searches_whose_misses_answer_a_range_run_alone() {
         &format!("set-text term {}", rows.join(r"\n")),
     );
     let start = text_start(&text);
-    let run = |needle| {
-        searched(
-            &fixture,
-            &search_shape(&text, &start, (needle, -2), (20, 100)),
-        )
-    };
+    let run = |needle| searched(&fixture, &search_shape(&text, &start, (needle, -2), 100));
     let (both, one, nowhere) = (run("y"), run("y 5"), run("q"));
     fixture.app.quit();
     let row = |to_end, text: &str| (to_end, format!("{text}\n"));

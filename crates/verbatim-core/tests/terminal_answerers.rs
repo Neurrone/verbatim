@@ -5,9 +5,9 @@
 //! `steps`), reads back as the read the reference read
 //! (`verbatim_term_sim::Terminal::snapshot`, the read the conformance
 //! expectations record) gives, field by field; and its history batch reads back as the
-//! reference's text and rows. The command search, which stays on its old
-//! operation, is still compared as the steps compose it (Dickson,
-//! 2026-11-26, `docs/simplification-review/builds.md`).
+//! reference's text and rows. The reader's command search batch is compared
+//! with the old search, which Core still sends (Dickson, 2026-11-26,
+//! `docs/simplification-review/builds.md`).
 //!
 //! The states are every chunk of every stream of the conformance corpus,
 //! in both terminals, and the shapes Core's terminal tests use: a full
@@ -24,20 +24,16 @@ mod terminal_support;
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
 
-use terminal_support::steps::{add_search, matches_of};
 use terminal_support::{Outpost, node};
-use verbatim_core::batch::{Answers, Builder};
+use verbatim_core::batch::Answers;
 use verbatim_core::terminal::reader::{
-    HistoryAsk, WindowAsk, WindowRead, WindowReply, history_batch, history_of, window_batch,
-    window_of,
+    HistoryAsk, SearchAsk, WindowAsk, WindowRead, WindowReply, history_batch, history_of,
+    search_batch, search_of, window_batch, window_of,
 };
 use verbatim_model::request::Reply;
 use verbatim_model::{TerminalMatch, TerminalText, TextAnchor, TextFailure, TextReply};
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query, Range};
-
-/// The brand of this file's search batches.
-enum Compared {}
 
 const FLAVORS: [Flavor; 2] = [Flavor::ConsoleHost, Flavor::WindowsTerminal];
 
@@ -550,28 +546,28 @@ fn a_start_past_the_texts_end_reads_from_the_next_start() {
     }
 }
 
-/// The search the steps compose for `needle`, outward from the row `from`
-/// rows above `start`, each match read for `rows` rows.
+/// The reader's search for `needle`, each way from the row `from` rows
+/// above `start`, each match read for `rows` rows.
 fn searched(
     outpost: &mut Outpost,
     start: TextAnchor,
     needle: &str,
     (from, rows): (i32, u8),
 ) -> Vec<TerminalMatch> {
-    let mut batch = Builder::<Compared>::named();
-    let steps = add_search(&mut batch, node(), (start, from), (needle, rows));
-    let sent = batch.finish();
+    let ask = SearchAsk::new(start, needle.to_owned(), from, u32::from(rows));
+    let (sent, steps) = search_batch(node(), &ask);
     let outcomes = outpost.run(sent.batch());
     let answers = Answers::parse(&sent, Reply::Steps(outcomes.clone()))
         .expect("outcomes of the steps' kinds");
-    matches_of(&answers, &steps).unwrap_or_else(|| panic!("matches, not {outcomes:#?}"))
+    search_of(&answers, &steps).unwrap_or_else(|failure| panic!("{failure:?}: {outcomes:#?}"))
 }
 
-/// The old search and the search the steps compose, for a needle that
-/// starts rows above and below the row searched from, one that starts
-/// more rows than a search keeps, and one that starts none.
+/// The old search and the reader's search batch answer alike, for a
+/// needle that starts rows above and below the row searched from, one
+/// that starts more rows than a search keeps, one that starts none, and
+/// one found only within rows.
 #[test]
-fn the_steps_compose_the_old_search() {
+fn the_readers_search_answers_as_the_old_search() {
     for flavor in FLAVORS {
         let mut outpost = Outpost::new(flavor, 30, 4, 200);
         let mut text = String::new();

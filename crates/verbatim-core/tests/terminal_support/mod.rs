@@ -769,7 +769,8 @@ impl Session {
                     reader::Asked::Window(window) if self.hold_output && window.output => {
                         self.held_output.push_back((ask, read));
                     }
-                    read => self.answer_read(&ask, read),
+                    reader::Asked::Search(_) => self.answer_search(&ask),
+                    read => self.answer_read(&ask, &read),
                 }
                 return;
             }
@@ -808,24 +809,40 @@ impl Session {
         self.reply(&ask, outcome);
     }
 
+    /// Answers `ask`, a command search of Core's terminal reader, each
+    /// step as the simulated terminal's provider answers it: output a test
+    /// queued before a search is written first, and a test's unanswered
+    /// search is refused unsent.
+    fn answer_search(&mut self, ask: &Ask) {
+        if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
+            self.write(&output, at_ms);
+        }
+        let outcome = if self.unanswered_finds {
+            Outcome::Refused(Refusal::Unsupported)
+        } else {
+            Outcome::Result(Reply::Steps(self.outpost.run(batch_of(ask))))
+        };
+        self.reply(ask, outcome);
+    }
+
     /// Answers `ask`, the read `read` of Core's terminal reader, each step
     /// as the simulated terminal's provider answers it, taken at the
     /// session's time. A window read began then, or when
     /// [`Session::next_read_began`] says, and what the reader reads back
     /// of its answer is kept ([`Session::answered_reads`]); output a test
     /// queued before a history read is written first.
-    fn answer_read(&mut self, ask: &Ask, read: reader::Asked) {
+    fn answer_read(&mut self, ask: &Ask, read: &reader::Asked) {
         let batch = batch_of(ask);
         match read {
             reader::Asked::Window(window) => {
                 let outcomes = self.outpost.run(batch);
                 let began_ms = self.next_read_began.take().unwrap_or(self.at_ms);
-                let (sent, steps) = reader::window_batch(node(), &window);
+                let (sent, steps) = reader::window_batch(node(), window);
                 assert_eq!(sent.batch(), batch, "the read asked of the terminal's node");
                 let answers = Answers::parse(&sent, Reply::Steps(outcomes.clone()))
                     .expect("an outcome of each step's kind");
                 let times = (began_ms * 1_000, self.at_ms * 1_000);
-                if let Ok(reply) = reader::window_of(&answers, &steps, &window, times) {
+                if let Ok(reply) = reader::window_of(&answers, &steps, window, times) {
                     self.answered_reads.push(reply.snapshot);
                 }
                 self.reply_begun(ask, Outcome::Result(Reply::Steps(outcomes)), began_ms);
@@ -837,6 +854,7 @@ impl Session {
                 let outcomes = self.outpost.run(batch);
                 self.reply(ask, Outcome::Result(Reply::Steps(outcomes)));
             }
+            reader::Asked::Search(_) => self.answer_search(ask),
         }
     }
 
@@ -844,7 +862,7 @@ impl Session {
     pub fn release_output(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
         while let Some((ask, read)) = self.held_output.pop_front() {
-            self.answer_read(&ask, read);
+            self.answer_read(&ask, &read);
         }
         self.run(Vec::new());
         self.settle();
@@ -913,7 +931,7 @@ impl Session {
     /// Answers the whole read held back.
     pub fn answer_held(&mut self) {
         let (ask, read) = self.held.take().expect("a whole read held back");
-        self.answer_read(&ask, read);
+        self.answer_read(&ask, &read);
         self.run(Vec::new());
         self.settle();
     }
@@ -940,6 +958,7 @@ impl Session {
                     WindowRead::From { .. } | WindowRead::First => Asked::Read,
                 },
                 Some(reader::Asked::History(_)) => Asked::History,
+                Some(reader::Asked::Search(search)) => Asked::Search(search.needle().to_owned()),
                 None => return,
             },
             verbatim_model::request::Question::Terminal(TerminalAsk {

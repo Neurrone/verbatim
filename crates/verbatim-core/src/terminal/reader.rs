@@ -35,16 +35,20 @@
 //! and the two sets without their probes; a whole history read is one
 //! trimmed range from the text's start to its end.
 //!
-//! The command search stays on its old operation
-//! (`verbatim_model::TextOp::TerminalFind`; Dickson, 2026-11-26).
+//! The command search ([`search_batch`]) is a move from the start an
+//! earlier read named to the text's end, which its matches are counted
+//! against, a move from that start to the row searched from, taken
+//! wherever it lands, and from there a `FindText` toward the text's end
+//! and one toward its start, each taking the rows that start with the
+//! text sought (Dickson, 2026-11-26).
 
-use std::num::NonZeroU32;
+use std::num::{NonZeroU8, NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::batch::{Batch, Chunks, Moved, Op, Placement, Point, StepRefusal, Subject};
 use verbatim_model::{
-    NodeId, TerminalSnapshot, TerminalText, TextAnchor, TextDetails, TextFailure, TextMovement,
-    TextPoint, TextPosition, TextUnit,
+    NodeId, TerminalMatch, TerminalSnapshot, TerminalText, TextAnchor, TextDetails, TextFailure,
+    TextMovement, TextPoint, TextPosition, TextUnit,
 };
 
 use crate::batch::{Answers, At, Builder, Cond, Got, Ref, Sent, kind};
@@ -61,6 +65,20 @@ pub enum Window {}
 
 /// The brand of a history read's batch.
 pub enum History {}
+
+/// The brand of a command search's batch.
+pub enum Search {}
+
+/// How many matches a command search takes at most, and each of its two
+/// ways too: the bound the console host's search needed
+/// (`books/dev/src/reference/performance.md`, "A terminal's upward
+/// search").
+pub const SEARCH_MATCHES: u8 = 20;
+
+/// How many `FindText` calls each way of a command search makes at most,
+/// the hits within a row it passes over among them, so that a needle found
+/// mostly within rows cannot walk the whole history (Dickson, 2026-11-26).
+pub const SEARCH_CALLS: u8 = 100;
 
 /// Which read of the window: one value per read, each with only the facts
 /// that read has.
@@ -134,14 +152,59 @@ pub enum HistoryAsk {
     },
 }
 
+/// What Core asks of a command search: the rows that start with a
+/// command mark's line's first row, each way from the mark's row, for the
+/// caller to check by its line's hash, since the console host's search
+/// also matches a longer row with the same start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchAsk {
+    start: TextAnchor,
+    needle: String,
+    from: i32,
+    rows: NonZeroU8,
+}
+
+impl SearchAsk {
+    /// The search for `needle`, a row's text with no line break, each way
+    /// from the row `from` rows above `start`, the start an earlier read
+    /// named (negative below it), reading `rows` rows of text from each
+    /// match: at least one and at most 255, a step's most, so a longer
+    /// line's match is read short.
+    #[must_use]
+    pub fn new(start: TextAnchor, needle: String, from: i32, rows: u32) -> Self {
+        let rows = u8::try_from(rows).unwrap_or(u8::MAX);
+        Self {
+            start,
+            needle,
+            // A count the move can negate.
+            from: from.max(-i32::MAX),
+            rows: NonZeroU8::new(rows).unwrap_or(NonZeroU8::MIN),
+        }
+    }
+
+    /// The start the search names.
+    #[must_use]
+    pub const fn start(&self) -> TextAnchor {
+        self.start
+    }
+
+    /// The text sought.
+    #[must_use]
+    pub fn needle(&self) -> &str {
+        &self.needle
+    }
+}
+
 /// What a batch asks of a terminal, when one of this module's builders
 /// wrote it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asked {
     /// A window read.
     Window(WindowAsk),
     /// A history read.
     History(HistoryAsk),
+    /// A command search.
+    Search(SearchAsk),
 }
 
 /// A window read's answer: the read the reading rules take, and the
@@ -562,6 +625,118 @@ pub fn history_of(
     Ok((text.padded(), above))
 }
 
+/// The steps of a command search's batch ([`search_batch`]).
+pub struct SearchSteps {
+    to_end: Ref<Search, kind::Move>,
+    row: Ref<Search, kind::Move>,
+    down: Ref<Search, kind::FindText>,
+    up: Ref<Search, kind::FindText>,
+}
+
+/// The command search `ask` names of terminal `node`, as a batch, with its
+/// steps: a pure function of the two.
+#[must_use]
+pub fn search_batch(node: NodeId, ask: &SearchAsk) -> (Sent<Search>, SearchSteps) {
+    let mut batch = Builder::<Search>::named();
+    let start = || TextPoint::At(TextPosition::at(ask.start)).into();
+    // The start's rows to the end are counted before the searches, so
+    // that output written while they run does not skew a match's row.
+    let to_end = batch.move_point(node, start(), lines(FAR));
+    let row = batch.move_point(node, start(), lines(ask.from.saturating_neg()));
+    let way = crate::batch::Search {
+        unit_start: Some(TextUnit::Line),
+        read: ask.rows.get(),
+        limit: SEARCH_MATCHES,
+        calls: SEARCH_CALLS,
+    };
+    let mut find =
+        |backward| batch.find_text(node, row.landed(), (ask.needle.clone(), backward), way);
+    let (down, up) = (find(false), find(true));
+    let steps = SearchSteps {
+        to_end,
+        row,
+        down,
+        up,
+    };
+    (batch.finish(), steps)
+}
+
+/// The matches the answers to `steps` make: alternately the next toward
+/// the text's end, the row searched from first when it starts with the
+/// text sought, and the next toward its start, one way's when the other
+/// has no more, at most [`SEARCH_MATCHES`], each counted in rows above the
+/// start. A way that found nothing has none; it is the caller that drops
+/// a mark, when no match of either way is its line.
+///
+/// # Errors
+///
+/// A search that did not run whole, so that its caller drops nothing:
+/// the terminal gone when any step's node or start is not there, as
+/// [`history_of`] reads it, and otherwise the failure of the first step
+/// not done, a move refused because the start lies past the text's end
+/// among them.
+pub fn search_of(
+    answers: &Answers<Search>,
+    steps: &SearchSteps,
+) -> Result<Vec<TerminalMatch>, TextFailure> {
+    let (to_end, row) = (
+        need(&answers.get(steps.to_end)),
+        need(&answers.get(steps.row)),
+    );
+    let (down, up) = (need(&answers.get(steps.down)), need(&answers.get(steps.up)));
+    let outcomes = [
+        to_end.map(|_| ()),
+        row.map(|_| ()),
+        down.map(|_| ()),
+        up.map(|_| ()),
+    ];
+    if outcomes.contains(&Err(TextFailure::Gone)) {
+        return Err(TextFailure::Gone);
+    }
+    let (from_end, down, up) = (i64::from(rows(to_end?)), down?, up?);
+    row?;
+    let (mut down, mut up) = (down.iter(), up.iter());
+    let mut taken = Vec::new();
+    let mut going_down = true;
+    while taken.len() < usize::from(SEARCH_MATCHES) {
+        let next = if going_down {
+            down.next().or_else(|| up.next())
+        } else {
+            up.next().or_else(|| down.next())
+        };
+        let Some(found) = next else {
+            break;
+        };
+        taken.push(TerminalMatch {
+            // A row count no terminal holds leaves the search unanswered.
+            above: i32::try_from(i64::from(found.to_end).saturating_sub(from_end))
+                .map_err(|_| TextFailure::Unanswered)?,
+            text: found.text.clone(),
+        });
+        going_down = !going_down;
+    }
+    Ok(taken)
+}
+
+/// The search `batch` could be: its start and row from its first two
+/// moves, and its text and rows from its first search.
+fn search_hint(batch: &Batch) -> Option<SearchAsk> {
+    let [first, second, third, ..] = batch.steps.as_slice() else {
+        return None;
+    };
+    let (Op::Move { at, .. }, Op::Move { movement, .. }, Op::FindText { needle, read, .. }) =
+        (&first.op, &second.op, &third.op)
+    else {
+        return None;
+    };
+    Some(SearchAsk::new(
+        held(at)?,
+        needle.clone(),
+        movement.count.checked_neg()?,
+        u32::from(*read),
+    ))
+}
+
 /// The anchor `point` names, when it is one Core holds, at no offset.
 fn held(point: &Point) -> Option<TextAnchor> {
     match point {
@@ -609,8 +784,9 @@ fn hints(batch: &Batch) -> Hints {
     hints
 }
 
-/// What `batch` asks of a terminal: the ask for which [`window_batch`] or
-/// [`history_batch`] writes exactly this batch, the builders' inverse;
+/// What `batch` asks of a terminal: the ask for which [`window_batch`],
+/// [`history_batch`] or [`search_batch`] writes exactly this batch, the
+/// builders' inverse;
 /// `None` for every other batch. A candidate ask is read from the batch's
 /// shape and kept only when its builder writes the batch back, so no
 /// batch another function wrote passes.
@@ -619,6 +795,10 @@ pub fn asked(batch: &Batch) -> Option<Asked> {
     let Some(Subject::Node(node)) = batch.steps.first().and_then(|step| step.op.subject()) else {
         return None;
     };
+    if let Some(ask) = search_hint(batch).filter(|ask| search_batch(*node, ask).0.batch() == batch)
+    {
+        return Some(Asked::Search(ask));
+    }
     let hints = hints(batch);
     let histories = [
         Some(HistoryAsk::Whole),
@@ -683,6 +863,8 @@ pub fn asked(batch: &Batch) -> Option<Asked> {
 
 #[cfg(test)]
 mod tests {
+    use verbatim_model::batch::{Done, FoundText, StepOutcome};
+
     use super::*;
 
     fn node() -> NodeId {
@@ -749,10 +931,206 @@ mod tests {
         ]
     }
 
+    /// Searches from rows above and below the start, of one row and of
+    /// more, and of more rows than a step reads.
+    fn search_asks() -> Vec<SearchAsk> {
+        let ask = |from, rows| SearchAsk::new(TextAnchor(7), "$ echo hi".to_owned(), from, rows);
+        vec![
+            ask(0, 1),
+            ask(40, 1),
+            ask(-3, 2),
+            ask(9_000, 255),
+            ask(12, 300),
+            ask(i32::MIN, 0),
+        ]
+    }
+
+    /// The outcomes of a search's four steps: the start's `to_end` rows to
+    /// the text's end, a move to the row that went `went`, and each way's
+    /// matches, by their rows to the text's end.
+    fn search_outcomes(to_end: i32, went: i32, ways: [&[u32]; 2]) -> Vec<StepOutcome> {
+        let moved = |moved| {
+            StepOutcome::Done(Done::Move(Moved {
+                moved,
+                from: TextAnchor(20),
+                to: TextAnchor(21),
+            }))
+        };
+        let found = |way: &[u32]| {
+            StepOutcome::Done(Done::FindText(
+                way.iter()
+                    .map(|&to_end| FoundText {
+                        to_end,
+                        text: format!("row {to_end}"),
+                    })
+                    .collect(),
+            ))
+        };
+        vec![moved(to_end), moved(went), found(ways[0]), found(ways[1])]
+    }
+
+    /// What `search_of` reads of `outcomes`, the answers to a search five
+    /// rows above its start: each match's rows above the start, or the
+    /// failure.
+    fn searched(outcomes: Vec<StepOutcome>) -> Result<Vec<i32>, TextFailure> {
+        let ask = SearchAsk::new(TextAnchor(7), "row".to_owned(), 5, 1);
+        let (sent, steps) = search_batch(node(), &ask);
+        let answers = Answers::parse(&sent, verbatim_model::request::Reply::Steps(outcomes))
+            .expect("an outcome of each step's kind");
+        search_of(&answers, &steps).map(|matches| {
+            matches
+                .into_iter()
+                .map(|found| {
+                    assert_eq!(found.text, format!("row {}", found.above + 10));
+                    found.above
+                })
+                .collect()
+        })
+    }
+
+    /// A search whose steps are all done answers its two ways' matches
+    /// alternately, the way toward the text's end first, one way's when
+    /// the other has no more, each as rows above the start, whose own rows
+    /// to the end are 10 here; a way with no match has none, and a second
+    /// move that went fewer rows than asked is taken as it landed.
+    #[test]
+    fn a_search_done_answers_its_ways_matches_alternately() {
+        assert_eq!(
+            searched(search_outcomes(10, -5, [&[15, 12, 3], &[16, 20]])),
+            Ok(vec![5, 6, 2, 10, -7])
+        );
+        assert_eq!(
+            searched(search_outcomes(10, -5, [&[15], &[16, 20, 22]])),
+            Ok(vec![5, 6, 10, 12])
+        );
+        assert_eq!(
+            searched(search_outcomes(10, -5, [&[], &[16, 20]])),
+            Ok(vec![6, 10])
+        );
+        assert_eq!(
+            searched(search_outcomes(10, -5, [&[15, 12], &[]])),
+            Ok(vec![5, 2])
+        );
+        assert_eq!(searched(search_outcomes(10, -5, [&[], &[]])), Ok(vec![]));
+        assert_eq!(
+            searched(search_outcomes(10, 0, [&[10], &[]])),
+            Ok(vec![0]),
+            "a move that went no row"
+        );
+    }
+
+    /// A search answers at most twenty matches, ten of each way when each
+    /// found twenty.
+    #[test]
+    fn a_search_answers_at_most_twenty_matches() {
+        let down: Vec<u32> = (0..20).map(|row| 115 - row).collect();
+        let up: Vec<u32> = (0..20).map(|row| 116 + row).collect();
+        let expected: Vec<i32> = (0..10).flat_map(|row| [105 - row, 106 + row]).collect();
+        assert_eq!(
+            searched(search_outcomes(10, -5, [&down, &up])),
+            Ok(expected)
+        );
+    }
+
+    /// A search with a step not done answers no matches at all, so that
+    /// its caller drops no mark for it: the terminal gone when any step
+    /// answers that its node or its start is not there, whatever the
+    /// others answer, and otherwise unanswered, for a step that failed,
+    /// was refused, as a move from a start past the text's end is, or was
+    /// skipped.
+    #[test]
+    fn a_search_with_a_step_not_done_answers_its_failure() {
+        use verbatim_model::batch::Missing;
+        let done = || search_outcomes(10, -5, [&[15], &[16]]);
+        let with = |at: usize, outcome: StepOutcome| {
+            let mut outcomes = done();
+            outcomes[at] = outcome;
+            searched(outcomes)
+        };
+        let lost = StepOutcome::NotThere(Missing::Anchor(TextAnchor(7)));
+        let gone = StepOutcome::NotThere(Missing::Node(node()));
+        let outside = StepOutcome::Refused(StepRefusal::OutsideText);
+        for at in 0..4 {
+            assert_eq!(with(at, gone.clone()), Err(TextFailure::Gone), "{at}");
+            for outcome in [StepOutcome::Failed, StepOutcome::Skipped, outside.clone()] {
+                assert_eq!(
+                    with(at, outcome.clone()),
+                    Err(TextFailure::Unanswered),
+                    "{at} {outcome:?}"
+                );
+            }
+        }
+        // A start no longer held: both moves not there, the searches
+        // skipped.
+        assert_eq!(
+            searched(vec![
+                lost.clone(),
+                lost.clone(),
+                StepOutcome::Skipped,
+                StepOutcome::Skipped
+            ]),
+            Err(TextFailure::Gone)
+        );
+        // Not there after a failure is still the terminal gone.
+        assert_eq!(
+            searched(vec![
+                StepOutcome::Failed,
+                outside,
+                StepOutcome::Skipped,
+                gone
+            ]),
+            Err(TextFailure::Gone)
+        );
+        assert_eq!(
+            with(2, StepOutcome::Refused(StepRefusal::NoText)),
+            Err(TextFailure::NoText)
+        );
+    }
+
+    /// A search reads at least one row and at most 255 from each match,
+    /// and moves to its row by the rows asked, negated.
+    #[test]
+    fn a_search_reads_at_most_255_rows_from_a_match() {
+        let steps = |from, rows| {
+            let ask = SearchAsk::new(TextAnchor(7), "$".to_owned(), from, rows);
+            let (sent, _) = search_batch(node(), &ask);
+            sent.batch()
+                .steps
+                .iter()
+                .map(|step| match &step.op {
+                    Op::Move { movement, .. } => movement.count,
+                    Op::FindText {
+                        read,
+                        limit,
+                        calls,
+                        backward,
+                        ..
+                    } => {
+                        assert_eq!((*limit, *calls), (20, 100));
+                        i32::from(*read) * if *backward { -1 } else { 1 }
+                    }
+                    other => panic!("a search's step, not {other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(steps(40, 1), [FAR, -40, 1, -1]);
+        assert_eq!(steps(-3, 255), [FAR, 3, 255, -255]);
+        assert_eq!(steps(0, 256), [FAR, 0, 255, -255]);
+        assert_eq!(steps(i32::MIN, 0), [FAR, i32::MAX, 1, -1]);
+    }
+
     /// `asked` is the builders' inverse: every ask's batch is asked back
     /// as that ask.
     #[test]
     fn every_asks_batch_is_asked_back_as_the_ask() {
+        for ask in search_asks() {
+            let (sent, _) = search_batch(node(), &ask);
+            assert_eq!(
+                asked(sent.batch()),
+                Some(Asked::Search(ask.clone())),
+                "{ask:?}"
+            );
+        }
         for ask in window_asks() {
             let (sent, _) = window_batch(node(), &ask);
             assert_eq!(asked(sent.batch()), Some(Asked::Window(ask)), "{ask:?}");
@@ -804,6 +1182,15 @@ mod tests {
             }),
             6
         );
+        for ask in search_asks() {
+            let (sent, _) = search_batch(node(), &ask);
+            assert_eq!(sent.batch().steps.len(), 4, "{ask:?}");
+            verbatim_model::batch::parse(
+                sent.batch().clone(),
+                verbatim_model::batch::ReaderKind::Outpost,
+            )
+            .unwrap_or_else(|error| panic!("{ask:?}: {error:?}"));
+        }
         // Every batch parses as one an outpost runs.
         for ask in window_asks() {
             let (sent, _) = window_batch(node(), &ask);
@@ -861,6 +1248,19 @@ mod tests {
         assert_eq!(asked(&outside), Some(Asked::History(HistoryAsk::Whole)));
         outside.placement = Placement::Outside;
         assert_eq!(asked(&outside), None);
+        // A search with a step more, and with one way's bound changed.
+        let search = SearchAsk::new(TextAnchor(7), "$".to_owned(), 3, 1);
+        let (sent, _) = search_batch(node(), &search);
+        let written = sent.batch().clone();
+        assert_eq!(asked(&written), Some(Asked::Search(search)));
+        let mut more = written.clone();
+        more.steps.push(more.steps[3].clone());
+        assert_eq!(asked(&more), None);
+        let mut bounded = written;
+        if let Op::FindText { calls, .. } = &mut bounded.steps[3].op {
+            *calls = 8;
+        }
+        assert_eq!(asked(&bounded), None);
         // A caret read alone, as a caret key's own batches open.
         let mut caret = Builder::<Window>::named();
         let _ = caret_and_line(&mut caret, node());
