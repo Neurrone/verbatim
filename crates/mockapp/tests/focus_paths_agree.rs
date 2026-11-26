@@ -52,11 +52,7 @@ fn tested_focus(known: Vec<verbatim_model::request::KnownAncestor>) -> Batch {
                     set: focus_set(),
                     details: TextDetails::NONE,
                 },
-                when: Some(Condition {
-                    on: Place(0),
-                    check: Check::Matched,
-                    negated: true,
-                }),
+                when: Some(Condition::step(Place(0), Check::Matched, true)),
             },
         ],
         placement: Placement::Queue,

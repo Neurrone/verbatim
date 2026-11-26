@@ -266,11 +266,7 @@ fn text_summary(segment: &Segment<'_>, subject: &Subject) -> Option<PropertyValu
                 end: of(PointOf::SelectionEnd),
                 through: None,
             },
-            when: Some(Condition {
-                on: Place(0),
-                check: Check::Found,
-                negated: false,
-            }),
+            when: Some(Condition::step(Place(0), Check::Found, false)),
         },
     ];
     let answer = super::run_batch(&Segment {

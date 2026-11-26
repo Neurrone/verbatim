@@ -253,6 +253,9 @@ impl Run<'_, '_> {
                     Ok(outcome) => outcome,
                     Err(whole) => return whole,
                 },
+                // Only the UI Automation executor compares two points of
+                // a text.
+                Ok(Gate::Compare { .. }) => StepOutcome::Refused(StepRefusal::Unsupported),
                 Err(KindMismatch) => {
                     tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
                     StepOutcome::Failed
@@ -480,7 +483,9 @@ impl Run<'_, '_> {
         for step in steps {
             outcomes.push(match step.gate(&outcomes) {
                 Ok(Gate::Skip) => StepOutcome::Skipped,
-                Ok(Gate::Run) => text_refused(&reply, node),
+                // The text did not open, so there are no points to
+                // compare: the step answers that.
+                Ok(Gate::Run | Gate::Compare { .. }) => text_refused(&reply, node),
                 Err(KindMismatch) => {
                     tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
                     StepOutcome::Failed

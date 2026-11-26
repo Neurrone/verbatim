@@ -213,11 +213,7 @@ impl<'a> Shape<'a> {
     pub fn when_found(&mut self, on: u8, op: Op) -> &mut Self {
         self.steps.push(Step {
             op,
-            when: Some(Condition {
-                on: Place(on),
-                check: Check::Found,
-                negated: false,
-            }),
+            when: Some(Condition::step(Place(on), Check::Found, false)),
         });
         self
     }

@@ -23,11 +23,7 @@ fn step(op: Op) -> Step {
 fn when(op: Op, on: u8, check: Check, negated: bool) -> Step {
     Step {
         op,
-        when: Some(Condition {
-            on: Place(on),
-            check,
-            negated,
-        }),
+        when: Some(Condition::step(Place(on), check, negated)),
     }
 }
 
@@ -989,11 +985,7 @@ fn a_condition_runs_its_step_as_the_named_outcome_says() {
             node: node_read(1),
         }))
     };
-    let condition = |check, negated| Condition {
-        on: Place(0),
-        check,
-        negated,
-    };
+    let condition = |check, negated| Condition::step(Place(0), check, negated);
     let point = TextAnchor;
     let caret = |selected: bool| {
         StepOutcome::Done(Done::Caret(CaretAt {
@@ -1047,18 +1039,18 @@ fn a_condition_runs_its_step_as_the_named_outcome_says() {
     ];
     for (check, named, plain, negated) in cases {
         assert_eq!(
-            condition(check, false).gate(&named),
+            condition(check, false).gate(std::slice::from_ref(&named)),
             Ok(plain),
             "{check:?} {named:?}"
         );
         assert_eq!(
-            condition(check, true).gate(&named),
+            condition(check, true).gate(std::slice::from_ref(&named)),
             Ok(negated),
             "not {check:?} {named:?}"
         );
     }
     assert_eq!(
-        condition(Check::Matched, false).gate(&StepOutcome::Done(Done::Follow)),
+        condition(Check::Matched, false).gate(&[StepOutcome::Done(Done::Follow)]),
         Err(KindMismatch)
     );
 }
@@ -1443,4 +1435,164 @@ fn a_step_taking_a_result_not_done_is_skipped_and_an_item_past_the_end_names_non
         Some(Vec::new())
     );
     assert_eq!(Subject::Node(node(4)).earlier_nodes(&earlier), None);
+}
+
+fn lines(count: i32) -> TextMovement {
+    TextMovement {
+        unit: TextUnit::Line,
+        count,
+    }
+}
+
+/// A step under a comparison of two points: a `Move` of the subject's
+/// text from `at(7)`, compared with where the step at 0 landed.
+fn compared(negated: bool) -> Step {
+    Step {
+        op: Op::Move {
+            subject: Subject::Node(node(1)),
+            at: at(7),
+            movement: lines(-1),
+        },
+        when: Some(Condition {
+            test: Test::NotAfter {
+                point: at(7),
+                than: Point::Of(Place(0), PointOf::Moved),
+            },
+            negated,
+        }),
+    }
+}
+
+#[test]
+fn a_comparison_is_left_to_the_executor_once_the_steps_it_names_are_done() {
+    let moved = StepOutcome::Done(Done::Move(Moved {
+        moved: 0,
+        from: TextAnchor(1),
+        to: TextAnchor(2),
+    }));
+    let compare = |negated| Gate::Compare {
+        point: at(7),
+        than: Point::Of(Place(0), PointOf::Moved),
+        negated,
+    };
+    // The outcome of the step the comparison names, then what the step
+    // under it does plain and negated: the condition table's rows.
+    let cases = [
+        (moved, compare(false), compare(true)),
+        (StepOutcome::Skipped, Gate::Skip, Gate::Skip),
+        (
+            StepOutcome::Refused(StepRefusal::OutsideText),
+            Gate::Skip,
+            Gate::Run,
+        ),
+        (
+            StepOutcome::NotThere(Missing::Anchor(TextAnchor(7))),
+            Gate::Skip,
+            Gate::Run,
+        ),
+        (StepOutcome::Failed, Gate::Skip, Gate::Run),
+    ];
+    for (named, plain, negated) in cases {
+        let earlier = [named];
+        assert_eq!(compared(false).gate(&earlier), Ok(plain), "{earlier:?}");
+        assert_eq!(
+            compared(true).gate(&earlier),
+            Ok(negated),
+            "not {earlier:?}"
+        );
+    }
+}
+
+#[test]
+fn a_comparison_parses_only_on_an_outposts_text_step_naming_points() {
+    let end = Step {
+        op: Op::Move {
+            subject: Subject::Node(node(1)),
+            at: Point::At(TextPoint::End),
+            movement: lines(1),
+        },
+        when: None,
+    };
+    let good = batch(vec![end.clone(), compared(false)]);
+    assert!(parse(good.clone(), ReaderKind::Outpost).is_ok());
+    // Its anchors are kept held with the step's own.
+    assert_eq!(
+        good.anchors(),
+        vec![
+            (node(1), vec![]),
+            (node(1), vec![TextAnchor(7), TextAnchor(7)])
+        ]
+    );
+    // Only an outpost compares: the plain reader runs a caret read, but
+    // not one under a comparison.
+    let caret_under = Step {
+        op: caret(),
+        when: Some(Condition {
+            test: Test::NotAfter {
+                point: Point::At(TextPoint::Start),
+                than: Point::At(TextPoint::End),
+            },
+            negated: false,
+        }),
+    };
+    assert!(parse(batch(vec![step(caret())]), ReaderKind::Plain).is_ok());
+    assert!(parse(batch(vec![caret_under.clone()]), ReaderKind::Outpost).is_ok());
+    assert_eq!(
+        parse(batch(vec![caret_under]), ReaderKind::Plain),
+        Err(Malformed::NotRun {
+            step: Place(0),
+            op: OpKind::Caret
+        })
+    );
+    // A point of a step that answers no such point.
+    let caret_first = batch(vec![step(caret()), compared(false)]);
+    assert_eq!(
+        parse(caret_first, ReaderKind::Outpost),
+        Err(Malformed::WrongKind {
+            step: Place(1),
+            to: Place(0),
+            kind: OpKind::Caret
+        })
+    );
+    // A point of a step not before it.
+    assert_eq!(
+        parse(batch(vec![compared(false)]), ReaderKind::Outpost),
+        Err(Malformed::Reference {
+            step: Place(0),
+            to: Place(0)
+        })
+    );
+    // A step that reads no text.
+    let mut object = compared(false);
+    object.op = read(Subject::Node(node(1)));
+    assert_eq!(
+        parse(batch(vec![end.clone(), object]), ReaderKind::Outpost),
+        Err(Malformed::Comparison(Place(1)))
+    );
+    // An anchor on a subject that is no node.
+    let mut on_result = compared(false);
+    on_result.op = Op::Visible {
+        subject: Subject::Result(Place(0)),
+    };
+    let first = step(read(Subject::Node(node(1))));
+    let moved = Step {
+        op: Op::Move {
+            subject: Subject::Node(node(1)),
+            at: Point::At(TextPoint::End),
+            movement: lines(1),
+        },
+        when: None,
+    };
+    let mut names_second = on_result;
+    names_second.when = Some(Condition {
+        test: Test::NotAfter {
+            point: at(7),
+            than: Point::Of(Place(1), PointOf::Moved),
+        },
+        negated: false,
+    });
+    assert_eq!(
+        parse(batch(vec![first, moved, names_second]), ReaderKind::Outpost),
+        Err(Malformed::AnchorWithoutNode(Place(2)))
+    );
 }

@@ -254,11 +254,11 @@ fn a_poll_that_ends_the_wait_reads_the_later_steps() {
             },
         ]
     };
-    let on_effect = Some(Condition {
-        on: Place(0),
-        check: verbatim_model::batch::Check::Found,
-        negated: false,
-    });
+    let on_effect = Some(Condition::step(
+        Place(0),
+        verbatim_model::batch::Check::Found,
+        false,
+    ));
     for remote in [true, false] {
         common::apply(&mut app, hwnd, "caret doc 0");
         let uia = Uia::new().expect("a UIA client");

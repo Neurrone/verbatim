@@ -199,7 +199,7 @@ pub enum PointOf {
 }
 
 /// A point in a subject's text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Point {
     /// A point Core names itself.
     At(TextPoint),
@@ -733,16 +733,41 @@ pub enum Check {
     Found,
 }
 
-/// A test of one earlier step, which skips the step carrying it when it
-/// does not hold. A step whose named step was skipped is skipped too; one
-/// whose named step was refused, not there or failed takes its check as
-/// false, so "unless" runs after a failure, which Core then judges.
+/// What a [`Condition`] tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Test {
+    /// One earlier step's result.
+    Step {
+        /// The earlier step.
+        on: Place,
+        /// What is tested of it.
+        check: Check,
+    },
+    /// Whether `point` lies at or before `than` in the text of the step
+    /// carrying the condition, a text step: one comparison of the two
+    /// points, made by the reader that runs the step (Dickson,
+    /// 2026-11-26).
+    NotAfter {
+        /// The point.
+        point: Point,
+        /// The point it is compared with.
+        than: Point,
+    },
+}
+
+/// A test which skips the step carrying it when it does not hold, or when
+/// `negated`, when it holds. A step whose named step was skipped is
+/// skipped too; one whose named step was refused, not there or failed
+/// takes its test as false, so "unless" runs after a failure, which Core
+/// then judges. A comparison of two points ([`Test::NotAfter`]) is skipped
+/// when a step either point names was skipped, false when one was refused,
+/// not there or failed or when the comparison's call fails, and its step
+/// answers [`Missing::Anchor`] when a point Core holds is no longer held,
+/// whatever `negated` says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Condition {
-    /// The earlier step.
-    pub on: Place,
     /// What is tested.
-    pub check: Check,
+    pub test: Test,
     /// Whether the test's negation is what must hold.
     pub negated: bool,
 }
@@ -754,6 +779,17 @@ pub enum Gate {
     Run,
     /// It is skipped.
     Skip,
+    /// Every step it names is done, and its condition compares two points
+    /// ([`Test::NotAfter`]): the executor that makes the calls finds the
+    /// two points and decides.
+    Compare {
+        /// The point.
+        point: Point,
+        /// The point it is compared with.
+        than: Point,
+        /// Whether the step runs when `point` lies after `than`.
+        negated: bool,
+    },
 }
 
 /// A step's outcome is not of the kind its condition tests: the executor
@@ -762,28 +798,88 @@ pub enum Gate {
 pub struct KindMismatch;
 
 impl Condition {
-    /// Whether the step carrying this condition runs, given the outcome
-    /// of the step it names.
-    ///
-    /// # Errors
-    ///
-    /// [`KindMismatch`] when that outcome is a result with no answer to
-    /// the check.
-    pub fn gate(&self, named: &StepOutcome) -> Result<Gate, KindMismatch> {
-        let holds = match named {
-            StepOutcome::Skipped => return Ok(Gate::Skip),
-            StepOutcome::Refused(_) | StepOutcome::NotThere(_) | StepOutcome::Failed => false,
-            StepOutcome::Done(done) => match self.check {
-                Check::Matched => done.matched(),
-                Check::Found => done.found(),
-            }
-            .ok_or(KindMismatch)?,
-        };
-        Ok(if holds == self.negated {
+    /// A test of the step at `on`.
+    #[must_use]
+    pub const fn step(on: Place, check: Check, negated: bool) -> Self {
+        Self {
+            test: Test::Step { on, check },
+            negated,
+        }
+    }
+
+    /// The step runs, or not, as the test came out.
+    const fn decided(&self, holds: bool) -> Gate {
+        if holds == self.negated {
             Gate::Skip
         } else {
             Gate::Run
-        })
+        }
+    }
+
+    /// The earlier steps a comparison's two points name; none for a test
+    /// of a step.
+    #[must_use]
+    pub fn compared(&self) -> Vec<Place> {
+        match self.test {
+            Test::Step { .. } => Vec::new(),
+            Test::NotAfter { point, than } => [point, than]
+                .into_iter()
+                .filter_map(|point| match point {
+                    Point::Of(place, _) => Some(place),
+                    Point::At(_) => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether the step carrying this condition runs, given the outcomes
+    /// of the steps before it.
+    ///
+    /// # Errors
+    ///
+    /// [`KindMismatch`] when the outcome a test of a step names is a
+    /// result with no answer to the check.
+    pub fn gate(&self, earlier: &[StepOutcome]) -> Result<Gate, KindMismatch> {
+        match self.test {
+            Test::Step { on, check } => {
+                let holds = match earlier.get(on.index()) {
+                    None | Some(StepOutcome::Skipped) => return Ok(Gate::Skip),
+                    Some(
+                        StepOutcome::Refused(_) | StepOutcome::NotThere(_) | StepOutcome::Failed,
+                    ) => false,
+                    Some(StepOutcome::Done(done)) => match check {
+                        Check::Matched => done.matched(),
+                        Check::Found => done.found(),
+                    }
+                    .ok_or(KindMismatch)?,
+                };
+                Ok(self.decided(holds))
+            }
+            Test::NotAfter { point, than } => {
+                let named: Vec<Option<&StepOutcome>> = self
+                    .compared()
+                    .into_iter()
+                    .map(|place| earlier.get(place.index()))
+                    .collect();
+                if named
+                    .iter()
+                    .any(|named| matches!(named, None | Some(StepOutcome::Skipped)))
+                {
+                    return Ok(Gate::Skip);
+                }
+                if named
+                    .iter()
+                    .any(|named| !matches!(named, Some(StepOutcome::Done(_))))
+                {
+                    return Ok(self.decided(false));
+                }
+                Ok(Gate::Compare {
+                    point,
+                    than,
+                    negated: self.negated,
+                })
+            }
+        }
     }
 }
 
@@ -852,7 +948,9 @@ impl Step {
     ///
     /// [`KindMismatch`] when its condition names a result with no answer
     /// to the check, a defect of the executor's; a step naming one not
-    /// yet run, which the parse rules out, is skipped.
+    /// yet run, which the parse rules out, is skipped. A condition that
+    /// compares two points answers [`Gate::Compare`] once every step
+    /// named is done, for the executor to decide.
     pub fn gate(&self, earlier: &[StepOutcome]) -> Result<Gate, KindMismatch> {
         let done = |place: Place| matches!(earlier.get(place.index()), Some(StepOutcome::Done(_)));
         if !self.references().into_iter().all(done) {
@@ -860,9 +958,7 @@ impl Step {
         }
         match &self.when {
             None => Ok(Gate::Run),
-            Some(condition) => earlier
-                .get(condition.on.index())
-                .map_or(Ok(Gate::Skip), |named| condition.gate(named)),
+            Some(condition) => condition.gate(earlier),
         }
     }
 }

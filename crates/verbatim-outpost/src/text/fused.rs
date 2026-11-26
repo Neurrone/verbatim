@@ -18,7 +18,7 @@ use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 use verbatim_model::batch::{
     Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, FoundText, Gate, HeldSelection,
     KindMismatch, Located, Missing, Moved, Op, Place, Point, PointOf, RangeText, Selected,
-    SelectionCompared, Step, StepOutcome, StepRefusal, Subject, VisibleText, Waited,
+    SelectionCompared, Step, StepOutcome, StepRefusal, Subject, Test, VisibleText, Waited,
 };
 use verbatim_model::{
     CaretSelection, MAX_RANGE_BYTES, MAX_READ_AHEAD_TEXT, NodeId, Selection, SelectionDifference,
@@ -95,6 +95,9 @@ pub fn named(steps: &[Step], first: usize, earlier: &[StepOutcome]) -> Vec<u64> 
                 }
             }
             _ => {}
+        }
+        if let Some(Test::NotAfter { point, than }) = step.when.map(|condition| condition.test) {
+            points.extend([point, than]);
         }
     }
     named.extend(
@@ -387,11 +390,7 @@ pub fn caret_line(
                 end: of(PointOf::SelectionEnd),
                 through: None,
             },
-            when: Some(Condition {
-                on: Place(0),
-                check: Check::Found,
-                negated: false,
-            }),
+            when: Some(Condition::step(Place(0), Check::Found, false)),
         },
     ];
     let (_, learning) = source.format_reads(source.details_read());
@@ -580,11 +579,7 @@ pub fn poll(
         last,
     };
     let fused_later = later.iter().all(|step| fusable_in_poll(step, node));
-    let gate = Condition {
-        on: Place(0),
-        check: Check::Found,
-        negated: false,
-    };
+    let gate = Condition::step(Place(0), Check::Found, false);
     let mut polled = vec![Step {
         op: Op::WaitForCaret {
             subject: Subject::Node(node),
@@ -739,8 +734,11 @@ fn fusable_in_poll(step: &Step, node: NodeId) -> bool {
     let condition = match step.when {
         None => true,
         Some(Condition {
-            on,
-            check: Check::Found,
+            test:
+                Test::Step {
+                    on,
+                    check: Check::Found,
+                },
             negated: false,
         }) => on == Place(0),
         Some(_) => false,
@@ -888,7 +886,11 @@ impl Made<'_, '_> {
         let mut outcomes = vec![StepOutcome::Done(Done::WaitForCaret(waited))];
         for (index, (step, ran)) in later.iter().zip(ran).enumerate() {
             let outcome = match step.gate(&outcomes) {
-                Ok(Gate::Run) => self.outcome(index, step, ran, (&texts, began_us)),
+                // A comparison was decided where the calls were made: the
+                // step's outcome is as it ran.
+                Ok(Gate::Run | Gate::Compare { .. }) => {
+                    self.outcome(index, step, ran, (&texts, began_us))
+                }
                 Ok(Gate::Skip) => {
                     self.carets.push(None);
                     StepOutcome::Skipped

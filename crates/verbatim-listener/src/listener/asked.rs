@@ -236,7 +236,8 @@ fn run_steps(read_at_event: MsaaReads, steps: &[Step], whole: Option<&ElementRea
         let outcome = match step.gate(&outcomes) {
             Ok(Gate::Skip) => StepOutcome::Skipped,
             Ok(Gate::Run) => batch_step(read_at_event, &step.op, whole),
-            Err(KindMismatch) => {
+            // The parse refuses a comparison of two points here.
+            Ok(Gate::Compare { .. }) | Err(KindMismatch) => {
                 tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a listener step's condition names a result it cannot test");
                 StepOutcome::Failed
             }

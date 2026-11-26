@@ -12,7 +12,7 @@ use windows::Win32::UI::Accessibility::{
 
 use verbatim_model::TextPoint;
 use verbatim_model::batch::{
-    Before as Prior, Check, Op, Place, Point, PointOf, Relation, StepRefusal, Subject, View,
+    Before as Prior, Check, Op, Place, Point, PointOf, Relation, StepRefusal, Subject, Test, View,
 };
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Cached, Fill, Node};
@@ -20,7 +20,7 @@ use verbatim_uia::{Cached, Fill, Node};
 use super::calls::caret_point;
 use super::walk::{Reads, RunRegisters, Walk, emit_run};
 use super::{
-    CaretFound, Compared, Cut, Defect, Descend, Found, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
+    CaretFound, Compared, Cut, Defect, Descend, Found, Holds, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
     MAX_UNIT_TEXT, MoveFound, Ran, Related, State, UnitsFound, UnitsRead, Unrun, VisibleFound,
     failed, named,
 };
@@ -66,6 +66,27 @@ pub(super) const PROLOGUE: u32 = 60;
 /// `crates/mockapp/tests/instruction_limit.rs`; nothing for a step that
 /// cannot be lowered, which the program does not emit.
 fn worst(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
+    let step = &state.step(index);
+    let compared = match step.when.map(|condition| condition.test) {
+        Some(Test::NotAfter { point, than }) => {
+            COMPARISON + point_cost(state, &point) + point_cost(state, &than)
+        }
+        _ => 0,
+    };
+    match worst_of_op(state, index, prior) {
+        // A step the program does not emit has no gate either.
+        0 => 0,
+        op => op + compared,
+    }
+}
+
+/// What a condition's comparison of two points may execute at most beside
+/// finding them: the tests of the steps they name, the comparison and its
+/// try block.
+const COMPARISON: u32 = 40;
+
+/// What the operation of the step at `index` may execute at most.
+fn worst_of_op(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
     let resolver = state.segment.resolver;
     let place = state.place(index);
     match &state.step(index).op {
@@ -365,7 +386,7 @@ enum Given<'a> {
 }
 
 /// A step's condition on a step of the same program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Gate {
     /// The steps of the program it names, by place in the program, whose
     /// statuses must be done: at most four.
@@ -373,6 +394,32 @@ struct Gate {
     /// Its found-or-not test on a step of the program, and whether it is
     /// negated.
     found: Option<(usize, bool)>,
+    /// Its comparison of two points.
+    compare: Option<Compare>,
+}
+
+impl Gate {
+    /// The gate of a step under no condition, naming no step.
+    const OPEN: Self = Self {
+        names: [None; 4],
+        found: None,
+        compare: None,
+    };
+}
+
+/// A condition's comparison of two points in a program
+/// (`verbatim_model::batch::Test::NotAfter`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Compare {
+    /// The steps of the program the points name: one skipped skips the
+    /// step, and one not done, or a move refused, makes the test false.
+    names: [Option<usize>; 2],
+    /// The text's element, imported, with the point and the point it is
+    /// compared with; `None` when a step one of them names outside the
+    /// program was refused, not there or failed, so the test is false.
+    points: Option<(usize, Pt, Pt)>,
+    /// Whether the step runs when the test is false.
+    negated: bool,
 }
 
 /// A program's shape, its cache's key.
@@ -635,13 +682,10 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
 
     /// The gate of the step at `index` inside the program; its outcome
     /// when a step it names outside the program decides it.
-    fn gate(&self, index: usize) -> Result<Gate, Ran> {
+    fn gate(&mut self, index: usize) -> Result<Gate, Ran> {
         let state = self.state;
         let step = state.step(index);
-        let mut gate = Gate {
-            names: [None; 4],
-            found: None,
-        };
+        let mut gate = Gate::OPEN;
         // References outside the program must be done; inside it, the
         // program tests their statuses.
         for (slot, named) in step.references().into_iter().enumerate() {
@@ -661,18 +705,51 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 }
             }
         }
-        if let Some(condition) = step.when {
-            match (self.here(condition.on, index), condition.check) {
-                (Some(here), Check::Found) => gate.found = Some((here, condition.negated)),
-                (Some(_), Check::Matched) => {
-                    return Err(Defect("a condition in a program tests a match").ran());
+        let Some(condition) = step.when else {
+            return Ok(gate);
+        };
+        if let Test::Step { on, check } = condition.test
+            && let Some(here) = self.here(on, index)
+        {
+            return match check {
+                Check::Found => {
+                    gate.found = Some((here, condition.negated));
+                    Ok(gate)
                 }
-                (None, _) => match state.holds(index) {
-                    Ok(true) => {}
-                    Ok(false) => return Err(Ran::Unrun(Unrun::Skipped)),
-                    Err(defect) => return Err(defect.ran()),
-                },
+                Check::Matched => Err(Defect("a condition in a program tests a match").ran()),
+            };
+        }
+        let range = self.range.clone();
+        let in_program = |place: Place| {
+            state
+                .index(place, index)
+                .is_some_and(|at| range.contains(&at))
+        };
+        match state.holds(index, &in_program) {
+            Ok(Holds::Run) => {}
+            Ok(Holds::Skip) => return Err(Ran::Unrun(Unrun::Skipped)),
+            Ok(Holds::Compare { points, negated }) => {
+                let mut names = [None; 2];
+                for (slot, place) in condition.compared().into_iter().enumerate() {
+                    names[slot.min(1)] = self.here(place, index);
+                }
+                let points = match (points, step.op.subject()) {
+                    (None, _) => None,
+                    (Some(_), None) => {
+                        return Err(Defect("a comparison on a step of no subject").ran());
+                    }
+                    (Some((point, than)), Some(subject)) => {
+                        let text = self.text(subject)?;
+                        Some((text, self.point(&point, index)?, self.point(&than, index)?))
+                    }
+                };
+                gate.compare = Some(Compare {
+                    names,
+                    points,
+                    negated,
+                });
             }
+            Err(defect) => return Err(defect.ran()),
         }
         Ok(gate)
     }
@@ -1074,16 +1151,27 @@ impl Emit<'_> {
 
     /// Whether the gate holds: every step of the program it names done,
     /// then its found-or-not test, a failed step's taken as not found, a
-    /// skipped one skipping it.
+    /// skipped one skipping it, and its comparison of two points.
     fn gate(&self, b: &mut Builder, gate: &Gate) -> Reg<kind::Bool> {
         let ok = b.new_bool(true);
         for &place in gate.names.iter().flatten() {
             let done = b.equal(self.status(place), self.c.zero);
             b.and_assign(ok, done);
         }
-        let Some((place, negated)) = gate.found else {
-            return ok;
-        };
+        if let Some((place, negated)) = gate.found {
+            let runs = self.found(b, place, negated);
+            b.and_assign(ok, runs);
+        }
+        if let Some(compare) = &gate.compare {
+            let runs = self.compared(b, compare);
+            b.and_assign(ok, runs);
+        }
+        ok
+    }
+
+    /// Whether a found-or-not test of the step at `place` lets its step
+    /// run.
+    fn found(&self, b: &mut Builder, place: usize, negated: bool) -> Reg<kind::Bool> {
         let status = self.status(place);
         let holds = b.new_bool(false);
         let done = b.equal(status, self.c.zero);
@@ -1111,8 +1199,54 @@ impl Emit<'_> {
             let no = b.bool(false);
             b.set(runs, no);
         });
-        b.and_assign(ok, runs);
-        ok
+        runs
+    }
+
+    /// Whether a comparison of two points lets its step run (the request
+    /// list's condition table): a step it names skipped skips it; one not
+    /// done, a move refused, or a comparison that fails makes the test
+    /// false.
+    fn compared(&self, b: &mut Builder, compare: &Compare) -> Reg<kind::Bool> {
+        let c = self.c;
+        let all_done = b.new_bool(true);
+        let none_skipped = b.new_bool(true);
+        for &place in compare.names.iter().flatten() {
+            let status = self.status(place);
+            let done = b.new_bool(false);
+            let is_done = b.equal(status, c.zero);
+            b.if_(is_done, |b| {
+                let found = match self.regs(place) {
+                    Regs::Move { refused, .. } => b.not(*refused),
+                    _ => b.bool(true),
+                };
+                b.set(done, found);
+            });
+            b.and_assign(all_done, done);
+            let skipped = b.int(SKIPPED);
+            let unskipped = b.compare(status, skipped, Comparison::NotEqual);
+            b.and_assign(none_skipped, unskipped);
+        }
+        let holds = b.new_bool(false);
+        if let Some((text, point, than)) = &compare.points {
+            b.if_(all_done, |b| {
+                b.try_catch(
+                    |b| {
+                        let point = self.point(b, *text, point);
+                        let than = self.point(b, *text, than);
+                        let order = b.text_range_compare_endpoints(point, c.start, than, c.start);
+                        let not_after = b.compare(order, c.zero, Comparison::LessThanOrEqual);
+                        b.set(holds, not_after);
+                    },
+                    |_, _| {},
+                );
+            });
+            // The caret read inside the test's own block is not the
+            // step's to use again.
+            self.caret.set(None);
+        }
+        let runs = if compare.negated { b.not(holds) } else { holds };
+        b.and_assign(none_skipped, runs);
+        none_skipped
     }
 
     /// The element a node source names: one node.
@@ -2151,13 +2285,7 @@ impl<'a> State<'_, 'a> {
                 }
                 Err(ran) => {
                     given.push(Given::Nothing);
-                    key.push((
-                        Low::Unemitted,
-                        Gate {
-                            names: [None; 4],
-                            found: None,
-                        },
-                    ));
+                    key.push((Low::Unemitted, Gate::OPEN));
                     pre.push(Some(ran));
                 }
             }

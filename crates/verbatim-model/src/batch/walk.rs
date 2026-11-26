@@ -9,7 +9,7 @@
 //! seen it ([`crate::protocol::Named`]); and Core keeps held every anchor
 //! a request names while it waits or is out.
 
-use super::{Batch, Before, Done, Missing, Op, Point, StepOutcome, Subject, Through};
+use super::{Batch, Before, Done, Missing, Op, Point, StepOutcome, Subject, Test, Through};
 use crate::request::{KnownAncestor, NodeRead};
 use crate::{NodeId, TextAnchor, TextPoint};
 
@@ -117,7 +117,8 @@ impl Batch {
     /// The nodes whose text the batch reads or moves, each with the text
     /// anchors its step names there, in order: each text operation's node
     /// subject with the anchors its points, baseline or starting point
-    /// name, then the spare's node and anchor. A step names an anchor only
+    /// name, with those its condition compares, then the spare's node and
+    /// anchor. A step names an anchor only
     /// on a node subject, which the parse checks
     /// ([`super::Malformed::AnchorWithoutNode`]) and Core's builder writes
     /// only so.
@@ -148,7 +149,7 @@ impl Batch {
             if !step.op.kind().is_text() {
                 continue;
             }
-            let named = match &step.op {
+            let mut named: Vec<TextAnchor> = match &step.op {
                 Op::ReadText { at, .. }
                 | Op::Locate { at, .. }
                 | Op::Move { at, .. }
@@ -188,6 +189,11 @@ impl Batch {
                 | Op::Visible { .. }
                 | Op::ReadColours { .. } => Vec::new(),
             };
+            if let Some(Test::NotAfter { point: at, than }) =
+                step.when.map(|condition| condition.test)
+            {
+                named.extend([at, than].into_iter().filter_map(point));
+            }
             anchors.push((*node, named));
         }
         anchors.extend(self.spare.map(|(node, anchor)| (node, vec![anchor])));

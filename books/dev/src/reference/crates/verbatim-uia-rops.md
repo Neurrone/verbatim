@@ -125,7 +125,12 @@ checked program to their own imports. Each emitted step runs in a try
 block with its own status register, written "not reached" before any
 step runs; a gate inside the program tests the statuses of the steps of
 the same program it names, and a condition's found-or-not on one of
-them is a register taken as it is or negated, never compared. Each node
+them is a register taken as it is or negated, never compared. A
+condition comparing two points finds both as a step's own points are
+found and makes one `CompareEndpoints` call, inside a try block of its
+own in a program, so a failed comparison is false; a point Core holds
+that is no longer held is found at planning, as by calls, and answers
+the step not there. Each node
 a relation or a walk reaches fills its cache inside the provider with
 the absent record of `RemoteCache`, so a property the element lacks
 reads absent as it does by calls.

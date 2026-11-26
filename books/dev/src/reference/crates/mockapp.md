@@ -716,6 +716,11 @@ Each file's module comment says exactly what it asserts; in outline:
   module and gives each read to Core's reducer: new output is said line by
   line with one UIA call a read remotely, and classically, and Backspace
   says what it deleted with no caret event.
+- `compare_points.rs` runs a condition comparing two text positions
+  through a real outpost remotely and by calls, which must agree: each
+  row of the condition's table a provider can give, the move of one line
+  back that goes nowhere at the text's start, and the move forward from
+  the text's end that later output stays past.
 - `terminal_window.rs` and `find_text.rs` run the request list's generic
   text operations (`Visible`, `Move`, `FindText`, `ReadColours`, a whole
   or trimmed read), composed as a read of a terminal's window and as a

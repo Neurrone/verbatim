@@ -1767,10 +1767,12 @@ fn same(ids: MsaaIds, identity: &Identity) -> verbatim_model::matcher::Matcher {
 fn step(op: verbatim_model::batch::Op, unless: Option<u8>) -> verbatim_model::batch::Step {
     verbatim_model::batch::Step {
         op,
-        when: unless.map(|on| verbatim_model::batch::Condition {
-            on: verbatim_model::batch::Place(on),
-            check: verbatim_model::batch::Check::Matched,
-            negated: true,
+        when: unless.map(|on| {
+            verbatim_model::batch::Condition::step(
+                verbatim_model::batch::Place(on),
+                verbatim_model::batch::Check::Matched,
+                true,
+            )
         }),
     }
 }

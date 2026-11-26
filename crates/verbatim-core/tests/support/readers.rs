@@ -259,6 +259,9 @@ pub fn outcome(batch: &Batch, found: &Found) -> Outcome {
         let outcome = match step.gate(&outcomes) {
             Ok(Gate::Run) => answer_step(&step.op, found),
             Ok(Gate::Skip) => StepOutcome::Skipped,
+            Ok(compare @ Gate::Compare { .. }) => {
+                panic!("a comparison of two points sent to a reader of no text: {compare:?}")
+            }
             Err(mismatch) => panic!("a condition on a result it cannot test: {mismatch:?}"),
         };
         outcomes.push(outcome);

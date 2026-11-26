@@ -71,7 +71,7 @@ use std::rc::Rc;
 
 use verbatim_model::batch::{
     Batch, Before, Check, Condition, FollowTarget, MAX_STEPS, Missing, Op, Place, Placement, Point,
-    PointOf, Relation, Step, StepOutcome, StepRefusal, Subject, Through, Walk, WindowOf,
+    PointOf, Relation, Step, StepOutcome, StepRefusal, Subject, Test, Through, Walk, WindowOf,
 };
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::PropertyId;
@@ -416,10 +416,19 @@ impl<B> Ref<B, kind::Move> {
     }
 }
 
-/// A condition on an earlier step of the batch branded `B`.
+/// What a [`Cond`] tests, before it is resolved against its batch.
+#[derive(Clone, Copy)]
+enum Tested {
+    /// An earlier step's result.
+    Step(Handle, Check),
+    /// Whether the first point lies at or before the second.
+    NotAfter(Target, Target),
+}
+
+/// A condition of the batch branded `B`: on an earlier step, or on two
+/// points of the text of the step it is given for.
 pub struct Cond<B> {
-    handle: Handle,
-    check: Check,
+    test: Tested,
     negated: bool,
     brand: PhantomData<fn() -> B>,
 }
@@ -427,8 +436,18 @@ pub struct Cond<B> {
 impl<B> Cond<B> {
     fn new(handle: Handle, check: Check) -> Self {
         Self {
-            handle,
-            check,
+            test: Tested::Step(handle, check),
+            negated: false,
+            brand: PhantomData,
+        }
+    }
+
+    /// Holds when `point` lies at or before `than` in the text of the
+    /// step it is given for (`verbatim_model::batch::Test::NotAfter`).
+    #[must_use]
+    pub fn not_after(point: At<B>, than: At<B>) -> Self {
+        Self {
+            test: Tested::NotAfter(point.0, than.0),
             negated: false,
             brand: PhantomData,
         }
@@ -716,9 +735,17 @@ impl<B> Builder<B> {
     /// function building it.
     fn push<K>(&mut self, op: Option<Op>) -> Ref<B, K> {
         let when = self.pending.take().map(|condition| {
-            self.place(condition.handle).map(|on| Condition {
-                on,
-                check: condition.check,
+            let test = match condition.test {
+                Tested::Step(handle, check) => {
+                    self.place(handle).map(|on| Test::Step { on, check })
+                }
+                Tested::NotAfter(point, than) => self
+                    .point(At(point, PhantomData))
+                    .zip(self.point(At(than, PhantomData)))
+                    .map(|(point, than)| Test::NotAfter { point, than }),
+            };
+            test.map(|test| Condition {
+                test,
                 negated: condition.negated,
             })
         });

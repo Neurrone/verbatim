@@ -467,6 +467,29 @@ impl Outpost {
         }
     }
 
+    /// The outcome of `op`, run.
+    fn ran(&mut self, op: &Op, earlier: &[StepOutcome]) -> StepOutcome {
+        match self.step(op, earlier) {
+            Ok(done) => StepOutcome::Done(done),
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// Whether `point` lies at or before `than`, as a reader decides a
+    /// comparison of two points (the request list's condition table): an
+    /// anchor no longer held is the step's outcome, and a point that
+    /// cannot be found or a comparison the provider refuses is false.
+    fn not_after(&self, point: &Point, than: &Point, earlier: &[StepOutcome]) -> Found<bool> {
+        let found = |point| match self.point(point, earlier) {
+            Err(missing @ StepOutcome::NotThere(_)) => Err(missing),
+            other => Ok(other.ok()),
+        };
+        let (Some(point), Some(than)) = (found(point)?, found(than)?) else {
+            return Ok(false);
+        };
+        Ok(self.sim.compare(point, than).is_ok_and(|order| order <= 0))
+    }
+
     /// Every step of `batch`, in order, each run when its condition lets
     /// it, answered as the provider answers its calls.
     pub fn run(&mut self, batch: &Batch) -> Vec<StepOutcome> {
@@ -474,9 +497,15 @@ impl Outpost {
         for step in &batch.steps {
             let outcome = match step.gate(&outcomes).expect("a gate the support can judge") {
                 Gate::Skip => StepOutcome::Skipped,
-                Gate::Run => match self.step(&step.op, &outcomes) {
-                    Ok(done) => StepOutcome::Done(done),
-                    Err(outcome) => outcome,
+                Gate::Run => self.ran(&step.op, &outcomes),
+                Gate::Compare {
+                    point,
+                    than,
+                    negated,
+                } => match self.not_after(&point, &than, &outcomes) {
+                    Err(missing) => missing,
+                    Ok(holds) if holds == negated => StepOutcome::Skipped,
+                    Ok(_) => self.ran(&step.op, &outcomes),
                 },
             };
             outcomes.push(outcome);

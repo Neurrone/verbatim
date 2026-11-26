@@ -480,6 +480,38 @@ fn caret(text: TextTarget<'_>) -> Result<CaretFound, Error> {
     Ok(CaretFound { caret, selection })
 }
 
+/// Whether `point` lies at or before `than` in the text of the step at
+/// `index`, a condition's comparison (the request list's condition
+/// table): one `CompareEndpoints` call. A point that cannot be found, or a
+/// comparison the provider refuses, is false.
+///
+/// # Errors
+///
+/// The step's outcome when its text is not there or a point Core holds is
+/// no longer held.
+pub(super) fn not_after(
+    state: &State<'_, '_>,
+    index: usize,
+    (at, than): (&Point, &Point),
+) -> Result<bool, Ran> {
+    let Some(subject) = state.step(index).op.subject() else {
+        return Err(Defect("a comparison on a step of no subject").ran());
+    };
+    let text = state.segment.resolver.text(subject)?;
+    let find = |at: &Point| match point(state, index, text, at) {
+        Ok(found) => Ok(Some(found)),
+        Err(missing @ Ran::Unrun(Unrun::NotThere(_))) => Err(missing),
+        Err(_) => Ok(None),
+    };
+    let (Some(at), Some(than)) = (find(at)?, find(than)?) else {
+        return Ok(false);
+    };
+    Ok(at
+        .range
+        .compare_endpoints(at.endpoint, &than.range, than.endpoint)
+        .is_ok_and(|order| order <= 0))
+}
+
 /// The point `at` names in `text`.
 fn point(
     state: &State<'_, '_>,

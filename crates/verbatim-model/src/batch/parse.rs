@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     Batch, Before, Check, MAX_BOUND_US, MAX_DEPTH, MAX_FIND_CALLS, MAX_FIND_MATCHES, MAX_NODES,
     MAX_STEPS, MAX_UNITS, MAX_WHOLE_UNITS, MIN_POLL_US, Op, OpKind, Place, Point, PointOf, Step,
-    Subject, Through,
+    Subject, Test, Through,
 };
 use crate::TextPoint;
 use crate::matcher::Matcher;
@@ -120,6 +120,9 @@ pub enum Malformed {
     /// operation takes a node or an earlier result, a focus read an MSAA
     /// object, the focus or a route.
     Subject(Place),
+    /// A step that reads no text carries a condition comparing two points
+    /// of its text.
+    Comparison(Place),
     /// A step names a text anchor of a subject that is no node, though an
     /// anchor means something only with the node it was minted for (Claude, 2026-11-21).
     AnchorWithoutNode(Place),
@@ -198,13 +201,36 @@ impl Checking<'_> {
         }
         self.runs(reader, &step.op)?;
         self.op(&step.op)?;
-        if let Some(condition) = &step.when {
-            match condition.check {
-                Check::Matched => self.names(condition.on, |kind| kind == OpKind::Test)?,
-                Check::Found => self.names(condition.on, OpKind::finds)?,
+        match step.when.map(|condition| condition.test) {
+            None => Ok(()),
+            Some(Test::Step {
+                on,
+                check: Check::Matched,
+            }) => self.names(on, |kind| kind == OpKind::Test),
+            Some(Test::Step {
+                on,
+                check: Check::Found,
+            }) => self.names(on, OpKind::finds),
+            // Two points of the step's own text, which only an outpost
+            // compares; a point Core holds means something only with the
+            // node it was minted for.
+            Some(Test::NotAfter { point, than }) => {
+                if !kind.is_text() {
+                    return Err(Malformed::Comparison(self.place));
+                }
+                if reader != ReaderKind::Outpost {
+                    return Err(Malformed::NotRun {
+                        step: self.place,
+                        op: kind,
+                    });
+                }
+                let named = self.point(point)? | self.point(than)?;
+                if named && !matches!(step.op.subject(), Some(Subject::Node(_))) {
+                    return Err(Malformed::AnchorWithoutNode(self.place));
+                }
+                Ok(())
             }
         }
-        Ok(())
     }
 
     /// The step at `to`, which must be before this one and of a kind

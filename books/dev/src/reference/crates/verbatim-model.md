@@ -292,10 +292,16 @@ tell, Core asks", which the protocol below carries.
   listener's check thread found at delivery (`Checked`).
 - `batch`: the request list, closed (ADR 0003, "A new command adds no
   kind of request"). A `Batch` is at most sixteen `Step`s, each an `Op`
-  of twenty-one (`OpKind`) with an optional `Condition` on one earlier step
-  (`Check::Matched` of a `Test`, `Check::Found`, or their negation;
-  `Condition::gate` gives the condition table: a skipped step skips its
-  dependants, a refused, missing or failed one makes the check false;
+  of twenty-one (`OpKind`) with an optional `Condition`: a `Test` of one
+  earlier step (`Check::Matched` of a `Test` operation, `Check::Found`),
+  or of two points of the step's own text (`Test::NotAfter`, whether one
+  lies at or before the other, which only an outpost runs; Dickson,
+  2026-11-26), either one negated or not
+  (`Condition::gate` gives the condition table: a skipped step skips its
+  dependants, a refused, missing or failed one makes the test false; for
+  two points it answers `Gate::Compare` once the steps they name are
+  done, and the executor that makes the calls compares them, a failed
+  comparison false and an anchor no longer held the step's own outcome;
   `Step::gate` adds that every step it takes a result from,
   `Step::references`, is done, the one gate each reader runs, and
   `Subject::earlier_nodes` the nodes an earlier result names, by

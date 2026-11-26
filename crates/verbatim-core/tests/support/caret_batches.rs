@@ -9,7 +9,7 @@
 use verbatim_model::batch::{
     Batch, Before, CaretAt, CaretWait, Check, Chunks, Condition, Done, EffectTest, HeldSelection,
     Missing, Op, Place, Placement, Point, PointOf, SelectionCompared, Step, StepOutcome, Subject,
-    Waited,
+    Test, Waited,
 };
 use verbatim_model::{
     CaretMotion, CaretReport, EditSelection, NodeId, SelectionDifference, SentenceMoved,
@@ -148,11 +148,7 @@ pub fn waiting(
                 subject: Subject::Node(node),
                 adopt: None,
             },
-            when: sentence.then_some(Condition {
-                on: Place(0),
-                check: Check::Found,
-                negated: false,
-            }),
+            when: sentence.then_some(Condition::step(Place(0), Check::Found, false)),
         },
         step(Op::ReadText {
             trim: false,
@@ -295,8 +291,11 @@ pub fn answer(batch: &Batch, facts: &Facts) -> Vec<StepOutcome> {
     let mut outcomes: Vec<StepOutcome> = Vec::new();
     for step in &batch.steps {
         let gated = step.when.is_some_and(|when| {
+            let Test::Step { on, .. } = when.test else {
+                panic!("a caret batch compares no points: {when:?}")
+            };
             let found = matches!(
-                outcomes.get(when.on.index()),
+                outcomes.get(on.index()),
                 Some(StepOutcome::Done(Done::WaitForCaret(Waited::Effect)))
             );
             found == when.negated

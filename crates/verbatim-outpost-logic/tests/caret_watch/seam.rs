@@ -40,7 +40,7 @@ use verbatim_model::request::{
 mod readers;
 
 use readers::Found;
-use verbatim_model::batch::{Batch, CaretAt, Check, Chunks, Done, Op, StepOutcome, Waited};
+use verbatim_model::batch::{Batch, CaretAt, Check, Chunks, Done, Op, StepOutcome, Test, Waited};
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
 use verbatim_model::tell::{
     AcceptanceFacts, Checked, ElementToken, Event, EventObject, Payload, Read, Relation,
@@ -688,11 +688,18 @@ impl Seam {
         let mut outcomes = earlier.to_vec();
         for step in &batch.steps[from..] {
             let holds = step.when.is_none_or(|when| {
+                let Test::Step {
+                    on,
+                    check: Check::Found,
+                } = when.test
+                else {
+                    return false;
+                };
                 let found = matches!(
-                    outcomes.get(when.on.index()),
+                    outcomes.get(on.index()),
                     Some(StepOutcome::Done(Done::WaitForCaret(Waited::Effect)))
                 );
-                when.check == Check::Found && found != when.negated
+                found != when.negated
             });
             let outcome = match &step.op {
                 _ if !holds => StepOutcome::Skipped,

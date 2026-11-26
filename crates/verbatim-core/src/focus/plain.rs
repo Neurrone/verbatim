@@ -257,9 +257,10 @@ fn answer_batch(reader: &PlainReader, batch: &Batch) -> Option<WireOutcome> {
             Ok(Gate::Run) => object.step(&step.op, &outcomes),
             Ok(Gate::Skip) => StepOutcome::Skipped,
             // Every result here is of its own operation's kind and the
-            // parse checked each condition's kind, so this cannot arise;
-            // the step is answered failed, which Core judges.
-            Err(KindMismatch) => StepOutcome::Failed,
+            // parse checked each condition's kind and refused a comparison
+            // of two points, so these cannot arise; the step is answered
+            // failed, which Core judges.
+            Ok(Gate::Compare { .. }) | Err(KindMismatch) => StepOutcome::Failed,
         };
         outcomes.push(outcome);
     }

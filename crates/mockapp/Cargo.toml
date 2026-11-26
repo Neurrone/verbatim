@@ -169,6 +169,10 @@ name = "find_text"
 harness = false
 
 [[test]]
+name = "compare_points"
+harness = false
+
+[[test]]
 name = "text"
 harness = false
 

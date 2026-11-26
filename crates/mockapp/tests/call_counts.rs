@@ -3726,11 +3726,7 @@ fn watch_checks_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
     let node = verbatim_model::NodeId::new(1);
-    let gated = Some(Condition {
-        on: Place(0),
-        check: Check::Found,
-        negated: false,
-    });
+    let gated = Some(Condition::step(Place(0), Check::Found, false));
     let later = [
         Step {
             op: Op::Caret {

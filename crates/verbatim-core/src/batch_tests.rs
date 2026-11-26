@@ -59,13 +59,7 @@ fn a_built_batch_names_earlier_steps_by_their_places() {
     );
     watch.outside().spare(node(), TextAnchor(40));
     let sent = watch.finish();
-    let found = |negated| {
-        Some(Condition {
-            on: Place(0),
-            check: Check::Found,
-            negated,
-        })
-    };
+    let found = |negated| Some(Condition::step(Place(0), Check::Found, negated));
     assert_eq!(sent.batch().placement, Placement::Outside);
     assert_eq!(sent.batch().spare, Some((node(), TextAnchor(40))));
     assert_eq!(

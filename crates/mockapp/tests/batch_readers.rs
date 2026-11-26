@@ -110,11 +110,7 @@ fn run_unless(
                     set: focus_set(),
                     details: verbatim_model::TextDetails::NONE,
                 },
-                when: Some(Condition {
-                    on: Place(0),
-                    check: Check::Matched,
-                    negated: true,
-                }),
+                when: Some(Condition::step(Place(0), Check::Matched, true)),
             },
         ]),
     );
@@ -261,11 +257,7 @@ fn an_msaa_candidate_in_a_uia_window_is_refused_before_its_hidden_check() {
         },
         redirect: true,
     };
-    let unless_hidden = Some(Condition {
-        on: Place(0),
-        check: Check::Matched,
-        negated: true,
-    });
+    let unless_hidden = Some(Condition::step(Place(0), Check::Matched, true));
     let (answer, _) = outpost.batch(
         hwnd,
         WindowVerdict::Uia,

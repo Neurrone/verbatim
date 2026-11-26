@@ -83,7 +83,7 @@ impl TextPosition {
 }
 
 /// Where a text request starts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TextPoint {
     /// The caret. A node with text but no caret (static text, a read-only
     /// document without one) answers from the start of its text, as NVDA's
