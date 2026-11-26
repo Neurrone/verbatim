@@ -1204,7 +1204,6 @@ pub(crate) fn route(
             thread: report.thread,
             // The foreground window is top-level: its own root.
             by_class: by_class(&report.class, &report.class),
-            shell: crate::applications::is_shell_foreground_class(&report.class),
             ghost: report.ghost,
             console: report.console,
             integrity: report.integrity,

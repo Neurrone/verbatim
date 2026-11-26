@@ -115,14 +115,14 @@ fn node_backend(node: &FocusNode, backend: Backend) -> Backend {
 /// "Verbatim" (Verbatim-only, design "Focus and foreground").
 ///
 /// The window in front at the tell's check is Program Manager's or the
-/// taskbar's when the foreground record, `foreground`, names it with a
-/// shell class: Core sees the listener's foreground reports in the order
-/// of its tells.
-fn window_of(
-    tell: &Event,
-    facts: &AcceptanceFacts,
-    foreground: Option<crate::event_queue::Foreground>,
-) -> WindowFacts {
+/// taskbar's when the tell's own top-level window or root owner is that
+/// window and has a shell class: the tell's facts alone decide, read
+/// together by its reader, so the title rule does not depend on whether
+/// the listener's foreground report reached Core before the tell. A
+/// window in front that is neither is of no class the tell names, and no
+/// rule reads the answer for it: the title rule judges a focus whose own
+/// top-level window is in front.
+fn window_of(tell: &Event, facts: &AcceptanceFacts) -> WindowFacts {
     let top_level = if facts.hidden_frame_owned {
         facts.root_owner.handle
     } else {
@@ -142,8 +142,10 @@ fn window_of(
         class: facts.window.class.clone(),
         application: tell.application.clone(),
         alt_held: false,
-        foreground_is_shell: foreground
-            .is_some_and(|front| front.shell && front.window == facts.foreground),
+        foreground_is_shell: [&facts.root, &facts.root_owner].into_iter().any(|window| {
+            window.handle == facts.foreground
+                && crate::applications::is_shell_foreground_class(&window.class)
+        }),
     }
 }
 
@@ -181,21 +183,15 @@ pub(crate) struct Origin {
 }
 
 impl Origin {
-    /// The origin of a focus a tell named, read on `asked`, with
-    /// `foreground` the foreground record, for an entry of speech fence
-    /// `fence`.
-    pub(crate) fn of_tell(
-        tell: &Event,
-        asked: RequestWindow,
-        foreground: Option<crate::event_queue::Foreground>,
-        fence: Fence,
-    ) -> Self {
+    /// The origin of a focus a tell named, read on `asked`, for an entry
+    /// of speech fence `fence`.
+    pub(crate) fn of_tell(tell: &Event, asked: RequestWindow, fence: Fence) -> Self {
         let facts = window_facts(tell);
         Self {
             trace_id: tell.trace_id,
             source: tell.process,
             observed_at_us: tell.at_us,
-            window: facts.map(|facts| window_of(tell, facts, foreground)),
+            window: facts.map(|facts| window_of(tell, facts)),
             whole_window: tell.kind == verbatim_model::event_kind::EventKind::Foreground,
             top_process: facts.map_or(asked.process, |facts| facts.root.process),
             asked,

@@ -100,6 +100,8 @@ struct Win {
     /// Whether the window is owned by Verbatim's hidden frame, as its menu
     /// is.
     frame_owned: bool,
+    /// The class of the top-level window.
+    class: &'static str,
 }
 
 /// Top-level window `top`, its own root owner, in front.
@@ -110,6 +112,7 @@ const fn in_front(top: u64) -> Win {
         front: top,
         front_owner: top,
         frame_owned: false,
+        class: "Frame",
     }
 }
 
@@ -122,6 +125,7 @@ const fn owned(top: u64, owner: u64, front: u64) -> Win {
         front,
         front_owner: front,
         frame_owned: false,
+        class: "Frame",
     }
 }
 
@@ -146,7 +150,7 @@ fn facts(app: App, win: Win) -> AcceptanceFacts {
     AcceptanceFacts {
         window: facet(app, win.top + 1, "AppPane"),
         parent_class: String::new(),
-        root: facet(app, win.top, "Frame"),
+        root: facet(app, win.top, win.class),
         root_owner: facet(app, win.owner, "Frame"),
         window_topmost: false,
         root_topmost: false,
@@ -911,6 +915,7 @@ fn a_dialogs_title_is_said_with_its_focus_after_its_forms_late_focus() {
                     front: DIALOG,
                     front_owner: F.top,
                     frame_owned: false,
+                    class: "Frame",
                 },
                 Via::Msaa,
             ),
@@ -950,6 +955,7 @@ const fn dialog_window() -> Win {
         front: DIALOG,
         front_owner: F.top,
         frame_owned: false,
+        class: "Frame",
     }
 }
 
@@ -1109,6 +1115,7 @@ fn verbatims_menu(desk: &mut Desk) {
         front: VERBATIM.top,
         front_owner: VERBATIM.top,
         frame_owned: true,
+        class: "Frame",
     };
     let _ = focus(
         desk,
@@ -1164,24 +1171,17 @@ fn a_return_from_verbatims_menu_with_its_focus_alone_says_the_title() {
 #[test]
 fn a_focus_in_program_manager_says_no_title() {
     let mut desk = in_the_edit();
-    desk.app(EXPLORER);
-    let _ = desk.step(QueueInput::Foreground(ForegroundReport {
-        window: WindowHandle(EXPLORER.top),
-        root_owner: WindowHandle(EXPLORER.top),
-        process: EXPLORER.pid,
-        thread: 41,
-        class: "Progman".to_owned(),
-        ghost: None,
-        console: false,
-        integrity: None,
-        own_integrity: None,
-    }));
+    let _ = explorer_in_front(&mut desk, EXPLORER.top, "Progman");
     let program_manager = quiet_pane(EXPLORER, 700, "Program Manager", EXPLORER.top);
     let list = node(EXPLORER, 710, Role::List, "Desktop");
+    let desktop = Win {
+        class: "Progman",
+        ..in_front(EXPLORER.top)
+    };
     assert_eq!(
         focus(
             &mut desk,
-            (EXPLORER, in_front(EXPLORER.top), Via::Msaa),
+            (EXPLORER, desktop, Via::Msaa),
             &node(EXPLORER, 711, Role::ListItem, "NVDA"),
             &[program_manager.clone(), list],
             Some(&program_manager),
@@ -1192,6 +1192,112 @@ fn a_focus_in_program_manager_says_no_title() {
             said("Desktop", Some(Role::List)),
             said("NVDA", None),
             follow(M),
+        ]
+    );
+}
+
+/// The taskbar's window, Explorer's too.
+const TASKBAR_TOP: u64 = 7_500;
+
+/// Explorer's taskbar, in front, as a tell's facts name it.
+const TASKBAR: Win = Win {
+    class: "Shell_TrayWnd",
+    ..in_front(TASKBAR_TOP)
+};
+
+/// The taskbar's pane, which stands for its window in a focus's chain.
+fn taskbar() -> NodeSnapshot {
+    quiet_pane(EXPLORER, 700, "Taskbar", TASKBAR_TOP)
+}
+
+/// A desk with Program Manager in front, as the listener last reported,
+/// after the user was in M's edit control.
+fn on_the_desktop() -> Desk {
+    let mut desk = in_the_edit();
+    let _ = explorer_in_front(&mut desk, EXPLORER.top, "Progman");
+    desk
+}
+
+/// The listener's report that Explorer's window `window`, of `class`, came
+/// to the foreground.
+fn explorer_in_front(desk: &mut Desk, window: u64, class: &str) -> Vec<Heard> {
+    desk.app(EXPLORER);
+    desk.step(QueueInput::Foreground(ForegroundReport {
+        window: WindowHandle(window),
+        root_owner: WindowHandle(window),
+        process: EXPLORER.pid,
+        thread: 41,
+        class: class.to_owned(),
+        ghost: None,
+        console: false,
+        integrity: None,
+        own_integrity: None,
+    }))
+}
+
+/// A focus on `item` of the Windows+X menu, in the taskbar's window, whose
+/// facts name the taskbar in front.
+fn in_the_quick_link_menu(desk: &mut Desk, item: &NodeSnapshot) -> Vec<Heard> {
+    let popup = node(EXPLORER, 710, Role::Window, "Popup");
+    focus(
+        desk,
+        (EXPLORER, TASKBAR, Via::Uia { repeat: false }),
+        item,
+        &[taskbar(), popup],
+        Some(&taskbar()),
+    )
+}
+
+/// What the Windows+X menu's first item says: the popup and the item, with
+/// no "Taskbar" before them.
+fn the_menu_entered() -> Vec<Heard> {
+    vec![
+        now(EXPLORER, 711, &[700, 710], Some(700)),
+        Heard::Stop,
+        said("Popup", Some(Role::Window)),
+        said("Installed apps", None),
+        follow(M),
+        follow(EXPLORER),
+    ]
+}
+
+/// A focus in the taskbar's window whose tell reaches Core with no
+/// foreground report for the taskbar, the record still naming Program
+/// Manager, says no title: the tell's own facts name the taskbar in front,
+/// so "Taskbar" is not said whatever Core's foreground record holds.
+#[test]
+fn a_focus_in_the_taskbar_with_no_foreground_report_says_no_title() {
+    let mut desk = on_the_desktop();
+    assert_eq!(
+        in_the_quick_link_menu(
+            &mut desk,
+            &node(EXPLORER, 711, Role::MenuItem, "Installed apps")
+        ),
+        the_menu_entered()
+    );
+}
+
+/// The taskbar's foreground report arriving after its focus was told and
+/// spoken changes none of the speech: the focus said no title, the report
+/// says nothing, and the next focus in the window says no title either.
+#[test]
+fn a_foreground_report_after_the_taskbars_focus_says_no_title() {
+    let mut desk = on_the_desktop();
+    let before = in_the_quick_link_menu(
+        &mut desk,
+        &node(EXPLORER, 711, Role::MenuItem, "Installed apps"),
+    );
+    assert_eq!(before, the_menu_entered());
+    assert_eq!(
+        explorer_in_front(&mut desk, TASKBAR_TOP, "Shell_TrayWnd"),
+        []
+    );
+    assert_eq!(
+        in_the_quick_link_menu(&mut desk, &node(EXPLORER, 712, Role::MenuItem, "Settings")),
+        [
+            now(EXPLORER, 712, &[700, 710], Some(700)),
+            said("Settings", None),
+            follow(EXPLORER),
         ]
     );
 }

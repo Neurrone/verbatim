@@ -1078,7 +1078,6 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
         process: verbatim_model::Pid(41),
         thread: 0,
         by_class: None,
-        shell: false,
         ..Foreground::BLANK
     };
     let judged = |background: bool| {

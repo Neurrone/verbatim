@@ -47,7 +47,6 @@ fn terminal() -> SrState {
             process: crate::entries::tests::APP,
             thread: 41,
             by_class: None,
-            shell: false,
             ..crate::event_queue::Foreground::BLANK
         }),
     );

@@ -405,7 +405,6 @@ fn in_front(process: Pid) -> Input<Entry> {
         process,
         thread: 41,
         by_class: None,
-        shell: false,
         ..Foreground::BLANK
     })
 }

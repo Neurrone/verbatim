@@ -464,7 +464,6 @@ fn backspace_whose_confirmation_the_foreground_stops_says_nothing() {
             process: verbatim_model::Pid(41),
             thread: 0,
             by_class: None,
-            shell: false,
             ..Foreground::BLANK
         }),
     );
@@ -517,7 +516,6 @@ fn the_foreground_leaving_the_candidates_window_stops_the_confirmation() {
             process: verbatim_model::Pid(41),
             thread: 0,
             by_class: None,
-            shell: false,
             ..Foreground::BLANK
         }),
     );

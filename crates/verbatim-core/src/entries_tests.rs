@@ -1031,7 +1031,6 @@ fn window_4_in_front() -> Input<Entry> {
         process: APP,
         thread: 41,
         by_class: None,
-        shell: false,
         ..Foreground::BLANK
     })
 }
@@ -1144,7 +1143,6 @@ fn a_foreground_marker_empties_the_last_focus_for_an_unrelated_window() {
         process: Pid(41),
         thread: 0,
         by_class: None,
-        shell: false,
         ..Foreground::BLANK
     };
     // The first foreground report appends the startup read, of an
@@ -1489,7 +1487,6 @@ fn a_focus_moving_in_the_hidden_frames_popup_menu_says_the_frames_title_once() {
         process: APP,
         thread: 41,
         by_class: None,
-        shell: false,
         ..Foreground::BLANK
     };
     // The first foreground report's startup read, which finds nothing.

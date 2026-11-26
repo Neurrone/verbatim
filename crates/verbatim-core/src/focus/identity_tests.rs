@@ -52,7 +52,6 @@ const IN_FRONT: Foreground = Foreground {
     process: crate::entries::tests::APP,
     thread: 41,
     by_class: None,
-    shell: false,
     ..Foreground::BLANK
 };
 
@@ -657,7 +656,6 @@ fn an_unrelated_foreground_empties_the_last_focus_and_its_fence() {
             process: Pid(41),
             thread: 42,
             by_class: None,
-            shell: false,
             ..crate::event_queue::Foreground::BLANK
         }),
     );

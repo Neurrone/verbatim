@@ -146,9 +146,6 @@ pub(crate) struct Foreground {
     pub(crate) thread: u32,
     /// The backend its class gives, `None` when probes decide.
     pub(crate) by_class: Option<Backend>,
-    /// Whether it is Program Manager's or the taskbar's window, judged once
-    /// from its class at the boundary: a focus entering it says no title.
-    pub(crate) shell: bool,
     /// The ghost window in front when one stands in for `window`, which
     /// is the hung window: the keyboard hook's window.
     pub(crate) ghost: Option<WindowHandle>,
@@ -172,7 +169,6 @@ impl Foreground {
         process: Pid(0),
         thread: 0,
         by_class: None,
-        shell: false,
         ghost: None,
         console: false,
         integrity: None,
