@@ -49,6 +49,13 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the file dialog's `ShowModal` took 8,122 ms (`stderr.log`). The wait chain read while it was stalled, `not-responding-wait-chains.txt`, says only "window 0x10292 (pid 5380), thread 3860: thread 3860 of verbatim.exe pid 5380 (blocked); no cycle": the GUI thread is blocked on something Wait Chain Traversal does not follow, so no other thread or process is named.
   - Fix: the cause is still open, and the next stall names it. When the sound follows a window of Verbatim's own, the harness now dumps Verbatim straight after the wait chains, as `verbatim-<pid>.dmp` in the scenario's artifacts with every thread's stack, and the job uploads its `verbatim.exe` and `verbatim.pdb` as `e2e-symbols-<group>`; `books/dev/src/how-to/e2e.md`, "Reading Verbatim's minidump", says how to read the GUI thread's stack from them. A stall in Verbatim's own code then goes to the build that owns that code; a stall inside Windows' dialog goes to Dickson.
 
+## A stand-in's window that does not answer after it shows
+
+- `text_box_page_keys` on GitHub's runner (run 45821984446, 2026-11-26, at 1fc0c0f6)
+  - How: "sound: app-not-responding" where the window's title and text box were expected, at the scenario's first step.
+  - Cause: the runner, as far as the artifacts show. The stand-in's form showed and took focus, then did not answer its first MSAA call for about 8 s (0.14 s in the passing run 45805762032); the outpost's probe timed out at 3 s and the sound is correct. The request made no UIA call and nothing fell back. `not-responding-wait-chains.txt` lists two blocked threads with no cycle: the form's UI thread and one of `dwm.exe`, which draws every window, so the desktop as a whole may have stalled. What they waited on is not known.
+  - Fix: none yet. If the next not-responding failure on the runner again lists `dwm.exe`, the harness records the runner's load at that moment, and the stalls of Verbatim's own dialogs above are read again in that light.
+
 ## A key pressed as a terminal flood ends
 
 - `windows_terminal_line_key_flood` on GitHub's runner (run 45787264327, 2026-11-26, at 5b79a4e6; it passed at 4327da97 and 71cf8f3b)
