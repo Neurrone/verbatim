@@ -632,7 +632,6 @@ fn speech_of(step: Step) -> Said {
                     TerminalItem::Skipped(Skipped::About(above))
                 }
                 Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
-                Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
                 Speech::Echo { text, .. } => TerminalItem::Echo(text),
                 Speech::Caret { unit, text, .. } => TerminalItem::Caret {
                     unit: match unit {

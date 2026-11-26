@@ -1113,12 +1113,12 @@ fn newer_output_never_cancels_older_and_skipped_counts_add_up() {
 }
 
 #[test]
-fn lines_skipped_uncounted_say_so_without_a_number() {
+fn a_lost_reads_count_of_none_says_skipped_lines_without_a_number() {
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(
         &mut state,
-        &output_from(TERMINAL, Some(Skipped::Uncounted), lines(1..=3)),
+        &output_from(TERMINAL, Some(Skipped::MoreThan(0)), lines(1..=3)),
     );
     let mut expected = vec!["skipped".to_owned()];
     expected.extend(lines(1..=3));

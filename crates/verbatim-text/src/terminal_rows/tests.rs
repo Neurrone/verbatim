@@ -1079,16 +1079,17 @@ fn a_lost_read_whose_rows_moved_above_it_is_all_new() {
 }
 
 #[test]
-fn a_lost_read_whose_rows_fit_twice_is_uncounted() {
+fn a_lost_read_whose_rows_fit_twice_aligns_only_its_screen() {
     // Alternating lines moved by an odd number of rows: the rows above the
     // last read's screen no longer read the same, and the last read's rows
     // fit at more than one place, so the read is lost: only its visible
-    // screen is aligned, and what went by has no count ("A lost read").
+    // screen is aligned, and what went by is a "more than" count of none,
+    // which says "skipped lines" ("A lost read").
     let mut watch = Watch::console(10, 3, 6);
     watch.write("a\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\n");
     let outcome = watch.write("a\r\nb\r\na\r\n");
     assert_eq!(watch.taken, 1, "one read");
-    assert_eq!(outcome.lost, Some(Lost::Uncounted));
+    assert_eq!(outcome.lost, Some(Lost::MoreThan));
     let mut rows = vec![NewRow::Shown; 3];
     rows.extend([kept(3), kept(4), NEW]);
     assert_eq!(outcome.rows, rows);

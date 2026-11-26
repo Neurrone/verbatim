@@ -90,8 +90,6 @@ pub(crate) enum TerminalKeyKind {
 pub(crate) enum Skipped {
     /// Exactly this many.
     Count(u32),
-    /// Some, but how many is not known.
-    Uncounted,
     /// More than this many: the terminal's history overflowed past the
     /// screen last read, so its oldest lines are gone, and this many are
     /// the lines the history holds that are not spoken.
@@ -116,9 +114,6 @@ impl Skipped {
             }
             (Self::About(a) | Self::Count(a), Self::About(b))
             | (Self::About(a), Self::Count(b)) => Self::About(a.saturating_add(b)),
-            (_, Self::Uncounted) | (Self::Uncounted, Self::Count(_) | Self::About(_)) => {
-                Self::Uncounted
-            }
         }
     }
 }
@@ -131,13 +126,15 @@ mod tests {
     fn skipped_counts_add_and_stay_exact_only_when_both_are() {
         assert_eq!(Skipped::Count(3).plus(Skipped::Count(4)), Skipped::Count(7));
         assert_eq!(Skipped::About(0).plus(Skipped::Count(4)), Skipped::About(4));
+        // A lost read's count of none stands for what went before it, and
+        // the lines after it add to it.
         assert_eq!(
-            Skipped::Count(3).plus(Skipped::Uncounted),
-            Skipped::Uncounted
+            Skipped::Count(3).plus(Skipped::MoreThan(0)),
+            Skipped::MoreThan(0)
         );
         assert_eq!(
-            Skipped::Uncounted.plus(Skipped::Count(1)),
-            Skipped::Uncounted
+            Skipped::MoreThan(0).plus(Skipped::Count(1)),
+            Skipped::MoreThan(1)
         );
         // What went before a history's overflow is part of it.
         assert_eq!(
@@ -145,16 +142,12 @@ mod tests {
             Skipped::MoreThan(9001)
         );
         assert_eq!(
-            Skipped::Uncounted.plus(Skipped::MoreThan(9001)),
+            Skipped::MoreThan(0).plus(Skipped::MoreThan(9001)),
             Skipped::MoreThan(9001)
         );
         assert_eq!(
             Skipped::MoreThan(9001).plus(Skipped::Count(10)),
             Skipped::MoreThan(9011)
-        );
-        assert_eq!(
-            Skipped::MoreThan(9001).plus(Skipped::Uncounted),
-            Skipped::Uncounted
         );
     }
 

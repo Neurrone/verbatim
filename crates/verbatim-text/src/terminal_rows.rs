@@ -565,11 +565,10 @@ pub enum Lost {
         above: u32,
     },
     /// Nothing the last read had at or above the caret was kept: every row
-    /// of the read not kept is new, and more went by than it shows.
+    /// of the read not kept is new, and more went by than it shows; or the
+    /// last read's rows fit at more than one place, so only the visible
+    /// screen was aligned, its rows above history.
     MoreThan,
-    /// The last read's rows fit at more than one place: only the visible
-    /// screen is aligned, and what went by has no count.
-    Uncounted,
 }
 
 /// A row that lingers: gone, kept for a while with its history.
@@ -1094,7 +1093,7 @@ impl TerminalMemory {
             let (aligned, lost) = match read.rows_above {
                 _ if lost && aligned.ambiguous && report => (
                     align_screen(&current, (&rows, height), read, caret),
-                    Lost::Uncounted,
+                    Lost::MoreThan,
                 ),
                 None if read.shrank || !report => {
                     self.screen = Some(current);
@@ -1398,8 +1397,7 @@ struct Aligned {
     /// Whether the read started at the document's start, so a row the
     /// rotation carried above it left the buffer.
     left: bool,
-    /// Whether the read's start was refused, a read from the kept start
-    /// that is not the whole document: the document shrank beneath the
+    /// Whether the read's start was refused: the document shrank beneath the
     /// rows above the read, so an anchor there is found by its text ("The
     /// review cursor").
     refused: bool,
@@ -1438,6 +1436,7 @@ impl Aligned {
 
 /// How to finish an alignment of a read with a memory, once its kept rows
 /// are found ([`classify`]).
+#[derive(Clone, Copy)]
 struct How {
     /// Where a memory row that did not move is in the read.
     fixed: isize,
@@ -1449,11 +1448,9 @@ struct How {
     /// Whether the old rows' places in the read are free: found by their
     /// text, not by position ("Positions").
     free: bool,
-    /// Whether the read is the whole document, whose history is `shown`.
-    whole: bool,
-    /// The read's rows that are history: above the visible screen, not
-    /// new ("A lost read").
-    shown: Vec<usize>,
+    /// When only the visible screen is aligned, its first row in the read:
+    /// the rows above it are history, not new ("A lost read").
+    screen: Option<usize>,
 }
 
 /// Whether positions are trusted ("Positions"): the read's rows above the
@@ -1665,8 +1662,7 @@ fn align_read(
         rotation: usize::try_from(base.saturating_sub(fixed)).unwrap_or(0),
         history,
         free: !trusted,
-        whole: false,
-        shown: Vec::new(),
+        screen: None,
     };
     let mut aligned = classify(memory, rows, read, caret, &pairs, how);
     aligned.ambiguous = !trusted && ambiguous(memory, rows, 0..rows.len());
@@ -1760,7 +1756,7 @@ fn all_new(mut aligned: Aligned) -> Aligned {
 /// Aligns the visible screen of `rows`, a lost read whose last read's rows
 /// fit at more than one place, with `memory` ("A lost read"): the longest
 /// common subsequence of rows with text, the rows above the visible screen
-/// history, and what went by uncounted.
+/// history, and what went by counted as more than with no number.
 fn align_screen(
     memory: &Screen,
     (rows, height): (&[Row], usize),
@@ -1793,7 +1789,6 @@ fn align_screen(
         },
         0,
     );
-    let shown: Vec<usize> = (0..screen).collect();
     let fixed = commonest_shift(&pairs, 0);
     // A place keeps its distance from the document's end, the last read
     // having read to it too.
@@ -1804,8 +1799,7 @@ fn align_screen(
         rotation: 0,
         history,
         free: true,
-        whole: true,
-        shown,
+        screen: Some(screen),
     };
     classify(memory, rows, read, caret, &pairs, how)
 }
@@ -1837,12 +1831,11 @@ fn classify(
         rotation,
         history,
         free,
-        whole,
-        shown,
+        screen,
     } = how;
     let old = &memory.rows;
     let (count, total) = (old.len(), rows.len());
-    let refused = !whole && (read.shrank || !read.from_start);
+    let refused = read.shrank || !read.from_start;
     let place = |from: usize| isize_of(from).saturating_add(fixed);
     // A row of the read, and of the last read, by index: each table is made
     // as long as its rows, and the alignment's pairs index both.
@@ -1862,10 +1855,8 @@ fn classify(
         put(&mut new, to, kind);
         put(&mut fates, from, OldRow::Kept(to));
     }
-    for &to in &shown {
-        if is_new(&new, to) {
-            put(&mut new, to, NewRow::Shown);
-        }
+    for kind in new.iter_mut().take(screen.unwrap_or(0)) {
+        *kind = NewRow::Shown;
     }
     // A row the subsequence left gone is kept at the nearest new row with
     // its text, even across rows the subsequence kept, as a list entry
@@ -1969,8 +1960,8 @@ fn classify(
     // it down past text the last read never covered ("The alignment").
     // Found by text from an accepted start, the first row went where the
     // history block's kept rows went, and nowhere known when none was kept.
-    // In a whole document, the rows `shown` are history.
-    let first_went = if whole {
+    // With only the visible screen aligned, the rows above it are history.
+    let first_went = if screen.is_some() {
         0
     } else if free && !refused {
         let history_pairs: Vec<Pair> = kept
