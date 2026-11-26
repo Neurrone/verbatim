@@ -667,9 +667,9 @@ is [verbatim-speech](verbatim-speech.md)'s.
 - `Indication`: one entry of the catalogue of everything Verbatim can
   report, with a stable id (`id`, `from_id`) that theme files use, and a
   `category` (`IndicationCategory`: roles, states, properties, text
-  formatting, structure, events). `Indication::catalogue()` lists all 96
-  in display order: the 52 roles (`role-link`), the 13 spoken states
-  (`state-checked`) and the 3 spoken by their absence
+  formatting, structure, events). `Indication::catalogue()` lists them all
+  in display order: every role of `Role::ALL` (`role-link`), the spoken
+  states (`state-checked`) and those spoken by their absence
   (`state-not-checked`), the properties (`description`, `shortcut`,
   `position`, `level`, `cell-coordinates`), text formatting
   (`spelling-error`, `grammar-error`, `font-name`, `font-size`, `color`,
