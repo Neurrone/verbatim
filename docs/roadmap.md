@@ -322,7 +322,7 @@ NVDA's capture.
   The listener's UI Automation and classic paths also test whether a
   bar's window is native differently. ADR 0001's "each window has one
   backend verdict" is amended to name the listener's verdict for
-  bars, and `docs/design/progress-bars.md`, `docs/design/m42-parity.md`,
+  bars, and the progress-bar and M4.2 designs,
   the M4.2 and M4.3 entries and the performance ledger's progress
   entries are corrected.
 - The fake focus after a menu or the task switcher ends is spoken

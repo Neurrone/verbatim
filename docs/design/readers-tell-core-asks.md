@@ -152,7 +152,7 @@ State: the backend cache (Core). Per window, keyed by the window and its owning 
 
 Messages: added `WindowDestroyed` (Core to outpost), `Follow`, object requests joining the shared request list, their properties named as property-table sets (is this event's object one of these nodes and read these properties; read properties of a node with child count; a selection's item minting a node and its relation to the focus; an alert, help balloon or tooltip as a node snapshot, an MSAA alert with its descendants), listener requests (read this toast, tooltip, live region or alert; check a UI Automation selection's item, completed by the outpost; a notification's sender is found by the check thread at delivery, with no request). Removed: the facts `UiaSelection`, `UiaNotification`, `UiaToast`, `Alert`, `Show`; `CoreToOutpost::Front` with `FrontWindow`; `NormalizedEvent::ProgressChanged`. The `Event` keeps MSAA selection add, remove and within as their own kinds.
 
-Amends: `docs/design/progress-bars.md` line 87 ("An outpost's hook still receives the same event for its own application") is removed; the design is otherwise kept whole.
+Amends: the progress-bar design's line 87 ("An outpost's hook still receives the same event for its own application") is removed; the design is otherwise kept whole.
 
 Pinned by: `mockapp/tests/native_controls.rs` 486 to 492 (a tree view item's ancestor not a target); `docs/parity/focus-announcement.md` 324 to 336, eleven captures (the foreground window's "unavailable" never spoken).
 
@@ -577,7 +577,7 @@ None of these was changed; each is for a later session to correct.
 - `docs/nvda/ia2.md` 59 to 62: the in-process hook's events are misdescribed.
 - `docs/nvda/speech.md` 371 to 372: say-all does not detect a changed document as stated.
 - `books/dev/src/explanation/design/key-holding.md` 20 and 42, `docs/roadmap.md` 1596 to 1603 and `verbatim-win32/src/integrity.rs` 10 to 11 say the integrity guard is removed when UIAccess is built; Microsoft's page (cited, not fetched) says a standard user's UIAccess cannot reach elevated windows. `books/dev/src/explanation/windows/processes-and-security.md` 18 to 30 has been cited both ways; verify before correcting any of them.
-- `docs/parity/text.md` 85 to 99, 134 to 136, 186 to 189, 293 to 309, 498 to 505 and `docs/design/progress-bars.md` 87 become false as builds 1 to 3 land; correct each with its build.
+- `docs/parity/text.md` 85 to 99, 134 to 136, 186 to 189, 293 to 309, 498 to 505 and the progress-bar design's line 87 become false as builds 1 to 3 land; correct each with its build.
 - `docs/parity/focus-context.md` says NVDA speaks the focus alone on the secure desktop's return; NVDA's sleeping object has no parent, so NVDA says the window's title and the focus, as Verbatim does.
 - Parity ledger gaps to record: NVDA says an attribute's negative when it disappears ("no bold", `speech/speech.py` 2909 to 2920) where Verbatim is silent (`verbatim-core/src/text.rs` 350 to 354); the Caps Lock lowercase beep is NVDA's behaviour and missing.
 

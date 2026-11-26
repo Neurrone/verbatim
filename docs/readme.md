@@ -95,13 +95,6 @@ captures and troubleshooting.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
     the ownership rules each planned milestone follows, and the evidence
     behind them.
-  - [cross-process-calls-study.md](design/cross-process-calls-study.md)
-    — every call that can reach another application, measured, with a
-    verdict on the rule that only an application's own outpost calls it.
-  - [progress-bars.md](design/progress-bars.md) — every progress bar,
-    foreground and background, owned by the listener.
-  - [m42-parity.md](design/m42-parity.md) — the toasts session and the
-    review cursor on objects that no longer exist.
   - [extensions.md](design/extensions.md) — the extension system,
     published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model
