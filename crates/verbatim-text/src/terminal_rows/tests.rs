@@ -1094,6 +1094,28 @@ fn a_lost_read_whose_rows_fit_twice_aligns_only_its_screen() {
     assert_eq!(outcome.rows, rows);
 }
 
+#[test]
+fn a_lost_reads_anchor_on_a_kept_row_follows_it_and_any_other_keeps_its_place() {
+    // The lost read above, its last read's rows three rows further up: the
+    // mark on a row the visible screen's alignment kept follows that row,
+    // and the mark on a row it did not keep stays at its place, three rows
+    // up ("A lost read"; Claude, 2026-11-27).
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("a\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\n");
+    let anchor = |row: isize, text: &str| Anchor {
+        row,
+        column: 0,
+        line_hash: hash(text),
+    };
+    assert_eq!(watch.memory.add_mark(3), Some(anchor(3, "b")));
+    assert_eq!(watch.memory.add_mark(5), Some(anchor(5, "b")));
+    let outcome = watch.write("a\r\nb\r\na\r\n");
+    assert_eq!(outcome.lost, Some(Lost::Uncounted));
+    assert_eq!(outcome.old[3], kept_row(3));
+    assert_eq!(watch.texts(), ["a", "b", "a", "b", "a", ""]);
+    assert_eq!(watch.memory.marks(), [anchor(3, "b"), anchor(2, "a")]);
+}
+
 /// A read of `rows`, each padded to 10 cells, its screen the last
 /// `screen` of them and its caret at the end of the last.
 fn read_of(rows: &[&str], screen: usize, at_document_start: bool, at_ms: u64) -> Read {

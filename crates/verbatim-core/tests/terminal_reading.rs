@@ -171,12 +171,17 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     // rows; before the outpost reads the history, a flood carries the last
     // read's rows out of the buffer. The read that shows it comes before the
     // history and is lost, its anchors kept at their places (Claude,
-    // 2026-11-27): it says "skipped lines" and its own new lines, and the
-    // history, heard as they play, is counted from the start the command named and placed from
-    // the anchor at its row (`docs/design/readers-tell-core-asks-build3.md`,
-    // Table 5): the review position's line is gone, so it keeps its place
-    // and reads the row there now, "line 32" ("Limits"), and the next
-    // command reads it again.
+    // 2026-11-27): it says "skipped lines" and its own new lines, its first
+    // handed to speech ahead of the command's words as any output read
+    // while a history read is out, and the history is counted from the
+    // start the command named and placed from the anchor at its row
+    // (`docs/design/readers-tell-core-asks-build3.md`, Table 5): the review
+    // position's line is gone, so it keeps its place and reads the row there
+    // now, "line 32" ("Limits"), and the next command reads it again. The
+    // whole document's read, answered after the history, had "line 32"
+    // heard first and then "skipped lines" and "line 30" to "line 40"; the
+    // difference is pending Dickson's approval (`docs/parity/terminals.md`,
+    // "The backlog").
     let mut session = showing(20, 3, 9, &numbered(1..=12));
     session.press(&command(ReviewCommand::ReviewTop));
     session.press(&command(ReviewCommand::ReviewNextLine));
@@ -471,8 +476,11 @@ fn live_snapshots_that_arrive_while_a_count_read_is_owed_are_dropped() {
     assert_eq!(session.requests(), []);
     session.answer_held();
     // The count read, the live read's line among its own, counts the one
-    // row above it, about, and every line it holds is new (Claude,
-    // 2026-11-27).
+    // row above it, "line 13", about, and every line it holds is new
+    // (Claude, 2026-11-27): the row above is counted, not read, where the
+    // whole document's read spoke "line 13" to "line 18" with no skip, a
+    // difference pending Dickson's approval (`docs/parity/terminals.md`,
+    // "The backlog").
     assert_eq!(
         session.heard(),
         plain(&[
@@ -483,6 +491,64 @@ fn live_snapshots_that_arrive_while_a_count_read_is_owed_are_dropped() {
             "line 17",
             "line 18"
         ])
+    );
+    assert_eq!(session.requests(), []);
+}
+
+#[test]
+fn a_flood_through_a_tiny_terminal_speaks_only_the_lost_reads_lines() {
+    // Three rows and a full history of nine, the last read's start in it:
+    // 28 lines carry the last read's rows out of the buffer, so the read
+    // keeps nothing and is lost. It says "skipped lines" and only its own
+    // new lines, nothing more read, where the whole document's read spoke
+    // "line 30" to "line 40" after it, a difference pending Dickson's
+    // approval (`docs/parity/terminals.md`, "The backlog").
+    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    session.write(&numbered(13..=40), 100);
+    let mut heard = vec!["Phrase(SkippedUncountedLines)".to_owned()];
+    heard.extend((36..=40).map(|line| format!("line {line}")));
+    assert_eq!(
+        session
+            .heard()
+            .into_iter()
+            .map(|said| said.words)
+            .collect::<Vec<_>>(),
+        heard
+    );
+    assert_eq!(session.requests(), []);
+}
+
+#[test]
+fn a_flood_past_a_first_reads_screen_speaks_from_the_lost_reads_first_row() {
+    // A first read of a Windows Terminal whose history is full, then more
+    // than two screens of output: the read keeps nothing of the first read
+    // and is lost, and "n13", above it, is not heard, where the whole
+    // document's read spoke it, a difference pending Dickson's approval
+    // (`docs/parity/terminals.md`, "The backlog").
+    let mut outpost = Outpost::new(Flavor::WindowsTerminal, 12, 5, 6);
+    let prefixed = |prefix: &str, range: std::ops::RangeInclusive<u32>| {
+        range.fold(String::new(), |mut text, line| {
+            let _ = write!(text, "{prefix}{line}\r\n");
+            text
+        })
+    };
+    outpost.sim.write(prefixed("p", 1..=20).as_bytes());
+    let mut session = Session::with(outpost);
+    let _ = session.heard();
+    let _ = session.requests();
+    let mut flood = prefixed("n", 1..=22);
+    flood.push_str("PS C:> ");
+    session.write(&flood, 2000);
+    let mut heard = vec!["Phrase(SkippedUncountedLines)".to_owned()];
+    heard.extend((14..=22).map(|line| format!("n{line}")));
+    heard.push("PS C:>".to_owned());
+    assert_eq!(
+        session
+            .heard()
+            .into_iter()
+            .map(|said| said.words)
+            .collect::<Vec<_>>(),
+        heard
     );
     assert_eq!(session.requests(), []);
 }

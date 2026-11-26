@@ -777,9 +777,15 @@ pub(crate) fn take(
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
+    // The rules ask a count read only of a read whose start shrank, and
+    // `read.shrank` is set above only with the start the read named, so a
+    // count read with no start is not reached. The pairing stays a match
+    // rather than a type because the rules are platform-neutral and hold no
+    // text anchor to carry the start in their step, and the snapshot's
+    // `shrank`, a flag of the recorded format, names none either.
     let owed = match (step.count_read, refused) {
         (true, Some(start)) => Some(TerminalScope::Count { start }),
-        _ => step
+        (true, None) | (false, _) => step
             .history_block
             .then_some(TerminalScope::HistoryBlock { height }),
     };

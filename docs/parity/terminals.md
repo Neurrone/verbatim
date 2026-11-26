@@ -150,6 +150,31 @@ settings", Core's flood policy).
   line 1992" to "flood line 2000", the prompt; it now says the same with
   "skipped more than 50 lines" (`crates/verbatim-core/tests/terminal_floods.rs`).
   NVDA speaks all 2,000 lines, queued.
+- Pending Dickson's approval (Claude, 2026-11-27): a lost read, one that
+  keeps nothing of the last read and is no new screen, speaks only its
+  own lines, where Verbatim read the whole document again and spoke every
+  new line it held within the flood limits. A three-row console host with
+  a full history of nine, 28 lines written: Verbatim said "skipped lines",
+  "line 30" to "line 40"; it now says "skipped lines", "line 36" to "line
+  40". A first read of a five-row Windows Terminal with a full history,
+  then 22 lines and the prompt: it said "skipped lines", "n13" to "n22",
+  "PS C:>"; it now starts at "n14"
+  (`crates/verbatim-core/tests/terminal_reading.rs`). NVDA speaks every
+  new line.
+- Pending Dickson's approval (Claude, 2026-11-27): after Windows
+  Terminal's clear, the rows above the count read are counted, not read.
+  Five lines after the clear on a three-row screen, then a sixth: Verbatim
+  said "line 13" to "line 18"; it now says "skipped about 1 line", "line
+  14" to "line 18" (`crates/verbatim-core/tests/terminal_reading.rs`).
+  NVDA speaks every line.
+- Pending Dickson's approval (Claude, 2026-11-27): a lost read that
+  arrives while a review command's history read is out is spoken as it
+  arrives, its first line handed to speech ahead of the command's words,
+  as any output read then is. Review current line with the review
+  position's line carried out of a tiny terminal's buffer: Verbatim said
+  "line 32", "skipped lines", "line 30" to "line 40"; it now says
+  "skipped lines", "line 36", "line 32", "line 37" to "line 40"
+  (`crates/verbatim-core/tests/terminal_reading.rs`).
 - While the flood policy holds, Core sends no read for the changes told:
   it reads them when a group's last line is handed to speech; a cut while
   it holds reads them at once with a silent read, which speaks only its
