@@ -51,8 +51,9 @@ use std::time::Duration;
 
 use verbatim_agent::protocol::{
     EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ListPosition, MinimizeOutcome,
-    ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessState, SwitcherItem, TaskbarCommand,
-    UiaRootAnswer, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus, WindowCondition, WindowInfo,
+    ProcessDiagnostics, ProcessExit, ProcessInfo, ProcessLoad, ProcessState, RunnerLoad,
+    SwitcherItem, TaskbarCommand, UiaRootAnswer, WaitChain, WaitNode, WaitNodeKind, WaitNodeStatus,
+    WindowCondition, WindowInfo,
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
@@ -90,6 +91,26 @@ const LAUNCHED_PROCESS_FILE_STEM: &str = "launched-process";
 /// The stem of the files Verbatim's dump is kept in when a wait for speech
 /// ran out ([`Scenario::record_verbatim_dump`]).
 const VERBATIM_DUMP_FILE_STEM: &str = "verbatim";
+
+/// The machine's load as a failed body ended
+/// ([`Scenario::record_runner_load`]); the load as a launch's window wait
+/// ran out is `runner-load-launched-<pid>.txt` ([`LaunchEvidence`]).
+const RUNNER_LOAD_FILE_STEM: &str = "runner-load";
+
+/// How long the processor and disk figures of the machine's load are
+/// sampled over ([`describe_runner_load`]).
+const RUNNER_LOAD_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long the agent may take to read the machine's load; a part not
+/// read by then says so.
+const RUNNER_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long the agent may take to read a process's facts and write its
+/// minidump: longer than the runner's stalls, which have lasted up to 55
+/// seconds (`docs/flaky-tests.md`), since a dump given up within 10
+/// seconds once named nothing. Only a failure waits for it, and the e2e
+/// job's step limit leaves room for it.
+const PROCESS_DUMP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
@@ -335,6 +356,10 @@ pub struct Scenario {
     /// ran out ([`Scenario::record_verbatim_dump`]), for the scenario's
     /// artifacts.
     verbatim_dump: Option<(u32, ProcessDump)>,
+    /// The machine's load, recorded when the body failed
+    /// ([`Scenario::record_runner_load`]), one fact a line, for the
+    /// scenario's artifacts.
+    runner_load: Option<Vec<String>>,
     /// Each Verbatim a second start replaced, by its process id, with the
     /// path of its stderr log, whose artifacts are collected with the
     /// run's.
@@ -641,6 +666,7 @@ impl Scenario {
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
                 verbatim_dump: None,
+                runner_load: None,
                 replaced: Vec::new(),
             });
         }
@@ -760,6 +786,7 @@ impl Scenario {
             launch_evidence: Vec::new(),
             not_responding_chains: None,
             verbatim_dump: None,
+            runner_load: None,
             replaced: Vec::new(),
         })
     }
@@ -2732,6 +2759,23 @@ impl Scenario {
         Some(note)
     }
 
+    /// Records the machine's load as a failed body ends, after the wait
+    /// chains of any window not responding and before any dump, so it is
+    /// read as near the failure as it can be: processor and memory use,
+    /// the disks' queue, the processes that spent the most processor time
+    /// over [`RUNNER_LOAD_INTERVAL`], and the Desktop Window Manager
+    /// (`Request::RunnerLoad`). Kept as `runner-load.txt` in the scenario's
+    /// artifacts. Returns a note for the failure's message; `None` when
+    /// this body's failure has recorded it already.
+    pub fn record_runner_load(&mut self) -> Option<String> {
+        if self.runner_load.is_some() {
+            return None;
+        }
+        let (lines, summary) = read_runner_load(&mut self.agent);
+        self.runner_load = Some(lines);
+        Some(format!("{summary}; see {RUNNER_LOAD_FILE_STEM}.txt"))
+    }
+
     /// Dumps Verbatim, `why` in the note: for a body that failed because a
     /// wait for speech ran out
     /// ([`crate::speech::SpeechFailure::waited_out`]), or after the
@@ -2811,6 +2855,14 @@ impl Scenario {
                 write_process_dump(dir, &format!("{VERBATIM_DUMP_FILE_STEM}-{pid}"), dump)
         {
             problems.push(format!("could not write Verbatim's dump: {error}"));
+        }
+        if let Some(load) = &self.runner_load
+            && let Err(error) = fs::write(
+                dir.join(format!("{RUNNER_LOAD_FILE_STEM}.txt")),
+                load.join("\n") + "\n",
+            )
+        {
+            problems.push(format!("could not write the machine's load: {error}"));
         }
         if self.is_comparing() {
             return problems;
@@ -4192,15 +4244,21 @@ fn settings_prelaunch(windows: &[WindowInfo]) -> Vec<u32> {
 
 /// What the harness records when a window a launch was to open did not
 /// open, or did not take the foreground, in time: the wait chains
-/// ([`window_wait_chains`]) and the launched process's processor time,
-/// modules and minidump (`Request::ProcessDiagnostics`), each part that
-/// could not be read saying why.
+/// ([`window_wait_chains`]), the machine's load ([`read_runner_load`]),
+/// and the launched process's processor time, modules and minidump
+/// (`Request::ProcessDiagnostics`), each part that could not be read
+/// saying why.
 #[derive(Clone, Debug)]
 pub(crate) struct LaunchEvidence {
     /// The launched process.
     pid: u32,
     /// The wait chains, one a line.
     chains: Vec<String>,
+    /// The machine's load, one fact a line, for
+    /// `runner-load-launched-process-<pid>.txt`.
+    load: Vec<String>,
+    /// The machine's load summed up, for the failure's message.
+    load_summary: String,
     /// The launched process's state, processor time and modules, one fact
     /// a line ([`describe_process`]), for `launched-process-<pid>.txt`.
     process: Vec<String>,
@@ -4225,6 +4283,7 @@ impl LaunchEvidence {
         pid: u32,
     ) -> Self {
         let chains = window_wait_chains(agent, desktop, window, pid);
+        let (load, load_summary) = read_runner_load(agent);
         let ProcessDump {
             process,
             summary,
@@ -4233,6 +4292,8 @@ impl LaunchEvidence {
         Self {
             pid,
             chains,
+            load,
+            load_summary,
             process,
             summary,
             dump,
@@ -4263,16 +4324,17 @@ fn process_dump(
     pid: u32,
 ) -> ProcessDump {
     let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}{name}-{pid}.dmp");
-    let (mut process, summary, written) = match agent.process_diagnostics(pid, &dump_path) {
-        Ok(read) => {
-            let (process, summary) = describe_process(pid, &read);
-            (process, summary, read.dump_error.is_none())
-        }
-        Err(error) => {
-            let why = format!("the {what} {pid} could not be read: {error}");
-            (vec![why.clone()], why, false)
-        }
-    };
+    let (mut process, summary, written) =
+        match agent.process_diagnostics(pid, &dump_path, PROCESS_DUMP_TIMEOUT) {
+            Ok(read) => {
+                let (process, summary) = describe_process(pid, &read);
+                (process, summary, read.dump_error.is_none())
+            }
+            Err(error) => {
+                let why = format!("the {what} {pid} could not be read: {error}");
+                (vec![why.clone()], why, false)
+            }
+        };
     let dump = if written {
         match agent.read_whole_file(&dump_path) {
             Ok(bytes) => Some(bytes),
@@ -4323,8 +4385,8 @@ impl std::fmt::Display for WindowWaitFailure {
         };
         write!(
             formatter,
-            "{}\n{}; see {WAIT_CHAINS_FILE_NAME}, {LAUNCHED_PROCESS_FILE_STEM}-{pid}.txt{dump} in the scenario's artifacts",
-            self.message, self.evidence.summary,
+            "{}\n{}; see {WAIT_CHAINS_FILE_NAME}, {LAUNCHED_PROCESS_FILE_STEM}-{pid}.txt{dump} in the scenario's artifacts\n{}; see {RUNNER_LOAD_FILE_STEM}-{LAUNCHED_PROCESS_FILE_STEM}-{pid}.txt",
+            self.message, self.evidence.summary, self.evidence.load_summary,
         )?;
         if !self.evidence.chains.is_empty() {
             write!(
@@ -4421,7 +4483,8 @@ pub(crate) fn launch_evidence_of(error: &io::Error) -> Option<&LaunchEvidence> {
 /// Writes what was recorded of each launch in `evidence` to `dir`: every
 /// wait chain to [`WAIT_CHAINS_FILE_NAME`], and each launched process's
 /// facts and minidump to files named for it
-/// ([`LAUNCHED_PROCESS_FILE_STEM`]). Writes nothing when there is none.
+/// ([`LAUNCHED_PROCESS_FILE_STEM`]), with the machine's load as its wait
+/// ran out ([`RUNNER_LOAD_FILE_STEM`]). Writes nothing when there is none.
 pub(crate) fn write_launch_evidence(dir: &Path, evidence: &[LaunchEvidence]) -> io::Result<()> {
     if evidence.is_empty() {
         return Ok(());
@@ -4437,6 +4500,10 @@ pub(crate) fn write_launch_evidence(dir: &Path, evidence: &[LaunchEvidence]) -> 
         fs::write(
             dir.join(format!("{stem}.txt")),
             launch.process.join("\n") + "\n",
+        )?;
+        fs::write(
+            dir.join(format!("{RUNNER_LOAD_FILE_STEM}-{stem}.txt")),
+            launch.load.join("\n") + "\n",
         )?;
         if let Some(dump) = &launch.dump {
             fs::write(dir.join(format!("{stem}.dmp")), dump)?;
@@ -4456,6 +4523,142 @@ fn write_process_dump(dir: &Path, stem: &str, dump: &ProcessDump) -> io::Result<
         fs::write(dir.join(format!("{stem}.dmp")), bytes)?;
     }
     Ok(())
+}
+
+/// The machine's load, read by the agent ([`AgentClient::runner_load`]),
+/// one fact a line, and summed up in one line
+/// ([`describe_runner_load`]); one line saying why when it could not be
+/// read.
+fn read_runner_load(agent: &mut AgentClient) -> (Vec<String>, String) {
+    match agent.runner_load(RUNNER_LOAD_INTERVAL, RUNNER_LOAD_TIMEOUT) {
+        Ok(load) => describe_runner_load(&load),
+        Err(error) => {
+            let why = format!("the machine's load could not be read: {error}");
+            (vec![why.clone()], why)
+        }
+    }
+}
+
+/// `tenths` of a percent, as a percentage with one decimal.
+fn percent(tenths: u32) -> String {
+    format!("{}.{}%", tenths / 10, tenths % 10)
+}
+
+/// `hundredths` as a number with two decimals.
+fn hundredths(hundredths: u32) -> String {
+    format!("{}.{:02}", hundredths / 100, hundredths % 100)
+}
+
+/// One process's use, on one line.
+fn describe_process_load(process: &ProcessLoad) -> String {
+    format!(
+        "{} pid {}: {} of the processors, {} ms in all, {} threads, working set {} KB",
+        process.name,
+        process.pid,
+        percent(process.processor_tenths),
+        process.processor_ms,
+        process.threads,
+        process.working_set_kb,
+    )
+}
+
+/// The machine's load (`load`), one fact a line: how long it took, the
+/// processor use, memory, the disks' queue, each `dwm.exe`, then the
+/// processes that spent the most processor time; each part not read says
+/// why. And one line summing up the processor, memory and disk figures,
+/// the three busiest processes and the Desktop Window Manager.
+fn describe_runner_load(load: &RunnerLoad) -> (Vec<String>, String) {
+    let mut lines = vec![format!(
+        "the machine's load, read in {} ms",
+        load.elapsed_ms
+    )];
+    let mut summary = Vec::new();
+    match &load.processor {
+        Ok(processor) => {
+            lines.push(format!(
+                "processor: {} busy over {} ms, {} processes",
+                percent(processor.busy_tenths),
+                processor.interval_ms,
+                processor.processes
+            ));
+            summary.push(format!("processor {} busy", percent(processor.busy_tenths)));
+        }
+        Err(error) => {
+            lines.push(format!("processor: {error}"));
+            summary.push("processor not read".to_owned());
+        }
+    }
+    match &load.memory {
+        Ok(memory) => {
+            lines.push(format!(
+                "memory: {}% in use, {} of {} MB available, commit {} of {} MB available",
+                memory.load_percent,
+                memory.available_mb,
+                memory.total_mb,
+                memory.commit_available_mb,
+                memory.commit_limit_mb
+            ));
+            summary.push(format!("memory {}% in use", memory.load_percent));
+        }
+        Err(error) => {
+            lines.push(format!("memory: {error}"));
+            summary.push("memory not read".to_owned());
+        }
+    }
+    match &load.disk {
+        Ok(disk) => {
+            lines.push(format!(
+                "disks' queue: {} at the end, {} on average",
+                hundredths(disk.current_hundredths),
+                hundredths(disk.average_hundredths)
+            ));
+            summary.push(format!(
+                "disks' queue {} on average",
+                hundredths(disk.average_hundredths)
+            ));
+        }
+        Err(error) => {
+            lines.push(format!("disks' queue: {error}"));
+            summary.push("disks' queue not read".to_owned());
+        }
+    }
+    let mut busiest = String::new();
+    if let Ok(processor) = &load.processor {
+        if processor.dwm.is_empty() {
+            lines.push("dwm.exe: none running".to_owned());
+        }
+        lines.extend(processor.dwm.iter().map(describe_process_load));
+        lines.push(format!(
+            "the {} processes that spent the most processor time over the interval:",
+            processor.top.len()
+        ));
+        lines.extend(processor.top.iter().map(describe_process_load));
+        let named = |process: &ProcessLoad| {
+            format!("{} {}", process.name, percent(process.processor_tenths))
+        };
+        let dwm = if processor.dwm.is_empty() {
+            "no dwm.exe".to_owned()
+        } else {
+            processor
+                .dwm
+                .iter()
+                .map(named)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        busiest = format!(
+            "; busiest {}; {dwm}",
+            processor
+                .top
+                .iter()
+                .take(3)
+                .map(named)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    let summary = format!("the machine's load: {}{busiest}", summary.join(", "));
+    (lines, summary)
 }
 
 /// The facts of launched process `pid` as the agent read them (`read`),
@@ -4513,6 +4716,10 @@ fn describe_process(pid: u32, read: &ProcessDiagnostics) -> (Vec<String>, String
         None => format!("minidump: {LAUNCHED_PROCESS_FILE_STEM}-{pid}.dmp"),
         Some(error) => format!("minidump: {error}"),
     });
+    lines.push(format!(
+        "read, the minidump included, in {} ms",
+        read.elapsed_ms
+    ));
     let summary = format!("launched process {pid}: {state}, {time}, {forms}");
     (lines, summary)
 }
@@ -5044,7 +5251,8 @@ mod minimize_tests {
 
     /// A launched process is described by its state, its processor time,
     /// which `System.Windows.Forms` it loaded, its modules and its
-    /// minidump, and summed up by the first three.
+    /// minidump, with how long the reading took, and summed up by the
+    /// first three.
     #[test]
     fn a_launched_process_is_described_with_its_windows_forms_image() {
         let forms = r"C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Windows.Forms\0f8d\System.Windows.Forms.ni.dll";
@@ -5058,6 +5266,7 @@ mod minimize_tests {
             ],
             modules_error: None,
             dump_error: None,
+            elapsed_ms: 41_870,
         };
         let (lines, summary) = describe_process(14224, &read);
         let time = "processor time 31250 ms in user mode and 1500 ms in kernel mode";
@@ -5072,11 +5281,78 @@ mod minimize_tests {
                 r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_owned(),
                 forms.to_owned(),
                 "minidump: launched-process-14224.dmp".to_owned(),
+                "read, the minidump included, in 41870 ms".to_owned(),
             ]
         );
         assert_eq!(
             summary,
             format!("launched process 14224: running, {time}, {loaded}")
+        );
+    }
+
+    /// The machine's load is written with each part read, each
+    /// `dwm.exe` and the top processes, one a line, and summed up by the
+    /// system's figures, the three busiest processes and the Desktop Window
+    /// Manager; a part not read says why, in both.
+    #[test]
+    fn the_machine_s_load_is_described_with_its_busiest_processes() {
+        let process = |name: &str, pid, processor_tenths| ProcessLoad {
+            name: name.to_owned(),
+            pid,
+            processor_tenths,
+            processor_ms: 52_340,
+            working_set_kb: 91_340,
+            threads: 22,
+        };
+        let dwm = process("dwm.exe", 1180, 5);
+        let load = RunnerLoad {
+            memory: Ok(verbatim_agent::protocol::MemoryLoad {
+                load_percent: 61,
+                total_mb: 16_383,
+                available_mb: 6_390,
+                commit_limit_mb: 20_479,
+                commit_available_mb: 9_002,
+            }),
+            processor: Ok(verbatim_agent::protocol::ProcessorLoad {
+                interval_ms: 1_003,
+                busy_tenths: 974,
+                processes: 141,
+                top: vec![
+                    process("MsMpEng.exe", 3804, 612),
+                    process("TiWorker.exe", 7716, 250),
+                    process("ffmpeg.exe", 9012, 80),
+                    dwm.clone(),
+                ],
+                dwm: vec![dwm],
+            }),
+            disk: Err("the disks' queue was not read within 5s".to_owned()),
+            elapsed_ms: 5_001,
+        };
+        let (lines, summary) = describe_runner_load(&load);
+        let line = |name: &str, pid, share: &str| {
+            format!(
+                "{name} pid {pid}: {share} of the processors, 52340 ms in all, 22 threads, working set 91340 KB"
+            )
+        };
+        assert_eq!(
+            lines,
+            vec![
+                "the machine's load, read in 5001 ms".to_owned(),
+                "processor: 97.4% busy over 1003 ms, 141 processes".to_owned(),
+                "memory: 61% in use, 6390 of 16383 MB available, commit 9002 of 20479 MB available"
+                    .to_owned(),
+                "disks' queue: the disks' queue was not read within 5s".to_owned(),
+                line("dwm.exe", 1180, "0.5%"),
+                "the 4 processes that spent the most processor time over the interval:".to_owned(),
+                line("MsMpEng.exe", 3804, "61.2%"),
+                line("TiWorker.exe", 7716, "25.0%"),
+                line("ffmpeg.exe", 9012, "8.0%"),
+                line("dwm.exe", 1180, "0.5%"),
+            ]
+        );
+        assert_eq!(
+            summary,
+            "the machine's load: processor 97.4% busy, memory 61% in use, disks' queue not read; busiest MsMpEng.exe 61.2%, TiWorker.exe 25.0%, ffmpeg.exe 8.0%; dwm.exe 0.5%"
         );
     }
 

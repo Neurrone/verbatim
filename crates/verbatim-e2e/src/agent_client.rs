@@ -24,7 +24,7 @@ use base64::engine::general_purpose::STANDARD;
 use verbatim_agent::protocol::{
     AGENT_PROTOCOL_VERSION, EventOutcome, FocusedElement, ForegroundInfo, ForegroundOutcome, Frame,
     KillOutcome, LaunchEnd, MinimizeOutcome, ProcessDiagnostics, ProcessExit, ProcessInfo,
-    ProcessState, ReplyPayload, Request, RequestEnvelope, SessionInfo, SwitcherItem,
+    ProcessState, ReplyPayload, Request, RequestEnvelope, RunnerLoad, SessionInfo, SwitcherItem,
     TaskbarCommand, UiaRootAnswer, WaitChain, WindowCondition, WindowInfo, minimize_all_limit,
 };
 use verbatim_control::client::Client as ControlClient;
@@ -1057,7 +1057,7 @@ impl AgentClient {
     }
 
     /// The processor time, modules and a minidump, written to `dump_path`
-    /// on the agent's machine, of process `pid`
+    /// on the agent's machine, of process `pid`, read within `timeout`
     /// ([`Request::ProcessDiagnostics`]).
     ///
     /// # Errors
@@ -1068,16 +1068,46 @@ impl AgentClient {
         &mut self,
         pid: u32,
         dump_path: &str,
+        timeout: Duration,
     ) -> io::Result<ProcessDiagnostics> {
-        match self.request(Request::ProcessDiagnostics {
-            pid,
-            dump_path: dump_path.to_owned(),
-        })? {
+        match self.request_waiting(
+            Request::ProcessDiagnostics {
+                pid,
+                dump_path: dump_path.to_owned(),
+                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            },
+            timeout,
+        )? {
             Frame::Reply {
                 payload: ReplyPayload::ProcessDiagnostics(read),
                 ..
             } => Ok(read),
             other => Err(unexpected("ProcessDiagnostics", &other)),
+        }
+    }
+
+    /// The machine's load, its processor and disk figures sampled over
+    /// `interval`, answered within `timeout` with each part not read by
+    /// then saying so ([`Request::RunnerLoad`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn runner_load(&mut self, interval: Duration, timeout: Duration) -> io::Result<RunnerLoad> {
+        let milliseconds =
+            |duration: Duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        match self.request_waiting(
+            Request::RunnerLoad {
+                interval_ms: milliseconds(interval),
+                timeout_ms: milliseconds(timeout),
+            },
+            timeout,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::RunnerLoad(load),
+                ..
+            } => Ok(load),
+            other => Err(unexpected("RunnerLoad", &other)),
         }
     }
 

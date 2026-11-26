@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -31,10 +31,6 @@ use windows::core::{BOOL, s, w};
 use crate::process;
 use crate::protocol::{ProcessDiagnostics, ProcessState};
 use crate::wait_chain::answer_within;
-
-/// How long [`diagnostics_within`] waits for the reading: under the
-/// harness's 30-second bound on a reply, as for the wait chains.
-pub const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The minidump's contents: the threads with their stacks, as every
 /// minidump has, and each thread's state and times
@@ -80,6 +76,7 @@ pub fn diagnostics_within(
 /// written to `dump_path`; each part that cannot be read says why.
 #[must_use]
 pub fn diagnostics(pid: u32, dump_path: &str) -> ProcessDiagnostics {
+    let started = Instant::now();
     let state = process::status(pid).unwrap_or(ProcessState::Exited { exit_code: None });
     let (user_ms, kernel_ms) = processor_time(pid).unzip();
     let (modules, modules_error) = match modules(pid) {
@@ -94,6 +91,7 @@ pub fn diagnostics(pid: u32, dump_path: &str) -> ProcessDiagnostics {
         modules,
         modules_error,
         dump_error,
+        elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
 }
 

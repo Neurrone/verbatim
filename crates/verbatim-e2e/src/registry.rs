@@ -764,11 +764,16 @@ fn run(def: &ScenarioDef, mode: Mode) {
         .and_then(|payload| payload.downcast_ref::<SpeechFailure>())
         .is_some_and(wants_verbatim_dump);
     // An application that stopped responding is asked what it waits on
-    // at once, before anything else, while it may still hang; then
-    // Verbatim is dumped when a wait for its speech ran out.
+    // at once, before anything else, while it may still hang; then the
+    // machine's load is read, for every failure, since a window wait or a
+    // speech wait that ran out on a stalled runner looks like any other;
+    // then Verbatim is dumped when a wait for its speech ran out.
     let body_failure = body_failure.map(|(message, point)| {
         let mut message = message;
         if let Some(note) = scenario.record_not_responding_wait_chains() {
+            message = format!("{message}\n{note}");
+        }
+        if let Some(note) = scenario.record_runner_load() {
             message = format!("{message}\n{note}");
         }
         if dumps_verbatim
@@ -1111,10 +1116,10 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// Writes what a failed launch's error carries, recorded when its
 /// document's window did not open or take the foreground in time (the wait
-/// chains, and the launched process's facts and minidump), or when
-/// Verbatim did not become ready (its stderr log), to the scenario's
-/// artifacts in `dir`; a launch fails before there is a scenario to
-/// collect them.
+/// chains, the machine's load, and the launched process's facts and
+/// minidump), or when Verbatim did not become ready (its stderr log), to
+/// the scenario's artifacts in `dir`; a launch fails before there is a
+/// scenario to collect them.
 fn record_launch_evidence(dir: &std::path::Path, error: &io::Error) {
     if let Some(evidence) = launch_evidence_of(error)
         && let Err(write) = write_launch_evidence(dir, std::slice::from_ref(evidence))

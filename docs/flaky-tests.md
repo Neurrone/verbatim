@@ -52,14 +52,19 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 - `quit_inside_a_file_dialog` on GitHub's runner (run 45845095452, 2026-11-26, at 520ca5f9)
   - How: "sound: app-not-responding" where the file dialog's opening was expected; the dialog's `ShowModal` took 54,762 ms.
   - Cause: the same stall, and again desktop-wide: the wait chains list a blocked thread of `dwm.exe` beside Verbatim's GUI thread, and the harness's own dump of Verbatim failed because the agent could not read the process within 10 s (`verbatim-696.txt`). So the stall is the runner's, not the dialog's; what blocks is still not known, since the dump is what would have named it.
-  - Fix: none yet. The next step is to record the runner's load when the sound fires, and to let the dump wait longer than the stall.
+  - Fix: none yet; the next stall names more. Every failed body now records the machine's load after the wait chains, as `runner-load.txt` in the scenario's artifacts: processor, memory and disk-queue use, the 12 processes that spent the most processor time over 1 s, and each `dwm.exe`'s processor time and threads, read with no window call so a frozen desktop cannot hold it up. The dump of Verbatim now waits up to 60 s, longer than any stall seen, and `verbatim-<pid>.txt` says how long it took. `books/dev/src/how-to/e2e.md`, "The runner's load", says how to read them.
+
+- `quit_inside_a_file_dialog` on GitHub's runner (run 45886935399, 2026-11-27, at 81ecf771), the fifth stall
+  - How: as above; the file dialog's `ShowModal` took 22,895 ms.
+  - Cause: this time the dump was written (`verbatim-904.dmp`, read with cdbX64 and the job's uploaded symbols). Verbatim's GUI thread waited on no lock: it was in `comdlg32!AutoComplete`, then `combase!CoCreateInstance`, then at the entry of `shell32!CACLIShellFolder_CreateInstance`, the file name box's autocomplete creating its shell folder object. Every other thread of Verbatim's was idle in its usual wait. The runner had been up 11 minutes and Verbatim 39 s, so the thread was running the shell's first-use code, most likely held up by page-ins on a cold, stalled runner, not by Verbatim.
+  - Fix: none in Verbatim's code. The machine's load the harness now records on a failure (`runner-load.txt`) is what can confirm disk or processor pressure the next time.
 
 ## A stand-in's window that does not answer after it shows
 
 - `text_box_page_keys` on GitHub's runner (run 45821984446, 2026-11-26, at 1fc0c0f6)
   - How: "sound: app-not-responding" where the window's title and text box were expected, at the scenario's first step.
   - Cause: the runner, as far as the artifacts show. The stand-in's form showed and took focus, then did not answer its first MSAA call for about 8 s (0.14 s in the passing run 45805762032); the outpost's probe timed out at 3 s and the sound is correct. The request made no UIA call and nothing fell back. `not-responding-wait-chains.txt` lists two blocked threads with no cycle: the form's UI thread and one of `dwm.exe`, which draws every window, so the desktop as a whole may have stalled. What they waited on is not known.
-  - Fix: none yet. If the next not-responding failure on the runner again lists `dwm.exe`, the harness records the runner's load at that moment, and the stalls of Verbatim's own dialogs above are read again in that light.
+  - Fix: none yet. The next failure records the machine's load: `runner-load.txt` for a failed body, and `runner-load-launched-process-<pid>.txt` beside `wait-chains.txt` when a launched window did not appear in time, as for the entry above ("The runner's load" in `books/dev/src/how-to/e2e.md`). When it names a process busy across the runner, or shows the runner idle while `dwm.exe` and the window wait, the stalls of Verbatim's own dialogs above are read again in that light.
 
 - `wpf_password` on GitHub's runner (run 45884584255, 2026-11-27, at 2b3959a5)
   - How: "… window" where "… dialog", "User name edit", "dickson" was expected.
@@ -70,6 +75,13 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - How: UIA_E_TIMEOUT from `window_live` on the compiled Forms program it had just started, after 14.7 s; it took 2.7 to 7.8 s in the 11 runs before.
   - Cause: the Forms program not answering UI Automation's first connection, the same family on the ARM64 runner; the log carries only the panic.
   - Fix: as for the entries above.
+
+## A typed character's echo read after the key window
+
+- `conhost_review_grid` on GitHub's runner (run 45886935399, 2026-11-27, at 81ecf771; the code was the same as the passing run at 2b3959a5)
+  - How: "\\" was heard where "backslash" was expected while typing `.\grid.ps1`.
+  - Cause: the console host's change event for the typed `\` reached the listener about 250 ms late, and the output read was answered about 322 ms after the key, past the key window (`KEY_WINDOW_MS`, 300 ms, in `crates/verbatim-text/src/terminal_reading.rs`). So the echo was taken as plain output and spoken with no symbol name. Every other key in the run was read within 6 ms. The delay is the runner stall of the entries above, but the weakness is Verbatim's: a fixed window judged by the read's time means a user on a loaded machine hears a typed symbol raw.
+  - Fix: the terminal's key-handover step (`docs/simplification-review/builds.md`), which decides how a key owns its reads. The scenario is not loosened.
 
 ## A key pressed as a terminal flood ends
 

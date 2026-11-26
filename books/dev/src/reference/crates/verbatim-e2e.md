@@ -968,13 +968,16 @@ Each exists in both terminals unless named for one.
     `foreground_info`, `close_windows`, `close_window`,
     `close_process_windows`, `record_windows`,
     `wait_for_new_windows_gone`, `close_abandoned_windows`,
-    `take_foreign_terminal_windows`, `wait_chains` and
-    `process_diagnostics` (the wait chains of windows' and processes'
-    threads, and a launched process's processor time, modules and
-    minidump, which a launch whose window did not open in time sums up in
-    its failure and writes to `wait-chains.txt` and
-    `launched-process-<pid>.txt` and `.dmp`, the runner writing them for a
-    launch that fails before the scenario exists).
+    `take_foreign_terminal_windows`, `wait_chains`,
+    `process_diagnostics` and `runner_load` (the wait chains of windows'
+    and processes' threads, a launched process's processor time, modules
+    and minidump, read within 60 seconds, and the machine's load, which a
+    launch whose window did not open in time sums up in its failure and
+    writes to `wait-chains.txt`, `launched-process-<pid>.txt` and `.dmp`
+    and `runner-load-launched-process-<pid>.txt`, the runner writing them
+    for a launch that fails before the scenario exists; every failed body
+    records the load too, as `runner-load.txt`,
+    `Scenario::record_runner_load`).
   - Accessibility reads: `focused_element`, `focus_by_automation_id`,
     `name_by_automation_id`, `controlled_items`,
     `key_toggled`, `screen_reader_flag`, `local_clock`,

@@ -252,7 +252,8 @@ jobs:
   # How many groups the e2e job runs the suite in, as its matrix
   # (`{"group":[1,2,...]}`): the fewest whose estimates from
   # xtask/e2e-durations.txt are each within 9 minutes, since each group's
-  # suite step times out at 10. `cargo xtask e2e-plan` reads the suite from
+  # suite step times out at 11, a minute of which is kept for a failure's
+  # evidence. `cargo xtask e2e-plan` reads the suite from
   # the registry's and the test file's source, so this job builds only
   # xtask's portable part, on Linux. A coverage run's groups run an
   # instrumented build, so `--coverage` multiplies every estimate by its
@@ -345,7 +346,7 @@ jobs:
       # Every scenario is recorded, video and Verbatim's own audio, when
       # ffmpeg can be started (crates/verbatim-e2e/src/recording.rs).
       # The test binary and xtask are compiled here, before the timed step,
-      # so the group's 10 minutes hold only the agent's start and the
+      # so the group's 11 minutes hold only the agent's start and the
       # scenarios the table measures.
       - name: Build the end-to-end test binary and xtask
         run: |
@@ -410,12 +411,15 @@ jobs:
       # an agent started in a step of its own was gone (connection refused)
       # by the time the suite ran. NVDA's system tests start NVDA inside
       # their test step for the same reason.
-      # A group's scenarios must finish within 10 minutes, which the plan
-      # job's sizing meets by the table, a coverage run's included; a run
+      # A group's scenarios must finish within 11 minutes, which the plan
+      # job's sizing meets by the table, a coverage run's included, with a
+      # minute's margin and a minute for a failure's evidence: a minidump
+      # the agent may wait up to a minute for while the runner stalls
+      # (books/dev/src/how-to/e2e.md, "The runner's load"); a run
       # started by hand to repeat one scenario repeats it as often as
       # asked, so it has the job's limit instead.
       - name: Run the E2E suite against a local agent
-        timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && !inputs.coverage && 360 || 10 }}
+        timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && !inputs.coverage && 360 || 11 }}
         env:
           VERBATIM_E2E_ENDPOINT: 127.0.0.1:44001
           VERBATIM_E2E_SKIP_LOCAL_ONLY: "1"

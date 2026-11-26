@@ -24,8 +24,8 @@ use crate::protocol::{
     RequestEnvelope,
 };
 use crate::{
-    clock, desktop, diagnostics, events, files, focus, jobs, keys, process, scenario_windows,
-    session, terminals, tunnel, typing, wait_chain,
+    clock, desktop, diagnostics, events, files, focus, jobs, keys, process, runner_load,
+    scenario_windows, session, terminals, tunnel, typing, wait_chain,
 };
 
 /// The number the next key stroke or typed character the agent injects
@@ -316,8 +316,12 @@ fn dispatch(connection: &mut Connection, id: u64, request: Request) -> Frame {
             },
             Err(error) => error_frame(id, &error),
         },
-        Request::ProcessDiagnostics { pid, dump_path } => {
-            match diagnostics::diagnostics_within(pid, dump_path, diagnostics::DIAGNOSTICS_TIMEOUT)
+        Request::ProcessDiagnostics {
+            pid,
+            dump_path,
+            timeout_ms,
+        } => {
+            match diagnostics::diagnostics_within(pid, dump_path, Duration::from_millis(timeout_ms))
             {
                 Ok(read) => Frame::Reply {
                     to: id,
@@ -346,6 +350,16 @@ fn dispatch(connection: &mut Connection, id: u64, request: Request) -> Frame {
                 }
             }
         }
+        Request::RunnerLoad {
+            interval_ms,
+            timeout_ms,
+        } => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::RunnerLoad(runner_load::runner_load(
+                Duration::from_millis(interval_ms),
+                Duration::from_millis(timeout_ms),
+            )),
+        },
         Request::WaitChains { windows, pids } => {
             match wait_chain::wait_chains_within(windows, pids, wait_chain::WAIT_CHAINS_TIMEOUT) {
                 Ok(chains) => Frame::Reply {
@@ -1069,6 +1083,30 @@ mod tests {
             }
             other @ Frame::Reply { .. } => panic!("expected an error frame, got {other:?}"),
         }
+    }
+
+    /// The machine's load is read over the wire, sampled over the
+    /// interval asked for.
+    #[test]
+    fn the_runner_s_load_is_read_over_the_wire() {
+        let addr = start_agent(r"\\.\pipe\verbatim-agent-test-unused-load");
+        let mut client = TestClient::connect(addr);
+        client.hello();
+        let frame = client.request(Request::RunnerLoad {
+            interval_ms: 200,
+            timeout_ms: 20_000,
+        });
+        let Frame::Reply {
+            to: 2,
+            payload: ReplyPayload::RunnerLoad(load),
+        } = frame
+        else {
+            panic!("expected the load, got {frame:?}");
+        };
+        let processor = load.processor.expect("the processor use is read");
+        assert!(processor.interval_ms >= 200, "{processor:?}");
+        load.memory.expect("the memory is read");
+        load.disk.expect("the disks' queue is read");
     }
 
     #[test]

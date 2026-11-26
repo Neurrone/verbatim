@@ -90,10 +90,13 @@ use serde::{Deserialize, Serialize};
 /// version 34 added [`Request::WaitForLastShownLine`], so a terminal is
 /// seen to show its prompt, read from the terminal itself; version 35
 /// added [`Request::WaitForUiaAnswer`], so a window still starting is seen
-/// to answer UI Automation before it is brought forward. A test run
+/// to answer UI Automation before it is brought forward; version 36 added
+/// [`Request::RunnerLoad`], so a failure records the machine's load, and
+/// a time limit to [`Request::ProcessDiagnostics`], with how long its
+/// reading took in [`ProcessDiagnostics::elapsed_ms`]. A test run
 /// against an older agent is refused at `Hello` instead of losing its
 /// connection mid-run, or running without the exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 35;
+pub const AGENT_PROTOCOL_VERSION: u32 = 36;
 
 /// How long the agent gives the taskbar to handle its Minimize All command
 /// ([`Request::MinimizeAll`]), in milliseconds.
@@ -546,12 +549,27 @@ pub enum Request {
     /// appear in time: its processor time, the modules it has loaded, and
     /// a minidump with its threads' information written to `dump_path`.
     /// Answered by [`ReplyPayload::ProcessDiagnostics`], or by
-    /// [`Frame::Error`] when they are not read within 10 seconds.
+    /// [`Frame::Error`] when they are not read within `timeout_ms`.
     ProcessDiagnostics {
         /// The process.
         pid: u32,
         /// Where to write the minidump, agent-local.
         dump_path: String,
+        /// How long the reading may take, in milliseconds.
+        timeout_ms: u64,
+    },
+    /// Records the machine's load: its processor and memory use, its
+    /// disks' queue, and the processes that spent the most processor time
+    /// over `interval_ms`, with every Desktop Window Manager process
+    /// (`dwm.exe`). Read with no window or UI call, so a frozen desktop
+    /// cannot hold it up; each part not read within `timeout_ms` says so.
+    /// Answered by [`ReplyPayload::RunnerLoad`].
+    RunnerLoad {
+        /// How long the processor and disk figures are sampled over, in
+        /// milliseconds.
+        interval_ms: u64,
+        /// How long the whole reading may take, in milliseconds.
+        timeout_ms: u64,
     },
     /// Sends a close request to one window by its handle, while it is still
     /// shown and still owned by process `pid` with class `class`, so a handle
@@ -896,6 +914,8 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::ProcessDiagnostics`].
     ProcessDiagnostics(ProcessDiagnostics),
+    /// Answer to [`Request::RunnerLoad`].
+    RunnerLoad(RunnerLoad),
     /// Answer to [`Request::ControlledItems`].
     ControlledItems {
         /// The size of the set the controlled element's first child
@@ -1366,6 +1386,85 @@ pub struct ProcessDiagnostics {
     pub modules_error: Option<String>,
     /// Why the minidump could not be written; `None` when it was.
     pub dump_error: Option<String>,
+    /// How long the reading took, the minidump's writing included, in
+    /// milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// The machine's load, for [`Request::RunnerLoad`]: each part, or why it
+/// was not read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerLoad {
+    /// The physical memory and commit in use.
+    pub memory: Result<MemoryLoad, String>,
+    /// Processor use over the interval, system-wide and by process.
+    pub processor: Result<ProcessorLoad, String>,
+    /// The disks' queue.
+    pub disk: Result<DiskQueue, String>,
+    /// How long the reading took, in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// The machine's memory use, for [`RunnerLoad`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryLoad {
+    /// The share of physical memory in use, in percent.
+    pub load_percent: u32,
+    /// Physical memory in all, in megabytes.
+    pub total_mb: u64,
+    /// Physical memory available, in megabytes.
+    pub available_mb: u64,
+    /// The commit limit, in megabytes.
+    pub commit_limit_mb: u64,
+    /// The commit available, in megabytes.
+    pub commit_available_mb: u64,
+}
+
+/// Processor use over an interval, for [`RunnerLoad`]. Shares are of the
+/// whole machine, every logical processor together, in tenths of a
+/// percent, as Task Manager gives them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessorLoad {
+    /// How long the interval was, in milliseconds.
+    pub interval_ms: u64,
+    /// The share of the machine's processor time spent busy.
+    pub busy_tenths: u32,
+    /// How many processes there were at the interval's end.
+    pub processes: u32,
+    /// The processes that spent the most processor time over the
+    /// interval, the most first; the idle process left out.
+    pub top: Vec<ProcessLoad>,
+    /// Every `dwm.exe`, the Desktop Window Manager, one per session.
+    pub dwm: Vec<ProcessLoad>,
+}
+
+/// One process's use, for [`ProcessorLoad`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessLoad {
+    /// Its image name, such as `MsMpEng.exe`.
+    pub name: String,
+    /// Its process id.
+    pub pid: u32,
+    /// Its share of the machine's processor time over the interval.
+    pub processor_tenths: u32,
+    /// The processor time it has spent since it started, user and kernel
+    /// together, in milliseconds.
+    pub processor_ms: u64,
+    /// Its working set, in kilobytes.
+    pub working_set_kb: u64,
+    /// How many threads it has.
+    pub threads: u32,
+}
+
+/// The disks' queue over an interval, all physical disks together, for
+/// [`RunnerLoad`], in hundredths of a request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskQueue {
+    /// The requests waiting or in service at the interval's end.
+    pub current_hundredths: u32,
+    /// The average of the requests waiting or in service over the
+    /// interval.
+    pub average_hundredths: u32,
 }
 
 /// The focused object as MSAA reports it, for
@@ -1879,6 +1978,7 @@ mod tests {
             request: Request::ProcessDiagnostics {
                 pid: 14224,
                 dump_path: r"C:\stage\launched-14224.dmp".to_owned(),
+                timeout_ms: 60_000,
             },
         };
         let frame = Frame::Reply {
@@ -1893,6 +1993,57 @@ mod tests {
                 ],
                 modules_error: None,
                 dump_error: Some("Access is denied.".to_owned()),
+                elapsed_ms: 12_480,
+            }),
+        };
+
+        let mut buffer = Vec::new();
+        write_message(&mut buffer, &request).expect("writes");
+        write_message(&mut buffer, &frame).expect("writes");
+
+        let mut reader = buffer.as_slice();
+        let read_request: RequestEnvelope = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        let read_frame: Frame = read_message(&mut reader)
+            .expect("reads")
+            .expect("not end of stream");
+        assert_eq!(read_request, request);
+        assert_eq!(read_frame, frame);
+    }
+
+    /// A load request and its answer, one part read and two not, round
+    /// trip.
+    #[test]
+    fn a_runner_load_request_round_trips() {
+        let request = RequestEnvelope {
+            id: 16,
+            request: Request::RunnerLoad {
+                interval_ms: 1_000,
+                timeout_ms: 5_000,
+            },
+        };
+        let dwm = ProcessLoad {
+            name: "dwm.exe".to_owned(),
+            pid: 1180,
+            processor_tenths: 123,
+            processor_ms: 48_200,
+            working_set_kb: 91_340,
+            threads: 22,
+        };
+        let frame = Frame::Reply {
+            to: 16,
+            payload: ReplyPayload::RunnerLoad(RunnerLoad {
+                memory: Err("memory was not read within 5s".to_owned()),
+                processor: Ok(ProcessorLoad {
+                    interval_ms: 1_003,
+                    busy_tenths: 974,
+                    processes: 141,
+                    top: vec![dwm.clone()],
+                    dwm: vec![dwm],
+                }),
+                disk: Err("PdhAddEnglishCounterW failed: 0xC0000BB8".to_owned()),
+                elapsed_ms: 5_002,
             }),
         };
 

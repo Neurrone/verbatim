@@ -386,11 +386,13 @@ and `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`. A group's setup, from checkout to
 the suite with a warm cache, took about two and a half minutes of the
 single job the groups replaced.
 
-A group's scenarios must finish within 10 minutes: the step that runs
+A group's scenarios must finish within 11 minutes: the step that runs
 them times out then. The limit is met by design, not found by a timeout:
 the `plan` job, on Linux, chooses the number of groups every run with
 `cargo xtask e2e-plan`, the fewest whose estimates are each within 9
-minutes, leaving a minute's margin, and prints the `e2e` job's matrix.
+minutes, leaving a minute's margin and a minute for a failure's evidence,
+since a failed scenario may wait up to a minute for a minidump on a
+stalled runner, and prints the `e2e` job's matrix.
 It starts from the suite's total estimate over 9 minutes, rounded up, and
 adds a group while the greedy split still leaves one over. Nobody edits
 the count. The one failure is a single scenario estimated over 9
@@ -462,7 +464,7 @@ stays far below GitHub's limit of 500 artifacts a job.
 
 Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
 repeat=<n>`, the workflow runs its `changes` and `plan` jobs and its `e2e` job, as one job rather than
-one per group and without the 10-minute limit, which runs that one
+one per group and without the 11-minute limit, which runs that one
 scenario n times, each in its own test process, and uploads every run's copy from the history (below) as the
 `verbatim-e2e-history` artifact, so an intermittent failure on GitHub's
 runner can be measured without a push for each run. The job fails before
@@ -539,8 +541,9 @@ losing any of them fails the run:
   within 10 seconds, the file holds one line giving the reason. The same
   lines are appended to the failure message. When the
   window was the scenario's document, which opens before Verbatim, the
-  launch fails before any other artifact is collected, and this file and
-  the two below are the only ones.
+  launch fails before any other artifact is collected, and this file, the
+  two below and `runner-load-launched-process-<pid>.txt` are the only
+  ones.
 - `not-responding-wait-chains.txt`, only when the body failed after
   Verbatim had played the application-not-responding sound: read as soon
   as the body fails, while the application may still hang, the wait chain
@@ -549,6 +552,12 @@ losing any of them fails the run:
   as in `wait-chains.txt`, with a first line saying so when no window is
   reported as not responding. The same lines are appended to the failure
   message.
+- `runner-load.txt`, whenever the body failed: the machine's load, read
+  after the wait chains above and before any dump ("The runner's load"
+  below). A line summing it up is appended to the failure message.
+- `runner-load-launched-process-<pid>.txt`, beside `wait-chains.txt` and
+  only with it: the machine's load as the launch's wait ran out, read
+  after the wait chains and before the process's dump, in the same form.
 - `verbatim-<pid>.txt` and `verbatim-<pid>.dmp`, only when the body
   failed because a wait for speech ran out (an utterance not queued, not
   started or not ended in time), or failed after the
@@ -571,10 +580,12 @@ losing any of them fails the run:
   (`System.Windows.Forms.ni.dll`) or the plain assembly
   (`System.Windows.Forms.dll`), which the runtime compiles as it loads,
   or neither; every module it has loaded, in load order; and the
-  minidump, or why there is none. A part the agent could not read says
-  why, and when the agent does not read them within 10 seconds the file
-  holds the reason alone. The failure message gives the first three facts
-  on one line and names these files.
+  minidump, or why there is none; and how long the reading took, the
+  minidump's writing included. A part the agent could not read says
+  why, and when the agent does not read them within 60 seconds, longer
+  than the runner's stalls have lasted, the file holds the reason alone.
+  The failure message gives the first three facts on one line and names
+  these files.
 - `launched-process-<pid>.dmp`, with it: the process's minidump, with
   its threads' stacks and information, its handles and its unloaded
   modules, for a debugger such as WinDbg. The agent writes it into the
@@ -668,6 +679,40 @@ foreground window, entering a menu, a focus change that left the focus it
 announced, or interrupting speech; the lines just above the `cancelled`
 line show what. A timeout and an outright connection failure read
 differently: the second appends "underlying error: ...".
+
+## The runner's load
+
+On GitHub's runners every window has at times stopped answering for 5 to
+55 seconds at once ([the known failures](https://github.com/Neurrone/verbatim/blob/main/docs/flaky-tests.md), "A stand-in's window that does not answer after it shows"). So every failed body, and every launch whose window did not
+appear in time, records the machine's load as it failed, in
+`runner-load.txt` or `runner-load-launched-process-<pid>.txt` ("What a
+run leaves behind"). The agent reads it with no window or UI call and
+without opening any process, so a frozen desktop cannot hold it up, and
+gives up after 5 seconds with what it has, each part it did not read
+saying so. One fact a line:
+
+- how long the reading took;
+- the processor: the share of the whole machine's processor time spent
+  busy over a 1-second interval, as Task Manager gives it, and how many
+  processes ran;
+- memory: the share of physical memory in use, the megabytes available of
+  the total, and the commit available of its limit;
+- the disks' queue, all physical disks together: the requests waiting or
+  in service at the interval's end and on average over it;
+- each `dwm.exe`, the Desktop Window Manager, which draws every window:
+  its share of the processors over the interval, the processor time it
+  has spent since it started, its threads and its working set;
+- the 12 processes that spent the most processor time over the interval,
+  the most first, in the same form.
+
+Read it beside the wait chains. A runner whose processor is near 100%
+busy names its cause in the top processes: Defender (`MsMpEng.exe`),
+Windows Update (`TiWorker.exe`, `TrustedInstaller.exe`), search indexing
+(`SearchIndexer.exe`), or the recorder's `ffmpeg.exe`. A disks' queue
+well above 1 with an idle processor points at the disk; little memory
+available, at paging. A runner idle on every count while a window does
+not answer points back at that window's thread and the Desktop Window
+Manager, whose processor time and threads are given either way.
 
 ## Reading Verbatim's minidump
 

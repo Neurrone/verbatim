@@ -18,7 +18,7 @@ shares, such as a VM's private virtual switch, an accepted risk (Dickson,
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 32) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 36) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -120,8 +120,21 @@ Public API:
     minidump written to a path given, from `MiniDumpWriteDump` in the
     system folder's `dbghelp.dll`, loaded once, with thread information,
     handles and unloaded modules, one dump at a time; each part that cannot
-    be read says why, and the request is read on a thread of its own and
-    answered with an error after 10 seconds, as `WaitChains` is), and
+    be read says why, with how long the reading took, and the request is
+    read on a thread of its own and answered with an error after the time
+    limit the request gives, since version 36), `RunnerLoad` (protocol
+    version 36, private `runner_load` module: the machine's load, read with
+    no window or UI call and without opening any process, so a frozen
+    desktop cannot hold it up: memory from `GlobalMemoryStatusEx`; the
+    system's processor use from `GetSystemTimes` and every process's
+    processor time, working set and threads from two readings of
+    `NtQuerySystemInformation`'s process list, the interval apart, giving
+    the 12 processes that spent the most and every `dwm.exe`; and the
+    physical disks' current and average queue from the performance data
+    helper's English counter names. The interval is timed by the pacing
+    module's waitable timer. The parts are read on two threads of their
+    own and the answer is given at the request's time limit with each part
+    not read by then saying so, its thread left to finish alone), and
     `TakeForeignTerminalWindows` (every Windows
     Terminal window shown since the last such request by a process outside
     the jobs of every process the agent launched, forgotten as it is

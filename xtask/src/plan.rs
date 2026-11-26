@@ -19,8 +19,10 @@
 //! tie), with names breaking ties of time, so the assignment depends only
 //! on the set of names and the table. The count is the smallest, from the
 //! total over [`BUDGET_SECONDS`] rounded up, whose every group's estimate
-//! is within that budget: the step running a group times out after 10
-//! minutes, and the budget leaves a minute's margin. The one failure is a
+//! is within that budget: the step running a group times out after 11
+//! minutes, and the budget leaves a minute's margin and a minute for a
+//! failure's evidence, such as a minidump the agent may wait a minute
+//! for. The one failure is a
 //! single scenario estimated over the budget, which no count can place.
 //!
 //! With `--coverage`, for a coverage run's groups, which run an instrumented
@@ -40,8 +42,9 @@ const DURATIONS: &str = include_str!("../e2e-durations.txt");
 /// scenarios take, so a new one is not packed in as if it were free.
 pub const DEFAULT_SECONDS: f64 = 60.0;
 
-/// The most a group's estimate may total: the 10-minute timeout of the
-/// step running it, less a minute's margin.
+/// The most a group's estimate may total: the 11-minute timeout of the
+/// step running it, less a minute's margin and a minute for a failure's
+/// evidence.
 pub const BUDGET_SECONDS: f64 = 540.0;
 
 /// How much longer a scenario takes against the instrumented build of a
@@ -278,7 +281,7 @@ pub fn group_count(
         .collect();
     if !over.is_empty() {
         return Err(format!(
-            "{} estimated over a group's budget of {:.0} minutes (the step's 10-minute timeout less a minute's margin), so no group can hold it: make it faster",
+            "{} estimated over a group's budget of {:.0} minutes (the step's 11-minute timeout less a minute's margin and a minute for a failure's evidence), so no group can hold it: make it faster",
             over.join(", "),
             BUDGET_SECONDS / 60.0
         ));
@@ -428,7 +431,7 @@ mod tests {
         let table = parse_durations("541 slow\n10 quick\n").expect("parses");
         assert_eq!(
             group_count(&names(&["quick", "slow"]), &table, 1.0),
-            Err("slow (9.0 minutes) estimated over a group's budget of 9 minutes (the step's 10-minute timeout less a minute's margin), so no group can hold it: make it faster".to_string())
+            Err("slow (9.0 minutes) estimated over a group's budget of 9 minutes (the step's 11-minute timeout less a minute's margin and a minute for a failure's evidence), so no group can hold it: make it faster".to_string())
         );
     }
 

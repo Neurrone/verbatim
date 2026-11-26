@@ -42,6 +42,7 @@ mod keys;
 mod pace;
 mod process;
 pub mod protocol;
+mod runner_load;
 mod scenario_windows;
 pub mod server;
 pub mod session;
