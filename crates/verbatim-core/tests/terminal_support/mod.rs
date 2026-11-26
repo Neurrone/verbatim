@@ -151,6 +151,9 @@ pub struct Outpost {
     /// The positions the generic steps hold (`steps`), anchor `n` the
     /// `n - 1`th.
     held: Vec<Position>,
+    /// Whether the provider reports no selection, so that a generic
+    /// `Caret` step finds no caret.
+    pub no_selection: bool,
 }
 
 impl Outpost {
@@ -162,6 +165,7 @@ impl Outpost {
             anchors: BTreeMap::new(),
             minted: 0,
             held: Vec::new(),
+            no_selection: false,
         }
     }
 
@@ -796,11 +800,21 @@ impl Session {
                 self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
                 return;
             }
-            // A batch of generic text steps: the terminal's second
-            // answerer, step by step.
-            if steps::answers(batch) {
+            // A batch Core's terminal reader wrote, or another of generic
+            // text steps: the terminal's second answerer, step by step. A
+            // window read began at the session's time, or when
+            // [`Session::next_read_began`] says.
+            let read = verbatim_core::terminal::reader::asked(batch);
+            if read.is_some() || steps::answers(batch) {
                 let outcomes = self.outpost.run(batch);
-                self.reply(&ask, Outcome::Result(Reply::Steps(outcomes)));
+                let began_ms = match read {
+                    Some(verbatim_core::terminal::reader::Asked::Window(_)) => {
+                        self.next_read_began.take()
+                    }
+                    _ => None,
+                }
+                .unwrap_or(self.at_ms);
+                self.reply_begun(&ask, Outcome::Result(Reply::Steps(outcomes)), began_ms);
                 return;
             }
             let found = Found::Read(focus_read(self.depth, self.console));
@@ -883,8 +897,16 @@ impl Session {
         self.settle();
     }
 
-    /// Sends the answer to `ask`, `outcome`, and takes in its effects.
+    /// Sends the answer to `ask`, `outcome`, begun and ended at the
+    /// session's time, and takes in its effects.
     fn reply(&mut self, ask: &Ask, outcome: Outcome) {
+        self.reply_begun(ask, outcome, self.at_ms);
+    }
+
+    /// Sends the answer to `ask`, `outcome`, begun at `began_ms` and ended
+    /// at the session's time, as the outpost's worker stamps an answer, and
+    /// takes in its effects.
+    fn reply_begun(&mut self, ask: &Ask, outcome: Outcome, began_ms: u64) {
         let input = self.queued_input(
             TraceId::from_raw(2),
             QueueInput::Answer {
@@ -894,8 +916,8 @@ impl Session {
                     outcome,
                     probes: Vec::new(),
                     detail: String::new(),
-                    began_us: 0,
-                    ended_us: 0,
+                    began_us: began_ms * 1_000,
+                    ended_us: self.at_ms * 1_000,
                 },
             },
         );

@@ -1,47 +1,18 @@
 //! The simulated terminal's second answerer: each generic text step of a
 //! batch (`Visible`, `Move`, `ReadText` with `whole` and `trim`,
 //! `ReadRange`, `Caret`, `FindText` and `ReadColours`) answered as the
-//! terminal's UI Automation provider answers the step's calls, and the
-//! terminal's old operations composed of those steps ([`add_read`] with
-//! [`read_of`], [`add_search`] with [`matches_of`]).
+//! terminal's UI Automation provider answers the step's calls
+//! ([`Outpost::run`]), and the terminal's old search composed of those
+//! steps ([`add_search`] with [`matches_of`]).
 //!
 //! Core reads a terminal by the old operations, which the first answerer
 //! (`Outpost::read`, `history` and `find`) answers, so no request of
-//! today's Core reaches this one: `terminal_answerers.rs` drives it
-//! directly and compares what its steps compose with the old operations'
-//! answers field by field, the comparison Core's reader built from generic
-//! steps is proven with (Dickson, 2026-11-26,
-//! `docs/simplification-review/builds.md`).
-//!
-//! The composed read's steps, in order:
-//!
-//! - `Visible`: the screen's text and whether it starts at the text's
-//!   start;
-//! - when colours are asked, the line at the screen's top, trimmed, whose
-//!   padded length is the screen's width;
-//! - a move from the text's end to it, which holds the end: every later
-//!   step names this held end, as the old program takes the document range
-//!   once;
-//! - the next read's start: the held end moved up by the screen's height
-//!   as last found, or the screen's top before it is known;
-//! - a move from the next start to the end, and one from the held end to
-//!   the text's start: the rows each lies from the end, by which the
-//!   start the read named is compared with the next start, and a start is
-//!   known to be the text's;
-//! - the fallback read, from the next start, or the text's start for a
-//!   whole read, moved up by the rows asked above it, to the held end, in
-//!   one trimmed `ReadRange`;
-//! - when the read names a start: a move from it to the end, refused when
-//!   it lies outside the text, and, when it was not, the same read from
-//!   it;
-//! - the first line, the caret, its line, the caret's rows to the end;
-//! - when asked, the colours.
-//!
-//! The read from the named start and the fallback read are both taken
-//! because a step's condition cannot compare two text positions: the
-//! composition picks one by the rows each start lies from the end. That
-//! is one screen-sized read more than the old program makes whenever the
-//! named start is used.
+//! today's Core reaches this one. `terminal_answerers.rs` drives it with
+//! the batches of Core's terminal reader
+//! (`verbatim_core::terminal::reader`) and compares what the reader reads
+//! back with the reference read, field by field; the command search stays
+//! on its old operation, and is compared as composed here (Dickson,
+//! 2026-11-26, `docs/simplification-review/builds.md`).
 
 #![expect(
     clippy::result_large_err,
@@ -54,10 +25,10 @@ use verbatim_model::batch::{
     StepOutcome, StepRefusal, VisibleText,
 };
 use verbatim_model::{
-    NodeId, TerminalColourRun, TerminalMatch, TerminalSnapshot, TerminalText, TextAnchor,
-    TextChunk, TextDetails, TextMovement, TextPoint, TextPosition, TextUnit,
+    NodeId, TerminalColourRun, TerminalMatch, TerminalText, TextAnchor, TextChunk, TextMovement,
+    TextPoint, TextPosition, TextUnit,
 };
-use verbatim_term_sim::{Position, Query, Range};
+use verbatim_term_sim::{Position, Range};
 
 use super::Outpost;
 
@@ -125,7 +96,7 @@ impl Outpost {
             Point::At(TextPoint::Start) => Ok(self.sim.document_range().start),
             Point::At(TextPoint::End) => Ok(self.sim.document_range().end),
             Point::At(TextPoint::Caret | TextPoint::SelectionStart | TextPoint::SelectionEnd) => {
-                Ok(self.sim.caret().start)
+                Ok(self.caret().0)
             }
             Point::At(TextPoint::At(position)) => {
                 self.advanced(self.held_or_missing(position.anchor)?, position.offset)
@@ -419,13 +390,14 @@ impl Outpost {
                 }))
             }
             Op::Caret { .. } => {
-                let caret = self.hold(self.sim.caret().start);
+                let (at, reported) = self.caret();
+                let caret = self.hold(at);
                 Ok(Done::Caret(CaretAt {
                     caret,
                     selection: None,
                     held: caret,
                     offsets: None,
-                    reported: true,
+                    reported,
                 }))
             }
             Op::FindText {
@@ -465,6 +437,17 @@ impl Outpost {
                 ))
             }
             other => panic!("a step the simulated terminal does not answer: {other:?}"),
+        }
+    }
+
+    /// Where the caret is, and whether the provider reported a selection:
+    /// with none reported ([`Outpost::no_selection`]), the text's start
+    /// stands in for it, as the outpost's caret read answers.
+    fn caret(&self) -> (Position, bool) {
+        if self.no_selection {
+            (self.sim.document_range().start, false)
+        } else {
+            (self.sim.caret().start, true)
         }
     }
 
@@ -539,125 +522,6 @@ fn lines(count: i32) -> TextMovement {
     }
 }
 
-/// What an old read asks, as the generic steps name it: the old
-/// operation's query with its start a held anchor.
-#[derive(Clone, Copy, Debug)]
-pub struct ReadAsk {
-    /// The start the last read named, held; `None` for a first read.
-    pub start: Option<TextAnchor>,
-    /// The screen's height as the last read found it; 0 when not known.
-    pub height: u32,
-    /// Whether to read the whole text.
-    pub whole: bool,
-    /// How many rows above the start to begin the read.
-    pub above: u32,
-    /// Whether to read the screen's colours.
-    pub colours: bool,
-}
-
-/// One candidate start's steps: the move up by the rows asked above it,
-/// when any are, and the text from where it landed to the held end.
-struct Candidate<B> {
-    up: Option<Ref<B, kind::Move>>,
-    text: Ref<B, kind::ReadRange>,
-}
-
-/// The steps of a composed read ([`add_read`]).
-pub struct ReadSteps<B> {
-    ask: ReadAsk,
-    visible: Ref<B, kind::Visible>,
-    next: Option<Ref<B, kind::Move>>,
-    next_to_end: Ref<B, kind::Move>,
-    document: Ref<B, kind::Move>,
-    fallback: Candidate<B>,
-    named: Option<(Ref<B, kind::Move>, Candidate<B>)>,
-    first: Ref<B, kind::ReadText>,
-    caret: Ref<B, kind::Caret>,
-    caret_line: Ref<B, kind::ReadText>,
-    caret_rows: Ref<B, kind::Move>,
-    colours: Option<Ref<B, kind::ReadColours>>,
-}
-
-/// Adds the read `ask` names of terminal `node` to `batch`, as the
-/// module's documentation lists its steps.
-pub fn add_read<B>(batch: &mut Builder<B>, node: NodeId, ask: &ReadAsk) -> ReadSteps<B> {
-    let visible = batch.visible(node);
-    let top = ask
-        .colours
-        .then(|| batch.read_trimmed(node, visible.visible_start(), TextUnit::Line, (1, false)));
-    let end = batch.move_point(node, TextPoint::End.into(), lines(FAR));
-    let next = (ask.height > 0).then(|| {
-        let up = i32::try_from(ask.height).map_or(-FAR, |height| -height);
-        batch.move_point(node, end.landed(), lines(up))
-    });
-    let next_start = next.map_or(visible.visible_start(), Ref::landed);
-    let next_to_end = batch.move_point(node, next_start, lines(FAR));
-    let document = batch.move_point(node, end.landed(), lines(-FAR));
-    let above = (ask.above > 0 && !ask.whole)
-        .then(|| i32::try_from(ask.above).map_or(-FAR, |above| -above));
-    let fallback = {
-        let start = if ask.whole {
-            TextPoint::Start.into()
-        } else {
-            next_start
-        };
-        let up = above.map(|above| batch.move_point(node, start, lines(above)));
-        let from = up.map_or(start, Ref::landed);
-        Candidate {
-            up,
-            text: batch.read_range_trimmed(node, (from, end.landed())),
-        }
-    };
-    let named = ask.start.filter(|_| !ask.whole).map(|start| {
-        let start = TextPoint::At(TextPosition::at(start)).into();
-        let to_end = batch.move_point(node, start, lines(FAR));
-        let up = above.map(|above| {
-            batch.when(to_end.found());
-            batch.move_point(node, start, lines(above))
-        });
-        let from = up.map_or(start, Ref::landed);
-        batch.when(to_end.found());
-        let text = batch.read_range_trimmed(node, (from, end.landed()));
-        (to_end, Candidate { up, text })
-    });
-    let first = batch.read_trimmed(node, TextPoint::Start.into(), TextUnit::Line, (1, false));
-    let caret = batch.caret(node, None);
-    let caret_line = batch.read_text(
-        node,
-        caret.caret(),
-        None,
-        TextUnit::Line,
-        1,
-        TextDetails::NONE,
-    );
-    let caret_rows = batch.move_point(node, caret.caret(), lines(FAR));
-    let colours = top.map(|top| batch.read_colours(node, visible, top));
-    ReadSteps {
-        ask: *ask,
-        visible,
-        next,
-        next_to_end,
-        document,
-        fallback,
-        named,
-        first,
-        caret,
-        caret_line,
-        caret_rows,
-        colours,
-    }
-}
-
-/// An old read composed of generic steps' answers: the old operation's
-/// snapshot, its times zero, and the anchor held at the next read's start.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Composed {
-    /// The snapshot.
-    pub snapshot: TerminalSnapshot,
-    /// The next read's start, held.
-    pub next: TextAnchor,
-}
-
 /// A step's result, when it was done.
 fn done<'a, T>(got: &Got<'a, T>) -> Option<&'a T> {
     match got {
@@ -669,89 +533,6 @@ fn done<'a, T>(got: &Got<'a, T>) -> Option<&'a T> {
 /// How many rows a move went.
 fn rows(moved: &Moved) -> u32 {
     moved.moved.unsigned_abs()
-}
-
-/// The one line a read of one line gave, without its padding.
-fn line(read: &Chunks) -> Option<TerminalText> {
-    let chunk = read.chunks.first()?;
-    Some(match &read.padded {
-        Some(lengths) => TerminalText {
-            text: chunk.text.clone(),
-            lengths: lengths.clone(),
-        },
-        None => TerminalText::unpadded(&chunk.text),
-    })
-}
-
-/// The old read the answers to `steps` compose; `None` when a step the
-/// read needs was not done.
-pub fn read_of<B>(answers: &Answers<B>, steps: &ReadSteps<B>) -> Option<Composed> {
-    let ask = &steps.ask;
-    let visible = done(&answers.get(steps.visible))?;
-    let next = match steps.next {
-        Some(next) => done(&answers.get(next))?.to,
-        None => visible.start,
-    };
-    let next_to_end = rows(done(&answers.get(steps.next_to_end))?);
-    let document = rows(done(&answers.get(steps.document))?);
-    // The named start is used when it lies at or above the next start:
-    // at least as many rows from the end. A move from it refused, or a
-    // start below the next one, is the text shrunk under the read.
-    let named = match &steps.named {
-        None => None,
-        Some((to_end, candidate)) => Some(
-            match answers.get(*to_end) {
-                Got::Done(moved) => Some(rows(moved)),
-                Got::Refused(StepRefusal::OutsideText) => None,
-                _ => return None,
-            }
-            .filter(|&to_end| to_end >= next_to_end)
-            .map(|to_end| (to_end, candidate)),
-        ),
-    };
-    let from_start = matches!(named, Some(Some(_)));
-    let shrank = matches!(named, Some(None));
-    let (to_end, candidate) = named.flatten().unwrap_or((next_to_end, &steps.fallback));
-    let above = match candidate.up {
-        Some(up) => rows(done(&answers.get(up))?),
-        None => 0,
-    };
-    let text = done(&answers.get(candidate.text))?;
-    let caret_line = done(&answers.get(steps.caret_line))?;
-    let chunk = caret_line.chunks.first()?;
-    let before = chunk.text.get(..usize::try_from(chunk.offset).ok()?)?;
-    let colours = match steps.colours {
-        Some(colours) => Some(done(&answers.get(colours))?.clone()),
-        None => None,
-    };
-    let _held: &CaretAt = done(&answers.get(steps.caret))?;
-    Some(Composed {
-        snapshot: TerminalSnapshot {
-            text: TerminalText {
-                text: text.text.clone(),
-                lengths: text.padded.clone()?,
-            },
-            screen: TerminalText {
-                text: visible.text.clone(),
-                lengths: visible.padded.clone(),
-            },
-            from_start,
-            shrank,
-            at_document_start: ask.whole || to_end + above == document,
-            alternate: visible.at_text_start,
-            first_row: line(done(&answers.get(steps.first))?)?,
-            caret_rows_to_end: rows(done(&answers.get(steps.caret_rows))?),
-            caret_line: line(caret_line)?,
-            caret_column: u32::try_from(before.chars().count()).ok()?,
-            above,
-            started_ms: 0,
-            ended_ms: 0,
-            waited: false,
-            colours,
-            caret: None,
-        },
-        next,
-    })
 }
 
 /// How each way of a composed search bounds it: the matches that start a
@@ -819,17 +600,4 @@ pub fn matches_of<B>(answers: &Answers<B>, steps: &SearchSteps<B>) -> Option<Vec
         going_down = !going_down;
     }
     Some(taken)
-}
-
-/// The old operation's query for `ask`, its start the range the generic
-/// steps hold.
-pub fn query_of(outpost: &Outpost, ask: &ReadAsk) -> Query {
-    Query {
-        start: ask
-            .start
-            .map(|start| Range::at(outpost.held(start).expect("a held start"))),
-        screen_rows: ask.height,
-        whole: ask.whole,
-        above: ask.above,
-    }
 }

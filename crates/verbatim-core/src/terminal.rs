@@ -61,6 +61,7 @@ use crate::text;
 
 pub(crate) mod commands;
 mod items;
+pub mod reader;
 pub(crate) mod reading;
 
 pub(crate) use items::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};

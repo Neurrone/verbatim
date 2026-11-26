@@ -114,6 +114,27 @@ guide maps those behaviors onto the crate's types and modules.
   `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
 - `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
   `read_at(&TerminalSnapshot)`: see "Core's terminal model".
+- `terminal::reader`: a terminal's reads as batches of the request list's
+  generic text steps, and their answers read back as the reading rules'
+  read; the module's documentation lists each batch's steps. Nothing in
+  Core sends these batches yet: the terminal's old operations still carry
+  its reads.
+  - `WindowAsk` (`read`, `colours`, `starting`, `output`) with
+    `WindowRead` (`First`, `From { start, height }`,
+    `HistoryBlock { height }`, `Whole { height }`), and `HistoryAsk`
+    (`Whole`, `Above { start, above, height }`): what Core asks, each read
+    with only the facts it has.
+  - `window_batch(node, &WindowAsk)` and `history_batch(node, &HistoryAsk)`:
+    the batch and its steps, pure functions of their arguments.
+  - `window_of(&Answers, &WindowSteps, &WindowAsk, (began_us, ended_us))`:
+    the `WindowReply`, which is the `TerminalSnapshot`, the anchor held at
+    the next read's start, when the read began and, for a starting read,
+    the caret key's starting point; or the `TextFailure` a step ended
+    with, a start no longer held being the terminal gone. The times are
+    the answer's own. `history_of` gives a history read's padded text and
+    its rows above the start.
+  - `asked(&Batch)`: the ask whose builder writes exactly that batch
+    (`Asked::Window` or `Asked::History`), `None` for any other batch.
 - `supervisor`: Core's supervisor's pure decisions. The outpost
   generation record Core's reducer owns (`record`, crate-private, applied
   by the event queue's driver; Table 5 of
@@ -1720,10 +1741,14 @@ a search with its text, a caret key's watch), so that they hold whichever
 way Core asks a terminal (Claude, 2026-11-26). The support's simulated
 terminal answers in two ways: the terminal's old operations, which is all
 Core sends, and each generic text step of a batch as the provider would
-(`tests/terminal_support/steps.rs`), with the old read, history read and
-search composed of those steps. `tests/terminal_answerers.rs` compares the
-two field by field after every chunk of every corpus stream and in the
-shapes the terminal tests use. `tests/terminal_transcripts.rs` replays
+(`tests/terminal_support/steps.rs`), with the old search composed of
+those steps. `tests/terminal_answerers.rs` runs the batches of Core's
+terminal reader (`terminal::reader`) through the second and compares what
+the reader reads back with the simulated terminal's reference read, field
+by field, after every chunk of every corpus stream and in the shapes the
+terminal tests use, and pins the cases the reference read has none of: a
+read that takes exactly the rows above its start, a provider that reports
+no selection, a start no longer held and a start past the text's end. `tests/terminal_transcripts.rs` replays
 every recording of the corpus through `reduce` in both terminals and
 compares everything heard with the transcripts pinned from the reading
 of 2026-11-26 in `tests/fixtures/terminal_transcripts/`; a transcript
