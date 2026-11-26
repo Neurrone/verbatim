@@ -303,6 +303,8 @@ fn said_after(exempt: Option<i32>, entries: Vec<Entry>) -> Vec<String> {
             )),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     };
     feed(&mut core, answer)
@@ -697,6 +699,8 @@ fn a_foreground_change_ends_waiting_entries_outside_it_and_a_marker_joins_the_ba
                 )),
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         },
     );

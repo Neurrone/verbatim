@@ -389,6 +389,8 @@ fn answer(from: Instance, number: u64, outcome: WireOutcome) -> Input<Entry> {
             outcome,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     }
 }
@@ -1792,6 +1794,8 @@ fn answer_probed(number: u64, probes: Vec<verbatim_model::request::Probe>) -> In
             outcome: result(),
             probes,
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     }
 }

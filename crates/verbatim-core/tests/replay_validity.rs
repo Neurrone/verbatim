@@ -218,6 +218,8 @@ fn answer_at(desk: &mut Desk, at_us: u64, app: App, number: u64, reply: Reply) {
                 outcome: Outcome::Result(reply),
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         },
     );

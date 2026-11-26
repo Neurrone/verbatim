@@ -35,8 +35,10 @@ use super::window::{hwnd_of, window_handle};
 /// into a list with no end, as an application can give.
 const MAX_NODES: usize = 1000;
 
-/// The answer to `ask`, read on the worker.
+/// The answer to `ask`, read on the worker, stamped with when the read
+/// began and ended.
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
+    let began_us = verbatim_process::clock::now_us();
     let mut probes = Vec::new();
     // Core's verdict for the request's window is the one its reads judge
     // that window by: the outpost probes it again for none of them.
@@ -63,6 +65,8 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         outcome,
         probes,
         detail: String::new(),
+        began_us,
+        ended_us: verbatim_process::clock::now_us(),
     }
 }
 

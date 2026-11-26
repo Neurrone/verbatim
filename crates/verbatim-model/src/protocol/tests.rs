@@ -68,6 +68,8 @@ fn next_listener_to_core(previous: Option<&ListenerToCore>) -> Option<ListenerTo
             outcome: crate::request::Outcome::NotThere,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         }),
         ListenerToCore::Answer(_) => {
             let facet = crate::tell::WindowFacet {
@@ -122,6 +124,8 @@ fn only_an_answer_with_a_result_and_a_tell_with_a_token_carry_nodes() {
         ])),
         probes: Vec::new(),
         detail: String::new(),
+        began_us: 0,
+        ended_us: 0,
     });
     assert!(answer.carries_nodes());
     let Some(OutpostToCore::Tell(mut tell)) = super::samples::outpost_to_core()

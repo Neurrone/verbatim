@@ -454,6 +454,8 @@ fn ended(number: RequestNumber, detail: &str) -> Answer {
         outcome: Outcome::Ended,
         probes: Vec::new(),
         detail: detail.to_owned(),
+        began_us: 0,
+        ended_us: 0,
     }
 }
 
@@ -469,6 +471,8 @@ fn not_there(number: RequestNumber) -> Answer {
         outcome: Outcome::NotThere,
         probes: Vec::new(),
         detail: "its window was destroyed".to_owned(),
+        began_us: 0,
+        ended_us: 0,
     }
 }
 
@@ -561,6 +565,8 @@ mod tests {
 
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         }
     }
 

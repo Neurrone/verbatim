@@ -46,6 +46,8 @@ fn focus(nodes: &[NodeId]) -> OutpostToCore {
         ])),
         probes: Vec::new(),
         detail: String::new(),
+        began_us: 0,
+        ended_us: 0,
     })
 }
 

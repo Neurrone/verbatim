@@ -715,6 +715,8 @@ impl Desk {
                 outcome,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         })
     }

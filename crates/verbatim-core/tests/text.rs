@@ -305,6 +305,8 @@ impl Text {
                         ))),
                         probes: Vec::new(),
                         detail: String::new(),
+                        began_us: 0,
+                        ended_us: 0,
                     },
                 };
                 heard.extend(self.step(answer));
@@ -387,6 +389,8 @@ impl Text {
                 outcome,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         })
     }

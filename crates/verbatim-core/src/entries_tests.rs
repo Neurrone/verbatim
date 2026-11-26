@@ -599,6 +599,8 @@ pub(crate) fn answer_outcome(from: Instance, number: u64, outcome: WireOutcome) 
             outcome,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     }
 }
@@ -1832,6 +1834,8 @@ fn a_request_from_outside_the_queue_is_sent_to_its_windows_outpost_and_answered_
                     outcome: WireOutcome::Result(reply.clone()),
                     probes: Vec::new(),
                     detail: String::new(),
+                    began_us: 0,
+                    ended_us: 0,
                 },
             }
         ),

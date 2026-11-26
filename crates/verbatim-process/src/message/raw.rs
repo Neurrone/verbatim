@@ -1,12 +1,16 @@
-//! How an outpost's answers that carry a terminal's text cross the pipe
-//! (`docs/design/communication.md`, section 4.2): the answer to a terminal
-//! read, to a history read, and to a search. Each such answer is a frame
-//! with a raw section. Every text it carries is in the raw section as
-//! UTF-8, its place in the JSON body a byte range, `[start, length]`; and a
-//! read's colour runs are there as 16-byte records, four little-endian
-//! `u32`s (column, length, foreground, background), the body giving their
-//! range and each row's count of runs. Everything else in the answer stays
-//! in the body as the model's own JSON.
+//! How an outpost's answers that carry large texts or colour runs cross
+//! the pipe (`docs/design/communication.md`, section 4.2). Two kinds of
+//! answer do: a batch's whose steps answered a trimmed range's text
+//! (`ReadRange`), the visible text (`Visible`), a search's matches
+//! (`FindText`) or a screen's colours (`ReadColours`), whichever text they
+//! read; and a terminal's text operation's, to a terminal read, a history
+//! read and a search. Each such answer is a frame with a raw section.
+//! Every such text is in the raw section as UTF-8, its place in the JSON
+//! body a byte range, `[start, length]`; and colour runs are there as
+//! 16-byte records, four little-endian `u32`s (column, length, foreground,
+//! background), the body giving their range and each row's count of runs.
+//! Everything else in the answer, a batch's other steps included, stays in
+//! the body as the model's own JSON.
 //!
 //! The model's types describe the content and know nothing of this: the
 //! answer is converted to the wire types here as it is encoded, borrowing
@@ -20,6 +24,7 @@ use std::borrow::Cow;
 use std::io;
 
 use serde::{Deserialize, Serialize};
+use verbatim_model::batch::{Done, FoundText, RangeText, StepOutcome, VisibleText};
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{Answer, Outcome, Probe, Reply, RequestNumber};
 use verbatim_model::{
@@ -35,13 +40,13 @@ type Range = (usize, usize);
 const RUN_BYTES: usize = 16;
 
 /// [`OutpostToCore`] as the body of a frame with a raw section gives it:
-/// only the answers that carry a terminal's text.
+/// only the answers that carry a text or colours there.
 #[derive(Serialize, Deserialize)]
 enum Wire<'a> {
     Answer(WireAnswer<'a>),
 }
 
-/// An [`Answer`] with a terminal's reply.
+/// An [`Answer`] with a result in the raw section.
 #[derive(Serialize, Deserialize)]
 struct WireAnswer<'a> {
     number: RequestNumber,
@@ -50,18 +55,53 @@ struct WireAnswer<'a> {
     probes: Cow<'a, [Probe]>,
     #[serde(default, skip_serializing_if = "str::is_empty")]
     detail: Cow<'a, str>,
+    began_us: u64,
+    ended_us: u64,
 }
 
-/// [`Outcome::Result`] with a terminal's reply.
+/// [`Outcome::Result`] with a result in the raw section.
 #[derive(Serialize, Deserialize)]
 enum WireOutcome<'a> {
     Result(WireResult<'a>),
 }
 
-/// [`Reply::Text`] with a terminal's reply.
+/// A [`Reply`] with texts or colours in the raw section.
 #[derive(Serialize, Deserialize)]
 enum WireResult<'a> {
     Text(WireReply<'a>),
+    Steps(Vec<WireStep<'a>>),
+}
+
+/// One step's outcome of a batch's answer.
+#[derive(Serialize, Deserialize)]
+enum WireStep<'a> {
+    /// An outcome with nothing in the raw section, as the model's own JSON.
+    Body(Cow<'a, StepOutcome>),
+    /// A trimmed [`RangeText`], its text in the raw section.
+    ReadRange {
+        text: Range,
+        truncated: bool,
+        padded: Cow<'a, [(u32, u32)]>,
+    },
+    /// A [`VisibleText`], its text in the raw section.
+    Visible {
+        start: TextAnchor,
+        end: TextAnchor,
+        at_text_start: bool,
+        text: Range,
+        padded: Cow<'a, [(u32, u32)]>,
+    },
+    /// A search's matches, each one's text in the raw section.
+    FindText(Vec<Found>),
+    /// A screen's colour runs, in the raw section.
+    ReadColours(Colours),
+}
+
+/// A [`FoundText`], its text in the raw section.
+#[derive(Serialize, Deserialize)]
+struct Found {
+    to_end: u32,
+    text: Range,
 }
 
 /// The [`TextReply`]s that carry a terminal's text.
@@ -142,9 +182,9 @@ enum Piece<'a> {
     Colours(&'a [Vec<TerminalColourRun>]),
 }
 
-/// An answer that carries a terminal's text, ready to be framed: its body
-/// borrowing from it, and the pieces of its raw section.
-pub(super) struct Terminal<'a> {
+/// An answer with texts or colours for the raw section, ready to be
+/// framed: its body borrowing from it, and the pieces of its raw section.
+pub(super) struct WithRaw<'a> {
     wire: Wire<'a>,
     layout: Layout<'a>,
 }
@@ -156,21 +196,107 @@ struct Layout<'a> {
     length: usize,
 }
 
-impl<'a> Terminal<'a> {
-    /// `message` ready to be framed, when it is an answer that carries a
-    /// terminal's text; `None` for every other message, framed as a body
-    /// alone.
+impl<'a> WithRaw<'a> {
+    /// `message` ready to be framed, when it is an answer with a text or
+    /// colours for the raw section; `None` for every other message, framed
+    /// as a body alone.
     pub(super) fn of(message: &'a OutpostToCore) -> Option<Self> {
         let OutpostToCore::Answer(Answer {
             number,
-            outcome: Outcome::Result(Reply::Text(reply)),
+            outcome: Outcome::Result(reply),
             probes,
             detail,
+            began_us,
+            ended_us,
         }) = message
         else {
             return None;
         };
         let mut layout = Layout::default();
+        let result = match reply {
+            Reply::Text(reply) => WireResult::Text(layout.reply(reply)?),
+            Reply::Steps(steps) => {
+                if !steps.iter().any(in_raw) {
+                    return None;
+                }
+                WireResult::Steps(steps.iter().map(|step| layout.step(step)).collect())
+            }
+        };
+        Some(Self {
+            wire: Wire::Answer(WireAnswer {
+                number: *number,
+                outcome: WireOutcome::Result(result),
+                probes: Cow::Borrowed(probes),
+                detail: Cow::Borrowed(detail),
+                began_us: *began_us,
+                ended_us: *ended_us,
+            }),
+            layout,
+        })
+    }
+}
+
+/// Whether `step`'s outcome has a text or colours for the raw section.
+fn in_raw(step: &StepOutcome) -> bool {
+    matches!(
+        step,
+        StepOutcome::Done(
+            Done::ReadRange(RangeText {
+                padded: Some(_),
+                ..
+            }) | Done::Visible(_)
+                | Done::FindText(_)
+                | Done::ReadColours(_)
+        )
+    )
+}
+
+impl<'a> Layout<'a> {
+    /// `step` as the body gives it, its text or colours placed next in the
+    /// raw section.
+    fn step(&mut self, step: &'a StepOutcome) -> WireStep<'a> {
+        match step {
+            StepOutcome::Done(Done::ReadRange(RangeText {
+                text,
+                truncated,
+                padded: Some(padded),
+            })) => WireStep::ReadRange {
+                text: self.text(text),
+                truncated: *truncated,
+                padded: Cow::Borrowed(padded),
+            },
+            StepOutcome::Done(Done::Visible(VisibleText {
+                start,
+                end,
+                at_text_start,
+                text,
+                padded,
+            })) => WireStep::Visible {
+                start: *start,
+                end: *end,
+                at_text_start: *at_text_start,
+                text: self.text(text),
+                padded: Cow::Borrowed(padded),
+            },
+            StepOutcome::Done(Done::FindText(matches)) => WireStep::FindText(
+                matches
+                    .iter()
+                    .map(|FoundText { to_end, text }| Found {
+                        to_end: *to_end,
+                        text: self.text(text),
+                    })
+                    .collect(),
+            ),
+            StepOutcome::Done(Done::ReadColours(rows)) => WireStep::ReadColours(self.colours(rows)),
+            other => WireStep::Body(Cow::Borrowed(other)),
+        }
+    }
+
+    /// A terminal's text operation's `reply` as the body gives it, its
+    /// texts and colours placed next in the raw section; `None` for a
+    /// reply with none.
+    fn reply(&mut self, reply: &'a TextReply) -> Option<WireReply<'a>> {
+        let layout = self;
         let reply = match reply {
             TextReply::TerminalRead(read) => {
                 let TerminalReadReply {
@@ -201,15 +327,7 @@ impl<'a> Terminal<'a> {
             },
             _ => return None,
         };
-        Some(Self {
-            wire: Wire::Answer(WireAnswer {
-                number: *number,
-                outcome: WireOutcome::Result(WireResult::Text(reply)),
-                probes: Cow::Borrowed(probes),
-                detail: Cow::Borrowed(detail),
-            }),
-            layout,
-        })
+        Some(reply)
     }
 }
 
@@ -285,7 +403,7 @@ impl<'a> Layout<'a> {
     }
 }
 
-impl Terminal<'_> {
+impl WithRaw<'_> {
     /// Appends the answer's frame to `buffer`: the body, then the raw
     /// section, in one buffer, so the frame is still one write.
     pub(super) fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
@@ -316,55 +434,45 @@ impl Terminal<'_> {
 
 /// Reads a message from the body and raw section of its frame.
 pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
-    // A body that is not a terminal's answer is one that may not have a
-    // raw section.
+    // A body that is not such an answer is one that may not have a raw
+    // section.
     let Wire::Answer(WireAnswer {
         number,
-        outcome: WireOutcome::Result(WireResult::Text(reply)),
+        outcome: WireOutcome::Result(result),
         probes,
         detail,
+        began_us,
+        ended_us,
     }) = serde_json::from_slice(body).map_err(|error| invalid(&error.to_string()))?;
     let mut section = Section {
         bytes: raw,
         next: 0,
     };
-    let reply = match reply {
-        WireReply::TerminalRead(read) => {
-            let WireRead {
-                snapshot,
-                start,
-                started_us,
-                point,
-            } = *read;
-            TextReply::TerminalRead(Box::new(TerminalReadReply {
-                snapshot: section.snapshot(snapshot)?,
-                start,
-                started_us,
-                point,
-            }))
-        }
-        WireReply::TerminalHistory { text, above } => TextReply::TerminalHistory {
-            text: section.text(text)?,
-            above,
-        },
-        WireReply::TerminalFound { matches } => TextReply::TerminalFound {
-            matches: matches
+    let reply = match result {
+        WireResult::Text(reply) => Reply::Text(section.reply(reply)?),
+        WireResult::Steps(steps) => {
+            let steps: Vec<StepOutcome> = steps
                 .into_iter()
-                .map(|Match { above, text }| {
-                    Ok(TerminalMatch {
-                        above,
-                        text: section.text(text)?,
-                    })
-                })
-                .collect::<io::Result<_>>()?,
-        },
+                .map(|step| section.step(step))
+                .collect::<io::Result<_>>()?;
+            // A batch's answer with nothing for the raw section is framed
+            // as its body alone.
+            if !steps.iter().any(in_raw) {
+                return Err(invalid(
+                    "a frame has a raw section its batch's answer does not take",
+                ));
+            }
+            Reply::Steps(steps)
+        }
     };
     section.finish()?;
     Ok(OutpostToCore::Answer(Answer {
         number,
-        outcome: Outcome::Result(Reply::Text(reply)),
+        outcome: Outcome::Result(reply),
         probes: probes.into_owned(),
         detail: detail.into_owned(),
+        began_us,
+        ended_us,
     }))
 }
 
@@ -376,6 +484,95 @@ struct Section<'s> {
 }
 
 impl<'s> Section<'s> {
+    /// A batch's step from the body's `step`, its text or colours read
+    /// from the raw section.
+    fn step(&mut self, step: WireStep<'_>) -> io::Result<StepOutcome> {
+        Ok(match step {
+            WireStep::Body(outcome) => {
+                let outcome = outcome.into_owned();
+                // An outcome the raw section takes is never in the body.
+                if in_raw(&outcome) {
+                    return Err(invalid(
+                        "a step's text or colours are in the body of a frame with a raw section",
+                    ));
+                }
+                outcome
+            }
+            WireStep::ReadRange {
+                text,
+                truncated,
+                padded,
+            } => StepOutcome::Done(Done::ReadRange(RangeText {
+                text: self.text(text)?,
+                truncated,
+                padded: Some(padded.into_owned()),
+            })),
+            WireStep::Visible {
+                start,
+                end,
+                at_text_start,
+                text,
+                padded,
+            } => StepOutcome::Done(Done::Visible(VisibleText {
+                start,
+                end,
+                at_text_start,
+                text: self.text(text)?,
+                padded: padded.into_owned(),
+            })),
+            WireStep::FindText(matches) => StepOutcome::Done(Done::FindText(
+                matches
+                    .into_iter()
+                    .map(|Found { to_end, text }| {
+                        Ok(FoundText {
+                            to_end,
+                            text: self.text(text)?,
+                        })
+                    })
+                    .collect::<io::Result<_>>()?,
+            )),
+            WireStep::ReadColours(colours) => {
+                StepOutcome::Done(Done::ReadColours(self.colours(colours)?))
+            }
+        })
+    }
+
+    /// A terminal's text operation's reply from the body's `reply`.
+    fn reply(&mut self, reply: WireReply<'_>) -> io::Result<TextReply> {
+        let section = self;
+        Ok(match reply {
+            WireReply::TerminalRead(read) => {
+                let WireRead {
+                    snapshot,
+                    start,
+                    started_us,
+                    point,
+                } = *read;
+                TextReply::TerminalRead(Box::new(TerminalReadReply {
+                    snapshot: section.snapshot(snapshot)?,
+                    start,
+                    started_us,
+                    point,
+                }))
+            }
+            WireReply::TerminalHistory { text, above } => TextReply::TerminalHistory {
+                text: section.text(text)?,
+                above,
+            },
+            WireReply::TerminalFound { matches } => TextReply::TerminalFound {
+                matches: matches
+                    .into_iter()
+                    .map(|Match { above, text }| {
+                        Ok(TerminalMatch {
+                            above,
+                            text: section.text(text)?,
+                        })
+                    })
+                    .collect::<io::Result<_>>()?,
+            },
+        })
+    }
+
     /// The bytes at `range`, which must start where the last range ended,
     /// so the ranges tile the raw section in the order they are read.
     fn bytes(&mut self, (start, length): Range) -> io::Result<&'s [u8]> {
@@ -397,7 +594,7 @@ impl<'s> Section<'s> {
         let bytes = self.bytes(range)?;
         simdutf8::basic::from_utf8(bytes)
             .map(str::to_owned)
-            .map_err(|_| invalid("a terminal's text in the raw section is not UTF-8"))
+            .map_err(|_| invalid("a text in the raw section is not UTF-8"))
     }
 
     fn terminal_text(&mut self, Text { raw, lengths }: Text<'_>) -> io::Result<TerminalText> {
@@ -419,7 +616,7 @@ impl<'s> Section<'s> {
             .and_then(|runs| runs.checked_mul(RUN_BYTES));
         if runs != Some(bytes.len()) {
             return Err(invalid(
-                "a read's colour runs do not fill their range in the raw section",
+                "colour runs do not fill their range in the raw section",
             ));
         }
         let mut records = bytes.as_chunks::<RUN_BYTES>().0.iter();

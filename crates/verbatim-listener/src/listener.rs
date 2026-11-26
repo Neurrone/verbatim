@@ -751,6 +751,8 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
             outcome,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         });
     };
     // A request is routed by the object it reads, a batch's first step's
@@ -2201,14 +2203,22 @@ mod tests {
             object.window,
             verbatim_win32::window_facts::node_window(&tells::SystemReads, desktop_window())
         );
+        // The reading thread ran it, so it is stamped with its times.
+        let ListenerToCore::Answer(second) = parts.next() else {
+            panic!("the second answer");
+        };
+        assert!(first.began_us <= first.ended_us && first.ended_us <= second.began_us);
+        assert!(0 < first.began_us && second.began_us <= second.ended_us);
         assert_eq!(
-            parts.next(),
-            ListenerToCore::Answer(Answer {
+            second,
+            Answer {
                 number: RequestNumber(2),
                 outcome: Outcome::NotThere,
                 probes: Vec::new(),
                 detail: String::new(),
-            })
+                began_us: second.began_us,
+                ended_us: second.ended_us,
+            }
         );
         parts.stop();
     }
@@ -2474,6 +2484,8 @@ mod tests {
             outcome: Outcome::NotThere,
             probes: Vec::new(),
             detail,
+            began_us: 0,
+            ended_us: 0,
         };
         outgoing.answer(answer(1, "x".repeat(20_000)));
         outgoing.answer(answer(2, String::new()));
@@ -2511,6 +2523,8 @@ mod tests {
             outcome: Outcome::NotThere,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         });
         outgoing.idle_answer(2);
         outgoing.ready();

@@ -265,6 +265,8 @@ mod tests {
             ])),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         })
     }
 
@@ -276,6 +278,8 @@ mod tests {
             outcome: Outcome::Ended,
             probes: Vec::new(),
             detail: detail.to_owned(),
+            began_us: 0,
+            ended_us: 0,
         })
     }
 

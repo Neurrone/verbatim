@@ -92,6 +92,8 @@ fn run_answer(state: &Held, from: Instance, number: u64) -> QueueInput {
             ),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     }
 }
@@ -330,6 +332,8 @@ fn a_second_failure_waits_out_its_backoff_and_then_is_not_replaced_unasked() {
                 outcome: verbatim_model::request::Outcome::NotThere,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         },
     );
@@ -427,6 +431,8 @@ fn an_idle_outpost_holding_nothing_is_kept() {
                 outcome: verbatim_model::request::Outcome::NotThere,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         },
     );
@@ -552,6 +558,8 @@ fn the_queue_is_not_idle_while_an_entrys_request_is_out() {
                 outcome: verbatim_model::request::Outcome::NotThere,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         },
     );

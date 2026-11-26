@@ -103,6 +103,8 @@ impl UiaReading {
             outcome,
             probes: Vec::new(),
             detail: detail.to_owned(),
+            began_us: 0,
+            ended_us: 0,
         });
     }
 
@@ -381,6 +383,7 @@ impl Reading for UiaReading {
     ) -> Self::Done {
         match job {
             UiaJob::Request(ask) => {
+                let began_us = verbatim_process::clock::now_us();
                 let (outcome, kept) = self.request(thread, &ask);
                 Some((
                     Answer {
@@ -388,6 +391,8 @@ impl Reading for UiaReading {
                         outcome,
                         probes: Vec::new(),
                         detail: String::new(),
+                        began_us,
+                        ended_us: verbatim_process::clock::now_us(),
                     },
                     kept,
                 ))

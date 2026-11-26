@@ -60,6 +60,8 @@ fn next(previous: Option<&OutpostToCore>) -> Option<OutpostToCore> {
             outcome: crate::request::Outcome::NotThere,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         }),
         OutpostToCore::Answer(_) => {
             let facet = crate::tell::WindowFacet {

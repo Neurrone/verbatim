@@ -283,13 +283,15 @@ fn run_job(context: &Arc<Context>, client: &mut Client, job: Job, charge: &Arc<C
 
 /// Runs a caret wait's check, and the batch's later steps when it ends the
 /// wait, telling the observer of Core's requests' calls of the program's,
-/// and posting the batch's answer when the program ends it.
+/// and posting the batch's answer when the program ends it, stamped with
+/// when this check began and ended.
 fn run_watch(
     context: &Context,
     (request_context, client): (&RequestContext<'_>, &mut Client),
     request: Request,
     watch: &WatchProgram,
 ) {
+    let began_us = verbatim_process::clock::now_us();
     let outcome = super::batch::poll(request_context, client, watch);
     if let Some(observer) = context.request_calls.get() {
         observer(watch.number, take_calls());
@@ -302,6 +304,8 @@ fn run_watch(
                 outcome,
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us,
+                ended_us: verbatim_process::clock::now_us(),
             }),
         });
     }

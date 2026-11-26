@@ -1036,6 +1036,8 @@ impl CoreDriver {
             outcome,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         };
         let (listener, token, keep) = match &ask.request {
             verbatim_model::request::Question::Batch(batch)

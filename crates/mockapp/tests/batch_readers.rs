@@ -183,7 +183,9 @@ fn an_msaa_candidates_test_reads_lazily_and_gates_its_full_read() {
 }
 
 /// The hidden check of a shown window reads whether it is shown and
-/// nothing more; a batch that does not parse is refused whole.
+/// nothing more, and its answer is stamped with when the worker began and
+/// ended it, between the clock's readings before the request and after its
+/// answer; a batch that does not parse is refused whole.
 fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refused() {
     let title = common::unique_title("mockapp-batch-window");
     let app = common::spawn_visible("counts.json", "msaa", &title);
@@ -201,6 +203,7 @@ fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refu
             vec![PropertyValue::Role(verbatim_model::Role::Dialog)],
         ),
     ]);
+    let before = verbatim_process::clock::now_us();
     let (answer, _) = outpost.batch(
         hwnd,
         WindowVerdict::Msaa,
@@ -211,6 +214,13 @@ fn a_shown_windows_hidden_check_reads_nothing_more_and_a_malformed_batch_is_refu
             },
             when: None,
         }]),
+    );
+    let after = verbatim_process::clock::now_us();
+    assert!(
+        before <= answer.began_us && answer.began_us <= answer.ended_us && answer.ended_us <= after,
+        "began {} and ended {} between {before} and {after}",
+        answer.began_us,
+        answer.ended_us
     );
     let outcomes = steps(answer.outcome);
     assert_eq!(read_order(&outcomes[0]), [PropertyId::WindowShown]);

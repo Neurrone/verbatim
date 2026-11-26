@@ -2313,6 +2313,8 @@ fn a_focus_whose_verdict_lapses_before_the_listener_read_probes_again_at_the_com
                 began_us: desk.at_us + 500,
             }],
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     };
     assert_eq!(

@@ -531,6 +531,8 @@ impl Seam {
                     outcome: readers::outcome(batch, &listener_read()),
                     probes: Vec::new(),
                     detail: String::new(),
+                    began_us: 0,
+                    ended_us: 0,
                 };
                 self.core(
                     QueueInput::Answer {
@@ -559,6 +561,8 @@ impl Seam {
                     outcome: Outcome::Result(reply),
                     probes,
                     detail: String::new(),
+                    began_us: 0,
+                    ended_us: 0,
                 };
                 let mut effects = self.outpost.input(
                     OutpostInput::Answered {
@@ -584,6 +588,8 @@ impl Seam {
                         outcome: Outcome::Result(Reply::Steps(watched)),
                         probes: Vec::new(),
                         detail: String::new(),
+                        began_us: 0,
+                        ended_us: 0,
                     };
                     effects.extend(self.outpost.input(
                         OutpostInput::Answered {

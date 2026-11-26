@@ -7,7 +7,7 @@
 //! so there is nothing to discover or secure. Each message is one frame of
 //! `crate::transport`: a `Content-Length` header, then the
 //! message as compact JSON, readable by eye and in captures, and, for an
-//! answer carrying a terminal's text or colours, a raw section holding
+//! answer carrying large texts or colour runs, a raw section holding
 //! them, the JSON giving their places (the `raw` module); all of it
 //! isolated behind [`Message`], [`write_message`], [`encode_message`] and
 //! [`read_message`] so neither end's logic sees the framing.
@@ -33,7 +33,7 @@ mod raw;
 pub const MAX_MESSAGE_BYTES: usize = crate::transport::MAX_FRAME_BYTES;
 
 /// A message of the Core-outpost protocol as a frame carries it: its JSON
-/// body, and for an answer that carries a terminal's text and colours, a
+/// body, and for an answer that carries large texts or colour runs, a
 /// raw section holding them, the body giving their places
 /// (`docs/design/communication.md`, section 4.2). Every other message is a
 /// body alone, and is refused with a raw section.
@@ -98,8 +98,8 @@ impl Message for ListenerToCore {
 
 impl Message for OutpostToCore {
     fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        match raw::Terminal::of(self) {
-            Some(terminal) => terminal.put_frame(buffer),
+        match raw::WithRaw::of(self) {
+            Some(answer) => answer.put_frame(buffer),
             None => put_json(buffer, self),
         }
     }
@@ -254,6 +254,8 @@ mod tests {
             ])),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         })
     }
 

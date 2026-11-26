@@ -554,6 +554,8 @@ impl Recorded {
                 outcome: readers::outcome(&batch, found),
                 probes: Vec::new(),
                 detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
             },
         })
     }
@@ -1045,6 +1047,8 @@ fn raw_found(desk: &mut Desk, to: Instance, number: u64, found: &Found) -> Vec<E
             outcome: readers::outcome(&batch, found),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         },
     })
 }

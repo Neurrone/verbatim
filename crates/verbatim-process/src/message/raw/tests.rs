@@ -67,6 +67,8 @@ fn answer(reply: TextReply) -> OutpostToCore {
         outcome: Outcome::Result(Reply::Text(reply)),
         probes: Vec::new(),
         detail: String::new(),
+        began_us: 7,
+        ended_us: 9,
     })
 }
 
@@ -131,6 +133,8 @@ fn a_terminals_answers_round_trip_through_the_raw_section() {
                 began_us: 8,
             }],
             detail: "slow".to_owned(),
+            began_us: 20,
+            ended_us: 21,
         }),
         read(snapshot(&cyrillic, "", Some(colours))),
         answer(TextReply::TerminalHistory {
@@ -213,6 +217,8 @@ fn a_terminal_reads_text_and_colours_are_the_raw_section_and_the_body_names_them
                 "started_us": 1_752_000_000_000_000_u64,
                 "point": 12,
             }}}},
+            "began_us": 7,
+            "ended_us": 9,
         }})
     );
     let mut expected = "abпр".as_bytes().to_vec();
@@ -232,7 +238,7 @@ fn a_history_and_a_searchs_texts_are_the_raw_section() {
     }));
     assert_eq!(
         String::from_utf8(body).expect("UTF-8"),
-        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":1}}}}}}"#
+        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":1}}}},"began_us":7,"ended_us":9}}"#
     );
     assert_eq!(raw, Some(b"abc".to_vec()));
     let (body, raw) = parts_of(&answer(TextReply::TerminalFound {
@@ -249,7 +255,7 @@ fn a_history_and_a_searchs_texts_are_the_raw_section() {
     }));
     assert_eq!(
         String::from_utf8(body).expect("UTF-8"),
-        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,2]},{"above":-1,"text":[2,1]}]}}}}}}"#
+        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,2]},{"above":-1,"text":[2,1]}]}}}},"began_us":7,"ended_us":9}}"#
     );
     assert_eq!(raw, Some(b"def".to_vec()));
 }
@@ -270,6 +276,8 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
             outcome: Outcome::NotThere,
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         }),
     ];
     for message in &messages {
@@ -294,7 +302,7 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
 /// `raw` as its raw section.
 fn history(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
     let body = format!(
-        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0}}}}}}}}}}}}"#
+        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalHistory":{{"text":{range},"above":0}}}}}}}},"began_us":7,"ended_us":9}}}}"#
     );
     OutpostToCore::from_parts(Parts {
         body: body.as_bytes(),
@@ -324,7 +332,7 @@ fn a_range_the_raw_section_does_not_hold_is_a_protocol_error() {
 fn ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
     let found = |first: &str, second: &str| {
         let body = format!(
-            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}]}}}}}}}}}}}}"#
+            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}]}}}}}}}},"began_us":7,"ended_us":9}}}}"#
         );
         OutpostToCore::from_parts(Parts {
             body: body.as_bytes(),
@@ -394,4 +402,223 @@ fn a_raw_section_longer_or_shorter_than_its_body_names_is_a_protocol_error() {
     })
     .expect_err("refused");
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
+
+/// The answer to request 4 with a batch's `steps`.
+fn steps(steps: Vec<StepOutcome>) -> OutpostToCore {
+    OutpostToCore::Answer(Answer {
+        number: RequestNumber(4),
+        outcome: Outcome::Result(Reply::Steps(steps)),
+        probes: Vec::new(),
+        detail: String::new(),
+        began_us: 7,
+        ended_us: 9,
+    })
+}
+
+fn moved() -> StepOutcome {
+    StepOutcome::Done(Done::Move(verbatim_model::batch::Moved {
+        moved: -3,
+        from: TextAnchor(1),
+        to: TextAnchor(2),
+    }))
+}
+
+fn trimmed(text: &str) -> StepOutcome {
+    StepOutcome::Done(Done::ReadRange(RangeText {
+        text: text.to_owned(),
+        truncated: false,
+        padded: Some(vec![(2, 12)]),
+    }))
+}
+
+fn visible(text: &str) -> StepOutcome {
+    StepOutcome::Done(Done::Visible(VisibleText {
+        start: TextAnchor(5),
+        end: TextAnchor(6),
+        at_text_start: true,
+        text: text.to_owned(),
+        padded: vec![(1, 80)],
+    }))
+}
+
+fn found(texts: &[&str]) -> StepOutcome {
+    StepOutcome::Done(Done::FindText(
+        texts
+            .iter()
+            .zip(3..)
+            .map(|(text, to_end)| FoundText {
+                to_end,
+                text: (*text).to_owned(),
+            })
+            .collect(),
+    ))
+}
+
+/// A batch's answer whose steps answered a trimmed range, the visible
+/// text, matches or colours comes back equal through the raw section,
+/// its other steps, skipped and failed ones among them, with it.
+#[test]
+fn a_batchs_answers_round_trip_through_the_raw_section() {
+    let cyrillic = "привет мир\r\nэто тест\r\n".repeat(3);
+    let colours = vec![
+        vec![run(0, 4, 0x00FF_FFFF, 0), run(4, 116, 0x0000_FF00, 5)],
+        Vec::new(),
+    ];
+    let messages = [
+        // Every kind the raw section takes, between steps it does not.
+        steps(vec![
+            moved(),
+            visible("screen"),
+            StepOutcome::Skipped,
+            trimmed(&cyrillic),
+            StepOutcome::Failed,
+            found(&["$ ls", "", &cyrillic]),
+            StepOutcome::Done(Done::ReadColours(colours)),
+            StepOutcome::NotThere(verbatim_model::batch::Missing::Anchor(TextAnchor(3))),
+        ]),
+        // One of each alone, with nothing in it.
+        steps(vec![trimmed("")]),
+        steps(vec![visible("")]),
+        steps(vec![found(&[])]),
+        steps(vec![StepOutcome::Done(Done::ReadColours(Vec::new()))]),
+    ];
+    for message in &messages {
+        let (body, raw) = parts_of(message);
+        let raw = raw.expect("such an answer has a raw section");
+        let read: OutpostToCore = decode_message(Parts {
+            body: &body,
+            raw: Some(&raw),
+        })
+        .expect("decoded");
+        assert_eq!(&read, message);
+    }
+}
+
+/// The frame's exact form for a batch's answer: the texts and the colours
+/// are not in the body, which names their ranges in the steps' order, and
+/// a step with nothing in the raw section is the model's JSON.
+#[test]
+fn a_batchs_texts_and_colours_are_the_raw_section_and_the_body_names_them() {
+    let message = steps(vec![
+        visible("ab"),
+        moved(),
+        trimmed("пр"),
+        found(&["c", "de"]),
+        StepOutcome::Done(Done::ReadColours(vec![vec![run(0, 2, 7, 0)], Vec::new()])),
+    ]);
+    let (body, raw) = parts_of(&message);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+    assert_eq!(
+        body,
+        serde_json::json!({"Answer": {
+            "number": 4,
+            "outcome": {"Result": {"Steps": [
+                {"Visible": {
+                    "start": 5,
+                    "end": 6,
+                    "at_text_start": true,
+                    "text": [0, 2],
+                    "padded": [[1, 80]],
+                }},
+                {"Body": {"Done": {"Move": {"moved": -3, "from": 1, "to": 2}}}},
+                {"ReadRange": {"text": [2, 4], "truncated": false, "padded": [[2, 12]]}},
+                {"FindText": [
+                    {"to_end": 3, "text": [6, 1]},
+                    {"to_end": 4, "text": [7, 2]},
+                ]},
+                {"ReadColours": {"raw": [9, 16], "rows": [1, 0]}},
+            ]}},
+            "began_us": 7,
+            "ended_us": 9,
+        }})
+    );
+    let mut expected = "abпрcde".as_bytes().to_vec();
+    for value in [0u32, 2, 7, 0] {
+        expected.extend(value.to_le_bytes());
+    }
+    assert_eq!(raw, Some(expected));
+}
+
+/// A batch's answer with no trimmed range, visible text, match list or
+/// colours is its JSON alone, an untrimmed range's text in it; and read
+/// with a raw section it is refused, as is one whose body holds a text the
+/// raw section takes.
+#[test]
+fn a_batchs_answer_with_nothing_for_the_raw_section_is_its_json_alone() {
+    let untrimmed = StepOutcome::Done(Done::ReadRange(RangeText {
+        text: "abc".to_owned(),
+        truncated: false,
+        padded: None,
+    }));
+    let message = steps(vec![moved(), untrimmed, StepOutcome::Skipped]);
+    let json = serde_json::to_vec(&message).expect("JSON");
+    let mut expected = format!("Content-Length: {:010}\r\n\r\n", json.len()).into_bytes();
+    expected.extend(&json);
+    assert_eq!(encode_message(&message).expect("encoded"), expected);
+    let refused = |body: &str| {
+        OutpostToCore::from_parts(Parts {
+            body: body.as_bytes(),
+            raw: Some(b""),
+        })
+        .expect_err("refused")
+        .kind()
+    };
+    // Its steps in a raw frame's form, none of them taking the section.
+    assert_eq!(
+        refused(
+            r#"{"Answer":{"number":4,"outcome":{"Result":{"Steps":[{"Body":"Skipped"}]}},"began_us":7,"ended_us":9}}"#
+        ),
+        io::ErrorKind::InvalidData
+    );
+    // The visible text in the body, where the raw section takes it.
+    assert_eq!(
+        refused(
+            r#"{"Answer":{"number":4,"outcome":{"Result":{"Steps":[{"Body":{"Done":{"Visible":{"start":5,"end":6,"at_text_start":true,"text":"","padded":[]}}}}]}},"began_us":7,"ended_us":9}}"#
+        ),
+        io::ErrorKind::InvalidData
+    );
+    // The same step in its raw form reads.
+    assert_eq!(
+        OutpostToCore::from_parts(Parts {
+            body: br#"{"Answer":{"number":4,"outcome":{"Result":{"Steps":[{"Visible":{"start":5,"end":6,"at_text_start":true,"text":[0,0],"padded":[[1,80]]}}]}},"began_us":7,"ended_us":9}}"#,
+            raw: Some(b""),
+        })
+        .expect("read"),
+        steps(vec![visible("")])
+    );
+}
+
+/// A batch's ranges must tile the raw section as a terminal's do.
+#[test]
+fn a_batchs_ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
+    let read = |first: &str, second: &str, raw: &[u8]| {
+        let body = format!(
+            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Steps":[{{"ReadRange":{{"text":{first},"truncated":false,"padded":[[2,12]]}}}},{{"FindText":[{{"to_end":3,"text":{second}}}]}}]}}}},"began_us":7,"ended_us":9}}}}"#
+        );
+        OutpostToCore::from_parts(Parts {
+            body: body.as_bytes(),
+            raw: Some(raw),
+        })
+    };
+    assert_eq!(
+        read("[0,3]", "[3,3]", b"abcdef").expect("the well-formed frame reads"),
+        steps(vec![trimmed("abc"), found(&["def"])])
+    );
+    // Overlapping, out of order, past the end, short of the end, and not
+    // UTF-8.
+    for (first, second, raw) in [
+        ("[0,3]", "[0,3]", &b"abcdef"[..]),
+        ("[3,3]", "[0,3]", b"abcdef"),
+        ("[0,3]", "[3,4]", b"abcdef"),
+        ("[0,3]", "[3,2]", b"abcdef"),
+        ("[0,3]", "[3,2]", &[b'a', b'b', b'c', 0xC3, 0x28]),
+    ] {
+        let error = read(first, second, raw).expect_err("refused");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::InvalidData,
+            "{first} then {second}"
+        );
+    }
 }

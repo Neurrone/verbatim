@@ -272,16 +272,15 @@ Public API:
   `write_message` writes the whole frame in one `WriteFile`,
   `encode_message` gives the bytes, `put_message` appends them to a
   sender's buffer, and `decode_message` parses a frame's `Parts`. An
-  answer that carries a terminal's text (an `Answer` whose reply is a
-  `TerminalRead`, `TerminalHistory`, or `TerminalFound`, its request
-  number in the JSON as any answer's) has a raw section (the private
-  `message::raw` module; `docs/design/communication.md`, section 4.2): each
-  text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
-  `TerminalText` and `"text":[start,length]` for a history's or match's
-  text, and colour runs are 16-byte records of four little-endian `u32`s
-  (column, length, foreground, background), the JSON giving
-  `"colours":{"raw":[start,length],"rows":[...]}` with each row's run
-  count. The module converts while encoding, borrowing from the message,
+  answer that carries large texts or colour runs has a raw section (the
+  private `message::raw` module; `docs/design/communication.md`, section
+  4.2, which gives the body's forms): a batch's answer when a step
+  answered a trimmed `ReadRange`, a `Visible`, a `FindText` or a
+  `ReadColours`, and a terminal's text operation's answer whose reply is a
+  `TerminalRead`, `TerminalHistory`, or `TerminalFound`. Each text is
+  UTF-8 there and a range in the JSON, and colour runs are 16-byte
+  records of four little-endian `u32`s (column, length, foreground,
+  background), the JSON giving their range and each row's run count. The module converts while encoding, borrowing from the message,
   and back while decoding, validating text with `simdutf8`; the model's
   types know nothing of it. A range outside the section, invalid UTF-8,
   records that do not fill their range, a section longer or shorter than

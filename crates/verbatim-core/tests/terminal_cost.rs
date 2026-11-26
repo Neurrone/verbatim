@@ -96,6 +96,8 @@ fn read_of(input: &Input) -> Option<&TerminalSnapshot> {
                     answer:
                         Answer {
                             outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
+                            began_us: 0,
+                            ended_us: 0,
                             ..
                         },
                     ..
@@ -129,6 +131,8 @@ fn encoded(input: &Input, snapshot: TerminalSnapshot) -> String {
                 answer:
                     Answer {
                         outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
+                        began_us: 0,
+                        ended_us: 0,
                         ..
                     },
                 ..

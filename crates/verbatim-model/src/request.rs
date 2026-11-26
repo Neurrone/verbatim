@@ -540,6 +540,15 @@ pub struct Answer {
     /// when there is none. Core judges nothing by it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
+    /// When the reader's worker began running the request, in microseconds
+    /// on the run's shared clock: every reader stamps it, with
+    /// [`Answer::ended_us`], around the request it runs, so that Core
+    /// judges a read by when it was taken and not by when its answer
+    /// arrived (Claude, 2026-11-26). 0, with `ended_us`, in an answer no
+    /// worker ran: a reader's own ending or refusal of a request.
+    pub began_us: u64,
+    /// When the worker finished running the request, on the same clock.
+    pub ended_us: u64,
 }
 
 impl Ask {
@@ -1250,6 +1259,8 @@ mod tests {
             ])),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         };
         assert_eq!(
             answer.named(),
@@ -1307,6 +1318,8 @@ mod tests {
             outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::Read(read))])),
             probes: Vec::new(),
             detail: String::new(),
+            began_us: 0,
+            ended_us: 0,
         };
         let json = serde_json::to_string(&answer).unwrap();
         assert!(!json.contains("detail"));

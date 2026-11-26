@@ -123,6 +123,8 @@ impl Asks {
                     outcome: Outcome::NotThere,
                     probes: Vec::new(),
                     detail: "its window was destroyed".to_owned(),
+                    began_us: 0,
+                    ended_us: 0,
                 });
             }
             !on
@@ -172,6 +174,8 @@ fn ended(number: RequestNumber, detail: &str) -> Answer {
         outcome: Outcome::Ended,
         probes: Vec::new(),
         detail: detail.to_owned(),
+        began_us: 0,
+        ended_us: 0,
     }
 }
 

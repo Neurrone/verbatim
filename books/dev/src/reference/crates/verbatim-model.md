@@ -359,8 +359,9 @@ tell, Core asks", which the protocol below carries.
   window's `WindowVerdict`, "probe first" when Core has none in force,
   and each `Answer` the `Probe`s the request made. `Answer` carries one
   of the five outcomes (`Outcome`: a `Reply`, `Refused` with a
-  `Refusal`, not there, not responding, or the reader ended) and a
-  diagnostic detail. `Cancel` carries a `CancelReason`: foreground, hung,
+  `Refusal`, not there, not responding, or the reader ended), a
+  diagnostic detail, and when the reader's worker began and ended the
+  request (`began_us`, `ended_us`, both 0 when no worker ran it). `Cancel` carries a `CancelReason`: foreground, hung,
   due time or withdrawn; only the first abandons a running call.
 - The event queue's inputs and effects (`QueueInput`, `QueueEffect`). A
   key or command arrives as a `Press`, its action chosen at the press

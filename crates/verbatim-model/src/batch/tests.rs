@@ -1211,6 +1211,8 @@ fn the_outcome_walk_meets_every_node_and_anchor_and_an_answer_stamps_them() {
         outcome: Outcome::Result(Reply::Steps(outcomes)),
         probes: Vec::new(),
         detail: String::new(),
+        began_us: 0,
+        ended_us: 0,
     };
     assert_eq!(
         answer.named().1,

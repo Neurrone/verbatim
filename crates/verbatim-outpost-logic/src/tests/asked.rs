@@ -46,6 +46,8 @@ fn result(number: u64) -> Answer {
         outcome: Outcome::Result(Reply::Steps(vec![StepOutcome::Done(Done::Follow)])),
         probes: Vec::new(),
         detail: String::new(),
+        began_us: 0,
+        ended_us: 0,
     }
 }
 
@@ -55,6 +57,8 @@ fn ended(number: u64, detail: &str) -> Answer {
         outcome: Outcome::Ended,
         probes: Vec::new(),
         detail: detail.to_owned(),
+        began_us: 0,
+        ended_us: 0,
     }
 }
 
