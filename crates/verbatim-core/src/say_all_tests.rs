@@ -607,7 +607,7 @@ fn a_caret_move_say_all_made_is_cores_caret() {
     let _ = step(&mut state, 1_310, text_answer(number, placed()));
     let caret = state.focus_caret(node(2)).expect("Core holds the caret");
     assert_eq!(caret.line.start, TextAnchor(100));
-    // The move minted the next selection baseline (Table 17, column F).
+    // The move minted the next selection baseline.
     assert_eq!(
         crate::text_facts::held(&state.state),
         Some((node(2), TextAnchor(60)))
@@ -646,7 +646,7 @@ fn say_all_stops_when_its_outpost_generation_ends() {
     assert_eq!(read.sent.len(), 1, "{read:?}");
     let ended = step(&mut state, 1_200, Input::ReaderEnded(OUTPOST));
     assert_eq!(ended.display, [false]);
-    // Its first failure is replaced at once (Table 5, column E).
+    // Its first failure is replaced at once.
     assert_eq!(ended.started, [crate::entries::tests::APP]);
     assert!(ended.said.is_empty() && ended.sent.is_empty(), "{ended:?}");
     assert!(state.say_all.is_none());

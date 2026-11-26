@@ -573,7 +573,7 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
         return;
     };
     // The move mints the next selection baseline, and says nothing of it
-    // (Table 17, column F).
+    // (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
     if let Ok(caret) = crate::text_request::got(&answers, caret) {
         let mut facts = cx.facts_mut();
         crate::editing::caret_placed(&mut facts, moved.node, moved.line);

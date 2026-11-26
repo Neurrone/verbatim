@@ -90,7 +90,7 @@ pub fn caret_wait(batch: &Batch) -> Option<(NodeId, &CaretWait)> {
     }
 }
 
-/// What follows a check that shows no effect (Table 15, W2, A).
+/// What follows a check that shows no effect (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's wait").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Then {
     /// The next poll.
@@ -100,7 +100,7 @@ enum Then {
     Again(u64),
 }
 
-/// A watch's state (Table 15).
+/// A watch's state (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's wait").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     /// W1: its next check, a poll, due at `due_us`, on the run's shared
@@ -271,7 +271,7 @@ impl Watches {
 
     /// A caret or text-change event of the followed node was heard at
     /// `at_us`: within 60 ms of a watch's pass, where its event rule
-    /// applies, it brings a check forward (Table 15, A).
+    /// applies, it brings a check forward (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's wait").
     pub fn heard(&mut self, at_us: u64) {
         for watching in self.table.iter_mut().filter(|w| w.event_counts(at_us)) {
             watching.phase = match watching.phase {

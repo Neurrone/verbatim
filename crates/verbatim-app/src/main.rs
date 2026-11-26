@@ -340,7 +340,7 @@ fn run(
         })));
     }
     // The session's lock state: queried now, then followed by Windows'
-    // session notifications (Table 8).
+    // session notifications (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state").
     session_lock::start(command_tx.clone())?;
 
     // Core's view of the window in front, for the keyboard hook: whether
@@ -373,7 +373,7 @@ fn run(
         // The only thread that speaks: it holds the speaking token, which
         // the loop hands back when it ends. It runs at `Highest`, so a
         // message into Core is not starved by the readers' and the speech
-        // side's normal threads (Dickson, 2026-11-14; ADR 0003's build 1).
+        // side's normal threads (Dickson, 2026-11-14).
         thread::Builder::new()
             .name("verbatim-reducer".to_owned())
             .spawn(move || {
@@ -1867,7 +1867,7 @@ impl ReducerThread<'_> {
         // barrier's round, its end is its answer.
         self.barrier.ended(outpost);
         // An end for its application's exit is Core's as that exit, which
-        // the supervisor reports next (Table 5, column J): no re-take and
+        // the supervisor reports next (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"): no re-take and
         // no replacement.
         if reason != EndReason::TargetExited {
             self.queue(QueueInput::ReaderEnded(outpost_instance(

@@ -283,7 +283,7 @@ pub enum OutpostMessage {
     /// Core asked for an outpost for `target_pid` and none was started:
     /// its launch failed, or the application's process has exited, cannot
     /// be held, or is one Verbatim ignores ([`IgnoredProcesses`]), which
-    /// `application_gone` says (Table 5, column C).
+    /// `application_gone` says (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     LaunchFailed {
         /// The application.
         target_pid: Pid,
@@ -294,7 +294,7 @@ pub enum OutpostMessage {
         sealed: Sealed,
     },
     /// The application `target_pid`'s own process exited, as the handle
-    /// the supervisor holds says (Table 5, column J). Its outpost's
+    /// the supervisor holds says (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"). Its outpost's
     /// `Ended`, when one ran, comes first.
     ApplicationExited {
         /// The application.

@@ -427,8 +427,8 @@ pub(super) fn told(applications: &mut Applications, process: Pid, answered: Opti
 /// opened and none when it cannot, so it is never dropped for its process:
 /// NVDA handles a destroy before any drop that applies to a window's
 /// destruction (`IAccessibleHandler/internalWinEventHandler.py` 101 to
-/// 103). The local drops, in NVDA's order (design, "Readers' local
-/// drops"): the window's mapping ([`tell_window`]), the process that
+/// 103). The local drops, in NVDA's order (`books/dev/src/explanation/architecture.md`,
+/// "Where the rules run (D14)"): the window's mapping ([`tell_window`]), the process that
 /// serves the window, which must be known (a console window's is its
 /// console host, the process of the thread that raised the event, as
 /// Verbatim routes it today), the window's class and the shown object

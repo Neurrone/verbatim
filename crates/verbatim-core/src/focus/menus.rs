@@ -1,4 +1,4 @@
-//! Menus (design, "Focus and foreground"): the check after a menu or the
+//! Menus (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"): the check after a menu or the
 //! task switcher ends with no valid focus in its run, and the UI
 //! Automation menu opening.
 //!
@@ -141,7 +141,7 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
     cx.append_after(CHECK_AFTER_US, Entry::MenuCheck(Box::new(check)));
 }
 
-/// The menu-start rule (design, "Focus and foreground"; NVDA:
+/// The menu-start rule (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"; NVDA:
 /// `IAccessibleHandler/__init__.py` 942 to 973, 1082 to 1103), as the one
 /// definition judges it: a menu or popup start is refused when the run
 /// before it just executed a focus and the readers' last focus is an MSAA

@@ -112,7 +112,7 @@ fn node_backend(node: &FocusNode, backend: Backend) -> Backend {
 /// tell carries. A window owned by Verbatim's hidden frame, as Verbatim's
 /// menu is, takes the frame, the top of its owner chain, as its top-level
 /// window, so that the focus enters the frame and says its title,
-/// "Verbatim" (Verbatim-only, design "Focus and foreground").
+/// "Verbatim" (Verbatim-only).
 ///
 /// The window in front at the tell's check is Program Manager's or the
 /// taskbar's when the tell's own top-level window or root owner is that
@@ -387,8 +387,8 @@ fn focus_text(caret: &FocusCaret) -> FocusText {
 }
 
 /// Whether a focus of `origin` is dropped at its answer: its top-level
-/// window is an ignored process's (Verbatim-only: the test harness's rule,
-/// design "Focus and foreground").
+/// window is an ignored process's (Verbatim-only: the test harness's
+/// rule).
 fn ignored(state: &SrState, origin: &Origin) -> bool {
     state.ignored.contains(&origin.top_process)
 }
@@ -398,12 +398,12 @@ fn ignored(state: &SrState, origin: &Origin) -> bool {
 /// focus, and both versions of the focus become it. When the walk met
 /// none of the ancestors Core knows, the focus difference level is 1 or
 /// less, and the foreground object becomes the one the answer read for
-/// it, the top ancestor only if it could not be read (design, "Focus and
-/// foreground"). The answer's caret becomes Core's, with the selection
+/// it, the top ancestor only if it could not be read
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"). The answer's caret becomes Core's, with the selection
 /// baseline it minted, silently, a repeated focus's too, as NVDA's
 /// `initAutoSelectDetection` sets its baseline (`editableText.py` 417 to
-/// 427; Dickson, 2026-11-17) (Table 17,
-/// columns A to C). A focus whose nodes the reader did not mint, or whose
+/// 427; Dickson, 2026-11-17;
+/// `books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"). A focus whose nodes the reader did not mint, or whose
 /// meeting point is not one Core sent, ends unspoken: a reader's fault.
 pub(crate) fn execute(
     state: &mut SrState,
@@ -420,8 +420,7 @@ pub(crate) fn execute(
     };
     // A reused runtime id: the element the node held before is gone, so
     // Core forgets the node's caret and its terminal's model, and the
-    // focus's text is taken afresh, as a new object's is (build 1's
-    // design, "The outpost in this build").
+    // focus's text is taken afresh, as a new object's is.
     if read.runtime_id_reused {
         let node = ready.report.node.id;
         if state.focus_caret(node).is_some() {
@@ -432,7 +431,7 @@ pub(crate) fn execute(
     // With the readers' last focus emptied by a foreground change to an
     // unrelated window, the committed focus was left: the new focus is
     // compared with no ancestors, so the window's title and the focus are
-    // said (design, "The ancestors spoken at execution").
+    // said (ADR 0003, "The ancestors Core already knows and leaving a window").
     let left = state.versions.last.is_none();
     let mut said = vec![observed(&ready.report)];
     let (terminal, follows) = commit(state, &ready);
@@ -511,7 +510,8 @@ impl Executed {
     }
 }
 
-/// What committing `ready` starts (Table 10, columns A and B): the
+/// What committing `ready` starts
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"): the
 /// focused terminal, when it is one, and every `Follow` of the commit, which
 /// [`crate::terminal::reading::committed`] wants in order once the
 /// committed focus is written, a terminal's baseline after its `Follow`.
@@ -545,7 +545,7 @@ fn commit(
 }
 
 /// Executes the committed focus again, as a UI Automation menu opening on
-/// it does (design, "Focus and foreground"; NVDA:
+/// it does (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"; NVDA:
 /// `UIAHandler/__init__.py` 856 to 868), under `trace_id`: only what Core
 /// spoke of it is written ([`Commit::InPlace`]). Nothing unless a live
 /// reader's focus is committed.
@@ -572,7 +572,8 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 /// the same is taken silently with its new ids, the navigator moved only
 /// if there is none and the caret baseline kept; a different one is
 /// executed. With the readers' last focus empty it is executed and spoken
-/// (an accepted corner, Table 3).
+/// (an accepted corner;
+/// `books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus).
 pub(crate) fn retake(
     state: &mut SrState,
     origin: &Origin,
@@ -595,7 +596,8 @@ pub(crate) fn retake(
     // The text-changed flag is the focus's and survives its reader's
     // replacement, so it is taken from the old record before the new one
     // is written; the old baseline's anchor ended with its generation, and
-    // the answer minted one in the new generation (Table 17, column J).
+    // the answer minted one in the new generation
+    // (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
     ready.kept.selection.text_changed = old.kept.selection.text_changed;
     let (terminal, follows) = commit(state, &ready);
     let new = Commit::New {

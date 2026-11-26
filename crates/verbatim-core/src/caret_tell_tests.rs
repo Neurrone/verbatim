@@ -1,4 +1,5 @@
-//! Caret tells as event-queue entries and Core's text facts (Table 17):
+//! Caret tells as event-queue entries and Core's text facts
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"):
 //! the caret read naming the selection baseline, the difference said in
 //! specific or general terms, the edit control's repeated offsets, the
 //! text-changed flag set by a value change and cleared by a comparison,
@@ -480,7 +481,6 @@ fn a_caret_tell_with_a_focus_pending_asks_nothing() {
 /// events, never behind one. Placed behind the caret tell, an MSAA focus no
 /// read has confirmed does not count and is not read, as NVDA's events not
 /// yet pumped are not pending: the caret tell reads its selection
-/// (design, "The two decided questions").
 #[test]
 fn a_caret_tell_with_an_unconfirmed_msaa_focus_behind_it_reads_its_selection() {
     let mut held = uia_field();
@@ -547,7 +547,6 @@ fn a_caret_read_answered_no_text_decodes_says_nothing_and_drops_the_caret_and_se
 
 /// Every other failure a caret tell's read can be answered decodes, says
 /// nothing and keeps the baseline and the flag, as a read that fails does
-/// (Table 17, column I).
 #[test]
 fn a_caret_read_answered_with_a_failure_decodes_and_keeps_the_baseline_and_the_flag() {
     for (index, failure) in [
@@ -594,7 +593,7 @@ fn a_caret_read_answered_with_another_requests_reply_is_undecodable() {
     assert_eq!(baseline(&held), Some(TextAnchor(70)));
 }
 
-/// Table 17, columns G then D: an edit control's value change sets the
+/// An edit control's value change sets the
 /// flag, saying nothing; the next comparison speaks in general terms and
 /// clears it, so the one after speaks in specific terms again.
 #[test]
@@ -732,7 +731,7 @@ fn an_edit_controls_caret_tell_with_the_last_offsets_says_nothing() {
     assert!(text_changed(&held));
 }
 
-/// Table 17, column H: the baseline's anchor ends with its generation;
+/// The baseline's anchor ends with its generation;
 /// the flag is the focus's and stays.
 #[test]
 fn a_generation_end_drops_the_baseline_and_keeps_the_flag() {
@@ -750,7 +749,7 @@ fn a_generation_end_drops_the_baseline_and_keeps_the_flag() {
     assert!(kept.selection.text_changed);
 }
 
-/// Table 17, column C: a failed focus read clears the baseline and the
+/// A failed focus read clears the baseline and the
 /// flag. NVDA: `editableText.py` 421 to 424.
 #[test]
 fn a_failed_focus_read_clears_the_baseline_and_the_flag() {
@@ -927,7 +926,7 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
     })
 }
 
-/// Table 17, column A: a new focus's caret becomes Core's, its line said
+/// A new focus's caret becomes Core's, its line said
 /// with the focus, and its baseline minted with no change said.
 #[test]
 fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
@@ -951,7 +950,7 @@ fn a_new_focus_says_its_line_and_mints_the_baseline_with_no_change() {
     assert_eq!(caret.line.offset, 1);
 }
 
-/// Table 17, column B: a repeated focus's answer becomes the new
+/// A repeated focus's answer becomes the new
 /// baseline silently, whatever was selected meanwhile and with the
 /// text-changed flag set, and clears the flag, as NVDA's
 /// `initAutoSelectDetection` sets the baseline of the object gaining focus
@@ -982,7 +981,7 @@ fn a_repeated_focus_mints_the_baseline_silently() {
     assert_eq!(baseline(&held), Some(TextAnchor(81)));
 }
 
-/// Table 17, column C: a focus answer with no caret lets the baseline go
+/// A focus answer with no caret lets the baseline go
 /// and clears the flag, and Core holds no caret.
 #[test]
 fn a_focus_answer_with_no_caret_clears_the_baseline_and_the_flag() {

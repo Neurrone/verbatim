@@ -487,7 +487,7 @@ fn read_ended(reads: u8, answers: &str) -> String {
     format!("Read {{ reads: {reads}, exempt: false }} [{answers}]")
 }
 
-// Table 2, in the queue, waiting for its outpost.
+// A request in the queue, waiting for its outpost.
 
 #[test]
 fn a_waiting_request_is_sent_when_its_reader_can_take_it() {
@@ -580,7 +580,7 @@ fn a_waiting_request_waits_on_when_a_starting_reader_fails() {
     );
     assert_eq!(feed(&mut core, 1_000, read(1)), []);
     assert_eq!(feed(&mut core, 1_500, started(OUTPOST)), []);
-    // A first failure is replaced at once (Table 5, column E).
+    // A first failure is replaced at once.
     assert_eq!(
         feed(&mut core, 2_000, Input::ReaderEnded(OUTPOST)),
         [Effect::Queue(QueueEffect::StartOutpost(APP))]
@@ -645,7 +645,7 @@ fn a_waiting_request_withdrawn_by_its_entry_is_dropped_unsent() {
     assert_eq!(ready_at(&mut core, 3_000, OUTPOST), []);
 }
 
-// Table 2, in the queue, out.
+// A request in the queue, out.
 
 #[test]
 fn a_request_out_whose_window_is_found_hung_stops_with_the_sound_when_attended() {
@@ -846,7 +846,7 @@ fn an_exempt_entrys_request_out_stays_when_the_foreground_changes() {
     );
 }
 
-// Table 2, outside the queue.
+// A request outside the queue.
 
 #[test]
 fn a_request_outside_the_queue_waits_for_its_reader_and_is_sent_when_ready() {
@@ -1042,7 +1042,7 @@ fn a_request_outside_the_queue_out_withdrawn_is_cancelled() {
     );
 }
 
-// Table 2, no longer awaited and answered.
+// A request no longer awaited, and answered.
 
 /// A core whose request 1 Core stopped waiting for at its due time.
 fn core_with_late_request() -> Core<Test> {
@@ -1178,7 +1178,7 @@ fn an_answer_from_an_instance_the_request_did_not_go_to_is_dropped() {
     );
 }
 
-// The half-second round and Table 18, the recovery set.
+// The half-second round and the recovery set.
 
 #[test]
 fn the_round_checks_every_request_outs_window_each_half_second_while_one_is_out() {
@@ -1638,7 +1638,7 @@ fn a_dump_shows_the_front_entry_its_answers_and_its_request_out() {
     );
 }
 
-// Table 4, column D, and the probes requests answer.
+// The probe verdicts, and the probes requests answer.
 
 /// A window of the tests' application whose classes give no verdict.
 const PROBED: RequestWindow = RequestWindow {

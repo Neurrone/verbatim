@@ -296,7 +296,7 @@ fn a_key_that_moves_nothing_says_its_unit_at_the_bound() {
 /// the key says nothing, and the focus is spoken. NVDA:
 /// `editableText.py` 96 to 99 with `NVDAObjects/behaviors.py` 255 to 257.
 /// The speech is the design's, derived from NVDA's source, awaiting NVDA's
-/// capture (design, "A later key and a pending focus": needs capture).
+/// capture (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"; needs capture).
 fn a_focus_during_a_keys_watch_withdraws_it_and_the_key_says_nothing() {
     let (mut app, hwnd, mut core) = on_notes("mockapp-caret-watch-focus");
     // Right Arrow, which the application ignores: its watch is out.
@@ -391,7 +391,7 @@ fn a_caret_tell_of_a_focus_read_at_the_start_is_said() {
 /// no text pattern (`docs/parity/text.md`, "A text pattern missing at the
 /// focus"). A caret tell's read adopts the element its event came from,
 /// forgetting that answer, as only an element with text raises a caret
-/// event (design, "Selection and the caret's text facts"): the first read
+/// event (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): the first read
 /// after the provider answers names no baseline, since the focus had no
 /// caret, and mints one, saying nothing; the next says what changed from
 /// it. Without the adoption both reads would find no text and say
@@ -596,7 +596,7 @@ fn a_duplicate_focus_says_nothing_and_the_caret_tell_says_the_selection() {
 
 /// A Shift key passes at once and says nothing for itself; its caret tell
 /// says what it selected, and a later caret event with nothing changed
-/// says nothing (design, "The hook and Core's stroke line"; NVDA:
+/// says nothing (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"; NVDA:
 /// `NVDAObjects/behaviors.py` 331 to 360).
 fn a_selecting_keys_selection_is_said_by_its_caret_tell() {
     let (mut app, _, mut core) = on_notes("mockapp-caret-watch-key-selection");
@@ -840,7 +840,7 @@ fn a_selections_caret_is_its_start_whichever_end_the_providers_caret_is_at() {
 /// A selection Verbatim made, as the review copy's first press makes it,
 /// mints the next baseline, so the caret tell's read after it compares
 /// with it and finds no change: Verbatim's own moves are not said as
-/// selection changes (design, "Selection and the caret's text facts",
+/// selection changes (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts",
 /// `keep_made`).
 fn a_selection_verbatim_made_is_the_next_baseline() {
     let (app, hwnd, outpost, node, baseline) = notes_outpost("mockapp-caret-watch-own");
@@ -1056,7 +1056,7 @@ fn an_edit_controls_selection_deleted_to_the_end_says_the_selection_removed() {
 /// "x" typed over the selected "alpha" in a classic edit control, its value
 /// change judged before its caret tell: the value change sets the
 /// text-changed flag, and the caret tell's answer says its change in
-/// general terms (Table 17, columns G and D). NVDA:
+/// general terms (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"). NVDA:
 /// `NVDAObjects/window/edit.py` 1083 to 1084.
 fn an_edit_controls_value_change_judged_first_has_the_next_change_said_in_general_terms() {
     let (mut app, mut core, _) = on_edit("mockapp-caret-watch-edit-changed-first");
@@ -1089,7 +1089,7 @@ fn an_edit_controls_value_change_judged_first_has_the_next_change_said_in_genera
 /// change, a caret tell, the client's value change and a last caret tell.
 /// The first caret tell's answer, with the flag set and the second value
 /// change waiting, says the change in general terms and counts that value
-/// change, which then sets no flag (Table 17); the last caret tell finds
+/// change, which then sets no flag (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"); the last caret tell finds
 /// the selection's offsets unchanged and says nothing, as NVDA's
 /// `Edit.event_caret` returns before comparing (`NVDAObjects/window/edit.py`
 /// 1068 to 1074). So the next comparison, as "x" is selected, is specific.

@@ -1,4 +1,4 @@
-//! `Follow` at each commit: Table 10's rows against its columns A to F.
+//! `Follow` at each commit, from each record Core holds of it.
 
 use verbatim_model::request::{FollowGroup, Followed};
 use verbatim_model::{

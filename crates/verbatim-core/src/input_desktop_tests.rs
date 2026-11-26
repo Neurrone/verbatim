@@ -1,4 +1,5 @@
-//! The secure desktop and the lock state (Table 8): a switch away handled
+//! The secure desktop and the lock state
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state"): a switch away handled
 //! at once, the read after the return, and the lock state.
 use crate::entries::tests::found_at;
 use crate::readers::Found;
@@ -126,7 +127,7 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
     .collect()
 }
 
-/// Table 8, column A from the user's desktop: speech is cut, the sleeping
+/// A switch away from the user's desktop: speech is cut, the sleeping
 /// focus is committed with nothing followed, the hook's view counts the
 /// switch away, and the old application is asked nothing more.
 #[test]
@@ -148,7 +149,7 @@ fn a_switch_away_cuts_speech_and_commits_the_sleeping_focus_following_nothing() 
     );
 }
 
-/// Table 8, row "Another input desktop", column A: nothing more.
+/// A switch away from another input desktop: nothing more.
 #[test]
 fn a_second_switch_away_does_nothing_more() {
     let mut held = started();
@@ -160,7 +161,7 @@ fn a_second_switch_away_does_nothing_more() {
     assert_eq!(held.state.desktop.switches_away, 1);
 }
 
-/// Table 8, column B then G: 200 ms after the return the front
+/// 200 ms after a return the front
 /// application's focus is read with none of the ancestors Core knows, and
 /// spoken with its window's title, as after the sleeping focus.
 #[test]
@@ -197,7 +198,7 @@ fn the_return_reads_the_front_focus_200_ms_later_and_says_its_title() {
     assert!(matches!(held.state.versions.committed, Committed::Read(_)));
 }
 
-/// Table 8, row "Return pending", column A: the timer is cancelled and
+/// A switch away while the return is pending: the timer is cancelled and
 /// the sleeping focus stays.
 #[test]
 fn a_switch_away_while_the_return_is_pending_cancels_the_read() {
@@ -234,7 +235,7 @@ fn an_outposts_end_on_another_desktop_takes_nothing_again() {
     assert_eq!(held.state.versions.committed, Committed::Own);
 }
 
-/// Table 8, columns C, D and H: the lock state is recorded, unknown
+/// The lock state is recorded, unknown
 /// counting as locked.
 #[test]
 fn the_lock_state_counts_unknown_as_locked() {

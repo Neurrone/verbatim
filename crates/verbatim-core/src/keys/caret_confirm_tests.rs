@@ -556,7 +556,7 @@ fn a_menu_start_behind_the_key_is_confirmed_for_its_role() {
     }
 }
 
-// Disagreements 1, 3 and 4 of the design, hand-written cross-process
+// Hand-written cross-process
 // sequences, NVDA's speech from source: a stray event inside a 100 ms watch
 // has no trigger a capture can produce on demand.
 

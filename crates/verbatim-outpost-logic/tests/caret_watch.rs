@@ -28,7 +28,7 @@
 //! `verbatim_model` carries yet, while Core runs terminals' keys on
 //! today's key line; sentence keys and selections, whose rules this model
 //! does not take; and the caret tells and value changes the application's
-//! events also give Core, which Table 17's hand-written tests cover (the
+//! events also give Core, which Core's hand-written caret tell tests cover (the
 //! outpost hears Notepad's events here, for the watch, and tells Core
 //! nothing of them).
 
@@ -560,7 +560,7 @@ fn found() -> Vec<Script> {
     vec![
         // A focus told while the read before Left waits in the outpost
         // behind a read the hook's release left running: the read is to be
-        // withdrawn and the focus taken at once (Table 7, S3-C), and is not.
+        // withdrawn and the focus taken at once (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"), and is not.
         Script {
             kind: Kind::Notepad,
             text: "ab".to_owned(),

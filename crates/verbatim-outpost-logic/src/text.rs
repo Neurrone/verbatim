@@ -331,7 +331,7 @@ mod tests {
     /// A held read (a starting point or a selection baseline) is copied
     /// only when a call names it, survives a call that did not copy it,
     /// and is released with the anchors, its UIA ranges handed back
-    /// (Table 16).
+    /// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The reducer").
     #[test]
     fn a_held_read_is_copied_when_named_and_released_as_an_anchor() {
         let mut facts = TextFacts::default();

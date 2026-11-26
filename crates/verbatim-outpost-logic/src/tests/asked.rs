@@ -293,7 +293,7 @@ fn one(op: Op) -> Batch {
 }
 
 /// A `Follow` sent while an older one is queued replaces it, which is
-/// answered "ended or stopped" at once (Table 10).
+/// answered "ended or stopped" at once (`books/dev/src/reference/crates/verbatim-outpost.md`, "Core's requests").
 #[test]
 fn a_newer_follow_answers_the_queued_one_ended() {
     let mut reducer = Reducer::new();
@@ -373,7 +373,7 @@ fn ended_program(effects: &[Effect]) -> Input {
     finished(request)
 }
 
-/// A window destroyed while a program runs (Table 14, 2026-11-19): the
+/// A window destroyed while a program runs (2026-11-19): the
 /// queued reads its MSAA ids name, a read by ids and a run's candidate,
 /// are answered "not there" at once; a re-take's and a recovery read's
 /// current focus, a `Follow` and a read of a node, all asked on the

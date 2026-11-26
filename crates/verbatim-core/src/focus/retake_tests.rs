@@ -1,7 +1,7 @@
 //! The reads of the current focus Core makes itself: the startup read
-//! (Table 3, row "Startup"), the re-take after a reader's replacement
-//! (column F) and the read after a hung window answers again (Table 18,
-//! column B).
+//! at startup, the re-take after a reader's replacement
+//! and the read after a hung window answers again
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus, and "Core's requests", the recovery set).
 use crate::entries::tests::found_at;
 use crate::readers::Found;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
@@ -257,7 +257,7 @@ fn a_recovered_window_reads_the_focus_and_a_uia_focus_on_the_last_runtime_id_is_
     assert!(state.queue.front_for_tests().is_none());
 }
 
-/// Table 17, column J: the silent re-take mints the baseline in the new
+/// The silent re-take mints the baseline in the new
 /// generation, says nothing of it, and keeps the focus's text-changed
 /// flag.
 #[test]

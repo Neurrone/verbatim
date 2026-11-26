@@ -541,7 +541,7 @@ fn an_alert_from_a_native_uia_toast_window_says_nothing() {
 /// A window of mockapp's destroyed, its destroy told as the listener sends
 /// it: Core passes it to mockapp's outpost, whose store then holds no MSAA
 /// node of the window, the focus Core still holds among them, so a reused
-/// handle inherits none (Table 14). The focus is "Save" in a child window
+/// handle inherits none (`books/dev/src/reference/crates/verbatim-outpost.md`, "Core's requests"). The focus is "Save" in a child window
 /// of the "Save As" dialog (`child-window`), which mockapp then destroys
 /// (`destroy-child-window`).
 fn a_destroyed_windows_msaa_nodes_leave_the_outposts_store() {

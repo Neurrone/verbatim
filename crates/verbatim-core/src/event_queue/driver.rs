@@ -208,7 +208,7 @@ pub(crate) struct Queue<E, F> {
     pub(super) readers: BTreeMap<Reader, Instance>,
     /// The foreground record, `None` before the listener's first report.
     pub(super) foreground: Option<Foreground>,
-    /// The backend verdicts of windows (Table 4).
+    /// The backend verdicts of windows (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache").
     pub(super) backend: BackendCache,
     /// The front entry's checkpoint, present exactly when there is a front.
     pub(super) checkpoint: Option<Box<Checkpoint<E, F>>>,
@@ -216,7 +216,7 @@ pub(crate) struct Queue<E, F> {
     /// in the order they were made: the check after a menu or switcher
     /// ends.
     pub(super) timers: Vec<(u64, E)>,
-    /// The outpost generation record (Table 5).
+    /// The outpost generation record (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     pub(crate) record: crate::supervisor::record::Record,
 }
 
@@ -307,8 +307,8 @@ impl<E, F> Queue<E, F> {
 
     /// Whether a frame of `instance` is its reader's current one's: the
     /// newest listener the owner reported started, or an application's
-    /// starting or ready generation (design, "The outpost generation
-    /// record").
+    /// starting or ready generation
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     pub(crate) fn admits(&self, instance: Instance) -> bool {
         match instance.reader {
             Reader::Listener => self.record.listener == Some(instance.generation),
@@ -336,7 +336,7 @@ impl<E, F> Queue<E, F> {
     }
 
     /// Every request waiting or out, as sent: the ids each names stay held
-    /// (design, "Held anchors").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
     pub(crate) fn requests(&self) -> impl Iterator<Item = &Question> {
         self.table.requests()
     }

@@ -1161,7 +1161,7 @@ impl Outpost {
             // The reducer answers the queued reads its MSAA ids name "not
             // there" at once, and forgets the window, with every other
             // window destroyed in the same drain, by one program ahead of
-            // any later work (Table 14).
+            // any later work (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The reducer").
             CoreToOutpost::WindowDestroyed(window) => {
                 context.mailbox.post(Posted::WindowDestroyed(*window));
             }

@@ -1674,8 +1674,8 @@ fn keys_are_told_to_the_reading_rules_by_their_unit() {
 /// asked of the ended outpost: its hold goes with the terminal's model, and
 /// once everything is heard nothing of the terminal is left. The index
 /// marks of what was handed to speech wait in the event queue behind the
-/// re-take, which the replacement answers (design, "Focus and foreground",
-/// after a reader's replacement).
+/// re-take, which the replacement answers
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus).
 #[test]
 fn output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it() {
     let mut state = terminal();

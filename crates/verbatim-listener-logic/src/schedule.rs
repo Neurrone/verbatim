@@ -623,7 +623,7 @@ impl<J, W> Schedule<J, W> {
         )
     }
 
-    /// Core cancels request `number` for `reason` at `now_us` (Table 9): a
+    /// Core cancels request `number` for `reason` at `now_us` (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "The reading threads' schedule"): a
     /// queued one is ended cancelled; a running one is abandoned with a
     /// fresh thread for the foreground, and left alone for any other
     /// reason; an unknown one, already answered, is left.

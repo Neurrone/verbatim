@@ -867,7 +867,7 @@ impl Owner {
     /// `pid`'s generation `outpost` runs `child`: a given spare is sent its
     /// `Assign`, ahead of everything the app will send it, and its pipe is
     /// read as the application's from now on; the app hears it started
-    /// (Table 5, column B).
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     fn running(&mut self, pid: Pid, outpost: OutpostId, child: OutpostChild, spare: bool) {
         if spare {
             if let Err(error) = child
@@ -1033,7 +1033,7 @@ impl Owner {
     }
     /// `pid`'s application has exited, for `why`: its outpost, if one
     /// runs, is ended, the app hearing its end; Core hears the exit
-    /// (Table 5, column J); and the listener is told, its handle held
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"); and the listener is told, its handle held
     /// until it answers.
     fn application_exited(&mut self, pid: Pid, why: &str) {
         if self.records.contains_key(&pid) {

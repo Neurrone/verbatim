@@ -721,7 +721,7 @@ fn a_start_marker_set_then_copied_copies_the_range_read() {
 /// Select then copy's first press selects from the start marker on the
 /// focused text: the selection it made is said, and the answer mints the
 /// next selection baseline, Verbatim's own selection not being spoken as a
-/// change (Table 17, column F).
+/// change (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 #[test]
 fn a_selection_made_on_the_focused_text_is_said_and_mints_the_baseline() {
     let mut state = reviewing();

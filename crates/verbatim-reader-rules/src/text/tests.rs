@@ -662,7 +662,7 @@ fn text_cut_short_ends_at_a_whole_character() {
 }
 
 /// A focus's caret read holds the next baseline and compares nothing
-/// (Table 17, column E).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 #[test]
 fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
     let mut source = Fake::new(
@@ -689,7 +689,7 @@ fn a_focus_caret_read_holds_a_baseline_and_compares_nothing() {
 
 /// The selection is compared with the named baseline by the contract's
 /// rule, in specific terms with each part's text, and the whole new
-/// selection given beside it (Table 17, column D).
+/// selection given beside it (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 #[test]
 fn a_selection_says_what_changed_from_the_named_baseline() {
     let mut source = Fake::new(

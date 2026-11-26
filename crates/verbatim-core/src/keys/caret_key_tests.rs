@@ -1,5 +1,5 @@
-//! The caret key as an event-queue entry (Table 7) and the stroke line
-//! it sends from (Table 13): the starting read at its turn, the pass, the
+//! The caret key as an event-queue entry and the stroke line it sends
+//! from (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue"): the starting read at its turn, the pass, the
 //! watch and the key's words; a later key, a pending focus, the 150 ms
 //! release, the foreground and the sentence move. Ported from the key
 //! line's tests where their speech holds (`tests/text.rs`), with the
@@ -1398,7 +1398,7 @@ fn a_caret_key_binds_to_a_committed_field_and_not_to_a_button() {
 }
 
 /// The starting point is an anchor the outpost holds for Core: while the
-/// watch naming it is out, `NodesHeld` names it (design, "Held anchors").
+/// watch naming it is out, `NodesHeld` names it (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
 /// The key's reads compare no selection and leave the baseline alone.
 #[test]
 fn the_starting_point_is_held_while_its_watch_is_out_and_no_baseline_is_minted() {
@@ -1449,8 +1449,7 @@ fn italic_i() -> TextChunk {
     }
 }
 
-/// The formatting memory by value (build 2's design, "The formatting
-/// memory", after ADR 0001's decision that it goes with the focus object):
+/// The formatting memory by value (after ADR 0001's decision that it goes with the focus object):
 /// a key's binding carries its focus record's memory from the press; the
 /// key compares its unit's formatting with it, so "italic" is said, and
 /// writes what it spoke back to the record, still the committed focus.

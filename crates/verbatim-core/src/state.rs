@@ -523,7 +523,7 @@ pub struct SrState {
     /// keeps of its focus answer (`crate::focus::versions`).
     pub(crate) versions: crate::focus::versions::Versions,
     /// The node Core last named in `Follow` per outpost
-    /// (`crate::focus::follow`, Table 10).
+    /// (`crate::focus::follow`).
     pub(crate) follows: crate::focus::follow::Follows,
     /// Core's plain reader and the plain object it holds
     /// (`crate::focus::plain`).
@@ -725,7 +725,7 @@ impl SrState {
     /// The number of the oldest key whose entry is still in Core's event
     /// queue, at the front or waiting: the test harness's mark that a key
     /// was handled is held until the entries of every key before it have
-    /// ended (the design, "The test harness's idle").
+    /// ended (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     #[must_use]
     pub fn oldest_key_entry(&self) -> Option<verbatim_model::KeySeq> {
         self.queue
@@ -948,7 +948,7 @@ impl SrState {
         }
         // The nodes the event queue's requests and entries name: a request
         // waiting or out, and a caret key bound at its press to a node that
-        // may no longer be the focus (design, "Held anchors").
+        // may no longer be the focus (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
         for request in self.queue.requests() {
             for (node, _) in crate::text_facts::named_by(request) {
                 insert(node);
@@ -1079,8 +1079,8 @@ impl SrState {
             }
         }
         // The selection baseline, and every anchor a request of the event
-        // queue names, a caret key's starting point among them (design,
-        // "Held anchors").
+        // queue names, a caret key's starting point among them
+        // (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
         if let Some((node, baseline)) = crate::text_facts::held(self) {
             insert(node, TextPosition::at(baseline));
         }

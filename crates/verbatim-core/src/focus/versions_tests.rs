@@ -1,5 +1,5 @@
-//! Table 3's cells that the two versions decide on their own: each row
-//! against columns B to H.
+//! What the two versions of the focus decide on their own
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus).
 
 use verbatim_model::property::RuntimeId;
 use verbatim_model::request::KnownAncestor;

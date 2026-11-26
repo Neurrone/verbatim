@@ -80,7 +80,7 @@ pub(crate) struct Live {
 
 impl Live {
     /// Sends it to `instance` at `now_us`, carrying the verdict in force
-    /// for its window (Table 4, column D). Only an outpost probes on a
+    /// for its window (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache"). Only an outpost probes on a
     /// request, so only a request to an outpost is probing: the focus
     /// listener reads the object it was told of and never probes, and its
     /// answer, which brings no probe, says nothing of the window's verdict.
@@ -166,7 +166,7 @@ pub(crate) struct Table {
     late: BTreeMap<RequestNumber, Instance>,
     /// Windows Core stopped waiting on, or refused unsent, as hung while
     /// their application held attention, watched until they answer again
-    /// (Table 18).
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Core's requests").
     recovery: BTreeMap<u64, RequestWindow>,
     /// When the next half-second hang round is due, armed only while
     /// something is to be checked.
@@ -426,7 +426,7 @@ impl Table {
 
     /// Every request waiting for `reader` or out to it ends answered
     /// `outcome`, and its late requests are forgotten: its application
-    /// exited (Table 5, column J).
+    /// exited (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     pub(crate) fn answer_all(&mut self, reader: Reader, outcome: &WireOutcome) -> Vec<Ended> {
         self.late.retain(|_, instance| instance.reader != reader);
         let numbers: Vec<RequestNumber> = self

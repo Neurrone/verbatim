@@ -1,5 +1,5 @@
-//! `Follow`, Core's request at each commit (design, "Changes on objects"
-//! and Table 10): it names the committed focus's node to the outpost that
+//! `Follow`, Core's request at each commit
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", its changes): it names the committed focus's node to the outpost that
 //! holds it, with its event group and any extra object, so that the
 //! outpost keeps that node's registration and removes the rest; and it
 //! names nothing to an outpost whose node was followed when the commit's
@@ -30,7 +30,7 @@ use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Reader, RequestWindow};
 /// without its text and caret events.
 pub(crate) const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
-/// The node Core last named in `Follow` to one outpost (Table 10's rows).
+/// The node Core last named in `Follow` to one outpost.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Named {
     /// The outpost generation that holds it.

@@ -1,5 +1,5 @@
-//! A UI Automation focus at the front (design, "Focus and foreground" and
-//! "The focus answers"): judged on its tell's facts, then read in two
+//! A UI Automation focus at the front
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"): judged on its tell's facts, then read in two
 //! batches chained under one due time, the listener's `Read` and
 //! `Ancestors` of the element it kept, of which Core makes the element's
 //! route, and the application's outpost's `FocusRead` of the route,
@@ -360,7 +360,7 @@ async fn afresh(
 /// A completion the outpost of `window`'s application answered, or Core
 /// stopped waiting for, ended without its focus executed: a `Follow`
 /// naming what Core names there removes the completion's registration
-/// (Table 10, column C).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects").
 fn unexecuted(cx: &mut Cx<Entries>, window: RequestWindow) {
     let request = cx.facts().follows.unexecuted(window.process, window);
     super::follow::send(cx, vec![request]);

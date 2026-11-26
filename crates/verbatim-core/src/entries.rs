@@ -691,7 +691,7 @@ impl Logic for Entries {
 
     fn ended_at_foreground(facts: &mut SrState, entry: &Entry, said: &mut Vec<Said>) {
         // A held key ended so says nothing; its key passes, its stroke
-        // sent in press order (Table 13, column A).
+        // sent in press order (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
         if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
             said.extend(facts.strokes.pass(caret.key_seq).map(Said::Queue));
         }
@@ -766,13 +766,13 @@ impl Logic for Entries {
             let outpost = instance.outpost_id();
             facts.follows.outpost_ended(process, outpost);
             // The focused terminal and the models of the generation's
-            // terminals go with it (Table 1, column I).
+            // terminals go with it.
             crate::terminal::reading::outpost_ended(facts, outpost);
             // Say-all's positions are anchors of the outpost's, which end
             // with it: say-all stops, its read withdrawn.
             said.extend(crate::say_all::outpost_ended(facts, outpost));
             // The navigator object is one of the outpost's held nodes,
-            // which end with it (Table 5): its commands say there is
+            // which end with it (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"): its commands say there is
             // none until a focus is committed again.
             if facts
                 .navigator
@@ -782,7 +782,7 @@ impl Logic for Entries {
                 facts.navigator = None;
             }
             // The review start marker's anchors ended with the generation
-            // that minted them (design, "Held anchors").
+            // that minted them (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
             if facts
                 .start_marker
                 .is_some_and(|marker| marker.node.outpost() == Some(outpost))
@@ -1155,7 +1155,7 @@ pub(crate) fn route(
             ));
         }
         // Every frame of an instance that is not its reader's current one
-        // is dropped (design, "The outpost generation record").
+        // is dropped (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
         QueueInput::Tell { from, .. }
         | QueueInput::WindowDestroyed { from, .. }
         | QueueInput::WindowHung { from, .. }
@@ -1318,7 +1318,7 @@ pub(crate) fn route(
 }
 
 /// A switch of the input desktop at `at_us`, handled at once in the inbox
-/// (Table 8): what it says first, then its `Follow`s sent as Core's own
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state"): what it says first, then its `Follow`s sent as Core's own
 /// requests, and the queue settled, so that a starting read whose stroke
 /// was dropped is withdrawn.
 fn desktop_switched(
@@ -1360,7 +1360,7 @@ pub(crate) fn unsettled(state: &SrState) -> bool {
 
 /// Settles the queue under `trace_id` after Core's facts changed outside
 /// it, as the speech side's cut or failure changes say-all until they
-/// reach the inbox in a later step of build 1: what they want joins the
+/// reach the inbox: what they want joins the
 /// back, and a request no longer needed is withdrawn.
 pub(crate) fn settle(state: &mut SrState, runtime: &mut Runtime, trace_id: TraceId) -> Vec<Said> {
     let at_us = state.queue.now_us();

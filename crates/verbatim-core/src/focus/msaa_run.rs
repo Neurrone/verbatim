@@ -1,5 +1,5 @@
-//! A run of MSAA focus and foreground candidates at the front (design,
-//! "Focus and foreground"): walked by the one definition's run walk
+//! A run of MSAA focus and foreground candidates at the front
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects"): walked by the one definition's run walk
 //! (`super::validity::judge_run`), newest first, strictly, across
 //! applications, as NVDA's pump has no grouping by application
 //! (`IAccessibleHandler/__init__.py` 1087 to 1092). Refusals go on with no

@@ -1,5 +1,5 @@
 //! The ids a request of the event queue names, held while it waits or is
-//! out (design, "Held anchors").
+//! out (`books/dev/src/reference/crates/verbatim-core.md`, "The reducer and its state").
 
 use verbatim_model::batch::{Batch, CaretWait, EffectTest, Op, Placement, Step, Subject};
 use verbatim_model::{TextAnchor, TextDetails, TextPoint, TextPosition};

@@ -245,7 +245,7 @@ pub(crate) enum Pending {
 }
 
 /// Whether a waiting candidate's facts were read by a caret key's
-/// confirmation (design, "Confirming, and its bound"): written only by
+/// confirmation (`docs/parity/focus-events.md`, "While a focus is pending"): written only by
 /// [`crate::event_queue::Cx::store_facts`], so each candidate is read at
 /// most once while it waits.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,7 +304,7 @@ pub(crate) enum Subject<'a> {
 
 /// The one definition: how `subject` stands against `view`, with `facts`
 /// the outpost read of it, if any. The rows, in
-/// order, each answer or pass on (design, "The definition").
+/// order, each answer or pass on (`books/dev/src/explanation/design/focus-validity.md`, "The definition").
 pub(crate) fn judge(
     subject: Subject<'_>,
     view: &View<'_>,
@@ -926,7 +926,7 @@ fn keyboard_focus(tell: &Event) -> Option<Read<bool>> {
 }
 
 /// Whether `focus` names Verbatim's hidden frame's own element
-/// (Verbatim-only, design "Focus and foreground").
+/// (Verbatim-only).
 fn uia_on_hidden_frame(focus: &UiaFocus) -> bool {
     let TellWindow::Found(facts) = &focus.tell.window else {
         return false;
@@ -943,7 +943,7 @@ fn uia_on_hidden_frame(focus: &UiaFocus) -> bool {
 }
 
 /// Whether `candidate` names Verbatim's hidden frame's own object
-/// (Verbatim-only, design "Focus and foreground").
+/// (Verbatim-only).
 fn msaa_on_hidden_frame(candidate: &Candidate) -> bool {
     candidate.facts().is_some_and(|facts| {
         facts.hidden_frame

@@ -1,5 +1,5 @@
 //! The reads of an application's current focus that Core makes itself
-//! (design, "Focus and foreground"; Tables 3 and 18): the focus at
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus, and "Core's requests", the recovery set): the focus at
 //! startup, asked at the listener's first foreground report and spoken as
 //! a switch with no duplicate test; the re-take after the committed
 //! focus's reader ends, or the listener ends, compared whole with the
@@ -260,7 +260,8 @@ pub(crate) fn startup(state: &SrState, foreground: &Foreground) -> CurrentFocus 
 }
 
 /// The read after the user's input desktop returned, of the application
-/// whose window `window` is in front (Table 8, column G).
+/// whose window `window` is in front
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The secure desktop and the lock state").
 pub(crate) fn returned(state: &SrState, window: RequestWindow) -> CurrentFocus {
     CurrentFocus {
         why: Why::Returned,
@@ -280,7 +281,7 @@ pub(crate) fn recovered(state: &SrState, window: &RequestWindow) -> CurrentFocus
     }
 }
 
-/// `instance` ended (Table 3, column F): the listener's tokens die with
+/// `instance` ended (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus): the listener's tokens die with
 /// it, and the committed focus's data is kept with its ids dead when its
 /// outpost ended. The re-take is returned when one is due: for the
 /// committed focus's outpost, of its application, naming the foreground

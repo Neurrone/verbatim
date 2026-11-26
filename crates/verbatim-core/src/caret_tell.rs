@@ -87,8 +87,8 @@ impl CaretTell {
     }
 
     /// The element the outpost adopts as the node's when the node's own
-    /// has no text pattern (design, "Selection and the caret's text
-    /// facts"): a UI Automation tell's, from the outpost following the
+    /// has no text pattern
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): a UI Automation tell's, from the outpost following the
     /// focus, when the outpost kept it; the system caret's names none.
     pub(crate) fn adopted(&self) -> Option<ElementToken> {
         match (&self.target, &self.tell.object) {
@@ -190,8 +190,7 @@ async fn read(
 }
 
 /// The committed focus `tell` is for, when its reader lives: the system
-/// caret's, when the readers' last focus is the committed focus (Table 3,
-/// column G); a UI Automation tell's, when its runtime id is the
+/// caret's, when the readers' last focus is the committed focus (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus); a UI Automation tell's, when its runtime id is the
 /// committed focus's.
 fn target(cx: &Cx<Entries>, tell: &CaretTell) -> Option<Focus> {
     let focus = {
@@ -229,8 +228,8 @@ pub(crate) fn edit_text_change(kept: &Kept, change: &MsaaChange) -> bool {
 }
 
 /// Whether `change`, an MSAA change at its turn, is a value change of the
-/// committed focus `focus` that sets its text-changed flag (Table 17,
-/// column G): `focus` is editable text with automatic selection detection
+/// committed focus `focus` that sets its text-changed flag
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): `focus` is editable text with automatic selection detection
 /// read through an edit control's messages.
 pub(crate) fn sets_text_changed(focus: &Focus, change: &MsaaChange) -> bool {
     edit_text_change(&focus.kept, change) && crate::text_facts::detects_selection(focus)
@@ -292,14 +291,14 @@ pub(crate) async fn run(mut cx: Cx<Entries>, tell: CaretTell) {
             return;
         }
         // A read that fails says nothing and keeps the baseline and the
-        // flag (Table 17, column I). NVDA: `editableText.py` 433 to 436.
+        // flag. NVDA: `editableText.py` 433 to 436.
         Read::Failed => return,
     };
     answered(&mut cx, &tell, (&focus, provider), read);
 }
 
 /// Judges the caret tell's answer `read` on the committed focus `focus`
-/// (Table 17, columns D and E).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts").
 fn answered(
     cx: &mut Cx<Entries>,
     tell: &CaretTell,

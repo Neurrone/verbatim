@@ -4,8 +4,7 @@
 //! passed to the outpost of the raising thread's process when one is
 //! ready, and Core's own records of the window cleared whatever the
 //! process; the followed node's window destroyed sends its generation a
-//! `Follow` naming nothing (Table 10, column E,
-//! 2026-11-19).
+//! `Follow` naming nothing (2026-11-19).
 
 use verbatim_model::request::{Outcome as WireOutcome, QueueEffect, QueueInput};
 use verbatim_model::{

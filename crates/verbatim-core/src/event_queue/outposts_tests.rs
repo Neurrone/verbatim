@@ -1,4 +1,4 @@
-//! The outpost generation record (Table 5), driven through Core's queue
+//! The outpost generation record (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"), driven through Core's queue
 //! inputs as the owner thread reports its process facts.
 
 use verbatim_model::Pid;
@@ -535,7 +535,7 @@ fn verbatims_own_outpost_is_started_at_once() {
     );
 }
 
-/// The test harness's idle (the design, "The test harness's idle"): Core's
+/// The test harness's idle (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"): Core's
 /// queue is idle with nothing in it, and not while an entry's request is
 /// out; once that entry ends it is idle again.
 #[test]

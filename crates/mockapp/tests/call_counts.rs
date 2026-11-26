@@ -1310,8 +1310,8 @@ fn connected(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
 /// by its handle, the one connection; then adds the node's event
 /// registration on its registering thread and reads the node's states
 /// after it, as NVDA registers in `event_gainFocus` before it speaks
-/// (`NVDAObjects/UIA/__init__.py` 1623 to 1626; Dickson, 2026-11-15, the
-/// design's "Changes on objects"). With remote operations that is three
+/// (`NVDAObjects/UIA/__init__.py` 1623 to 1626; Dickson, 2026-11-15;
+/// `books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", its changes). With remote operations that is three
 /// calls: the window's element, the walk down the route, and the states'
 /// program (`verbatim_uia_rops::focus_states`). Before Core asked for the
 /// completion, the outpost reported the listener's read first and walked

@@ -448,7 +448,7 @@ struct Listener {
     outgoing: Arc<Outgoing>,
     /// Every application's reading thread, which answers Core's requests.
     readers: Arc<Readers<UiaReading>>,
-    /// The elements kept for tells (Table 6).
+    /// The elements kept for tells (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "Kept elements").
     kept: Arc<Kept>,
     /// Every application's check thread, which checks and tells its UI
     /// Automation events.

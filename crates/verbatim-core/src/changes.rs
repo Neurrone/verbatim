@@ -320,7 +320,7 @@ pub(crate) fn passes(
 
 /// A value change of the committed focus, editable text with automatic
 /// selection detection, sets its text-changed flag and says nothing
-/// (Table 17, column G); `true` when `change` is one. One a caret tell's
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"); `true` when `change` is one. One a caret tell's
 /// answer took as counted no longer waits.
 fn sets_text_changed(facts: &mut SrState, change: &MsaaChange) -> bool {
     let Some(committed) = facts.versions.live_mut() else {

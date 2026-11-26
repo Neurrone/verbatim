@@ -52,13 +52,15 @@ pub(crate) enum Input<E> {
     /// The listener's foreground report.
     Foreground(Foreground),
     /// A reader's instance can take requests: the listener's
-    /// `ListenerReady`, or an outpost's `Ready` frame (Table 5, column D).
+    /// `ListenerReady`, or an outpost's `Ready` frame
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     ReaderReady(Instance),
     /// A reader's instance ended: its pipe closed or its process exited
-    /// (Table 5, column E).
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     ReaderEnded(Instance),
     /// A process fact the owner thread reports for the outpost generation
-    /// record (Table 5).
+    /// record
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record").
     Process(ProcessFact),
     /// A window was destroyed, its destruction raised by a thread of
     /// `process`, `None` when the listener could not open that thread.
@@ -418,7 +420,7 @@ impl<L: Logic> Core<L> {
     /// resumed, or the asker outside the queue. A request sent to an
     /// outpost carrying "probe first" whose answer brought no probe of its
     /// window counts as a probe that timed out, begun when it was sent
-    /// (Table 4, row "MSAA in force"); one its entry withdrew does not,
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache"); one its entry withdrew does not,
     /// since its reader runs it on and its probe may yet answer, so its
     /// window keeps no verdict and the next request or tell is judged by a
     /// probe of its own. A request to the focus listener is never probing,
@@ -572,8 +574,8 @@ impl<L: Logic> Core<L> {
     /// `instance` ended: its requests out end "reader ended", its late ones
     /// are forgotten, and its application's recovering windows leave the
     /// set; requests waiting for its reader wait for the next instance.
-    /// With `retake`, Core's facts may ask the focus again (Table 5,
-    /// column E); an application's exit or its outpost's retirement takes
+    /// With `retake`, Core's facts may ask the focus again
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"); an application's exit or its outpost's retirement takes
     /// nothing again.
     pub(super) fn reader_ended(&mut self, instance: Instance, retake: bool) {
         let ended = {

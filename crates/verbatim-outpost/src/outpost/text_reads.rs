@@ -642,7 +642,7 @@ pub(super) fn uia_text(
     uia_source(context, node_id, details)
 }
 
-/// A focus's caret, read after its states (Table 17, columns A to C): the
+/// A focus's caret, read after its states (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): the
 /// line at the caret, with the formatting `details` names, and the
 /// selection, the next baseline held from the read, compared with nothing
 /// (Dickson, 2026-11-17). A node with no text answers

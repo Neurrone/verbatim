@@ -362,8 +362,8 @@ impl Reducer {
         effects
     }
 
-    /// Core's request, its cancel, or a program's answer to it (Tables 14
-    /// and 15).
+    /// Core's request, its cancel, or a program's answer to it
+    /// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests" and "A caret key's wait").
     fn asked(&mut self, input: Input, now: Now, effects: &mut Vec<Effect>) {
         match input {
             Input::Ask(ask) => {
@@ -421,7 +421,7 @@ impl Reducer {
         }
     }
 
-    /// Core named `window` destroyed (Table 14): the queued reads its MSAA
+    /// Core named `window` destroyed (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The reducer"): the queued reads its MSAA
     /// ids name and the watches waiting on it are answered "not there";
     /// every other request stays queued and runs after the forget, which
     /// the window is now owed. A running request answers what it found.
@@ -441,7 +441,7 @@ impl Reducer {
 
     /// Core's `cancel`: a queued request answered cancelled, the running one
     /// abandoned with its worker when the foreground moved away, or left
-    /// alone (Table 14).
+    /// alone (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests").
     fn cancel_ask(&mut self, cancel: verbatim_model::request::Cancel, effects: &mut Vec<Effect>) {
         match self.watches.cancel(cancel) {
             WatchCancelled::NotHere => {}
@@ -605,7 +605,7 @@ impl Reducer {
                 told,
                 acknowledged,
             } => {
-                // The anchors a waiting watch names are spared (Table 15, I).
+                // The anchors a waiting watch names are spared (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's wait").
                 anchors.extend(self.watches.anchors());
                 self.releasing = true;
                 effects.push(Effect::Release {

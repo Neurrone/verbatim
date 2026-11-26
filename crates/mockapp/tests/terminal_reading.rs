@@ -422,8 +422,8 @@ fn a_read_takes_the_colours_when_core_asks() {
 /// caret, and holds the key's caret starting point from the caret the read
 /// found, so it is one round trip, the remote program's one call, as a
 /// fresh read is. Converted from
-/// `the_read_before_a_held_key_is_a_read_with_its_caret` (build 1, "A
-/// terminal's caret key").
+/// `the_read_before_a_held_key_is_a_read_with_its_caret`
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
 fn a_starting_read_reads_the_caret_and_holds_the_starting_point() {
     let mut terminal = start("mockapp-terminal-starting-read");
     terminal.app.send("caret term 1");
@@ -520,8 +520,8 @@ fn watched(terminal: &Terminal, number: verbatim_model::request::RequestNumber) 
 /// event by its check, and answers with no unit read, Core's full read of
 /// the terminal following. Converted from
 /// `a_read_terminal_message_reads_the_caret_first_under_the_keys_trace`:
-/// the key's effect is the watch's, its read Core's (build 1, "A
-/// terminal's caret key").
+/// the key's effect is the watch's, its read Core's
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
 fn a_terminal_watch_finds_a_caret_moved_with_no_event() {
     let mut terminal = start("mockapp-terminal-watch-moved");
     let point = starting_point(&terminal);
@@ -537,8 +537,8 @@ fn a_terminal_watch_finds_a_caret_moved_with_no_event() {
 /// and is not the key's effect: a terminal's watch has no event shortcut,
 /// so it runs to its bound and answers with nothing read. Converted from
 /// `a_read_covering_a_caret_event_answers_a_watch_with_no_caret`: an event
-/// no longer answers a terminal's watch (build 1, "A terminal's caret
-/// key").
+/// no longer answers a terminal's watch
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
 fn a_caret_event_is_not_a_terminal_watchs_effect() {
     let mut terminal = start("mockapp-terminal-watch-event");
     let point = starting_point(&terminal);

@@ -63,7 +63,7 @@ pub(crate) struct ReadingThread {
 }
 
 /// A request's read of a kept element, handed back so its end judges the
-/// element under the lock (Table 6, column B).
+/// element under the lock (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "Kept elements").
 pub(crate) struct KeptRead {
     pid: Pid,
     token: ElementToken,

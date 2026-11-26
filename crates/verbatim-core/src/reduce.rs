@@ -40,8 +40,8 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 /// effects the imperative shell must execute. `runtime` is the event
 /// queue's paused function kept beside `state` by whoever runs the
 /// reducer; the queue's inputs (`Input::Queue`) run with it, rebuilding it
-/// from the state's checkpoint when it has none, beside today's inputs
-/// until each moves to the queue in its step of build 1.
+/// from the state's checkpoint when it has none, beside the inputs
+/// that do not go through the queue.
 ///
 /// Deterministic: no I/O, no clocks, and no randomness, so the same state
 /// and input always produce the same new state and effects. The state is

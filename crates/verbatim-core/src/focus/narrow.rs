@@ -1,5 +1,5 @@
-//! The narrow ordering rule (design, "The narrow ordering rule"; ADR
-//! 0003): when the answer that completes a focus read arrives and its
+//! The narrow ordering rule (ADR 0003,
+//! "The narrow ordering rule"): when the answer that completes a focus read arrives and its
 //! ancestors include the committed focus by runtime id, Core first judges
 //! the committed focus's waiting UI Automation state tells, in their order,
 //! then takes the focus. Name and value changes are not moved.

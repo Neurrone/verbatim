@@ -55,8 +55,8 @@ pub(crate) struct BackendCache {
     probed: BTreeMap<WindowKey, Probed>,
 }
 
-/// What a tell's verdict makes of it at its turn (Table 4, columns A to
-/// C).
+/// What a tell's verdict makes of it at its turn
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Judgement {
     /// Read: its request carries the verdict.
@@ -183,7 +183,7 @@ mod tests {
         }
     }
 
-    // Table 4, row "none in force".
+    // No verdict in force.
 
     #[test]
     fn with_no_verdict_an_msaa_tell_is_read_with_probe_first() {

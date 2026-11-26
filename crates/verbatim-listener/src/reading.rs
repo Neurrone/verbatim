@@ -255,7 +255,7 @@ impl<R: Reading> Readers<R> {
         self.shared.apply(&mut state, effects);
     }
 
-    /// Core cancels a request (Table 9). Never waits on a call.
+    /// Core cancels a request (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "The reading threads' schedule"). Never waits on a call.
     pub(crate) fn cancel(&self, cancel: Cancel) {
         let mut state = self.shared.lock();
         let effects = state

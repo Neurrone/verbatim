@@ -19,10 +19,10 @@
 //! dropped unanswered.
 //!
 //! A `Follow` replaces one still queued, which is answered "ended or
-//! stopped" (Table 10): the newest `Follow` wins, and since it names the
+//! stopped" (`books/dev/src/reference/crates/verbatim-outpost.md`, "Core's requests"): the newest `Follow` wins, and since it names the
 //! whole registration, skipping the older one changes nothing that runs
 //! between them. A window destroyed answers "not there" every queued read
-//! whose MSAA ids name it (Table 14).
+//! whose MSAA ids name it (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The reducer").
 
 use std::collections::VecDeque;
 
@@ -272,7 +272,7 @@ mod tests {
 
     /// The event queue's requests are made ahead of every request from
     /// outside the queue still queued, each class in the order Core sent
-    /// it; one already taken to run is not among them (Table 14).
+    /// it; one already taken to run is not among them (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The reducer").
     #[test]
     fn the_queues_requests_go_ahead_of_requests_from_outside_it() {
         let mut asks = Asks::default();
