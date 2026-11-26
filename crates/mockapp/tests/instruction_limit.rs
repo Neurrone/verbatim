@@ -722,11 +722,11 @@ fn reader_next_start(fixture: &Fixture, text: &batch::Text) -> IUIAutomationText
 }
 
 /// The batches of Core's terminal reader, each one program: a first read;
-/// a first read again with its history block; the whole text; a read from
-/// a start, the largest, whose named start is used; the same as a caret
-/// key's starting read; the same read after a clear, when the next
-/// start's steps run instead; a history read from a start; and a whole
-/// history read. No step loops, so a long text costs the same
+/// a first read again with its history block; a read from a start, the
+/// largest, whose named start is used; the same as a caret key's starting
+/// read; the same as a count read; a history read from a start; a whole
+/// history read; and the read and the count read after a clear, when the
+/// next start's steps run instead. No step loops, so a long text costs the same
 /// instructions as a short one.
 fn terminal_reader_batches_execute_exactly() {
     use verbatim_core::terminal::reader::{HistoryAsk, WindowRead, history_batch};
@@ -741,9 +741,10 @@ fn terminal_reader_batches_execute_exactly() {
     );
     let height = std::num::NonZeroU32::new(30).expect("a height");
     let next = reader_next_start(&fixture, &text);
-    let from = |anchor| WindowRead::From {
+    let from = |anchor, count| WindowRead::From {
         start: anchor,
         height: 30,
+        count,
     };
     let node = verbatim_model::NodeId::new(1);
     let shapes = [
@@ -753,14 +754,14 @@ fn terminal_reader_batches_execute_exactly() {
         reader_shape(&text, None, |_| {
             reader_window(WindowRead::HistoryBlock { height }, (false, false))
         }),
-        reader_shape(&text, None, |_| {
-            reader_window(WindowRead::Whole { height: 30 }, (false, false))
+        reader_shape(&text, Some(&next), |start| {
+            reader_window(from(start, false), (false, false))
         }),
         reader_shape(&text, Some(&next), |start| {
-            reader_window(from(start), (false, false))
+            reader_window(from(start, false), (false, true))
         }),
         reader_shape(&text, Some(&next), |start| {
-            reader_window(from(start), (false, true))
+            reader_window(from(start, true), (false, false))
         }),
         reader_shape(&text, Some(&next), |start| {
             let ask = HistoryAsk::Above {
@@ -782,11 +783,14 @@ fn terminal_reader_batches_execute_exactly() {
             })
         })
         .collect();
-    // The text cleared below the start: the next start's steps run.
+    // The text cleared below the start: the next start's steps run, a
+    // count read's probe walking to the text's start in one call.
     common::apply(&mut fixture.app, fixture.hwnd, r"set-text term cleared\n");
-    counts.push(each_counted(|| {
-        let _ = run_batch(&shapes[3].segment(&fixture.uia));
-    }));
+    for shape in [2, 4] {
+        counts.push(each_counted(|| {
+            let _ = run_batch(&shapes[shape].segment(&fixture.uia));
+        }));
+    }
     fixture.app.quit();
     assert!(counts.iter().flatten().all(|&count| count < LIMIT / 2));
     assert_eq!(
@@ -794,15 +798,16 @@ fn terminal_reader_batches_execute_exactly() {
         [
             vec![207],
             vec![242],
-            vec![206],
             vec![303],
             vec![303],
+            vec![304],
             vec![153],
             vec![39],
-            vec![294]
+            vec![294],
+            vec![295]
         ],
-        "first, history block, whole, from a start, starting, history above, whole history, \
-         and from a start past the text's end"
+        "first, history block, from a start, starting, count, history above, whole history, \
+         and from a start and a count read past the text's end"
     );
 }
 
@@ -1069,7 +1074,12 @@ fn terminal_reader_colours_execute_exactly() {
         );
         let next = reader_next_start(&fixture, &text);
         let shape = reader_shape(&text, Some(&next), |start| {
-            reader_window(WindowRead::From { start, height: 30 }, (true, false))
+            let read = WindowRead::From {
+                start,
+                height: 30,
+                count: false,
+            };
+            reader_window(read, (true, false))
         });
         let reads: Vec<(Vec<u32>, Vec<usize>)> = (0..2)
             .map(|_| {
@@ -1170,7 +1180,12 @@ fn terminal_reader_reads_call_the_provider_exactly() {
     };
     let hits = |colours: bool| {
         let shape = reader_shape(&text, Some(&next), |start| {
-            reader_window(WindowRead::From { start, height: 3 }, (colours, false))
+            let read = WindowRead::From {
+                start,
+                height: 3,
+                count: false,
+            };
+            reader_window(read, (colours, false))
         });
         common::reset_hits(fixture.hwnd);
         let mut rows = None;

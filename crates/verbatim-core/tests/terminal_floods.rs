@@ -53,10 +53,14 @@ fn terminal(flavor: Flavor, text: &str, limit: u16) -> Session {
     session
 }
 
-/// What a burst read in two groups asks beside its output reads: the
-/// whole document when `lost`.
-fn requests(lost: bool) -> Vec<Asked> {
-    if lost { vec![Asked::Whole] } else { Vec::new() }
+/// What a burst read in two groups asks beside its output reads: a count
+/// read when `counted`.
+fn requests(counted: bool) -> Vec<Asked> {
+    if counted {
+        vec![Asked::Count]
+    } else {
+        Vec::new()
+    }
 }
 
 /// The speech of a burst: `first` heard in full, the skip `phrase`, then
@@ -71,11 +75,13 @@ fn burst(first: Vec<Said>, phrase: &str, last: Vec<Said>) -> Vec<Said> {
 
 /// A flood of 2,000 lines into a history already full, at limits of 10:
 /// the first read takes 12 lines and Core holds the terminal; the rest is
-/// written while it holds, carrying the first read's rows out of the
-/// buffer, so the read Core asks for at the group's end finds its start
-/// gone and Core reads the whole document, finding the last read's rows by
-/// their text. The count is "about", the burst's 2,001 lines less the 10
-/// heard each side.
+/// written while it holds, carrying the first read's rows above the read
+/// Core asks for at the group's end, which keeps nothing of them and is
+/// lost. Its 60 rows are new, and more went by than it shows: "more than"
+/// its rows less the 10 heard last, the 2 lines of the first read not heard
+/// absorbed into the count (Dickson, 2026-11-26; a difference from NVDA's
+/// speech of every line, pending, `docs/parity/terminals.md`, "The
+/// backlog").
 fn full_history_flood(flavor: Flavor) {
     let mut session = terminal(flavor, &written("fill line", 1..=9100), 10);
     session.write(&format!("\r\n{}", written("flood line", 1..=12)), 100);
@@ -88,20 +94,20 @@ fn full_history_flood(flavor: Flavor) {
         session.heard(),
         burst(
             heard("flood line", 1..=10),
-            "Phrase(SkippedAboutLines(1981))",
+            "Phrase(SkippedMoreThanLines(50))",
             heard("flood line", 1992..=2000)
         )
     );
-    assert_eq!(session.requests(), requests(true));
+    assert_eq!(session.requests(), requests(false));
 }
 
 #[test]
-fn a_flood_through_a_full_history_is_counted_by_text_in_the_console_host() {
+fn a_flood_through_a_full_history_says_more_than_the_read_shows_in_the_console_host() {
     full_history_flood(Flavor::ConsoleHost);
 }
 
 #[test]
-fn a_flood_through_a_full_history_is_counted_by_text_in_windows_terminal() {
+fn a_flood_through_a_full_history_says_more_than_the_read_shows_in_windows_terminal() {
     full_history_flood(Flavor::WindowsTerminal);
 }
 
@@ -148,8 +154,9 @@ fn a_flood_within_the_history_while_a_group_plays_is_counted_exactly_in_windows_
 }
 
 /// 12,000 lines landing while a group plays, more than the buffer holds:
-/// the read at the group's end finds its start gone, and the lines skipped
-/// are more than the buffer's rows less the 15 heard last, `phrase`.
+/// the read at the group's end reaches the document's start and keeps
+/// nothing, and the lines skipped are more than the buffer's rows less the
+/// 15 heard last, `phrase`; nothing more is read.
 fn past_history(flavor: Flavor, phrase: &str) {
     let mut session = during_group(flavor, 12_000);
     assert_eq!(
@@ -160,7 +167,7 @@ fn past_history(flavor: Flavor, phrase: &str) {
             heard("after line", 11_987..=12_000)
         )
     );
-    assert_eq!(session.requests(), requests(true));
+    assert_eq!(session.requests(), requests(false));
 }
 
 #[test]
@@ -348,7 +355,7 @@ fn a_flood_after_windows_terminals_clear_says_more_than_it_holds() {
         )
     );
     // The cleared lines' group's read is lost.
-    assert_eq!(session.requests(), requests(true));
+    assert_eq!(session.requests(), requests(false));
 }
 
 /// A fresh console host, with no history, taking 9,100 lines in one write
@@ -373,7 +380,7 @@ fn a_flood_onto_a_fresh_console_host_says_more_than_it_holds() {
             heard("fill line", 9092..=9100)
         )
     );
-    assert_eq!(session.requests(), requests(true));
+    assert_eq!(session.requests(), requests(false));
 }
 
 /// The console host with the screen cleared, its last row a footer below a
@@ -413,7 +420,7 @@ fn a_flood_above_a_footer_past_the_console_hosts_history_says_more_than_it_holds
     speech.extend(heard("flood line", 11_987..=12_000));
     speech.push(said(None, "status: done"));
     assert_eq!(session.heard(), speech);
-    assert_eq!(session.requests(), requests(true));
+    assert_eq!(session.requests(), requests(false));
     session.write(&format!("\x1b[r\x1b[2J\x1b[Hfooter gone\r\n{PROMPT}"), 400);
     session.play();
     assert_eq!(

@@ -169,9 +169,10 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_is_placed_from_the_an
 fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     // The review position on "line 4", in the history above the memory's
     // rows; before the outpost reads the history, a flood carries the last
-    // read's rows out of the buffer. The read that shows it is lost, and
-    // Core owes the whole document, which comes after the history; the
-    // history is counted from the start the command named and placed from
+    // read's rows out of the buffer. The read that shows it comes before the
+    // history and is lost, its anchors kept at their places (Claude,
+    // 2026-11-27): it says "skipped lines" and its own new lines, and the
+    // history, heard as they play, is counted from the start the command named and placed from
     // the anchor at its row (`docs/design/readers-tell-core-asks-build3.md`,
     // Table 5): the review position's line is gone, so it keeps its place
     // and reads the row there now, "line 32" ("Limits"), and the next
@@ -183,17 +184,21 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     assert_eq!(session.heard(), plain(&["line 2", "line 3", "line 4"]));
     let _ = session.requests();
     session.output_before_histories = [(numbered(13..=40), 100)].into();
-    session.hold_whole = true;
     session.press(&command(ReviewCommand::ReviewCurrentLine));
-    session.answer_held();
-    let mut flood = vec![
-        "line 32".to_owned(),
-        "Phrase(SkippedUncountedLines)".to_owned(),
-    ];
-    flood.extend((30..=40).map(|line| format!("line {line}")));
+    let flood: Vec<String> = [
+        "Phrase(SkippedUncountedLines)",
+        "line 36",
+        "line 32",
+        "line 37",
+        "line 38",
+        "line 39",
+        "line 40",
+    ]
+    .map(str::to_owned)
+    .to_vec();
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, flood);
-    assert_eq!(session.requests(), [FRESH, Asked::History, Asked::Whole]);
+    assert_eq!(session.requests(), [FRESH, Asked::History]);
     session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["line 32"]));
 }
@@ -451,36 +456,35 @@ fn lines_of_one_and_two_characters_after_enter_are_output_not_echo() {
 }
 
 #[test]
-fn live_snapshots_that_arrive_while_a_whole_read_is_owed_are_dropped() {
-    let mut session = showing(20, 3, 9, &numbered(1..=3));
-    session.hold_whole = true;
-    // A flood that carries the last read's rows out of the buffer: the read
-    // keeps nothing, and the rules ask for the whole document.
-    session.write(&numbered(4..=40), 100);
+fn live_snapshots_that_arrive_while_a_count_read_is_owed_are_dropped() {
+    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    session.hold_count = true;
+    // The screen and the history cleared and five lines written: the read's
+    // start is refused and it keeps nothing, and the rules ask for a count
+    // read.
+    session.write(&format!("\x1b[H\x1b[2J\x1b[3J{}", numbered(13..=17)), 100);
     assert_eq!(session.heard(), []);
-    assert_eq!(session.requests(), [Asked::Whole]);
-    // A live read begun before the whole read: dropped.
-    session.write(&numbered(41..=41), 110);
+    assert_eq!(session.requests(), [Asked::Count]);
+    // A live read begun before the count read: dropped.
+    session.write(&numbered(18..=18), 110);
     assert_eq!(session.heard(), []);
     assert_eq!(session.requests(), []);
     session.answer_held();
+    // The count read, the live read's line among its own, counts the one
+    // row above it, about, and every line it holds is new (Claude,
+    // 2026-11-27).
     assert_eq!(
         session.heard(),
         plain(&[
-            "Phrase(SkippedUncountedLines)",
-            "line 31",
-            "line 32",
-            "line 33",
-            "line 34",
-            "line 35",
-            "line 36",
-            "line 37",
-            "line 38",
-            "line 39",
-            "line 40",
-            "line 41"
+            "Phrase(SkippedAboutLines(1))",
+            "line 14",
+            "line 15",
+            "line 16",
+            "line 17",
+            "line 18"
         ])
     );
+    assert_eq!(session.requests(), []);
 }
 
 #[test]
@@ -584,6 +588,7 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                         caret_column: snapshot.caret_column,
                         at_ms,
                         above: usize::try_from(snapshot.above).expect("rows"),
+                        rows_above: snapshot.rows_above,
                     };
                     let wire = serde_json::to_string(&snapshot_of(&read, false, None))
                         .expect("a snapshot serializes");
@@ -597,12 +602,19 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                     );
                     let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
                     let screen_rows = u32::try_from(height).expect("a small screen");
-                    if step.whole_document || step.history_block {
+                    if step.count_read {
+                        query = Query {
+                            count: true,
+                            ..query
+                        };
+                        continue;
+                    }
+                    if step.history_block {
                         query = Query {
                             start: None,
                             screen_rows,
-                            whole: step.whole_document,
-                            above: if step.whole_document { 0 } else { screen_rows },
+                            count: false,
+                            above: screen_rows,
                         };
                         continue;
                     }
@@ -614,7 +626,7 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                             Some(snapshot.next_start)
                         },
                         screen_rows,
-                        whole: false,
+                        count: false,
                         above: u32::try_from(original.memory().above()).expect("rows"),
                     };
                     break;

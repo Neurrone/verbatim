@@ -24,8 +24,9 @@
 //!   start's steps run under the comparison or its negation, so only one
 //!   set runs. Each set is the move up by the rows asked above the start,
 //!   the trimmed text from where it landed, and a probe, a move one row
-//!   further up, which goes no row when the text starts there. A whole
-//!   read is one trimmed range from the text's start instead;
+//!   further up, which goes no row when the text starts there. A count
+//!   read's next start probes to the text's start instead, counting the
+//!   rows above the read;
 //! - the text's first line, trimmed;
 //! - the caret and its line, unless they were read first, and the caret's
 //!   rows to the text's end;
@@ -94,17 +95,15 @@ pub enum WindowRead {
         start: TextAnchor,
         /// The screen's height in rows.
         height: u32,
+        /// Whether it is a count read: read from the next read's start, it
+        /// counts the rows above it.
+        count: bool,
     },
     /// A first read again with its history block: from a screen above the
     /// next read's start.
     HistoryBlock {
         /// The screen's height in rows.
         height: NonZeroU32,
-    },
-    /// The whole text.
-    Whole {
-        /// The screen's height in rows, 0 when not known.
-        height: u32,
     },
 }
 
@@ -128,7 +127,7 @@ impl WindowAsk {
     pub const fn start(&self) -> Option<TextAnchor> {
         match self.read {
             WindowRead::From { start, .. } => Some(start),
-            WindowRead::First | WindowRead::HistoryBlock { .. } | WindowRead::Whole { .. } => None,
+            WindowRead::First | WindowRead::HistoryBlock { .. } => None,
         }
     }
 }
@@ -243,7 +242,7 @@ fn up(rows: u32) -> TextMovement {
 
 /// One start's steps: the move up by the rows asked above it, when any
 /// are, the text from where it landed to the held end, and, for a window
-/// read, the probe.
+/// read, the probe, one row up or, for a count read, to the text's start.
 struct Set<B> {
     up: Option<Ref<B, kind::Move>>,
     text: Ref<B, kind::ReadRange>,
@@ -251,11 +250,11 @@ struct Set<B> {
 }
 
 /// What a set is built from: the rows asked above its start, the held
-/// end, and whether it has a probe.
+/// end, and how far its probe moves up, when it has one.
 struct Shape<B> {
     above: u32,
     end: At<B>,
-    probe: bool,
+    probe: Option<u32>,
 }
 
 impl<B> Clone for Shape<B> {
@@ -294,22 +293,23 @@ fn set<B>(
         from
     };
     let text = batch.read_range_trimmed(node, (from, shape.end));
-    let probe = shape.probe.then(|| {
+    let probe = shape.probe.map(|rows| {
         if up.is_none() {
             gated(batch);
         }
-        batch.move_point(node, from, lines(-1))
+        batch.move_point(node, from, self::up(rows))
     });
     Set { up, text, probe }
 }
 
 /// The sets of a read that names `start`: the start's own, when it lies at
-/// or before `next`, and the next start's when it does not.
+/// or before `next`, and the next start's when it does not, the next
+/// start's with `fallback`'s shape.
 fn sets<B>(
     batch: &mut Builder<B>,
     node: NodeId,
     (start, next): (TextAnchor, At<B>),
-    shape: Shape<B>,
+    (shape, fallback): (Shape<B>, Shape<B>),
 ) -> (Set<B>, Set<B>) {
     let start: At<B> = TextPoint::At(TextPosition::at(start)).into();
     let named = set(
@@ -323,7 +323,7 @@ fn sets<B>(
         batch,
         node,
         next,
-        shape,
+        fallback,
         Some(&|| !Cond::not_after(start, next)),
     );
     (named, fallback)
@@ -331,12 +331,11 @@ fn sets<B>(
 
 /// The text a window read takes.
 enum Texts<B> {
-    /// The whole text.
-    Whole(Ref<B, kind::ReadRange>),
     /// From the next read's start.
     Next(Set<B>),
-    /// From the start named, or else from the next read's.
-    Named(Set<B>, Set<B>),
+    /// From the start named, or else from the next read's, whose probe
+    /// counts the rows above it when the read is a count read.
+    Named(Set<B>, Set<B>, bool),
 }
 
 /// The steps of a window read's batch ([`window_batch`]).
@@ -386,27 +385,29 @@ pub fn window_batch(node: NodeId, ask: &WindowAsk) -> (Sent<Window>, WindowSteps
         .landed();
     let height = match ask.read {
         WindowRead::First => 0,
-        WindowRead::From { height, .. } | WindowRead::Whole { height } => height,
+        WindowRead::From { height, .. } => height,
         WindowRead::HistoryBlock { height } => height.get(),
     };
     let next = (height > 0).then(|| batch.move_point(node, end, up(height)));
     let next_start = next.map_or(visible.visible_start(), Ref::landed);
-    let shape = |above| Shape {
+    let shape = |above, probe| Shape {
         above,
         end,
-        probe: true,
+        probe: Some(probe),
     };
     let texts = match ask.read {
-        WindowRead::Whole { .. } => {
-            Texts::Whole(batch.read_range_trimmed(node, (TextPoint::Start.into(), end)))
-        }
-        WindowRead::First => Texts::Next(set(&mut batch, node, next_start, shape(0), None)),
+        WindowRead::First => Texts::Next(set(&mut batch, node, next_start, shape(0, 1), None)),
         WindowRead::HistoryBlock { .. } => {
-            Texts::Next(set(&mut batch, node, next_start, shape(height), None))
+            Texts::Next(set(&mut batch, node, next_start, shape(height, 1), None))
         }
-        WindowRead::From { start, .. } => {
-            let (named, fallback) = sets(&mut batch, node, (start, next_start), shape(height));
-            Texts::Named(named, fallback)
+        WindowRead::From { start, count, .. } => {
+            // A count read's probe walks every row above the read in one
+            // move (`books/dev/src/reference/performance.md`, "A terminal's
+            // count read").
+            let probe = if count { FAR.unsigned_abs() } else { 1 };
+            let shapes = (shape(height, 1), shape(height, probe));
+            let (named, fallback) = sets(&mut batch, node, (start, next_start), shapes);
+            Texts::Named(named, fallback, count)
         }
     };
     let first = batch.read_trimmed(node, TextPoint::Start.into(), TextUnit::Line, (1, false));
@@ -455,9 +456,9 @@ pub fn history_batch(node: NodeId, ask: &HistoryAsk) -> (Sent<History>, HistoryS
             let shape = Shape {
                 above,
                 end,
-                probe: false,
+                probe: None,
             };
-            let (named, fallback) = sets(&mut batch, node, (start, next), shape);
+            let (named, fallback) = sets(&mut batch, node, (start, next), (shape, shape));
             Histories::Above(named, fallback)
         }
     };
@@ -541,18 +542,20 @@ pub fn window_of(
         Some(next) => need(&answers.get(next))?.to,
         None => visible.start,
     };
-    let (text, above, at_document_start, from_start) = match &steps.texts {
-        Texts::Whole(text) => (range_text(need(&answers.get(*text))?)?, 0, true, false),
+    let (text, above, rows_above, from_start) = match &steps.texts {
         Texts::Next(set) => {
             let (text, above) = set_text(answers, set)?;
-            (text, above, at_text_start(answers, set)?, false)
+            (text, above, probed(answers, set)?, false)
         }
-        Texts::Named(named, fallback) => {
+        Texts::Named(named, fallback, _) => {
             let (set, from_start) = chosen(answers, (named, fallback));
             let (text, above) = set_text(answers, set)?;
-            (text, above, at_text_start(answers, set)?, from_start)
+            (text, above, probed(answers, set)?, from_start)
         }
     };
+    // The rows above the read are counted when the count read's next
+    // start's set ran.
+    let counted = matches!(steps.texts, Texts::Named(_, _, true)) && !from_start;
     let caret = need(&answers.get(steps.caret))?;
     let caret_line = need(&answers.get(steps.caret_line))?;
     let chunk = caret_line.chunks.first().ok_or(TextFailure::Unanswered)?;
@@ -576,7 +579,7 @@ pub fn window_of(
             },
             from_start,
             shrank: matches!(steps.texts, Texts::Named(..)) && !from_start,
-            at_document_start,
+            at_document_start: rows_above == 0,
             alternate: visible.at_text_start,
             first_row: line(need(&answers.get(steps.first))?)?,
             // A provider that reported no selection has no caret: the
@@ -585,6 +588,7 @@ pub fn window_of(
             caret_line: TerminalText::unpadded(&chunk.text),
             caret_column: column,
             above,
+            rows_above: counted.then_some(rows_above),
             started_ms,
             ended_ms: (ended_us / 1_000).max(started_ms),
             waited: false,
@@ -597,11 +601,12 @@ pub fn window_of(
     })
 }
 
-/// Whether `set`'s text starts at the text's start: its probe, one row
-/// further up, went no row.
-fn at_text_start(answers: &Answers<Window>, set: &Set<Window>) -> Result<bool, TextFailure> {
+/// How many rows `set`'s probe went up from where its text starts: none
+/// when the text starts at the text's start, and, for a count read's next
+/// start, every row above it.
+fn probed(answers: &Answers<Window>, set: &Set<Window>) -> Result<u32, TextFailure> {
     let probe = set.probe.ok_or(TextFailure::Unanswered)?;
-    Ok(rows(need(&answers.get(probe))?) == 0)
+    Ok(rows(need(&answers.get(probe))?))
 }
 
 /// The history read the answers to `steps` make: its text, each line
@@ -821,20 +826,19 @@ pub fn asked(batch: &Batch) -> Option<Asked> {
     // In a window read the first move from where another landed is the
     // next start's, from the held end, or with no height known a set's
     // probe, one row up.
-    let reads = match hints.start {
-        Some(start) => vec![
-            WindowRead::From {
-                start,
-                height: hints.height,
-            },
-            WindowRead::From { start, height: 0 },
-        ],
+    let reads: Vec<WindowRead> = match hints.start {
+        Some(start) => [hints.height, 0]
+            .into_iter()
+            .flat_map(|height| {
+                [false, true].map(|count| WindowRead::From {
+                    start,
+                    height,
+                    count,
+                })
+            })
+            .collect(),
         None => vec![
             Some(WindowRead::First),
-            Some(WindowRead::Whole {
-                height: hints.height,
-            }),
-            Some(WindowRead::Whole { height: 0 }),
             NonZeroU32::new(hints.height).map(|height| WindowRead::HistoryBlock { height }),
         ]
         .into_iter()
@@ -883,20 +887,30 @@ mod tests {
             WindowRead::From {
                 start: TextAnchor(7),
                 height: 30,
+                count: false,
             },
             WindowRead::From {
                 start: TextAnchor(7),
                 height: 1,
+                count: false,
             },
             WindowRead::From {
                 start: TextAnchor(8),
                 height: 0,
+                count: false,
+            },
+            WindowRead::From {
+                start: TextAnchor(7),
+                height: 30,
+                count: true,
+            },
+            WindowRead::From {
+                start: TextAnchor(8),
+                height: 0,
+                count: true,
             },
             WindowRead::HistoryBlock { height: height(30) },
             WindowRead::HistoryBlock { height: height(1) },
-            WindowRead::Whole { height: 30 },
-            WindowRead::Whole { height: 1 },
-            WindowRead::Whole { height: 0 },
         ];
         let mut asks = Vec::new();
         for read in reads {
@@ -1156,9 +1170,14 @@ mod tests {
         let from = WindowRead::From {
             start: TextAnchor(7),
             height: 30,
+            count: false,
         };
         let block = WindowRead::HistoryBlock { height: height(30) };
-        let whole = WindowRead::Whole { height: 30 };
+        let count = WindowRead::From {
+            start: TextAnchor(7),
+            height: 30,
+            count: true,
+        };
         assert_eq!(
             [
                 steps(from, false),
@@ -1167,10 +1186,10 @@ mod tests {
                 steps(block, true),
                 steps(WindowRead::First, false),
                 steps(WindowRead::First, true),
-                steps(whole, false),
-                steps(whole, true),
+                steps(count, false),
+                steps(count, true),
             ],
-            [13, 15, 10, 12, 8, 10, 8, 10]
+            [13, 15, 10, 12, 8, 10, 13, 15]
         );
         let history = |ask| history_batch(node(), &ask).0.batch().steps.len();
         assert_eq!(history(HistoryAsk::Whole), 1);
@@ -1219,6 +1238,7 @@ mod tests {
             read: WindowRead::From {
                 start: TextAnchor(7),
                 height: 30,
+                count: false,
             },
             colours: true,
             starting: true,

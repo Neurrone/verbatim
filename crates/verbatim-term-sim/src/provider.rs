@@ -59,8 +59,8 @@ pub enum Flavor {
 }
 
 /// What the read program asks: where to start, the screen's height as
-/// last found, whether to read the whole text, and how many rows to read
-/// above the start.
+/// last found, whether to count the rows above the read when its start is
+/// refused, and how many rows to read above the start.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Query {
     /// Where the last read said to start; `None` for a first read.
@@ -68,10 +68,11 @@ pub struct Query {
     /// The screen's height in rows as the last read found it; 0 when not
     /// known.
     pub screen_rows: u32,
-    /// Whether to read the whole text from the document's start.
-    pub whole: bool,
+    /// Whether the read is a count read: when `start` is refused, it counts
+    /// the rows above where it began, by a move to the document's start.
+    pub count: bool,
     /// How many rows above the start to begin the read, as far as the
-    /// document's start allows; ignored when reading the whole text.
+    /// document's start allows.
     pub above: u32,
 }
 
@@ -287,16 +288,12 @@ impl Provider<'_> {
         } else {
             screen.collapsed()
         };
-        let mut start = if query.whole {
-            document.collapsed()
-        } else {
-            screen.collapsed()
-        };
-        if query.screen_rows > 0 && !query.whole {
+        let mut start = screen.collapsed();
+        if query.screen_rows > 0 {
             start = next;
         }
         let (mut from_start, mut shrank) = (false, false);
-        if let Some(kept) = query.start.filter(|_| !query.whole) {
+        if let Some(kept) = query.start {
             match self.compare(kept.start, next.start) {
                 Ok(order) if order <= 0 => {
                     start = kept.collapsed();
@@ -306,12 +303,19 @@ impl Provider<'_> {
             }
         }
         let mut above = 0;
-        if query.above > 0 && !query.whole {
+        if query.above > 0 {
             let rows = isize::try_from(query.above).unwrap_or(isize::MAX);
             let (moved_to, moved) = self.move_rows(start.start, -rows)?;
             start = Range::at(moved_to);
             above = u32::try_from(-moved).unwrap_or(0);
         }
+        // A count read whose start was refused walks from where it began to
+        // the document's start, counting the rows there.
+        let rows_above = if query.count && shrank {
+            Some(u32::try_from(-self.move_rows(start.start, -FAR)?.1).unwrap_or(u32::MAX))
+        } else {
+            None
+        };
         let text = self.text(Range {
             start: start.start,
             end: document.end,
@@ -340,6 +344,7 @@ impl Provider<'_> {
             caret_column,
             next_start: next,
             above,
+            rows_above,
         };
         Ok((snapshot, start.start.row))
     }

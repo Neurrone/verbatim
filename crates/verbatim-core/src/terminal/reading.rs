@@ -245,16 +245,16 @@ fn full_read(
     let scope = model.owed.take().unwrap_or(TerminalScope::Fresh);
     model.sends = model.sends.saturating_add(1);
     let read = match (scope, model.start) {
-        (TerminalScope::Whole, _) => WindowRead::Whole {
-            height: model.height,
-        },
         // A first read again with its history block names no start.
         (TerminalScope::HistoryBlock { height }, _) => unnamed(height),
-        (TerminalScope::Fresh, Some(start)) => WindowRead::From {
+        (scope, Some(start)) => WindowRead::From {
             start,
             height: model.height,
+            count: scope == TerminalScope::Count,
         },
-        (TerminalScope::Fresh, None) => unnamed(model.height),
+        // A count read is owed only after a read that named the start,
+        // which the model keeps from then on.
+        (TerminalScope::Fresh | TerminalScope::Count, None) => unnamed(model.height),
     };
     WindowAsk {
         read,

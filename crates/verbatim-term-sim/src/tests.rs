@@ -94,7 +94,7 @@ fn a_kept_start_reads_from_where_it_was() {
         .snapshot(&Query {
             start: Some(read.next_start),
             screen_rows: screen_rows(&read.screen),
-            whole: false,
+            count: false,
             above: 0,
         })
         .expect("the read succeeds");

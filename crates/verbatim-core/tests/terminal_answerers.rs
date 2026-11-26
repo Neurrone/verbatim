@@ -60,18 +60,21 @@ fn history_read(outpost: &mut Outpost, ask: &HistoryAsk) -> Result<(String, u32)
 
 /// The reference read's query for the window read `read`, as the old
 /// operation asked it: a start named and a history block begin a screen
-/// above their start, a first read and a whole one at it.
+/// above their start, a first read at it.
 fn query_of(outpost: &Outpost, read: WindowRead) -> Query {
-    let (start, screen_rows, whole, above) = match read {
+    let (start, screen_rows, count, above) = match read {
         WindowRead::First => (None, 0, false, 0),
-        WindowRead::From { start, height } => (Some(start), height, false, height),
+        WindowRead::From {
+            start,
+            height,
+            count,
+        } => (Some(start), height, count, height),
         WindowRead::HistoryBlock { height } => (None, height.get(), false, height.get()),
-        WindowRead::Whole { height } => (None, height, true, 0),
     };
     Query {
         start: start.map(|start| Range::at(outpost.held(start).expect("a held start"))),
         screen_rows,
-        whole,
+        count,
         above,
     }
 }
@@ -108,6 +111,7 @@ fn read_differences(outpost: &mut Outpost, ask: &WindowAsk) -> (Vec<String>, Tex
         caret_line,
         caret_column,
         above,
+        rows_above,
         colours
     );
     let mut same = |name: &str, old: String, new: String| {
@@ -169,7 +173,7 @@ fn history_differences(
     let query = Query {
         start: Some(Range::at(outpost.held(start).expect("a held start"))),
         screen_rows: height,
-        whole: false,
+        count: false,
         above,
     };
     let old = outpost.sim.snapshot(&query).expect("a simulated read");
@@ -190,9 +194,9 @@ fn history_differences(
 }
 
 /// Compares every window read Core asks in the terminal's present state:
-/// a first read, a first read again with its history block, the whole
-/// document, and, from the start `kept` an earlier read named, a read from
-/// it, each with its colours, as a caret key's starting read and not; and
+/// a first read, a first read again with its history block, and, from the
+/// start `kept` an earlier read named, a read from it and a count read
+/// from it, each with its colours, as a caret key's starting read and not; and
 /// the history reads from `kept`, with no rows above it, a screen of them
 /// and more than the text holds. Returns the next start for a later state,
 /// with what differed.
@@ -204,13 +208,15 @@ fn compare_reads(
     differences: &mut Vec<String>,
 ) -> TextAnchor {
     let rows = NonZeroU32::new(height).expect("a height");
-    let mut reads = vec![
-        WindowRead::First,
-        WindowRead::HistoryBlock { height: rows },
-        WindowRead::Whole { height },
-    ];
+    let mut reads = vec![WindowRead::First, WindowRead::HistoryBlock { height: rows }];
     if let Some(start) = kept {
-        reads.push(WindowRead::From { start, height });
+        for count in [false, true] {
+            reads.push(WindowRead::From {
+                start,
+                height,
+                count,
+            });
+        }
         for above in [0, height, 100_000] {
             differences.extend(
                 history_differences(outpost, (start, above, height))
@@ -453,7 +459,11 @@ fn small(lines: u32) -> Vec<(Outpost, TextAnchor)> {
 /// A read from `start` at a screen of 4 rows.
 fn from(start: TextAnchor) -> WindowAsk {
     WindowAsk {
-        read: WindowRead::From { start, height: 4 },
+        read: WindowRead::From {
+            start,
+            height: 4,
+            count: false,
+        },
         colours: false,
         starting: false,
         output: false,

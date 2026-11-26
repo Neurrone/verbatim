@@ -302,6 +302,7 @@ fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
         caret_column: snapshot.caret_column,
         at_ms,
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+        rows_above: snapshot.rows_above,
     }
 }
 
@@ -325,19 +326,26 @@ fn settle(
         reads.push(read);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
         let screen_rows = u32::try_from(height).unwrap_or(u32::MAX);
-        if step.whole_document || step.history_block {
+        if step.count_read {
+            *query = Query {
+                count: true,
+                ..*query
+            };
+            continue;
+        }
+        if step.history_block {
             *query = Query {
                 start: None,
                 screen_rows,
-                whole: step.whole_document,
-                above: if step.history_block { screen_rows } else { 0 },
+                count: false,
+                above: screen_rows,
             };
             continue;
         }
         *query = Query {
             start: Some(snapshot.next_start),
             screen_rows,
-            whole: false,
+            count: false,
             above: u32::try_from(reader.memory().above()).unwrap_or(u32::MAX),
         };
         return reads;

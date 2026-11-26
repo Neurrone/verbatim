@@ -169,6 +169,7 @@ impl Reader for Core {
             caret_column: snapshot.caret_column,
             at_ms: self.now(),
             above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+            rows_above: snapshot.rows_above,
         };
         self.answer(&read, snapshot.next_start)
     }
@@ -185,19 +186,17 @@ impl Core {
         let step = self.reader.read(read, false, None);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
         let screen_rows = u32::try_from(height).unwrap_or(u32::MAX);
-        if step.whole_document {
+        if step.count_read {
             return Reply::Again(Query {
-                start: None,
-                screen_rows,
-                whole: true,
-                above: 0,
+                count: true,
+                ..self.query
             });
         }
         if step.history_block {
             return Reply::Again(Query {
                 start: None,
                 screen_rows,
-                whole: false,
+                count: false,
                 above: screen_rows,
             });
         }
@@ -225,7 +224,7 @@ impl Core {
                 Some(next_start)
             },
             screen_rows,
-            whole: false,
+            count: false,
             above: u32::try_from(memory.above()).unwrap_or(u32::MAX),
         };
         self.reads += 1;
@@ -411,8 +410,9 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
     // accepted only through its own reason, and each failing without it:
     // - a flood after two identical rows, which fit the read at two places,
     //   so the lost read says "skipped lines" (repeated text);
-    // - a flood larger than the read covers, after a full history, whose
-    //   lines above the screen a lost read counts (a lost read);
+    // - a flood larger than the read covers, after a full history taller
+    //   than the read's two screens, whose lines above the read a lost read
+    //   counts (a lost read);
     // - a volatile row held when only reads with no text follow, which the
     //   reader's timer speaks (a read with no text).
     let repeated = stream(&[
@@ -436,6 +436,13 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
     ]);
     let lost = stream(&[
         (
+            Op::Flood {
+                lines: 30,
+                word: "fill",
+            },
+            true,
+        ),
+        (
             Op::Restyle {
                 rows: 1,
                 text: "dog",
@@ -455,7 +462,7 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
         (Op::Newline, true),
         (
             Op::Flood {
-                lines: 9,
+                lines: 30,
                 word: "ok",
             },
             false,
@@ -488,19 +495,29 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
         ),
         (Op::Clear, false),
     ]);
-    meet_only_through_their_limits(&[
-        (repeated, Limit::RepeatedText),
-        (lost, Limit::LostRead),
-        (held, Limit::BlankScreen),
-    ]);
+    meet_only_through_their_limits(&[(repeated, Limit::RepeatedText), (held, Limit::BlankScreen)]);
+    // A lost read misses only lines above it, which a buffer holds only when
+    // its history is taller than the read's two screens.
+    let tall = Size {
+        history: 20,
+        ..Size::SMALL
+    };
+    for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+        assert_eq!(violations(&lost, flavor, tall), [], "{flavor:?}");
+        assert_ne!(
+            violations_without(&lost, flavor, tall, Limit::LostRead),
+            [],
+            "{flavor:?} without LostRead"
+        );
+    }
 }
 
 #[test]
 fn a_flood_and_a_repaint_that_refuse_the_start_are_a_lost_read_with_every_line_reported() {
     // In Windows Terminal, a flood and a repaint, which erases the screen
     // and shrinks the document, before the next read refuse its start and
-    // keep nothing: a lost read, whose whole document has nothing of the
-    // last read, so every line is new and reported, with no limit needed
+    // keep nothing: a lost read, whose count read has nothing of the last
+    // read, so every line is new and reported, with no limit needed
     // ("Screens", "A lost read"). The console host's erase pushes the
     // screen into the history, refusing nothing, so the stream is Windows
     // Terminal's alone.

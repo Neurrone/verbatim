@@ -258,10 +258,11 @@ pub struct Step {
     /// When to call [`TerminalReader::timer`], in milliseconds on the
     /// caller's clock; `None` when nothing waits for the quiet period.
     pub timer: Option<u64>,
-    /// Read the whole document and give that read instead ("The read");
-    /// nothing changed, and only the outcome's shape (the screen's width
-    /// and height) is set.
-    pub whole_document: bool,
+    /// Read again from the same start as a count read, which counts the
+    /// rows above it, and give that read instead ("A lost read"); nothing
+    /// changed, and only the outcome's shape (the screen's width and
+    /// height) is set.
+    pub count_read: bool,
     /// Read again from a screen above the screen, the screen counted up
     /// from the document's end by the outcome's height, with no start, and
     /// give that read instead: a first read with no rows above its screen
@@ -912,7 +913,7 @@ impl TerminalReader {
         colours: Option<&[Vec<ColourRun>]>,
     ) -> Step {
         let now = read.at_ms;
-        let mut outcome = memory.read(read);
+        let mut outcome = memory.read(read, self.settings.report_new_output);
         if outcome.history_block {
             return Step {
                 history_block: true,
@@ -930,17 +931,17 @@ impl TerminalReader {
                 ..Step::default()
             };
         }
-        if outcome.whole_document {
+        if outcome.count_read {
             if self.settings.report_new_output {
                 return Step {
-                    whole_document: true,
+                    count_read: true,
                     timer: self.next_due(),
                     outcome: Some(outcome),
                     ..Step::default()
                 };
             }
-            // With nothing reported nothing waits, so the whole document is
-            // not read: the memory starts again from this read ("The read").
+            // With nothing reported nothing waits, so a lost read asks
+            // nothing: the memory starts again from it ("The read").
             self.screen = Screen::default();
             self.lingering.clear();
             outcome = memory.restart(read);

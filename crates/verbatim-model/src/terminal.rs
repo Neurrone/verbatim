@@ -46,6 +46,9 @@ pub struct TerminalSnapshot {
     pub caret_column: u32,
     /// How many rows the read holds above the start it was asked for.
     pub above: u32,
+    /// For a count read whose start was refused, how many rows lie above
+    /// the read; `None` for any other read.
+    pub rows_above: Option<u32>,
     /// When the read began, in milliseconds on the clock every process of
     /// a run shares: output it shows was written before it ended, and
     /// output read before speech was cut off, which began before the cut,
@@ -173,9 +176,11 @@ pub enum TerminalScope {
     /// command, which Core answers from its memory once the read is
     /// aligned.
     Fresh,
-    /// The whole document, from its start, which the reading rules ask
-    /// for after a lost read ("A lost read").
-    Whole,
+    /// A count read: a read as any other from the start Core keeps, which,
+    /// when that start is refused, counts the rows above it; the reading
+    /// rules ask for it after a lost read whose start shrank ("A lost
+    /// read").
+    Count,
     /// A first read again, counted up from the document's end by `height`
     /// rows with as many rows above, so that it holds its history block
     /// ("The read").

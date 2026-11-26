@@ -14,8 +14,8 @@ use super::{
 use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
-/// said, a screen above it, the whole document is read when the reader
-/// asks, and every read in a key's window takes the screen's colours.
+/// said, a screen above it, a count read is taken when the reader asks,
+/// and every read in a key's window takes the screen's colours.
 struct Term {
     terminal: Terminal,
     reader: TerminalReader,
@@ -103,7 +103,7 @@ impl Term {
         step
     }
 
-    /// One read at `at_ms`, the whole document read again when asked, with
+    /// One read at `at_ms`, read again as a count read when asked, with
     /// `colours`, or the screen's own when a key's window holds it.
     fn take(&mut self, at_ms: u64, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
         let due = (colours.is_none()
@@ -128,6 +128,7 @@ impl Term {
                 caret_column: snapshot.caret_column + std::mem::take(&mut self.caret_ahead),
                 at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
+                rows_above: snapshot.rows_above,
             };
             let step = self.reader.read(&read, waited, colours);
             let screen_rows = u32::try_from(
@@ -137,13 +138,11 @@ impl Term {
                     .height,
             )
             .expect("a small screen");
-            if step.whole_document {
-                assert_eq!(taken, 1, "the whole document is read at most once");
+            if step.count_read {
+                assert_eq!(taken, 1, "a count read is read at most once");
                 query = Query {
-                    start: None,
-                    screen_rows,
-                    whole: true,
-                    above: 0,
+                    count: true,
+                    ..query
                 };
                 continue;
             }
@@ -152,7 +151,7 @@ impl Term {
                 query = Query {
                     start: None,
                     screen_rows,
-                    whole: false,
+                    count: false,
                     above: screen_rows,
                 };
                 continue;
@@ -160,7 +159,7 @@ impl Term {
             self.query = Query {
                 start: Some(snapshot.next_start),
                 screen_rows,
-                whole: false,
+                count: false,
                 above: u32::try_from(self.reader.memory().above()).expect("a small screen"),
             };
             // Whether the review position followed is asserted beside where
@@ -199,7 +198,7 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         speech,
         withheld,
         timer,
-        whole_document: false,
+        count_read: false,
         history_block: false,
         outcome: None,
         followed: false,
@@ -317,7 +316,7 @@ fn kept_rows_are_silent_as_output_scrolls() {
 }
 
 #[test]
-fn a_whole_document_read_leaves_only_the_screen_and_the_screen_above_held() {
+fn a_lost_read_of_the_whole_document_leaves_only_the_screen_and_the_screen_above_held() {
     // Once a read of the whole document is handled, the memory and the
     // rules keep its screen and a screen above it, and the rows above only
     // as hashes in the remembered history ("The memory").
@@ -326,7 +325,7 @@ fn a_whole_document_read_leaves_only_the_screen_and_the_screen_above_held() {
     let flood: String = (1..=20)
         .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
         .collect();
-    // Twenty lines through a buffer of thirteen: the whole document is read,
+    // Twenty lines through a buffer of thirteen: the read, the whole document,
     // the rows "8" to "20", which keep no row of the last read: the history
     // overflowed, and every line is new, for Core's flood policy.
     let mut expected = vec![Speech::LostRead(Lost::MoreThan)];
@@ -1013,6 +1012,7 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
         caret_column: column,
         at_ms,
         above: 0,
+        rows_above: None,
     }
 }
 
@@ -1089,8 +1089,8 @@ fn with_report_new_output_off_output_is_silent_and_keys_are_answered() {
 
 #[test]
 fn with_output_off_a_flood_through_a_full_history_keeps_marks_at_their_places() {
-    // Ten lines rotate a full history of twenty past the last screen, which
-    // would have the whole document read; with nothing reported the memory
+    // Ten lines rotate a full history of twenty past the last screen, a
+    // lost read; with nothing reported the memory
     // starts again from the read, and each command mark keeps its place,
     // counted from the read's end, to be found by its line's text when a
     // command looks for it ("Starting again"; Dickson, 2026-10-26).
@@ -1526,8 +1526,9 @@ fn a_flood_past_a_first_reads_screen_and_its_history_is_a_lost_read() {
     // returns to a Windows Terminal tab while a build streams, holds the
     // screen above its screen. More than two screens of output before the
     // next read move the buffer under those rows, so positions are not
-    // trusted, nothing of the first read is found, and the whole document
-    // is read: its rows went by past a full history ("A lost read").
+    // trusted and nothing of the first read is found: a lost read, whose
+    // rows went by past a full history, the first of them above the read
+    // ("A lost read").
     let mut term = Term::of(Flavor::WindowsTerminal, 12, 5, 6, Settings::default());
     let lines = (1..=20)
         .map(|line| format!("p{line}\r\n"))
@@ -1543,8 +1544,8 @@ fn a_flood_past_a_first_reads_screen_and_its_history_is_a_lost_read() {
         .concat();
     flood.push_str("PS C:> ");
     let mut expected = vec![Speech::LostRead(Lost::MoreThan)];
-    expected.extend((13..=22).map(|number| line(number - 13, &format!("n{number}"))));
-    expected.push(line(10, "PS C:>"));
+    expected.extend((14..=22).map(|number| line(number - 14, &format!("n{number}"))));
+    expected.push(line(9, "PS C:>"));
     assert_eq!(term.write(&flood, 2000), says(expected));
 }
 
@@ -1892,7 +1893,7 @@ fn a_reader_serialized_mid_session_and_restored_gives_the_same_steps() {
 // (decision 1 of the plan for moving the reader into Core).
 
 /// One read of `terminal` at `at_ms` as the outpost takes it, given to
-/// `reader`, the whole document or the history block read again at once
+/// `reader`, read again at once as a count read or with its history block
 /// when the rules ask, and the query of the next read.
 fn corpus_read(
     terminal: &Terminal,
@@ -1917,17 +1918,25 @@ fn corpus_read(
             caret_column: snapshot.caret_column,
             at_ms,
             above: usize::try_from(snapshot.above).expect("a few rows"),
+            rows_above: snapshot.rows_above,
         };
         let step = reader.read(&read, false, None);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
         let screen_rows = u32::try_from(height).expect("a small screen");
-        if step.whole_document || step.history_block {
+        if step.count_read || step.history_block {
             assert_eq!(taken, 1, "a read is taken again at most once");
-            *query = Query {
-                start: None,
-                screen_rows,
-                whole: step.whole_document,
-                above: if step.whole_document { 0 } else { screen_rows },
+            *query = if step.count_read {
+                Query {
+                    count: true,
+                    ..*query
+                }
+            } else {
+                Query {
+                    start: None,
+                    screen_rows,
+                    count: false,
+                    above: screen_rows,
+                }
             };
             continue;
         }
@@ -1939,7 +1948,7 @@ fn corpus_read(
                 Some(snapshot.next_start)
             },
             screen_rows,
-            whole: false,
+            count: false,
             above: u32::try_from(reader.memory().above()).expect("a small screen"),
         };
         return step;

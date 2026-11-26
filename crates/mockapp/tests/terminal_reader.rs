@@ -5,7 +5,7 @@
 //! cases: a first read; a read from the start the last
 //! one named, with nothing new, with output written since, and after a
 //! clear that leaves the start past the text's end; a first read again
-//! with its history block; the whole text; the rows above a start, as many
+//! with its history block; a count read; the rows above a start, as many
 //! as asked, exactly as many as the text holds and fewer; history reads by
 //! place; the caret, a caret key's starting point and a provider that
 //! reports no selection; the screen's colours as exact runs, read by the
@@ -391,7 +391,11 @@ fn plain(read: WindowRead) -> WindowAsk {
 
 /// A read from `start` at a screen of 3 rows of text.
 fn from(start: TextAnchor) -> WindowAsk {
-    plain(WindowRead::From { start, height: 3 })
+    plain(WindowRead::From {
+        start,
+        height: 3,
+        count: false,
+    })
 }
 
 fn height(rows: u32) -> NonZeroU32 {
@@ -415,6 +419,7 @@ fn eight_rows(text: TerminalText, (from_start, above): (bool, u32)) -> Read {
             caret_line: row("r 1"),
             caret_column: 0,
             above,
+            rows_above: None,
             started_ms: 0,
             ended_ms: 0,
             waited: false,
@@ -511,6 +516,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
                 caret_line: row("cleared"),
                 caret_column: 0,
                 above: 0,
+                rows_above: None,
                 started_ms: 0,
                 ended_ms: 0,
                 waited: false,
@@ -524,10 +530,12 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
 }
 
 /// A first read again with its history block counts its start from the
-/// text's end, not the screen's top, and takes as many rows above it; a
-/// whole read takes the text from its start.
-fn a_read_with_no_start_takes_its_history_block_or_the_whole_text_both_ways() {
-    let terminal = Terminal::start("mockapp-reader-unkept", 4, &numbered(8));
+/// text's end, not the screen's top, and takes as many rows above it; once
+/// a row less is shown, that start lies past the next read's, and a count
+/// read from it reads from the next read's start, a screen of 3 rows
+/// above it, and counts the rows above where it began.
+fn a_first_read_again_takes_its_history_block_and_a_count_read_counts_both_ways() {
+    let mut terminal = Terminal::start("mockapp-reader-unkept", 4, &numbered(8));
     // A screen of 2 rows named: the next read starts 2 rows from the end,
     // and this one 2 rows above that.
     let (block, start, _) =
@@ -537,22 +545,29 @@ fn a_read_with_no_start_takes_its_history_block_or_the_whole_text_both_ways() {
         eight_rows(text(&["r 6", "r 7", "r 8", "ready>"]), (false, 2))
     );
     assert_eq!(terminal.rows_to_end(start), 2, "two rows from the end");
-    let (whole, start, _) = terminal.window(|_| plain(WindowRead::Whole { height: 3 }));
-    let rows_to_end = terminal.rows_to_end(start);
+    // Seven rows and the prompt: the next read starts 3 rows from the end,
+    // at "r 6", and this one 3 rows above that, at "r 3", two rows below
+    // the text's start.
+    terminal.show(&numbered(7));
+    let (counted, _, _) = terminal.window(|which| {
+        plain(WindowRead::From {
+            start: start[which],
+            height: 3,
+            count: true,
+        })
+    });
     terminal.app.quit();
-    let rows = numbered(8);
-    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let snapshot = counted.snapshot;
     assert_eq!(
-        whole,
-        Read {
-            snapshot: TerminalSnapshot {
-                at_document_start: true,
-                ..eight_rows(text(&rows), (false, 0)).snapshot
-            },
-            ..eight_rows(TerminalText::default(), (false, 0))
-        }
+        (
+            snapshot.from_start,
+            snapshot.shrank,
+            snapshot.at_document_start,
+            snapshot.rows_above,
+            snapshot.text.text.lines().next(),
+        ),
+        (false, true, false, Some(2), Some("r 3"))
     );
-    assert_eq!(rows_to_end, 3, "the next start, a screen from the end");
 }
 
 /// A read takes the rows asked above its start as far as the text's start:
@@ -850,20 +865,12 @@ fn a_last_row_with_no_line_break_is_read_both_ways() {
     let texts: Vec<String> = [
         WindowRead::First,
         WindowRead::HistoryBlock { height: height(2) },
-        WindowRead::Whole { height: 2 },
     ]
     .into_iter()
     .map(|read| terminal.window(|_| plain(read)).0.snapshot.text.text)
     .collect();
     terminal.app.quit();
-    assert_eq!(
-        texts,
-        [
-            "r 3\r\nready>",
-            "r 1\r\nr 2\r\nr 3\r\nready>",
-            "r 1\r\nr 2\r\nr 3\r\nready>",
-        ]
-    );
+    assert_eq!(texts, ["r 3\r\nready>", "r 1\r\nr 2\r\nr 3\r\nready>",]);
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why
@@ -875,8 +882,8 @@ fn main() {
             a_kept_start_is_used_until_the_text_clears_below_it_both_ways,
         ),
         (
-            "a_read_with_no_start_takes_its_history_block_or_the_whole_text_both_ways",
-            a_read_with_no_start_takes_its_history_block_or_the_whole_text_both_ways,
+            "a_first_read_again_takes_its_history_block_and_a_count_read_counts_both_ways",
+            a_first_read_again_takes_its_history_block_and_a_count_read_counts_both_ways,
         ),
         (
             "a_read_takes_the_rows_above_its_start_as_far_as_the_texts_start_both_ways",

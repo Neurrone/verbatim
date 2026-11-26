@@ -547,6 +547,7 @@ fn read_stream(
                 Some(start) => WindowRead::From {
                     start,
                     height: screen_rows,
+                    count: false,
                 },
             },
             // Every read takes the colours, so the colour read is checked

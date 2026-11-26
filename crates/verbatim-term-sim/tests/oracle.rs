@@ -128,7 +128,7 @@ impl Reader for TextDiff {
         self.query = Query {
             start: Some(snapshot.next_start),
             screen_rows: screen_rows(&snapshot.screen),
-            whole: false,
+            count: false,
             above: 0,
         };
         self.previous = rows;
@@ -239,9 +239,10 @@ impl Scripted {
 
 impl Reader for Scripted {
     fn query(&self) -> Query {
-        Query {
-            whole: self.whole,
-            ..Query::default()
+        if self.whole {
+            Whole.query()
+        } else {
+            Query::default()
         }
     }
 
@@ -287,8 +288,9 @@ struct Whole;
 
 impl Reader for Whole {
     fn query(&self) -> Query {
+        // From the screen's top up past the document's start.
         Query {
-            whole: true,
+            above: u32::MAX / 2,
             ..Query::default()
         }
     }

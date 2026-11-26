@@ -541,6 +541,7 @@ pub fn read_of(snapshot: &TerminalSnapshot) -> Read {
         caret_column: usize::try_from(snapshot.caret_column).unwrap_or(usize::MAX),
         at_ms: read_at(snapshot),
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+        rows_above: snapshot.rows_above,
     }
 }
 
@@ -570,6 +571,7 @@ pub fn snapshot_of(
         caret_line: TerminalText::unpadded(&read.caret_line),
         caret_column: cells(read.caret_column),
         above: cells(read.above),
+        rows_above: read.rows_above,
         started_ms: read.at_ms,
         ended_ms: read.at_ms,
         waited,
@@ -622,10 +624,13 @@ fn speech_of(step: Step) -> Said {
                 // What a line gained, without the space that parts it from the
                 // text it follows, which says nothing.
                 Speech::Growth { text, .. } => TerminalItem::Growth(text.trim_start().to_owned()),
-                // After a lost read, its lines follow a count of none of how
-                // they are counted, to which each adds when the flood policy
-                // skips it ("Core's flood policy").
-                Speech::LostRead(Lost::About) => TerminalItem::Skipped(Skipped::About(0)),
+                // After a lost read, its lines follow a count of how they are
+                // counted, of none or, after a count read, of the rows above
+                // the read, to which each adds when the flood policy skips it
+                // ("Core's flood policy").
+                Speech::LostRead(Lost::About { above }) => {
+                    TerminalItem::Skipped(Skipped::About(above))
+                }
                 Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
                 Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
                 Speech::Echo { text, .. } => TerminalItem::Echo(text),
@@ -666,6 +671,7 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
         caret_line,
         caret_column,
         above,
+        rows_above,
         started_ms: _,
         ended_ms: _,
         waited,
@@ -685,6 +691,7 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
         caret_rows_to_end,
         caret_column,
         above,
+        rows_above,
         waited,
     )
         .hash(&mut hasher);
@@ -766,9 +773,9 @@ pub(crate) fn take(
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
-    if step.whole_document || step.history_block {
-        model.owed = Some(if step.whole_document {
-            TerminalScope::Whole
+    if step.count_read || step.history_block {
+        model.owed = Some(if step.count_read {
+            TerminalScope::Count
         } else {
             TerminalScope::HistoryBlock { height }
         });

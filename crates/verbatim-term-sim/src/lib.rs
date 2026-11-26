@@ -56,6 +56,9 @@ pub struct Snapshot {
     /// many as the query asked, or fewer when the document's start came
     /// first.
     pub above: u32,
+    /// For a count read whose start was refused, how many rows lie above
+    /// where it began; `None` for any other read.
+    pub rows_above: Option<u32>,
 }
 
 /// A stretch of a row in one foreground and background, as shown.

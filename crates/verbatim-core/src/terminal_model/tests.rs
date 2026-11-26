@@ -22,7 +22,7 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                 unit: verbatim_text::terminal_reading::Unit::Word,
                 text: "word".to_owned(),
             },
-            Speech::LostRead(Lost::About),
+            Speech::LostRead(Lost::About { above: 41 }),
             Speech::Line {
                 row: 3,
                 text: "first".into(),
@@ -47,9 +47,9 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                     unit: TerminalUnit::Word,
                     text: "word".to_owned(),
                 }),
-                // After a lost read, its lines follow an "about" count of
-                // none; a line's growth is part of its line.
-                SaidItem::Item(TerminalItem::Skipped(Skipped::About(0))),
+                // After a count read, its lines follow an "about" count of
+                // the rows above it; a line's growth is part of its line.
+                SaidItem::Item(TerminalItem::Skipped(Skipped::About(41))),
                 SaidItem::Line("first".into()),
                 SaidItem::Item(TerminalItem::Growth("grown".to_owned())),
                 SaidItem::Item(TerminalItem::Echo("x".to_owned())),
@@ -274,7 +274,7 @@ impl Watch {
                     self.anchors[usize::try_from(anchor.0).expect("a small number") - 1]
                 }),
                 screen_rows: height,
-                whole: false,
+                count: false,
                 above: height,
             })
             .expect("a simulated read");
@@ -294,6 +294,7 @@ impl Watch {
                 caret_line: unpadded(&snapshot.caret_line),
                 caret_column: u32::try_from(snapshot.caret_column).expect("a short row"),
                 above: snapshot.above,
+                rows_above: snapshot.rows_above,
                 started_ms: at_ms,
                 ended_ms: at_ms,
                 waited: false,

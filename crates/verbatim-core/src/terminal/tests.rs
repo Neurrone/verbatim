@@ -618,6 +618,7 @@ fn read_reply(text: &str) -> WindowReply {
         caret_column: 0,
         at_ms: 1,
         above: 0,
+        rows_above: None,
     };
     WindowReply {
         snapshot: crate::snapshot_of(&read, false, None),

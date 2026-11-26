@@ -273,9 +273,10 @@ pub enum Limit {
     /// fit the main screen equally well at more than one place, or the
     /// line's text is not unique in the main buffer, its history included.
     RepeatedText,
-    /// A lost read counted, rather than spoke, the new lines above the
-    /// visible screen ("A lost read"). Such a missed line is accepted only
-    /// when the buffer moved since the last read by more than the read
+    /// A lost read counted, rather than spoke, the new lines above it, or
+    /// above the visible screen when it aligned only that screen ("A lost
+    /// read"). Such a missed line is accepted only above the visible screen,
+    /// and when the buffer moved since the last read by more than the read
     /// covered: at least a screen's rows left the buffer.
     LostRead,
     /// A program that erases the history and prints it again, as Pi's
@@ -324,9 +325,9 @@ pub enum Reply {
     /// What it would say.
     Heard(Heard),
     /// Read again at once with this query, before anything more is
-    /// written, as a reader reads the whole document when the read keeps
-    /// no row of its last read (`books/dev/src/explanation/design/terminal-model.md`, "The
-    /// read").
+    /// written, as a reader takes a count read when a read after a start
+    /// that shrank keeps no row of its last read
+    /// (`books/dev/src/explanation/design/terminal-model.md`, "A lost read").
     Again(Query),
 }
 
@@ -415,8 +416,8 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
 }
 
 /// The most times a reader may ask to read again at one point: a change
-/// costs at most two reads, the second of the whole document, or, for a
-/// first read, of its screen and the screen above it
+/// costs at most two reads, the second a count read, or, for a first
+/// read, of its screen and the screen above it
 /// (`books/dev/src/explanation/design/terminal-model.md`, "The read").
 pub const AGAIN_LIMIT: usize = 1;
 

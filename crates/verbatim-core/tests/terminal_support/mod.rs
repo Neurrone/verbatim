@@ -124,8 +124,8 @@ pub fn caret(trace_id: TraceId, key: CaretKey, at_ms: u64, held: bool) -> Key {
 /// What Core asked of the terminal beside its output reads, by its
 /// purpose, whichever way it was asked: a read of the screen and the rows
 /// above it (a review command's fresh read, or a caret key's starting or
-/// final read), a read the rules owe (the whole document, or a first read
-/// again with its history block), a read of the history above the rows
+/// final read), a read the rules owe (a count read, or a first read again
+/// with its history block), a read of the history above the rows
 /// Core keeps, a search for the rows that start with a text, or a caret
 /// key's watch. A request's own numbers (rows above an anchor, a screen's
 /// height) are left out: they count from anchors only its protocol has
@@ -133,7 +133,7 @@ pub fn caret(trace_id: TraceId, key: CaretKey, at_ms: u64, held: bool) -> Key {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asked {
     Read,
-    Whole,
+    Count,
     FirstAgain,
     History,
     Search(String),
@@ -208,6 +208,7 @@ impl Outpost {
             caret_column: snapshot.caret_column,
             at_ms,
             above: usize::try_from(snapshot.above).expect("rows"),
+            rows_above: snapshot.rows_above,
         };
         let colours = colours.then(|| self.colours());
         let wire = snapshot_of(&read, false, colours.as_deref());
@@ -215,21 +216,29 @@ impl Outpost {
     }
 
     /// The reference history read from `above` rows above the start
-    /// `start`, or of the whole document: its text, padding kept, and the
-    /// rows it holds above the start.
+    /// `start`, or of the whole document, read from the screen's top up past
+    /// the document's start: its text, padding kept, and the rows it holds
+    /// above the start, none for the whole document.
     pub fn history(
         &self,
         start: TextAnchor,
         (above, whole, height): (u32, bool, u32),
     ) -> (String, u32) {
-        let query = Query {
-            start: if whole { None } else { self.range(Some(start)) },
-            screen_rows: height,
-            whole,
-            above: if whole { 0 } else { above },
+        let query = if whole {
+            Query {
+                above: u32::MAX / 2,
+                ..Query::default()
+            }
+        } else {
+            Query {
+                start: self.range(Some(start)),
+                screen_rows: height,
+                count: false,
+                above,
+            }
         };
         let snapshot = self.sim.snapshot(&query).expect("a simulated history read");
-        (snapshot.text, snapshot.above)
+        (snapshot.text, if whole { 0 } else { snapshot.above })
     }
 
     /// The simulated terminal's rows starting with `needle`, outward from
@@ -248,7 +257,7 @@ impl Outpost {
         let query = Query {
             start: Some(start),
             screen_rows: 0,
-            whole: false,
+            count: false,
             above: u32::MAX / 2,
         };
         let snapshot = self.sim.snapshot(&query).expect("a simulated read");
@@ -480,9 +489,9 @@ pub struct Session {
     /// Every input given to the reducer since the session began, with its
     /// effects.
     pub log: Vec<(Input, Vec<Effect>)>,
-    /// Whether the outpost holds back a whole read Core asks for, until
+    /// Whether the outpost holds back a count read Core asks for, until
     /// [`Session::answer_held`].
-    pub hold_whole: bool,
+    pub hold_count: bool,
     held: Option<(Ask, reader::Asked)>,
     /// Whether the outpost answers Core's searches refused, as its worker
     /// does when the terminal lost the focus before searching.
@@ -574,7 +583,7 @@ impl Session {
             armed: None,
             copied: Vec::new(),
             log: Vec::new(),
-            hold_whole: false,
+            hold_count: false,
             held: None,
             unanswered_finds: false,
             output_before_finds: VecDeque::new(),
@@ -753,7 +762,8 @@ impl Session {
         if let Some(read) = reader::asked(batch) {
             match read {
                 reader::Asked::Window(window)
-                    if self.hold_whole && matches!(window.read, WindowRead::Whole { .. }) =>
+                    if self.hold_count
+                        && matches!(window.read, WindowRead::From { count: true, .. }) =>
                 {
                     self.held = Some((ask, read));
                 }
@@ -895,9 +905,9 @@ impl Session {
         });
     }
 
-    /// Answers the whole read held back.
+    /// Answers the count read held back.
     pub fn answer_held(&mut self) {
-        let (ask, read) = self.held.take().expect("a whole read held back");
+        let (ask, read) = self.held.take().expect("a count read held back");
         self.answer_read(&ask, &read);
         self.run(Vec::new());
         self.settle();
@@ -916,7 +926,7 @@ impl Session {
         let asked = match &ask.request {
             verbatim_model::request::Question::Batch(batch) => match reader::asked(batch) {
                 Some(reader::Asked::Window(window)) => match window.read {
-                    WindowRead::Whole { .. } => Asked::Whole,
+                    WindowRead::From { count: true, .. } => Asked::Count,
                     WindowRead::HistoryBlock { .. } => Asked::FirstAgain,
                     WindowRead::From { .. } | WindowRead::First if window.output => {
                         self.output_reads += 1;

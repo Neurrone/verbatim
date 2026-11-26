@@ -36,11 +36,11 @@ fn a_reads_text_converted_in_one_pass_is_the_two_copies_exactly() {
             for (chunk, bytes) in stream.chunks.iter().enumerate() {
                 terminal.write(bytes.as_bytes());
                 let snapshot = terminal
+                    // The whole text: from the screen's top up past the
+                    // document's start.
                     .snapshot(&Query {
-                        start: None,
-                        screen_rows: 30,
-                        whole: true,
-                        above: 0,
+                        above: u32::MAX / 2,
+                        ..Query::default()
                     })
                     .expect("a simulated read");
                 for (part, text) in [("text", &snapshot.text), ("screen", &snapshot.screen)] {

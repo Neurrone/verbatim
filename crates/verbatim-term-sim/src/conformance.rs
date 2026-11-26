@@ -259,7 +259,7 @@ pub fn simulate(stream: &Stream, flavor: Flavor, width: usize, height: usize) ->
         query = Query {
             start: Some(snapshot.next_start),
             screen_rows: screen_rows(&snapshot.screen),
-            whole: false,
+            count: false,
             above: 0,
         };
         answers.push(Answer {

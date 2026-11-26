@@ -117,7 +117,11 @@ impl Terminal {
     /// A read from the start Core names, the screen's height not yet
     /// known to Core, asked for the terminal's output.
     fn fresh_from(&self, start: TextAnchor) -> WindowReply {
-        self.read(output(WindowRead::From { start, height: 0 }))
+        self.read(output(WindowRead::From {
+            start,
+            height: 0,
+            count: false,
+        }))
     }
 
     /// The history read `ask`, run by the outpost's worker and read back
@@ -171,7 +175,11 @@ fn starting_from(start: TextAnchor) -> WindowAsk {
     WindowAsk {
         starting: true,
         output: false,
-        ..output(WindowRead::From { start, height: 0 })
+        ..output(WindowRead::From {
+            start,
+            height: 0,
+            count: false,
+        })
     }
 }
 
@@ -339,14 +347,11 @@ fn a_read_counts_from_the_start_core_names() {
     terminal.quit();
 }
 
-/// The whole document and a history block are read when Core asks for
-/// them, in place of a fresh read.
-fn the_whole_document_and_a_history_block_are_read_when_asked() {
+/// A history block is read when Core asks for it, in place of a fresh
+/// read.
+fn a_history_block_is_read_when_asked() {
     let mut terminal = start("mockapp-terminal-whole");
     write(&mut terminal, &["three", "four", "five"]);
-    let whole = terminal.read(output(WindowRead::Whole { height: 2 }));
-    assert_eq!(text(&whole.snapshot), after(&["three", "four", "five"]));
-    assert!(whole.snapshot.at_document_start);
     let block = terminal.read(output(WindowRead::HistoryBlock {
         height: NonZeroU32::new(2).expect("a height"),
     }));
@@ -404,6 +409,7 @@ fn a_read_takes_the_colours_when_core_asks() {
         ..output(WindowRead::From {
             start: terminal.start,
             height: 0,
+            count: false,
         })
     });
     assert_eq!(text(&read.snapshot), after(&["three"]));
@@ -692,8 +698,8 @@ fn main() {
             a_read_counts_from_the_start_core_names,
         ),
         (
-            "the_whole_document_and_a_history_block_are_read_when_asked",
-            the_whole_document_and_a_history_block_are_read_when_asked,
+            "a_history_block_is_read_when_asked",
+            a_history_block_is_read_when_asked,
         ),
         (
             "history_above_the_start_core_names_is_read_by_place",

@@ -94,6 +94,7 @@ fn read(text: &str, started_us: u64) -> Outcome<WindowReply> {
         caret_column: 0,
         at_ms: started_us / 1_000,
         above: 0,
+        rows_above: None,
     };
     Outcome::Result(WindowReply {
         snapshot: crate::snapshot_of(&read, false, None),

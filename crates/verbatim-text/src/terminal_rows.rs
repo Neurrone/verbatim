@@ -16,10 +16,11 @@
 //! are found by their text ("The alignment"). A read that keeps nothing the
 //! last read had at or above the caret, or keeps it equally well at more
 //! than one place, with positions not trusted and its start not refused, is
-//! lost: the whole document is read once ("A lost read"). A read that keeps
-//! and pairs nothing is a new screen when its own screen starts at the
+//! lost, and handled within itself ("A lost read"). A read that keeps and
+//! pairs nothing is a new screen when its own screen starts at the
 //! document's start or the aside screen is found in it ("Screens", "The
-//! aside screen"), and otherwise lost too.
+//! aside screen"), and otherwise lost too; after a start that shrank, a
+//! count read then counts the rows above it.
 //!
 //! The memory holds only the last read: once a read is handled, its rows
 //! from a screen above the next read's start on. Rows keep their places,
@@ -83,6 +84,9 @@ pub struct Read {
     /// ([`TerminalMemory::above`]): fewer than asked when the document's
     /// start came first.
     pub above: usize,
+    /// For a count read whose start was refused, how many rows lie above
+    /// the read ([`Outcome::count_read`]); `None` for any other read.
+    pub rows_above: Option<u32>,
 }
 
 /// A read's text without the spaces that pad its lines, and how long each
@@ -393,8 +397,8 @@ pub enum NewRow {
     },
     /// A row that is history and carries no row of the last read: a row of
     /// the history above where the last read's rows are now; after a lost
-    /// read, a row above the topmost row found, or above the visible screen
-    /// when only it was aligned ("A lost read"); or, on a new screen, a row
+    /// read whose rows fit at more than one place, a row above the visible
+    /// screen, which alone was aligned ("A lost read"); or, on a new screen, a row
     /// above the visible screen ("Screens").
     Shown,
 }
@@ -494,12 +498,15 @@ impl<'a> Rows<'a> {
     reason = "independent findings of one read"
 )]
 pub struct Outcome {
-    /// The read is lost: positions not trusted, its start not refused, and
-    /// no row with text that the last read had at or above the caret kept,
-    /// or kept equally well at more than one place, so the caller reads the
-    /// whole document and gives that read instead ("A lost read"). Nothing
-    /// else is set, and the memory is unchanged.
-    pub whole_document: bool,
+    /// The read is lost and left to the caller ("A lost read"): with new
+    /// output reported, it kept and paired nothing of the last read after
+    /// a start that shrank, as after a clear, so the caller reads again
+    /// from the same start as a count read, which counts the rows above it,
+    /// and gives that read instead; with new output not reported, any lost
+    /// read, from which the caller starts the memory again
+    /// ([`TerminalMemory::restart`]). Nothing else is set, and the memory
+    /// is unchanged.
+    pub count_read: bool,
     /// The memory's first read holds no rows above its screen though the
     /// document goes on above it, so the caller reads again from a screen
     /// above the screen, the screen counted up from the document's end as
@@ -523,7 +530,7 @@ pub struct Outcome {
     /// How many rows the last read's rows moved up, as the alignment found
     /// them.
     pub rotation: usize,
-    /// A lost read, read whole ("A lost read"): how what went by is counted.
+    /// A lost read ("A lost read"): how what went by is counted.
     pub lost: Option<Lost>,
     /// Whether the last read's rows were found by their text, positions not
     /// trusted ("Positions").
@@ -549,11 +556,16 @@ pub struct Outcome {
 /// How the lines of a lost read that went by are counted ("A lost read").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lost {
-    /// The last read's rows were found at one place, by their text: the
-    /// rows below them are new, and their count is "about".
-    About,
-    /// The last read's rows were nowhere: every row above the visible
-    /// screen is new, and more went by than the buffer holds.
+    /// A count read after a start that shrank, as after a clear, kept
+    /// nothing of the last read: every row of the document is new, the
+    /// rows above the read counted, not read, and the count is "about",
+    /// since it counts rows, not lines.
+    About {
+        /// How many rows lie above the read.
+        above: u32,
+    },
+    /// Nothing the last read had at or above the caret was kept: every row
+    /// of the read not kept is new, and more went by than it shows.
     MoreThan,
     /// The last read's rows fit at more than one place: only the visible
     /// screen is aligned, and what went by has no count.
@@ -792,12 +804,6 @@ pub struct TerminalMemory {
     /// a read keeps something of the last read with its own screen below
     /// the document's start, or another new screen replaces it.
     aside: Option<Aside>,
-    /// Whether the whole document was asked for, until it is read.
-    asked_whole: bool,
-    /// Whether the read that asked for the whole document had its start
-    /// refused: the document shrank, as after a clear, so every row of it
-    /// is new when nothing of the last read is in it ("A lost read").
-    asked_refused: bool,
     /// The screen's height a first read was asked again with, a screen of
     /// rows above its screen ([`Outcome::history_block`]), until that read
     /// comes.
@@ -998,10 +1004,12 @@ impl TerminalMemory {
     }
 
     /// Aligns `read` with the memory, and takes it as the memory's last
-    /// read, unless [`Outcome::whole_document`] asks for the whole document
-    /// first or [`Outcome::blank`] says its screen shows no text. What the
-    /// last read left untrimmed is trimmed first ([`TerminalMemory::trim`]).
-    pub fn read(&mut self, read: &Read) -> Outcome {
+    /// read, unless [`Outcome::count_read`] leaves it to the caller or
+    /// [`Outcome::blank`] says its screen shows no text; `report` is
+    /// whether new output is reported, without which a lost read is left to
+    /// the caller to start the memory again. What the last read left
+    /// untrimmed is trimmed first ([`TerminalMemory::trim`]).
+    pub fn read(&mut self, read: &Read, report: bool) -> Outcome {
         self.trim();
         let last_height = self.screen.as_ref().map(|screen| screen.height);
         let (width, height) = measure(&read.screen, &read.caret_line, last_height);
@@ -1013,8 +1021,6 @@ impl TerminalMemory {
             height,
             ..Outcome::default()
         };
-        let asked_whole = std::mem::take(&mut self.asked_whole);
-        let asked_refused = std::mem::take(&mut self.asked_refused);
         let asked_above = self.asked_above.take();
         let Some(current) = self.screen.take() else {
             // A first read takes only the screen: when the document goes on
@@ -1052,24 +1058,6 @@ impl TerminalMemory {
                 ..shape
             };
         }
-        // The whole document a lost read asked for ("A lost read"), in
-        // which the aside screen is looked for too: found, the earlier
-        // screen is back, a new screen ("The aside screen").
-        if asked_whole && read.at_document_start && !read.from_start {
-            if self.aside_found(&rows) {
-                return self.screens(&current, rows, read, &shape);
-            }
-            let (aligned, lost) =
-                align_whole(&current, (&rows, height), read, caret, asked_refused);
-            self.drop_aside(&aligned, read);
-            let shape = Outcome {
-                lost: Some(lost),
-                by_text: true,
-                ..shape
-            };
-            let next = remember(&current, rows, &aligned, read, (width, height), caret);
-            return self.finish(&current, next, &aligned, &shape, Switch::None);
-        }
         let had_text = current.rows.iter().any(|row| !row.is_blank());
         let refused = read.shrank || !read.from_start;
         let trusted = !refused && positions(&current, &rows, read);
@@ -1086,10 +1074,10 @@ impl TerminalMemory {
         // Whether this is a different screen: nothing of the last read
         // survives, rows below the caret included, and the read's own screen
         // starts at the document's start, or the screen a new screen
-        // replaced is back ("Screens", "The aside screen"). A refused start
-        // with neither is a clear followed by more than a screen of output,
-        // or a program closing over history whose page kept no row of the
-        // aside screen: a lost read, whose whole document tells them apart.
+        // replaced is back ("Screens", "The aside screen"). With neither,
+        // it is a clear followed by more than a screen of output, a flood
+        // past the buffer, or a program closing over history whose page kept
+        // no row of the aside screen: a lost read.
         let nothing = had_text && !aligned.kept_text && !aligned.paired;
         if nothing && (read.alternate || self.aside_found(&rows)) {
             return self.screens(&current, rows, read, &shape);
@@ -1097,16 +1085,38 @@ impl TerminalMemory {
         // A lost read: a read that keeps nothing in any other case, or
         // positions not trusted, the start not refused, and nothing the
         // last read had at or above the caret kept, or kept equally well at
-        // more than one place ("A lost read").
+        // more than one place ("A lost read"). With new output reported, it
+        // is handled within itself, but after a start that shrank, whose
+        // rows above the read a count read counts first; without, the
+        // caller starts the memory again.
         let lost = !trusted && !refused && had_text && (aligned.lost() || aligned.ambiguous);
         if nothing || lost {
-            self.asked_whole = true;
-            self.asked_refused = refused;
-            self.screen = Some(current);
-            return Outcome {
-                whole_document: true,
+            let (aligned, lost) = match read.rows_above {
+                _ if lost && aligned.ambiguous && report => (
+                    align_screen(&current, (&rows, height), read, caret),
+                    Lost::Uncounted,
+                ),
+                None if read.shrank || !report => {
+                    self.screen = Some(current);
+                    return Outcome {
+                        count_read: true,
+                        ..shape
+                    };
+                }
+                Some(above) if read.shrank => (all_new(aligned), Lost::About { above }),
+                _ => (all_new(aligned), Lost::MoreThan),
+            };
+            self.drop_aside(&aligned, read);
+            let shape = Outcome {
+                lost: Some(lost),
+                by_text: true,
                 ..shape
             };
+            let mut next = remember(&current, rows, &aligned, read, (width, height), caret);
+            if !refused {
+                keep_places(&mut next, &current, aligned.place);
+            }
+            return self.finish(&current, next, &aligned, &shape, Switch::None);
         }
         self.drop_aside(&aligned, read);
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
@@ -1128,12 +1138,11 @@ impl TerminalMemory {
         }
     }
 
-    /// Takes `read`, for which [`TerminalMemory::read`] asked for the whole
-    /// document, without that read, as when "report new output" is off and
+    /// Takes `read`, for which [`TerminalMemory::read`] asked for a count
+    /// read, without that read, as when "report new output" is off and
     /// nothing is read that is not needed ("The read"): the memory starts
     /// again from it ("Starting again").
     pub fn restart(&mut self, read: &Read) -> Outcome {
-        self.asked_whole = false;
         let last_height = self.screen.as_ref().map(|screen| screen.height);
         let (width, height) = measure(&read.screen, &read.caret_line, last_height);
         let rows = split_rows(&read.text, width);
@@ -1698,33 +1707,75 @@ fn commonest_shift(pairs: &[(usize, usize)], base: isize) -> isize {
         .map_or(base, |(shift, _)| shift)
 }
 
-/// Aligns `rows`, the whole document a lost read asked for, with `memory`
-/// ("A lost read"), and says how what went by is counted: when the last
-/// read's rows fit at more than one place, only the visible screen is
-/// aligned and the rows above it are history, uncounted; otherwise the
-/// alignment is the longest common subsequence of rows with text, the rows
-/// above the topmost row kept are history, and the rows below the last
-/// read's are new, counted as about; when nothing of the last read is
-/// found, every row is new, counted as more than, or as about when the read
-/// that asked for the whole document had its start `refused`.
-fn align_whole(
+/// The anchors of `memory` in `next`, the memory after a lost read whose
+/// start was accepted, each kept at its place, a memory row's place being
+/// `place` rows further in the read (Claude, 2026-11-27; "A lost read"):
+/// on the read's row there, or above the read with its line's hash, found
+/// by its text when a command looks for it ("Features and settings"). A
+/// read from the document's start holds every place there is: above it, a
+/// command mark left the buffer, and the review position and a place go to
+/// its first row.
+fn keep_places(next: &mut Screen, memory: &Screen, place: isize) {
+    let shift = place.saturating_sub(isize_of(memory.skipped));
+    let (rows, at_start) = (&next.rows, next.at_document_start);
+    let kept = |anchor: Anchor, mark: bool| {
+        let row = anchor.row.saturating_add(shift);
+        match usize::try_from(row) {
+            Ok(row) => anchor_at(rows, row, anchor.column),
+            Err(_) if at_start && mark => None,
+            Err(_) if at_start => anchor_at(rows, 0, anchor.column),
+            Err(_) => Some(Anchor { row, ..anchor }),
+        }
+    };
+    let review = memory.review.and_then(|anchor| kept(anchor, false));
+    let places = memory
+        .places
+        .iter()
+        .filter_map(|&(number, anchor)| Some((number, kept(anchor, false)?)))
+        .collect();
+    let marks = memory
+        .marks
+        .iter()
+        .filter_map(|&mark| kept(mark, true))
+        .collect();
+    let newest_mark = memory.newest_mark.and_then(|mark| kept(mark, true));
+    next.review = review;
+    next.places = places;
+    next.marks = marks;
+    next.newest_mark = newest_mark;
+}
+
+/// A lost read's alignment `aligned` with every row it did not keep new,
+/// the rows above its screen included: more went by than the read shows
+/// ("A lost read").
+fn all_new(mut aligned: Aligned) -> Aligned {
+    for kind in &mut aligned.new {
+        if *kind == NewRow::Shown {
+            *kind = NewRow::New;
+        }
+    }
+    aligned
+}
+
+/// Aligns the visible screen of `rows`, a lost read whose last read's rows
+/// fit at more than one place, with `memory` ("A lost read"): the longest
+/// common subsequence of rows with text, the rows above the visible screen
+/// history, and what went by uncounted.
+fn align_screen(
     memory: &Screen,
     (rows, height): (&[Row], usize),
     read: &Read,
     caret: Option<usize>,
-    refused: bool,
-) -> (Aligned, Lost) {
+) -> Aligned {
     let old = &memory.rows;
     let history = memory.screen_start();
     let screen = rows.len().saturating_sub(height);
-    let uncounted = ambiguous(memory, rows, 0..rows.len());
-    let within = if uncounted { screen } else { 0 };
     let old_text: Vec<usize> = text_rows(old);
     let old_set: BTreeSet<u64> = hashes(old, &old_text).collect();
     let window: Vec<usize> = rows
         .iter()
         .enumerate()
-        .skip(within)
+        .skip(screen)
         .filter(|(_, row)| !row.is_blank() && old_set.contains(&row.hash))
         .map(|(to, _)| to)
         .collect();
@@ -1742,31 +1793,7 @@ fn align_whole(
         },
         0,
     );
-    // The last read's rows found are those at or above its caret, as in
-    // the test that made the read lost: a footer below the caret stays
-    // where it is while the output passes it.
-    let caret_row = memory
-        .caret
-        .and_then(|row| row.checked_sub(memory.skipped))
-        .unwrap_or(old.len());
-    let found = pairs.iter().find(|&&(from, _)| from <= caret_row);
-    // Nothing of the last read found after a refused start, the document
-    // having shrunk, is a clear: everything in the document is new, and as
-    // much as it holds went by, about ("A lost read").
-    let lost = match found {
-        _ if uncounted => Lost::Uncounted,
-        None if refused => Lost::About,
-        None => Lost::MoreThan,
-        Some(_) => Lost::About,
-    };
-    // History, silent: above the visible screen when only it is aligned,
-    // and above the topmost row found otherwise.
-    let top = match (lost, found) {
-        (Lost::Uncounted, _) => screen,
-        (Lost::About, Some(&(_, to))) => to.min(screen),
-        _ => 0,
-    };
-    let shown: Vec<usize> = (0..top).collect();
+    let shown: Vec<usize> = (0..screen).collect();
     let fixed = commonest_shift(&pairs, 0);
     // A place keeps its distance from the document's end, the last read
     // having read to it too.
@@ -1780,7 +1807,7 @@ fn align_whole(
         whole: true,
         shown,
     };
-    (classify(memory, rows, read, caret, &pairs, how), lost)
+    classify(memory, rows, read, caret, &pairs, how)
 }
 
 /// Finishes the alignment of `rows` with `memory` from its kept pairs

@@ -94,11 +94,12 @@ fn range(text: &TerminalText) -> StepOutcome {
     }))
 }
 
-/// The outcomes of one start's steps, `above` rows asked above it: read
-/// as `snapshot` when `ran`, skipped otherwise.
+/// The outcomes of one start's steps, `above` rows asked above it, its
+/// probe moved up `probed` rows: read as `snapshot` when `ran`, skipped
+/// otherwise.
 fn set(
     anchors: &mut Anchors,
-    (above, ran): (u32, bool),
+    (above, probed, ran): (u32, u32, bool),
     snapshot: &TerminalSnapshot,
 ) -> Vec<StepOutcome> {
     let mut outcomes = Vec::new();
@@ -106,11 +107,7 @@ fn set(
         outcomes.push(moved(anchors, -i64::from(snapshot.above), None));
     }
     outcomes.push(range(&snapshot.text));
-    outcomes.push(moved(
-        anchors,
-        if snapshot.at_document_start { 0 } else { -1 },
-        None,
-    ));
+    outcomes.push(moved(anchors, -i64::from(probed), None));
     if !ran {
         outcomes.fill(StepOutcome::Skipped);
     }
@@ -138,7 +135,6 @@ pub(crate) fn outcomes(
     let (height, above) = match ask.read {
         WindowRead::First => (0, 0),
         WindowRead::From { height, .. } => (height, height),
-        WindowRead::Whole { height } => (height, 0),
         WindowRead::HistoryBlock { height } => (height.get(), height.get()),
     };
     let (caret, chunk, point) = caret_found(&mut anchors, ask, reply);
@@ -167,14 +163,28 @@ pub(crate) fn outcomes(
     if height > 0 {
         outcomes.push(moved(&mut anchors, -i64::from(height), Some(reply.start)));
     }
+    // A probe one row up goes none at the text's start; a count read's,
+    // from the next start, goes every row above it.
+    let one = u32::from(!snapshot.at_document_start);
     match ask.read {
-        WindowRead::Whole { .. } => outcomes.push(range(&snapshot.text)),
         WindowRead::First | WindowRead::HistoryBlock { .. } => {
-            outcomes.extend(set(&mut anchors, (above, true), snapshot));
+            outcomes.extend(set(&mut anchors, (above, one, true), snapshot));
         }
-        WindowRead::From { .. } => {
-            outcomes.extend(set(&mut anchors, (above, snapshot.from_start), snapshot));
-            outcomes.extend(set(&mut anchors, (above, !snapshot.from_start), snapshot));
+        WindowRead::From { count, .. } => {
+            let fallback = match snapshot.rows_above {
+                Some(rows) if count => rows,
+                _ => one,
+            };
+            outcomes.extend(set(
+                &mut anchors,
+                (above, one, snapshot.from_start),
+                snapshot,
+            ));
+            outcomes.extend(set(
+                &mut anchors,
+                (above, fallback, !snapshot.from_start),
+                snapshot,
+            ));
         }
     }
     let first = self::chunk(&mut anchors, snapshot.first_row.text.clone(), 0);
