@@ -770,7 +770,11 @@ private:
     bool AskFile(const rust::String& title, const rust::String& file, const rust::String& filter,
                  long style, std::string& path) {
         wxFileDialog ask(dialog_, Text(title), wxString(), Text(file), Text(filter), style);
-        const int answer = ask.ShowModal();
+        int answer = wxID_CANCEL;
+        {
+            const NativeModalTimer timer(Text(title));
+            answer = ask.ShowModal();
+        }
         if (g_shell->shutting_down || answer != wxID_OK) {
             return false;
         }
