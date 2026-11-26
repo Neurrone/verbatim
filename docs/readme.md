@@ -86,9 +86,8 @@ captures and troubleshooting.
     from an event or a key to sound; published once its audio step is
     built.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
-    the ownership rules each planned milestone follows, what each must
-    keep of ADR 0003's model, the statements found contradicted, and the
-    evidence behind them.
+    the ownership rules each planned milestone follows, and the evidence
+    behind them.
   - [extensions.md](design/extensions.md) — the extension system,
     published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model

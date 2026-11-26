@@ -2,7 +2,7 @@
 
 Status: decided, 2026-11-13, by Dickson; the model and every ruling in it are his. Built in three builds by the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md); [How focus works](../../explanation/design/focus.md) and the crate guides describe the code.
 
-This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. The rules as built are in the crate guides, [Core's](../crates/verbatim-core.md) above all, and NVDA's behaviour beside each in [the parity ledger](https://github.com/Neurrone/verbatim/blob/main/docs/parity/readme.md); what each later milestone must keep of this model is in [the milestone rules](https://github.com/Neurrone/verbatim/blob/main/docs/design/ownership-milestone-rules.md).
+This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. The rules as built are in the crate guides, [Core's](../crates/verbatim-core.md) above all, and NVDA's behaviour beside each in [the parity ledger](https://github.com/Neurrone/verbatim/blob/main/docs/parity/readme.md); what each later milestone must keep of this model is in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md), "Found for later milestones".
 
 ## The problem
 
@@ -250,7 +250,7 @@ The reviews left eight questions, each put to Dickson with a sequence and the sp
 - Entries already in the event queue when the secure desktop comes up run as NVDA's do: a focus that was waiting is spoken after the switch. Reason: no added rule.
 - The single record of an outpost generation's life (M6.2) is built together with the event-queue build, since both change the same code.
 
-Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevated windows in a standard user's session. Microsoft's documents disagree; [the milestone rules](https://github.com/Neurrone/verbatim/blob/main/docs/design/ownership-milestone-rules.md), "M8.7, UIAccess and secure screens", say what to verify.
+Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevated windows in a standard user's session. Microsoft's documents disagree; [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md), "Found for later milestones", says what to verify under M8.7.
 
 ## Left to later milestones
 
