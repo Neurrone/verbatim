@@ -182,6 +182,53 @@ impl Terminal {
     pub fn text(&self, range: Range) -> Result<String, Refused> {
         self.provider().text(range)
     }
+
+    /// The whole document, as `DocumentRange` gives it.
+    #[must_use]
+    pub fn document_range(&self) -> Range {
+        self.provider().document()
+    }
+
+    /// The screen, as the first of `GetVisibleRanges` gives it.
+    #[must_use]
+    pub fn visible(&self) -> Range {
+        self.provider().visible()
+    }
+
+    /// The caret, an empty range at the cursor, as `GetCaretRange` gives
+    /// it.
+    #[must_use]
+    pub fn caret(&self) -> Range {
+        self.provider().caret()
+    }
+
+    /// An empty range at `at` moved by `count` lines, as `Move` by line
+    /// moves it, with how many it moved.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`] when `at` lies beyond the active buffer.
+    pub fn move_rows(&self, at: Position, count: isize) -> Result<(Position, isize), Refused> {
+        self.provider().move_rows(at, count)
+    }
+
+    /// The row holding `at`, as `ExpandToEnclosingUnit` by line gives it.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`] when `at` lies beyond the active buffer.
+    pub fn row_of(&self, at: Position) -> Result<Range, Refused> {
+        self.provider().row_of(at)
+    }
+
+    /// Compares two endpoints, as `CompareEndpoints` does.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`] when either lies beyond the active buffer.
+    pub fn compare(&self, left: Position, right: Position) -> Result<i32, Refused> {
+        self.provider().compare(left, right)
+    }
 }
 
 /// How many rows a screen's text holds, as Verbatim counts them: each line

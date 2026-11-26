@@ -53,7 +53,8 @@ fn pressed(command: ReviewCommand, repeat: u8) -> Key {
     }
 }
 
-const FRESH: Asked = Asked::Fresh;
+/// A read of the screen and the rows above it.
+const FRESH: Asked = Asked::Read;
 
 /// A session whose terminal shows `text`, written before its first read.
 fn showing(width: usize, height: usize, history: usize, text: &str) -> Session {
@@ -100,12 +101,11 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     // Down from it, through the history, read again for each command.
     session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
-    // Each history read asks for a screen more than the command needs.
-    let history = Asked::History {
-        above: 13,
-        whole: false,
-    };
-    assert_eq!(session.requests(), [FRESH, history.clone(), FRESH, history]);
+    // Each command reads the screen, then the history above Core's rows.
+    assert_eq!(
+        session.requests(),
+        [FRESH, Asked::History, FRESH, Asked::History]
+    );
 }
 
 /// A terminal of four rows whose review position is on "two", in the
@@ -133,16 +133,7 @@ fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_
     session.output_before_histories = [("ten\r\neleven\r\n".to_owned(), 300)].into();
     session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["ten", "eleven", "two"]));
-    assert_eq!(
-        session.requests(),
-        [
-            FRESH,
-            Asked::History {
-                above: 13,
-                whole: false,
-            }
-        ]
-    );
+    assert_eq!(session.requests(), [FRESH, Asked::History]);
     session.press(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
 }
@@ -169,16 +160,7 @@ fn more_than_a_screen_arriving_while_a_history_read_is_out_is_placed_from_the_an
         session.heard(),
         plain(&["ten", "eleven", "two", "twelve", "thirteen", "fourteen"])
     );
-    assert_eq!(
-        session.requests(),
-        [
-            FRESH,
-            Asked::History {
-                above: 13,
-                whole: false,
-            }
-        ]
-    );
+    assert_eq!(session.requests(), [FRESH, Asked::History]);
     session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["two"]));
 }
@@ -211,17 +193,7 @@ fn a_history_answer_after_a_flood_is_placed_from_the_anchor() {
     flood.extend((30..=40).map(|line| format!("line {line}")));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
     assert_eq!(heard, flood);
-    assert_eq!(
-        session.requests(),
-        [
-            FRESH,
-            Asked::History {
-                above: 13,
-                whole: false,
-            },
-            Asked::Whole
-        ]
-    );
+    assert_eq!(session.requests(), [FRESH, Asked::History, Asked::Whole]);
     session.press(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["line 32"]));
 }
@@ -274,16 +246,7 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
     let mut session = showing(20, 3, 100, &numbered(1..=12));
     session.press(&command(ReviewCommand::ReviewTop));
     assert_eq!(session.heard(), plain(&["line 1"]));
-    assert_eq!(
-        session.requests(),
-        [
-            FRESH,
-            Asked::History {
-                above: 0,
-                whole: true
-            }
-        ]
-    );
+    assert_eq!(session.requests(), [FRESH, Asked::History]);
     // Up from the document's first row goes nowhere.
     session.press(&command(ReviewCommand::ReviewPreviousLine));
     assert_eq!(session.heard(), plain(&["Message(Top) line 1"]));
@@ -845,12 +808,8 @@ fn enter(session: &mut Session, command: &str, output: &str, at_ms: u64) -> u64 
 }
 
 /// The search for a mark's line Core asks for.
-fn find(needle: &str, from: i32) -> Asked {
-    Asked::Find {
-        needle: needle.to_owned(),
-        from,
-        rows: 1,
-    }
+fn find(needle: &str) -> Asked {
+    Asked::Search(needle.to_owned())
 }
 
 #[test]
@@ -1014,9 +973,8 @@ fn a_mark_above_the_memory_is_found_by_one_search() {
     let _ = session.heard();
     session.press(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
-    // The document's 23 rows: the next read starts at row 19, and the
-    // search works outward from the mark's own row, 19 rows above it.
-    assert_eq!(session.requests(), [FRESH, find("$ echo one", 19)]);
+    // The mark lies above the rows Core keeps: one search finds it.
+    assert_eq!(session.requests(), [FRESH, find("$ echo one")]);
 }
 
 #[test]
@@ -1060,7 +1018,7 @@ fn every_copy_of_a_command_entered_many_times_is_reached() {
         let finds = session
             .requests()
             .iter()
-            .filter(|op| matches!(op, Asked::Find { .. }))
+            .filter(|op| matches!(op, Asked::Search(_)))
             .count();
         assert_eq!(finds, 1, "press {press}");
         // The line below is the next copy's, or the output's for the newest.
@@ -1126,7 +1084,7 @@ fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
     let searched = |requests: &[Asked]| {
         requests
             .iter()
-            .filter(|op| matches!(op, Asked::Find { .. }))
+            .filter(|op| matches!(op, Asked::Search(_)))
             .count()
     };
     assert_eq!(searched(&session.requests()), 1);
@@ -1166,7 +1124,7 @@ fn a_press_makes_at_most_three_searches() {
         .requests()
         .into_iter()
         .filter_map(|op| match op {
-            Asked::Find { needle, .. } => Some(needle),
+            Asked::Search(needle) => Some(needle),
             _ => None,
         })
         .collect();
@@ -1219,20 +1177,16 @@ fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
             "line 28"
         ])
     );
-    let history = |above| Asked::History {
-        above,
-        whole: false,
-    };
     assert_eq!(
         session.requests(),
         // Each press reads afresh, presses waiting together too.
         [
             FRESH,
-            history(31),
+            Asked::History,
             FRESH,
-            find("$ echo one", 25),
+            find("$ echo one"),
             FRESH,
-            history(35)
+            Asked::History
         ]
     );
 }
@@ -1277,8 +1231,8 @@ fn a_mark_whose_line_is_gone_is_dropped_and_the_next_one_tried() {
     assert_eq!(session.heard(), plain(&["$ echo one"]));
     let requests = session.requests();
     assert_eq!(requests.len(), 3, "{requests:?}");
-    assert!(matches!(&requests[1], Asked::Find { needle, .. } if needle == "$ echo two"));
-    assert!(matches!(&requests[2], Asked::Find { needle, .. } if needle == "$ echo one"));
+    assert!(matches!(&requests[1], Asked::Search(needle) if needle == "$ echo two"));
+    assert!(matches!(&requests[2], Asked::Search(needle) if needle == "$ echo one"));
     // The dropped mark is not looked for again.
     session.press(&command(UP));
     assert_eq!(session.heard(), []);
@@ -1364,10 +1318,7 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
         true,
     ));
     assert_eq!(session.heard(), plain(&["file", "$"]));
-    assert_eq!(
-        session.requests(),
-        [Asked::Starting, Asked::Watch, Asked::Fresh]
-    );
+    assert_eq!(session.requests(), [Asked::Read, Asked::Watch, Asked::Read]);
 }
 
 /// How a terminal key's wait polls: from its starting point, its pass, its
@@ -1394,10 +1345,7 @@ fn held_up_watch(session: &mut Session) -> Vec<Polled> {
         200,
         true,
     ));
-    assert_eq!(
-        session.requests(),
-        [Asked::Starting, Asked::Watch, Asked::Fresh]
-    );
+    assert_eq!(session.requests(), [Asked::Read, Asked::Watch, Asked::Read]);
     std::mem::take(&mut session.watches)
         .into_iter()
         .map(|wait| {
@@ -1523,7 +1471,7 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     let (x, input) = typed("x", 210);
     session.at_ms = 300;
     session.presses(&[held, input]);
-    assert_eq!(session.requests(), [Asked::Starting]);
+    assert_eq!(session.requests(), [Asked::Read]);
     session.write("echo onex", 320);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
 }

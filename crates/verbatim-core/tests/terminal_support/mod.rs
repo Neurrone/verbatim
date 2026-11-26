@@ -7,8 +7,21 @@
 //! answered from the simulated terminal from the start anchors Core names,
 //! in the order Core sends them, and the speech Core queues played by
 //! reaching each utterance's marks.
+//!
+//! The simulated terminal answers in two ways. The first answers the
+//! terminal's old operations (`Outpost::read`, `history` and `find`),
+//! which is all today's Core sends. The second (`steps`) answers each
+//! generic text step of a batch as the terminal's provider would, and is
+//! given any batch that opens with one; `terminal_answerers.rs` checks
+//! that its steps compose to the first's answers.
+//!
+//! What a test asserts of a session does not depend on which way Core
+//! asks: what was heard ([`Session::heard`]), and what Core asked for by
+//! its purpose alone ([`Asked`]), with none of a request's own numbers.
 
 #![allow(dead_code, reason = "each test file uses part of the support")]
+
+pub mod steps;
 
 use crate::readers::{self, Found};
 use std::collections::{BTreeMap, VecDeque};
@@ -29,7 +42,7 @@ use verbatim_model::{
     SpeechMark, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply,
     TraceId, WindowHandle,
 };
-use verbatim_term_sim::{Flavor, Query, Range, Terminal};
+use verbatim_term_sim::{Flavor, Position, Query, Range, Terminal};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
 pub const TERMINAL: u64 = 12;
@@ -104,26 +117,22 @@ pub fn caret(trace_id: TraceId, key: CaretKey, at_ms: u64, held: bool) -> Key {
     }
 }
 
-/// What Core asked of the terminal beside its output reads: a full read
-/// inside the event queue (a review command's fresh read or a caret key's
-/// final read), a caret key's starting read, a read the rules owe (the
-/// whole document or a first read again with its history block), a
-/// history read, a search, or a caret key's watch.
+/// What Core asked of the terminal beside its output reads, by its
+/// purpose, whichever way it was asked: a read of the screen and the rows
+/// above it (a review command's fresh read, or a caret key's starting or
+/// final read), a read the rules owe (the whole document, or a first read
+/// again with its history block), a read of the history above the rows
+/// Core keeps, a search for the rows that start with a text, or a caret
+/// key's watch. A request's own numbers (rows above an anchor, a screen's
+/// height) are left out: they count from anchors only its protocol has
+/// (Claude, 2026-11-26).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Asked {
-    Fresh,
-    Starting,
+    Read,
     Whole,
-    HistoryBlock(u32),
-    History {
-        above: u32,
-        whole: bool,
-    },
-    Find {
-        needle: String,
-        from: i32,
-        rows: u32,
-    },
+    FirstAgain,
+    History,
+    Search(String),
     Watch,
 }
 
@@ -139,6 +148,9 @@ pub struct Outpost {
     anchors: BTreeMap<u64, Range>,
     /// The last anchor minted.
     minted: u64,
+    /// The positions the generic steps hold (`steps`), anchor `n` the
+    /// `n - 1`th.
+    held: Vec<Position>,
 }
 
 impl Outpost {
@@ -149,6 +161,7 @@ impl Outpost {
             width,
             anchors: BTreeMap::new(),
             minted: 0,
+            held: Vec::new(),
         }
     }
 
@@ -158,10 +171,39 @@ impl Outpost {
     }
 
     /// Mints an anchor at `range`.
-    fn mint(&mut self, range: Range) -> TextAnchor {
+    pub fn mint(&mut self, range: Range) -> TextAnchor {
         self.minted += 1;
         self.anchors.insert(self.minted, range);
         TextAnchor(self.minted)
+    }
+
+    /// The old read operation's answer to `query`, begun at `at_ms`, with
+    /// the screen's colours when `colours`: the rules' read, the snapshot
+    /// the outpost sends, and where the next read starts.
+    pub fn snapshot(
+        &self,
+        query: &Query,
+        colours: bool,
+        at_ms: u64,
+    ) -> (Read, verbatim_model::TerminalSnapshot, Range) {
+        let snapshot = self.sim.snapshot(query).expect("a simulated read");
+        let read = Read {
+            text: ReadText::unpadded(&snapshot.text),
+            screen: snapshot.screen,
+            from_start: snapshot.from_start,
+            shrank: snapshot.shrank,
+            at_document_start: snapshot.at_document_start,
+            alternate: snapshot.alternate,
+            first_row: snapshot.first_row,
+            caret_rows_to_end: snapshot.caret_rows_to_end,
+            caret_line: snapshot.caret_line,
+            caret_column: snapshot.caret_column,
+            at_ms,
+            above: usize::try_from(snapshot.above).expect("rows"),
+        };
+        let colours = colours.then(|| self.colours());
+        let wire = snapshot_of(&read, false, colours.as_deref());
+        (read, wire, snapshot.next_start)
     }
 
     /// The read `request` asks, begun at `at_ms`: the rules' read and the
@@ -187,25 +229,9 @@ impl Outpost {
                 above: request.height,
             },
         };
-        let snapshot = self.sim.snapshot(&query).expect("a simulated read");
-        let read = Read {
-            text: ReadText::unpadded(&snapshot.text),
-            screen: snapshot.screen,
-            from_start: snapshot.from_start,
-            shrank: snapshot.shrank,
-            at_document_start: snapshot.at_document_start,
-            alternate: snapshot.alternate,
-            first_row: snapshot.first_row,
-            caret_rows_to_end: snapshot.caret_rows_to_end,
-            caret_line: snapshot.caret_line,
-            caret_column: snapshot.caret_column,
-            at_ms,
-            above: usize::try_from(snapshot.above).expect("rows"),
-        };
-        let colours = request.colours.then(|| self.colours());
-        let mut wire = snapshot_of(&read, false, colours.as_deref());
-        let start = self.mint(snapshot.next_start);
-        let point = request.starting.map(|_| self.mint(snapshot.next_start));
+        let (read, mut wire, next) = self.snapshot(&query, request.colours, at_ms);
+        let start = self.mint(next);
+        let point = request.starting.map(|_| self.mint(next));
         // The caret a key's starting point is minted from, as the outpost
         // reports it with the point: its line, the caret at its column.
         if let Some(point) = point {
@@ -237,7 +263,11 @@ impl Outpost {
 
     /// The history read from `above` rows above the start `start`, or the
     /// whole document.
-    fn history(&self, start: TextAnchor, (above, whole, height): (u32, bool, u32)) -> TextReply {
+    pub fn history(
+        &self,
+        start: TextAnchor,
+        (above, whole, height): (u32, bool, u32),
+    ) -> TextReply {
         let query = Query {
             start: if whole { None } else { self.range(Some(start)) },
             screen_rows: height,
@@ -256,7 +286,7 @@ impl Outpost {
     /// `needle`, outward from the row `from` rows above the start `start`,
     /// alternately the next at or below it and the next above it, at most
     /// 20, each with `rows` rows of text read from it.
-    fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
+    pub fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
         // The document from its start, and how many rows lie above the
         // start, read by moving that far up from it.
         let query = Query {
@@ -314,7 +344,7 @@ impl Outpost {
     }
 
     /// The screen's colours as the read program gives them.
-    fn colours(&self) -> Vec<Vec<verbatim_text::terminal_reading::ColourRun>> {
+    pub fn colours(&self) -> Vec<Vec<verbatim_text::terminal_reading::ColourRun>> {
         self.sim
             .colours()
             .into_iter()
@@ -766,6 +796,13 @@ impl Session {
                 self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
                 return;
             }
+            // A batch of generic text steps: the terminal's second
+            // answerer, step by step.
+            if steps::answers(batch) {
+                let outcomes = self.outpost.run(batch);
+                self.reply(&ask, Outcome::Result(Reply::Steps(outcomes)));
+                return;
+            }
             let found = Found::Read(focus_read(self.depth, self.console));
             let outcome = readers::outcome(batch, &found);
             self.reply(&ask, outcome);
@@ -931,25 +968,15 @@ impl Session {
         let asked = match op {
             TextOp::ReadTerminal(read) => match (read.scope, read.output, read.starting) {
                 (TerminalScope::Whole, ..) => Asked::Whole,
-                (TerminalScope::HistoryBlock { height }, ..) => Asked::HistoryBlock(height),
+                (TerminalScope::HistoryBlock { .. }, ..) => Asked::FirstAgain,
                 (TerminalScope::Fresh, true, _) => {
                     self.output_reads += 1;
                     return;
                 }
-                (TerminalScope::Fresh, false, Some(_)) => Asked::Starting,
-                (TerminalScope::Fresh, false, None) => Asked::Fresh,
+                (TerminalScope::Fresh, false, _) => Asked::Read,
             },
-            TextOp::TerminalHistory { above, whole, .. } => Asked::History {
-                above: *above,
-                whole: *whole,
-            },
-            TextOp::TerminalFind {
-                needle, from, rows, ..
-            } => Asked::Find {
-                needle: needle.clone(),
-                from: *from,
-                rows: *rows,
-            },
+            TextOp::TerminalHistory { .. } => Asked::History,
+            TextOp::TerminalFind { needle, .. } => Asked::Search(needle.clone()),
         };
         self.requests.push(asked);
     }

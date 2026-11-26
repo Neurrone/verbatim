@@ -1709,5 +1709,15 @@ simulated terminal (`tests/terminal_support`), whose outpost reads as the
 real one does, and holds its reading while Core's flood policy asks it to;
 `tests/terminal_floods.rs` drives the reading rules and the flood policy
 together through floods at the harness's terminal size and history.
+Both assert what is heard and what Core asked for by its purpose alone
+(`Asked`: a read, the whole document, a first read again, a history read,
+a search with its text, a caret key's watch), so that they hold whichever
+way Core asks a terminal (Claude, 2026-11-26). The support's simulated
+terminal answers in two ways: the terminal's old operations, which is all
+Core sends, and each generic text step of a batch as the provider would
+(`tests/terminal_support/steps.rs`), with the old read, history read and
+search composed of those steps. `tests/terminal_answerers.rs` compares the
+two field by field after every chunk of every corpus stream and in the
+shapes the terminal tests use.
 `tests/terminal_cost.rs` is a measurement, not a test
 (`books/dev/src/reference/performance.md`, "A terminal's reads in Core").
