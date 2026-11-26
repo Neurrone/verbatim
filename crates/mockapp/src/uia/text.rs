@@ -134,6 +134,17 @@ impl TextProvider {
 impl ITextProvider_Impl for TextProvider_Impl {
     fn GetSelection(&self) -> WinResult<*mut SAFEARRAY> {
         hits::hit(Method::TextGetSelection);
+        let none = self
+            .tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[self.index]
+            .formats
+            .no_selection;
+        if none {
+            // SAFETY: an empty `VT_UNKNOWN` vector.
+            return Ok(unsafe { super::props::filled_vector(VT_UNKNOWN, &[]) });
+        }
         let (start, end) = self.selection();
         Ok(range_array(&self.range(start, end)))
     }

@@ -425,6 +425,7 @@ impl Outpost {
                     selection: None,
                     held: caret,
                     offsets: None,
+                    reported: true,
                 }))
             }
             Op::FindText {

@@ -997,6 +997,7 @@ fn a_condition_runs_its_step_as_the_named_outcome_says() {
             }),
             held: TextAnchor(3),
             offsets: None,
+            reported: true,
         }))
     };
     let cases = [
@@ -1151,6 +1152,7 @@ fn outcomes_naming_every_node_and_anchor() -> Vec<StepOutcome> {
             }),
             held: TextAnchor(8),
             offsets: None,
+            reported: true,
         })),
         done(Done::ReadText(Chunks {
             padded: None,

@@ -60,6 +60,7 @@ pub fn caret<S: TextSource>(
         selection,
         held: baseline,
         offsets: source.edit_selection(&state),
+        reported: true,
     })
 }
 

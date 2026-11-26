@@ -710,6 +710,7 @@ impl Seam {
                         selection: None,
                         held: point,
                         offsets: None,
+                        reported: true,
                     }))
                 }
                 Op::ReadText {

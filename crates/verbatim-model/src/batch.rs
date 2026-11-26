@@ -1114,6 +1114,10 @@ pub struct CaretAt {
     /// The selection's character offsets, where the text counts by
     /// offsets (an edit control's).
     pub offsets: Option<EditSelection>,
+    /// Whether the provider reported a selection at all: when it gave
+    /// none, not even an empty one, the caret stands in at the text's
+    /// start (Claude, 2026-11-26).
+    pub reported: bool,
 }
 
 /// A [`Op::ReadText`]'s result.
@@ -1134,7 +1138,8 @@ pub struct Chunks {
 /// A [`Op::ReadRange`]'s result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RangeText {
-    /// The text, cut to [`crate::MAX_RANGE_BYTES`].
+    /// The text, cut to [`crate::MAX_RANGE_BYTES`]; a trimmed read's is
+    /// whole, bounded only by its message's frame (Claude, 2026-11-26).
     pub text: String,
     /// Whether it was cut.
     pub truncated: bool,

@@ -272,6 +272,7 @@ fn caret_at(report: &CaretReport, held: TextAnchor, at_start: bool) -> CaretAt {
         }),
         held,
         offsets: None,
+        reported: true,
     }
 }
 
@@ -308,6 +309,7 @@ pub fn answer(batch: &Batch, facts: &Facts) -> Vec<StepOutcome> {
             Op::Caret { .. } => facts.caret.as_ref().map_or(StepOutcome::Skipped, |caret| {
                 StepOutcome::Done(Done::Caret(CaretAt {
                     offsets: facts.offsets,
+                    reported: true,
                     ..caret_at(caret, facts.held.unwrap_or(POINT), facts.at_start)
                 }))
             }),

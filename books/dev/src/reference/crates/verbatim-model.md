@@ -648,7 +648,11 @@ carrying one outcome per step. A terminal's three reads are its own
   point past the text's end or one the provider will not compare; a
   whole `ReadText`, units read as one span from the point, up to
   `MAX_WHOLE_UNITS`; `trim` on `ReadText` and `ReadRange`, each line
-  without its padding and the padded lengths answered (`padded`);
+  without its padding and the padded lengths answered (`padded`), a
+  trimmed `ReadRange` read whole with no cut, bounded only by its
+  message's frame (Claude, 2026-11-26); a `Caret`'s `reported`, false
+  when the provider gave no selection at all and the caret stands in at
+  the text's start (Claude, 2026-11-26);
   `FindText`, a needle sought from a point to the text's end or back to
   its start, by calls, at most `MAX_FIND_MATCHES` matches over at most
   `MAX_FIND_CALLS` calls, each with its units to the text's end and its

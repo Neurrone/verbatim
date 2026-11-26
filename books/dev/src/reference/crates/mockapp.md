@@ -293,7 +293,8 @@ offsets are read from its implementation.
 - Provider faults, each a fixture flag: `italic_fails` fails the
   `IsItalic` read with `E_FAIL`; `empty_text_fails` fails `GetText` on
   an empty range the same way (`empty_text_fails.json`);
-  `find_text_fails` fails `FindText` the
+  `no_selection` answers `GetSelection` with no range at all
+  (`terminal_no_selection.json`); `find_text_fails` fails `FindText` the
   same way, as Windows Terminal's has (`terminal_find_fails.json`);
   `find_backward_fails` fails only a backward `FindText`, so a failure
   that closes one direction of a search can be told from one that ends it
@@ -720,7 +721,8 @@ Each file's module comment says exactly what it asserts; in outline:
   through a real outpost remotely and by calls, which must agree: each
   row of the condition's table a provider can give, the move of one line
   back that goes nowhere at the text's start, and the move forward from
-  the text's end that later output stays past.
+  the text's end that later output stays past; and a caret read's
+  `reported` and a trimmed range read whole, the same way.
 - `terminal_window.rs` and `find_text.rs` run the request list's generic
   text operations (`Visible`, `Move`, `FindText`, `ReadColours`, a whole
   or trimmed read), composed as a read of a terminal's window and as a

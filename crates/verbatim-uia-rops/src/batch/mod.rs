@@ -448,6 +448,13 @@ const MAX_UNIT_TEXT: i32 = verbatim_model::MAX_CHUNK_BYTES as i32 + 1;
 )]
 const MAX_RANGE_TEXT: i32 = (verbatim_model::MAX_RANGE_BYTES / 2) as i32 + 1;
 
+/// The most UTF-16 code units a `ReadRange` reads: a trimmed read, a
+/// terminal's rows, is read whole (`GetText(-1)`), as the terminal's own
+/// read always was.
+const fn range_limit(trim: bool) -> i32 {
+    if trim { -1 } else { MAX_RANGE_TEXT }
+}
+
 /// The most UTF-16 code units of each change of a selection compared.
 const MAX_CHANGE_TEXT: i32 = MAX_RANGE_TEXT - 1;
 
@@ -679,6 +686,9 @@ pub struct CaretFound {
     /// The selection, when text is selected, with whether its start is at
     /// the text's start.
     pub selection: Option<(IUIAutomationTextRange, bool)>,
+    /// Whether the provider reported a selection, an empty one included:
+    /// with none the caret is the text's start standing in.
+    pub reported: bool,
 }
 
 /// `ReadText`'s result.

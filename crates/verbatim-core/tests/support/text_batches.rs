@@ -253,6 +253,7 @@ fn caret_at(held: u64) -> StepOutcome {
         selection: None,
         held: TextAnchor(held),
         offsets: None,
+        reported: true,
     }))
 }
 

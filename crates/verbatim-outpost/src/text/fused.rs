@@ -956,6 +956,7 @@ impl Made<'_, '_> {
             selection: held_selection,
             held,
             offsets: None,
+            reported: found.reported,
         }))
     }
 
@@ -1155,20 +1156,21 @@ impl Made<'_, '_> {
     }
 }
 
-/// A `ReadRange`'s text, `units` read up to one past the range's limit, as
-/// a copy's: cut at the limit between whole characters; each line without
-/// its padding, with the padded lengths, when `trim`.
+/// A `ReadRange`'s text: `units` read up to one past the range's limit, as
+/// a copy's, cut at the limit between whole characters; or when `trim`,
+/// read whole, each line without its padding, with the padded lengths.
 fn range_text(units: &[u16], trim: bool) -> RangeText {
-    let read_cut = units.len() > MAX_RANGE_UNITS;
-    let units = &units[..units.len().min(MAX_RANGE_UNITS)];
     if trim {
+        // Read whole, with no limit.
         let trimmed = super::trim::unpadded_utf16(units);
         return RangeText {
             text: trimmed.text,
-            truncated: read_cut,
+            truncated: false,
             padded: Some(trimmed.lengths),
         };
     }
+    let read_cut = units.len() > MAX_RANGE_UNITS;
+    let units = &units[..units.len().min(MAX_RANGE_UNITS)];
     let (mut text, _, cut) = to_utf8(units, MAX_RANGE_BYTES, &[]);
     if read_cut && !cut {
         keep_whole_characters(&mut text);

@@ -849,12 +849,12 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 start,
                 end,
                 through,
-                ..
+                trim,
             } => {
                 let element = self.text(subject)?;
                 let ends = self.ends((start, end, through.as_ref()), index)?;
                 (
-                    Low::ReadRange(element, ends, MAX_RANGE_TEXT),
+                    Low::ReadRange(element, ends, super::range_limit(*trim)),
                     Given::Nothing,
                 )
             }
@@ -2318,6 +2318,8 @@ fn caret_found(
         caret: outcome
             .get(point)?
             .ok_or(Error::MissingResult(point.id()))?,
+        // With no selection at all the program leaves both unset.
+        reported: selection.is_some() || outcome.get(caret.collapsed)?,
         selection,
     })
 }

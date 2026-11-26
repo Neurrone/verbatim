@@ -603,7 +603,7 @@ fn generic_window_reads_execute_exactly() {
     assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [vec![229], vec![358]],
+        [vec![230], vec![358]],
         "terminal window first and capped"
     );
 }
@@ -653,12 +653,12 @@ fn generic_colours_execute_exactly() {
     assert_eq!(plain_runs, vec![1; 29], "every row one run");
     assert_eq!(
         worst,
-        vec![229, 4106, 4099, 4099, 4099, 4099, 3285],
+        vec![230, 4106, 4099, 4099, 4099, 4099, 3285],
         "the window read's program, then the worst case's colour programs"
     );
     assert_eq!(
         plain,
-        vec![229, 1262],
+        vec![230, 1262],
         "the window read's program, then a plain screen's"
     );
     assert!(worst.iter().all(|&count| count < LIMIT / 2));

@@ -145,12 +145,12 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             start,
             end,
             through,
-            ..
+            trim,
         } => {
             let range = range(state, index, resolver.text(subject)?, (start, end, through))?;
             Ok(Found::ReadRange(
                 range
-                    .text(MAX_RANGE_TEXT)
+                    .text(super::range_limit(*trim))
                     .map_err(|error| failed(&error.into()))?,
             ))
         }
@@ -477,7 +477,11 @@ fn caret(text: TextTarget<'_>) -> Result<CaretFound, Error> {
         }
         None => None,
     };
-    Ok(CaretFound { caret, selection })
+    Ok(CaretFound {
+        caret,
+        reported: state.caret.collapsed || selection.is_some(),
+        selection,
+    })
 }
 
 /// Whether `point` lies at or before `than` in the text of the step at

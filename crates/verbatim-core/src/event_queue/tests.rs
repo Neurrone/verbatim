@@ -2074,6 +2074,7 @@ fn caret_done() -> StepOutcome {
         selection: None,
         held: verbatim_model::TextAnchor(5),
         offsets: None,
+        reported: true,
     }))
 }
 
