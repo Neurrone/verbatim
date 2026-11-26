@@ -38,10 +38,8 @@ use crate::state::SrState;
 /// from and whether its working tree had uncommitted changes. Version 8:
 /// the foreground record keeps no applied stamp, and the focus's spoken
 /// record is always present. Version 9: the formatting last reported is
-/// the focus object's. Version 10: the focused terminal's watch is the
-/// committed focus's, and a terminal keeps its places, not a model. Only
-/// the current version is read.
-pub const DUMP_FORMAT_VERSION: u32 = 10;
+/// the focus object's. Only the current version is read.
+pub const DUMP_FORMAT_VERSION: u32 = 9;
 
 /// The commit a header records when the writing build's commit is not
 /// known: a build made without git.

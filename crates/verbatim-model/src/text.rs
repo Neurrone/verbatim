@@ -659,7 +659,7 @@ impl TextDetails {
     };
 }
 
-/// The answer to [`crate::batch::Op::MoveBySentence`].
+/// The answer to [`TextOp::MoveBySentence`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SentenceMoved {
     /// The caret moved to this sentence, in this line.
@@ -714,9 +714,121 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// Why a node's text could not be opened, as a text source answers it.
+/// One of the terminal's text operations Core asks its outpost
+/// ([`crate::request::Question::Terminal`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextOp {
+    /// Read the history above the start the next read takes: from `above`
+    /// rows above it to the document's end, or the whole document when
+    /// `whole`. Answered [`TextReply::TerminalHistory`], which names the
+    /// read whose start that is.
+    TerminalHistory {
+        /// How many rows above the start.
+        above: u32,
+        /// Whether to read the whole document instead.
+        whole: bool,
+        /// The start anchor the rows are counted from, which Core names
+        /// (`docs/design/readers-tell-core-asks-build3.md`, "The full read
+        /// request and its starts").
+        start: TextAnchor,
+        /// The screen's height in rows, from Core's model.
+        height: u32,
+    },
+    /// Search the focused terminal's text for `needle`, a row's text with
+    /// no line break, outward from the row `from` rows above where the next
+    /// read starts (negative below it): alternately the next match at or
+    /// below that row and the next above it, that row's own first, at most
+    /// 20 matches that start a row, reading `rows` rows of text from each,
+    /// over a bounded number of `FindText` calls.
+    /// For a command mark above the rows Core keeps ("Features and
+    /// settings"). A failing search in one direction finds nothing more
+    /// there. Answered [`TextReply::TerminalFound`].
+    TerminalFind {
+        /// The text sought.
+        needle: String,
+        /// The row the search starts at, in rows above the start.
+        from: i32,
+        /// How many rows to read from each match.
+        rows: u32,
+        /// The start anchor the rows are counted from, which Core names.
+        start: TextAnchor,
+    },
+    /// Read the terminal: a full read from a screen above the start Core
+    /// names to the document's end, with the screen, the caret and its line
+    /// (`docs/design/readers-tell-core-asks-build3.md`, "The full read
+    /// request and its starts"). Answered [`TextReply::TerminalRead`].
+    ReadTerminal(TerminalRead),
+}
+
+/// Core's request to read a terminal ([`TextOp::ReadTerminal`]): every
+/// fact the read needs that Core owns travels in it and is used only
+/// inside its answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalRead {
+    /// The start anchor to read from, a screen above it; `None` for a
+    /// first read, which takes the screen alone.
+    pub start: Option<TextAnchor>,
+    /// Which read: fresh, the whole document, or the history block with
+    /// the height the first read found.
+    pub scope: crate::TerminalScope,
+    /// The screen's height in rows from Core's model, 0 when Core has
+    /// none.
+    pub height: u32,
+    /// The screen's width in cells from Core's model, 0 when Core has
+    /// none.
+    pub width: u32,
+    /// Whether the read takes the screen's colours.
+    pub colours: bool,
+    /// Whether the terminal's window is a console host's, Core's fact from
+    /// the committed focus's answer.
+    pub console: bool,
+    /// When a caret key's entry sends it as its starting read, the key's
+    /// unit: the answer then also mints the key's caret starting point.
+    pub starting: Option<TextUnit>,
+    /// Whether it is an output read, which Core asks outside the event
+    /// queue and the worker makes after the event queue's requests; a
+    /// baseline, a caret key's starting and final reads and a review
+    /// command's fresh read are the event queue's.
+    pub output: bool,
+}
+
+/// The answer to [`TextOp::ReadTerminal`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalReadReply {
+    /// The read.
+    pub snapshot: crate::TerminalSnapshot,
+    /// The start anchor this read minted, at the top of its screen, which
+    /// a later read, history read or search may name.
+    pub start: TextAnchor,
+    /// When the read began, in microseconds on the clock every process of
+    /// a run shares: a change observed before it is covered by it.
+    pub started_us: u64,
+    /// The caret starting point the read minted, when the request named a
+    /// unit ([`TerminalRead::starting`]).
+    pub point: Option<TextAnchor>,
+}
+
+/// An outpost's answer to a text request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TextReply {
+    /// The answer to [`TextOp::ReadTerminal`].
+    TerminalRead(Box<TerminalReadReply>),
+    /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
+    /// kept, and how many rows it holds above the start the next read
+    /// takes.
+    TerminalHistory {
+        /// The text.
+        text: String,
+        /// Rows above the start.
+        above: u32,
+    },
+    /// The answer to [`TextOp::TerminalFind`].
+    TerminalFound {
+        /// The matches, alternately below and above the row sought from,
+        /// nearest first in each direction.
+        matches: Vec<crate::TerminalMatch>,
+    },
     /// The node has no text interface at all. Core falls back to the node's
     /// value or name, as NVDA's object review does.
     NoText,
@@ -724,6 +836,40 @@ pub enum TextReply {
     Gone,
     /// The application did not answer in time, or the read failed.
     Unanswered,
+}
+
+/// The answers an outpost can give any text request in place of its op's
+/// own reply: the variants of [`TextReply`] that no op names as its own.
+/// Core parses every text request's result into either the op's own reply
+/// or one of these, so no answer a correct outpost gives fails to decode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFailure {
+    /// [`TextReply::NoText`]: the node has no text, so no caret and no
+    /// selection.
+    NoText,
+    /// [`TextReply::Gone`].
+    Gone,
+    /// [`TextReply::Unanswered`].
+    Unanswered,
+}
+
+impl TextReply {
+    /// The failure this reply is, or the reply itself when it is an op's
+    /// own reply.
+    ///
+    /// # Errors
+    ///
+    /// The reply itself, when it is no failure.
+    pub fn into_failure(self) -> Result<TextFailure, Self> {
+        match self {
+            TextReply::NoText => Ok(TextFailure::NoText),
+            TextReply::Gone => Ok(TextFailure::Gone),
+            TextReply::Unanswered => Ok(TextFailure::Unanswered),
+            own @ (TextReply::TerminalRead(_)
+            | TextReply::TerminalHistory { .. }
+            | TextReply::TerminalFound { .. }) => Err(own),
+        }
+    }
 }
 
 /// What a caret key does, as Core's caret handling knows it: the motion

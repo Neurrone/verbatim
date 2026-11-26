@@ -16,6 +16,7 @@ pub mod arbitration;
 pub mod driver;
 mod gates;
 pub mod outpost;
+pub mod terminal;
 pub mod text;
 
 pub use outpost::{

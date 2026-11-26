@@ -708,21 +708,29 @@ Each file's module comment says exactly what it asserts; in outline:
   Core's say-all over UIA text, which has no sentence unit, through Core's
   driver and a real outpost
   (`uia_say_all_speaks_by_sentence_without_a_sentence_unit`).
-- `terminal_window.rs` reads `terminal.json`'s terminal by Core's
-  window read's steps through a real outpost remotely and by calls, the
-  two required to agree on every field, the remote read one program, and
-  pins the window and the colours of `terminal-colours.json` as exact
-  runs.
-- `terminal.rs` drives Core's reducer and a real outpost over the
-  terminal: new output is said line by line with one UIA call a read
-  remotely, and classically, Backspace says what it deleted with no
-  caret event, and a command mark's search, Core's steps, finds its
-  matches both ways against each kind of miss.
+- `terminal_snapshot.rs` reads `terminal.json`'s terminal with
+  `verbatim-uia-rops`'s terminal read program remotely and classically,
+  the two required to agree on every field, and pins the colours of
+  `terminal-colours.json` as exact runs both ways.
+- `terminal.rs` reads the terminal through the outpost's `terminal`
+  module and gives each read to Core's reducer: new output is said line by
+  line with one UIA call a read remotely, and classically, and Backspace
+  says what it deleted with no caret event.
+- `terminal_window.rs` and `find_text.rs` run the request list's generic
+  text operations (`Visible`, `Move`, `FindText`, `ReadColours`, a whole
+  or trimmed read), composed as a read of a terminal's window and as a
+  search outward from a row by `common/window_steps.rs`, through a real
+  outpost remotely and by calls, the two required to agree on every
+  field, the remote read one program; they pin the window, the colours of
+  `terminal-colours.json` as exact runs, and the search against each kind
+  of miss. No product code sends these operations until the terminal is
+  redesigned (Dickson, 2026-11-26).
 - `terminal_reading.rs` drives a real outpost's worker over the same
-  terminal and asserts the tells it sends Core and Core's window read's
-  answers: caret events with and without text changes, the console
-  host's caret, the hooks' change events through MSAA, colours only when
-  asked, and the read before a held key with its starting point.
+  terminal and asserts the reads and answers it sends Core: focus-now and
+  foreground reports, each on-demand reading request and its answer, caret
+  events with and without text changes, the console host's caret, the
+  hooks' change events through MSAA, the whole document and history
+  blocks, colours requests, and the read before a held key.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
   ancestry over `ancestry.json` (a five-level chain, a list and a tab
   control with selected children, which neither reads) and

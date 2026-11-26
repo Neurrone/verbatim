@@ -190,6 +190,10 @@ fn refused(reply: &TextReply, node: NodeId) -> StepOutcome {
         TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
         TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
         TextReply::Unanswered => StepOutcome::Failed,
+        other => {
+            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
+            StepOutcome::Failed
+        }
     }
 }
 

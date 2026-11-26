@@ -4209,14 +4209,11 @@ fn uia_text_focus_reporting(
 /// formatting read with every attribute, where the caret
 /// report the outpost sent with its own focus report took 45 and 57. A terminal's caret is read with its
 /// focus too, so that the focus says its line (`docs/parity/terminals.md`),
-/// and its first read is the watch's baseline, the window read's generic
-/// steps (`verbatim_core::terminal_window`), which Core sends as the focus
-/// commits: the focus, its caret and its baseline cost 11 calls remotely
-/// and 71 classically, the window read's classic calls including its
-/// width, the caret's rows to the document's end and the document's first
-/// row and row count. The steps' classic calls are nine more than the
-/// terminal's own read made, 62: each read of a line at a point finds the
-/// point's place in it, and each move copies its point first. The line's formatting, which the focus
+/// and its first full read is build 3's baseline read, which Core sends
+/// with `Follow` as the focus commits
+/// (`docs/design/readers-tell-core-asks-build3.md`, "The focused
+/// terminal's life"): the focus, its caret and its baseline cost 11 calls
+/// remotely and 57 classically. The line's formatting, which the focus
 /// says, is read in the caret's program remotely, at no call of its own.
 #[expect(
     clippy::too_many_lines,
@@ -4345,7 +4342,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             &[][..],
             terminal_said.clone(),
-            first_focus(68),
+            first_focus(57),
         ),
     ] {
         let (said, measured) = uia_text_focus(fixture, id, remote, setup);

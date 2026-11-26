@@ -17,11 +17,11 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{FollowGroup, Followed};
+use verbatim_model::request::{FollowGroup, Followed, Reply};
 use verbatim_model::{NodeSnapshot, OutpostId, Pid, Role, WindowHandle};
 
 use super::versions::{Kept, ReadBy};
-use crate::batch::{Builder, On, Sent};
+use crate::batch::{Answers, Builder, Got, On, Ref, Sent, kind};
 use crate::entries::Entries;
 use crate::event_queue::pairs;
 use crate::event_queue::{CoreRequest, Cx, OTHER_DUE_US, Reader, RequestWindow};
@@ -78,9 +78,13 @@ impl FollowRequest {
 }
 
 /// The brand of a `Follow`'s batch, named for its one site, [`batch`]:
-/// its batches are sent outside the queue or held on Core's want list
-/// (the request list's design, section 4).
+/// its batches are sent outside the queue or held on Core's want list,
+/// and a terminal's answer is parsed at a later step (the request list's
+/// design, section 4).
 pub(crate) enum FollowBatch {}
+
+/// A `Follow` batch's one step.
+const FOLLOWED: Ref<FollowBatch, kind::Follow> = Ref::named(0);
 
 /// The one-step batch that follows `node` with its event group and extra
 /// object, or nothing.
@@ -89,6 +93,13 @@ pub(crate) fn batch(node: Option<&Followed>) -> Sent<FollowBatch> {
     let _ = batch
         .follow(node.map(|followed| (On::from(followed.node), followed.group, followed.extra)));
     batch.finish()
+}
+
+/// Whether `reply`, the answer to the `Follow` of `node`, says the node is
+/// not there; `None` for a reply that does not parse against the batch.
+pub(crate) fn not_there(node: Option<&Followed>, reply: Reply) -> Option<bool> {
+    let answers = Answers::parse(&batch(node), reply)?;
+    Some(matches!(answers.get(FOLLOWED), Got::NotThere(_)))
 }
 
 /// The UI Automation class of Word's document, the one focus outside a

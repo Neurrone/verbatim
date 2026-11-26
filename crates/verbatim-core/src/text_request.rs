@@ -10,13 +10,34 @@ use std::ops::Range;
 
 use verbatim_model::batch::{Batch, Missing, Op, Point, PointOf, StepOutcome, StepRefusal};
 use verbatim_model::request::Reply;
-use verbatim_model::{NodeId, Pid, Role, TextMovement, TextPoint, TextPosition, TextUnit};
+use verbatim_model::{
+    NodeId, Pid, Role, TextFailure, TextMovement, TextPoint, TextPosition, TextReply, TextUnit,
+};
 
 use crate::batch::kind::Kind;
 use crate::batch::{Answers, Got, Ref, Sent};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, Outcome, Reader, RequestWindow};
 use crate::state::SrState;
+
+/// A text request's result, parsed: the op's own reply, which `own` takes,
+/// or one of the failures any text request can be answered
+/// ([`TextFailure`]), so every answer a correct outpost gives decodes, and
+/// the function that asked handles each. `None` only for a result that is
+/// no text reply, or another op's own reply: a malformed answer. The
+/// terminal's own reads use it until they become batches.
+pub(crate) fn decode_text<T>(
+    reply: Reply,
+    own: impl FnOnce(TextReply) -> Option<T>,
+) -> Option<Result<T, TextFailure>> {
+    let Reply::Text(reply) = reply else {
+        return None;
+    };
+    match reply.into_failure() {
+        Ok(failure) => Some(Err(failure)),
+        Err(reply) => own(reply).map(Ok),
+    }
+}
 
 /// Two points of a text, and, to run through the character at the later
 /// of them, the points just past the characters at each.
@@ -70,6 +91,9 @@ pub(crate) enum Answerer<'a> {
     Outpost(RequestWindow),
     /// Core, from this flat text ([`crate::review_text::flat_steps`]).
     Flat(&'a str),
+    /// Core, from the rows of the focused terminal, this node, on this
+    /// window for the history reads its answer may need.
+    Terminal(RequestWindow, NodeId),
 }
 
 /// Asks `sent`, a batch of text steps, of `by`, the text's answerer, under
@@ -93,6 +117,9 @@ pub(crate) async fn ask<B: 'static>(
             };
         }
         Answerer::Flat(text) => crate::review_text::flat_steps(text, sent.batch()),
+        Answerer::Terminal(window, node) => {
+            crate::terminal::commands::answer(cx, (window, node), sent.batch(), due_us).await?
+        }
     };
     // Core's answers give each step one outcome of its own kind, so they
     // always fit the batch.

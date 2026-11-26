@@ -53,13 +53,16 @@ mod opcode;
 mod operation;
 mod path;
 mod terminal_colours;
+mod terminal_find;
+mod terminal_snapshot;
 mod text;
 mod watch;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
-    ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, MAX_COMPARED_TEXT, MAX_RUNS,
-    RangeEnd, Run, RunAttributes, SelectionTextChange, TextAttribute, UnitRead,
+    ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretLineQuery,
+    MAX_COMPARED_TEXT, MAX_RUNS, RangeEnd, Run, RunAttributes, SelectionTextChange, TextAttribute,
+    UnitRead,
 };
 pub use error::{Error, Failure};
 pub use focus::{
@@ -79,6 +82,14 @@ pub use operation::{Operation, Outcome, Read, Value, counting, work};
 pub use path::{
     ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
 };
-pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun};
+pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, screen_height};
+pub use terminal_find::{
+    FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
+    terminal_find_remote,
+};
+pub use terminal_snapshot::{
+    Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
+    terminal_snapshot_remote,
+};
 pub use text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 pub use watch::{WatchAnswer, WatchQuery, watch_check_classic};

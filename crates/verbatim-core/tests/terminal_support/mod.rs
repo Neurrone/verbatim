@@ -1,541 +1,334 @@
-//! A terminal Core reads, for the tests of Core's terminal reading: the
-//! simulated terminal (`verbatim-term-sim`), whose provider answers each
-//! call as the console host's or Windows Terminal's does (its conformance
-//! expectations check it against them), with each step of every batch Core
-//! sends its outpost answered from it as the UI Automation provider answers
-//! the step's calls; and the public reducer driven through its event queue
-//! as the shell drives it (`desk`): the terminal focused through the
-//! listener and the outpost, every write told to Core as the outpost tells
-//! a change, the requests answered in the order Core sent them, and the
-//! speech Core queues played by reaching each utterance's marks.
+//! A terminal Core reads, for the tests and measurements of Core's terminal
+//! model: the simulated terminal (`verbatim-term-sim`) read as the outpost
+//! reads a real one (`docs/design/readers-tell-core-asks-build3.md`), and a
+//! reducer driven through its event queue: the terminal committed as the
+//! focus at startup, every write told to Core as the outpost tells a
+//! change, Core's requests for full reads, history reads and searches
+//! answered from the simulated terminal from the start anchors Core names,
+//! in the order Core sends them, and the speech Core queues played by
+//! reaching each utterance's marks.
 
 #![allow(dead_code, reason = "each test file uses part of the support")]
-#![expect(
-    clippy::result_large_err,
-    reason = "a step's outcome is what ends it, as the outpost answers it"
-)]
 
-use std::collections::VecDeque;
+use crate::readers::{self, Found};
+use std::collections::{BTreeMap, VecDeque};
 
-use crate::desk::{Desk, ONE, focus_read_of};
-use verbatim_model::batch::{
-    Batch, CaretAt, Chunks, Done, FoundText, Gate, Located, Missing, Moved, Op, Point, PointOf,
-    RangeText, SelectionCompared, StepOutcome, StepRefusal, VisibleText, Waited,
-};
+use verbatim_core::{SrState, reduce, snapshot_of};
 use verbatim_model::event_kind::EventKind;
-use verbatim_model::property::PropertyValues;
+use verbatim_model::property::{
+    PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
+};
 use verbatim_model::request::{
-    Answer, CaretBinding, Outcome, Press, PressAction, Question, QueueEffect, QueueInput, Reply,
-    RequestNumber,
+    Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
+    NodeRead, NodeWindow, Outcome, Press, PressAction, QueueEffect, QueueInput, Reader, Refusal,
+    Reply, TerminalAsk,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
-    Backend, CaretKey, Effect, Input, KeySeq, NodeDetails, NodeId, NodeSnapshot, ReaderSettings,
-    Role, SegmentContent, SelectionDifference, SpeechMark, StateSet, TerminalColourRun,
-    TerminalText, TextAnchor, TextChunk, TextPoint, TextUnit, TraceId,
+    CaretKey, Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent,
+    SpeechMark, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply,
+    TraceId, WindowHandle,
 };
-use verbatim_term_sim::{Flavor, Position, Range, Terminal};
+use verbatim_term_sim::{Flavor, Query, Range, Terminal};
+use verbatim_text::terminal_rows::{Read, ReadText};
 
-/// The terminal's node number.
-pub const TERMINAL: u64 = 31;
+pub const TERMINAL: u64 = 12;
+
+/// The terminal's application.
+pub const APP: Pid = Pid(1);
+
+/// The terminal's outpost.
+pub const OUTPOST: Instance = Instance {
+    reader: Reader::Outpost(APP),
+    generation: 1,
+};
 
 /// The terminal's node.
 pub fn node() -> NodeId {
-    ONE.node(TERMINAL)
+    NodeId::in_outpost(OutpostId(OUTPOST.generation), TERMINAL)
 }
 
-/// More rows than any terminal holds.
-const FAR: isize = 1_000_000;
-
-/// The simulated terminal answering each step as its provider does, with
-/// the ranges it holds for Core, by anchor.
-pub struct Sim {
-    /// The terminal.
-    pub terminal: Terminal,
-    /// The ranges held, anchor `n` the `n - 1`th.
-    held: Vec<Position>,
-    /// How a caret wait ends.
-    pub waited: Waited,
+/// The terminal's window, as a request names it.
+pub fn window() -> NodeWindow {
+    NodeWindow {
+        handle: WindowHandle(5),
+        top_level: WindowHandle(4),
+        root_owner: WindowHandle(4),
+        process: APP,
+        thread: 41,
+        desktop: false,
+    }
 }
 
-/// A step's point found, or the outcome that ends the step.
-type Found<T> = Result<T, StepOutcome>;
+/// The record a caret key pressed in the terminal is bound to.
+pub fn binding() -> CaretBinding {
+    CaretBinding {
+        node: node(),
+        window: window(),
+        role: Role::Terminal,
+        provider: verbatim_model::TextProvider::Uia,
+        record: None,
+        formatting: verbatim_model::TextAttributes::default(),
+    }
+}
 
-impl Sim {
+/// A key a test presses: its trace, when it was pressed, and what the
+/// hook reports it does.
+#[derive(Clone, Debug)]
+pub struct Key {
+    pub trace_id: TraceId,
+    pub at_ms: u64,
+    pub action: PressAction,
+}
+
+/// Caret key `key` pressed at `at_ms` in the terminal, passed at once, or
+/// held back when `held`.
+pub fn caret(trace_id: TraceId, key: CaretKey, at_ms: u64, held: bool) -> Key {
+    let held = held.then(|| verbatim_model::stroke::HeldStroke {
+        stroke: verbatim_model::stroke::Stroke {
+            vk: 0x26,
+            scan_code: 0x48,
+            extended: true,
+            sequence: 0,
+        },
+        modifiers: Vec::new(),
+    });
+    Key {
+        trace_id,
+        at_ms,
+        action: PressAction::CaretKey {
+            key,
+            held,
+            bound: Some(Box::new(binding())),
+        },
+    }
+}
+
+/// What Core asked of the terminal beside its output reads: a full read
+/// inside the event queue (a review command's fresh read or a caret key's
+/// final read), a caret key's starting read, a read the rules owe (the
+/// whole document or a first read again with its history block), a
+/// history read, a search, or a caret key's watch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Fresh,
+    Starting,
+    Whole,
+    HistoryBlock(u32),
+    History {
+        above: u32,
+        whole: bool,
+    },
+    Find {
+        needle: String,
+        from: i32,
+        rows: u32,
+    },
+    Watch,
+}
+
+/// The simulated terminal read as the outpost reads it for Core: each read
+/// starts a screen above the start anchor Core names, at the height Core
+/// names, and mints the anchor at the top of its own screen; a first read
+/// takes the screen alone; a read Core asks the colours of takes them.
+pub struct Outpost {
+    pub sim: Terminal,
+    /// The screen's width in cells.
+    width: usize,
+    /// The start anchors minted, by number.
+    anchors: BTreeMap<u64, Range>,
+    /// The last anchor minted.
+    minted: u64,
+}
+
+impl Outpost {
     /// A terminal of `flavor`, `width` by `height`, with `history` rows.
     pub fn new(flavor: Flavor, width: usize, height: usize, history: usize) -> Self {
         Self {
-            terminal: Terminal::new(flavor, width, height, history),
-            held: Vec::new(),
-            waited: Waited::Effect,
+            sim: Terminal::new(flavor, width, height, history),
+            width,
+            anchors: BTreeMap::new(),
+            minted: 0,
         }
     }
 
-    /// Holds `at`, minting its anchor.
-    fn hold(&mut self, at: Position) -> TextAnchor {
-        self.held.push(at);
-        TextAnchor(u64::try_from(self.held.len()).expect("anchors"))
+    /// The range Core names by `anchor`.
+    fn range(&self, anchor: Option<TextAnchor>) -> Option<Range> {
+        anchor.and_then(|anchor| self.anchors.get(&anchor.0).copied())
     }
 
-    /// The position anchor `anchor` holds.
-    fn held(&self, anchor: TextAnchor) -> Found<Position> {
-        usize::try_from(anchor.0)
-            .ok()
-            .and_then(|number| number.checked_sub(1))
-            .and_then(|index| self.held.get(index).copied())
-            .ok_or(StepOutcome::NotThere(Missing::Anchor(anchor)))
+    /// Mints an anchor at `range`.
+    fn mint(&mut self, range: Range) -> TextAnchor {
+        self.minted += 1;
+        self.anchors.insert(self.minted, range);
+        TextAnchor(self.minted)
     }
 
-    /// The text of `range`, as `GetText` gives it; a refused call fails
-    /// the step.
-    fn text(&self, range: Range) -> Found<String> {
-        self.terminal.text(range).map_err(|_| StepOutcome::Failed)
-    }
-
-    /// `at` moved on by the characters of `offset` bytes of the text from
-    /// it, as the outpost finds a position by its offset.
-    fn advanced(&self, at: Position, offset: u32) -> Found<Position> {
-        if offset == 0 {
-            return Ok(at);
-        }
-        let row = self.terminal.row_of(at).map_err(|_| StepOutcome::Failed)?;
-        let text = self.text(Range {
-            start: at,
-            end: row.end,
-        })?;
-        let offset = usize::try_from(offset)
-            .unwrap_or(usize::MAX)
-            .min(text.len());
-        let columns = text
-            .get(..offset)
-            .map_or(0, |before| before.chars().count());
-        Ok(Position {
-            row: at.row,
-            column: at.column + columns,
-        })
-    }
-
-    /// The position `point` names, the outcomes `earlier` answering a point
-    /// of an earlier step's result.
-    fn point(&self, point: &Point, earlier: &[StepOutcome]) -> Found<Position> {
-        match point {
-            Point::At(TextPoint::Start) => Ok(self.terminal.document_range().start),
-            Point::At(TextPoint::End) => Ok(self.terminal.document_range().end),
-            Point::At(TextPoint::Caret | TextPoint::SelectionStart | TextPoint::SelectionEnd) => {
-                Ok(self.terminal.caret().start)
-            }
-            Point::At(TextPoint::At(position)) => {
-                self.advanced(self.held(position.anchor)?, position.offset)
-            }
-            Point::Of(place, which) => {
-                let anchor = match (earlier.get(place.index()), which) {
-                    (Some(StepOutcome::Done(Done::Visible(visible))), PointOf::VisibleStart) => {
-                        visible.start
-                    }
-                    (Some(StepOutcome::Done(Done::Visible(visible))), PointOf::VisibleEnd) => {
-                        visible.end
-                    }
-                    (Some(StepOutcome::Done(Done::Move(moved))), PointOf::Moved) => moved.to,
-                    (
-                        Some(StepOutcome::Done(Done::Caret(caret))),
-                        PointOf::Caret | PointOf::SelectionStart | PointOf::SelectionEnd,
-                    ) => caret.caret,
-                    (Some(StepOutcome::Done(Done::ReadText(read))), PointOf::ChunkStart) => read
-                        .chunks
-                        .first()
-                        .map(|chunk| chunk.start)
-                        .ok_or(StepOutcome::Failed)?,
-                    other => panic!("a point of an earlier result the support answers: {other:?}"),
-                };
-                self.held(anchor)
-            }
-        }
-    }
-
-    /// The trimmed text of `text`, with its padded lengths when `trim`.
-    fn trimmed(text: String, trim: bool) -> (String, Option<Vec<(u32, u32)>>) {
-        if trim {
-            let unpadded = TerminalText::unpadded(&text);
-            (unpadded.text, Some(unpadded.lengths))
-        } else {
-            (text, None)
-        }
-    }
-
-    /// A chunk of a line, `text`, held at `start`, the point `offset` bytes
-    /// into it.
-    fn chunk(&mut self, start: Position, text: String, offset: usize) -> TextChunk {
-        let last = self.terminal.document_range().end.row;
-        TextChunk {
-            unit: TextUnit::Line,
-            start: self.hold(start),
-            offset: u32::try_from(offset).unwrap_or(u32::MAX),
-            first: start.row == 0,
-            last: start.row == last,
-            text,
-            languages: Vec::new(),
-            truncated: false,
-            formats: Vec::new(),
-        }
-    }
-
-    /// `count` lines from `at`, after a move of `movement` lines from the
-    /// start of `at`'s line, as the outpost's classic read takes them.
-    fn read_lines(
-        &mut self,
-        at: Position,
-        movement: Option<i32>,
-        (count, trim): (u16, bool),
-    ) -> Found<Done> {
-        let failed = |_| StepOutcome::Failed;
-        let (point, moved, on_start) = match movement {
-            None => (at, 0, false),
-            Some(by) => {
-                let start = self.terminal.row_of(at).map_err(failed)?.start;
-                let (landed, moved) = self
-                    .terminal
-                    .move_rows(start, isize::try_from(by).unwrap_or(0))
-                    .map_err(failed)?;
-                (landed, i32::try_from(moved).unwrap_or(0), true)
-            }
+    /// The read `request` asks, begun at `at_ms`: the rules' read and the
+    /// answer the outpost sends.
+    pub fn read(&mut self, request: &TerminalRead, at_ms: u64) -> (Read, TerminalReadReply) {
+        let query = match request.scope {
+            TerminalScope::Whole => Query {
+                start: None,
+                screen_rows: request.height,
+                whole: true,
+                above: 0,
+            },
+            TerminalScope::HistoryBlock { height } => Query {
+                start: None,
+                screen_rows: height,
+                whole: false,
+                above: height,
+            },
+            TerminalScope::Fresh => Query {
+                start: self.range(request.start),
+                screen_rows: request.height,
+                whole: false,
+                above: request.height,
+            },
         };
-        let mut chunks = Vec::new();
-        let mut padded;
-        let mut row = self.terminal.row_of(point).map_err(failed)?;
-        loop {
-            let text = self.text(row)?;
-            let offset = if chunks.is_empty() && !on_start {
-                let before = self.text(Range {
-                    start: row.start,
-                    end: point,
-                })?;
-                before.len().min(text.len())
-            } else {
-                0
-            };
-            let (text, lengths) = Self::trimmed(text, trim);
-            padded = lengths;
-            let offset = offset.min(text.len());
-            chunks.push(self.chunk(row.start, text, offset));
-            if chunks.len() >= usize::from(count) {
-                break;
-            }
-            let (next, went) = self.terminal.move_rows(row.start, 1).map_err(failed)?;
-            let next = self.terminal.row_of(next).map_err(failed)?;
-            if went == 0 || next.start.row <= row.start.row {
-                break;
-            }
-            row = next;
-        }
-        Ok(Done::ReadText(Chunks {
-            moved,
-            chunks,
-            padded,
-        }))
-    }
-
-    /// The matches of `needle` from `at` to the text's end, or back to its
-    /// start, the nearest first, as the outpost's classic search finds them:
-    /// each occurrence one call, a match not at its row's start passed over
-    /// when `starts`.
-    fn find(
-        &self,
-        at: Position,
-        (needle, backward): (&str, bool),
-        (starts, read): (bool, u8),
-        (limit, most): (u8, u8),
-    ) -> Found<Vec<FoundText>> {
-        let failed = |_| StepOutcome::Failed;
-        let last = self.terminal.document_range().end.row;
-        let mut hits = Vec::new();
-        for row in 0..=last {
-            let start = Position { row, column: 0 };
-            let text = self.text(self.terminal.row_of(start).map_err(failed)?)?;
-            let cells: Vec<char> = text.trim_end_matches("\r\n").chars().collect();
-            let wanted: Vec<char> = needle.chars().collect();
-            if wanted.is_empty() || wanted.len() > cells.len() {
-                continue;
-            }
-            for column in 0..=cells.len() - wanted.len() {
-                if cells[column..column + wanted.len()] == wanted[..] {
-                    hits.push((
-                        Position { row, column },
-                        Position {
-                            row,
-                            column: column + wanted.len(),
-                        },
-                    ));
-                }
-            }
-        }
-        let ordered: Vec<(Position, Position)> = if backward {
-            hits.into_iter()
-                .rev()
-                .filter(|(_, end)| *end <= at)
-                .collect()
-        } else {
-            hits.into_iter().filter(|(start, _)| *start >= at).collect()
+        let snapshot = self.sim.snapshot(&query).expect("a simulated read");
+        let read = Read {
+            text: ReadText::unpadded(&snapshot.text),
+            screen: snapshot.screen,
+            from_start: snapshot.from_start,
+            shrank: snapshot.shrank,
+            at_document_start: snapshot.at_document_start,
+            alternate: snapshot.alternate,
+            first_row: snapshot.first_row,
+            caret_rows_to_end: snapshot.caret_rows_to_end,
+            caret_line: snapshot.caret_line,
+            caret_column: snapshot.caret_column,
+            at_ms,
+            above: usize::try_from(snapshot.above).expect("rows"),
         };
-        let mut found = Vec::new();
-        for (start, _) in ordered.into_iter().take(usize::from(most)) {
-            if found.len() >= usize::from(limit) {
-                break;
-            }
-            if starts && start.column != 0 {
-                continue;
-            }
-            let row_start = Position {
-                row: start.row,
-                column: 0,
-            };
-            let to_end = self.terminal.move_rows(row_start, FAR).map_err(failed)?.1;
-            let (end, _) = self
-                .terminal
-                .move_rows(row_start, isize::from(read.max(1)))
-                .map_err(failed)?;
-            found.push(FoundText {
-                to_end: u32::try_from(to_end.unsigned_abs()).unwrap_or(u32::MAX),
-                text: self.text(Range {
-                    start: row_start,
-                    end,
-                })?,
+        let colours = request.colours.then(|| self.colours());
+        let mut wire = snapshot_of(&read, false, colours.as_deref());
+        let start = self.mint(snapshot.next_start);
+        let point = request.starting.map(|_| self.mint(snapshot.next_start));
+        // The caret a key's starting point is minted from, as the outpost
+        // reports it with the point: its line, the caret at its column.
+        if let Some(point) = point {
+            let line = read.caret_line.trim_end().to_owned();
+            let offset = u32::try_from(read.caret_column.min(line.len())).expect("a short row");
+            wire.caret = Some(verbatim_model::CaretReport {
+                line: verbatim_model::TextChunk {
+                    unit: verbatim_model::TextUnit::Line,
+                    text: line,
+                    start: point,
+                    offset,
+                    languages: Vec::new(),
+                    first: false,
+                    last: false,
+                    truncated: false,
+                    formats: Vec::new(),
+                },
+                selection: None,
             });
         }
-        Ok(found)
+        let reply = TerminalReadReply {
+            snapshot: wire,
+            start,
+            started_us: at_ms * 1_000,
+            point,
+        };
+        (read, reply)
     }
 
-    /// One step, `op`, after the outcomes `earlier`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per operation, in the list's order"
-    )]
-    fn step(&mut self, op: &Op, earlier: &[StepOutcome]) -> Found<Done> {
-        let failed = |_| StepOutcome::Failed;
-        match op {
-            Op::Follow(_) => Ok(Done::Follow),
-            Op::Visible { .. } => {
-                let screen = self.terminal.visible();
-                let document = self.terminal.document_range();
-                let (text, padded) = Self::trimmed(self.text(screen)?, true);
-                let at_text_start = self
-                    .terminal
-                    .compare(document.start, screen.start)
-                    .map_err(failed)?
-                    == 0;
-                Ok(Done::Visible(VisibleText {
-                    start: self.hold(screen.start),
-                    end: self.hold(screen.end),
-                    at_text_start,
-                    text,
-                    padded: padded.unwrap_or_default(),
-                }))
-            }
-            Op::ReadText {
-                at,
-                movement,
-                unit,
-                count,
-                whole,
-                trim,
-                ..
-            } => {
-                if *unit != TextUnit::Line
-                    || movement.is_some_and(|movement| movement.unit != TextUnit::Line)
-                {
-                    return Err(StepOutcome::Refused(StepRefusal::NoSuchUnit));
-                }
-                let from = self.point(at, earlier)?;
-                if *whole {
-                    let (end, _) = self
-                        .terminal
-                        .move_rows(from, isize::try_from(*count).unwrap_or(isize::MAX))
-                        .map_err(failed)?;
-                    let (text, padded) =
-                        Self::trimmed(self.text(Range { start: from, end })?, *trim);
-                    let chunk = self.chunk(from, text, 0);
-                    return Ok(Done::ReadText(Chunks {
-                        moved: 0,
-                        chunks: vec![chunk],
-                        padded,
-                    }));
-                }
-                self.read_lines(
-                    from,
-                    movement.map(|movement| movement.count),
-                    (*count, *trim),
-                )
-            }
-            Op::ReadRange {
-                start,
-                end,
-                trim,
-                through,
-                ..
-            } => {
-                let (a, b) = (self.point(start, earlier)?, self.point(end, earlier)?);
-                // Through the character at the later end, by the point just
-                // past it.
-                let past = match through {
-                    Some(through) => Some((
-                        self.point(&through.start, earlier)?,
-                        self.point(&through.end, earlier)?,
-                    )),
-                    None => None,
-                };
-                let (start, end) = match (a <= b, past) {
-                    (true, Some((_, past_end))) => (a, past_end),
-                    (false, Some((past_start, _))) => (b, past_start),
-                    (true, None) => (a, b),
-                    (false, None) => (b, a),
-                };
-                let (text, padded) = Self::trimmed(self.text(Range { start, end })?, *trim);
-                Ok(Done::ReadRange(RangeText {
-                    text,
-                    truncated: false,
-                    padded,
-                }))
-            }
-            Op::Move { at, movement, .. } => {
-                if movement.unit != TextUnit::Line {
-                    return Err(StepOutcome::Refused(StepRefusal::NoSuchUnit));
-                }
-                let held = matches!(at, Point::At(TextPoint::At(_)));
-                let outside = StepOutcome::Refused(StepRefusal::OutsideText);
-                let from = match self.point(at, earlier) {
-                    Err(StepOutcome::Failed) if held => return Err(outside),
-                    other => other?,
-                };
-                if held {
-                    let end = self.terminal.document_range().end;
-                    match self.terminal.compare(from, end) {
-                        Ok(order) if order <= 0 => {}
-                        Ok(_) | Err(_) => return Err(outside),
-                    }
-                }
-                let (to, moved) = self
-                    .terminal
-                    .move_rows(from, isize::try_from(movement.count).unwrap_or(0))
-                    .map_err(failed)?;
-                Ok(Done::Move(Moved {
-                    moved: i32::try_from(moved).unwrap_or(0),
-                    from: self.hold(from),
-                    to: self.hold(to),
-                }))
-            }
-            Op::Caret { .. } => {
-                let caret = self.hold(self.terminal.caret().start);
-                Ok(Done::Caret(CaretAt {
-                    caret,
-                    selection: None,
-                    held: caret,
-                    offsets: None,
-                }))
-            }
-            Op::FindText {
-                at,
-                needle,
-                backward,
-                unit_start,
-                read,
-                limit,
-                calls,
-                ..
-            } => {
-                let from = self.point(at, earlier)?;
-                self.find(
-                    from,
-                    (needle, *backward),
-                    (unit_start.is_some(), *read),
-                    (*limit, *calls),
-                )
-                .map(Done::FindText)
-            }
-            Op::ReadColours { .. } => {
-                let rows = self.terminal.program_colours().map_err(failed)?;
-                Ok(Done::ReadColours(
-                    rows.into_iter()
-                        .map(|row| {
-                            row.into_iter()
-                                .map(|run| TerminalColourRun {
-                                    column: u32::try_from(run.column).unwrap_or(u32::MAX),
-                                    length: u32::try_from(run.length).unwrap_or(u32::MAX),
-                                    foreground: run.foreground,
-                                    background: run.background,
-                                })
-                                .collect()
-                        })
-                        .collect(),
-                ))
-            }
-            Op::WaitForCaret { .. } => Ok(Done::WaitForCaret(self.waited)),
-            Op::Locate { .. } => Ok(Done::Locate(Located {
-                screen: None,
-                offset: None,
-            })),
-            // The terminals' text cannot be selected, so the selection
-            // stays as it was.
-            Op::Select { .. } => Err(StepOutcome::Refused(StepRefusal::Unsupported)),
-            Op::CompareSelection { .. } => Ok(Done::CompareSelection(SelectionCompared {
-                difference: SelectionDifference {
-                    changes: Vec::new(),
-                    new_selection: None,
-                },
-                text_changed: false,
-            })),
-            other => panic!("a step the simulated terminal does not answer: {other:?}"),
+    /// The history read from `above` rows above the start `start`, or the
+    /// whole document.
+    fn history(&self, start: TextAnchor, (above, whole, height): (u32, bool, u32)) -> TextReply {
+        let query = Query {
+            start: if whole { None } else { self.range(Some(start)) },
+            screen_rows: height,
+            whole,
+            above: if whole { 0 } else { above },
+        };
+        let snapshot = self.sim.snapshot(&query).expect("a simulated history read");
+        TextReply::TerminalHistory {
+            text: snapshot.text,
+            above: snapshot.above,
         }
     }
 
-    /// Every step of `batch`, in order, each run when its gate lets it.
-    pub fn run(&mut self, batch: &Batch) -> Vec<StepOutcome> {
-        let mut outcomes = Vec::new();
-        for step in &batch.steps {
-            let outcome = match step.gate(&outcomes).expect("a gate the support can judge") {
-                Gate::Skip => StepOutcome::Skipped,
-                Gate::Run => match self.step(&step.op, &outcomes) {
-                    Ok(done) => StepOutcome::Done(done),
-                    Err(outcome) => outcome,
-                },
+    /// The search the outpost's find program makes
+    /// (`verbatim_uia_rops::terminal_find`): the rows starting with
+    /// `needle`, outward from the row `from` rows above the start `start`,
+    /// alternately the next at or below it and the next above it, at most
+    /// 20, each with `rows` rows of text read from it.
+    fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
+        // The document from its start, and how many rows lie above the
+        // start, read by moving that far up from it.
+        let query = Query {
+            start: self.range(Some(start)),
+            screen_rows: 0,
+            whole: false,
+            above: u32::MAX / 2,
+        };
+        let snapshot = self.sim.snapshot(&query).expect("a simulated read");
+        let all = verbatim_text::terminal_rows::rows_of(&snapshot.text, self.width);
+        let start = i64::from(snapshot.above);
+        let boundary = start - i64::from(from);
+        let text_of = |row: usize| {
+            let mut text = String::new();
+            for found in all.iter().skip(row).take(rows as usize) {
+                text.push_str(&found.text);
+                if !found.wraps {
+                    text.push_str("\r\n");
+                }
+            }
+            text
+        };
+        let at = |row: &usize| i64::try_from(*row).expect("rows");
+        let starts = |row: &usize| all[*row].text.starts_with(needle);
+        let mut below = (0..all.len())
+            .filter(|row| at(row) >= boundary)
+            .filter(starts);
+        let mut above = (0..all.len())
+            .rev()
+            .filter(|row| at(row) < boundary)
+            .filter(starts);
+        let mut taken = Vec::new();
+        let mut going_down = true;
+        while taken.len() < 20 {
+            let next = if going_down {
+                below.next().or_else(|| above.next())
+            } else {
+                above.next().or_else(|| below.next())
             };
-            outcomes.push(outcome);
+            let Some(row) = next else {
+                break;
+            };
+            taken.push(row);
+            going_down = !going_down;
         }
-        outcomes
+        TextReply::TerminalFound {
+            matches: taken
+                .into_iter()
+                .map(|row| verbatim_model::TerminalMatch {
+                    above: i32::try_from(start - at(&row)).expect("rows"),
+                    text: text_of(row),
+                })
+                .collect(),
+        }
     }
-}
 
-/// What Core asked of the terminal, by the batch's kind: a window read, one
-/// that searches for its end mark's line, a read of lines (a review
-/// command's or a command mark's), a command mark's search, a caret key's
-/// wait with its final window read, or the commit's `Follow`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Asked {
-    Window,
-    WindowSearching,
-    Lines,
-    Search,
-    Wait,
-    Follow,
-    Other,
-}
-
-/// What `batch` asks, by its kind.
-fn asked_of(batch: &Batch) -> Asked {
-    let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
-    match ops.first() {
-        Some(Op::Visible { .. }) if ops.iter().any(|op| matches!(op, Op::FindText { .. })) => {
-            Asked::WindowSearching
-        }
-        Some(Op::Visible { .. }) => Asked::Window,
-        Some(Op::WaitForCaret { .. }) => Asked::Wait,
-        Some(Op::Follow(_)) => Asked::Follow,
-        _ if ops.iter().any(|op| matches!(op, Op::FindText { .. })) => Asked::Search,
-        _ if ops
-            .iter()
-            .all(|op| matches!(op, Op::ReadText { .. } | Op::Move { .. })) =>
-        {
-            Asked::Lines
-        }
-        _ => Asked::Other,
+    /// The screen's colours as the read program gives them.
+    fn colours(&self) -> Vec<Vec<verbatim_text::terminal_reading::ColourRun>> {
+        self.sim
+            .colours()
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|run| verbatim_text::terminal_reading::ColourRun {
+                        column: run.column,
+                        length: run.length,
+                        foreground: run.foreground,
+                        background: run.background,
+                    })
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -555,11 +348,6 @@ pub fn said(key: Option<TraceId>, words: &str) -> Said {
     }
 }
 
-/// Things said with no key.
-pub fn plain(words: &[&str]) -> Vec<Said> {
-    words.iter().map(|words| said(None, words)).collect()
-}
-
 /// The words of an utterance: its text, its characters, and the debug name
 /// of any message or phrase, the index marks left out.
 pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
@@ -574,216 +362,528 @@ pub fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
         .join(" ")
 }
 
-/// The record a caret key pressed in the terminal is bound to.
-pub fn binding() -> CaretBinding {
-    CaretBinding {
-        node: node(),
-        window: ONE.node_window(),
-        role: Role::Terminal,
-        provider: verbatim_model::TextProvider::Uia,
-        record: None,
-        formatting: verbatim_model::TextAttributes::default(),
+/// The terminal's focus read, as the outpost answers Core's read of the
+/// application's focus at startup, inside `depth` groups, and inside a
+/// console host's window, outermost, when `console`.
+fn focus_read(depth: u64, console: bool) -> FocusRead {
+    let value = |name: String, role: Role| {
+        PropertyValues(vec![
+            PropertyAnswer {
+                id: PropertyId::Name,
+                value: Some(PropertyValue::Text(name)),
+            },
+            PropertyAnswer {
+                id: PropertyId::Role,
+                value: Some(PropertyValue::Role(role)),
+            },
+        ])
+    };
+    let ancestors = (0..depth)
+        .map(|index| verbatim_model::request::FocusAncestor {
+            node: FocusNode {
+                read: NodeRead {
+                    node: Some(NodeId::in_outpost(
+                        OutpostId(OUTPOST.generation),
+                        100_000 + index,
+                    )),
+                    window: window(),
+                    values: value(format!("Group {index}"), Role::Group),
+                },
+                runtime_id: Some(RuntimeId(vec![
+                    42,
+                    100_000 + i32::try_from(index).expect("depth"),
+                ])),
+            },
+            simple_child: false,
+            uia_layout: false,
+            described: false,
+        })
+        .chain(console.then(console_window))
+        .collect();
+    FocusRead {
+        focus: FocusNode {
+            read: NodeRead {
+                node: Some(node()),
+                window: window(),
+                values: PropertyValues(vec![
+                    PropertyAnswer {
+                        id: PropertyId::Name,
+                        value: Some(PropertyValue::Text("Terminal".to_owned())),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::Role,
+                        value: Some(PropertyValue::Role(Role::Terminal)),
+                    },
+                ]),
+            },
+            runtime_id: Some(RuntimeId(vec![42, 12])),
+        },
+        msaa: None,
+        ancestors,
+        met: None,
+        foreground: None,
+        value_from_selection: false,
+        runtime_id_reused: false,
+        caret: FocusCaret::NotRead,
     }
 }
 
-/// Caret key `key` pressed in the terminal, passed at once.
-pub fn caret_key(key: CaretKey) -> PressAction {
-    PressAction::CaretKey {
-        key,
-        held: None,
-        bound: Some(Box::new(binding())),
+/// A console host's window, as a focus read's ancestor: its own window, of
+/// the console's class.
+fn console_window() -> verbatim_model::request::FocusAncestor {
+    verbatim_model::request::FocusAncestor {
+        node: FocusNode {
+            read: NodeRead {
+                node: Some(NodeId::in_outpost(OutpostId(OUTPOST.generation), 99_999)),
+                window: window(),
+                values: PropertyValues(vec![
+                    PropertyAnswer {
+                        id: PropertyId::Name,
+                        value: Some(PropertyValue::Text("Console".to_owned())),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::Role,
+                        value: Some(PropertyValue::Role(Role::Window)),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::NativeWindow,
+                        value: Some(PropertyValue::Window(WindowHandle(4))),
+                    },
+                    PropertyAnswer {
+                        id: PropertyId::ClassName,
+                        value: Some(PropertyValue::Text("ConsoleWindowClass".to_owned())),
+                    },
+                ]),
+            },
+            runtime_id: Some(RuntimeId(vec![42, 99_999])),
+        },
+        simple_child: false,
+        uia_layout: false,
+        described: false,
     }
 }
 
-/// The focused terminal read through Core's event queue, with playback that
-/// reaches each utterance's marks as it plays.
+/// A reducer reading the simulated terminal through Core's event queue,
+/// with playback that reaches each utterance's marks as it plays.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent switches a test sets for how the outpost answers and when speech plays"
+)]
 pub struct Session {
-    pub desk: Desk,
-    pub sim: Sim,
+    pub state: SrState,
+    runtime: verbatim_core::Runtime,
+    pub outpost: Outpost,
     /// What was said, in order.
     pub heard: Vec<Said>,
-    /// Every request Core made of the terminal, in order.
+    /// Every request Core made of the terminal but its output reads, in
+    /// order.
     pub requests: Vec<Asked>,
+    /// How many output reads Core asked.
+    pub output_reads: usize,
+    /// Every caret key's wait Core sent, in order.
+    pub watches: Vec<verbatim_model::batch::CaretWait>,
+    /// Every full read the outpost answered, in order.
+    pub answered_reads: Vec<verbatim_model::TerminalSnapshot>,
+    /// Every event Core gave the control plane's stream, in order.
+    pub observed: Vec<verbatim_model::Observed>,
+    /// Every due time of the quiet-period timer, as the shell reads it
+    /// after each step that changed it, in order.
+    pub timers: Vec<Option<u64>>,
+    /// The due time the shell read last.
+    armed: Option<u64>,
     /// The text Core copied to the clipboard, in order.
     pub copied: Vec<String>,
+    /// Every input given to the reducer since the session began, with its
+    /// effects.
+    pub log: Vec<(Input, Vec<Effect>)>,
+    /// Whether the outpost holds back a whole read Core asks for, until
+    /// [`Session::answer_held`].
+    pub hold_whole: bool,
+    held: Option<Ask>,
+    /// Whether the outpost answers Core's searches refused, as its worker
+    /// does when the terminal lost the focus before searching.
+    pub unanswered_finds: bool,
+    /// Output the terminal prints before each search Core asks for, the
+    /// next taken for each: written, and told to Core, at its time, before
+    /// the outpost searches, as when a program keeps printing while a
+    /// search is on its way.
+    pub output_before_finds: VecDeque<(String, u64)>,
+    /// Output the terminal prints before each history read Core asks for,
+    /// the next taken for each, as [`Session::output_before_finds`] is
+    /// before a search.
+    pub output_before_histories: VecDeque<(String, u64)>,
     /// Whether what Core queues is played only when the test calls
     /// [`Session::play`] or [`Session::play_one`], so that output can be
     /// written while a group plays.
     pub manual_play: bool,
-    /// Output the terminal prints before the outpost answers the next
-    /// request of a kind, the next taken for each: written, and told to
-    /// Core, at its time, as when a program keeps printing while a request
-    /// is on its way.
-    pub output_before: VecDeque<(Asked, String, u64)>,
-    /// Requests sent and not yet answered, in the order Core sent them.
-    pending: VecDeque<(u64, Batch)>,
+    /// Requests sent and not yet answered, in the order Core sent them:
+    /// the outpost answers each once Core's step is done, in order.
+    pending: VecDeque<Ask>,
     /// Utterances queued and their marks, not yet played.
     queued: VecDeque<(Vec<SpeechMark>, Said)>,
+    /// The time reads Core asks for begin at.
+    pub at_ms: u64,
+    /// The last key's number.
+    keys: u64,
+    /// How many groups the terminal is inside.
+    depth: u64,
+    /// Whether the terminal is inside a console host's window.
+    console: bool,
+    /// When the next full read the outpost answers began, when earlier
+    /// than when it ended, the session's time.
+    pub next_read_began: Option<u64>,
+    /// Whether the outpost holds back Core's output reads, until
+    /// [`Session::release_output`].
+    pub hold_output: bool,
+    held_output: VecDeque<Ask>,
+    /// Whether the terminal's window is hung: the shell's live hang check
+    /// refuses every request to it unsent, and answers Core's checks of it
+    /// hung.
+    pub hung: bool,
+    /// The earcons played since the last [`Session::earcons`], in order.
+    earcons: Vec<Earcon>,
     /// The wake Core last asked for, in microseconds.
-    pub wake: Option<u64>,
-    /// How many terminal reads Core gave the control plane's event stream.
-    pub observed: usize,
+    wake: Option<u64>,
+    /// The windows Core asked the shell to check for a hang, not yet
+    /// answered.
+    checks: Vec<WindowHandle>,
 }
 
 impl Session {
     /// A terminal of `flavor`, `width` by `height` with `history` rows,
-    /// showing `text`, focused and read twice, all of which is let pass
-    /// unasserted.
-    pub fn new(flavor: Flavor, size: (usize, usize, usize), text: &str) -> Self {
-        Self::under(flavor, size, text, &[])
+    /// focused and read once at time 0.
+    pub fn new(flavor: Flavor, width: usize, height: usize, history: usize) -> Self {
+        Self::with(Outpost::new(flavor, width, height, history))
     }
 
-    /// [`Session::new`], the terminal focused under `ancestors`, outermost
-    /// first.
-    pub fn under(
-        flavor: Flavor,
-        (width, height, history): (usize, usize, usize),
-        text: &str,
-        ancestors: &[NodeSnapshot],
-    ) -> Self {
-        let mut sim = Sim::new(flavor, width, height, history);
-        sim.terminal.write(text.as_bytes());
-        let mut desk = Desk::new();
-        let terminal = NodeSnapshot {
-            id: node(),
-            backend: Backend::Uia,
-            role: Role::Terminal,
-            name: Some("Terminal".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: NodeDetails::default(),
-        };
-        let _ = desk.focus_read(ONE, focus_read_of(ONE, &terminal, ancestors));
-        let pending = desk
-            .sent
-            .iter()
-            .map(|(number, _, question)| {
-                let Question::Batch(batch) = question;
-                (*number, batch.clone())
-            })
-            .collect();
+    /// `outpost`'s terminal, focused at startup and read once at time 0,
+    /// all of which is let pass unasserted: the focus and the first read
+    /// say nothing of the terminal's output.
+    pub fn with(outpost: Outpost) -> Self {
+        Self::inside(outpost, 0)
+    }
+
+    /// [`Session::with`], the terminal inside `depth` groups.
+    pub fn inside(outpost: Outpost, depth: u64) -> Self {
+        Self::built(outpost, depth, false)
+    }
+
+    /// [`Session::with`], the terminal inside a console host's window,
+    /// which Core takes from the focus read's ancestor of the console's
+    /// class.
+    pub fn in_console(outpost: Outpost) -> Self {
+        Self::built(outpost, 0, true)
+    }
+
+    fn built(outpost: Outpost, depth: u64, console: bool) -> Self {
         let mut session = Self {
-            desk,
-            sim,
+            state: SrState::new(),
+            runtime: verbatim_core::Runtime::default(),
+            outpost,
             heard: Vec::new(),
             requests: Vec::new(),
+            output_reads: 0,
+            watches: Vec::new(),
+            answered_reads: Vec::new(),
+            observed: Vec::new(),
+            timers: Vec::new(),
+            armed: None,
             copied: Vec::new(),
+            log: Vec::new(),
+            hold_whole: false,
+            held: None,
+            unanswered_finds: false,
+            output_before_finds: VecDeque::new(),
+            output_before_histories: VecDeque::new(),
             manual_play: false,
-            output_before: VecDeque::new(),
-            pending,
+            pending: VecDeque::new(),
             queued: VecDeque::new(),
+            at_ms: 0,
+            keys: 0,
+            depth,
+            console,
+            next_read_began: None,
+            hold_output: false,
+            held_output: VecDeque::new(),
+            hung: false,
+            earcons: Vec::new(),
             wake: None,
-            observed: 0,
+            checks: Vec::new(),
         };
-        session.run();
-        // A read at the screen's height, once the baseline found it, so
-        // that every later read spans the same two screens: the baseline,
-        // taken before the height is known, reads the screen alone.
-        session.told(2);
-        session.play();
+        // The terminal's window in front: Core starts the application's
+        // outpost to read its focus, which commits the terminal.
+        session.queue(QueueInput::Foreground(ForegroundReport {
+            window: WindowHandle(4),
+            root_owner: WindowHandle(4),
+            process: APP,
+            thread: 41,
+            class: if console {
+                "ConsoleWindowClass"
+            } else {
+                "CASCADIA_HOSTING_WINDOW_CLASS"
+            }
+            .to_owned(),
+            ghost: None,
+            console,
+            integrity: None,
+            own_integrity: None,
+        }));
+        session.queue(QueueInput::Process(
+            verbatim_model::request::ProcessFact::OutpostStarted {
+                process: APP,
+                generation: OUTPOST.generation,
+            },
+        ));
+        session.queue(QueueInput::ReaderReady(OUTPOST));
         session.heard.clear();
         session.requests.clear();
-        session.observed = 0;
+        session.output_reads = 0;
+        session.answered_reads.clear();
+        session.observed.clear();
+        session.timers.clear();
         session
     }
 
-    /// The session's time, in milliseconds.
-    pub fn at_ms(&self) -> u64 {
-        self.desk.at_us / 1_000
+    /// One step of the reducer, logged, with the timer's due time read
+    /// after it, as the shell reads it.
+    fn step(&mut self, input: Input) -> Vec<Effect> {
+        let effects = reduce(&mut self.state, &mut self.runtime, &input);
+        self.log.push((input, effects.clone()));
+        let due = self.state.terminal_timer_due();
+        if due != self.armed {
+            self.armed = due;
+            self.timers.push(due);
+        }
+        effects
     }
 
-    /// Feeds `input` at the session's time and takes in its effects.
-    fn feed(&mut self, input: QueueInput) {
-        let effects = self.desk.feed(input);
-        self.take(effects, None);
-    }
-
-    /// Feeds `input`, answers what it asked, and plays what was queued.
-    pub fn queue(&mut self, input: QueueInput) {
-        self.feed(input);
-        self.run();
-        self.settle();
-    }
-
-    /// Applies `settings`, as the shell gives Core the settings.
-    pub fn settings(&mut self, settings: ReaderSettings) {
-        let input = Input::Settings(settings);
-        let effects = verbatim_core::reduce(&mut self.desk.state, &mut self.desk.runtime, &input);
-        self.take(effects, None);
-        self.run();
-        self.settle();
-    }
-
-    /// Both flood limits at `limit`.
-    pub fn limits(&mut self, limit: u16) {
-        self.settings(ReaderSettings {
-            terminal_full_lines: verbatim_model::TerminalLines::new(limit),
-            terminal_last_lines: verbatim_model::TerminalLines::new(limit),
-            ..ReaderSettings::default()
-        });
-    }
-
-    /// A key press doing `action` at `at_ms`, under `trace_id`.
-    pub fn press_at(&mut self, at_ms: u64, trace_id: TraceId, action: PressAction) {
-        self.desk.at_us = at_ms * 1_000;
-        self.desk.keys += 1;
-        let input = Input::Queue {
+    /// `input`, an input of Core's event queue, at the session's time.
+    fn queued_input(&self, trace_id: TraceId, input: QueueInput) -> Input {
+        Input::Queue {
             trace_id,
-            at_us: self.desk.at_us,
+            at_us: self.at_ms * 1_000,
+            input,
+        }
+    }
+
+    /// Feeds `input` to the event queue, takes in its effects, answers what
+    /// they asked, and plays what was queued.
+    pub fn queue(&mut self, input: QueueInput) {
+        let input = self.queued_input(TraceId::from_raw(1), input);
+        let effects = self.step(input);
+        self.run(effects);
+        self.settle();
+    }
+
+    /// `key` as the hook reports it to the event queue, numbered in turn,
+    /// a held key's stroke numbered as the key is.
+    fn pressed(&mut self, key: &Key) -> Input {
+        self.keys += 1;
+        let mut action = key.action.clone();
+        if let PressAction::CaretKey {
+            held: Some(held), ..
+        } = &mut action
+        {
+            held.stroke.sequence = u32::try_from(self.keys).expect("keys");
+        }
+        Input::Queue {
+            trace_id: key.trace_id,
+            at_us: key.at_ms * 1_000,
             input: QueueInput::Press(Box::new(Press {
-                key_seq: KeySeq::new(self.desk.keys),
-                pressed_at_us: self.desk.at_us,
+                key_seq: KeySeq::new(self.keys),
+                pressed_at_us: key.at_ms * 1_000,
                 action,
             })),
-        };
-        let effects = verbatim_core::reduce(&mut self.desk.state, &mut self.desk.runtime, &input);
-        self.take(effects, None);
-        self.run();
+        }
+    }
+
+    /// Feeds `input`, takes in its effects, and plays what it queued.
+    pub fn input(&mut self, input: &Input) {
+        let effects = self.step(input.clone());
+        self.run(effects);
         self.settle();
     }
 
-    /// `text` typed at `at_ms` under `trace_id`.
-    pub fn typed(&mut self, text: &str, at_ms: u64, trace_id: TraceId) {
-        self.press_at(
-            at_ms,
-            trace_id,
-            PressAction::Typed {
-                text: text.to_owned(),
-            },
-        );
+    /// Presses `key`, takes in its effects, and plays what it queued.
+    pub fn press(&mut self, key: &Key) {
+        let input = self.pressed(key);
+        self.input(&input);
     }
 
-    /// Review command `command`, its `repeat`th quick press, a millisecond
-    /// on.
-    pub fn command(&mut self, command: verbatim_model::ReviewCommand, repeat: u8) {
-        let at = self.at_ms() + 1;
-        self.press_at(
-            at,
-            TraceId::from_raw(1),
-            PressAction::Command { command, repeat },
+    /// Presses `keys` one after another before the outpost answers any
+    /// request they make, as keys pressed faster than it answers, then
+    /// answers those requests, in order, and plays what they queued.
+    pub fn presses(&mut self, keys: &[Key]) {
+        for key in keys {
+            let input = self.pressed(key);
+            let effects = self.step(input);
+            self.take(effects, None);
+        }
+        self.run(Vec::new());
+        self.settle();
+    }
+
+    /// Takes in `effects`, then answers the requests they and their answers
+    /// made, in order.
+    fn run(&mut self, effects: Vec<Effect>) {
+        self.take(effects, None);
+        while let Some(ask) = self.pending.pop_front() {
+            self.answer(ask);
+        }
+    }
+
+    /// The outpost's answer to `ask`, or, for a hung window, the shell's
+    /// refusal of it unsent: a read of the current focus with the hung
+    /// terminal's own window in front, no ghost before it, as the shell
+    /// answers one; any other "not responding".
+    fn answer(&mut self, ask: Ask) {
+        if self.hung {
+            let refused = match &ask.request {
+                verbatim_model::request::Question::Batch(batch) if batch.reads_focus_first() => {
+                    QueueInput::InFront {
+                        number: ask.number,
+                        front: verbatim_model::request::Front::Hung,
+                    }
+                }
+                _ => QueueInput::RefusedHung(ask.number),
+            };
+            let input = self.queued_input(TraceId::from_raw(2), refused);
+            let effects = self.step(input);
+            self.take(effects, None);
+            return;
+        }
+        if let verbatim_model::request::Question::Batch(batch) = &ask.request {
+            // A key's wait sees its effect at once: the terminal's full
+            // read follows it.
+            if let Some(verbatim_model::batch::Op::WaitForCaret { .. }) =
+                batch.steps.first().map(|step| &step.op)
+            {
+                let waited = verbatim_model::batch::StepOutcome::Done(
+                    verbatim_model::batch::Done::WaitForCaret(
+                        verbatim_model::batch::Waited::Effect,
+                    ),
+                );
+                self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
+                return;
+            }
+            let found = Found::Read(focus_read(self.depth, self.console));
+            let outcome = readers::outcome(batch, &found);
+            self.reply(&ask, outcome);
+            return;
+        }
+        let TerminalAsk { op, .. } = terminal(&ask.request);
+        let outcome = {
+            match op {
+                TextOp::ReadTerminal(read) => {
+                    if self.hold_whole && read.scope == TerminalScope::Whole {
+                        self.held = Some(ask);
+                        return;
+                    }
+                    if self.hold_output && read.output {
+                        self.held_output.push_back(ask);
+                        return;
+                    }
+                    Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
+                        self.full_read(read),
+                    ))))
+                }
+                TextOp::TerminalHistory {
+                    above,
+                    whole,
+                    start,
+                    height,
+                } => {
+                    if let Some((output, at_ms)) = self.output_before_histories.pop_front() {
+                        self.write(&output, at_ms);
+                    }
+                    Outcome::Result(Reply::Text(
+                        self.outpost.history(*start, (*above, *whole, *height)),
+                    ))
+                }
+                TextOp::TerminalFind {
+                    needle,
+                    from,
+                    rows,
+                    start,
+                } => {
+                    if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
+                        self.write(&output, at_ms);
+                    }
+                    if self.unanswered_finds {
+                        Outcome::Refused(Refusal::Unsupported)
+                    } else {
+                        Outcome::Result(Reply::Text(self.outpost.find(
+                            *start,
+                            needle,
+                            (*from, *rows),
+                        )))
+                    }
+                }
+            }
+        };
+        self.reply(&ask, outcome);
+    }
+
+    /// The full read `read`, taken at the session's time, begun then or at
+    /// [`Session::next_read_began`].
+    fn full_read(&mut self, read: &TerminalRead) -> TerminalReadReply {
+        let (_, mut reply) = self.outpost.read(read, self.at_ms);
+        if let Some(began) = self.next_read_began.take() {
+            reply.snapshot.started_ms = began;
+            reply.started_us = began * 1_000;
+        }
+        self.answered_reads.push(reply.snapshot.clone());
+        reply
+    }
+
+    /// Answers the output reads held back, taken at `at_ms`.
+    pub fn release_output(&mut self, at_ms: u64) {
+        self.at_ms = at_ms;
+        while let Some(ask) = self.held_output.pop_front() {
+            self.answer(ask);
+        }
+        self.run(Vec::new());
+        self.settle();
+    }
+
+    /// Sends the answer to `ask`, `outcome`, and takes in its effects.
+    fn reply(&mut self, ask: &Ask, outcome: Outcome) {
+        let input = self.queued_input(
+            TraceId::from_raw(2),
+            QueueInput::Answer {
+                from: OUTPOST,
+                answer: Answer {
+                    number: ask.number,
+                    outcome,
+                    probes: Vec::new(),
+                    detail: String::new(),
+                },
+            },
         );
+        let effects = self.step(input);
+        self.take(effects, None);
     }
 
     /// Writes `bytes` to the terminal, its change told to Core at `at_ms`.
     pub fn write(&mut self, bytes: &str, at_ms: u64) {
-        self.sim.terminal.write(bytes.as_bytes());
-        self.told(at_ms);
+        self.outpost.sim.write(bytes.as_bytes());
+        self.live(at_ms);
     }
 
     /// The terminal's change told to Core at `at_ms`, as its outpost tells
-    /// one.
-    pub fn told(&mut self, at_ms: u64) {
-        self.desk.at_us = at_ms * 1_000;
+    /// one: Core reads it when it chooses.
+    pub fn live(&mut self, at_ms: u64) {
+        self.at_ms = at_ms;
         let tell = Event {
             trace_id: TraceId::from_raw(3),
             kind: EventKind::TerminalChanged,
-            process: ONE.pid,
+            process: APP,
             application: "terminal".to_owned(),
             thread: 41,
-            at_us: self.desk.at_us,
+            at_us: at_ms * 1_000,
             object: EventObject::Terminal {
                 node: node(),
-                window: ONE.window(),
+                window: WindowHandle(5),
             },
             cached: PropertyValues::default(),
             payload: Payload::None,
@@ -791,67 +891,73 @@ impl Session {
             checked: None,
         };
         self.queue(QueueInput::Tell {
-            from: ONE.instance(),
+            from: OUTPOST,
             tell: Box::new(tell),
         });
     }
 
-    /// The queue's wake fed, at the time Core asked for.
-    pub fn due(&mut self) {
-        let wake = self.wake.take().expect("Core asked to be woken");
-        self.desk.at_us = self.desk.at_us.max(wake);
-        self.queue(QueueInput::Due);
+    /// Answers the whole read held back.
+    pub fn answer_held(&mut self) {
+        let ask = self.held.take().expect("a whole read held back");
+        let TerminalAsk {
+            op: TextOp::ReadTerminal(read),
+            ..
+        } = terminal(&ask.request)
+        else {
+            panic!("a read held back");
+        };
+        let read = *read;
+        let reply = self.full_read(&read);
+        let outcome = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(reply))));
+        self.reply(&ask, outcome);
+        self.run(Vec::new());
+        self.settle();
     }
 
-    /// Answers every request out, in the order Core sent them.
-    fn run(&mut self) {
-        while let Some((number, batch)) = self.pending.pop_front() {
-            let asked = asked_of(&batch);
-            if let Some(at) = self
-                .output_before
-                .iter()
-                .position(|(kind, _, _)| *kind == asked)
-                && let Some((_, output, at_ms)) = self.output_before.remove(at)
-            {
-                self.sim.terminal.write(output.as_bytes());
-                self.desk.at_us = at_ms * 1_000;
-                let tell = Event {
-                    trace_id: TraceId::from_raw(3),
-                    kind: EventKind::TerminalChanged,
-                    process: ONE.pid,
-                    application: "terminal".to_owned(),
-                    thread: 41,
-                    at_us: self.desk.at_us,
-                    object: EventObject::Terminal {
-                        node: node(),
-                        window: ONE.window(),
-                    },
-                    cached: PropertyValues::default(),
-                    payload: Payload::None,
-                    window: TellWindow::NoWindow,
-                    checked: None,
-                };
-                self.feed(QueueInput::Tell {
-                    from: ONE.instance(),
-                    tell: Box::new(tell),
-                });
-            }
-            let outcomes = self.sim.run(&batch);
-            self.feed(QueueInput::Answer {
-                from: ONE.instance(),
-                answer: Answer {
-                    number: RequestNumber(number),
-                    outcome: Outcome::Result(Reply::Steps(outcomes)),
-                    probes: Vec::new(),
-                    detail: String::new(),
-                },
-            });
+    /// Records what `ask` asks of the terminal.
+    fn record(&mut self, ask: &Ask) {
+        if let verbatim_model::request::Question::Batch(batch) = &ask.request
+            && let Some(verbatim_model::batch::Op::WaitForCaret { wait, .. }) =
+                batch.steps.first().map(|step| &step.op)
+        {
+            self.watches.push((**wait).clone());
+            self.requests.push(Asked::Watch);
+            return;
         }
+        let verbatim_model::request::Question::Terminal(TerminalAsk { op, .. }) = &ask.request
+        else {
+            return;
+        };
+        let asked = match op {
+            TextOp::ReadTerminal(read) => match (read.scope, read.output, read.starting) {
+                (TerminalScope::Whole, ..) => Asked::Whole,
+                (TerminalScope::HistoryBlock { height }, ..) => Asked::HistoryBlock(height),
+                (TerminalScope::Fresh, true, _) => {
+                    self.output_reads += 1;
+                    return;
+                }
+                (TerminalScope::Fresh, false, Some(_)) => Asked::Starting,
+                (TerminalScope::Fresh, false, None) => Asked::Fresh,
+            },
+            TextOp::TerminalHistory { above, whole, .. } => Asked::History {
+                above: *above,
+                whole: *whole,
+            },
+            TextOp::TerminalFind {
+                needle, from, rows, ..
+            } => Asked::Find {
+                needle: needle.clone(),
+                from: *from,
+                rows: *rows,
+            },
+        };
+        self.requests.push(asked);
     }
 
     /// Takes in effects: speech is queued, or heard at once when it has no
     /// marks and nothing is queued ahead of it; requests are kept for the
-    /// outpost; copies are recorded. Any other effect fails the test.
+    /// outpost, which answers them in order; copies are recorded. Any
+    /// other effect fails the test.
     fn take(&mut self, effects: Vec<Effect>, key: Option<TraceId>) {
         for effect in effects {
             match effect {
@@ -869,6 +975,9 @@ impl Session {
                         key,
                         words: words(&utterance.segments),
                     };
+                    // Speech plays in the order it was queued: an utterance
+                    // with no marks is heard at once only when nothing is
+                    // queued ahead of it.
                     if marks.is_empty() && self.queued.is_empty() {
                         self.heard.push(said);
                     } else {
@@ -877,34 +986,31 @@ impl Session {
                 }
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::CopyToClipboard(text) => self.copied.push(text),
+                Effect::Observed(observed) => self.observed.push(*observed),
                 Effect::Queue(QueueEffect::Send { to, ask }) => {
-                    assert_eq!(to, ONE.instance(), "a request to the terminal's outpost");
-                    let Question::Batch(batch) = ask.request;
-                    let asked = asked_of(&batch);
-                    if asked != Asked::Follow {
-                        self.requests.push(asked);
-                    }
-                    self.pending.push_back((ask.number.0, batch));
+                    assert_eq!(to, OUTPOST, "a request to the terminal's outpost");
+                    self.record(&ask);
+                    self.pending.push_back(ask);
                 }
+                // The event queue's own business: cancels, wakes, strokes
+                // sent, answers dropped by number.
+                Effect::Queue(
+                    QueueEffect::Cancel { .. }
+                    | QueueEffect::SendStrokes(_)
+                    | QueueEffect::AnswerDropped { .. }
+                    | QueueEffect::StartOutpost(_),
+                )
+                | Effect::DropExpiredSpeech(_) => {}
+                Effect::PlayEarcon(earcon) => self.earcons.push(earcon),
                 Effect::Queue(QueueEffect::WakeAt(wake)) => self.wake = wake,
-                Effect::Observed(observed) => {
-                    if matches!(
-                        observed.event,
-                        verbatim_model::NormalizedEvent::TerminalSnapshot { .. }
-                    ) {
-                        self.observed += 1;
-                    }
-                }
-                Effect::Queue(_)
-                | Effect::DropExpiredSpeech(_)
-                | Effect::PlayEarcon(_)
-                | Effect::SettingsChanged(_) => {}
+                Effect::Queue(QueueEffect::CheckHung(windows)) => self.checks.extend(windows),
                 other => panic!("unexpected effect: {other:?}"),
             }
         }
     }
 
-    /// Plays what is queued, unless the test plays it.
+    /// Plays what is queued, unless the test plays it
+    /// ([`Session::manual_play`]).
     fn settle(&mut self) {
         if !self.manual_play {
             self.play();
@@ -924,10 +1030,94 @@ impl Session {
         };
         self.heard.push(said);
         for mark in marks {
-            self.feed(QueueInput::MarkReached(mark));
-            self.run();
+            let input = self.queued_input(TraceId::from_raw(1), QueueInput::MarkReached(mark));
+            let effects = self.step(input);
+            self.run(effects);
         }
         true
+    }
+
+    /// When the shell's quiet-period timer is due, if it is armed.
+    pub fn armed(&self) -> Option<u64> {
+        self.armed
+    }
+
+    /// The earcons played since the last [`Session::earcons`], taken.
+    pub fn earcons(&mut self) -> Vec<Earcon> {
+        std::mem::take(&mut self.earcons)
+    }
+
+    /// Wakes Core at the time it last asked to be woken at, the session's
+    /// time moved on to it, and answers the hang checks it asks then, the
+    /// window hung as [`Session::hung`] says, as the shell's live check
+    /// answers them.
+    pub fn due(&mut self) {
+        let wake = self.wake.take().expect("Core asked to be woken");
+        self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
+        self.queue(QueueInput::Due);
+        while !self.checks.is_empty() {
+            let checks = std::mem::take(&mut self.checks);
+            for window in checks {
+                let hung = self.hung;
+                self.queue(QueueInput::HangCheck { window, hung });
+            }
+        }
+    }
+
+    /// The terminal's focus read again under the same node, as the read
+    /// after a return to the user's desktop reads it: a switch to an input
+    /// desktop that opens is told by the listener, Core is woken when its read comes due,
+    /// and the outpost answers the read with `runtime_id_reused`, whether
+    /// the runtime id its reader held for the node now names another
+    /// element.
+    pub fn focus_after(&mut self, runtime_id_reused: bool) {
+        let tell = Event {
+            trace_id: TraceId::from_raw(4),
+            kind: EventKind::DesktopSwitch,
+            process: APP,
+            application: "terminal".to_owned(),
+            thread: 41,
+            at_us: self.at_ms * 1_000,
+            object: EventObject::Msaa {
+                window: WindowHandle(0),
+                object: 0,
+                child: 0,
+            },
+            cached: PropertyValues::default(),
+            payload: Payload::DesktopSwitch {
+                input_desktop_open: true,
+            },
+            window: TellWindow::NoWindow,
+            checked: None,
+        };
+        self.queue(QueueInput::Tell {
+            from: Instance {
+                reader: Reader::Listener,
+                generation: 1,
+            },
+            tell: Box::new(tell),
+        });
+        let wake = self.wake.take().expect("the read after the return timed");
+        self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
+        let input = self.queued_input(TraceId::from_raw(1), QueueInput::Due);
+        let effects = self.step(input);
+        self.take(effects, None);
+        let ask = self.pending.pop_front().expect("the read after the return");
+        let verbatim_model::request::Question::Batch(batch) = &ask.request else {
+            panic!("the read after the return: {ask:?}");
+        };
+        assert!(
+            batch.reads_focus_first(),
+            "the read after the return: {ask:?}"
+        );
+        let mut read = focus_read(self.depth, self.console);
+        read.runtime_id_reused = runtime_id_reused;
+        let outcome = readers::outcome(batch, &Found::Read(read));
+        self.reply(&ask, outcome);
+        while let Some(ask) = self.pending.pop_front() {
+            self.answer(ask);
+        }
+        self.settle();
     }
 
     /// What was heard since the last [`Session::heard`], taken.
@@ -939,4 +1129,12 @@ impl Session {
     pub fn requests(&mut self) -> Vec<Asked> {
         std::mem::take(&mut self.requests)
     }
+}
+
+/// `question` as a terminal's text operation: these tests state the
+/// terminal's requests, and a batch is answered before it.
+fn terminal(question: &verbatim_model::request::Question) -> &TerminalAsk {
+    question
+        .terminal()
+        .expect("a terminal's text operation, where a batch was asked")
 }

@@ -266,13 +266,9 @@ pub(crate) trait Logic: Sized + 'static {
     ) -> Option<verbatim_model::request::CancelReason>;
 
     /// The entry appended when `window`, in the recovery set, answers
-    /// again at `now_us`; what Core's facts keep of the window may change,
-    /// as a terminal is read again.
-    fn recovered(
-        facts: &mut Self::Facts,
-        window: &RequestWindow,
-        now_us: u64,
-    ) -> Option<Self::Entry>;
+    /// again; what Core's facts keep of the window may change, as a
+    /// terminal is read again.
+    fn recovered(facts: &mut Self::Facts, window: &RequestWindow) -> Option<Self::Entry>;
 
     /// The requests Core's facts want sent now, outside the queue, in
     /// order with the queue's requests: taken whenever the queue settles,

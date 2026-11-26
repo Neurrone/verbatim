@@ -111,6 +111,7 @@ impl UiaReading {
     fn request(&self, thread: &mut ReadingThread, ask: &Ask) -> (Outcome, Option<KeptRead>) {
         match &ask.request {
             Question::Batch(batch) => self.batch(thread, ask, batch),
+            Question::Terminal(_) => (Outcome::Refused(Refusal::Unsupported), None),
         }
     }
 

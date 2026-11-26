@@ -88,13 +88,6 @@ impl Arrivals {
         Fence(self.newest)
     }
 
-    /// Whether a key whose press cut speech came after an entry of fence
-    /// `fence` joined: its speech, and the output it hands on, is fenced
-    /// off.
-    pub(crate) fn cut_since(self, fence: Fence) -> bool {
-        self.cut > fence.0
-    }
-
     /// Whether the caret key numbered `key` is marked silent: a key joined
     /// behind it. The mark is read from the arrivals, never stored on the
     /// entry, so a key at the front is marked by the same arrival as one
@@ -194,7 +187,6 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         }
         return;
     }
-    let now_us = cx.now_us();
     let effects = {
         let mut facts = cx.facts_mut();
         // A held stroke is sent at its turn.
@@ -216,7 +208,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
                         crate::reduce::toggle_setting(facts, trace_id, *command)
                     }
                     ReviewCommand::ToggleReportNewOutput => {
-                        crate::terminal::toggle(facts, trace_id, now_us)
+                        crate::terminal::toggle(facts, trace_id)
                     }
                     _ => Vec::new(),
                 });

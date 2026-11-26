@@ -255,7 +255,7 @@ fn run(
             Question::Batch(batch) if reads_alert(&request, ALERT) => {
                 readers::outcome(batch, &Found::Object(alert_read()))
             }
-            other @ Question::Batch(_) => answer(other),
+            other => answer(other),
         };
         heard.extend(desk.answer(to, number, outcome));
     }
@@ -343,7 +343,7 @@ fn read_property(property: PropertyId, value: PropertyValue, said: &[Heard]) {
                 }]),
             }),
         ),
-        other @ Question::Batch(_) => unasked(other),
+        other => unasked(other),
     };
     let mut heard = vec![Heard::Sent(Reader::Outpost(ONE.pid), "Properties")];
     heard.extend_from_slice(said);
@@ -426,7 +426,7 @@ fn an_alert_merged_is_the_newer_alert() {
             read.values = desk::values_of(&node(7, Role::Alert, "Copied twice", StateSet::new()));
             readers::outcome(batch, &Found::Object(read))
         }
-        other @ Question::Batch(_) => unasked(other),
+        other => unasked(other),
     };
     equivalent(
         &alert(),

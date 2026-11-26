@@ -547,17 +547,11 @@ pub(crate) async fn mark_entry(mut cx: Cx<Entries>, mark: SpeechMark) {
         .say_all
         .as_ref()
         .map(|say_all| say_all.run.window);
-    let now_us = cx.now_us();
-    let waits = crate::terminal::output_waits(&cx.facts(), &cx.waiting());
     let (effects, moved) = {
         let mut facts = cx.facts_mut();
         let (mut effects, moved) = passed(&mut facts, mark, true);
         let moved = moved.zip(window);
-        effects.extend(crate::terminal::mark_reached(
-            &mut facts,
-            mark,
-            (now_us, waits),
-        ));
+        effects.extend(crate::terminal::mark_reached(&mut facts, mark));
         (effects, moved)
     };
     for effect in effects {

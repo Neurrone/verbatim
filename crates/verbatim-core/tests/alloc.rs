@@ -17,9 +17,9 @@
 mod desk;
 #[path = "support/readers.rs"]
 mod readers;
-mod terminal_support;
 
 use readers::Found;
+mod terminal_support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -48,6 +48,7 @@ fn text_batch(effects: &[Effect]) -> (u64, verbatim_model::batch::Batch) {
                 verbatim_model::request::Question::Batch(batch) => {
                     Some((ask.number.0, batch.clone()))
                 }
+                verbatim_model::request::Question::Terminal(_) => None,
             },
             _ => None,
         })
@@ -180,6 +181,7 @@ fn sent_batch(effects: &[Effect], kind: &str) -> (u64, verbatim_model::batch::Ba
                     verbatim_model::request::Question::Batch(batch) => {
                         Some((ask.number.0, batch.clone()))
                     }
+                    verbatim_model::request::Question::Terminal(_) => None,
                 }
             }
             _ => None,
@@ -425,17 +427,14 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
 
 #[test]
 fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
-    // The simulated terminal focused inside a chain of groups and read
-    // through Core's window reads (`terminal_support`): a line of output,
-    // told and read, its every step answered as the terminal's provider
-    // answers it.
+    // The simulated terminal read as its outpost reads it, focused inside
+    // a chain of groups: a first read, then a line of output, told and
+    // read.
     let session = |depth: u64| {
-        let mut session = terminal_support::Session::under(
-            verbatim_term_sim::Flavor::ConsoleHost,
-            (40, 5, 20),
-            "PS> ",
-            &chain(depth),
-        );
+        let mut outpost =
+            terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
+        outpost.sim.write(b"PS> ");
+        let mut session = terminal_support::Session::inside(outpost, depth);
         // Playback's marks are entries of their own, outside the line's
         // step.
         session.manual_play = true;
@@ -448,7 +447,17 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
     small.play();
     large.play();
     let heard = small.heard();
-    assert_eq!(heard, terminal_support::plain(&["total 42", "PS>"]));
+    assert_eq!(
+        heard,
+        [
+            terminal_support::said(None, "total 42"),
+            terminal_support::said(None, "PS>")
+        ]
+    );
     assert_eq!(large.heard(), heard);
+    assert_eq!(
+        small.log.last().map(|(_, effects)| effects.clone()),
+        large.log.last().map(|(_, effects)| effects.clone())
+    );
     assert_eq!(small_bytes, large_bytes);
 }

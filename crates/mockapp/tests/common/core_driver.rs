@@ -1046,6 +1046,10 @@ impl CoreDriver {
                 };
                 (*listener, *token, *keep)
             }
+            verbatim_model::request::Question::Terminal(_) => panic!(
+                "Core asked the listener {:?}, which it reads no other way",
+                ask.request
+            ),
         };
         assert_eq!(listener, LISTENER.generation, "a token of another listener");
         let element = match self
@@ -1065,6 +1069,9 @@ impl CoreDriver {
         let outcome = match &ask.request {
             verbatim_model::request::Question::Batch(batch) => {
                 verbatim_listener::read_object((&self.uia, &readability), &element, nearest, batch)
+            }
+            verbatim_model::request::Question::Terminal(other) => {
+                panic!("the listener reads no {other:?}")
             }
         };
         self.calls += verbatim_win32::calls::take();

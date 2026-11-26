@@ -34,6 +34,7 @@ use verbatim_model::request::{FocusCaret, FocusCaretRead};
 use verbatim_model::{NodeId, Role, TextDetails, TextReply};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
+use verbatim_uia_rops::Path;
 
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{self, NodeTextCopy, Slot, TextError};
@@ -485,6 +486,17 @@ impl verbatim_ia2::text::TextResolve for EditFacts<'_, '_> {
     }
 }
 
+/// The reply a text read that failed answers.
+fn failed_reply(error: TextError) -> TextReply {
+    match error {
+        TextError::Gone => TextReply::Gone,
+        TextError::Failed(reason) => {
+            tracing::debug!(reason, "a text request was not answered");
+            TextReply::Unanswered
+        }
+    }
+}
+
 /// A run of a batch's fusable text steps on UI Automation node `node_id`
 /// through the program builder ([`text::fused::run`]), `first` being the
 /// place of its first step and `earlier` the outcomes of the steps before
@@ -677,6 +689,235 @@ pub(super) fn focus_caret(
             selected_text: selected.map(|selected| selected.text),
             baseline,
         })),
+    }
+}
+
+/// The range a start anchor Core named holds in `call`, `Err` with the reply
+/// a start no longer held answers: the anchor was forgotten with its
+/// window (Table 16, column E), so the terminal is not there.
+fn named_start(
+    call: &mut TextCall<UiaPos, RangeKey>,
+    start: verbatim_model::TextAnchor,
+) -> Result<windows::Win32::UI::Accessibility::IUIAutomationTextRange, TextReply> {
+    let pos = call.text().anchor_point(start).ok_or(TextReply::Gone)?;
+    pos.range_end()
+        .map(|(range, _)| range)
+        .map_err(failed_reply)
+}
+
+/// Reads terminal `node_id` as Core asks (`read`,
+/// `docs/design/readers-tell-core-asks-build3.md`, "The full read request
+/// and its starts"): from a screen above the start anchor Core names, with
+/// the caret and its line read in the same round trip and given as a caret
+/// report, the start anchor this read mints at the top of its screen, and,
+/// for a caret key's starting read, the key's caret starting point. Every
+/// fact the read needs that Core owns comes in `read`; the outpost keeps
+/// nothing of the terminal but the anchors it holds for Core.
+pub(super) fn terminal_read(
+    context: &RequestContext<'_>,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    read: &verbatim_model::TerminalRead,
+) -> TextReply {
+    let mut source = match uia_source(context, node_id, TextDetails::NONE) {
+        Ok(source) => source,
+        Err(reply) => return reply,
+    };
+    let named: Vec<u64> = read.start.map(|start| start.0).into_iter().collect();
+    let mut call = uia_call(context, node_id, &named);
+    let start = match read.start.map(|start| named_start(&mut call, start)) {
+        None => None,
+        Some(Ok(range)) => Some(range),
+        Some(Err(reply)) => return reply,
+    };
+    let remote = context.tries_remote(super::asked::known_nearest_of(context, node_id));
+    let caret = verbatim_uia_rops::CaretLineQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+
+        max_text: i32::try_from(crate::text::MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
+        since: None,
+    };
+    let ask = crate::terminal::ReadAsk {
+        start: start.as_ref(),
+        scope: read.scope,
+        height: read.height,
+        width: read.width,
+        colours: read.colours,
+    };
+    let answer = crate::terminal::read(
+        uia,
+        (source.element(), source.pattern()),
+        caret,
+        &ask,
+        remote,
+    );
+    let mut answer = match answer {
+        Ok(answer) => answer,
+        Err(TextError::Gone) => return TextReply::Gone,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's text could not be read");
+            return TextReply::Unanswered;
+        }
+    };
+    if let Path::Fallback(error) = &answer.path {
+        let window = super::asked::known_nearest_of(context, node_id);
+        super::remote_fell_back("terminal snapshot", window, error);
+        if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
+            context.read_classically(window);
+        }
+    }
+    let Some(next_start) = answer
+        .next_start
+        .take()
+        .and_then(|range| UiaPos::start_of(&range).ok())
+    else {
+        tracing::debug!("a terminal's read found no start");
+        return TextReply::Unanswered;
+    };
+    let minted = call.text().hold_point(next_start);
+    let point = match terminal_caret(&mut source, &mut call, &mut answer, read.starting) {
+        Ok(point) => point,
+        Err(reply) => return reply,
+    };
+    put_uia(context, node_id, call);
+    keep_support(context, node_id, &source);
+    TextReply::TerminalRead(Box::new(verbatim_model::TerminalReadReply {
+        snapshot: answer.snapshot,
+        start: minted,
+        started_us: answer.started_us,
+        point,
+    }))
+}
+
+/// The caret a terminal's full read found, given as its snapshot's caret
+/// report: a terminal raises no caret event for every character typed, so
+/// the read keeps Core's caret following typing. For a caret key's
+/// starting read, `starting` names the key's unit, and the key's caret
+/// starting point, which its watch's checks compare with (build 1, "A
+/// terminal's caret key"), is minted from that same caret, so the read
+/// stays one round trip; it is returned. A node gone answers its reply.
+fn terminal_caret(
+    source: &mut UiaText,
+    call: &mut TextCall<UiaPos, RangeKey>,
+    answer: &mut crate::terminal::ReadAnswer,
+    starting: Option<verbatim_model::TextUnit>,
+) -> Result<Option<verbatim_model::TextAnchor>, TextReply> {
+    let Some(found) = answer
+        .caret
+        .take()
+        .and_then(|found| source.caret_read_from(found).ok())
+    else {
+        return Ok(None);
+    };
+    if starting.is_none() {
+        answer.snapshot.caret = crate::text::caret_report_from(
+            source,
+            &mut call.text(),
+            found,
+            (answer.started_us, false),
+        )
+        .ok();
+        return Ok(None);
+    }
+    match text::held::starting_from(source, &mut call.text(), found, answer.started_us) {
+        Ok((caret, point)) => {
+            answer.snapshot.caret = Some(caret);
+            Ok(Some(point))
+        }
+        Err(TextError::Gone) => Err(TextReply::Gone),
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal key's starting point was not read");
+            Ok(None)
+        }
+    }
+}
+
+/// Reads the history of terminal `node_id` above the start anchor Core
+/// names, for a review command Core answers from its memory
+/// ([`verbatim_model::TextOp::TerminalHistory`]): from `above` rows above
+/// that start to the document's end, or the whole document when `whole`.
+pub(super) fn terminal_history(
+    context: &RequestContext<'_>,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    (start, above, whole, height): (verbatim_model::TextAnchor, u32, bool, u32),
+) -> TextReply {
+    let source = match uia_source(context, node_id, TextDetails::NONE) {
+        Ok(source) => source,
+        Err(reply) => return reply,
+    };
+    let mut call = uia_call(context, node_id, &[start.0]);
+    let start = match named_start(&mut call, start) {
+        Ok(range) => range,
+        Err(reply) => return reply,
+    };
+    let window = super::asked::known_nearest_of(context, node_id);
+    let remote = context.tries_remote(window);
+    match crate::terminal::history(
+        uia,
+        (source.element(), source.pattern()),
+        &start,
+        (above, whole, height, remote),
+    ) {
+        Ok(history) => {
+            if let Path::Fallback(error) = &history.path {
+                super::remote_fell_back("terminal history", window, error);
+            }
+            TextReply::TerminalHistory {
+                text: history.text,
+                above: history.above,
+            }
+        }
+        Err(TextError::Gone) => TextReply::Gone,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal's history could not be read");
+            TextReply::Unanswered
+        }
+    }
+}
+
+/// Searches terminal `node_id` for a command mark's line from the start
+/// anchor Core names, for Core's command
+/// ([`verbatim_model::TextOp::TerminalFind`]).
+pub(super) fn terminal_find(
+    context: &RequestContext<'_>,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    start: verbatim_model::TextAnchor,
+    (needle, from, rows): (&str, i32, u32),
+) -> TextReply {
+    let source = match uia_source(context, node_id, TextDetails::NONE) {
+        Ok(source) => source,
+        Err(reply) => return reply,
+    };
+    let mut call = uia_call(context, node_id, &[start.0]);
+    let start = match named_start(&mut call, start) {
+        Ok(range) => range,
+        Err(reply) => return reply,
+    };
+    let window = super::asked::known_nearest_of(context, node_id);
+    let remote = context.tries_remote(window);
+    match crate::terminal::find(
+        uia,
+        (source.element(), source.pattern()),
+        &start,
+        (needle, from, rows),
+        remote,
+    ) {
+        Ok(found) => {
+            if let Path::Fallback(error) = &found.path {
+                super::remote_fell_back("terminal find", window, error);
+            }
+            TextReply::TerminalFound {
+                matches: found.matches,
+            }
+        }
+        Err(TextError::Gone) => TextReply::Gone,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal could not be searched");
+            TextReply::Unanswered
+        }
     }
 }
 

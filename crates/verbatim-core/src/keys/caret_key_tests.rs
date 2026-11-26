@@ -181,7 +181,9 @@ struct Step {
 /// caret key's confirmation; "full if focused" for its test of the focused
 /// state before its full read; "full" otherwise.
 pub(crate) fn depth_of(question: &verbatim_model::request::Question) -> &'static str {
-    let verbatim_model::request::Question::Batch(batch) = question;
+    let verbatim_model::request::Question::Batch(batch) = question else {
+        return "not a batch";
+    };
     if crate::focus::msaa_run::is_confirmation(question) {
         "facts"
     } else if batch.steps.iter().any(|step| {
@@ -236,9 +238,12 @@ fn read_effect(step: &mut Step, effect: Effect) {
                     ASKED.with(|asked| asked.borrow_mut().insert(ask.number.0, batch.clone()));
                     step.text.push((ask.number.0, node, batch));
                 }
-                verbatim_model::request::Question::Batch(batch) => {
-                    step.other.push(crate::entries::tests::batch_kind(&batch));
-                }
+                other => step.other.push(match &other {
+                    verbatim_model::request::Question::Batch(batch) => {
+                        crate::entries::tests::batch_kind(batch)
+                    }
+                    verbatim_model::request::Question::Terminal(_) => "other",
+                }),
             }
         }
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => {
@@ -1783,8 +1788,8 @@ fn enter_marked_by_a_later_key_says_nothing_and_keeps_the_word() {
 }
 
 /// Enter held for a terminal, by a hook view behind the focus, is sent at
-/// once with no read, and passes to the terminal's reading at its pass,
-/// the carriage return it types there.
+/// once with no read, and the terminal's model takes it as Enter, the
+/// carriage return it types there.
 #[test]
 fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     let mut held = editing();
@@ -1792,7 +1797,7 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
         role: Role::Terminal,
         ..bound(&held)
     };
-    crate::terminal::live_for_tests(
+    crate::terminal::reading::modelled_for_tests(
         &mut held.state,
         terminal.node,
         crate::event_queue::RequestWindow::of_node(&terminal.window),
@@ -1804,7 +1809,10 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     );
     assert_eq!(sent.strokes, [vec![1]]);
     assert_eq!(sent.text, NO_REQUESTS);
-    assert_eq!(crate::terminal::passed_for_tests(&held.state), Some(1_000));
+    assert_eq!(
+        crate::terminal_model::pending_kinds_for_tests(&held.state, terminal.node),
+        [crate::terminal::TerminalKeyKind::Enter]
+    );
 }
 
 /// A key released by its 150 ms timer before its turn runs no script: a

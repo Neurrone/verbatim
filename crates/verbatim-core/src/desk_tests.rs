@@ -220,6 +220,7 @@ fn kind(request: &Question) -> &'static str {
             "Properties"
         }
         Question::Batch(batch) => crate::entries::tests::batch_kind(batch),
+        Question::Terminal(_) => "Text",
     }
 }
 
@@ -698,6 +699,7 @@ impl Desk {
                 {
                     crate::entries::tests::properties(values_of(navigator))
                 }
+                Question::Terminal(_) => Reply::Text(verbatim_model::TextReply::NoText),
                 other @ Question::Batch(_) => {
                     panic!("a review read these tests do not answer: {other:?}")
                 }

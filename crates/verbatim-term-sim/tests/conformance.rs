@@ -92,7 +92,7 @@ fn screen_to_document_end<'a>(text: &str, screen: &'a str) -> Option<&'a str> {
         .find(|within| text.ends_with(within) || within.ends_with(text))
 }
 
-/// The window read's assumption (Core's window read, which reads the two
+/// The assumption of a read of a terminal.s window (one that reads the two
 /// screens above the document's end): in every read of both terminals no
 /// document row lies below the screen, so the screen's top is at most one
 /// screen above the document's end and the window holds the whole screen.

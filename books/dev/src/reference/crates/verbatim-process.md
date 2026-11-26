@@ -268,11 +268,28 @@ Public API:
   Framing. Each message is one frame of `transport`, a `Content-Length`
   header and compact JSON, through `write_message` and `read_message`,
   for any type that implements `Message` (`put_frame` and `from_parts`):
-  the four direction enums, each a JSON body alone.
+  the four direction enums, the outpost's with the raw section below.
   `write_message` writes the whole frame in one `WriteFile`,
   `encode_message` gives the bytes, `put_message` appends them to a
-  sender's buffer, and `decode_message` parses a frame's `Parts`, and
-  refuses one with a raw section. `message_kind(body)` reads a frame's variant
+  sender's buffer, and `decode_message` parses a frame's `Parts`. An
+  answer that carries a terminal's text (an `Answer` whose reply is a
+  `TerminalRead`, `TerminalHistory`, or `TerminalFound`, its request
+  number in the JSON as any answer's) has a raw section (the private
+  `message::raw` module; `docs/design/communication.md`, section 4.2): each
+  text is UTF-8 there and a range in the JSON, `"raw":[start,length]` in a
+  `TerminalText` and `"text":[start,length]` for a history's or match's
+  text, and colour runs are 16-byte records of four little-endian `u32`s
+  (column, length, foreground, background), the JSON giving
+  `"colours":{"raw":[start,length],"rows":[...]}` with each row's run
+  count. The module converts while encoding, borrowing from the message,
+  and back while decoding, validating text with `simdutf8`; the model's
+  types know nothing of it. A range outside the section, invalid UTF-8,
+  records that do not fill their range, a section longer or shorter than
+  its ranges, or a section on any other message is a protocol error. For
+  example, a history whose text is `abc` has a header with
+  `Raw-Length: 0000000003`, a body whose outcome is
+  `{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
+  and then the bytes `abc`. `message_kind(body)` reads a frame's variant
   name from its first bytes without parsing the rest; the relay reads it
   on every outpost frame.
 - `arguments` — the launch arguments the supervisor gives its children,

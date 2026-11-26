@@ -353,7 +353,9 @@ pub(crate) async fn facts(
 /// Whether `question` reads a candidate's facts alone, a caret key's
 /// confirmation: a batch on an MSAA object with no full read.
 pub(crate) fn is_confirmation(question: &Question) -> bool {
-    let Question::Batch(batch) = question;
+    let Question::Batch(batch) = question else {
+        return false;
+    };
     matches!(
         batch.steps.first().and_then(|step| step.op.subject()),
         Some(On_::Msaa { .. })

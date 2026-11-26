@@ -215,18 +215,6 @@ pub fn expectation_path(stream: &str, flavor: Flavor) -> PathBuf {
         .join(format!("{stream}.{flavor}.json"))
 }
 
-/// What the real terminal `flavor` answered to the corpus's stream
-/// `stream`.
-///
-/// # Panics
-///
-/// When the expectation cannot be read.
-#[must_use]
-pub fn expectation(stream: &str, flavor: Flavor) -> Expectation {
-    let text = std::fs::read_to_string(expectation_path(stream, flavor)).expect("an expectation");
-    serde_json::from_str(&text).expect("an expectation's contents")
-}
-
 /// The corpus's streams, by name, in name order.
 ///
 /// # Panics

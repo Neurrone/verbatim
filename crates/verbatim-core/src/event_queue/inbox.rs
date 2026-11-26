@@ -501,8 +501,7 @@ impl<L: Logic> Core<L> {
             return;
         };
         let state = &mut shared.state;
-        let now_us = state.queue.now_us;
-        if let Some(entry) = L::recovered(&mut state.facts, &recovered, now_us) {
+        if let Some(entry) = L::recovered(&mut state.facts, &recovered) {
             join::<L>(state, entry);
         }
     }

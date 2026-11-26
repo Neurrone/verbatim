@@ -31,13 +31,14 @@ use verbatim_model::batch::{Op, Subject};
 use verbatim_model::request::{Answer, Ask, Cancel, Outcome, Question, RequestNumber};
 
 /// The window of the MSAA ids `request`'s subject is named by: a batch
-/// with a step on an MSAA object.
+/// with a step on an MSAA object. A terminal's text operation names none.
 fn ids_window(request: &Question) -> Option<WindowHandle> {
     match request {
         Question::Batch(batch) => batch.steps.iter().find_map(|step| match step.op.subject() {
             Some(Subject::Msaa { ids, .. }) => Some(ids.window),
             _ => None,
         }),
+        Question::Terminal(_) => None,
     }
 }
 
@@ -53,6 +54,7 @@ fn is_follow(request: &Question) -> bool {
                     .iter()
                     .all(|step| matches!(step.op, Op::Follow(_)))
         }
+        Question::Terminal(_) => false,
     }
 }
 

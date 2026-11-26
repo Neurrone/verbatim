@@ -496,6 +496,10 @@ pub mod core_driver;
 /// The real tree view of `tests/fixtures/tree_view.json`.
 pub mod tree_view;
 
+/// A read of a terminal's window composed of the request list's generic
+/// text steps, for the tests of those operations' executors.
+pub mod window_steps;
+
 /// mockapp's provider-side hit counters (`src/hits.rs`), compiled into the
 /// tests too, so both sides share one method list and one pair of message
 /// numbers.

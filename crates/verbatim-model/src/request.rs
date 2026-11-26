@@ -7,6 +7,8 @@
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
 //! features and the extension surface: a batch of operations from one
 //! closed list ([`crate::batch`]). A new command adds no kind of request.
+//! The terminal's three text operations are carried beside it until the
+//! terminal's rebuild converts them ([`Question::Terminal`]).
 
 use std::fmt;
 
@@ -14,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::{Batch, Malformed, Placement, StepOutcome};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
-use crate::{CaretReport, NodeId, Pid, TextAnchor, WindowHandle};
+use crate::{CaretReport, NodeId, Pid, TextAnchor, TextOp, TextReply, WindowHandle};
 
 /// A reader Core asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -71,11 +73,23 @@ pub struct Ask {
     pub request: Question,
 }
 
-/// What a request asks: a batch of the request list's operations.
+/// What a request asks: a batch, or one of the terminal's three text
+/// operations, which the terminal's rebuild converts to batches.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Question {
     /// A batch of operations.
     Batch(Batch),
+    /// A read, history read or search of a terminal's text.
+    Terminal(TerminalAsk),
+}
+
+/// One of the terminal's text operations on its node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalAsk {
+    /// The terminal's node.
+    pub node: NodeId,
+    /// What to read.
+    pub op: TextOp,
 }
 
 impl From<Batch> for Question {
@@ -85,13 +99,29 @@ impl From<Batch> for Question {
 }
 
 impl Question {
+    /// The terminal's operation it is, `None` for a batch.
+    #[must_use]
+    pub const fn terminal(&self) -> Option<&TerminalAsk> {
+        match self {
+            Self::Terminal(ask) => Some(ask),
+            Self::Batch(_) => None,
+        }
+    }
+
     /// Whether Core asks it from outside the event queue
-    /// ([`Placement::Outside`]), which a reader's worker makes after every
-    /// request of the queue's waiting with it.
+    /// ([`Placement::Outside`]): a batch placed there, or a terminal's
+    /// read for its output
+    /// (`docs/design/readers-tell-core-asks-build3.md`), which a reader's
+    /// worker makes after every request of the queue's waiting with it.
     #[must_use]
     pub fn outside_the_queue(&self) -> bool {
         match self {
             Self::Batch(batch) => batch.placement == Placement::Outside,
+            Self::Terminal(TerminalAsk {
+                op: TextOp::ReadTerminal(read),
+                ..
+            }) => read.output,
+            Self::Terminal(_) => false,
         }
     }
 }
@@ -456,6 +486,8 @@ pub struct FocusCaretRead {
 /// A result: the first of the five outcomes, by request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
+    /// A terminal's text operation's reply.
+    Text(TextReply),
     /// A batch's: one outcome per step, in order.
     Steps(Vec<StepOutcome>),
 }
@@ -519,6 +551,7 @@ impl Ask {
         }
         match &mut self.request {
             Question::Batch(batch) => batch.visit_nodes(&mut unstamp),
+            Question::Terminal(ask) => unstamp(&mut ask.node),
         }
     }
 }
@@ -893,6 +926,13 @@ pub enum QueueInput {
         /// already reached were reported as [`QueueInput::MarkReached`]
         /// first.
         marks: Vec<crate::SpeechMark>,
+    },
+    /// The focused terminal's quiet-period timer came due at `at_ms`, the
+    /// due time Core's state gives.
+    TerminalDue {
+        /// When it came due, in milliseconds on the clock every process of
+        /// a run shares.
+        at_ms: u64,
     },
     /// A lock key's state, read by the shell once the key's read was due
     /// and Windows had changed it.

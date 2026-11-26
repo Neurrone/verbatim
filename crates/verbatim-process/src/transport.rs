@@ -9,11 +9,12 @@
 //! A frame is a text header giving the body's length, as the Language
 //! Server Protocol's, then the body, a JSON message, and then, when the
 //! header names one, a raw section of bytes the message gives the places
-//! of: a synthesizer host's samples ([`Parts`]). The header is
-//! `Content-Length: ` and the body's length in ten decimal digits; for a
-//! frame with a raw section, a line break and `Raw-Length: ` with the raw
-//! section's length in ten digits; then a blank line (`\r\n\r\n`). A frame
-//! without a raw section has no `Raw-Length` line. The lengths have a fixed width so a frame can be encoded in
+//! of: a terminal's text and colours, or a synthesizer host's samples
+//! ([`Parts`]). The header is `Content-Length: ` and the body's length in
+//! ten decimal digits; for a frame with a raw section, a line break and
+//! `Raw-Length: ` with the raw section's length in ten digits; then a blank
+//! line (`\r\n\r\n`). A frame without a raw section has no `Raw-Length`
+//! line. The lengths have a fixed width so a frame can be encoded in
 //! place, its body and raw section after a header whose digits are filled
 //! in once their lengths are known; a reader takes any number of digits.
 //! A frame is written with one write and read whole: the reader takes the

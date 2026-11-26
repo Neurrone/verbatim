@@ -1,12 +1,16 @@
-//! A terminal's window read, the request list's generic steps
-//! (`verbatim_core::terminal_window`), against mockapp's UIA text provider,
+//! The request list's generic text steps (`Visible`, `Move`, `FindText`,
+//! `ReadColours`, and a whole or trimmed `ReadText` and `ReadRange`),
+//! composed as a read of a terminal's window by this suite's support
+//! (`common/window_steps.rs`), against mockapp's UIA text provider,
 //! whose `set-text` command rewrites the terminal's text as a terminal's
 //! buffer changes, every row padded to the width and ended by a carriage
 //! return and line feed, and whose `screen` command puts only the text's
 //! last rows on screen. Each read runs through a real outpost with remote
 //! operations on and one with them off, which must answer alike, the
-//! remote read one program and the colours one more, and the window Core
-//! makes of the outcomes is pinned whole.
+//! remote read one program and the colours one more, and the window made
+//! of the outcomes is pinned whole. No product code reads a terminal this
+//! way until the terminal is redesigned (Dickson, 2026-11-26); the test
+//! keeps the executors' arms of these operations covered.
 //!
 //! What is checked: a first read from the screen's top; a read after
 //! output, from two screens above the document's end, giving for each end
@@ -26,10 +30,10 @@ mod harness;
 
 use common::outpost::OutpostUnderTest;
 
-use verbatim_core::batch::Builder;
-use verbatim_core::terminal_window::{
+use common::window_steps::{
     CurrentMark, EndMark, MarkPlace, MarkSearch, TerminalWindow, WindowAsk, add_steps, window_of,
 };
+use verbatim_core::batch::Builder;
 use verbatim_model::batch::{Done, Op, Placement, Step, StepOutcome, Subject};
 use verbatim_model::request::{Outcome, Question, Reply, WindowVerdict};
 use verbatim_model::{NodeId, TerminalColourRun, TerminalText, TextAnchor, TextDetails};
@@ -199,7 +203,9 @@ impl Terminal {
         };
         let mut steps = Builder::<WindowSteps>::named();
         add_steps(&mut steps, *node, &ask);
-        let Question::Batch(batch) = steps.finish().question();
+        let Question::Batch(batch) = steps.finish().question() else {
+            unreachable!("a builder's batch")
+        };
         let (answer, calls) = outpost.batch(self.hwnd, WindowVerdict::Uia, batch);
         // By remote operations, a read with no search is one program, and
         // the colours one more: no step fell back to calls.
@@ -272,7 +278,7 @@ impl Fields {
             found: window.found,
             colours: window.colours.clone(),
             caret: window.caret.as_ref().map(|caret| {
-                let line = &caret.report.line;
+                let line = &caret.line;
                 (
                     line.text.clone(),
                     usize::try_from(line.offset).expect("an offset"),

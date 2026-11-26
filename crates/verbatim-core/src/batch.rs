@@ -1367,7 +1367,9 @@ impl<B> Answers<B> {
     /// of its step's kind; `None` for any other reply, a malformed answer.
     #[must_use]
     pub fn parse(sent: &Sent<B>, reply: Reply) -> Option<Self> {
-        let Reply::Steps(outcomes) = reply;
+        let Reply::Steps(outcomes) = reply else {
+            return None;
+        };
         let fits = outcomes.len() == sent.batch.steps.len()
             && sent
                 .batch

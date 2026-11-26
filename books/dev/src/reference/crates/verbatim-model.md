@@ -309,7 +309,7 @@ tell, Core asks", which the protocol below carries.
   starts at a `Point`, one Core names or `Point::Of` an earlier caret or
   chunk start. Each step answers a `StepOutcome`: `Done` with its kind's
   result (`Done`: today's `NodeRead`, `FocusRead` and `SentenceMoved`
-  among them, a terminal's `TerminalWindow`, and `Tested`, `Ancestry`, `Descended`, `CaretAt`, `Chunks`,
+  among them, and `Tested`, `Ancestry`, `Descended`, `CaretAt`, `Chunks`,
   `RangeText`, `SelectionCompared`, `Selected`, `Located`, `Waited`),
   `Refused` (`StepRefusal`), `NotThere` (`Missing`), `Failed` or
   `Skipped`. `parse` turns a batch as it arrives into a `Parsed` one for
@@ -336,7 +336,9 @@ tell, Core asks", which the protocol below carries.
 - `request`: the shared request list's envelope. `Ask` is a request as
   Core sends it, numbered (`RequestNumber`) and naming its window,
   asking a `Question`: a `Batch`, answered `Reply::Steps`, one outcome
-  per step, and refused `Refusal::Malformed` when it does not parse. The
+  per step, and refused `Refusal::Malformed` when it does not parse; or
+  one of a terminal's three text operations (`Question::Terminal`, a
+  `TerminalAsk` of its node and `TextOp`), answered `Reply::Text`. The
   focus reads are batches: a `FocusRead` of an MSAA candidate, the
   application's focus or a `Route`, the outpost's own copy of an element
   the listener read, which carries the route's steps, where its walk
@@ -603,7 +605,8 @@ control plane's event stream; no reader sends them.
 A text request is a batch of the request list's text operations,
 which Core's event queue sends to the node's outpost
 (`QueueEffect::Send`); its answer reaches Core as `QueueInput::Answer`
-carrying one outcome per step. The operations:
+carrying one outcome per step. A terminal's three reads are its own
+`TextOp`s, answered with a `TextReply`. The operations:
 
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
@@ -630,8 +633,9 @@ carrying one outcome per step. The operations:
   selects, two equal points moving the caret, and a `Caret` after it holds
   the next baseline; `Locate` a point's place on the screen, with its
   offset and the text's length in text measured by character offsets.
-- A terminal's reads are the list's generic text operations
-  (`verbatim_core::terminal_window`): `Visible`, the first visible range,
+- The generic text operations added for a terminal, which the
+  terminal's redesign will read by and only tests send until then
+  (Dickson, 2026-11-26): `Visible`, the first visible range,
   its ends held, whether it starts at the text's start, and its text
   trimmed; `Move`, a point moved by units from the point itself, its
   start and landing held, refused (`StepRefusal::OutsideText`) for a held
@@ -643,17 +647,38 @@ carrying one outcome per step. The operations:
   its start, by calls, at most `MAX_FIND_MATCHES` matches over at most
   `MAX_FIND_CALLS` calls, each with its units to the text's end and its
   text (`FoundText`); and `ReadColours`, the one operation for terminals
-  alone, each row's colour runs (`TerminalColourRun`) of the screen an
-  earlier `Visible` read, each row as wide as an earlier `ReadText`'s
-  first line and the screen as many rows as `screen_rows` counts at that
-  width, so a read after a resize reads the new screen (Claude,
-  2026-11-22), since the terminals answer a stretch whose last cell
-  differs as one colour (Dickson, 2026-11-22).
+  alone, each row's colour runs (`TerminalColourRun`) from a point, for
+  the rows of the screen a `Visible` step read, as wide as the line at its top, since the terminals answer
+  a stretch whose last cell differs as one colour (Dickson, 2026-11-22).
+- `ReadTerminal(TerminalRead)`: a full read of the focused terminal from a
+  screen above the start anchor Core names (`None` for a first read) to the
+  document's end, answered `TerminalRead(TerminalReadReply)`: the
+  `TerminalSnapshot` with the screen, the caret and its line, the start
+  anchor the read minted at the top of its screen for a later read to name,
+  when the read began (`started_us`, on the shared clock, so a change
+  observed before it is covered by it), and the caret starting point when
+  `starting` named a unit. The request carries every fact Core owns that the
+  read uses: the scope (`Fresh`, `Whole`, or `HistoryBlock { height }`), the
+  screen's `height` and `width`, whether to take the screen's `colours`,
+  whether the window is a console host's (`console`), and whether it is an
+  output read (`output`), which Core asks outside the event queue
+  (`docs/design/readers-tell-core-asks-build3.md`).
+- `TerminalHistory { above, whole, start, height }`: the text from `above`
+  rows above the start anchor Core names to the document's end, or the whole
+  document, answered `TerminalHistory { text, above }`.
+- `TerminalFind { needle, from, rows, start }`: a command mark's line sought
+  by its first row's text outward from `from` rows above the start anchor,
+  at most 20 matches, `rows` rows read from each, answered
+  `TerminalFound { matches }` with a `TerminalMatch` for each.
 
-A batch's text step answers its refusals and failures as its own outcome
-(`StepOutcome`). `TextReply` is why a node's text could not be opened
-(`NoText`, `Gone`, `Unanswered`), which the outpost and the MSAA text
-arms turn into a step's outcome.
+A terminal's three reads can also be answered `NoText` (no text
+interface), `Gone` (the node no longer exists) or `Unanswered` (no answer
+in time, or the read failed). These three are the `TextFailure`s
+(`TextReply::into_failure`), which Core decodes beside the operation's
+own reply, so no answer of them fails to decode. A batch's text step
+answers its refusals and failures as its own outcome (`StepOutcome`).
+The same three say why a node's text could not be opened, which the
+outpost and the MSAA text arms turn into a step's outcome.
 
 ### Inputs from the shell
 

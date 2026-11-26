@@ -114,6 +114,7 @@ impl Request for HoldRead {
                 ] => Some(read.values.clone()),
                 _ => None,
             },
+            Reply::Text(_) => None,
         }
     }
 }
@@ -186,7 +187,7 @@ impl Logic for Limited {
         None
     }
 
-    fn recovered(_: &mut Option<i32>, _: &RequestWindow, _: u64) -> Option<Entry> {
+    fn recovered(_: &mut Option<i32>, _: &RequestWindow) -> Option<Entry> {
         None
     }
 

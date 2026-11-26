@@ -1962,6 +1962,7 @@ pub fn candidate_outcome(
         Outcome::Result(Reply::Steps(steps)) => {
             FocusOutcome::Result(candidate_reply(batch, (kind, depth), &steps))
         }
+        Outcome::Result(other) => panic!("a batch answered {other:?}"),
         Outcome::Refused(verbatim_model::request::Refusal::ReadThroughUia) => {
             FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
                 facts: CandidateFacts::Skipped,
@@ -2059,6 +2060,7 @@ pub fn focus_outcome(batch: &verbatim_model::batch::Batch, outcome: Outcome) -> 
     use verbatim_model::batch::{Done, StepOutcome};
     let steps = match outcome {
         Outcome::Result(Reply::Steps(steps)) => steps,
+        Outcome::Result(other) => panic!("a batch answered {other:?}"),
         Outcome::Refused(refusal) => return FocusOutcome::Refused(refusal),
         Outcome::NotThere => return FocusOutcome::NotThere,
         Outcome::NotResponding => return FocusOutcome::NotResponding,

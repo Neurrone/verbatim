@@ -8,10 +8,10 @@
 //! entry.
 
 use verbatim_model::batch::{CaretWait, EffectTest, Op, OpKind, StepRefusal, Waited};
-use verbatim_model::request::{CancelReason, CaretBinding, Question};
+use verbatim_model::request::{CancelReason, CaretBinding, Question, TerminalAsk};
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReport, KeySeq, NodeId, SentenceMoved, TextAnchor, TextChunk,
-    TextDetails, TextMovement, TextProvider, TextUnit, TraceId, UtteranceSegment,
+    TextDetails, TextMovement, TextOp, TextProvider, TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::batch::Got;
@@ -127,7 +127,13 @@ fn first_is(question: &Question, kind: OpKind) -> bool {
 /// `request`: its starting read, once its stroke went by its 150 ms
 /// release or was dropped at a switch away from the user's desktop.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
-    let starting = first_is(request, OpKind::Caret) || first_is(request, OpKind::Visible);
+    let starting = match request {
+        Question::Terminal(TerminalAsk { op, .. }) => match op {
+            TextOp::ReadTerminal(read) => read.starting.is_some(),
+            _ => false,
+        },
+        question @ Question::Batch(_) => first_is(question, OpKind::Caret),
+    };
     starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
 
@@ -207,11 +213,6 @@ impl CaretStage {
             question if first_is(question, OpKind::Caret) => Some(Self::Starting {
                 deletes_back: press.key.motion.deletes_back(),
             }),
-            // A terminal's starting read, the window's, whose first step is
-            // the visible range, keeps nothing to say what a key deleted.
-            question if first_is(question, OpKind::Visible) => Some(Self::Starting {
-                deletes_back: false,
-            }),
             question if first_is(question, OpKind::MoveBySentence) => Some(Self::Sentence),
             _ => None,
         }
@@ -233,10 +234,67 @@ impl CaretStage {
     }
 }
 
+/// The stage of a caret key in a terminal, derived from its request as
+/// [`CaretStage`] is, with a stage table of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalStage {
+    /// Its starting read, the terminal's full read, is out.
+    Starting,
+    /// Its watch is out, looking for its effect until `bound_at_us`.
+    Watching {
+        /// The watch's bound.
+        bound_at_us: u64,
+    },
+    /// It asks an unconfirmed focus's facts.
+    Confirming,
+    /// Its final read is out, after the bound.
+    Final,
+}
+
+impl TerminalStage {
+    /// The stage `request` puts a terminal's key in.
+    fn of(request: &Question) -> Option<Self> {
+        if let Some(bound_at_us) = wait_bound(request) {
+            return Some(Self::Watching { bound_at_us });
+        }
+        match request {
+            Question::Terminal(TerminalAsk { op, .. }) => match op {
+                TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
+                TextOp::ReadTerminal(_) => Some(Self::Final),
+                _ => None,
+            },
+            question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
+            Question::Batch(_) => None,
+        }
+    }
+
+    /// Whether `arrival` withdraws the request of this stage: one arm per
+    /// cell of the terminal path's stage table. The final read comes after
+    /// the bound, so an unconfirmed focus never withdraws it.
+    #[expect(
+        clippy::match_same_arms,
+        reason = "one arm per cell of the stage table, as the design asks"
+    )]
+    fn withdrawn_by(self, arrival: Arrival) -> bool {
+        match self {
+            Self::Starting => arrival.counts(),
+            Self::Watching { bound_at_us } => {
+                arrival == Arrival::Key
+                    || arrival.counts()
+                    || arrival.unconfirmed_before(bound_at_us)
+            }
+            Self::Confirming => arrival == Arrival::Key || arrival.counts(),
+            Self::Final => arrival == Arrival::Key || arrival.counts(),
+        }
+    }
+}
+
 /// When the bound of `request`'s wait passes, when its first step is a
 /// caret wait.
 fn wait_bound(request: &Question) -> Option<u64> {
-    let Question::Batch(batch) = request;
+    let Question::Batch(batch) = request else {
+        return None;
+    };
     match &batch.steps.first()?.op {
         Op::WaitForCaret { wait, .. } => {
             Some(wait.passed_at_us.saturating_add(u64::from(wait.bound_us)))
@@ -245,12 +303,23 @@ fn wait_bound(request: &Question) -> Option<u64> {
     }
 }
 
+/// Whether `press` takes the terminal's path: it is bound to a grid, a
+/// terminal. The key picks its path once, at its turn, by the same test.
+fn terminal_path(press: &CaretPress) -> bool {
+    press
+        .bound
+        .as_ref()
+        .is_some_and(|bound| editing::is_grid(bound.role))
+}
+
 /// Whether `arrival`, joining behind the front caret key `front`,
-/// withdraws `request`, by the stage table both paths share: a terminal's
-/// starting read is its window read, and its final read follows its wait
-/// in the wait's request.
+/// withdraws `request`, by the stage table of the key's path.
 pub(crate) fn withdrawn_by(front: &CaretPress, request: &Question, arrival: Arrival) -> bool {
-    CaretStage::of(front, request).is_some_and(|stage| stage.withdrawn_by(arrival))
+    if terminal_path(front) {
+        TerminalStage::of(request).is_some_and(|stage| stage.withdrawn_by(arrival))
+    } else {
+        CaretStage::of(front, request).is_some_and(|stage| stage.withdrawn_by(arrival))
+    }
 }
 
 /// How a confirmation ended.
@@ -445,9 +514,9 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
                     .pressed_at_us
                     .saturating_add(crate::keys::strokes::RELEASE_AFTER_US)
                     .min(cx.now_us());
-                crate::terminal::key_passed(
+                crate::keys::terminal::passed(
                     &mut cx.facts_mut(),
-                    (crate::terminal::caret_key_kind(press.key), None),
+                    crate::terminal::caret_key_kind(press.key),
                     released_at_us,
                     press.trace_id,
                 );
@@ -590,22 +659,23 @@ async fn marked_end(
 }
 
 /// A terminal's caret key at its turn
-/// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): its
-/// starting read is the window's, a key's read of the watch's whose caret
-/// is the key's starting point; the key passes into the terminal's
-/// reading; then the wait looks for its effect with no event shortcut, its
-/// request ending with the final window read. The key says nothing itself:
-/// each read's speech joins the queue as the watch's.
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): its starting read is the terminal's full
+/// read, which mints the caret starting point; the key passes, its model
+/// takes it, and the watch looks for its effect with no event shortcut;
+/// then the final read, another full read, whose answer the model takes.
+/// The key says nothing itself: the reading rules speak each read, the
+/// terminal's speech waiting in the queue ahead of the first focus first
+/// (build 3, "Answers and speech").
 async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) -> Reached {
     if marked(cx, press) || counts_behind(cx) {
         return terminal_pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
-    let terminal = (binding.node, window_of(binding));
-    let Some(started) = crate::terminal::key_read(
+    let Some(started) = terminal_read(
         cx,
-        terminal,
-        (press.trace_id, crate::terminal::ReadSpeech::Joins),
+        press,
+        binding.node,
+        Some(press.key.motion.unit()),
         due_us,
     )
     .await
@@ -619,22 +689,21 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
     if marked(cx, press) {
         return Reached::Sent;
     }
-    // The starting point is the read's; a read that brought none leaves
-    // the key's effect to the change it tells.
-    let Some(caret) = started.caret else {
+    // The starting point is the read's; a read that minted none, a
+    // reader's fault, leaves the key's effect to the change it tells.
+    let Some((point, caret)) = started else {
         return Reached::Sent;
     };
-    let console = crate::terminal::focused(&cx.facts())
+    let console = crate::terminal::reading::focused(&cx.facts())
         .is_some_and(|terminal| terminal.node == binding.node && terminal.console);
     let motion = press.key.motion;
     // A terminal's starting read reads no word: the wait compares its
     // line, as the word read there.
-    let line = caret.report.line;
     let wait = CaretWait {
-        from: caret.point,
-        word: motion.compares_unit().then(|| line.text.clone()),
-        offset: line.offset,
-        line: line.text,
+        from: point,
+        word: motion.compares_unit().then(|| caret.line.text.clone()),
+        line: caret.line.text,
+        offset: caret.line.offset,
         effect: effect_test(motion),
         passed_at_us,
         poll_us: if console { CONSOLE_POLL_US } else { POLL_US },
@@ -642,26 +711,38 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
         events: false,
     };
     let bound_at_us = passed_at_us.saturating_add(u64::from(wait.bound_us));
-    // As the edit path judges after its pass: a counting focus silences
-    // the key, an unconfirmed one is confirmed, and with neither the wait
-    // runs for the rest of the bound.
+    // As the edit path judges after its pass, with the terminal's own
+    // stages: a counting focus silences the key, an unconfirmed one is
+    // confirmed, and with neither the watch runs for the rest of the bound.
     loop {
         let withdrawn = match pending_behind_front(cx, Within::key(bound_at_us)) {
             Pending::Counts => return Reached::Sent,
             Pending::Unconfirmed(trace) => {
-                match confirm(cx, trace, Some((binding.node, wait.from)), due_us).await {
+                match confirm(cx, trace, Some((binding.node, point)), due_us).await {
                     Confirmed::Judged => false,
                     Confirmed::Withdrawn => true,
                     Confirmed::Stopped => return Reached::Sent,
                 }
             }
             Pending::No => {
-                let times = (press.trace_id, due_us);
-                match crate::terminal::key_wait(cx, terminal, wait.clone(), times).await {
-                    crate::terminal::KeyWait::Done | crate::terminal::KeyWait::Ended => {
-                        return Reached::Sent;
+                // The wait alone: the terminal's full read follows it.
+                let mut watch = cx.batch(|| ());
+                let waited = watch.wait_for_caret(binding.node, wait.clone());
+                let request = watch
+                    .finish()
+                    .of(Reader::Outpost(binding.window.process), window_of(binding));
+                match cx.ask(request, due_us).await {
+                    Outcome::Result(answers) if matches!(answers.get(waited), Got::Done(_)) => {
+                        break;
                     }
-                    crate::terminal::KeyWait::Withdrawn => true,
+                    Outcome::NoLongerAwaited(CancelReason::Withdrawn) => true,
+                    // A wait that failed ended as one refused.
+                    Outcome::Result(_)
+                    | Outcome::Refused(_)
+                    | Outcome::NotThere
+                    | Outcome::NotResponding
+                    | Outcome::ReaderEnded
+                    | Outcome::NoLongerAwaited(_) => return Reached::Sent,
                 }
             }
         };
@@ -669,18 +750,63 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
             return Reached::Sent;
         }
     }
+    let _ = terminal_read(cx, press, binding.node, None, due_us).await;
+    Reached::Sent
+}
+
+/// A terminal key's full read of `node`, its starting read when `starting`
+/// names the key's unit: the model takes its answer, and the terminal's
+/// waiting speech, then the read's own, is said. `None` when it brought no
+/// read; else the caret starting point it minted, if any, with the caret
+/// it was minted from.
+async fn terminal_read(
+    cx: &mut Cx<Entries>,
+    press: &CaretPress,
+    node: NodeId,
+    starting: Option<verbatim_model::TextUnit>,
+    due_us: u64,
+) -> Option<Option<(TextAnchor, CaretReport)>> {
+    let now_us = cx.now_us();
+    let asked = crate::terminal::reading::entry_read(&mut cx.facts_mut(), node, starting, now_us)?;
+    let reply = match cx.ask(asked, due_us).await {
+        // A read that fails, the terminal's text unread included, brings
+        // nothing.
+        Outcome::Result(Ok(reply)) => Some(reply),
+        Outcome::Result(Err(_))
+        | Outcome::Refused(_)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::ReaderEnded
+        | Outcome::NoLongerAwaited(_) => None,
+    };
+    if let Some(reply) = reply.as_deref() {
+        cx.emit(crate::terminal::reading::observed(
+            &asked.terminal,
+            reply,
+            press.trace_id,
+        ));
+    }
+    let now_us = cx.now_us();
+    let entry = crate::terminal::reading::entry_read_ended(
+        &mut cx.facts_mut(),
+        &asked,
+        reply.as_deref(),
+        (now_us, press.trace_id),
+    );
+    crate::terminal::reading::speak_read(cx, entry);
+    reply.map(|reply| reply.point.zip(reply.snapshot.caret.clone()))
 }
 
 /// A terminal's held key passes: its stroke is sent, and the focused
-/// terminal's reading takes it at its pass; a dropped stroke is neither.
+/// terminal's model takes it at its pass; a dropped stroke is neither.
 fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     let unsent = press.held && cx.facts().strokes.status(press.key_seq) == StrokeStatus::Unsent;
     let reached = pass(cx, press);
-    if unsent && reached == Reached::Sent {
+    if unsent {
         let now_us = cx.now_us();
-        crate::terminal::key_passed(
+        crate::keys::terminal::passed(
             &mut cx.facts_mut(),
-            (crate::terminal::caret_key_kind(press.key), None),
+            crate::terminal::caret_key_kind(press.key),
             now_us,
             press.trace_id,
         );
@@ -1162,8 +1288,7 @@ impl CaretPress {
     fn terminal_bound(&self, state: &SrState) -> bool {
         self.bound.as_ref().is_some_and(|bound| {
             editing::is_grid(bound.role)
-                && crate::terminal::focused(state)
-                    .is_some_and(|terminal| terminal.node == bound.node)
+                && crate::terminal::reading::modelled(state) == Some(bound.node)
         })
     }
 }

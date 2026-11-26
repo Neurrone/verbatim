@@ -759,6 +759,7 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
     // outpost's.
     let object = match &ask.request {
         Question::Batch(batch) => asked::batch_object(batch),
+        Question::Terminal(_) => None,
     };
     let Some(object) = object else {
         answer(Outcome::Refused(Refusal::Unsupported));

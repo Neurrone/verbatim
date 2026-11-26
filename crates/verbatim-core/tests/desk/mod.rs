@@ -231,7 +231,10 @@ pub fn focus_heard(
 /// reads, a candidate's read, a read of the current focus, the listener's
 /// read of a kept element, the outpost's read of a route.
 pub fn kind(request: &Question) -> &'static str {
-    let Question::Batch(batch) = request;
+    let batch = match request {
+        Question::Terminal(_) => return "Text",
+        Question::Batch(batch) => batch,
+    };
     // A caret key's or a caret tell's batch: its first step a text
     // operation.
     if matches!(
@@ -543,7 +546,7 @@ pub fn listener_read_meeting(
                     _ => None,
                 })
             }
-            Question::Batch(_) => None,
+            _ => None,
         })
         .unwrap_or_else(|| panic!("{met:?} among the stops of walk {asked}"));
     let Found::Walked(element, ancestors, _) = listener_read(app, number) else {
@@ -556,7 +559,9 @@ pub fn listener_read_meeting(
 /// The route and the ancestors Core knows of the outpost's read of a route
 /// that `question` asks, if it asks one.
 pub fn completion_of(question: &Question) -> Option<(Route, Vec<KnownAncestor>)> {
-    let Question::Batch(batch) = question;
+    let Question::Batch(batch) = question else {
+        return None;
+    };
     batch.steps.iter().find_map(|step| match &step.op {
         Op::FocusRead {
             subject: Subject::Route(route),
@@ -742,7 +747,7 @@ impl Desk {
             .iter()
             .find_map(|(asked, _, question)| match question {
                 Question::Batch(batch) if *asked == number => Some(batch.clone()),
-                Question::Batch(_) => None,
+                _ => None,
             })
             .unwrap_or_else(|| panic!("request {number} is a batch asked"));
         self.answer(from, number, readers::outcome(&batch, found))
@@ -873,60 +878,12 @@ impl Desk {
     }
 }
 
-/// What Core names to the window read `batch` holds, read back from its
-/// steps: a move up from the text's end twice the height, the moves from
-/// the marks, and the search and the colours when asked.
-pub fn window_ask_of(
-    batch: &verbatim_model::batch::Batch,
-) -> Option<verbatim_core::terminal_window::WindowAsk> {
-    use verbatim_core::terminal_window::{CurrentMark, EndMark, WindowAsk};
-    use verbatim_model::TextPoint;
-    use verbatim_model::batch::{Point, PointOf};
-    let ops: Vec<&Op> = batch.steps.iter().map(|step| &step.op).collect();
-    if !matches!(ops.first(), Some(Op::Visible { .. })) {
-        return None;
-    }
-    // The window's move up from the read's end, where the move from the
-    // screen's top landed, when the height is known.
-    let height = match ops.get(3) {
-        Some(Op::Move {
-            at: Point::Of(_, PointOf::Moved),
-            movement,
-            ..
-        }) if movement.count < 0 => movement.count.unsigned_abs() / 2,
-        _ => 0,
-    };
-    let mut marks = ops.iter().filter_map(|op| match op {
-        Op::Move {
-            at: Point::At(TextPoint::At(position)),
-            ..
-        } => Some(EndMark {
-            anchor: position.anchor,
-            line: String::new(),
-            line_above: 0,
-            rows: 0,
-            row: String::new(),
-        }),
-        _ => None,
-    });
-    let end = marks.next();
-    let aside = marks.next();
-    let find = ops.iter().any(|op| matches!(op, Op::FindText { .. }));
-    Some(WindowAsk {
-        end: end.map(|mark| CurrentMark { mark, find }),
-        aside,
-        height,
-        opening: 0,
-        colours: ops.iter().any(|op| matches!(op, Op::ReadColours { .. })),
-    })
-}
-
-/// The window read Core asked for last, by its request's number.
-pub fn window_ask(desk: &Desk) -> Option<(u64, verbatim_core::terminal_window::WindowAsk)> {
-    desk.sent
-        .iter()
-        .rev()
-        .find_map(|(number, _, question)| match question {
-            Question::Batch(batch) => window_ask_of(batch).map(|ask| (*number, ask)),
-        })
+/// `question` as a terminal's text operation: these tests state the
+/// terminal's requests, and a batch fails them.
+pub fn terminal(
+    question: &verbatim_model::request::Question,
+) -> &verbatim_model::request::TerminalAsk {
+    question
+        .terminal()
+        .expect("a terminal's text operation, where a batch was asked")
 }

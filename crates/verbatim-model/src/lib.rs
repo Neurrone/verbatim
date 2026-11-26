@@ -88,14 +88,17 @@ pub use speech::{
     SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
     UtteranceSource,
 };
-pub use terminal::{TerminalColourRun, TerminalSnapshot, TerminalText, screen_rows};
+pub use terminal::{
+    TerminalColourRun, TerminalMatch, TerminalScope, TerminalSnapshot, TerminalText, screen_rows,
+};
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReport, CaretSelection, Compared, EditSelection,
     FocusText, FormatAttribute, FormatRun, FormatSet, HeldAnchors, LanguageRun, LineStyle,
     MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT,
     MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange, SelectionDifference, SentenceMoved,
-    TextAnchor, TextAttributes, TextChunk, TextDetails, TextMovement, TextPoint, TextPosition,
-    TextProvider, TextReply, TextUnit, had_effect,
+    TerminalRead, TerminalReadReply, TextAnchor, TextAttributes, TextChunk, TextDetails,
+    TextFailure, TextMovement, TextOp, TextPoint, TextPosition, TextProvider, TextReply, TextUnit,
+    had_effect,
 };
 pub use theme::{
     DEFAULT_GAIN, Indication, IndicationCategory, IndicationSetting, MAX_GAIN, Presentation,

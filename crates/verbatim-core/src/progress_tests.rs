@@ -58,6 +58,9 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
                     ask.number.0,
                     crate::entries::tests::batch_kind(batch)
                 ),
+                verbatim_model::request::Question::Terminal(other) => {
+                    format!("send {:?} {} {other:?}", to.reader, ask.number.0)
+                }
             }),
             Effect::PlayEarcon(earcon) => Some(format!("{earcon:?}")),
             Effect::Speak(utterance, _) => Some(

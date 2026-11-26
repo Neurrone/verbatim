@@ -1,8 +1,8 @@
 //! A terminal's reads (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"):
-//! Core reads a focused terminal by the request list's steps and judges
-//! each read; the text a read answers ([`TerminalText`]) and a row's
-//! colours ([`TerminalColourRun`]) are the model's, and what Core read is
-//! reported to the end-to-end suite as a [`TerminalSnapshot`].
+//! the outpost reads a focused terminal and sends each read to Core as a
+//! [`TerminalSnapshot`], and Core's terminal model aligns it and applies
+//! the reading rules; Core asks for the reads it needs
+//! ([`TerminalScope`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -153,14 +153,45 @@ pub struct TerminalColourRun {
     pub background: u32,
 }
 
+/// A row a terminal's search found ([`crate::TextReply::TerminalFound`]):
+/// where it is, in rows above where the next read starts (negative below
+/// it), and the text read from it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalMatch {
+    /// Rows above the start.
+    pub above: i32,
+    /// The text of the rows read from it, padding and line breaks as the
+    /// terminal gave them.
+    pub text: String,
+}
+
+/// Which read Core asks a terminal's outpost for at once
+/// ([`crate::TextOp::TerminalReadNow`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalScope {
+    /// A read as any other, whatever the on-demand state, before a review
+    /// command, which Core answers from its memory once the read is
+    /// aligned.
+    Fresh,
+    /// The whole document, from its start, which the reading rules ask
+    /// for after a lost read ("A lost read").
+    Whole,
+    /// A first read again, counted up from the document's end by `height`
+    /// rows with as many rows above, so that it holds its history block
+    /// ("The read").
+    HistoryBlock {
+        /// The screen's height the first read found.
+        height: u32,
+    },
+}
+
 /// How many rows a terminal's screen fills at `width` cells a row, its
 /// lines' lengths with their padding and without their line breaks in
 /// `lines`, `ends_with_break` when its text ends with a line break: each
 /// line as many rows as its length takes, at least one, and the empty line
 /// after a last line break no row, while a blank last row, empty once its
-/// padding is trimmed, is one. Core counts the screen of a window read so,
-/// and an executor the rows of a [`crate::batch::Op::ReadColours`], so the
-/// two agree on every screen.
+/// padding is trimmed, is one. An executor counts the rows of a
+/// [`crate::batch::Op::ReadColours`] so.
 #[must_use]
 pub fn screen_rows(lines: impl IntoIterator<Item = u32>, ends_with_break: bool, width: u32) -> u32 {
     if width == 0 {

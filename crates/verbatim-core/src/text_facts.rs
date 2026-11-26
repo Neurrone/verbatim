@@ -5,8 +5,8 @@
 //! facts").
 
 use serde::{Deserialize, Serialize};
-use verbatim_model::request::{FocusCaret, Question};
-use verbatim_model::{EditSelection, NodeId, OutpostId, TextAnchor, TextProvider};
+use verbatim_model::request::{FocusCaret, Question, TerminalAsk};
+use verbatim_model::{EditSelection, NodeId, OutpostId, TextAnchor, TextOp, TextProvider};
 
 use crate::focus::versions::{Focus, Kept, ReadBy};
 use crate::state::SrState;
@@ -175,7 +175,20 @@ pub(crate) fn held(state: &SrState) -> Option<(NodeId, TextAnchor)> {
 pub(crate) fn named_by(request: &Question) -> Vec<(NodeId, Vec<TextAnchor>)> {
     match request {
         Question::Batch(batch) => batch.anchors(),
+        Question::Terminal(ask) => vec![terminal_named_by(ask)],
     }
+}
+
+/// The terminal's node a terminal's text operation is about, and every
+/// text anchor it names.
+fn terminal_named_by(ask: &TerminalAsk) -> (NodeId, Vec<TextAnchor>) {
+    let anchors = match &ask.op {
+        TextOp::ReadTerminal(read) => read.start.into_iter().collect(),
+        TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
+            vec![*start]
+        }
+    };
+    (ask.node, anchors)
 }
 
 #[cfg(test)]

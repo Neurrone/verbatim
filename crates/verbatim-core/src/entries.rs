@@ -147,7 +147,7 @@ pub(crate) enum Entry {
     Announcement(Box<crate::announcements::Announcement>),
     /// A full read's speech, spoken at its turn
     /// (`docs/design/readers-tell-core-asks-build3.md`, Table 3).
-    TerminalSpeech(Box<crate::terminal::SpeechEntry>),
+    TerminalSpeech(Box<crate::terminal::reading::SpeechEntry>),
 }
 
 impl fmt::Debug for Entry {
@@ -600,7 +600,7 @@ impl Logic for Entries {
             }
             Entry::TerminalSpeech(speech) => Box::pin(async move {
                 let mut cx = cx;
-                crate::terminal::speech_turn(&mut cx, *speech);
+                crate::terminal::reading::speech_turn(&mut cx, *speech);
             }),
             Entry::ForegroundMarker {
                 window, root_owner, ..
@@ -652,9 +652,11 @@ impl Logic for Entries {
         }
         if let Entry::Press(press) = entry {
             facts.arrivals.key_joined(press.press.key_seq);
-            // A key reaching the focused terminal is passed to its reading
-            // as it reaches the inbox, a held caret key's at its pass.
-            crate::terminal::key_arrived(facts, press);
+            // A key reaching the focused terminal is taken by its model as
+            // it reaches the inbox, a held caret key's at its pass
+            // (`docs/design/readers-tell-core-asks-build3.md`, "Keys and
+            // ordering").
+            crate::keys::terminal::arrived(facts, press);
             // A held key's stroke joins the stroke line as its report
             // arrives, in the hook's order.
             if let PressAction::CaretKey {
@@ -701,7 +703,6 @@ impl Logic for Entries {
             .strokes
             .next_release()
             .into_iter()
-            .chain(crate::terminal::due(facts))
             .chain(crate::input_desktop::due(facts))
             .chain(crate::desktop::due(facts))
             .min()
@@ -714,19 +715,17 @@ impl Logic for Entries {
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         said.extend(facts.strokes.release_due(now_us).map(Said::Queue));
+        crate::keys::terminal::released(facts, now_us / 1_000);
         said.extend(crate::desktop::tick(facts, now_us));
-        let trace = facts.queue_trace.0;
         crate::input_desktop::tick(facts, now_us, foreground.map(|front| front.window()))
             .map(|read| Entry::CurrentFocus(Box::new(read)))
             .into_iter()
-            .chain(crate::terminal::tick(facts, now_us, trace))
             .collect()
     }
 
-    fn recovered(facts: &mut SrState, window: &RequestWindow, now_us: u64) -> Option<Entry> {
-        // A recovery only marks the watch dirty; the read it wants is sent
-        // as the queue settles, and nothing it says can be due.
-        crate::terminal::recovered(facts, window, now_us);
+    fn recovered(facts: &mut SrState, window: &RequestWindow) -> Option<Entry> {
+        let now_us = facts.terminal_focus.now_us;
+        crate::terminal::reading::recovered(facts, window, now_us);
         Some(Entry::CurrentFocus(Box::new(
             crate::focus::retake::recovered(facts, window),
         )))
@@ -748,7 +747,7 @@ impl Logic for Entries {
             return Vec::new();
         }
         let trace = facts.queue_trace.0;
-        crate::terminal::facts_answered(facts, token, outcome, (now_us, trace, said))
+        crate::terminal::reading::answered(facts, token, outcome, (now_us, trace), said)
     }
 
     fn started(facts: &SrState, foreground: &Foreground) -> Option<Entry> {
@@ -766,8 +765,9 @@ impl Logic for Entries {
         if let crate::event_queue::Reader::Outpost(process) = instance.reader {
             let outpost = instance.outpost_id();
             facts.follows.outpost_ended(process, outpost);
-            // The places of the generation's terminals go with it.
-            crate::terminal::outpost_ended(facts, outpost);
+            // The focused terminal and the models of the generation's
+            // terminals go with it (Table 1, column I).
+            crate::terminal::reading::outpost_ended(facts, outpost);
             // Say-all's positions are anchors of the outpost's, which end
             // with it: say-all stops, its read withdrawn.
             said.extend(crate::say_all::outpost_ended(facts, outpost));
@@ -1140,6 +1140,7 @@ pub(crate) fn route(
     (trace_id, at_us): (TraceId, u64),
     input: &QueueInput,
 ) -> Routed {
+    state.terminal_focus.now_us = at_us;
     let input = match input {
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::DesktopSwitch => {
             let Payload::DesktopSwitch { input_desktop_open } = tell.payload else {
@@ -1166,13 +1167,10 @@ pub(crate) fn route(
         // (`docs/design/readers-tell-core-asks-build3.md`, "Core's inbox:
         // the change tell"): its read is sent as the queue settles.
         QueueInput::Tell { tell, .. } if tell.kind == EventKind::TerminalChanged => {
-            let EventObject::Terminal { node, .. } = tell.object else {
-                // A terminal's change without its terminal is the
-                // outpost's fault.
-                return Routed::Said(Vec::new());
-            };
-            crate::terminal::told(state, node, at_us);
-            return Routed::Said(run_input(state, runtime, (trace_id, at_us), Input::Settle));
+            if let EventObject::Terminal { node, .. } = tell.object {
+                crate::terminal::reading::told(state, node, tell.at_us, at_us);
+            }
+            Input::Settle
         }
         QueueInput::Tell { from, tell } => match Entry::of_tell(
             *from,
@@ -1278,8 +1276,8 @@ pub(crate) fn route(
             // past the cut, a terminal drops what waits, and say-all stops,
             // as NVDA's stops on any key.
             state.arrivals.speech_cut(*key);
-            crate::terminal::cut(state, at_us);
-            let mut said = crate::say_all::stop(state);
+            let mut said = crate::terminal::cut(state, at_us / 1_000);
+            said.extend(crate::say_all::stop(state));
             // A say-all stopped with its read out withdraws it.
             said.extend(settle(state, runtime, trace_id));
             return Routed::Said(said);
@@ -1293,6 +1291,12 @@ pub(crate) fn route(
         QueueInput::UtteranceFailed { marks } => {
             return Routed::AtOnce(Box::new(verbatim_model::Input::UtteranceFailed {
                 marks: marks.clone(),
+            }));
+        }
+        QueueInput::TerminalDue { at_ms } => {
+            return Routed::AtOnce(Box::new(verbatim_model::Input::TerminalTimer {
+                trace_id,
+                at_ms: *at_ms,
             }));
         }
         QueueInput::LockKeyRead { key, on } => {

@@ -197,6 +197,7 @@ fn values_of(reply: Reply) -> Option<PropertyValues> {
             }
             _ => None,
         },
+        Reply::Text(_) => None,
     }
 }
 
@@ -312,7 +313,7 @@ impl Logic for Test {
         }
     }
 
-    fn recovered(_: &mut u32, window: &RequestWindow, _: u64) -> Option<Entry> {
+    fn recovered(_: &mut u32, window: &RequestWindow) -> Option<Entry> {
         Some(Entry::Recovered(window.handle))
     }
 
@@ -1706,7 +1707,7 @@ impl Logic for Probing {
         }
     }
 
-    fn recovered((): &mut (), _: &RequestWindow, _: u64) -> Option<Withdraws> {
+    fn recovered((): &mut (), _: &RequestWindow) -> Option<Withdraws> {
         None
     }
 

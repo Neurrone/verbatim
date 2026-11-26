@@ -1360,7 +1360,7 @@ remains, in order:
   feed into a carriage return and line feed, but `verbatim-term-sim` moves
   down a row without returning, so a script writing LF replays wrongly;
   `a_flood_above_a_footer_past_the_console_hosts_history_says_more_than_it_holds`
-  (once in Core's flood tests, removed with the row model) wrote CRLF to work
+  (`crates/verbatim-core/tests/terminal_floods.rs`) writes CRLF to work
   around it. Confirm the console host's behaviour with a conformance
   recording before changing the simulator.
 - A program silent on a key that then prints output and redraws a status

@@ -25,10 +25,7 @@
 //! - `conhost_editing_44344991044.jsonl`: `conhost_editing`'s dump in
 //!   GitHub run 44344991044 to its 47th input, at commit 6cfc7f4e, each
 //!   of its two foreground reports one input as Core takes them, where the console raised its terminal's focus again before
-//!   Core handled the first, and Verbatim said "terminal" twice. Its two
-//!   answers to the terminal's window read, replies of a request the
-//!   terminal no longer makes, are each the read's failed step, as Core
-//!   took them.
+//!   Core handled the first, and Verbatim said "terminal" twice.
 //! - `measure_focus_text_box_uia_focuses.jsonl`: the listener's start and
 //!   its 46 UI Automation focus tells of `measure_focus_text_box`'s dump of
 //!   2026-11-18, at commit ce3305a1: two Windows Forms text boxes, each
@@ -224,6 +221,7 @@ fn replay(name: &str) -> Replayed {
                                 _ => None,
                             }
                         }
+                        verbatim_model::request::Question::Terminal(_) => None,
                     };
                     if let Some((token, keep)) = kept {
                         listener.pending.push((

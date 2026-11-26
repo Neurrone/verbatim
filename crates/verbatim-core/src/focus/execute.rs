@@ -423,7 +423,7 @@ pub(crate) fn execute(
         return Executed::default();
     };
     // A reused runtime id: the element the node held before is gone, so
-    // Core forgets the node's caret and its terminal's places, and the
+    // Core forgets the node's caret and its terminal's model, and the
     // focus's text is taken afresh, as a new object's is (build 1's
     // design, "The outpost in this build").
     if read.runtime_id_reused {
@@ -431,7 +431,7 @@ pub(crate) fn execute(
         if state.focus_caret(node).is_some() {
             state.forget_caret();
         }
-        crate::terminal::forget(state, node);
+        state.drop_models(|model| model.node == node);
     }
     // With the readers' last focus emptied by a foreground change to an
     // unrelated window, the committed focus was left: the new focus is
@@ -460,7 +460,7 @@ pub(crate) fn execute(
     if !matches!(read.caret, FocusCaret::Read(_)) {
         state.forget_caret();
     }
-    crate::terminal::committed(state, terminal, follows);
+    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
     Executed {
         said,
         committed: true,
@@ -517,13 +517,13 @@ impl Executed {
 
 /// What committing `ready` starts (Table 10, columns A and B): the
 /// focused terminal, when it is one, and every `Follow` of the commit, which
-/// [`crate::terminal::committed`] wants in order once the
+/// [`crate::terminal::reading::committed`] wants in order once the
 /// committed focus is written, a terminal's baseline after its `Follow`.
 fn commit(
     state: &mut SrState,
     ready: &Ready,
 ) -> (
-    Option<crate::terminal::Terminal>,
+    Option<crate::terminal::reading::Terminal>,
     Vec<(RequestWindow, Option<verbatim_model::request::Followed>)>,
 ) {
     let (kept, node) = (&ready.kept, &ready.report.node);
@@ -533,7 +533,12 @@ fn commit(
         .committed(Some((kept, node, parent)), kept.console_terminal);
     let terminal = matches!(kept.read_by, ReadBy::Uia { .. })
         .then(|| {
-            crate::terminal::terminal_of(node.role, node.id, kept.asked, kept.console_terminal)
+            crate::terminal::reading::terminal_of(
+                node.role,
+                node.id,
+                kept.asked,
+                kept.console_terminal,
+            )
         })
         .flatten();
     let follows = follows
@@ -602,7 +607,7 @@ pub(crate) fn retake(
         fence: origin.fence,
     };
     crate::reduce::take_silently(state, &ready.report, new);
-    crate::terminal::committed(state, terminal, follows);
+    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
     Executed {
         said: Vec::new(),
         committed: true,

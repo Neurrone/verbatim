@@ -14,7 +14,7 @@ pub use responder::Responder;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NodeDetails, NodeId, OutpostId, Pid, Role, StateSet, TreeNode};
+use crate::{NodeDetails, NodeId, OutpostId, Pid, Role, StateSet, TextReply, TreeNode};
 /// When an event reached each point on its way through the listener and
 /// the outpost: microseconds since the Unix epoch, 0 for a point it did not
 /// pass.
@@ -517,6 +517,43 @@ impl Named {
         let (nodes, anchors) = answer.named();
         self.nodes.extend(nodes);
         self.anchors.extend(anchors);
+        if let crate::request::Outcome::Result(crate::request::Reply::Text(reply)) = &answer.outcome
+        {
+            self.text_reply(reply);
+        }
+    }
+
+    fn chunk(&mut self, chunk: &crate::TextChunk) {
+        self.anchors.push(chunk.start);
+    }
+
+    fn caret(&mut self, caret: &crate::CaretReport) {
+        self.chunk(&caret.line);
+        if let Some(selection) = &caret.selection {
+            self.selection(selection);
+        }
+    }
+
+    fn selection(&mut self, selection: &crate::CaretSelection) {
+        self.anchors.push(selection.range.start.anchor);
+        self.anchors.push(selection.range.end.anchor);
+    }
+
+    fn text_reply(&mut self, reply: &TextReply) {
+        match reply {
+            TextReply::TerminalRead(read) => {
+                self.anchors.push(read.start);
+                self.anchors.extend(read.point);
+                if let Some(caret) = &read.snapshot.caret {
+                    self.caret(caret);
+                }
+            }
+            TextReply::TerminalHistory { .. }
+            | TextReply::TerminalFound { .. }
+            | TextReply::NoText
+            | TextReply::Gone
+            | TextReply::Unanswered => {}
+        }
     }
 }
 

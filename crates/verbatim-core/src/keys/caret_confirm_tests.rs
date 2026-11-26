@@ -15,7 +15,7 @@ use super::*;
 use crate::entries::tests::msaa_tell;
 use crate::event_queue::Reader;
 use crate::focus::validity::Pending;
-use crate::keys::caret_key::{Arrival, CaretPress, CaretStage};
+use crate::keys::caret_key::{Arrival, CaretPress, CaretStage, TerminalStage};
 use crate::readers::Found;
 
 const KEY: Arrival = Arrival::Key;
@@ -83,67 +83,42 @@ fn every_cell_of_the_edit_paths_stage_table() {
     }
 }
 
-/// A terminal's caret key runs on the edit path's table: its starting
-/// read, the window's, is a starting read that keeps nothing to say what
-/// Backspace deleted, and its final read rides in its wait's request, so
-/// the request is a watch.
+/// The terminal path's table: its final read comes after the bound, so an
+/// unconfirmed focus never withdraws it.
 #[test]
-fn a_terminals_reads_take_the_edit_paths_stages() {
-    let held = editing();
-    let press = CaretPress {
-        trace_id: TraceId::from_raw(71),
-        key_seq: KeySeq::new(1),
-        pressed_at_us: 1_000,
-        key: caret(CaretMotion::Backspace),
-        held: true,
-        bound: Some(bound(&held)),
+fn every_cell_of_the_terminal_paths_stage_table() {
+    let watching = TerminalStage::Watching {
+        bound_at_us: 300_000,
     };
-    let node = verbatim_model::NodeId::new(1);
-    let read = BatchStep {
-        op: Op::Visible {
-            subject: Subject::Node(node),
-        },
-        when: None,
-    };
-    let batch = |steps: Vec<BatchStep>| {
-        verbatim_model::request::Question::Batch(Batch {
-            steps,
-            placement: Placement::Queue,
-            spare: None,
-        })
-    };
-    assert_eq!(
-        CaretStage::of(&press, &batch(vec![read.clone()])),
-        Some(CaretStage::Starting {
-            deletes_back: false
-        })
-    );
-    let wait = BatchStep {
-        op: Op::WaitForCaret {
-            subject: Subject::Node(node),
-            wait: Box::new(verbatim_model::batch::CaretWait {
-                from: verbatim_model::TextAnchor(3),
-                word: None,
-                line: String::new(),
-                offset: 0,
-                effect: verbatim_model::batch::EffectTest {
-                    unit: false,
-                    line: true,
-                },
-                passed_at_us: 2_000,
-                poll_us: 10_000,
-                bound_us: 300_000,
-                events: false,
-            }),
-        },
-        when: None,
-    };
-    assert_eq!(
-        CaretStage::of(&press, &batch(vec![wait, read])),
-        Some(CaretStage::Watching {
-            bound_at_us: 302_000
-        })
-    );
+    for (stage, arrival, withdrawn) in [
+        (TerminalStage::Starting, KEY, false),
+        (TerminalStage::Starting, counts(), true),
+        (TerminalStage::Starting, unconfirmed(50_000), false),
+        (TerminalStage::Starting, not_pending(), false),
+        (TerminalStage::Starting, OTHER, false),
+        (watching, KEY, true),
+        (watching, counts(), true),
+        (watching, unconfirmed(299_999), true),
+        (watching, unconfirmed(300_000), false),
+        (watching, not_pending(), false),
+        (watching, OTHER, false),
+        (TerminalStage::Confirming, KEY, true),
+        (TerminalStage::Confirming, counts(), true),
+        (TerminalStage::Confirming, unconfirmed(50_000), false),
+        (TerminalStage::Confirming, not_pending(), false),
+        (TerminalStage::Confirming, OTHER, false),
+        (TerminalStage::Final, KEY, true),
+        (TerminalStage::Final, counts(), true),
+        (TerminalStage::Final, unconfirmed(50_000), false),
+        (TerminalStage::Final, not_pending(), false),
+        (TerminalStage::Final, OTHER, false),
+    ] {
+        assert_eq!(
+            stage.withdrawn_by(arrival),
+            withdrawn,
+            "{stage:?} {arrival:?}"
+        );
+    }
 }
 
 /// The stage is read from the request out: a confirmation is an MSAA

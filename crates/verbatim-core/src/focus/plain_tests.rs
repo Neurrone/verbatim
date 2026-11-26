@@ -531,6 +531,22 @@ fn the_plain_reader_answers_each_operation_as_a_plain_window() {
         ])))
     );
     assert_eq!(
+        answer(verbatim_model::request::Question::Terminal(
+            verbatim_model::request::TerminalAsk {
+                node,
+                op: verbatim_model::TextOp::TerminalHistory {
+                    above: 0,
+                    whole: true,
+                    start: verbatim_model::TextAnchor(1),
+                    height: 1,
+                },
+            }
+        )),
+        Some(WireOutcome::Result(Reply::Text(
+            verbatim_model::TextReply::NoText
+        )))
+    );
+    assert_eq!(
         answer(plain_batch(vec![Op::Activate {
             subject: Subject::Node(NodeId::in_outpost(OutpostId(3), 1)),
         }])),

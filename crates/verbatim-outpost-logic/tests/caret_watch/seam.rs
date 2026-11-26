@@ -515,7 +515,7 @@ impl Seam {
                 0
             }
             Question::Batch(batch) if !batch.reads_focus_first() => self.focus_us.1,
-            Question::Batch(_) => 0,
+            _ => 0,
         }
     }
 
@@ -523,7 +523,9 @@ impl Seam {
     fn end(&mut self, program: Running, app: &App) -> Vec<Seen> {
         match program {
             Running::Listener(ask) => {
-                let Question::Batch(batch) = &ask.request;
+                let Question::Batch(batch) = &ask.request else {
+                    panic!("the listener reads a batch: {ask:?}");
+                };
                 let answer = Answer {
                     number: ask.number,
                     outcome: readers::outcome(batch, &listener_read()),
@@ -623,24 +625,26 @@ impl Seam {
             self.points.insert(point.0, app.clone());
             return Reply::Steps(self.reads(batch, (0, point), &[], app));
         }
-        let Question::Batch(batch) = &ask.request;
-        let full = batch
-            .steps
-            .iter()
-            .any(|step| matches!(step.op, verbatim_model::batch::Op::FocusRead { .. }));
-        let found = if batch.reads_focus_first() {
-            Found::Read(self.field_read(app))
-        } else if full {
-            Found::Read(button_read(self.kind))
-        } else {
-            // Its facts alone, a confirmation: the button, really focused,
-            // has the focused state.
-            Found::Focused
-        };
-        let Outcome::Result(reply) = readers::outcome(batch, &found) else {
-            unreachable!("the stand-in finds every object");
-        };
-        reply
+        if let Question::Batch(batch) = &ask.request {
+            let full = batch
+                .steps
+                .iter()
+                .any(|step| matches!(step.op, verbatim_model::batch::Op::FocusRead { .. }));
+            let found = if batch.reads_focus_first() {
+                Found::Read(self.field_read(app))
+            } else if full {
+                Found::Read(button_read(self.kind))
+            } else {
+                // Its facts alone, a confirmation: the button, really
+                // focused, has the focused state.
+                Found::Focused
+            };
+            let Outcome::Result(reply) = readers::outcome(batch, &found) else {
+                unreachable!("the stand-in finds every object");
+            };
+            return reply;
+        }
+        panic!("the stand-in answers no request {:?}", ask.request)
     }
 
     /// What wait `program`'s check answers, read from `app`: `None` for a

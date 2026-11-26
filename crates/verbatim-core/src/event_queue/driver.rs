@@ -330,19 +330,9 @@ impl<E, F> Queue<E, F> {
         L::ends(facts, (&front.entry, live), cause, at).map(|reason| (number, reason))
     }
 
-    /// The time of the last input handled. Inside a step the facts' queue
-    /// is an empty stand-in that reads 0, the driver holding the queue: a
-    /// step takes its time from the driver ([`Cx::now_us`]) or from what
-    /// its [`super::Logic`] hook is given.
+    /// The time of the last input handled.
     pub(crate) fn now_us(&self) -> u64 {
         self.now_us
-    }
-
-    /// Sets the time of the last input handled, as a test's input at
-    /// `at_us` would.
-    #[cfg(test)]
-    pub(crate) fn set_now_for_tests(&mut self, at_us: u64) {
-        self.now_us = at_us;
     }
 
     /// Every request waiting or out, as sent: the ids each names stay held
@@ -359,11 +349,6 @@ impl<E, F> Queue<E, F> {
     /// The listener generation the owner thread last reported started.
     pub(crate) fn listener(&self) -> Option<u64> {
         self.record.listener
-    }
-
-    /// The items waiting behind the front, in arrival order.
-    pub(crate) fn waiting_items(&self) -> &VecDeque<Item<E>> {
-        &self.waiting
     }
 
     /// The front entry and every entry waiting behind it, a run's
@@ -962,6 +947,51 @@ impl<L: Logic> Cx<L> {
                 Item::One(entry) if pick(&entry) => taken.push(entry),
                 other => kept.push_back(other),
             }
+        }
+        *waiting = kept;
+        taken
+    }
+
+    /// Takes out of the queue the waiting single entries `pick` chooses
+    /// ahead of the first focus-kind entry, in their order: a focus, a run
+    /// or the menu slot's entry ends the search.
+    pub(crate) fn take_waiting_before(
+        &mut self,
+        pick: impl Fn(&L::Entry) -> bool,
+    ) -> Vec<L::Entry> {
+        let mut shared = self.shared.borrow_mut();
+        let state = &mut shared.state;
+        let facts = &state.facts;
+        let waiting = &mut state.queue.waiting;
+        let mut taken = Vec::new();
+        let mut kept = VecDeque::with_capacity(waiting.len());
+        let mut searching = true;
+        for item in waiting.drain(..) {
+            if searching {
+                let focus_kind = match &item {
+                    Item::One(entry) => match L::place(facts, entry) {
+                        super::Place::Other { focus_kind, .. } => focus_kind,
+                        super::Place::Msaa { class, .. } => matches!(
+                            class,
+                            super::MsaaClass::Focus
+                                | super::MsaaClass::Foreground
+                                | super::MsaaClass::Menu
+                        ),
+                    },
+                    Item::Run(_) | Item::Menu { .. } => true,
+                };
+                if focus_kind {
+                    searching = false;
+                } else if let Item::One(entry) = &item
+                    && pick(entry)
+                {
+                    if let Item::One(entry) = item {
+                        taken.push(entry);
+                    }
+                    continue;
+                }
+            }
+            kept.push_back(item);
         }
         *waiting = kept;
         taken

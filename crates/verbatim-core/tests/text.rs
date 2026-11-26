@@ -9,6 +9,7 @@
 mod desk;
 #[path = "support/readers.rs"]
 mod readers;
+mod terminal_support;
 
 use desk::{App, Desk, ONE};
 use readers::Found;
@@ -31,7 +32,6 @@ use verbatim_model::{
 #[path = "support/caret_batches.rs"]
 mod caret_batches;
 use caret_batches::Facts;
-mod terminal_support;
 #[path = "support/text_batches.rs"]
 mod text_batches;
 use verbatim_model::batch::{Located, StepRefusal};
@@ -208,7 +208,7 @@ fn heard_of(effect: Effect) -> Option<Heard> {
             {
                 Heard::Asked(of_any(batch))
             }
-            other @ verbatim_model::request::Question::Batch(_) => Heard::Sent(desk::kind(other)),
+            other => Heard::Sent(desk::kind(other)),
         }),
         Effect::Queue(QueueEffect::SendStrokes(sent)) => Some(Heard::Strokes(sent.len())),
         Effect::Queue(QueueEffect::Cancel { .. }) => Some(Heard::Cancelled),
@@ -3391,6 +3391,99 @@ fn speech_is_stamped_with_the_number_of_the_key_on_whose_behalf_it_is_spoken() {
     assert_eq!(text.stamps, [Some(KeySeq::new(2))]);
 }
 
+/// A console host's terminal, 20 cells wide and 4 rows high, showing
+/// `text`, its caret then placed by `caret`, an escape sequence, as Core
+/// reads it through its terminal model (`terminal_support`).
+fn terminal(text: &str, caret: &str) -> terminal_support::Session {
+    let mut outpost =
+        terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 20, 4, 100);
+    outpost.sim.write(text.as_bytes());
+    outpost.sim.write(caret.as_bytes());
+    terminal_support::Session::with(outpost)
+}
+
+/// Review command `command`, its first press, as the terminal session
+/// takes it.
+fn terminal_command(command: ReviewCommand) -> terminal_support::Key {
+    terminal_support::Key {
+        trace_id: TraceId::from_raw(1),
+        at_ms: 0,
+        action: PressAction::Command { command, repeat: 0 },
+    }
+}
+
+/// Heard in a terminal with no key: each utterance's words.
+fn terminal_heard(words: &[&str]) -> Vec<terminal_support::Said> {
+    words
+        .iter()
+        .map(|words| terminal_support::said(None, words))
+        .collect()
+}
+
+/// A terminal row's line ends at its last character: padding is never
+/// reviewed (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), so moving on
+/// from the last character is at the edge, padded or not.
+#[test]
+fn a_terminal_rows_line_ends_at_its_last_character() {
+    for row in ["ab", "ab        "] {
+        // The caret on "b".
+        let mut session = terminal(row, "\x1b[1;2H");
+        session.press(&terminal_command(ReviewCommand::ReviewNextCharacter));
+        assert_eq!(
+            session.heard(),
+            terminal_heard(&["Message(Right) b"]),
+            "{row:?}"
+        );
+    }
+}
+
+/// In a terminal, bottom reads the review cursor's row again, as every
+/// review command there does (`books/dev/src/explanation/design/terminal-model.md`, "The
+/// review cursor"), then the text's last row.
+#[test]
+fn review_bottom_in_a_terminal_reads_the_last_row() {
+    let mut session = terminal("$ ls\r\ndone", "\x1b[1;3H");
+    session.press(&terminal_command(ReviewCommand::ReviewBottom));
+    assert_eq!(session.heard(), terminal_heard(&["done"]));
+}
+
+/// In a terminal, start of line reads the review cursor's row again first
+/// (`books/dev/src/explanation/design/terminal-model.md`, "The review cursor"), then says the
+/// row's first cell.
+#[test]
+fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
+    let mut session = terminal("ab cd", "\x1b[1;4H");
+    session.press(&terminal_command(ReviewCommand::ReviewStartOfLine));
+    assert_eq!(session.heard(), terminal_heard(&["a"]));
+}
+
+#[test]
+fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
+    // Its echo comes from the reading rules, once the terminal shows it
+    // (`tests/terminal_reading.rs`); typing alone says nothing, nor does a
+    // change that shows nothing new.
+    let mut session = terminal("$ ", "");
+    let typed = |text: &str| terminal_support::Key {
+        trace_id: TraceId::from_raw(8),
+        at_ms: 0,
+        action: PressAction::Typed {
+            text: text.to_owned(),
+        },
+    };
+    session.press(&typed("l"));
+    session.live(10);
+    assert_eq!(session.heard(), []);
+
+    // With terminal passwords spoken, typing is echoed at once.
+    session.input(&Input::Settings(ReaderSettings {
+        speak_terminal_passwords: true,
+        ..ReaderSettings::default()
+    }));
+    session.press(&typed("x"));
+    // Echoed by the key's own entry, whose speech carries its number.
+    assert_eq!(session.heard(), [terminal_support::said(None, "x")]);
+}
+
 /// One part of a say-all utterance: an index mark, or text.
 #[derive(Clone, Debug, PartialEq)]
 enum Said {
@@ -3973,6 +4066,29 @@ fn a_nameless_whole_window_focus_reports_formatting_afresh() {
     );
 }
 
+/// A terminal keeps the review cursor's cell column: moving down to a
+/// shorter row and back finds the same cell, and a cell past the row's
+/// text is read as blank.
+#[test]
+fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
+    // The caret on "d" at cell 3 of a padded row. The simulated terminal
+    // gives every character one cell, so the column is kept by cell here
+    // as for a wide character's two.
+    let mut session = terminal("abcdef    \r\nxy", "\x1b[1;4H");
+    session.press(&terminal_command(ReviewCommand::ReviewNextCharacter));
+    session.press(&terminal_command(ReviewCommand::ReviewNextLine));
+    // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
+    session.press(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
+    assert_eq!(
+        session.heard(),
+        terminal_heard(&["e", "xy", "Message(Blank)"])
+    );
+    session.press(&terminal_command(ReviewCommand::ReviewPreviousLine));
+    assert_eq!(session.heard(), terminal_heard(&["abcdef"]));
+    session.press(&terminal_command(ReviewCommand::ReviewCurrentCharacter));
+    assert_eq!(session.heard(), terminal_heard(&["e"]));
+}
+
 /// A system caret event in a hung edit control holding attention: the
 /// listener tells it, as NVDA tests no caret event for a hang
 /// (`verbatim_listener_logic::tell::hang_tested`), and its read is refused
@@ -4029,105 +4145,4 @@ fn a_caret_event_in_a_hung_window_holding_attention_plays_the_sound() {
         })
         .collect();
     assert_eq!(earcons, [verbatim_model::Earcon::AppNotResponding]);
-}
-
-/// A console host's terminal, 20 cells wide and 4 rows high, showing
-/// `text`, its caret then placed by `caret`, an escape sequence, focused and
-/// read through Core's window reads, each step answered as the simulated
-/// terminal's provider answers it (`terminal_support`).
-fn terminal(text: &str, caret: &str) -> terminal_support::Session {
-    terminal_support::Session::new(
-        verbatim_term_sim::Flavor::ConsoleHost,
-        (20, 4, 100),
-        &format!("{text}{caret}"),
-    )
-}
-
-/// A terminal row's line ends at its last character: padding is never
-/// reviewed (`books/dev/src/explanation/design/terminal-model.md`,
-/// "Features and settings"), so moving on from the last character is at
-/// the edge, padded or not.
-#[test]
-fn a_terminal_rows_line_ends_at_its_last_character() {
-    for row in ["ab", "ab        "] {
-        // The caret on "b".
-        let mut session = terminal(row, "\x1b[1;2H");
-        session.command(ReviewCommand::ReviewNextCharacter, 0);
-        assert_eq!(
-            session.heard(),
-            terminal_support::plain(&["Message(Right) b"]),
-            "{row:?}"
-        );
-    }
-}
-
-/// In a terminal, bottom reads the window first, as every review command
-/// there does (`books/dev/src/explanation/design/terminal-model.md`, "The
-/// review cursor"), then the review cursor's row, here the caret's, then
-/// the text's last row.
-#[test]
-fn review_bottom_in_a_terminal_reads_the_last_row() {
-    let mut session = terminal("$ ls\r\ndone", "\x1b[1;3H");
-    session.command(ReviewCommand::ReviewBottom, 0);
-    assert_eq!(session.heard(), terminal_support::plain(&["done"]));
-    assert_eq!(
-        session.requests(),
-        [
-            terminal_support::Asked::Window,
-            terminal_support::Asked::Lines,
-            terminal_support::Asked::Lines
-        ]
-    );
-}
-
-/// In a terminal, start of line reads the review cursor's row first, then
-/// says the row's first cell.
-#[test]
-fn start_of_line_in_a_terminal_says_the_rows_first_cell() {
-    let mut session = terminal("ab cd", "\x1b[1;4H");
-    session.command(ReviewCommand::ReviewStartOfLine, 0);
-    assert_eq!(session.heard(), terminal_support::plain(&["a"]));
-}
-
-#[test]
-fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
-    // Its echo comes from the reading rules, once the terminal shows it
-    // (`tests/terminal_reading.rs`); typing alone says nothing, nor does a
-    // change that shows nothing new.
-    let mut session = terminal("$ ", "");
-    session.typed("l", 1000, TraceId::from_raw(8));
-    session.told(1010);
-    assert_eq!(session.heard(), []);
-
-    // With terminal passwords spoken, typing is echoed at once, by the
-    // key's own entry.
-    session.settings(ReaderSettings {
-        speak_terminal_passwords: true,
-        ..ReaderSettings::default()
-    });
-    session.typed("x", 2000, TraceId::from_raw(8));
-    assert_eq!(session.heard(), [terminal_support::said(None, "x")]);
-}
-
-/// A terminal keeps the review cursor's cell column: moving down to a
-/// shorter row and back finds the same cell, and a cell past the row's
-/// text is read as blank.
-#[test]
-fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
-    // The caret on "d" at cell 3 of a padded row. The simulated terminal
-    // gives every character one cell, so the column is kept by cell here
-    // as for a wide character's two.
-    let mut session = terminal("abcdef    \r\nxy", "\x1b[1;4H");
-    session.command(ReviewCommand::ReviewNextCharacter, 0);
-    session.command(ReviewCommand::ReviewNextLine, 0);
-    // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
-    session.command(ReviewCommand::ReviewCurrentCharacter, 0);
-    assert_eq!(
-        session.heard(),
-        terminal_support::plain(&["e", "xy", "Message(Blank)"])
-    );
-    session.command(ReviewCommand::ReviewPreviousLine, 0);
-    assert_eq!(session.heard(), terminal_support::plain(&["abcdef"]));
-    session.command(ReviewCommand::ReviewCurrentCharacter, 0);
-    assert_eq!(session.heard(), terminal_support::plain(&["e"]));
 }

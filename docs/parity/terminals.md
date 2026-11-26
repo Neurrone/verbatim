@@ -60,7 +60,7 @@ Verbatim: **different** (Dickson, 2026-10-23; rules 5, 12 and 13).
   read at once, outside its event queue, when none is out; changes told
   while one is out are read once after it, unless it began after them,
   and a change a read begun after it covers asks nothing (Dickson,
-  2026-11-16; `crates/verbatim-core/src/terminal.rs`).
+  2026-11-16; `crates/verbatim-core/src/terminal/reading.rs`).
   Each read's speech joins the event queue in order, as NVDA reads on a
   monitor thread of its own and queues only the speech
   (`NVDAObjects/behaviors.py` 466 to 500).
