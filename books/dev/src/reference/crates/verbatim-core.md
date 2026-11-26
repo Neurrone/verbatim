@@ -3,9 +3,10 @@
 The deterministic reducer (architecture section 2), the flight recorder,
 and its on-disk dump format. What each behavior says, and why, is in the
 parity ledger (`docs/parity/`) and the NVDA prose (`docs/nvda/`); this
-guide maps those behaviors onto the crate's types and modules.
+guide maps those behaviors onto the crate's types and modules. Its API is
+in its rustdoc (`cargo doc -p verbatim-core --no-deps --open`).
 
-## Public API
+## The reducer and its state
 
 - `Runtime`: the event queue's paused function, kept beside the state by
   whoever runs the reducer and never cloned or written to a dump; a new
@@ -53,7 +54,6 @@ guide maps those behaviors onto the crate's types and modules.
     keeps the previous line to that entry and enters the new entries below
     it. Neither allocates.
 - `SrState`, the reducer's state:
-  - `new()`.
   - `focused()`, the live focus and its application; `focus_source()`, the
     application the focus belongs to; `focus_report()`, the focus's
     snapshot, its ancestors, and the navigator object, which the control
@@ -103,17 +103,9 @@ guide maps those behaviors onto the crate's types and modules.
   - `settings()`: the reader settings as the reducer has them, toggle keys
     included, which the shell merges the settings dialog's Terminal page
     changes into.
-  - `holds_caret_keys()` and `hook_foreground()`: what the keyboard hook
-    is told after each input (see "Held caret keys" and "The window in
-    front" below).
-- `flight_recorder` and `FlightRecorder<T, S>`: see "The flight recorder".
-- `RecordedInput`, `ReducerRecorder` and `replay(initial, inputs)`: see
-  "The flight recorder".
-- `dump`: `DUMP_FORMAT_VERSION`,
-  `UNKNOWN_COMMIT`, `DumpHeader`, `DumpContents`,
-  `DumpReadError`, `write_dump` and `read_dump`; see "The dump format".
-- `read_of(&TerminalSnapshot)`, `snapshot_of(&Read, waited, colours)` and
-  `read_at(&TerminalSnapshot)`: see "Core's terminal model".
+  - What the keyboard hook is told after each input (below, "The caret
+    key on the event queue", and "Focus, events and objects", the window
+    in front).
 - `terminal::reader`: a terminal's reads as batches of the request list's
   generic text steps, and their answers read back as the reading rules'
   read; the module's documentation lists each batch's steps. They carry
@@ -154,8 +146,8 @@ guide maps those behaviors onto the crate's types and modules.
     terminal's read by it.
 - `supervisor`: Core's supervisor's pure decisions. The outpost
   generation record Core's reducer owns (`record`, crate-private, applied
-  by the event queue's driver; Table 5 of
-  `docs/design/readers-tell-core-asks-build1.md`) judges every
+  by the event queue's driver; below, "The outpost generation record")
+  judges every
   application's generation; [verbatim-supervisor](verbatim-supervisor.md)'s
   owner only reports process facts and carries out the record's effects.
   `policy` decides when a child is wedged (`Liveness::wedged` under
@@ -172,9 +164,8 @@ guide maps those behaviors onto the crate's types and modules.
 ## Core's requests
 
 Every request Core makes of a reader is recorded in the event queue's
-request table (`crates/verbatim-core/src/event_queue/table.rs`; Table 2 of
-`docs/design/readers-tell-core-asks-build1.md`), from its asking to its one
-ending, under the request number it goes out with. An entry holds the
+request table (`crates/verbatim-core/src/event_queue/table.rs`), from its
+asking to its one ending, under the request number it goes out with. An entry holds the
 reader asked, the window it names, when Core stops waiting for it (13
 seconds for a focus read's whole chain, 11 for any other), the request and
 its owner: the front entry's function, an asker outside the queue (a tree
@@ -225,8 +216,80 @@ a token (a terminal's output reads and baseline).
   watched (Claude, 2026-11-21).
 
 Tests: the queue's unit tests (`crates/verbatim-core/src/event_queue/tests.rs`),
-each rule of Table 2 and every ending, a late answer dropped by number and
-an answer from an instance the request did not go to dropped.
+each state of a request and every ending, the recovery set's rounds, a
+late answer dropped by number and an answer from an instance the request
+did not go to dropped.
+
+### The waiting entries
+
+Where an arriving entry waits behind the front is decided in one place,
+`event_queue/limiter.rs`, by the part the logic gives it (`Logic::place`;
+ADR 0003, "Flood limiters and the merge"; `docs/parity/backends.md`, "MSAA
+winevent flood control" and "MSAA menu events in one flush"). Only
+waiting entries are merged, joined or counted, never the front.
+
+- An entry of any other kind that the logic says merges replaces the
+  newest waiting entry `Logic::merges` finds the same (a UI Automation
+  focus of the same kind, element and thread, a property change of the
+  same element, property and thread, a progress bar's or a caret tell's
+  own rule), searching from
+  the back and stopping at a focus-kind entry, which is itself reached;
+  the newer joins the back.
+- An MSAA focus or foreground tell joins the run waiting with no accepted
+  MSAA tell after it, or starts one, replacing a candidate with its key; a
+  foreground tell first removes the waiting focuses of its object from its
+  thread. A run reaches its turn as one entry (`Logic::run_entry`).
+- An MSAA menu start or end, popup start or end, or switch end takes the
+  menu slot, replacing the one waiting; at its turn the slot moves once
+  behind the runs waiting behind it, as NVDA's flush handles menus.
+- An MSAA show removes a waiting hide of its object and a hide a waiting
+  show; then it, like any other MSAA tell, replaces a waiting one of the
+  same key (kind, window, ids and raising thread), searching back no
+  further than a focus-kind entry.
+- After each MSAA arrival NVDA's caps apply to the MSAA entries that
+  arrived within one pump window (`PUMP_WINDOW_US`, 10 ms) of the newest,
+  since NVDA flushes its limiter once a pump: the newest four run
+  candidates (`FOCUS_CAP`), and the newest ten other entries of each
+  raising thread (`THREAD_CAP`), foreground tells counted in both and
+  dropped only when neither keeps them, and an entry of the readers' last
+  focus's MSAA object kept but counted (`Logic::exempt_from_cap`), as
+  NVDA always keeps the focused object's. The menu slot is outside both.
+
+The foreground change ends the waiting entries it ends
+(`Logic::ends_at_foreground`; "Focus, events and objects", "The
+foreground change"). Tests: `src/event_queue/limiter_tests.rs`, one per
+rule, and `tests/merge.rs`, which checks for every kind Core merges that
+each short sequence between an older tell and a newer does what it does
+without the older.
+
+### The backend cache
+
+Core's backend cache (`focus/backend.rs`) is the one keeper of whether a
+window is read through UI Automation or MSAA (ADR 0004;
+`docs/parity/backends.md`, "Dual-stack MSAA+UIA with per-window
+arbitration"). A window is keyed by its handle and the thread that owns
+it, so a reused handle is a new window. Its verdict is its class's when
+the class, normalized, is on NVDA's good or bad list or the Explorer
+shell rule names it, judged from each tell's classes and never kept;
+otherwise the newest probe of the window begun no more than half a second
+before the moment judged (`PROBE_LIFE_US`, NVDA's cache period), the
+newest probe's start winning; otherwise none. A request that carried
+"probe first" and ended with no answer for its probe counts as a probe
+that timed out, begun when the request was sent, and a window's
+destruction forgets its probes.
+
+A tell is judged at its turn by the verdict in force when its callback
+received it: an MSAA tell, other than a caret one, of a window read
+through UI Automation, and a UI Automation tell, other than a
+notification or a toast, of a window read through MSAA, is dropped with
+no read. A tell kept, and any request naming a window, carries the
+verdict in force as the request is sent (`WindowVerdict`): `Uia`, `Msaa`,
+or `ProbeFirst`, when the outpost probes the window before the read and
+returns the probe with its answer, which the cache records. The outpost
+takes the verdict given for every judgement of that window while it
+answers the request, and keeps none ([verbatim-outpost](verbatim-outpost.md),
+"The arbitrator"). Tests: the module's own, and the queue's unit tests of
+the verdict a request carries and the probes requests answer.
 
 ### Batches
 

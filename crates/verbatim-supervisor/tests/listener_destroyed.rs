@@ -2,7 +2,7 @@
 //! `ListenerToCore::Destroyed` the current listener writes reaches the app
 //! as an `OutpostMessage::Listener` carrying it whole, with or without a
 //! process, in the order written, so Core can clear the window and tell its
-//! outpost (`docs/design/readers-tell-core-asks-build1.md`, "Window
+//! outpost (`books/dev/src/reference/crates/verbatim-core.md`, "A window's
 //! destruction").
 //!
 //! This test binary runs itself as a stand-in for the focus listener, which

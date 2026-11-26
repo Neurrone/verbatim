@@ -188,8 +188,8 @@ struct State {
     nearest_windows: HashMap<u64, isize>,
     /// The route to the outpost's copy of each UIA node minted from a
     /// listener's read, by which its element is found again
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in
-    /// this build"), released with the node.
+    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Reading the
+    /// focus"), released with the node.
     routes: HashMap<u64, super::focus_path::Route>,
     /// The objects entries came with, parked until their program takes
     /// them, by key ([`Parked`]).

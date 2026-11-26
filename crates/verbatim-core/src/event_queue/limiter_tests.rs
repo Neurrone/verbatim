@@ -1,4 +1,4 @@
-//! Table 1's waiting rules (`docs/design/readers-tell-core-asks-build1.md`):
+//! The waiting rules (`books/dev/src/reference/crates/verbatim-core.md`, "The waiting entries"):
 //! the merge, MSAA runs, NVDA's limiter on the waiting MSAA entries, the
 //! menu slot and the foreground change's ending of waiting entries, with a
 //! logic whose entries say their names, behind a front entry that holds

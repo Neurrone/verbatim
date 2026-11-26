@@ -31,7 +31,7 @@
 //! on while it reads.
 //!
 //! Started by a press at its turn in the event queue
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The event queue"),
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Core's requests"),
 //! each read is an entry of its own that joins the back when the read is
 //! wanted and asks the node's window as the queue's request, and each
 //! caret move is a request of the index mark's entry. Its speech carries

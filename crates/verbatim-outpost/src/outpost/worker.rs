@@ -348,8 +348,8 @@ pub(super) fn win_kind(kind: WinEventKind) -> Option<WinKind> {
 /// value it carried; for a help text change a description change and for a
 /// `ControllerFor` change a suggestions change, each with no value, since
 /// Core asks the node for them; any other property, such as the expand
-/// state or the toggle state, as a change of the element's states (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Changes on objects"). The states of a menu item that no pattern makes
+/// state or the toggle state, as a change of the element's states
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", its changes). The states of a menu item that no pattern makes
 /// checkable are completed from `element`'s legacy MSAA state, as NVDA's
 /// menu item reads its states (`NVDAObjects/UIA/__init__.py`, `MenuItem`).
 fn told_property(
@@ -482,8 +482,8 @@ impl Worker<'_> {
     }
 
     /// A UIA event from this outpost's `Follow` registration
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-    /// build"): a change signal of the terminal `Follow` names, its text
+    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Inside an outpost", the
+    /// focus-following subscription): a change signal of the terminal `Follow` names, its text
     /// change or caret event, a caret event, or a property change, each
     /// told to Core. A text change of any other element tells nothing: its
     /// element is let go of.
@@ -548,8 +548,8 @@ impl Worker<'_> {
     /// that the `Follow` registration delivered for `event`'s element, the
     /// event's element kept behind the token Core's caret read names for
     /// the outpost to adopt when the node's own answered no text pattern
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Selection and the
-    /// caret's text facts"). The outpost reads nothing for it and judges
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
+    /// Core's text facts"). The outpost reads nothing for it and judges
     /// nothing of it: Core asks the caret read at the tell's turn, when its
     /// element is the committed focus. An element UI Automation could not
     /// make agile is told with nothing kept.
@@ -624,8 +624,8 @@ impl Worker<'_> {
     /// property-change handler. The outpost
     /// judges nothing of it: Core finds the
     /// node by its runtime id among the committed focus and its ancestors
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
-    /// drops", "Changes on objects").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and
+    /// objects", its changes).
     fn property_tell(
         &self,
         (event, element): (&UiaEvent, Option<&Cached<Kept>>),

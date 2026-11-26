@@ -1,6 +1,7 @@
 //! The text reads of Core's requests that hold a read behind an id
-//! (`docs/design/readers-tell-core-asks-build1.md`, "A caret key at its
-//! turn", "Selection and the caret's text facts" and Table 16): a caret
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the
+//! event queue" and "Caret tells and Core's text facts"; `books/dev/src/reference/crates/verbatim-outpost.md`,
+//! "Text and caret"): a caret
 //! key's starting read, which holds its starting point; a focus's caret
 //! read, which holds the next selection baseline; and Verbatim's own caret
 //! moves and selections, whose answers hold the next baseline.

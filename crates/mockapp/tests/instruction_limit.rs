@@ -1345,8 +1345,8 @@ fn a_colour_read_that_does_not_fit_its_program_runs_the_colour_programs() {
     );
 }
 
-/// A caret wait's poll (`docs/design/readers-tell-core-asks-build1.md`,
-/// "The watch"; the request list's design, section 5, `WaitForCaret`):
+/// A caret wait's poll (`books/dev/src/reference/crates/verbatim-uia-rops.md`,
+/// "Layer 3: a caret wait's check"):
 /// one program, the check followed by the batch's later reads, the caret
 /// and its line with every attribute's formatting, gated on the check's
 /// caret or selection having moved or its being at the bound. Typically a

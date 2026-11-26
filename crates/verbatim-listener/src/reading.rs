@@ -1,6 +1,6 @@
-//! The listener's reading threads (design
-//! `docs/design/readers-tell-core-asks-build1.md`, "The listener in this
-//! build" and Table 9): the shell of the pure schedule
+//! The listener's reading threads (`books/dev/src/reference/crates/verbatim-listener.md`,
+//! "Tells, checks and Core's requests"; `books/dev/src/reference/crates/verbatim-listener-logic.md`,
+//! "The reading threads' schedule"): the shell of the pure schedule
 //! ([`verbatim_listener_logic::schedule`]), one thread per application
 //! process generation, running that application's jobs, Core's requests
 //! ahead of the releases of kept elements.

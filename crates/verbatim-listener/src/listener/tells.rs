@@ -1,6 +1,6 @@
 //! The listener's tells of `WinEvent`s (ADR 0003, "Readers tell, Core
-//! asks"; design `docs/design/readers-tell-core-asks-build1.md`, "The
-//! listener in this build"): each event the listener hooks desktop-wide,
+//! asks"; `books/dev/src/reference/crates/verbatim-listener.md`, "Tells, checks and
+//! Core's requests"): each event the listener hooks desktop-wide,
 //! after NVDA's local drops, becomes a tell carrying what came with it and
 //! the facts gathered in the callback with calls to Windows only, and goes
 //! to Core in the listener's one order of tells, behind any pending

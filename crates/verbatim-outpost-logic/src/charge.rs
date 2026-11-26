@@ -3,7 +3,7 @@
 //! and an earlier program's results are refused. A program runs until it
 //! ends; nothing here times it. A generation is abandoned only when Core
 //! cancels the request its program runs because the foreground moved away
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14).
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests").
 
 /// One request of one worker generation: what a worker's results name, so
 /// that a dead generation's and an earlier request's are refused.

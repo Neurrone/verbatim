@@ -1,7 +1,6 @@
 //! What the listener decides about a `WinEvent` before it tells Core of it
-//! (ADR 0003, "Readers tell, Core asks"; design
-//! `docs/design/readers-tell-core-asks-build1.md`, "Readers' local drops"
-//! and "The listener in this build"): NVDA's local drops that cannot hang,
+//! (ADR 0003, "Readers tell, Core asks"; `books/dev/src/reference/crates/verbatim-listener-logic.md`,
+//! "Tells"): NVDA's local drops that cannot hang,
 //! and the window a tell names; the foreground hold is the pending
 //! foreground's (`crate::foreground::Pending`). Each is pure over the
 //! reads the listener makes, so every case is a test here.

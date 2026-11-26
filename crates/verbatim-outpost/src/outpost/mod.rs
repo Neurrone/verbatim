@@ -305,7 +305,7 @@ struct RequestContext<'a> {
     /// ([`crate::arbitration::RequestVerdicts`]).
     verdicts: crate::arbitration::RequestVerdicts,
     /// Core's verdict for the window its request names, which the request
-    /// carries (`docs/design/readers-tell-core-asks-build1.md`, Table 4):
+    /// carries (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache"):
     /// every judgement of that window while the request is answered takes
     /// it, with no probe ([`read::window_uses_uia`]).
     given_verdict: Cell<Option<(isize, bool)>>,
@@ -642,9 +642,8 @@ impl Context {
 
     /// Hooks the console's events for this outpost's application, once
     /// for its life, the first time `Follow` names a terminal in a
-    /// console's window (`docs/design/readers-tell-core-asks-build1.md`:
-    /// "An outpost holds no `WinEvent` hook, except a console host's outpost,
-    /// which keeps the console's five events"). The application serving a
+    /// console's window (`books/dev/src/reference/crates/verbatim-outpost.md`, "The
+    /// console host's events"). The application serving a
     /// console's window is its console host whatever its image: `conhost`,
     /// `OpenConsole` behind Windows Terminal, or a test's own stand-in.
     /// The hook is in before `Follow` is answered, so every console event

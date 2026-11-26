@@ -4,8 +4,7 @@ The focus listener process, `verbatim-listener.exe` (decision D13; ADR
 0003, "Readers tell, Core asks"): one permanent process holding the
 desktop-global UI Automation registration and the global MSAA hooks,
 telling Core of every event it hears and answering Core's requests on what
-it kept (`docs/design/readers-tell-core-asks-build1.md`, "The listener in
-this build"). Core's supervisor ([verbatim-supervisor](verbatim-supervisor.md))
+it kept. Core's supervisor ([verbatim-supervisor](verbatim-supervisor.md))
 starts it with `--listener` and its arguments
 (`verbatim_process::arguments::ListenerArguments`), and replaces it when
 it ends. What it decides without a call,
@@ -14,7 +13,8 @@ schedule, the tells' drops and the foreground watch, is
 [verbatim-listener-logic](verbatim-listener-logic.md); the class verdict
 is [verbatim-reader-rules](verbatim-reader-rules.md)'s. The reasons for
 this shape are in `books/dev/src/explanation/architecture.md`, section 1
-("The focus listener (D13)").
+("The focus listener (D13)"). Its API is in its rustdoc (`cargo doc -p
+verbatim-listener --no-deps --open`).
 
 ## Tells, checks and Core's requests
 
@@ -46,7 +46,7 @@ this shape are in `books/dev/src/explanation/architecture.md`, section 1
   bar's change keeps no element: its tell names it by its cached runtime
   id alone (`EventObject::Followed`), and the check thread lets the
   element go at the end of its check.
-- Kept elements (Table 6). Each told element is kept behind the token its
+- Kept elements. Each told element is kept behind the token its
   tell names, in `Kept`, one record per application
   (`verbatim_listener_logic::kept`), until Core's held view leaves it out
   (`CoreToListener::ElementsHeld`). The listener's generation, given on
@@ -164,10 +164,9 @@ that application's reading thread until the call returns, so its later
 requests wait up to Core's due time; other applications have their own
 threads.
 
-## Public API
+## The runtime
 
-`run_listener` is the listener runtime (`docs/design/communication.md`,
-section 6.3).
+(`docs/design/communication.md`, section 6.3.)
 
 - Its main thread is its I/O thread (completion port,
   `THREAD_PRIORITY_HIGHEST`); every thread that produces a message writes
@@ -263,14 +262,7 @@ section 6.3).
   has said `Ready` is held until `Ready` is sent and goes behind it, so a
   barrier that follows the listener's restart passes only once its UIA
   subscriptions are installed.
-- `listener::CheckEvent` (its `new` and `into_tell`), `listener::cached_of`,
-  `listener::check_event`, `listener::Pending::finish`,
-  `listener::msaa_tell` and `listener::written_together` are the check
-  thread's capture, cached properties, check and tell assembly, the MSAA
-  tell with its local drops, and the writer's merge of waiting tells,
-  with the window reads and the clock as parameters, public so mockapp's
-  driver runs the listener's own code.
-- `listener::capture` and `listener::capture_selection` are what the
-  notification and element-selected callbacks capture of their event's
-  element, and `listener::bar_of` what the progress callback makes of a
-  bar's event, public so mockapp's tests make them as the listener does.
+- The check thread's capture, check and tell assembly, the MSAA tell with
+  its local drops, the writer's merge of waiting tells and the callbacks'
+  captures take the window reads and the clock as parameters and are
+  public, so mockapp's driver and tests run the listener's own code.

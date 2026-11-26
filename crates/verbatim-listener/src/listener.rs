@@ -1,7 +1,6 @@
 //! The focus-listener runtime (architecture section 1, "The focus listener
 //! (D13)"; decisions D13 and D14; ADR 0003, "Readers tell, Core asks";
-//! design `docs/design/readers-tell-core-asks-build1.md`, "The listener in
-//! this build").
+//! `books/dev/src/reference/crates/verbatim-listener.md`).
 //!
 //! One permanent listener process holds the subscriptions that are global
 //! by nature and tells Core of every event it hears; Core judges each tell
@@ -499,7 +498,7 @@ impl Listener {
     /// meanwhile, because UIA reads the system's focus for the focus
     /// registration and waits on the foreground application for it, up to
     /// about 6 seconds for one that does not answer
-    /// (`docs/design/cross-process-calls-study.md`, instance 2). Their
+    /// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`, "The listener's start"). Their
     /// failure is reported as a fault, before the announcement. Every UIA
     /// event is dropped until `install` returns
     /// ([`Outgoing::uia_event_process`]).
@@ -799,8 +798,8 @@ struct EventThreadState {
 /// drop takes it ([`tell_win_event`]), steps the pending foreground under
 /// the tells' lock, which reports a window it finds in front before any
 /// tell that step releases, since Core judges a foreground tell against
-/// its foreground record (`docs/design/readers-tell-core-asks-build1.md`,
-/// "Focus and foreground"); then the watch hears of the window reported,
+/// its foreground record (`books/dev/src/reference/crates/verbatim-listener-logic.md`,
+/// "The foreground watch"); then the watch hears of the window reported,
 /// and of a console's own event, and the hold's timer is set as the step
 /// says. The window in front is read once
 /// ([`Tells::front`](tells::Tells::front)), and the step judges the event

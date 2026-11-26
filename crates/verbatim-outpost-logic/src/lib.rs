@@ -20,7 +20,7 @@
 //! A program runs until it ends, with no deadline: Core judges a hang and
 //! bounds its requests by their due times, and a worker is abandoned only
 //! when Core cancels the request it runs because the foreground moved away
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14).
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests").
 //!
 //! What it never does: make a call of any kind, wait, read a clock, or
 //! keep an object. Time is the shell's: a [`Now`] given with each input,

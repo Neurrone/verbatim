@@ -1262,7 +1262,7 @@ pub(super) fn foreground_object_among(
 /// ([`super::focus_path`]). A node found by neither is gone, as NVDA's object
 /// for a gone element is: no search is made for it, since a search of the
 /// application's windows enters any child window another process serves
-/// (`docs/design/cross-process-calls-study.md`, instance 3). A kept element
+/// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`, "A node whose element is gone"). A kept element
 /// that fails for another reason, such as a busy provider timing out, is
 /// kept and the read fails: it may well still be alive. So does a route's
 /// walk that fails rather than finishing without the element

@@ -1,6 +1,5 @@
-//! The listener's reading threads' schedule, as pure transitions (design
-//! `docs/design/readers-tell-core-asks-build1.md`, "The listener in this
-//! build" and Table 9): one reading thread per application process
+//! The listener's reading threads' schedule, as pure transitions
+//! (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "The reading threads' schedule"): one reading thread per application process
 //! generation, which runs that application's jobs, Core's requests ahead
 //! of the releases of kept elements.
 //!

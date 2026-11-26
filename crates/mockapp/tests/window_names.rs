@@ -5,7 +5,7 @@
 //! had when it took the foreground, and its rename, off the focus, is not
 //! spoken. NVDA speaks a name change only for the focus, so Core, judging
 //! the listener's tell against the committed focus, says nothing of it
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Changes on objects").
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", its changes).
 //!
 //! Core drives a real outpost in this process (`common::core_driver`).
 //! mockapp's `client-name` renames the client area alone, raising a name

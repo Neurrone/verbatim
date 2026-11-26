@@ -1,5 +1,5 @@
-//! Changes on objects as event-queue entries (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Changes on objects"): MSAA name, value, state and description
+//! Changes on objects as event-queue entries (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Focus, events and objects", its changes): MSAA name, value, state and description
 //! changes, the selection kinds, and UI Automation property changes, each
 //! judged at its turn by the state-change rule against the committed focus
 //! and its ancestors.

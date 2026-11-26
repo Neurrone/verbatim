@@ -1,7 +1,7 @@
 //! Where an arriving entry waits: the merge, MSAA runs, NVDA's limiter on
 //! the waiting MSAA entries and the menu slot
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The event queue" and
-//! Table 1; `docs/parity/backends.md`, "MSAA winevent flood control", "MSAA
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "The waiting entries";
+//! `docs/parity/backends.md`, "MSAA winevent flood control", "MSAA
 //! menu events in one flush").
 //!
 //! NVDA applies its limiter once per pump, to the events gathered since

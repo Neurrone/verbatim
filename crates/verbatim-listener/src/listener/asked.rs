@@ -1,6 +1,6 @@
-//! Core's requests to the listener, and the reading threads' jobs (design
-//! `docs/design/readers-tell-core-asks-build1.md`, "The listener in this
-//! build", Tables 6 and 9): a batch's `Read` and `Ancestors` of a UI
+//! Core's requests to the listener, and the reading threads' jobs
+//! (`books/dev/src/reference/crates/verbatim-listener.md`, "Tells, checks and Core's
+//! requests"; `books/dev/src/reference/crates/verbatim-listener-logic.md`, "Kept elements" and "The reading threads' schedule"): a batch's `Read` and `Ancestors` of a UI
 //! Automation element the listener kept for a tell (a focus's or a
 //! selection's, read up its ancestors until it reaches one Core already
 //! knows), the generic read of any other event's kept element, by property

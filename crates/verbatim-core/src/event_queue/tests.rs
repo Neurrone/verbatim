@@ -1,6 +1,6 @@
-//! The driver's five rules and every cell of Table 2 (a request in Core)
-//! and Table 18 (the recovery set), from
-//! `docs/design/readers-tell-core-asks-build1.md`, against a small logic
+//! The driver's five rules, every state and ending of a request in Core
+//! and the recovery set, from `books/dev/src/reference/crates/verbatim-core.md`,
+//! "Core's requests", against a small logic
 //! whose entries each ask a chain of property reads and say each outcome.
 
 use std::future::Future;

@@ -98,7 +98,7 @@ impl Question {
 }
 
 /// Core's backend verdict for a request's window as it is sent
-/// (`docs/design/readers-tell-core-asks-build1.md`, Table 4, column D).
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WindowVerdict {
     /// No verdict is in force: the outpost probes the window for a UI
@@ -391,8 +391,8 @@ pub struct FocusAncestor {
 }
 
 /// A focus answer: what Core keeps with the committed focus, each carried
-/// here (`docs/design/readers-tell-core-asks-build1.md`, "The focus
-/// answers").
+/// here (`books/dev/src/reference/crates/verbatim-outpost.md`, "Reading the
+/// focus").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusRead {
     /// The focus; its rectangle, states, name and value come with its
@@ -417,8 +417,8 @@ pub struct FocusRead {
     /// element's text.
     pub runtime_id_reused: bool,
     /// The focus's caret, read after its states
-    /// (`docs/design/readers-tell-core-asks-build1.md`, Table 17, columns
-    /// A to C).
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and
+    /// Core's text facts").
     pub caret: FocusCaret,
 }
 
@@ -603,7 +603,7 @@ impl FocusRead {
 }
 
 /// The session's lock state, as the shell's session notifications and
-/// its query at startup tell it (`docs/design/readers-tell-core-asks-build1.md`,
+/// its query at startup tell it (`books/dev/src/reference/crates/verbatim-core.md`,
 /// "The secure desktop and the lock state"). Core counts unknown as
 /// locked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -876,9 +876,9 @@ pub enum QueueInput {
     },
     /// Alt went down, or up: the hook reports each change of whether
     /// either Alt key is down, which joins Core's key state at once, so a
-    /// tell reads it at its arrival in the inbox's order (design
-    /// `docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-    /// this build").
+    /// tell reads it at its arrival in the inbox's order
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the
+    /// event queue").
     Alt {
         /// Whether Alt is now down.
         down: bool,
@@ -916,9 +916,8 @@ pub enum QueueInput {
     /// outpost generation record.
     Process(ProcessFact),
     /// The keyboard hook cut speech off at a key press, at the input's
-    /// time: handled at once in the inbox, as the speech side's cut
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The inbox, handled
-    /// at once"); say-all stops, as NVDA's stops on any key. The speech
+    /// time: handled at once in the inbox, as the speech side's cut;
+    /// say-all stops, as NVDA's stops on any key. The speech
     /// queue drops speech of keys numbered below `key`, so Core's speech
     /// from then on carries at least `key`, a modifier's number included.
     SpeechCut {
@@ -964,8 +963,8 @@ pub enum QueueInput {
 }
 
 /// A process fact the supervisor's owner thread reports for Core's outpost
-/// generation record (`docs/design/readers-tell-core-asks-build1.md`,
-/// Table 5): the owner judges no generation itself.
+/// generation record (`books/dev/src/reference/crates/verbatim-core.md`,
+/// "The outpost generation record"): the owner judges no generation itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessFact {
     /// The owner thread started an outpost process for `process`, as
@@ -1094,8 +1093,7 @@ pub struct CaretBinding {
     pub record: Option<crate::TraceId>,
     /// The record's formatting memory at the press: the formatting last
     /// spoken in its text, which the key compares with and updates
-    /// (`docs/design/readers-tell-core-asks-build2.md`, "The formatting
-    /// memory").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Formatting").
     #[serde(default)]
     pub formatting: crate::TextAttributes,
 }

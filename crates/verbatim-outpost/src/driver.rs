@@ -1,8 +1,7 @@
 //! The one small driver that sends an outpost Core's requests, for
 //! everything that runs an outpost without Core: the development attach
 //! mode (`verbatim-outpost --attach`) and mockapp's integration harness
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-//! build"). Since an outpost hooks nothing of its own but a console host's
+//! (`books/dev/src/reference/crates/verbatim-outpost.md`, "Running an outpost"). Since an outpost hooks nothing of its own but a console host's
 //! console events, it reads only what it is asked; the driver numbers each
 //! request as Core's request table would and hands it to the outpost as
 //! the I/O thread hands it a `CoreToOutpost::Request`. Its answers come

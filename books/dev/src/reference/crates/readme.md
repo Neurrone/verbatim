@@ -6,10 +6,11 @@ before it — so reading top to bottom works front to back.
 [Architecture](../../explanation/architecture.md) holds the decisions of record this
 code implements; [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md) holds the milestone
 scoping; [Walkthroughs](../../explanation/walkthroughs.md) stitches these crates into
-end-to-end narratives. Where a method's behavior is not obvious from
-its signature, an implementation note explains how it works and why.
+end-to-end narratives. A guide says what its crate does and how its
+intricate parts work, and why; its API is in its rustdoc (`cargo doc -p
+<crate> --no-deps --open`), which a guide does not list.
 
-Keep the file for a crate current when its public API changes. The rule
+Keep the file for a crate current when its mechanism changes. The rule
 has a second half, the one that slips: when a change lands behavior
 another crate's guide describes, such as a "not yet" that becomes true or
 a policy another file summarizes, search the docs for claims about that

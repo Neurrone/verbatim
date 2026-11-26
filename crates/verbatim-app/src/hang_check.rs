@@ -1,5 +1,5 @@
-//! The shell's live hang check (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Requests in Core"): before a request is sent, and every half second
+//! The shell's live hang check (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Core's requests"): before a request is sent, and every half second
 //! for each request out and each window of Core's recovery set, the shell
 //! asks Windows whether the request's window is hung, and the answer
 //! enters Core's inbox. A ghost window, which Windows shows in place of a
@@ -142,7 +142,7 @@ impl FrontReads for Windows {
 
 /// What is in front, read live when the shell answers a read of an
 /// application's current focus unsent
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core"):
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Core's requests"):
 /// F, the foreground window, or the desktop window when there is none,
 /// then W, F's thread's focus window or F itself, as NVDA's reads of the
 /// focus take it (`NVDAObjects/window/__init__.py` 162 to 181). W is the

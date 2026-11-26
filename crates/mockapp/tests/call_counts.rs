@@ -332,8 +332,8 @@ fn msaa_focus_changes_cost_exactly() {
     // A value change on an object that is not the focus, in the focus's
     // window, and then one on the focus, told by the listener: Core asks
     // whether each object is the focus or one of its ancestors and reads
-    // its value (`docs/design/readers-tell-core-asks-build1.md`, "Changes
-    // on objects", Dickson's rule of 2026-11-12). The first is not, told
+    // its value (`books/dev/src/reference/crates/verbatim-core.md`, "Focus,
+    // events and objects", its changes; Dickson's rule of 2026-11-12). The first is not, told
     // apart from the focus by the ids of its event, as NVDA's equality
     // tells them apart before reading anything, and is read no further;
     // the second is met by NVDA's equality, its location, role and name
@@ -1290,7 +1290,7 @@ fn connected(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
 
 /// A UIA focus costs what the listener's check thread, its read and the
 /// outpost's completion make, in the order Core has them made
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The focus answers").
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Reading the focus").
 ///
 /// The check (`verbatim_listener_logic::check`) finds the windowless
 /// sender's nearest window (`NormalizeElementBuildCache`, one call) and
@@ -2373,8 +2373,7 @@ fn uia_navigation_steps_cost_exactly() {
 ///
 /// Every UI Automation node is now minted by a completion from the
 /// listener's route, which the outpost keeps with it
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-/// build"), so a node with no route at all, which answered with no call,
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Reading the focus"), so a node with no route at all, which answered with no call,
 /// is no longer made. Each answer finds the element gone by walking its
 /// route, two calls: the route's window's element, looked up by its
 /// handle, the one connection, and the walk down from it. Activation walks

@@ -1,5 +1,5 @@
-//! `Follow` (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-//! objects" and Table 10): Core names the committed focus's node, its
+//! `Follow` (`books/dev/src/reference/crates/verbatim-outpost.md`, "Inside an
+//! outpost", the focus-following subscription): Core names the committed focus's node, its
 //! event group and any extra object, or nothing, and the outpost keeps
 //! that node's registration, adding it when absent, and removes every
 //! other. The completion of a UI Automation focus adds the new node's

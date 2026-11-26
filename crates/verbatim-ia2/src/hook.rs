@@ -225,8 +225,8 @@ const SUBSCRIPTIONS: [(u32, WinEventKind); 27] = [
 /// The console host's outpost's subscription set, installed with the
 /// console host's process id: the console's update and caret events, which
 /// only the console host raises and its outpost keeps
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-/// build"). No other outpost hooks a `WinEvent`.
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "The console host's
+/// events"). No other outpost hooks a `WinEvent`.
 pub const CONSOLE_SUBSCRIPTIONS: &[WinEventKind] =
     &[WinEventKind::ConsoleUpdate, WinEventKind::ConsoleCaret];
 

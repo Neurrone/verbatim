@@ -55,8 +55,7 @@ true }`, `Context::hook_console`), whatever binary hosts the console
 and before it answers that `Follow`, so every console event raised after
 Core's baseline read is heard. A hook that cannot be installed is a
 `Fault`. The listener tells Core of every other
-kind, and Core asks the outpost for what it reads
-(`docs/design/readers-tell-core-asks-build1.md`).
+kind, and Core asks the outpost for what it reads.
 
 ### Console windows and frames of another process
 
@@ -217,20 +216,12 @@ time budget: it runs until it ends, unless Core cancels its request and
 its worker is abandoned. A
 listener's selection is reported with what its event's cache holds
 (`verbatim_uia::ListenerSelection`), since a search of a subtree enters
-any child window another process serves (the study's instance 3). The supervisor's `App` table holds each application's
+any child window another process serves ([ADR 0005](../adr/0005-calls-that-reach-another-application.md), "A node whose element is gone"). The supervisor's `App` table holds each application's
 process open while it has a record, so its pid is never reused while an
 outpost or reading thread serves it. Registrations scope windows' subtrees
 by their elements (`Scope::Subtrees`), with no connection by handle.
 
-## Public API
-
-### The protocol
-
-The messages are `verbatim_model::protocol`'s, and the framing, the shared
-clock and `peek` are `verbatim_process::message`'s
-([verbatim-process](verbatim-process.md)).
-
-### The arbitrator
+## The arbitrator
 
 `Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`)
 as the outpost reads a window. It holds the configuration: the class
@@ -264,20 +255,19 @@ the same tables and code, which the arbitrator's own lists are built from.
 - A timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`),
   which the worker reads through MSAA for the rest of its request. A
   probe on an abandoned worker sends nothing and keeps nothing.
-- `Outpost::set_observation_clock` sets the clock the outpost's own
-  events and the probes it reports are stamped by, for a test that moves
-  that time on.
 - Both class lists are `verbatim_model::class`'s, written from
   `docs/parity/backends.md` ("The class lists the per-window verdict
   reads").
 
-### The outpost
+## Running an outpost
 
-`Outpost`, `run_pipe`, and `run_attach` are the per-application outpost.
+The outpost's API is in its rustdoc (`cargo doc -p verbatim-outpost
+--no-deps --open`); its messages are `verbatim_model::protocol`'s, and the
+framing, the shared clock and `peek` are `verbatim_process::message`'s
+([verbatim-process](verbatim-process.md)).
 
-- `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
-  inherited overlapped pipes, watching `target_pid`, or for `None` as a
-  spare. `Outpost::assign` sets the application once and says `Ready`; it installs no hook (the console's is
+- `run_pipe` runs one on Core's inherited overlapped pipes, watching its
+  target, or with none as a spare. `Outpost::assign` sets the application once and says `Ready`; it installs no hook (the console's is
   `Context::hook_console`, through `verbatim_ia2::event_thread::Nudger::hook`).
   ([ADR 0001: Focus](../adr/0001-focus.md), "Spare outposts"). It serves until
   `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
@@ -288,14 +278,10 @@ the same tables and code, which the arbitrator's own lists are built from.
   message as the model's JSON on stdout: the development mode.
 - `OutpostOptions::remote_operations` (`verbatim_process::arguments`) says whether a UIA focus's ancestry
   may be read with a remote operation (on; `--classic-uia` turns it off).
-- For tests in their own process: `Outpost::new` and its siblings watch
-  from construction and panic when the hook fails, with a sender thread in
-  place of the I/O thread; `with_options`; `with_focused_element_reader` (a
-  `FocusedElementReader` in place of `Uia::focused`);
-  `set_foreground_reader` (a `verbatim_win32::window::ForegroundReader` in place of
-  `GetForegroundWindow`, for acceptance and the window a focus entered);
-  `set_focus_window_reader` (a `FocusWindowReader` for focus-now); `set_observation_clock` (a `verbatim_process::clock::ObservationClock`
-  for the outpost's own events' stamps and the probes it reports).
+- A test in its own process builds an `Outpost` that watches from
+  construction, with a sender thread in place of the I/O thread, and may
+  replace its readers of the focused element, the foreground window, the
+  focus window and the observation clock.
 - `Outpost::settle` posts a barrier (`Item::Barrier` with
   `Asker::Settle`) and waits until the reducer reaches it with no program
   in flight, everything queued before it handled and a noted caret read,
@@ -312,17 +298,15 @@ the same tables and code, which the arbitrator's own lists are built from.
   are never merged or reordered; at shutdown the intake drops them and the
   shell its waiters, so the call returns. It covers only what has
   reached the outpost.
-- `Outpost::failed_reads` gives the worker's and subscription callbacks'
-  failed cached reads (`verbatim_uia::calls`), also logged at shutdown.
-- `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
-  own handlers and hook take in, as a `Heard`, once queued.
-- `Outpost::observe_request_calls` hands a `RequestCallsObserver` the
-  calls into the application each of Core's requests made, by its
-  number, before its answer is sent, for a test that pins a request's
-  calls.
+- The worker's and subscription callbacks' failed cached reads
+  (`verbatim_uia::calls`) are logged at shutdown, and a test may observe
+  each event heard once queued, and the calls each of Core's requests
+  made before its answer is sent.
 
-Inside an outpost (`docs/design/communication.md`, section 6.4;
-`books/dev/src/explanation/design/ownership.md`):
+## Inside an outpost
+
+(`docs/design/communication.md`, section 6.4;
+`books/dev/src/explanation/design/ownership.md`.)
 
 - The mailbox (`outpost::shell::Mailbox`): the console host's hook
   callbacks (`CONSOLE_SUBSCRIPTIONS`), the subscription's callbacks,
@@ -412,9 +396,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   the `ThreadStart` fault point under the `faults` feature
   ([verbatim-faults](verbatim-faults.md)), which mockapp's `failure_paths`
   tests use.
-- The focus-following subscription (`outpost::followed`;
-  `docs/design/readers-tell-core-asks-build1.md`, "Changes on objects"
-  and Table 10): Core's `Follow` names the committed focus's node, its
+- The focus-following subscription (`outpost::followed`): Core's `Follow` names the committed focus's node, its
   event group and any extra object, or nothing, and the outpost keeps that
   node's registration, adding it when absent, and removes every other. The
   completion of a UI Automation focus adds the new node's registration
@@ -451,9 +433,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   queries, in arrival order, one entry per object and kind, a newer
   replacing it at the back (the console host's events per window and
   kind). A batch is what accumulated during the previous one. Core's
-  event queue judges every other event
-  (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-  build"). Nothing is dropped at planning for a hung window: the worker
+  event queue judges every other event. Nothing is dropped at planning for a hung window: the worker
   tests a UIA event's own window first as it handles it
   (`IsHungAppWindow`, a window of 0 passing, as NVDA's test passes a
   sender with no cached window), before any window lookup or read, and a
@@ -490,7 +470,7 @@ Inside an outpost (`docs/design/communication.md`, section 6.4;
   once: the program's answer, ended "abandoned" for a program whose worker
   was abandoned, ended "failed" for a program that ended without
   answering, and ended "cancelled" for a `Cancel` before dispatch
-  (`docs/design/readers-tell-core-asks-build1.md`, Table 14).
+  ([verbatim-outpost-logic](verbatim-outpost-logic.md), "Core's requests").
 - Time limits in an entry ([ADR 0001: Focus](../adr/0001-focus.md), "Time
   limits"): UIA
   calls end at `verbatim_uia::UIA_CONNECTION_TIMEOUT` (2 s) or
@@ -513,7 +493,7 @@ supervisor's owner, policy, and writer modules forbid `unsafe`; what remains
 is window-manager calls, the event thread's message loop, process creation,
 and the inherited pipe handles.
 
-### Text and dialog text
+## Text and dialog text
 
 - `text` holds the outpost's text sources, public so mockapp drives
   them, and re-exports `verbatim_reader_rules::text`, the `TextSource`
@@ -791,8 +771,7 @@ read.
 
 A batch's text steps (`outpost/batch.rs`, `text_reads`, `text`) read a
 node's text and hold reads behind the anchors Core names, released as
-anchors are (Table 16 of
-`docs/design/readers-tell-core-asks-build1.md`):
+anchors are:
 
 - A run of consecutive text steps (`Caret`, `ReadText`, `ReadRange`,
   `CompareSelection`, `Select`, `Locate`, `MoveBySentence`) on one
@@ -851,8 +830,8 @@ anchors are (Table 16 of
   later reads, gated on the caret or the selection having moved or the
   bound (`text::fused::poll`); an edit control's check is made by parts
   (`text::check`), and the later steps run after it
-  (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and Table
-  15). The starting texts the effect test compares come with the wait,
+  ([verbatim-outpost-logic](verbatim-outpost-logic.md), "A caret key's
+  wait"). The starting texts the effect test compares come with the wait,
   from Core.
 
 - A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
@@ -895,8 +874,8 @@ anchors are (Table 16 of
   and links.
 
 Core alone judges a caret key and a selection
-(`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-this build" and Table 17): the outpost keeps no note of a key and makes
+([verbatim-core](verbatim-core.md), "The caret key on the event queue" and
+"Caret tells and Core's text facts"): the outpost keeps no note of a key and makes
 no comparison Core did not ask for.
 
 - Each node's text facts are the object store's: its anchors, the positions
@@ -1112,7 +1091,7 @@ taken before any call that can block. Each step runs under its gate
   mints alone (`completion::resolve_route`). Where the listener's walk
   met an ancestor Core already knows, the route's end names it, and the
   completion makes no read to find it.
-- `Follow` (`outpost/followed.rs`, Table 10): what it names, the node,
+- `Follow` (`outpost/followed.rs`): what it names, the node,
   its group and any extra object, or nothing, is recorded when the
   worker takes it, then the registration is moved on the registering
   thread to that node alone, the extra object given the value group (its
@@ -1183,7 +1162,8 @@ reads their answers):
 
 The outpost raises none of these: selections, UI Automation notifications
 and toasts are the listener's tells, which Core's event queue judges
-(`docs/design/readers-tell-core-asks-build1.md`). What Core reads for a
+([verbatim-core](verbatim-core.md), "Focus, events and objects", its
+announcements). What Core reads for a
 controlled selection, an element of the focus's ControllerFor relation or
 inside one, is a batch's `Related` controller-for and a `Descendants` of
 every node it found, one program where the window allows.
@@ -1286,7 +1266,7 @@ outlast it. A clean shutdown takes milliseconds: over one end-to-end run, 4
 to 443 ms from the message to the exit, median 15.
 
 Tests: `crates/mockapp/tests/shutdown.rs` (a shutdown during a held read,
-remote and classic: the answer sent, the four UIA registrations removed,
+remote and classic: the read finished and its answer dropped, the four UIA registrations removed,
 the pipe closed, mockapp still answering; and a pong while the worker is
 held; it waits on the shutdown's observation point, so only `cargo xtask
 faults` builds it), `crates/verbatim-supervisor/tests/shutdown_fallback.rs` (a stand-in

@@ -977,8 +977,8 @@ impl Owner {
 
     /// Holds the process a tell names, from the first tell that names it,
     /// so its id names that process until the listener has handled its
-    /// exit (`docs/design/readers-tell-core-asks-build1.md`, "The listener's
-    /// record"). A process held already costs a lookup and nothing more.
+    /// exit (`books/dev/src/reference/crates/verbatim-supervisor.md`, "How it
+    /// works"). A process held already costs a lookup and nothing more.
     fn hold_told(&mut self, pid: Pid) {
         if self.apps.contains_key(&pid) || self.ignored.contains(pid) {
             return;

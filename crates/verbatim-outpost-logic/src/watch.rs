@@ -1,6 +1,6 @@
 //! The caret waits in the outpost's waiting table
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The watch", Tables 14
-//! and 15): a batch whose first step is `WaitForCaret` (the request list's
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's
+//! wait"): a batch whose first step is `WaitForCaret` (the request list's
 //! design, section 3) enters with its first check due now and leaves when
 //! answered.
 //!
@@ -394,7 +394,7 @@ impl Watches {
         None
     }
 
-    /// Core's `cancel` of a watch (Table 15, F).
+    /// Core's `cancel` of a watch.
     pub fn cancel(&mut self, cancel: Cancel) -> WatchCancelled {
         let Some(place) = self.table.iter().position(|w| w.number == cancel.number) else {
             return WatchCancelled::NotHere;
@@ -412,8 +412,7 @@ impl Watches {
     }
 
     /// Window `window` was destroyed: a watch on it that waits is answered
-    /// not there; one whose check runs is answered so when the check ends
-    /// (Table 15, H).
+    /// not there; one whose check runs is answered so when the check ends.
     pub fn destroyed(&mut self, window: WindowHandle) -> Vec<Answer> {
         let mut gone = Vec::new();
         self.table.retain_mut(|watching| {
@@ -434,14 +433,12 @@ impl Watches {
         gone
     }
 
-    /// The anchors the waiting watches name, which a release spares
-    /// (Table 15, I).
+    /// The anchors the waiting watches name, which a release spares.
     pub fn anchors(&self) -> impl Iterator<Item = u64> + '_ {
         self.table.iter().map(|w| w.wait().from.0)
     }
 
-    /// The outpost shuts down: every watch is dropped unanswered (Table
-    /// 15, J).
+    /// The outpost shuts down: every watch is dropped unanswered.
     pub fn close(&mut self) {
         self.table.clear();
     }

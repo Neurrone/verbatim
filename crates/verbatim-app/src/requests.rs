@@ -2,7 +2,7 @@
 //! outcome goes (`books/dev/src/reference/crates/verbatim-app.md`,
 //! `requests`): the control plane's tree dump and the notification area
 //! list's two reads of the taskbar
-//! (`docs/design/readers-tell-core-asks-build1.md`, "Requests in Core").
+//! (`books/dev/src/reference/crates/verbatim-core.md`, "Core's requests").
 //! Core keeps each request's due time, hang check and outpost, and answers
 //! it once, under the token the shell keeps its asker by
 //! (`QueueEffect::Answered`); [`Outside`] holds each [`Asker`] by its token

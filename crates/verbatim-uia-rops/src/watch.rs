@@ -1,5 +1,5 @@
-//! A caret wait's check (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The watch"; the request list's design, section 5, `WaitForCaret`):
+//! A caret wait's check (`books/dev/src/reference/crates/verbatim-uia-rops.md`,
+//! "Layer 3: a caret wait's check"):
 //! the caret and the selection compared with the key's starting point,
 //! the caret's line, and the word at the caret when a deleting key
 //! compares it. The caret is read again at the end, so a check whose

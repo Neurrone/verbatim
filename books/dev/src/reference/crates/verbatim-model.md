@@ -4,9 +4,11 @@ The normalized accessibility vocabulary (architecture section 3), the one
 language every other crate speaks. No I/O; serde derives exist so the same
 types travel over the Core-outpost pipe, the control plane, and the flight
 recorder unchanged. What the reducer does with each type is in
-[verbatim-core](verbatim-core.md).
+[verbatim-core](verbatim-core.md). Its API is in its rustdoc (`cargo doc
+-p verbatim-model --no-deps --open`); this guide holds the rules the types
+carry.
 
-## Public API
+## Identity, nodes and the reducer's contract
 
 - `TraceId`: correlates one observed OS event or keypress with everything
   it causes, through outpost, reducer, speech queue, synth, and audio.
@@ -31,10 +33,6 @@ recorder unchanged. What the reducer does with each type is in
   plain; in a message an outpost's id is `{"outpost": n, "number": m}`
   and a plain one `{"plain": n, "number": m}`, written and read by hand
   with no buffering.
-- `HIDDEN_FRAME_WINDOW_PROP`: the window property
-  [verbatim-gui](verbatim-gui.md) stamps on Core's hidden main frame
-  (decision D9), which a reader reads into a window's facts
-  (`verbatim_win32::window`) so that Core never announces the frame.
 - `WindowHandle` and `WindowFacts`: a native window handle as an opaque
   number, and the facts about an event's window its outpost reads with
   local calls: top-level window, root owner, whether it is topmost,
@@ -55,8 +53,6 @@ recorder unchanged. What the reducer does with each type is in
   (`FocusTextKind`: none, a field's, whose Enter is held too, or a
   terminal's), and which thread's keyboard layout translates its keys
   (architecture section 5).
-- `Backend`: `Uia` or `Msaa`, which client stack sourced a node or event;
-  diagnostics only above the outpost.
 - `class`: NVDA's window class lists and its class name normalization,
   written from `docs/parity/backends.md` ("The class lists the
   per-window verdict reads") for Core and both readers. `normalize(class)`
@@ -99,35 +95,11 @@ recorder unchanged. What the reducer does with each type is in
   Everything in `NodeDetails` defaults
   to "not reported", and its serde default keeps older recordings
   deserializing.
-- `TreeNode`: a `NodeSnapshot` plus its children in tree order, which
-  Core builds from a tree dump's `Descendants` answer
-  (`verbatim_core::outside`) and the control protocol's `DumpTree` reply
-  carries unchanged to `verbatim-inspect`.
-- `ShellItemKind`, `ShellItem`, `ShellCandidate`, `ShellCandidates`: the
-  system tray or taskbar surface and one of its buttons (a name and a UIA
-  runtime id), which Core builds from the walks of the taskbar's windows
-  (`verbatim_core::outside`); a `ShellCandidate` is a button with the
-  clicked item's runtime id or name, whether it is off screen, and its
-  rectangle, and `ShellCandidates` says whether the walk read every
-  button.
 - `Percent`: a progress bar's percentage, parsed at the boundary so
   nothing receiving one checks it again: held between 0 and 100 in
   hundredths, made only from a UI Automation bar's range or a bar's text.
   A UI Automation bar's tell carries it (`tell::Payload::Progress`); Core
   parses a classic bar's from the value its read answers.
-- `NormalizedEvent`, `PropertyChange` and `EarlierElement`: an event as
-  Core took it, which `Effect::Observed` carries to the control plane's
-  event stream, its protocol version 5 event: `FocusChanged` (a full
-  snapshot with its ancestor chain, outermost first), `PropertyChanged`
-  with a `PropertyChange` (name, value, description, or the complete new
-  `States` set), `ValueChanged`, and the text events under "The text
-  protocol". The readers send none: they tell (`tell`) and answer
-  requests (`request`).
-- `NotificationKind` and `NotificationProcessing`: a UI Automation
-  notification's kind and processing, as Core's announcement of it takes
-  them.
-- `ToastId`: a toast's identity, its runtime id, which Core compares
-  with the last toast's to drop a repeat.
 - `KeySeq`: the number of a user input, ordered by press, which fences
   speech (`books/dev/src/explanation/design/ownership.md`). Only the keyboard hook's
   thread mints one (`KeySeq::after`), a review rule since the type is in
@@ -167,21 +139,6 @@ recorder unchanged. What the reducer does with each type is in
     event stream). A lock key's read and the terminal's quiet-period timer
     are not effects: the shell reads their due times from Core's state
     after each step.
-- `Earcon`: an event reported at once, outside the speech queue: an
-  application not responding, start, exit, an error, browse and focus
-  mode, suggestions opened and closed, and progress with its percentage.
-  The theme decides how each is presented.
-- `ActionName`: the action an activation performed, in its answer
-  (`Done::Activate`): `Invoke` (spoken "invoke") or `Named` (an
-  application's own name, spoken as is).
-- `ReviewCommand`: the review and object-navigation vocabulary the
-  keyboard layer's scripts map onto, so the reducer never depends on
-  input-crate types: report object and focus, parent, siblings, first
-  child, to-focus, activate, review-cursor motions by character, word,
-  line and page, the selection's ends, say-all, the start marker and
-  select then copy, the follow-caret, typing echo and new-output toggles,
-  the caret's and review cursor's locations, report status bar, and the
-  previous and next command mark.
 - `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
   `SpeechPriority`, `SpeechMark`, `Message`, `Phrase`, `SelectionText`,
   `TextFormat`: structured speech per decision D12. Segments are semantic
@@ -220,11 +177,6 @@ recorder unchanged. What the reducer does with each type is in
   NVDA never equals objects of two types (`NVDAObject.__eq__`), or one a
   stand-in, which is whatever object its own application's API gives
   (`WindowIdentity::is_same_window`).
-- `UtteranceId` and `UtteranceEnding` (decision D17). An `UtteranceId`
-  names one utterance from acceptance to its single ending and is never
-  reused within a process, unlike a `TraceId`, which several utterances
-  can share. `UtteranceEnding` is `Completed`, `Cancelled`, or `Failed`
-  with a reason.
 - `ReaderSettings`, `TypingEcho`, `SayAllUnit`, `DEFAULT_TERMINAL_LINES`,
   `MAX_TERMINAL_LINES`: the settings the reducer reads, with NVDA's
   defaults: typed character echo (only in edit controls) and word echo
@@ -236,23 +188,12 @@ recorder unchanged. What the reducer does with each type is in
   `MAX_TERMINAL_LINES` as it is made or read from a file, so no reader
   clamps it, and read as counts through `full_lines` and `last_lines`.
   `TypingEcho::next` is the toggle key's cycle. [verbatim-config](verbatim-config.md) stores them.
-- `VerbatimKeys` and `KeyboardLayout`: the Verbatim modifier keys and
-  the gesture-binding layout, declared once for the configuration, which
-  stores them, and the keyboard hook, which reads them.
-- The theme model, under "Themes".
 - `GestureId` and `GestureParseError`: normalized gesture identifiers,
   NVDA's scheme. `GestureId::parse` splits `source:parts`, lowercases
   everything, and sorts the plus-separated parts (`docs/nvda/input.md`,
   "Gestures and mapping"), so `kb:Verbatim+V` and `kb:v+verbatim` are one
   gesture; deserialization re-parses, so an identifier from config or the
   wire is always normalized.
-- `CallKind` and `CallCounts`: how many cross-process calls a piece of
-  work made, by kind (UIA calls, MSAA calls, window messages), and how
-  many of those connected to a window by its handle (`connections`, which
-  `total` leaves out). `record` and `record_connection` saturate; `total`
-  and `is_empty` read; counts add. The model only names the counts;
-  [verbatim-uia](verbatim-uia.md) and [verbatim-ia2](verbatim-ia2.md)
-  count them.
 
 ## Tells, requests and the tables
 

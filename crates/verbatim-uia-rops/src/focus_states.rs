@@ -1,7 +1,7 @@
 //! A focus's states, read once its event registration is in, with the
 //! children of the dialogs the focus enters, from which their text is
-//! gathered (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in
-//! this build"). NVDA's `event_gainFocus` registers for the focus's events
+//! gathered (`books/dev/src/reference/crates/verbatim-uia-rops.md`, "Layer 3: a
+//! focus's states after its registration"). NVDA's `event_gainFocus` registers for the focus's events
 //! before it speaks it (`NVDAObjects/UIA/__init__.py` 1623 to 1626), and
 //! gathers a dialog's text from its children inside the same focus event,
 //! so both are read after the registration. A remote program reads the

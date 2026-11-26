@@ -1,5 +1,5 @@
-//! The listener's check threads' records (design
-//! `docs/design/readers-tell-core-asks-build1.md`, Table 11): one thread
+//! The listener's check threads' records
+//! (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "The check threads"): one thread
 //! per application whose UI Automation events the listener hears, its
 //! record keyed by the application's process generation, taking that
 //! application's events in arrival order.

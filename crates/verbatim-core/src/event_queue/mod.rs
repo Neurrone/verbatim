@@ -1,6 +1,6 @@
 //! Core's event queue, its async driver and its request table (ADR 0003,
-//! "Readers tell, Core asks"; `docs/design/readers-tell-core-asks-build1.md`,
-//! "The model", Table 2).
+//! "Readers tell, Core asks"; `books/dev/src/reference/crates/verbatim-core.md`,
+//! "Core's requests").
 //!
 //! The queue is one line of entries, of which only the front may have a
 //! request out. Its function is an async function run on Core's thread

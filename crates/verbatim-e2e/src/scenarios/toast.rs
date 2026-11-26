@@ -4,7 +4,7 @@
 //! would swallow it, so the body turns Do Not Disturb off for the run and
 //! teardown restores what setup found (roadmap, M4.2, "Toasts").
 //!
-//! The expected speech is the design's (`docs/design/m42-parity.md`,
+//! The expected speech is the parity entry's (`docs/parity/alerts.md`,
 //! "Toasts"), with this scenario's own title and body, to be confirmed
 //! against NVDA in compare mode.
 

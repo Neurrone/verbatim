@@ -1,6 +1,6 @@
 //! The completion of the listener's read of a UI Automation element from
-//! its route (`docs/design/readers-tell-core-asks-build1.md`, "The outpost
-//! in this build" and "The focus answers"): the outpost finds its own copy
+//! its route (`books/dev/src/reference/crates/verbatim-outpost.md`, "Reading the
+//! focus"): the outpost finds its own copy
 //! of the element by the route, mints node ids from the runtime ids the
 //! listener read, replaces the element kept under a reused runtime id,
 //! adds a focus's event registration on the registering thread and waits

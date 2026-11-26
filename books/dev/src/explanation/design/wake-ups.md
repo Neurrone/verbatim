@@ -140,8 +140,8 @@ none while no note polls (`books/dev/src/explanation/design/key-holding.md`,
 No outpost hooks a `WinEvent` but the console host's, which hooks only
 its console's update and caret events, scoped to its process: every other
 kind is the focus listener's, told to Core
-(`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-build"), so an outpost's event thread wakes for nothing in any other
+([verbatim-outpost](../../reference/crates/verbatim-outpost.md), "The
+console host's events"), so an outpost's event thread wakes for nothing in any other
 application.
 
 ## What remains, largest first

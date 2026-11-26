@@ -10,46 +10,54 @@ the window type it shares with the focus listener.
 
 The outpost ([verbatim-outpost](verbatim-outpost.md)) runs it on a thread
 of its own, its shell, which applies its effects and keeps its time; that
-guide's "The outpost" section describes the reducer with the shell, the
+guide's "Inside an outpost" describes the reducer with the shell, the
 worker and the mailbox around it, and its "Implementation notes" the
-reducer's rules for each kind of event.
+reducer's rules for each kind of event. Its API is in its rustdoc
+(`cargo doc -p verbatim-outpost-logic --no-deps --open`).
 
-Public API:
+## Core's requests
 
-- Core's requests (`Asks`, the `waiting` module;
-  `docs/design/readers-tell-core-asks-build1.md`, Table 14): an
-  `Input::Ask` is queued in the order Core sent it and dispatched as
-  `Work::Ask` ahead of every other program, one at a time, with no
-  deadline and no moved-on rule, Core's due time and cancel bounding it.
-  `Input::Answered` sends the program's answer while its request is in
-  flight; a program that ends without one is answered ended, "failed".
-  `Input::CancelAsk` answers a queued request ended, "cancelled", and
-  never runs it; a running one cancelled because the foreground moved
-  away is answered ended, "abandoned", and its worker abandoned and
-  replaced (`Effect::Abandon`), its later answer refused; for any other
-  reason it runs on and its answer is sent. At the close the queued
-  requests are dropped unanswered.
-- A caret key's wait (`Watches`, the `watch` module; the design's "The
-  watch" and Table 15): an `Input::Ask` of a batch whose first step is
-  `WaitForCaret` on a node (`watch::caret_wait`) waits in the table
-  instead of the queue, its first check due at once, then one a poll
-  after each polled check began, the check due at the bound the last.
-  Each check is a `Work::Watch` (`WatchProgram`, holding the batch, its
-  `WatchWork` a `Check` with whether to compare the word and whether it
-  is the last), dispatched ahead of every other program, the earliest
-  due first, on the shell's timer (`Reducer::next_timer`); a check that
-  shows the effect, and the last whatever it shows, runs the batch's
-  later steps and answers it. A check that shows the effect, and the last
-  check, makes the final read in the same program and answers through
-  `Input::Answered`; a check that answers nothing showed no effect, or
-  failed, and the watch goes on; a last check that answers nothing is
-  answered failed. Where the watch names the event rule, a UI Automation
-  caret or text-change entry within `EVENT_WINDOW_US` of the pass brings
-  a check forward, due at once (after the check running, if one runs),
-  which compares the word too and ends the watch only with the effect;
-  the polls after it keep their times (Dickson, 2026-11-17). Cancel, window destruction, `NodesHeld` (whose
-  release spares the watches' starting points) and the close follow
-  Table 15.
+Core's requests (`Asks`, the `waiting` module): an `Input::Ask` is queued in the order Core sent it and dispatched as
+`Work::Ask` ahead of every other program, one at a time, with no
+deadline and no moved-on rule, Core's due time and cancel bounding it.
+`Input::Answered` sends the program's answer while its request is in
+flight; a program that ends without one is answered ended, "failed".
+`Input::CancelAsk` answers a queued request ended, "cancelled", and
+never runs it; a running one cancelled because the foreground moved
+away is answered ended, "abandoned", and its worker abandoned and
+replaced (`Effect::Abandon`), its later answer refused; for any other
+reason it runs on and its answer is sent. At the close the queued
+requests are dropped unanswered.
+
+## A caret key's wait
+
+A caret key's wait (`Watches`, the `watch` module): an `Input::Ask` of a batch whose first step is
+`WaitForCaret` on a node (`watch::caret_wait`) waits in the table
+instead of the queue, its first check due at once, then one a poll
+after each polled check began, the check due at the bound the last.
+Each check is a `Work::Watch` (`WatchProgram`, holding the batch, its
+`WatchWork` a `Check` with whether to compare the word and whether it
+is the last), dispatched ahead of every other program, the earliest
+due first, on the shell's timer (`Reducer::next_timer`); a check that
+shows the effect, and the last whatever it shows, runs the batch's
+later steps and answers it. A check that shows the effect, and the last
+check, makes the final read in the same program and answers through
+`Input::Answered`; a check that answers nothing showed no effect, or
+failed, and the watch goes on; a last check that answers nothing is
+answered failed. Where the watch names the event rule, a UI Automation
+caret or text-change entry within `EVENT_WINDOW_US` of the pass brings
+a check forward, due at once (after the check running, if one runs),
+which compares the word too and ends the watch only with the effect;
+the polls after it keep their times (Dickson, 2026-11-17). Core's
+cancel ends a watch "cancelled", or "abandoned" when its check runs and
+the reason abandons the call, and a check running commits nothing once
+its watch is gone. A destroyed window answers a watch on it "not there",
+at once while it waits, at its check's end while one runs. A release
+(`NodesHeld`) spares the starting points the waiting watches name, and
+at the close every watch is dropped unanswered.
+
+## The reducer
+
 - `Reducer` with `input(input, now)`, which takes one `Input` in
   mailbox order, given the time (`Now`: the shell's monotonic clock, the
   observation clock and the shared clock), and returns the `Effect`s in
@@ -111,7 +119,7 @@ Public API:
   `ReadSelection`, re-exported from `verbatim_reader_rules::text::facts`,
   and `TextChange`), among them the reads held behind ids Core names
   (`NodeAnchors::held`: a caret key's starting point and a selection
-  baseline, numbered and released as anchors are, Table 16), which the
+  baseline, numbered and released as anchors are), which the
   outpost's object store holds and the reducer does not, since no rule of
   it reads them, their type here as pure data tested on any host
   (Dickson's confirmed default, 2026-11-20); and
@@ -124,16 +132,7 @@ registration hears. It keeps no key note: a caret key's starting read and
 watch are Core's requests, and Core alone judges a read's facts as a
 key's evidence.
 
-`cargo xtask ci` reads every file of the crate by the pure rule
-(`xtask/src/ownership.rs`): no clock, no lock, no thread, no Windows type.
-
-Tests: the reducer's unit tests drive it through `input` and `tick`
-(`crates/verbatim-outpost-logic/src/tests.rs`, and each
-module's own), so every ordering of inputs is a replay; Core's requests
-through the reducer are `src/tests/asked.rs`'s, and their queue's own
-cells (Table 14) `waiting.rs`'s; the watch's cells (Table 15) are
-`watch.rs`'s, and the watch across Core and the outpost is the generated
-test `tests/caret_watch.rs`.
+## The intake
 
 The intake (`src/intake.rs`) queues what the outpost still hears, its
 `Follow` subscription's UI Automation events and a console host's console
@@ -143,3 +142,15 @@ console's events merged per window and kind, a newer list of held nodes
 replacing a waiting one, and a batch ending at an idle query. Core's
 requests do not pass through it: they wait in `Asks`. Its rules are pinned
 by its own tests.
+
+## Tests
+
+`cargo xtask ci` reads every file of the crate by the pure rule
+(`xtask/src/ownership.rs`): no clock, no lock, no thread, no Windows type.
+
+Tests: the reducer's unit tests drive it through `input` and `tick`
+(`crates/verbatim-outpost-logic/src/tests.rs`, and each
+module's own), so every ordering of inputs is a replay; Core's requests
+through the reducer are `src/tests/asked.rs`'s, and their queue's own
+rules `waiting.rs`'s; the watch's are `watch.rs`'s, and the watch across Core and the outpost is the generated
+test `tests/caret_watch.rs`.

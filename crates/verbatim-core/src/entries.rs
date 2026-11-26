@@ -1,6 +1,5 @@
 //! The event queue's entries over the reducer's state (ADR 0003, "Core's
-//! inbox and the event queue"; `docs/design/readers-tell-core-asks-build1.md`,
-//! "How the code is organised"): what an entry is, how the queue's rules
+//! inbox and the event queue"): what an entry is, how the queue's rules
 //! read it, and which feature's async function runs it. Each kind's
 //! function sits in its feature's module; only what crosses features is
 //! here.

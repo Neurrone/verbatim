@@ -1,6 +1,6 @@
 //! Core's reducer driving a real outpost watching mockapp, as verbatim.exe
-//! runs them (`docs/design/readers-tell-core-asks-build1.md`, "The test
-//! harness's idle"): the test causes events in mockapp and hands each to
+//! runs them (`books/dev/src/reference/crates/mockapp.md`, "The test
+//! harness"): the test causes events in mockapp and hands each to
 //! [`CoreDriver`] as the tell the listener would send, Core's requests go
 //! to the outpost through its request driver ([`OutpostUnderTest::forward`])
 //! or, for the listener, are answered on this thread with the listener's
@@ -202,7 +202,7 @@ pub enum CoreTime {
     /// The run's shared clock moved on by the time the test passes, for a
     /// test whose caret key's watch the outpost times by the run's shared
     /// clock from the pass Core stamps
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The watch").
+    /// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "A caret key's wait").
     Real,
 }
 
@@ -488,8 +488,8 @@ impl CoreDriver {
     /// together, as it brings a burst an application raises within a
     /// millisecond, its limiter keeping one waiting event per object, kind
     /// and raising thread, the newest in its place
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Readers' local
-    /// drops").
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "The waiting
+    /// entries").
     pub fn raise_together(
         &mut self,
         app: &mut super::MockApp,

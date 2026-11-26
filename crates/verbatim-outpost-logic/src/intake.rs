@@ -1,6 +1,5 @@
 //! What the outpost still hears, queued for its worker
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-//! build"): its `Follow` subscription's UI Automation events, a console
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "The intake"): its `Follow` subscription's UI Automation events, a console
 //! host's console events, a window Core named destroyed, and Core's
 //! lists of held nodes and idle queries, handled in the order they
 //! arrived. The event queue is Core's: the intake keeps only the

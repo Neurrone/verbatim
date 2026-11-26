@@ -362,8 +362,7 @@ pub struct PropertyEntry {
 
 /// A node detail a setting switches: a read leaves out the properties of
 /// one whose setting is off, so its call is not made
-/// (`docs/design/readers-tell-core-asks-build2.md`, "Rules, each with its
-/// reason").
+/// (`books/dev/src/reference/crates/verbatim-model.md`, "Themes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NodeDetail {
     /// The description.

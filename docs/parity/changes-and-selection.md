@@ -204,8 +204,8 @@ MSAA selection, has Core ask for the item with the committed focus's
 controller-for relation read live, and an item that is an object the
 focus controls, or inside one, is spoken as a focus, while any other is
 a change of state of the selected object, spoken only on the focus or an
-ancestor (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-objects"). Each selection is handled in turn: two selections of one
+ancestor (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events
+and objects", its selections). Each selection is handled in turn: two selections of one
 item the focus controls each speak it, the second cutting the first, as
 NVDA cancels speech and reports the item for each (`NVDAObjects/__init__.py`
 1314 to 1338). **matched (unverified)**. A focused list's selected item is
@@ -527,9 +527,8 @@ following the combo box and the focus by the focus listener, two
 processes with no order between them, so when the item's focus read
 completes with the committed combo box among its ancestors, Core first
 judges the combo box's waiting UI Automation state changes, then takes
-the focus (ADR 0003's narrow ordering rule,
-`docs/design/readers-tell-core-asks-build1.md`, "The narrow ordering
-rule"), and Verbatim says "expanded" there too. A change that reaches
+the focus (`books/dev/src/reference/adr/0003-readers-tell-core-asks.md`,
+"The narrow ordering rule"), and Verbatim says "expanded" there too. A change that reaches
 Core only after the focus has been taken is said after the item, as an
 ancestor's change.
 

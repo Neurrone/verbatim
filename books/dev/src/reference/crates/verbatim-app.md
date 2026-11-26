@@ -477,8 +477,8 @@ knowing for review:
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
 - `requests` — who asks Core's requests from outside the event queue,
-  and where each outcome goes (`docs/design/readers-tell-core-asks-build1.md`,
-  "Requests in Core"): the control plane's tree dump (a batch
+  and where each outcome goes ([verbatim-core](verbatim-core.md), "Core's
+  requests"): the control plane's tree dump (a batch
   `verbatim_core::outside::dump` builds, naming the attention
   application's main window, `verbatim_win32::window::main_window_of`)
   and the notification area list's two reads (batches of walks of the

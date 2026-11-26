@@ -6,9 +6,10 @@ effects it produced on one line. A tool crate: its binary is what `cargo
 xtask replay` runs ([the end-to-end guide](../../how-to/e2e.md), "Replaying
 a run"), and the end-to-end suite renders the flight recorder's inputs in
 a failure's report with its library. It builds on every host, since
-nothing in it is Windows-specific.
+nothing in it is Windows-specific. Its API is in its rustdoc (`cargo doc
+-p verbatim-replay --no-deps --open`).
 
-## Public API
+## The replay and its lines
 
 - `replay_dump(contents)` replays every input of a `DumpContents` from its
   base state with `verbatim_core::replay` and returns one `Replayed` per
@@ -17,14 +18,10 @@ nothing in it is Windows-specific.
   session recorded, and the effects the replay produced. `differs()` is
   true when the two counts disagree: the code changed since the run, or
   the reducer is not deterministic.
-- `Renderer::new(sounds)` renders with the built-in default theme, finding
-  its sound files in `sounds`, the repository's `sounds` folder. `line(replayed)`
-  is one input's line; `effect(effect)` one effect.
-- `describe_input(input)` is an input's part of the line, and
-  `input_time_us(input)` the time it carries, in microseconds; an input
-  with none, or with a time of 0, is untimed. `carries_trace(input,
-  trace)` says whether a `trace_id` or `trace` field at any depth holds
-  `trace`.
+- A line renders its input and effects with the built-in default theme,
+  its sounds found in the repository's `sounds` folder. An input with no
+  time, or a time of 0, is untimed, and an input carries a trace when a
+  `trace_id` or `trace` field at any depth holds it.
 - `failure_inputs(replayed, renderer, trace, from_us, to_us)` is what the
   end-to-end suite's failure report shows of a dump: each input carrying
   `trace`, and each received from `from_us` to `to_us`, as a `Shown` with

@@ -1,5 +1,5 @@
 //! The backend cache: whether a window is read through UI Automation or
-//! MSAA (`docs/design/readers-tell-core-asks-build1.md`, Table 4;
+//! MSAA (`books/dev/src/reference/crates/verbatim-core.md`, "The backend cache";
 //! `docs/parity/backends.md`, "Dual-stack MSAA+UIA with per-window
 //! arbitration", "The class lists the per-window verdict reads").
 //!

@@ -3,7 +3,7 @@
 //! messages and repeated presses (`docs/nvda/review-modes.md`).
 //!
 //! Every review command reads live (Dickson, 2026-10-08;
-//! `docs/design/m42-parity.md`): a command that answers from the review
+//! `docs/parity/review.md`, "Dead objects"): a command that answers from the review
 //! cursor's line reads it first, and a move goes straight to the read that
 //! moves. A press is an entry of the event queue (`crate::keys::entry`).
 //! A dead object reviews as an object with

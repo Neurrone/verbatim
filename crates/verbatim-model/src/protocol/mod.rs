@@ -141,16 +141,15 @@ pub enum CoreToOutpost {
     },
     /// A request of the shared list, answered once by
     /// [`OutpostToCore::Answer`] on the outpost's one worker
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in
-    /// this build" and Table 14).
+    /// (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests").
     Request(Box<crate::request::Ask>),
     /// Cancel a request: one queued is dropped and answered cancelled; one
     /// running is abandoned with its worker replaced when the foreground
     /// moved away, or else left alone.
     Cancel(crate::request::Cancel),
     /// A window of the outpost's application was destroyed, as the
-    /// listener told Core (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "Changes on objects"): the outpost answers "not there" the queued
+    /// listener told Core (`books/dev/src/reference/crates/verbatim-core.md`,
+    /// "A window's destruction"): the outpost answers "not there" the queued
     /// reads whose MSAA ids name it and the watches waiting on it, and
     /// forgets its MSAA nodes, text facts and classic-read mark before any
     /// later work. A followed node's registration is
@@ -210,8 +209,8 @@ pub enum CoreToListener {
     /// ([`CoreToOutpost::Shutdown`]).
     Shutdown,
     /// A request of the shared list, answered once by
-    /// [`ListenerToCore::Answer`] (`docs/design/readers-tell-core-asks-build1.md`,
-    /// "The listener in this build" and Table 9).
+    /// [`ListenerToCore::Answer`] (`books/dev/src/reference/crates/verbatim-listener-logic.md`,
+    /// "The reading threads' schedule").
     Request(Box<crate::request::Ask>),
     /// Cancel a request: one queued is dropped and answered cancelled; one
     /// running is abandoned for the foreground, or else left alone.

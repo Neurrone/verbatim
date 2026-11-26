@@ -1,6 +1,6 @@
 //! Core's requests, answered on the worker
-//! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-//! build", "The focus answers" and Table 14), each answered once with one
+//! (`books/dev/src/reference/crates/verbatim-outpost.md`, "Core's requests";
+//! `books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests"), each answered once with one
 //! of the five outcomes: a batch (`super::batch`), the one kind of
 //! request. What a read reads is answered by its
 //! property set, each node with its nearest window's facts, read from

@@ -1,5 +1,5 @@
 //! Core's requests through the reducer
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14): each runs
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests"): each runs
 //! on the worker in charge ahead of the outpost's own work, is answered
 //! once, and is cancelled as its reason says.
 

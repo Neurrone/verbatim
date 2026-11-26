@@ -7,8 +7,8 @@ use verbatim_model::TraceId;
 use verbatim_model::hung::WindowState;
 use verbatim_model::protocol::{EventTiming, UiaSnapshotFact};
 /// The `WinEvent` kinds an outpost still takes in
-/// (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
-/// build"): a console host's console events, which its own hook delivers.
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "The console host's
+/// events"): a console host's console events, which its own hook delivers.
 /// The mailbox turns a hooked event into one of these at its arrival. A
 /// window Core names destroyed is no entry: the reducer owes it a forget
 /// ([`crate::Work::Forget`]).

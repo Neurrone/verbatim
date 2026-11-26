@@ -1,6 +1,6 @@
-//! The listener's check threads (design
-//! `docs/design/readers-tell-core-asks-build1.md`, "Focus and foreground",
-//! "The listener in this build" and Tables 6 and 11): every UI Automation
+//! The listener's check threads (`books/dev/src/reference/crates/verbatim-listener.md`,
+//! "Tells, checks and Core's requests"; `books/dev/src/reference/crates/verbatim-listener-logic.md`,
+//! "The check", "The check threads" and "Kept elements"): every UI Automation
 //! event the listener hears goes from its callback, which makes no call,
 //! to its application's check
 //! thread, which makes every call NVDA's handler for that event's kind

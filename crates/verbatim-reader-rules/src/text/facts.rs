@@ -33,7 +33,7 @@ pub struct NodeAnchors<P> {
     pub last: Option<LastRead<P>>,
     /// The reads held behind ids Core names, numbered as anchors are: a
     /// caret key's starting point and a selection baseline
-    /// (`docs/design/readers-tell-core-asks-build1.md`, Table 16). Each
+    /// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Text and caret"). Each
     /// is released with the anchors, so it lives while Core holds it or a
     /// request names it.
     pub held: BTreeMap<u64, LastRead<P>>,

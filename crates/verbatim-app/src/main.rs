@@ -1785,8 +1785,8 @@ impl ReducerThread<'_> {
     /// attention, each element's location read only with `locations`: a
     /// request of Core's from outside the event queue, naming the
     /// application's main window, with the queue's due time and hang check
-    /// (`docs/design/readers-tell-core-asks-build1.md`, "Requests in
-    /// Core"). The answer goes to `reply`; the requester waits on it with
+    /// (`books/dev/src/reference/crates/verbatim-core.md`, "Core's
+    /// requests"). The answer goes to `reply`; the requester waits on it with
     /// its own timeout, and a late answer to a request it gave up on is
     /// dropped.
     fn dump_tree(&mut self, ticket: DumpTicket, locations: bool, reply: Sender<DumpTreeResult>) {

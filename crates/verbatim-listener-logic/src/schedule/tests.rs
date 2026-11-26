@@ -1,5 +1,5 @@
-//! The reading threads' schedule's tests: one per rule and per cell of
-//! Table 9 (`docs/design/readers-tell-core-asks-build1.md`).
+//! The reading threads' schedule's tests: one per rule of
+//! `books/dev/src/reference/crates/verbatim-listener-logic.md`, "The reading threads' schedule".
 
 use super::*;
 

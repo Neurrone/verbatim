@@ -1,9 +1,8 @@
 //! An outpost's clean shutdown, against mockapp's UIA provider: told to
 //! shut down while a read into mockapp is in progress, a remote operation
 //! in one test and classic reads in the other, the outpost lets the read
-//! finish and drops its answer, as the design's worker table has it
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14, "Shutdown"),
-//! then removes every UIA event handler it
+//! finish and drops its answer (`books/dev/src/reference/crates/verbatim-outpost.md`,
+//! "Shutting down"), then removes every UIA event handler it
 //! registered, which mockapp sees through the registrations UIA reports
 //! to its fragment root (`IRawElementProviderAdviseEvents`), and closes
 //! its pipe. mockapp keeps running and answers another client afterwards.
@@ -204,7 +203,7 @@ fn shut_down_during(name: &str, read: &Read) {
     app.release();
 
     // The read finished, the shutdown waiting for it, and its answer was
-    // dropped (Table 14, "Shutdown" with a program running).
+    // dropped.
     shut_down
         .recv_timeout(common::WAIT_TIMEOUT)
         .expect("the shutdown ends once the call has returned");

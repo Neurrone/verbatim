@@ -1730,7 +1730,7 @@ fn focus_in_caret_fixture(
 
 /// The focus-following registration moves with the focus as NVDA's local
 /// group does, added to the new focus as its completion reads it
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Changes on objects"):
+/// (`books/dev/src/reference/crates/verbatim-outpost.md`, "Inside an outpost", the focus-following subscription):
 /// after the focus leaves the document for a button and returns, a caret
 /// event the document raises is heard and told for its element.
 fn a_caret_event_after_the_focus_returns_to_a_document_is_heard() {
@@ -2716,8 +2716,8 @@ fn a_focus_in_a_window_with_no_uia_provider_is_dropped_by_its_probe() {
 
 /// The focus's help text and `ControllerFor` relation are followed, as
 /// NVDA's local group follows them, and told to Core, which asks one read
-/// for each (`docs/design/readers-tell-core-asks-build1.md`, "Changes on
-/// objects"): a help text change is spoken as the focus's new description,
+/// for each (`books/dev/src/reference/crates/verbatim-core.md`, "Focus, events
+/// and objects", its changes): a help text change is spoken as the focus's new description,
 /// read when Core judges it, and a search box's relation naming its list
 /// and then nothing plays the suggestions opening and closing, each read
 /// in one call, the refresh of the box that reads the relation live.

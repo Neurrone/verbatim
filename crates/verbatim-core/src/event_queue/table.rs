@@ -1,5 +1,5 @@
-//! Core's request table and recovery set (`docs/design/readers-tell-core-asks-build1.md`,
-//! Tables 2 and 18).
+//! Core's request table and recovery set (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Core's requests").
 //!
 //! A request is waiting for its reader, out, or no longer awaited; an
 //! answered request leaves the table, so any later input naming it finds

@@ -1,7 +1,6 @@
 //! The calls a UI Automation event's check makes at delivery, as one
-//! straight-line function (design
-//! `docs/design/readers-tell-core-asks-build1.md`, Table 11 and "Focus and
-//! foreground"): [`check`] makes each call through [`CheckCalls`], which
+//! straight-line function (`books/dev/src/reference/crates/verbatim-listener-logic.md`,
+//! "The check"): [`check`] makes each call through [`CheckCalls`], which
 //! the listener's check thread answers on the event's element, and returns
 //! what the tell carries. The check judges nothing: Core judges every
 //! answer it carries.

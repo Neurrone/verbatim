@@ -1,5 +1,5 @@
-//! A caret wait's check (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The watch"; the request list's design, section 5, `WaitForCaret`)
+//! A caret wait's check (`books/dev/src/reference/crates/verbatim-uia-rops.md`,
+//! "Layer 3: a caret wait's check")
 //! against mockapp's UIA text provider, each of the three ways the
 //! outpost makes it, which must answer alike: a poll's program, the
 //! program's steps by calls (`run_calls`, the fallback and the setting

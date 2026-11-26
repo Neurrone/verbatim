@@ -1,5 +1,5 @@
-//! A caret tell as an event-queue entry (`docs/design/readers-tell-core-asks-build1.md`,
-//! "Selection and the caret's text facts", Tables 3 and 17): the system
+//! A caret tell as an event-queue entry (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "Caret tells and Core's text facts"): the system
 //! caret's location change or show from the listener, or a UI Automation
 //! text-selection change from the outpost following the focus.
 //!
@@ -247,8 +247,8 @@ fn console_terminal_committed(state: &crate::state::SrState) -> bool {
 
 /// Whether `entry` is a system caret tell, dropped at its arrival while
 /// the committed focus is a console host's terminal
-/// (`docs/design/readers-tell-core-asks-build1.md`, "Terminals in this
-/// build"). Verbatim-only: the terminal model.
+/// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals").
+/// Verbatim-only: the terminal model.
 pub(crate) fn dropped_in_console(state: &crate::state::SrState, entry: &Entry) -> bool {
     matches!(entry, Entry::Caret(caret) if matches!(caret.target, Target::System(_)))
         && console_terminal_committed(state)

@@ -18,7 +18,7 @@
 //!   window's lookup UIA ends with its timeout fails whole.
 //!
 //! A window that hangs while the outpost waits on it is Core's to judge,
-//! by its hang check (`docs/design/readers-tell-core-asks-build1.md`), and
+//! by its hang check (`books/dev/src/reference/crates/verbatim-core.md`, "Core's requests"), and
 //! is not tested here.
 
 mod common;

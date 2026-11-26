@@ -1,5 +1,5 @@
-//! Core's merge in its event queue (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The event queue"): a newer tell of the same object and kind, from the
+//! Core's merge in its event queue (`books/dev/src/reference/crates/verbatim-core.md`,
+//! "The waiting entries"): a newer tell of the same object and kind, from the
 //! same thread, replaces one still waiting, the newest keeping its place.
 //! For every kind Core merges, each sequence of up to two other inputs
 //! from a fixed set between the older tell and the newer, both told while

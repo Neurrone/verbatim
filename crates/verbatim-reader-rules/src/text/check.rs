@@ -1,6 +1,6 @@
-//! A caret wait's check (`docs/design/readers-tell-core-asks-build1.md`,
-//! "The watch", Table 15; the request list's design, section 3,
-//! `WaitForCaret`): it compares the caret with the starting point by the
+//! A caret wait's check (`books/dev/src/reference/crates/verbatim-uia-rops.md`,
+//! "Layer 3: a caret wait's check"; `books/dev/src/reference/crates/verbatim-outpost-logic.md`,
+//! "A caret key's wait"): it compares the caret with the starting point by the
 //! effect test, the starting texts given with the wait.
 //!
 //! This is the check call by call, an edit control's; through UI

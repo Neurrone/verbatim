@@ -13,13 +13,12 @@ generation record and judges every generation, its replacement, backoff
 and missed pings among it (`verbatim_core::supervisor`,
 [verbatim-core](verbatim-core.md)). It keeps two spare outposts waiting.
 The message layer, the launch arguments and the held processes are
-[verbatim-process](verbatim-process.md)'s.
+[verbatim-process](verbatim-process.md)'s. Its API is in its rustdoc
+(`cargo doc -p verbatim-supervisor --no-deps --open`).
 
-## Public API
+## Starting and ending children
 
-`Supervisor`:
-
-- `new(events, options, ignored)` starts the relay, which
+- The supervisor starts the relay, which
   starts the listener at once, launching each role from its executable
   beside the current one (`Executables::beside_current`:
   `verbatim-outpost.exe` and `verbatim-listener.exe`); a missing one fails
@@ -53,14 +52,11 @@ The message layer, the launch arguments and the held processes are
 - `send_to_outpost(outpost, command)` queues a command without waiting,
   failing at once with a `QueueError` when the generation ended or its
   queue is full.
-- `leave_nodes_held` (left in the
-  writer's slot for the next command), `send_nodes_held` (written behind
-  what waits, in place of a list left), `query_idle(round)`, `is_ignored`,
-  and `frames`.
-- `set_backoff_clock(clock)` has the spares' backoff set and ended by a
-  test's clock in place of the run's shared one, so a test decides when a
-  backoff ends, after what it waits for has happened.
+- A list of held nodes is either left in the writer's slot for the next
+  command, or written behind what waits, in place of a list left.
 - `SPARES` is two; Verbatim's readiness waits for them.
+
+## What the app hears
 
 The app hears through `OutpostMessage`: `ListenerStarted` (before the
 listener's launch, so Core keeps its first tells), `ListenerReady`,
@@ -106,7 +102,7 @@ since its subject is private to the crate ([verbatim-faults](verbatim-faults.md)
 `fault_paths` checks that such a shutdown still ends, at the next
 heartbeat.
 
-How it works:
+## How it works
 
 - The owner and relay (`owner`, `relay`) is one thread, `verbatim-relay`,
   that launches and ends every child (`docs/design/communication.md`,

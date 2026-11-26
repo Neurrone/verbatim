@@ -1,5 +1,5 @@
 //! Core's requests on the outpost's one worker
-//! (`docs/design/readers-tell-core-asks-build1.md`, Table 14): queued in
+//! (`books/dev/src/reference/crates/verbatim-outpost-logic.md`, "Core's requests"): queued in
 //! the order Core sent them, the event queue's requests (`Follow` and a
 //! terminal's baseline among them) ahead of every request from outside
 //! the queue still waiting ([`Question::outside_the_queue`]: a tree dump,

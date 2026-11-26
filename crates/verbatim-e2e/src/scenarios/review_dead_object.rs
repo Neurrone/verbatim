@@ -1,7 +1,7 @@
 //! The navigator on an object that no longer exists, in `mockapp`'s UIA
 //! provider: the object is reached by navigation and then removed, as
 //! `mockapp`'s disconnected nodes fail as a destroyed element's calls do
-//! (`docs/design/m42-parity.md`, "Exact speech"; NVDA's captures of
+//! (`docs/parity/review.md`, "Dead objects", with NVDA's captures of
 //! 2026-11-09). Each command says the direction's edge and keeps the
 //! navigator; review commands see empty flat text; the parent is the
 //! window's; the to-focus command moves the navigator back.
