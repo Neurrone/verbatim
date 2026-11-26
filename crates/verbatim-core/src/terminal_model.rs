@@ -29,7 +29,7 @@
 //!   whose screen showed text, which Core holds; a read whose start is no
 //!   longer that one when it answers is given to the rules as reading from
 //!   another start, so its rows are found by their text.
-//! - What is owed (Table 4): when the rules ask for the whole document, or
+//! - What is owed (Table 4): when the rules ask for a count read, or
 //!   a first read again with its history block, the next full read sent
 //!   takes that scope.
 //! - Identical reads: a read identical to the last one given, but for its
@@ -632,6 +632,7 @@ fn speech_of(step: Step) -> Said {
                     TerminalItem::Skipped(Skipped::About(above))
                 }
                 Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
+                Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
                 Speech::Echo { text, .. } => TerminalItem::Echo(text),
                 Speech::Caret { unit, text, .. } => TerminalItem::Caret {
                     unit: match unit {
@@ -760,6 +761,10 @@ pub(crate) fn take(
     model.focus_arrived = false;
     model.give_keys(at_ms);
     let mut read = read_of(snapshot);
+    // Only a start the read named can be refused, so the rules ask for a
+    // count read, which reads from that start again, only after one.
+    let refused = named.filter(|_| read.shrank);
+    read.shrank = refused.is_some();
     // A read named a start other than the memory's: its rows are found by
     // their text, as after a refused start (Table 7; rules 2 and 4).
     if named != model.start {
@@ -772,12 +777,14 @@ pub(crate) fn take(
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
-    if step.count_read || step.history_block {
-        model.owed = Some(if step.count_read {
-            TerminalScope::Count
-        } else {
-            TerminalScope::HistoryBlock { height }
-        });
+    let owed = match (step.count_read, refused) {
+        (true, Some(start)) => Some(TerminalScope::Count { start }),
+        _ => step
+            .history_block
+            .then_some(TerminalScope::HistoryBlock { height }),
+    };
+    if let Some(owed) = owed {
+        model.owed = Some(owed);
         return Taken {
             speech: None,
             key,

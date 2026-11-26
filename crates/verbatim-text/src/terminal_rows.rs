@@ -565,10 +565,11 @@ pub enum Lost {
         above: u32,
     },
     /// Nothing the last read had at or above the caret was kept: every row
-    /// of the read not kept is new, and more went by than it shows; or the
-    /// last read's rows fit at more than one place, so only the visible
-    /// screen was aligned, its rows above history.
+    /// of the read not kept is new, and more went by than it shows.
     MoreThan,
+    /// The last read's rows fit at more than one place: only the visible
+    /// screen is aligned, and what went by has no count.
+    Uncounted,
 }
 
 /// A row that lingers: gone, kept for a while with its history.
@@ -1093,7 +1094,7 @@ impl TerminalMemory {
             let (aligned, lost) = match read.rows_above {
                 _ if lost && aligned.ambiguous && report => (
                     align_screen(&current, (&rows, height), read, caret),
-                    Lost::MoreThan,
+                    Lost::Uncounted,
                 ),
                 None if read.shrank || !report => {
                     self.screen = Some(current);
@@ -1113,7 +1114,7 @@ impl TerminalMemory {
             };
             let mut next = remember(&current, rows, &aligned, read, (width, height), caret);
             if !refused {
-                keep_places(&mut next, &current, aligned.place);
+                keep_places(&mut next, &current, &aligned);
             }
             return self.finish(&current, next, &aligned, &shape, Switch::None);
         }
@@ -1704,17 +1705,25 @@ fn commonest_shift(pairs: &[(usize, usize)], base: isize) -> isize {
 }
 
 /// The anchors of `memory` in `next`, the memory after a lost read whose
-/// start was accepted, each kept at its place, a memory row's place being
-/// `place` rows further in the read (Claude, 2026-11-27; "A lost read"):
-/// on the read's row there, or above the read with its line's hash, found
+/// start was accepted, aligned as `aligned`: one on a row the alignment kept
+/// or paired follows that row, and any other keeps its place, a memory row's
+/// place being `aligned.place` rows further in the read (Claude,
+/// 2026-11-27; "A lost read"): on the read's row there, or above the read with its line's hash, found
 /// by its text when a command looks for it ("Features and settings"). A
 /// read from the document's start holds every place there is: above it, a
 /// command mark left the buffer, and the review position and a place go to
 /// its first row.
-fn keep_places(next: &mut Screen, memory: &Screen, place: isize) {
-    let shift = place.saturating_sub(isize_of(memory.skipped));
+fn keep_places(next: &mut Screen, memory: &Screen, aligned: &Aligned) {
+    let shift = aligned.place.saturating_sub(isize_of(memory.skipped));
+    let fates = aligned.fates(memory);
     let (rows, at_start) = (&next.rows, next.at_document_start);
     let kept = |anchor: Anchor, mark: bool| {
+        if let Some(OldRow::Kept(to) | OldRow::Rewritten(to)) = usize::try_from(anchor.row)
+            .ok()
+            .and_then(|row| fates.get(row))
+        {
+            return anchor_at(rows, *to, anchor.column);
+        }
         let row = anchor.row.saturating_add(shift);
         match usize::try_from(row) {
             Ok(row) => anchor_at(rows, row, anchor.column),
@@ -1756,7 +1765,7 @@ fn all_new(mut aligned: Aligned) -> Aligned {
 /// Aligns the visible screen of `rows`, a lost read whose last read's rows
 /// fit at more than one place, with `memory` ("A lost read"): the longest
 /// common subsequence of rows with text, the rows above the visible screen
-/// history, and what went by counted as more than with no number.
+/// history, and what went by uncounted.
 fn align_screen(
     memory: &Screen,
     (rows, height): (&[Row], usize),

@@ -176,11 +176,14 @@ pub enum TerminalScope {
     /// command, which Core answers from its memory once the read is
     /// aligned.
     Fresh,
-    /// A count read: a read as any other from the start Core keeps, which,
-    /// when that start is refused, counts the rows above it; the reading
-    /// rules ask for it after a lost read whose start shrank ("A lost
-    /// read").
-    Count,
+    /// A count read: a read as any other from `start`, the start the lost
+    /// read named, which, when that start is refused, counts the rows above
+    /// it; the reading rules ask for it after a lost read whose start shrank
+    /// ("A lost read").
+    Count {
+        /// The start the lost read named.
+        start: crate::TextAnchor,
+    },
     /// A first read again, counted up from the document's end by `height`
     /// rows with as many rows above, so that it holds its history block
     /// ("The read").

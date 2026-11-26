@@ -676,8 +676,7 @@ fn history_lines_skipped_add_to_the_more_than_count_they_follow() {
 
 #[test]
 fn lines_after_a_lost_read_found_by_text_are_counted_as_about() {
-    // A lost read whose last rows were found in the whole document by
-    // their text gives its lines after an "about" count of none. Once the
+    // A count read gives its lines after an "about" count, here of none. Once the
     // group of lines 1 to 30 is heard, line 31 and the read's oldest 70
     // lines are skipped: about 71, the count taken from text.
     let mut state = terminal();
@@ -1113,12 +1112,12 @@ fn newer_output_never_cancels_older_and_skipped_counts_add_up() {
 }
 
 #[test]
-fn a_lost_reads_count_of_none_says_skipped_lines_without_a_number() {
+fn lines_skipped_uncounted_say_so_without_a_number() {
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(
         &mut state,
-        &output_from(TERMINAL, Some(Skipped::MoreThan(0)), lines(1..=3)),
+        &output_from(TERMINAL, Some(Skipped::Uncounted), lines(1..=3)),
     );
     let mut expected = vec!["skipped".to_owned()];
     expected.extend(lines(1..=3));

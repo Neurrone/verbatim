@@ -862,7 +862,7 @@ fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
         Skipped::Count(count) => {
             lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)) > full
         }
-        Skipped::MoreThan(_) | Skipped::About(_) => true,
+        Skipped::Uncounted | Skipped::MoreThan(_) | Skipped::About(_) => true,
     }
 }
 
@@ -979,7 +979,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             ),
             // An overflow none of whose lines were skipped: how many went
             // by is not known.
-            Waiting::Skipped(Skipped::MoreThan(0)) => (
+            Waiting::Skipped(Skipped::Uncounted | Skipped::MoreThan(0)) => (
                 vec![UtteranceSegment::new(SegmentContent::Phrase(
                     Phrase::SkippedUncountedLines,
                 ))],
