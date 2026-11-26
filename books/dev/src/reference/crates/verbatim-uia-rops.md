@@ -24,8 +24,8 @@ operations of the list keep a remote program and a classic
 implementation of the same signature behind one entry point that
 chooses between them and answers with a `Path`: the focus ancestry, an
 element found by its path, a focus's states after its registration, and
-a terminal's command search, the terminal's old operation kept until the
-command marks' journal replaces it (Dickson, 2026-11-26). Every UIA
+a terminal's command search, the terminal's old operation kept until
+Core sends the search as a batch (Dickson, 2026-11-26). Every UIA
 path in the outpost that makes a sequence of calls to the application
 runs through one or the other; "Where remote operations are not used"
 lists the rest.
@@ -38,14 +38,14 @@ executor's list:
 
 - a program arm and a call arm: `Related`, `Descendants`, `Caret`,
   `ReadText` (a whole read and a trimmed one among them), `ReadRange`,
-  `CompareSelection`, `Select`, `Locate`, `Visible`, `Move`,
+  `CompareSelection`, `Select`, `Locate`, `Visible`, `Move`, `FindText`,
   `WaitForCaret`'s check and `FocusRead`;
 - programs of its own and a call arm: `ReadColours` (`batch/colours.rs`),
   the terminal's colours, its first rows read by the program that read
   its screen and its colour programs going on from there ("The
   colours");
 - a call arm only: `Read`, `Test`, `IsOneOf`, `Activate`, `Follow`,
-  `Ancestors`, `FindText` and `MoveBySentence`, the last refused as no
+  `Ancestors` and `MoveBySentence`, the last refused as no
   such unit, since UI Automation's text has no sentence.
 
 `Read`, `Test`, `IsOneOf`, `Activate` and `Follow` each run alone by calls
@@ -542,16 +542,30 @@ each answered by the arms above:
   its end moved by their count, in one `GetText`; a trimmed read's text
   loses each line's padding in the outpost, which answers the padded
   lengths, and reads no languages, which its chunk never answers.
-- `FindText` runs by calls alone: Windows Terminal answers a search that
-  finds nothing in its span with a range some of whose calls fail with
-  `RPC_E_SERVERFAULT`, which ends a remote run whatever try block holds
-  the call, while a failed call answered as such only ends the search,
-  with what it found. Each match that starts its unit, when the search
-  asks so, is answered with its units to the text's end and its text; a
-  hit within a unit is passed over, and counts within the search's
-  `calls`, so a needle found mostly within rows ends rather than walking
-  the whole history (`books/dev/src/reference/performance.md`, "A
-  terminal's upward search").
+- `FindText`: the matches of a text from a point to the text's end, or
+  back to its start, the nearest first. Each match that starts its unit,
+  when the search asks so, is answered with its units to the text's end
+  and its text; a hit within a unit is passed over, and counts within
+  the search's `calls`, so a needle found mostly within rows ends rather
+  than walking the whole history (`books/dev/src/reference/performance.md`,
+  "A terminal's upward search"). A failed call ends the search with what
+  it found. Windows Terminal answers a search that finds nothing in its
+  span with a range some of whose calls fail with `RPC_E_SERVERFAULT`,
+  which ends a remote run whatever try block holds the call, so the
+  program makes none of them (`batch/program.rs`, `Emit::find_text`).
+  It first searches the whole text and compares the hit with the answer
+  for text no terminal holds, which every `FindText` of a program
+  shares: equal, null or failed is nothing found, with no other call.
+  And before any call on a hit it compares the span searched with the
+  hit, a call on a real range, which fails into the search's try block
+  when the hit is that range. Those searches of the whole text are
+  outside the step's `calls`, so the program and the calls make the
+  same calls from the point. The step declares 60 instructions, 20 for
+  each call and 8 more for each match, and its program is built for its
+  run and not kept, since the text sought is part of it. Limit: output
+  that trims the text sought from the history after the first search
+  makes a later miss the kind whose call ends the run, and the fallback
+  rule runs the step by calls.
 
 ### The colours
 

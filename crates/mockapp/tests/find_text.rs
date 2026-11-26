@@ -192,13 +192,24 @@ fn a_failing_search_goes_on_in_the_other_direction() {
 /// range rather than null, as Windows Terminal's does
 /// (`terminal_find_misses_answer_a_range.json`): the search takes every
 /// match each way from its row, each way ending where the text is only
-/// elsewhere, its failed calls ending that way alone, and finds nothing
-/// for text that is nowhere.
+/// elsewhere, and finds nothing for text that is nowhere. The outpost
+/// reading by remote operations makes no call the provider answers with
+/// `RPC_E_SERVERFAULT`, which ends a remote run in Windows Terminal; the
+/// one reading by calls makes them, each ending its way alone.
 fn a_search_whose_misses_answer_a_range_finds_its_matches() {
     let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"];
     let (app, hwnd) = searched_terminal("terminal_find_misses_answer_a_range.json", &rows);
+    common::reset_hits(hwnd);
+    let found = find_generic(&app, hwnd, ("y", 2), true);
+    let nowhere = find_generic(&app, hwnd, ("q", 2), true);
+    let faults = common::read_hits(hwnd)
+        .into_iter()
+        .find_map(|(name, count)| (name == "RPC_E_SERVERFAULT").then_some(count));
+    let by_calls =
+        [("y", 2), ("q", 2)].map(|needle_from| find_generic(&app, hwnd, needle_from, false));
+    app.quit();
     assert_eq!(
-        search_both(&app, hwnd, ("y", 2)),
+        found,
         [
             found_row(2, "y 3"),
             found_row(1, "y 4"),
@@ -207,8 +218,9 @@ fn a_search_whose_misses_answer_a_range_finds_its_matches() {
             found_row(4, "y 1"),
         ]
     );
-    assert_eq!(search_both(&app, hwnd, ("q", 2)), []);
-    app.quit();
+    assert_eq!(nowhere, []);
+    assert_eq!(faults, None, "the searches by remote operations");
+    assert_eq!(by_calls, [found, nowhere], "the searches by calls");
 }
 
 /// The search for `needle` over every row of `rows`, from the row `from`
@@ -274,7 +286,10 @@ fn the_search_works_outward_from_its_row() {
 /// A needle found within rows more often than a way of the search's
 /// `FindText` calls allow ends that way before a row starting with it,
 /// further away, is reached: one call down over the empty span below the
-/// document's end, and a hundred up, for each of the two outposts.
+/// document's end, and a hundred up, for each of the two outposts, and
+/// for the one reading by remote operations three more, outside a way's
+/// calls: each way's search of the whole text, and the search for text no
+/// terminal holds.
 fn the_search_ends_after_its_calls() {
     let within = " y y y y y y";
     let mut rows = vec!["y"];
@@ -288,7 +303,7 @@ fn the_search_ends_after_its_calls() {
         .into_iter()
         .find_map(|(name, count)| (name == "FindText").then_some(count));
     app.quit();
-    assert_eq!(calls, Some(2 * 101), "both outposts' searches' calls");
+    assert_eq!(calls, Some(2 * 101 + 3), "both outposts' searches' calls");
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).

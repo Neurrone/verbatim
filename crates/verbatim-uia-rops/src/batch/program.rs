@@ -17,12 +17,12 @@ use verbatim_model::batch::{
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Cached, Fill, Node};
 
-use super::calls::caret_point;
+use super::calls::{FAR, caret_point};
 use super::walk::{Reads, RunRegisters, Walk, emit_run};
 use super::{
     CaretFound, Compared, Cut, Defect, Descend, Found, Holds, MAX_CHANGE_TEXT, MAX_RANGE_TEXT,
-    MAX_UNIT_TEXT, MoveFound, Ran, Related, State, UnitsFound, UnitsRead, Unrun, VisibleFound,
-    failed, named,
+    MAX_UNIT_TEXT, MoveFound, Ran, Related, State, TextMatch, UnitsFound, UnitsRead, Unrun,
+    VisibleFound, failed, named,
 };
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
@@ -60,6 +60,20 @@ const CONTROLLED_PER_RUN: u32 = 16;
 
 /// The instructions every program spends outside its steps.
 pub(super) const PROLOGUE: u32 = 60;
+
+/// Text no terminal's buffer holds: control characters, which a terminal
+/// acts on rather than writes, so that a search for it answers what the
+/// provider answers for text that is nowhere ([`Emit::find_text`]).
+const ABSENT: &str = "\u{1}\u{2}\u{3}";
+
+/// What a `FindText` may execute at most outside its calls: its span, the
+/// search of the whole text and the comparison with the answer for
+/// [`ABSENT`], beside finding its point.
+const FIND_SETUP: u32 = 60;
+/// What one `FindText` call whose hit is passed over may execute at most.
+const FIND_CALL: u32 = 20;
+/// What taking a match may execute at most beyond its call.
+const FIND_MATCH: u32 = 8;
 
 /// What the step at `index` may execute at most, from its caps, after
 /// `prior` instructions of its program, pinned by
@@ -148,6 +162,14 @@ fn worst_of_op(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
         }
         Op::CompareSelection { .. } => 120,
         Op::Locate { at, .. } => 20 + point_cost(state, at),
+        Op::FindText {
+            at, limit, calls, ..
+        } => {
+            FIND_SETUP
+                + point_cost(state, at)
+                + FIND_CALL * u32::from(*calls)
+                + FIND_MATCH * u32::from(*limit.min(calls))
+        }
         Op::WaitForCaret { .. } => WAIT_CHECK,
         Op::ReadColours { subject, .. } if fused_size(state, subject).is_some() => {
             super::colours::FUSED_COST
@@ -256,10 +278,8 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
         | Op::Follow(_)
         | Op::Ancestors { .. }
         | Op::MoveBySentence { .. }
-        // A search ends a remote run where it finds nothing in Windows
-        // Terminal, and the colours run programs of their own unless a
-        // program that read their screen reads them (`fuses_colours`).
-        | Op::FindText { .. }
+        // The colours run programs of their own unless a program that
+        // read their screen reads them (`fuses_colours`).
         | Op::ReadColours { .. } => true,
         _ => false,
     }
@@ -409,6 +429,10 @@ enum Low {
     /// The program's place of the screen's `Visible`, and the rows and the
     /// width the colours are read at.
     Colours(usize, (u32, u32)),
+    /// The element and the point; the text sought and whether toward the
+    /// text's start; the unit, whether only a match that starts one is
+    /// taken, and the units read from each; the most matches and calls.
+    FindText((usize, Pt), (String, bool), (i32, bool, u8), (u8, u8)),
 }
 
 impl Low {
@@ -424,7 +448,8 @@ impl Low {
             | Self::Locate(text, ..)
             | Self::Visible(text)
             | Self::Move(text, ..)
-            | Self::Whole(text, ..) => Some(*text),
+            | Self::Whole(text, ..)
+            | Self::FindText((text, _), ..) => Some(*text),
             Self::Unemitted
             | Self::Related(..)
             | Self::Descendants(..)
@@ -988,6 +1013,29 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 let element = self.text(subject)?;
                 (Low::Locate(element, self.point(at, index)?), Given::Nothing)
             }
+            Op::FindText {
+                subject,
+                at,
+                needle,
+                backward,
+                unit_start,
+                read,
+                limit,
+                calls,
+            } => {
+                let unit = unit_start.unwrap_or(verbatim_model::TextUnit::Line);
+                let by = resolver.units((None, unit, 1), verbatim_model::TextDetails::NONE)?;
+                let element = self.text(subject)?;
+                (
+                    Low::FindText(
+                        (element, self.point(at, index)?),
+                        (needle.clone(), *backward),
+                        (by.unit.0, unit_start.is_some(), *read),
+                        (*limit, *calls),
+                    ),
+                    Given::Nothing,
+                )
+            }
             Op::WaitForCaret { .. } => (self.wait_check()?, Given::Nothing),
             Op::ReadColours {
                 subject, screen, ..
@@ -1091,6 +1139,15 @@ enum Regs {
         last: bool,
     },
     Colours(super::colours::FirstRows),
+    FindText {
+        /// Each match's units to the text's end.
+        to_ends: Reg<kind::Array>,
+        /// Each match's text.
+        texts: Reg<kind::Array>,
+        /// Whether the move it starts from was refused, so that it did
+        /// not run; `None` when it starts from no move that can be.
+        skipped: Option<Reg<kind::Bool>>,
+    },
 }
 
 /// A unit read's registers, its first unit's formatting's, and whether
@@ -1227,6 +1284,9 @@ struct Shared {
     /// Each comparison made, by the steps and points it names, with
     /// whether its point lay at or before the other.
     compared: std::cell::RefCell<Vec<(ComparedKey, Reg<kind::Bool>)>>,
+    /// For each text a `FindText` searches, by its import: whether the
+    /// search for [`ABSENT`] was made, and its answer.
+    absent: Vec<(usize, Reg<kind::Bool>, Reg<kind::TextRange>)>,
 }
 
 /// What a comparison of two points names: the steps and the points.
@@ -1249,7 +1309,26 @@ impl Shared {
             .collect();
         imports.sort_unstable();
         imports.dedup();
+        let mut searched: Vec<usize> = key
+            .iter()
+            .filter_map(|(low, _)| match low {
+                Low::FindText((text, _), ..) => Some(*text),
+                _ => None,
+            })
+            .collect();
+        searched.sort_unstable();
+        searched.dedup();
         Self {
+            absent: searched
+                .into_iter()
+                .map(|import| {
+                    (
+                        import,
+                        b.new_bool(false),
+                        b.new_null().assume::<kind::TextRange>(),
+                    )
+                })
+                .collect(),
             texts: imports
                 .into_iter()
                 .map(|import| {
@@ -1263,6 +1342,28 @@ impl Shared {
             compared: std::cell::RefCell::default(),
         }
     }
+}
+
+/// The registers one `FindText` call of a search uses
+/// ([`Emit::find_once`]).
+struct FindCall {
+    /// The span still to search, and the text sought.
+    span: Reg<kind::TextRange>,
+    needle: Reg<kind::Str>,
+    /// Whether the search goes toward the text's start, and false.
+    toward_start: Reg<kind::Bool>,
+    no: Reg<kind::Bool>,
+    /// The unit, more of them than any text holds, how many are read
+    /// from a match, and the most text read.
+    unit: Reg<kind::Int>,
+    far: Reg<kind::Int>,
+    read: Reg<kind::Int>,
+    max: Reg<kind::Int>,
+    /// Whether the search may still find a match, and how many it took.
+    open: Reg<kind::Bool>,
+    taken: Reg<kind::Int>,
+    /// Each match's units to the text's end, and its text.
+    found: (Reg<kind::Array>, Reg<kind::Array>),
 }
 
 /// The emitter's context: the constants, the imports, what the steps
@@ -1574,6 +1675,9 @@ impl Emit<'_> {
             (Low::Visible(text), _) => self.visible(b, *text),
             (Low::Colours(screen, size), _) => self.colours(b, *screen, *size),
             (Low::Move(text, at, by, held), _) => self.move_point(b, (*text, at), *by, *held),
+            (Low::FindText((text, at), (needle, backward), read, bounds), _) => {
+                self.find_text(b, (*text, at), (needle, *backward), *read, *bounds)
+            }
             (Low::Whole(text, at, (unit, count)), _) => {
                 let range = self.own_point(b, *text, at);
                 let unit = b.int(*unit);
@@ -1822,6 +1926,230 @@ impl Emit<'_> {
             moved,
             refused,
         }
+    }
+
+    /// Emits the answer of the text imported at `text` to a search of
+    /// `document` for [`ABSENT`], made by the first `FindText` of the
+    /// program that needs it.
+    fn absent(
+        &self,
+        b: &mut Builder,
+        text: usize,
+        document: Reg<kind::TextRange>,
+    ) -> Reg<kind::TextRange> {
+        let Some(&(_, sought, nowhere)) = self
+            .shared
+            .absent
+            .iter()
+            .find(|(import, ..)| *import == text)
+        else {
+            unreachable_import()
+        };
+        let unsought = b.not(sought);
+        b.if_(unsought, |b| {
+            let absent = b.string(ABSENT);
+            let no = b.bool(false);
+            let answer = b.text_range_find_text(document, absent, no, no);
+            b.set(nowhere, answer);
+            let yes = b.bool(true);
+            b.set(sought, yes);
+        });
+        nowhere
+    }
+
+    /// Emits a `FindText` from the point `at`, as its call arm searches
+    /// (`calls.rs`, `find_text`), with two guards for Windows Terminal,
+    /// whose search answers a miss with a range, of two kinds, on which a
+    /// call fails in a way that ends the whole run whatever try block
+    /// holds it (probed in Windows Terminal 1.24.12741 on Windows 11
+    /// 26300, 2026-11-21).
+    ///
+    /// When the text is nowhere, the range compares equal to every other
+    /// such range and to nothing else. So the needle is first sought in
+    /// the whole text and its hit compared with the answer for [`ABSENT`]:
+    /// equal, null, or a search that fails is nothing found, with no
+    /// other call. In a provider that answers null for [`ABSENT`] there
+    /// is no such range to compare with.
+    ///
+    /// When the text is elsewhere, every call on the range fails that
+    /// way, while a call on a real range given it fails as any call
+    /// does. So before any call on a hit, the span searched is compared
+    /// with it, which fails into the try block and ends the search with
+    /// what it found.
+    ///
+    /// The two searches of the whole text are outside the step's `calls`.
+    /// Limits: output that trims the needle from the history after the
+    /// first search makes a later miss the nowhere kind, whose call ends
+    /// the run, and the fallback rule runs the step by calls; and a
+    /// search for exactly [`ABSENT`] finds nothing in a provider whose
+    /// text holds it.
+    fn find_text(
+        &self,
+        b: &mut Builder,
+        (text, at): (usize, &Pt),
+        (needle, backward): (&str, bool),
+        (unit, starts, read): (i32, bool, u8),
+        (limit, calls): (u8, u8),
+    ) -> Regs {
+        let c = self.c;
+        let to_ends = b.new_array();
+        let to_ends = b.add_to_results(to_ends);
+        let texts = b.new_array();
+        let texts = b.add_to_results(texts);
+        // A refused move it starts from leaves no point: the step is
+        // skipped, as the calls skip a step that names one not done.
+        let refused = match at {
+            Pt::Here(place, _) => match self.regs(*place) {
+                Regs::Move { refused, .. } => Some(*refused),
+                _ => None,
+            },
+            _ => None,
+        };
+        let skipped = refused.map(|refused| {
+            let skipped = b.new_bool(false);
+            b.set(skipped, refused);
+            b.add_to_results(skipped)
+        });
+        let regs = Regs::FindText {
+            to_ends,
+            texts,
+            skipped,
+        };
+        if limit == 0 || calls == 0 {
+            return regs;
+        }
+        let search = |b: &mut Builder| {
+            let document = self.document(b, text);
+            let at = self.point(b, text, at);
+            let span = b.text_range_clone(document);
+            if backward {
+                b.text_range_move_endpoint_by_range(span, c.end, at, c.start);
+            } else {
+                b.text_range_move_endpoint_by_range(span, c.start, at, c.start);
+            }
+            let needle = b.string(needle);
+            let no = b.bool(false);
+            let open = self.somewhere(b, text, document, needle);
+            let call = FindCall {
+                span,
+                needle,
+                toward_start: b.bool(backward),
+                no,
+                unit: b.int(unit),
+                far: b.int(FAR),
+                read: b.int(i32::from(read.max(1))),
+                max: b.int(MAX_RANGE_TEXT),
+                open,
+                taken: b.new_int(0),
+                found: (to_ends, texts),
+            };
+            let most = b.int(i32::from(limit));
+            let most_calls = b.int(i32::from(calls));
+            let made = b.new_int(0);
+            b.while_(
+                |b| {
+                    let more = b.compare(call.taken, most, Comparison::LessThan);
+                    let left = b.compare(made, most_calls, Comparison::LessThan);
+                    let going = b.and(more, left);
+                    b.and(going, open)
+                },
+                |b| {
+                    b.add_assign(made, c.one);
+                    b.try_catch(
+                        |b| self.find_once(b, &call, (backward, starts)),
+                        // A failed call ends the search with what it found.
+                        |b, _| b.set(open, no),
+                    );
+                },
+            );
+        };
+        match refused {
+            Some(refused) => {
+                let runs = b.not(refused);
+                b.if_(runs, search);
+            }
+            None => search(b),
+        }
+        regs
+    }
+
+    /// Emits whether `needle` is anywhere in `document`, the whole text
+    /// imported at `text`: false when its search fails, answers null, or
+    /// answers what the search for [`ABSENT`] answers.
+    fn somewhere(
+        &self,
+        b: &mut Builder,
+        text: usize,
+        document: Reg<kind::TextRange>,
+        needle: Reg<kind::Str>,
+    ) -> Reg<kind::Bool> {
+        let present = b.new_bool(false);
+        let no = b.bool(false);
+        b.try_catch(
+            |b| {
+                let hit = b.text_range_find_text(document, needle, no, no);
+                let missing = b.is_null(hit);
+                let found = b.not(missing);
+                b.if_(found, |b| {
+                    let nowhere = self.absent(b, text, document);
+                    let unanswered = b.is_null(nowhere);
+                    b.if_else(
+                        unanswered,
+                        |b| b.set(present, found),
+                        |b| {
+                            let same = b.text_range_compare(hit, nowhere);
+                            let other = b.not(same);
+                            b.set(present, other);
+                        },
+                    );
+                });
+            },
+            // Not searchable: nothing found.
+            |_, _| {},
+        );
+        present
+    }
+
+    /// Emits one `FindText` call of a search, inside the search's try
+    /// block, toward the text's start when `backward`: no hit closes the
+    /// search; a hit moves the span past it, and one that starts its
+    /// unit, or any when `starts` is not asked, is taken, its units to
+    /// the text's end and its text appended.
+    fn find_once(&self, b: &mut Builder, call: &FindCall, (backward, starts): (bool, bool)) {
+        let c = self.c;
+        let hit = b.text_range_find_text(call.span, call.needle, call.toward_start, call.no);
+        let missing = b.is_null(hit);
+        b.if_else(
+            missing,
+            |b| b.set(call.open, call.no),
+            |b| {
+                // A call on the span given the hit, before any call on the
+                // hit.
+                let _ = b.text_range_compare_endpoints(call.span, c.start, hit, c.start);
+                let row = b.text_range_clone(hit);
+                if starts {
+                    b.text_range_expand_to_enclosing_unit(row, call.unit);
+                }
+                let order = b.text_range_compare_endpoints(row, c.start, hit, c.start);
+                // The next search, past this hit.
+                if backward {
+                    b.text_range_move_endpoint_by_range(call.span, c.end, hit, c.start);
+                } else {
+                    b.text_range_move_endpoint_by_range(call.span, c.start, hit, c.end);
+                }
+                let begins = b.equal(order, c.zero);
+                b.if_(begins, |b| {
+                    b.text_range_move_endpoint_by_range(row, c.end, row, c.start);
+                    let walker = b.text_range_clone(row);
+                    let to_end = b.text_range_move(walker, call.unit, call.far);
+                    let _ = b.text_range_move_endpoint_by_unit(row, c.end, call.unit, call.read);
+                    let text = b.text_range_get_text(row, call.max);
+                    b.array_append(call.found.0, to_end);
+                    b.array_append(call.found.1, text);
+                    b.add_assign(call.taken, c.one);
+                });
+            },
+        );
     }
 
     /// Emits a collapsed range at `point` in the text of `text`'s element,
@@ -2186,7 +2514,10 @@ impl<'a> State<'_, 'a> {
             pre,
         } = plan;
         let injected = injected(self, &range);
-        let (operation, emitted) = if injected.is_some() {
+        // A program that searches holds the text it seeks, so each is
+        // built for its run and none kept.
+        let searches = key.iter().any(|(low, _)| matches!(low, Low::FindText(..)));
+        let (operation, emitted) = if injected.is_some() || searches {
             // A program a test makes fail is built apart, never kept.
             let mut b = Builder::new();
             let emitted = build(&mut b, (&key, &imports, &given), injected);
@@ -2463,6 +2794,33 @@ impl<'a> State<'_, 'a> {
                 runs: Vec::new(),
                 unsupported: None,
             }),
+            (
+                Regs::FindText {
+                    to_ends,
+                    texts,
+                    skipped,
+                },
+                _,
+            ) => {
+                if let Some(skipped) = skipped
+                    && outcome.get(*skipped)?
+                {
+                    return Ok(Ran::Unrun(Unrun::Skipped));
+                }
+                let matches = outcome
+                    .get(*to_ends)?
+                    .into_iter()
+                    .zip(outcome.get(*texts)?)
+                    .map(|found| match found {
+                        (Value::Int(to_end), Value::String(text)) => Ok(TextMatch {
+                            to_end: to_end.unsigned_abs(),
+                            text: text.encode_utf16().collect(),
+                        }),
+                        _ => Err(Error::MissingResult(to_ends.id())),
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                Found::FindText(matches)
+            }
             (Regs::Colours(registers), Given::Colours(read_at)) => {
                 let Op::ReadColours { screen, top, .. } = &self.step(index).op else {
                     return Err(Error::MissingResult(emitted.status.id()));

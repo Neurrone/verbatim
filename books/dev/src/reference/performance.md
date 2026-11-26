@@ -2200,8 +2200,10 @@ first, the share of the limit in brackets:
   cells is read alone, and one wider than about 1,300 is answered
   classically. The programs' counts on a 120 by 30 screen are pinned with
   the reader's batches, below.
-- A terminal's upward search: 2,952 at its bound (`mockapp`'s
-  `the_search_ends_after_its_calls_remote`), measured, not pinned.
+- A search each way from a row, two moves and two `FindText` steps: one
+  program, pinned in `instruction_limit.rs`'s `searches_execute_exactly`
+  at a typical size and at its bound, a hundred calls and twenty matches
+  each way, under half the limit.
 - The generic text operations composed as a read of a terminal's window,
   which only tests send until the terminal's redesign: one program, pinned
   in `instruction_limit.rs`'s `generic_window_reads_execute_exactly`, a
@@ -2209,7 +2211,6 @@ first, the share of the limit in brackets:
   programs after it on a 120 by 30 screen, pinned in
   `generic_colours_execute_exactly`, six in the worst case, read with no
   size kept, and a plain screen's colours in the read's own program.
-  `FindText` runs no program: it is by calls.
 - The batches of Core's terminal reader (`verbatim_core::terminal::reader`),
   which carry a focused terminal's full reads and history reads: each one
   program with no loop,

@@ -523,11 +523,9 @@ pub enum Op {
         movement: TextMovement,
     },
     /// Searches the text from `at` to its end, or back from `at` to its
-    /// start, for `needle`, the nearest match first, always by calls: a
-    /// search that finds nothing in Windows Terminal answers a range whose
-    /// calls end a remote run (the verbatim-uia-rops crate guide, "The
-    /// terminal's operations"). A failed call ends the search with what it
-    /// found.
+    /// start, for `needle`, the nearest match first. A failed call ends
+    /// the search with what it found (the verbatim-uia-rops crate guide,
+    /// "The generic text operations added for a terminal").
     FindText {
         /// The text subject.
         subject: Subject,

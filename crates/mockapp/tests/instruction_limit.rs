@@ -808,6 +808,266 @@ fn terminal_reader_batches_execute_exactly() {
     );
 }
 
+/// A search each way from a row of mockapp's terminal `text`, as a shape
+/// the executor runs here: a move from `start` to the text's end, a move
+/// from it to the row `from` rows above it, and from where that landed a
+/// `FindText` for `needle` toward the text's end and one toward its start,
+/// each taking the matches that start a row, at most `bounds`' matches
+/// over its calls.
+fn search_shape<'t>(
+    text: &'t batch::Text,
+    start: &IUIAutomationTextRange,
+    (needle, from): (&str, i32),
+    (limit, calls): (u8, u8),
+) -> batch::Shape<'t> {
+    use verbatim_model::batch::{Op, Place, Point, PointOf, Subject};
+    use verbatim_model::{TextMovement, TextUnit};
+    let mut shape = batch::Shape::of(Some(text));
+    shape.culture = false;
+    let start = shape.point(&batch::held(start, Endpoint::Start, true));
+    let subject = Subject::Node(batch::TEXT);
+    let lines = |count| TextMovement {
+        unit: TextUnit::Line,
+        count,
+    };
+    let moved = |movement| Op::Move {
+        subject: subject.clone(),
+        at: start,
+        movement,
+    };
+    let find = |backward| Op::FindText {
+        subject: subject.clone(),
+        at: Point::Of(Place(1), PointOf::Moved),
+        needle: needle.to_owned(),
+        backward,
+        unit_start: Some(TextUnit::Line),
+        read: 1,
+        limit,
+        calls,
+    };
+    shape
+        .step(moved(lines(1_000_000)))
+        .step(moved(lines(-from)))
+        .step(find(false))
+        .step(find(true));
+    shape
+}
+
+/// What a run of a search's shape gave: each program's instructions, the
+/// rows to the text's end and the text of each match toward the text's
+/// end and of each toward its start, and the provider's `FindText` calls
+/// and the calls it answered with `RPC_E_SERVERFAULT`.
+#[derive(Debug, PartialEq, Eq)]
+struct Searched {
+    programs: Vec<u32>,
+    down: Vec<(u32, String)>,
+    up: Vec<(u32, String)>,
+    find_calls: u32,
+    faults: u32,
+}
+
+/// Runs `shape`, a search's ([`search_shape`]), against `fixture`.
+fn searched(fixture: &Fixture, shape: &batch::Shape<'_>) -> Searched {
+    common::reset_hits(fixture.hwnd);
+    let mut steps = Vec::new();
+    let programs = each_counted(|| steps = run_batch(&shape.segment(&fixture.uia)).steps);
+    let hits = common::read_hits(fixture.hwnd);
+    let hit = |method: &str| {
+        hits.iter()
+            .find_map(|(name, count)| (*name == method).then_some(*count))
+            .unwrap_or(0)
+    };
+    let matches = |step: &Ran| match step {
+        Ran::Done(Found::FindText(matches)) => matches
+            .iter()
+            .map(|found| (found.to_end, String::from_utf16_lossy(&found.text)))
+            .collect(),
+        other => panic!("a search's matches, not {other:?}"),
+    };
+    Searched {
+        programs,
+        down: matches(&steps[2]),
+        up: matches(&steps[3]),
+        find_calls: hit("FindText"),
+        faults: hit("RPC_E_SERVERFAULT"),
+    }
+}
+
+/// A collapsed range at the start of `text`'s text, a search's start.
+fn text_start(text: &batch::Text) -> IUIAutomationTextRange {
+    use verbatim_uia::text::TextRangeExt;
+    let start = text.pattern.document_range().expect("the document range");
+    start
+        .move_endpoint_to(Endpoint::End, &start, Endpoint::Start)
+        .expect("a collapsed range");
+    start
+}
+
+/// A command search (`search_shape`), `FindText` each way from a row, is
+/// one program that makes exactly the calls its steps ask: typically, a
+/// line found once at its own row, each way ending at its first miss; a
+/// line found nowhere, which makes no call but the search of the whole
+/// text for each way; and at its bound, each way's hundred calls spent
+/// and its twenty matches taken, eighty hits within rows passed over
+/// between them. The three costs the emitter declares are these counts'
+/// differences: the bound's run stays under the limit.
+fn searches_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-search");
+    let text = batch::Text::of(fixture.find("Terminal"));
+    let within = " y y y y";
+    let mut rows = vec!["y top"];
+    rows.extend([within; 20]);
+    rows.extend(["y up"; 19]);
+    rows.extend(["y down"; 19]);
+    rows.extend([within; 20]);
+    rows.extend(["y bottom", "end"]);
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 3");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!("set-text term {}", rows.join(r"\n")),
+    );
+    let start = text_start(&text);
+    let run =
+        |needle_from, bounds| searched(&fixture, &search_shape(&text, &start, needle_from, bounds));
+    let typical = run(("end", -80), (20, 100));
+    let nowhere = run(("q", -40), (20, 100));
+    let bound = run(("y", -40), (20, 100));
+    // Each way's first 19 hits are matches and its next 80 are within
+    // rows: 19 calls take 19 matches, and 23 pass 4 more hits over.
+    let counts = [1, 19, 23].map(|calls| {
+        let ran = run(("y", -40), (20, calls));
+        assert_eq!(
+            (ran.down.len(), ran.up.len(), ran.find_calls),
+            (
+                usize::from(calls.min(19)),
+                usize::from(calls.min(19)),
+                2 * u32::from(calls) + 3
+            ),
+            "{calls} calls each way"
+        );
+        ran.programs
+    });
+    fixture.app.quit();
+    assert_eq!(
+        typical,
+        Searched {
+            programs: vec![223],
+            down: vec![(0, "end".to_owned())],
+            up: Vec::new(),
+            // Toward the end: the whole text, the text no terminal holds,
+            // the line and a miss. Toward the start: the whole text and a
+            // miss.
+            find_calls: 6,
+            faults: 0,
+        },
+        "a line found once"
+    );
+    assert_eq!(
+        nowhere,
+        Searched {
+            programs: vec![150],
+            down: Vec::new(),
+            up: Vec::new(),
+            find_calls: 2,
+            faults: 0,
+        },
+        "a line found nowhere"
+    );
+    assert_eq!(
+        (
+            bound.down.len(),
+            bound.up.len(),
+            bound.find_calls,
+            bound.faults
+        ),
+        (20, 20, 203, 0),
+        "the bound: a hundred calls each way, and three over the whole text"
+    );
+    // A call whose hit is passed over executes 20 instructions, and a
+    // match 8 more: (1389 - 1229) / 8 and (1229 - 220) / 36, the costs the
+    // emitter declares (`FIND_CALL` and `FIND_MATCH`, `batch/program.rs`).
+    assert_eq!(
+        (counts, bound.programs),
+        ([vec![220], vec![1229], vec![1389]], vec![4485]),
+        "one call each way, 19, 23, and the bound"
+    );
+}
+
+/// The same search in a provider whose `FindText` answers a search that
+/// finds nothing with a range, as Windows Terminal's does
+/// (`terminal_find_misses_answer_a_range.json`): a call on that range
+/// fails with `RPC_E_SERVERFAULT`, which ends a remote run in Windows
+/// Terminal. The program makes no such call, so it runs alone, with
+/// exactly its own calls: a line found each way; a line found toward the
+/// text's end only, where the search toward its start ends at the
+/// comparison of its span with the hit (the `CompareEndpoints` guard);
+/// and a line found nowhere, which ends each way at the comparison with
+/// the answer for text no terminal holds (the sentinel comparison).
+fn searches_whose_misses_answer_a_range_run_alone() {
+    common::init_com();
+    let mut fixture = Fixture::start(
+        "terminal_find_misses_answer_a_range.json",
+        "mockapp-instructions-search-misses",
+    );
+    let text = batch::Text::of(fixture.find("Terminal"));
+    let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "end"];
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 3");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!("set-text term {}", rows.join(r"\n")),
+    );
+    let start = text_start(&text);
+    let run = |needle| {
+        searched(
+            &fixture,
+            &search_shape(&text, &start, (needle, -2), (20, 100)),
+        )
+    };
+    let (both, one, nowhere) = (run("y"), run("y 5"), run("q"));
+    fixture.app.quit();
+    let row = |to_end, text: &str| (to_end, format!("{text}\n"));
+    assert_eq!(
+        both,
+        Searched {
+            programs: vec![337],
+            down: vec![row(3, "y 3"), row(2, "y 4"), row(1, "y 5")],
+            up: vec![row(4, "y 2"), row(5, "y 1")],
+            // The whole text twice and the text no terminal holds, three
+            // lines and a miss toward the end, two and a miss toward the
+            // start.
+            find_calls: 10,
+            faults: 0,
+        },
+        "a line found each way"
+    );
+    assert_eq!(
+        one,
+        Searched {
+            programs: vec![225],
+            down: vec![row(1, "y 5")],
+            up: Vec::new(),
+            find_calls: 6,
+            faults: 0,
+        },
+        "a line found toward the end only"
+    );
+    assert_eq!(
+        nowhere,
+        Searched {
+            programs: vec![167],
+            down: Vec::new(),
+            up: Vec::new(),
+            // The whole text for each way, and the text no terminal holds.
+            find_calls: 3,
+            faults: 0,
+        },
+        "a line found nowhere"
+    );
+}
+
 /// The colours of a read of Core's terminal reader from a start, its
 /// largest batch, on a 120 by 30 screen, in the worst case, every cell's
 /// colours differing from its neighbours' (`terminal-checkered.json`), and
@@ -1432,6 +1692,11 @@ fn main() {
         (
             "terminal_reader_colours_execute_exactly",
             terminal_reader_colours_execute_exactly,
+        ),
+        ("searches_execute_exactly", searches_execute_exactly),
+        (
+            "searches_whose_misses_answer_a_range_run_alone",
+            searches_whose_misses_answer_a_range_run_alone,
         ),
         (
             "terminal_reader_reads_call_the_provider_exactly",

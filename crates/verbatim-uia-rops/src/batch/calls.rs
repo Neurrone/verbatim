@@ -721,7 +721,7 @@ fn compared(
 }
 
 /// More units than any text holds, for counting units to the text's end.
-const FAR: i32 = 1_000_000;
+pub(super) const FAR: i32 = 1_000_000;
 
 /// `count` units of `unit` read as one span from `from`, its end moved by
 /// them: a collapsed copy (one or two calls), the end's move (one) and the
