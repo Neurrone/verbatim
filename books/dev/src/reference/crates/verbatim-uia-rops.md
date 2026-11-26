@@ -41,7 +41,9 @@ executor's list:
   `CompareSelection`, `Select`, `Locate`, `Visible`, `Move`,
   `WaitForCaret`'s check and `FocusRead`;
 - programs of its own and a call arm: `ReadColours` (`batch/colours.rs`),
-  the terminal's colours, its programs run after the segment's;
+  the terminal's colours, its first rows read by the program that read
+  its screen and its colour programs going on from there ("The
+  colours");
 - a call arm only: `Read`, `Test`, `IsOneOf`, `Activate`, `Follow`,
   `Ancestors`, `FindText` and `MoveBySentence`, the last refused as no
   such unit, since UI Automation's text has no sentence.
@@ -108,6 +110,33 @@ description of the operations sits between the model and the programs
 (Claude, 2026-11-22). The answer is a `Ran` for each step
 (`Done(Found)`, `Unrun`, `Gone`, `TimedOut`, `Failed`) and whether the
 window is to be read classically from now on.
+
+A program reads from the provider once what its steps share
+(`batch/program.rs`, `Shared` and `Planner`), because every instruction
+that reaches the provider is a call inside the application, and Core
+takes a terminal's window read, up to 15 steps on one text, twice for
+every key (Claude, 2026-11-26):
+
+- Each text's element is imported once for the program, by its subject,
+  and each position the outpost holds once, by its point. UI Automation
+  finds every imported element again in the application, five calls to
+  its provider.
+- Each text's pattern and document range are read by the first step
+  that needs one, inside that step's try block, and kept in registers
+  the later steps test for null. The document range is therefore the
+  text as that step found it; no step moves it, each takes a copy.
+- A comparison of two points (`Test::NotAfter`) is made by the first
+  step under it, and a step under the same comparison or its negation
+  reads its answer.
+- A step that only reads a position takes the range another step
+  answered or the outpost holds as it is, when that range is already
+  collapsed there: where a `Move` landed, a `Caret`'s point, a held
+  position known collapsed. A step that moves its point (`ReadText`'s
+  whole read) takes a copy (`Emit::own_point`).
+
+`mockapp`'s `terminal_reader_reads_call_the_provider_exactly`
+(`tests/instruction_limit.rs`) pins the provider's calls for a window
+read with and without colours.
 
 `run_batch` cuts the segment into programs. A program ends after the
 act, `Select`, so the act is its program's last step and runs only if
@@ -638,8 +667,33 @@ instructions, so it stays under half the platform's limit, and the next
 program, built once a width and kept, goes on from the row where the
 last stopped. A row wider than about 300 cells is read alone, and one
 wider than about 1,300 is answered classically. The call arm makes the
-same checks call by call. On a 120 by 30 screen the worst case, every
-cell's colours differing from its neighbours', is six programs
+same checks call by call.
+
+The first of those programs is the window read's own. A program's rows
+and their width are built into it, and a batch sizes its colours from
+its own answers, the screen's text and the line at its top, which the
+program has not read when it is built. So the executor keeps the size
+the last colour read on its thread found (`colours::fusable_size`), and
+a `ReadColours` whose screen's `Visible` is a step of the same program
+is emitted into that program at that size (`colours::emit_from`, the
+same instructions the colour program starts with), when the width is
+at most 300 cells, so that the rows' loop stays within `COLOUR_BUDGET`,
+and the program's declared worst case, the loop's budget included,
+fits the instruction limit. The size kept is a guess that can only
+cost calls: when the program has run, the size its batch's own answers
+give is computed as the call arm computes it, the rows are taken only
+when it is the size they were read at (`colours::finish`, which goes on
+with the colour programs from the row where the program stopped), and
+at any other size, after a resize or in another terminal of the same
+process, the colour programs read them all and that size is kept. The
+first colour read on a thread, a screen wider than 300 cells and a
+colour read whose screen an earlier program read run the colour
+programs alone. The old read took the size from Core's model; a batch
+names none, so the executor keeps it (Claude, 2026-11-26).
+
+On a 120 by 30 screen a plain screen's read is one program, colours and
+all, and the worst case, every cell's colours differing from its
+neighbours', is six programs, the read's own and five that go on
 (`books/dev/src/reference/performance.md`, "A terminal's colours").
 
 ## Layer 3: the caret's emitters

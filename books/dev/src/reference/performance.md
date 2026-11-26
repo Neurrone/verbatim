@@ -1609,13 +1609,23 @@ end in one `GetText`, with the screen, where the next read starts, the
 document's first row, and the caret and its line. Measured against
 mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
 
-- Minimum and today: 1 UIA call for every read without colours, the
-  first after the focus included
-  (`new_output_is_said_line_by_line_remote`); a read that takes the
-  screen's colours makes one more for a plain screen, its colour program,
-  and up to six more in the worst case
-  (`terminal_reader_colours_execute_exactly`). Classically, one call per
-  provider method of each step's calls.
+- Minimum and today: 1 UIA call for every read, the first after the
+  focus included (`new_output_is_said_line_by_line_remote`), and for a
+  read that takes a plain screen's colours once a colour read has found
+  the screen's size; the worst case's colours take five more. A colour
+  read with no size kept or at another size than the one kept, the first
+  on an outpost's thread or after a resize, makes one call more, and a
+  screen wider than 300 cells always does
+  (`terminal_reader_colours_execute_exactly`, and `mockapp`'s
+  `colours_are_read_as_exact_runs_both_ways` for the resize).
+  Classically, one call per provider method of each step's calls.
+- Inside the application, the read's program calls the provider as often
+  as a purpose-built program would, 47 times for a read from a start
+  (`terminal_reader_reads_call_the_provider_exactly`): the text's element
+  is imported once, and its pattern, its document range and the
+  comparison of the two starts are read once. Each import of an element
+  is 5 calls to the provider, and Windows Terminal answers a call slowly
+  while it echoes a key.
 - Bound: one call whatever the history and however many lines changed; the
   text read grows only with the output since the last read.
 - A caret key is held for a read before it is sent on, which in a terminal
@@ -1759,33 +1769,39 @@ back as a snapshot by Core's terminal reader and is aligned on the reducer
 each input carrying a read timed 31 times from a clone of the state
 before. The reducer's time is the whole step; the parse, of the input's
 JSON, runs on the reducer's thread before the step and is timed apart;
-sizes are the unpadded snapshot's JSON. Measured on 2026-10-26 on this
+sizes are the unpadded snapshot's JSON. Measured on 2026-11-26 on this
 machine, three runs, medians in µs over both terminals:
 
-- An ordinary read of one new line: 1,109 to 1,135 bytes, of which the
-  screen 264 to 272; reducer 56 to 68; parse 4 to 9.
-- A rotation of 61 rows: the read, 34 to 42, keeps nothing and asks for
-  the whole document, 71.8 to 72.0 KB; reducer 1,109 to 1,272; parse 123 to
-  141.
-- A lost read after 10,000 lines: the read 37 to 45, then the whole
-  document, 81.6 to 81.9 KB, every line handed to the flood policy; reducer
-  1,664 to 1,845; parse 125 to 146.
-- A full-screen program's exit, its read the whole document: 71.7 to 72.0
-  KB; reducer 1,082 to 1,282; parse 125 to 131.
-- A clear and a reprint of 8,905 rows: the read 35 to 40, then the whole
-  document, 160.1 KB; reducer 1,437 to 1,888; parse 140 to 210.
-- `clear; dir`, a clear and 100 lines: the read 1,823 to 1,863 bytes, 22
-  to 23 µs, and the whole document of about a hundred rows, 2,421 to 2,461
-  bytes, 40 to 41.
+- An ordinary read of one new line: 1,329 to 1,354 bytes, of which the
+  screen 264 to 272; reducer 73 to 76; parse 7.
+- A rotation of 61 rows: the read, 52 to 54, keeps nothing and asks for
+  the whole document, 72.0 to 72.3 KB; reducer 1,396 to 1,644; parse 121 to
+  132.
+- A lost read after 10,000 lines: the read 52 to 55, then the whole
+  document, 81.9 to 82.2 KB, every line handed to the flood policy; reducer
+  2,854 to 3,041; parse 126 to 138.
+- A full-screen program's exit, its read the whole document: 72.0 to 72.2
+  KB; reducer 1,460 to 1,697; parse 125 to 130.
+- A clear and a reprint of 8,905 rows: the read 49 to 55, then the whole
+  document, 160.3 to 160.4 KB; reducer 2,515 to 2,874; parse 142 to 159.
+- `clear; dir`, a clear and 100 lines: the read 2,043 to 2,087 bytes, 41
+  to 43 µs, and the whole document of about a hundred rows, 2,690 to 2,734
+  bytes, 64 to 67.
 
-Every case is within the reducer's budget of 2 ms a step
-(`docs/design/communication.md`, decision 9) at the median, so the
-alignment of a whole document stays on the reducer (Dickson, 2026-10-26,
-who would rather optimize than move it off as an effect). The slowest of
-the 31 runs of the lost read and of the clear and reprint reach 1.9 to 2.7
-ms, the runs in which the heap takes back pages it had returned.
+The whole document after a lost read and after a clear and reprint are
+over the reducer's budget of 2 ms a step
+(`docs/design/communication.md`, decision 9) at the median, and the other
+cases are within it; the slowest of their 31 runs reach 3.8 to 4.2 ms.
+The alignment of a whole document stays on the reducer (Dickson,
+2026-10-26, who would rather optimize than move it off as an effect, when
+every case measured 1.1 to 1.9 ms). The read's form is not the cost: the
+same benchmark on the old read's answers, run the same day on the commit
+before Core read by batches, gives 1,422 to 1,547 for the rotation, 2,916
+to 3,109 for the lost read, 1,466 to 1,878 for the exit and 2,645 to 2,981
+for the clear and reprint, and 2 to 7 µs less for a small read. What
+raised the whole documents' times since 2026-10-26 has not been found.
 
-Where a whole document's time goes (median µs, three runs a terminal):
+Where a whole document's time goes (2026-10-26, median µs, three runs a terminal):
 making the rules' read 2 to 37, the text taken unpadded and copied once;
 the split into rows 265 to 350; the alignment 321 to 460; the rules' pass
 with the speech of 9,000 lines 469 to 689, each line's speech sharing the
@@ -1835,16 +1851,32 @@ operation and message more for every other key; 39 of 911 in Windows
 Terminal. A key costs as many coloured reads as its window holds: 1.0 to
 1.33 in the console host and 0.90 to 2.09 in Windows Terminal.
 
-Since Core reads a terminal by its reader's batches, a read that takes the
-colours is two remote programs, the window's and the colours', where the
-old read's one program took both. Measured on 2026-11-26 on this machine,
-debug build, three runs before and three after of `measure_keys_conhost`
-and `measure_keys_windows_terminal` together: the outpost's time for a
-request went from a median of 3.1 to 4.2 ms in the console host and from
-2.1 to 4.5 ms in Windows Terminal, and a key's time to its speech queued
-from a median of 7.6 to 7.8 ms to 10.7 to 11.3 ms, its 99th percentile
-from 52 to 56 ms to 56 ms. Fusing the colours into the window's program
-is the terminal work's next step on this cost.
+A read by the reader's batch costs more than the purpose-built read
+(`verbatim_uia_rops::terminal_snapshot`) that Core sent before it.
+Measured on 2026-11-26 on this machine, debug build, three runs of each
+of `measure_keys_conhost` and `measure_keys_windows_terminal` together: a
+key's time to its speech queued is a median of 9.1 to 9.3 ms against 7.6
+to 7.8 ms, its 99th percentile 54 to 57 ms against 52 to 56 ms; the
+outpost's time for a request is a median of 3.4 to 3.5 ms in the console
+host against 3.1 ms, and 2.6 to 2.7 ms in Windows Terminal against 2.1
+ms. A coloured read's round trip as Core sees it, from the request
+written to its answer parsed, is 4.5 ms in the console host against 3.9
+ms, and 4.8 to 4.9 ms in Windows Terminal against 4.3 to 4.4 ms. Where
+the 0.6 ms goes, by the timestamps of Core's and the outpost's logs:
+
+- 0.2 ms from the request written to the outpost having parsed it: the
+  batch is 13 to 15 steps of JSON where the old request was one small
+  operation.
+- 0.2 ms in the outpost's handling in the console host, and none
+  measurable in Windows Terminal. The program executes about 300
+  instructions without the colours where the old one executed 90, at
+  about 0.7 µs an instruction in the console host, and the outpost
+  plans and reads back 13 to 15 steps.
+- 0.1 ms writing the answer and parsing it in Core.
+
+A key takes two such reads. The parsing and the planning are Rust code,
+built without optimization in this measurement; the cost in a release
+build has not been measured.
 
 From the last key the hook saw to the speech queued, announcements of one
 character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
@@ -2173,16 +2205,21 @@ first, the share of the limit in brackets:
   in `instruction_limit.rs`'s `generic_window_reads_execute_exactly`, a
   first read and one naming both marks, with no loop; and `ReadColours`'
   programs after it on a 120 by 30 screen, pinned in
-  `generic_colours_execute_exactly`, one program for a plain screen and
-  six in the worst case. `FindText` runs no program: it is by calls.
+  `generic_colours_execute_exactly`, six in the worst case, read with no
+  size kept, and a plain screen's colours in the read's own program.
+  `FindText` runs no program: it is by calls.
 - The batches of Core's terminal reader (`verbatim_core::terminal::reader`),
   which carry a focused terminal's full reads and history reads: each one
   program with no loop,
   pinned in `instruction_limit.rs`'s
   `terminal_reader_batches_execute_exactly`, and a coloured read's
   programs on a 120 by 30 screen in
-  `terminal_reader_colours_execute_exactly`, one colour program for a
-  plain screen and six in the worst case.
+  `terminal_reader_colours_execute_exactly`: a plain screen's read is one
+  program, colours and all, and the worst case's is six, the read's own,
+  which stops at the colours' budget under half the limit, and five
+  colour programs; a read with no size kept runs the read's program and
+  then the colour programs, one for a plain screen and six in the worst
+  case.
 
 ## Memory use
 

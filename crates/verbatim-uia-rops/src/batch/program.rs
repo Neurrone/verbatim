@@ -149,7 +149,26 @@ fn worst_of_op(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
         Op::CompareSelection { .. } => 120,
         Op::Locate { at, .. } => 20 + point_cost(state, at),
         Op::WaitForCaret { .. } => WAIT_CHECK,
+        Op::ReadColours { .. } if super::colours::fusable_size().is_some() => {
+            super::colours::FUSED_COST
+        }
         _ => 0,
+    }
+}
+
+/// Whether a program of the steps from `start` reads the colours of the
+/// step at `index` itself: a size is kept to read them at, and the screen
+/// they are read from is a step of the program. Any other colour read
+/// runs the colour programs alone.
+fn fuses_colours(state: &State<'_, '_>, start: usize, index: usize) -> bool {
+    match &state.step(index).op {
+        Op::ReadColours { screen, .. } => {
+            super::colours::fusable_size().is_some()
+                && state.index(*screen, index).is_some_and(|at| {
+                    at >= start && matches!(state.step(at).op, Op::Visible { .. })
+                })
+        }
+        _ => false,
     }
 }
 
@@ -225,7 +244,8 @@ fn by_calls(state: &State<'_, '_>, index: usize) -> bool {
         | Op::Ancestors { .. }
         | Op::MoveBySentence { .. }
         // A search ends a remote run where it finds nothing in Windows
-        // Terminal, and the colours run programs of their own.
+        // Terminal, and the colours run programs of their own unless a
+        // program that read their screen reads them (`fuses_colours`).
         | Op::FindText { .. }
         | Op::ReadColours { .. } => true,
         _ => false,
@@ -265,7 +285,7 @@ pub(super) fn cut(state: &State<'_, '_>, at: usize) -> Cut {
             _ => true,
         };
         if end > at
-            && (by_calls(state, end)
+            && ((by_calls(state, end) && !fuses_colours(state, at, end))
                 || names_item_inside(state, at, end)
                 || !walk_fits
                 || cost + step > LIMIT)
@@ -373,6 +393,32 @@ enum Low {
     Move(usize, Pt, (i32, i32), bool),
     /// The element, the point, the unit and count.
     Whole(usize, Pt, (i32, u16)),
+    /// The program's place of the screen's `Visible`, and the rows and the
+    /// width the colours are read at.
+    Colours(usize, (u32, u32)),
+}
+
+impl Low {
+    /// The import of the element whose text the step reads through its
+    /// pattern or its document range.
+    const fn text(&self) -> Option<usize> {
+        match self {
+            Self::Caret(text)
+            | Self::ReadText(text, ..)
+            | Self::ReadRange(text, ..)
+            | Self::Compare(text, ..)
+            | Self::Select(text, ..)
+            | Self::Locate(text, ..)
+            | Self::Visible(text)
+            | Self::Move(text, ..)
+            | Self::Whole(text, ..) => Some(*text),
+            Self::Unemitted
+            | Self::Related(..)
+            | Self::Descendants(..)
+            | Self::WaitCheck(..)
+            | Self::Colours(..) => None,
+        }
+    }
 }
 
 /// What a lowered step's emitter and its answer take beyond its shape:
@@ -383,6 +429,8 @@ enum Given<'a> {
     Fill(&'a Fill<Node>),
     Walk(Descend<'a>),
     Read(UnitsRead),
+    /// The rows and the width a colour read's rows are read at.
+    Colours((u32, u32)),
 }
 
 /// A step's condition on a step of the same program.
@@ -446,6 +494,14 @@ struct Planner<'p, 's, 'a> {
     /// The outcome of each step of the program planned so far that was
     /// decided here, before the program runs; `None` for a step lowered.
     pre: Vec<Option<Ran>>,
+    /// The text elements imported so far, by the subject that names each:
+    /// every step on a subject takes the one import, since UI Automation
+    /// finds each imported element again in the application, five calls
+    /// to its provider.
+    texts: Vec<(Subject, usize)>,
+    /// The positions the outpost holds imported so far, by the point that
+    /// names each.
+    held_points: Vec<(Point, Pt)>,
 }
 
 impl<'p, 'a> Planner<'p, '_, 'a> {
@@ -569,9 +625,12 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 _ => Err(Defect("a point of no text read").ran()),
             };
         }
+        if let Some((_, imported)) = self.held_points.iter().find(|(named, _)| named == point) {
+            return Ok(imported.clone());
+        }
         let held = self.state.segment.resolver.point(point)?;
         let from = self.found_point(&held.at);
-        Ok(if held.prefix.is_empty() {
+        let imported = if held.prefix.is_empty() {
             Pt::At(from.0, from.1, from.2)
         } else {
             Pt::After {
@@ -579,7 +638,9 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 prefix: held.prefix,
                 counts: held.counts,
             }
-        })
+        };
+        self.held_points.push((*point, imported.clone()));
+        Ok(imported)
     }
 
     fn ends(
@@ -677,10 +738,15 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
         ))
     }
 
-    /// The text `subject` names, imported.
+    /// The text `subject` names, imported once for the program.
     fn text(&mut self, subject: &Subject) -> Result<usize, Ran> {
+        if let Some((_, import)) = self.texts.iter().find(|(named, _)| named == subject) {
+            return Ok(*import);
+        }
         let target = self.state.segment.resolver.text(subject)?;
-        Ok(self.import(Import::Element(target.element.clone())))
+        let import = self.import(Import::Element(target.element.clone()));
+        self.texts.push((subject.clone(), import));
+        Ok(import)
     }
 
     /// The gate of the step at `index` inside the program; its outcome
@@ -910,6 +976,13 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 (Low::Locate(element, self.point(at, index)?), Given::Nothing)
             }
             Op::WaitForCaret { .. } => (self.wait_check()?, Given::Nothing),
+            Op::ReadColours { screen, .. } => {
+                let planned = super::colours::fusable_size().zip(self.here(*screen, index));
+                let Some((size, screen)) = planned else {
+                    return Err(Defect("a colour read in a program that cannot read it").ran());
+                };
+                (Low::Colours(screen, size), Given::Colours(size))
+            }
             _ => return Err(Defect("a step no program runs").ran()),
         };
         Ok((low, gate, given))
@@ -1002,6 +1075,7 @@ enum Regs {
         /// Whether it is the check at the bound.
         last: bool,
     },
+    Colours(super::colours::FirstRows),
 }
 
 /// A unit read's registers, its first unit's formatting's, and whether
@@ -1046,6 +1120,7 @@ fn build(
         one: b.int(1),
         max_text: b.int(0),
     };
+    let shared = Shared::new(b, key);
     let mut emitted: Vec<Option<Emitted>> = Vec::with_capacity(key.len());
     for (place, ((low, gate), status)) in key.iter().zip(&statuses).enumerate() {
         let Some(status) = *status else {
@@ -1060,6 +1135,7 @@ fn build(
                 c: &c,
                 imported: &imported,
                 emitted: &emitted,
+                shared: &shared,
                 caret: std::cell::Cell::new(None),
             };
             let mut regs = None;
@@ -1122,12 +1198,64 @@ enum Imported {
     Range(Reg<kind::TextRange>),
 }
 
-/// The emitter's context: the constants, the imports, and the steps
-/// emitted before.
+/// What a program's steps share, so that each is read from the provider
+/// once a program however many steps use it: each text's pattern and
+/// document range, null until the first step that needs one reads it
+/// inside its own try block, and the comparisons of two points already
+/// made. The document range is the text as the first step to need it
+/// found it, as the reads of one program always were of one text.
+struct Shared {
+    /// For each text's element, by its import: its pattern and its
+    /// document range.
+    texts: Vec<(usize, Reg<kind::TextPattern>, Reg<kind::TextRange>)>,
+    /// Each comparison made, by the steps and points it names, with
+    /// whether its point lay at or before the other.
+    compared: std::cell::RefCell<Vec<(ComparedKey, Reg<kind::Bool>)>>,
+}
+
+/// What a comparison of two points names: the steps and the points.
+type ComparedKey = ([Option<usize>; 2], Option<(usize, Pt, Pt)>);
+
+impl Shared {
+    /// The registers of the texts `key`'s steps read, each null.
+    fn new(b: &mut Builder, key: &Key) -> Self {
+        let mut imports: Vec<usize> = key
+            .iter()
+            .flat_map(|(low, gate)| {
+                let compared = gate
+                    .compare
+                    .as_ref()
+                    .and_then(|compare| compare.points.as_ref())
+                    .map(|(text, ..)| *text);
+                [low.text(), compared]
+            })
+            .flatten()
+            .collect();
+        imports.sort_unstable();
+        imports.dedup();
+        Self {
+            texts: imports
+                .into_iter()
+                .map(|import| {
+                    (
+                        import,
+                        b.new_null().assume::<kind::TextPattern>(),
+                        b.new_null().assume::<kind::TextRange>(),
+                    )
+                })
+                .collect(),
+            compared: std::cell::RefCell::default(),
+        }
+    }
+}
+
+/// The emitter's context: the constants, the imports, what the steps
+/// share, and the steps emitted before.
 struct Emit<'e> {
     c: &'e Constants,
     imported: &'e [Imported],
     emitted: &'e [Option<Emitted>],
+    shared: &'e Shared,
     /// The caret the step read, once it read it, so that its points share
     /// one read, as the text reads' programs share it.
     caret: std::cell::Cell<Option<CaretRegisters>>,
@@ -1146,6 +1274,44 @@ impl Emit<'_> {
             Imported::Range(range) => range,
             Imported::Element(_) => unreachable_import(),
         }
+    }
+
+    /// The registers of the text imported at `text`.
+    fn text_regs(&self, text: usize) -> (Reg<kind::TextPattern>, Reg<kind::TextRange>) {
+        self.shared
+            .texts
+            .iter()
+            .find(|(import, ..)| *import == text)
+            .map_or_else(
+                || unreachable_import(),
+                |&(_, pattern, document)| (pattern, document),
+            )
+    }
+
+    /// Emits the pattern of the text imported at `text`, read by the first
+    /// step of the program that needs it.
+    fn pattern(&self, b: &mut Builder, text: usize) -> Reg<kind::TextPattern> {
+        let (pattern, _) = self.text_regs(text);
+        let unread = b.is_null(pattern);
+        b.if_(unread, |b| {
+            let read = b.get_text_pattern(self.element(text), false);
+            b.set(pattern, read);
+        });
+        pattern
+    }
+
+    /// Emits the document range of the text imported at `text`, read by
+    /// the first step of the program that needs it. No step moves it: each
+    /// takes a copy.
+    fn document(&self, b: &mut Builder, text: usize) -> Reg<kind::TextRange> {
+        let (_, document) = self.text_regs(text);
+        let unread = b.is_null(document);
+        b.if_(unread, |b| {
+            let pattern = self.pattern(b, text);
+            let read = b.text_pattern_get_document_range(pattern);
+            b.set(document, read);
+        });
+        document
     }
 
     fn regs(&self, place: usize) -> &Regs {
@@ -1251,24 +1417,42 @@ impl Emit<'_> {
             let unskipped = b.compare(status, skipped, Comparison::NotEqual);
             b.and_assign(none_skipped, unskipped);
         }
-        let holds = b.new_bool(false);
-        if let Some((text, point, than)) = &compare.points {
-            b.if_(all_done, |b| {
-                b.try_catch(
-                    |b| {
-                        let point = self.point(b, *text, point);
-                        let than = self.point(b, *text, than);
-                        let order = b.text_range_compare_endpoints(point, c.start, than, c.start);
-                        let not_after = b.compare(order, c.zero, Comparison::LessThanOrEqual);
-                        b.set(holds, not_after);
-                    },
-                    |_, _| {},
-                );
-            });
-            // The caret read inside the test's own block is not the
-            // step's to use again.
-            self.caret.set(None);
-        }
+        // A comparison an earlier step of the program made is not made
+        // again: the steps it names have not changed since, so neither has
+        // its answer, and a step under its negation costs no call. Every
+        // gate that could make one runs whenever the program does: only an
+        // act's is emitted under a condition, and an act ends its program.
+        let key: ComparedKey = (compare.names, compare.points.clone());
+        let made = self
+            .shared
+            .compared
+            .borrow()
+            .iter()
+            .find(|(made, _)| *made == key)
+            .map(|&(_, holds)| holds);
+        let holds = made.unwrap_or_else(|| {
+            let holds = b.new_bool(false);
+            if let Some((text, point, than)) = &compare.points {
+                b.if_(all_done, |b| {
+                    b.try_catch(
+                        |b| {
+                            let point = self.point(b, *text, point);
+                            let than = self.point(b, *text, than);
+                            let order =
+                                b.text_range_compare_endpoints(point, c.start, than, c.start);
+                            let not_after = b.compare(order, c.zero, Comparison::LessThanOrEqual);
+                            b.set(holds, not_after);
+                        },
+                        |_, _| {},
+                    );
+                });
+                // The caret read inside the test's own block is not the
+                // step's to use again.
+                self.caret.set(None);
+            }
+            self.shared.compared.borrow_mut().push((key, holds));
+            holds
+        });
         let runs = if compare.negated { b.not(holds) } else { holds };
         b.and_assign(none_skipped, runs);
         none_skipped
@@ -1372,9 +1556,10 @@ impl Emit<'_> {
                 self.wait_check(b, (*text, points), (*word, *last, *max))
             }
             (Low::Visible(text), _) => self.visible(b, *text),
+            (Low::Colours(screen, size), _) => self.colours(b, *screen, *size),
             (Low::Move(text, at, by, held), _) => self.move_point(b, (*text, at), *by, *held),
             (Low::Whole(text, at, (unit, count)), _) => {
-                let range = self.point(b, *text, at);
+                let range = self.own_point(b, *text, at);
                 let unit = b.int(*unit);
                 let count = b.int(i32::from(*count));
                 let _ = b.text_range_move_endpoint_by_unit(range, self.c.end, unit, count);
@@ -1509,8 +1694,7 @@ impl Emit<'_> {
     /// reads find them, a collapsed copy at the caret, and, when something
     /// is selected, whether the selection's start is at the text's start.
     fn caret(&self, b: &mut Builder, text: usize) -> Regs {
-        let element = self.element(text);
-        let pattern = b.get_text_pattern(element, false);
+        let pattern = self.pattern(b, text);
         let caret = emit_caret(b, self.c, pattern);
         let point = self.c.collapsed(b, caret.caret);
         let point = b.add_to_results(point);
@@ -1518,7 +1702,7 @@ impl Emit<'_> {
         let at_text_start = b.add_to_results(at_text_start);
         let c = self.c;
         b.if_(caret.has_selection, |b| {
-            let document = b.text_pattern_get_document_range(pattern);
+            let document = self.document(b, text);
             let order = b.text_range_compare_endpoints(caret.selection, c.start, document, c.start);
             let at_start = b.equal(order, c.zero);
             b.set(at_text_start, at_start);
@@ -1530,14 +1714,24 @@ impl Emit<'_> {
         }
     }
 
+    /// Emits a `ReadColours`' first rows, `rows` rows of `width` cells from
+    /// the start of the screen the program's step at `screen` read, as the
+    /// colour read's first program reads them.
+    fn colours(&self, b: &mut Builder, screen: usize, (rows, width): (u32, u32)) -> Regs {
+        let Regs::Visible { range, .. } = self.regs(screen) else {
+            unreachable_import()
+        };
+        let width = usize::try_from(width).unwrap_or(usize::MAX);
+        Regs::Colours(super::colours::emit_from(b, *range, false, (rows, width)))
+    }
+
     /// Emits a `Visible`: the first visible range, or the whole text's
     /// when the provider shows none, its text, and whether it starts at
     /// the text's start.
     fn visible(&self, b: &mut Builder, text: usize) -> Regs {
         let c = self.c;
-        let element = self.element(text);
-        let pattern = b.get_text_pattern(element, false);
-        let document = b.text_pattern_get_document_range(pattern);
+        let pattern = self.pattern(b, text);
+        let document = self.document(b, text);
         let screen = b.text_range_clone(document);
         let ranges = b.text_pattern_get_visible_ranges(pattern);
         let size = b.array_size(ranges);
@@ -1591,9 +1785,7 @@ impl Emit<'_> {
             b.try_catch(
                 |b| {
                     let point = self.point(b, text, at);
-                    let element = self.element(text);
-                    let pattern = b.get_text_pattern(element, false);
-                    let document = b.text_pattern_get_document_range(pattern);
+                    let document = self.document(b, text);
                     let order = b.text_range_compare_endpoints(point, c.start, document, c.end);
                     let within = b.compare(order, c.zero, Comparison::LessThanOrEqual);
                     b.if_(within, |b| {
@@ -1616,8 +1808,31 @@ impl Emit<'_> {
         }
     }
 
-    /// Emits a collapsed range at `point` in the text of `text`'s element.
+    /// Emits a collapsed range at `point` in the text of `text`'s element,
+    /// for a step that only reads it: it may be the range another step
+    /// answered or the outpost holds, which nothing may move.
     fn point(&self, b: &mut Builder, text: usize, point: &Pt) -> Reg<kind::TextRange> {
+        self.point_or_shared(b, text, point).0
+    }
+
+    /// Emits a collapsed range at `point` that is the step's own to move.
+    fn own_point(&self, b: &mut Builder, text: usize, point: &Pt) -> Reg<kind::TextRange> {
+        match self.point_or_shared(b, text, point) {
+            (shared, true) => self.c.collapsed(b, shared),
+            (own, false) => own,
+        }
+    }
+
+    /// Emits a collapsed range at `point`, and whether it is a range the
+    /// step shares, already collapsed where it was read: a held position
+    /// known collapsed, a caret read's point, or where a move landed. Each
+    /// copy not made is two calls to the provider.
+    fn point_or_shared(
+        &self,
+        b: &mut Builder,
+        text: usize,
+        point: &Pt,
+    ) -> (Reg<kind::TextRange>, bool) {
         let c = self.c;
         let collapsed_to_end = |b: &mut Builder, range: Reg<kind::TextRange>| {
             let copy = b.text_range_clone(range);
@@ -1632,56 +1847,50 @@ impl Emit<'_> {
                 c.collapsed(b, range)
             }
         };
-        let document = |b: &mut Builder| {
-            let element = self.element(text);
-            let pattern = b.get_text_pattern(element, false);
-            b.text_pattern_get_document_range(pattern)
-        };
+        let own = |range: Reg<kind::TextRange>| (range, false);
         match point {
             Pt::Caret | Pt::SelectionStart | Pt::SelectionEnd => {
                 let caret = if let Some(caret) = self.caret.get() {
                     caret
                 } else {
-                    let element = self.element(text);
-                    let pattern = b.get_text_pattern(element, false);
+                    let pattern = self.pattern(b, text);
                     let caret = emit_caret(b, c, pattern);
                     self.caret.set(Some(caret));
                     caret
                 };
-                self.caret_point(b, &caret, point_of(point))
+                own(self.caret_point(b, &caret, point_of(point)))
             }
             Pt::Start => {
-                let document = document(b);
-                c.collapsed(b, document)
+                let document = self.document(b, text);
+                own(c.collapsed(b, document))
             }
             Pt::End => {
-                let document = document(b);
-                collapsed_to_end(b, document)
+                let document = self.document(b, text);
+                own(collapsed_to_end(b, document))
             }
-            Pt::At(range, end, collapsed) => held(b, (*range, *end, *collapsed)),
+            Pt::At(range, _, true) => (self.range(*range), true),
+            Pt::At(range, end, collapsed) => own(held(b, (*range, *end, *collapsed))),
             Pt::After {
                 from,
                 prefix,
                 counts,
             } => {
                 let base = held(b, *from);
-                emit_after(b, c, base, (prefix, counts))
+                own(emit_after(b, c, base, (prefix, counts)))
             }
             Pt::Here(place, which) => match self.regs(*place) {
                 Regs::Caret { caret, point, .. } => match which {
-                    PointOf::Caret => c.collapsed(b, *point),
-                    _ => self.caret_point(b, caret, *which),
+                    PointOf::Caret => (*point, true),
+                    _ => own(self.caret_point(b, caret, *which)),
                 },
-                Regs::ReadText(units) => c.collapsed(b, units.0.first.0),
-                Regs::Whole { range, .. } => c.collapsed(b, *range),
-                Regs::Visible { range, .. } => {
-                    if *which == PointOf::VisibleEnd {
-                        collapsed_to_end(b, *range)
-                    } else {
-                        c.collapsed(b, *range)
-                    }
-                }
-                Regs::Move { to, .. } => c.collapsed(b, *to),
+                Regs::ReadText(units) => own(c.collapsed(b, units.0.first.0)),
+                Regs::Whole { range, .. } => own(c.collapsed(b, *range)),
+                Regs::Visible { range, .. } => own(if *which == PointOf::VisibleEnd {
+                    collapsed_to_end(b, *range)
+                } else {
+                    c.collapsed(b, *range)
+                }),
+                Regs::Move { to, .. } => (*to, true),
                 _ => unreachable_import(),
             },
         }
@@ -2139,9 +2348,7 @@ impl<'a> State<'_, 'a> {
                 _,
             ) => Found::Caret(caret_found(outcome, caret, *point, *at_text_start)?),
             (Regs::ReadText(units), _) => Found::ReadText(units_found(outcome, units)?),
-            (Regs::ReadRange(text), _) => {
-                Found::ReadRange(string_of(outcome, *text)?.encode_utf16().collect())
-            }
+            (Regs::ReadRange(text), _) => Found::ReadRange(outcome.get_utf16(*text)?),
             (Regs::Select(selected), _) => {
                 if !outcome.get(*selected)? {
                     return Ok(Ran::Unrun(Unrun::Refused(
@@ -2229,6 +2436,26 @@ impl<'a> State<'_, 'a> {
                 runs: Vec::new(),
                 unsupported: None,
             }),
+            (Regs::Colours(registers), Given::Colours(read_at)) => {
+                let Op::ReadColours { screen, top, .. } = &self.step(index).op else {
+                    return Err(Error::MissingResult(emitted.status.id()));
+                };
+                let size = match super::calls::colour_size(self, index, (*screen, *top)) {
+                    Ok(size) => size,
+                    Err(ran) => return Ok(ran),
+                };
+                // The rows were read at the last read's size: at another,
+                // the colour programs read this one's.
+                if size != read_at {
+                    return Ok(super::calls::run(self, index));
+                }
+                let width = usize::try_from(size.1).unwrap_or(usize::MAX);
+                Found::Colours(super::colours::finish(
+                    outcome,
+                    *registers,
+                    (size.0, width),
+                )?)
+            }
             (Regs::Locate(rectangles), _) => {
                 Found::Locate(match outcome.get(*rectangles)?.as_slice() {
                     [Value::Double(left), Value::Double(top), ..] => Some((*left, *top)),
@@ -2298,6 +2525,8 @@ impl<'a> State<'_, 'a> {
             range: range.clone(),
             imports: Vec::new(),
             pre: Vec::with_capacity(range.len()),
+            texts: Vec::new(),
+            held_points: Vec::new(),
         };
         let mut key = Vec::with_capacity(range.len());
         let mut given = Vec::with_capacity(range.len());

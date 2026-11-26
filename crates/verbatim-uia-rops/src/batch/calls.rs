@@ -234,6 +234,7 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             let at = Point::Of(*screen, PointOf::VisibleStart);
             let from = point(state, index, resolver.text(subject)?, &at)?;
             let size = colour_size(state, index, (*screen, *top))?;
+            super::colours::note_size(size);
             colours(state, &from, size).map(Found::Colours)
         }
         Op::MoveBySentence { subject, .. } => no_sentences(resolver.text(subject)?),
@@ -870,7 +871,7 @@ fn find_text(
 /// its `screen` step read, at the width of the line at the screen's top
 /// that its `top` step read ([`verbatim_model::screen_rows`]), each taken
 /// from this segment's result or an earlier segment's outcome.
-fn colour_size(
+pub(super) fn colour_size(
     state: &State<'_, '_>,
     index: usize,
     (screen, top): (Place, Place),

@@ -1329,8 +1329,9 @@ provider gives no handle for the window, which the classic walk finds.
   (`a_windows_console_updates_merge_into_one_while_they_wait`). The outpost
   keeps no "changed, not yet read" flag: Core alone does.
 - Core's full read of a terminal is a batch of generic text steps, one
-  program by remote operations, with a second for the colours when Core
-  asks them, or the same steps by calls
+  program by remote operations, the colours Core asks included once a
+  read has found the screen's size (the verbatim-uia-rops crate guide,
+  "The colours"), or the same steps by calls
   (`verbatim_core::terminal::reader`); the outpost keeps nothing of the
   terminal but the anchors it holds for Core. The old read, which Core no
   longer sends, is still answered: one `TextOp::ReadTerminal(TerminalRead)`

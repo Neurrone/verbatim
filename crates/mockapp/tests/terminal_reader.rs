@@ -9,8 +9,9 @@
 //! with its history block; the whole text; the rows above a start, as many
 //! as asked, exactly as many as the text holds and fewer; history reads by
 //! place; the caret, a caret key's starting point and a provider that
-//! reports no selection; the screen's colours as exact runs; and a start
-//! the outpost no longer holds.
+//! reports no selection; the screen's colours as exact runs, read by the
+//! colour programs and by the read's own program, at the size kept and
+//! after a resize; and a start the outpost no longer holds.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -103,6 +104,9 @@ struct Terminal {
     app: common::MockApp,
     hwnd: HWND,
     outposts: Vec<(OutpostUnderTest, NodeId)>,
+    /// The UI Automation calls each outpost made for the last window read,
+    /// the remote one's first: for it, the programs it ran.
+    calls: std::cell::Cell<[u32; 2]>,
 }
 
 /// The anchors the two outposts hold for one place, the remote one's
@@ -170,6 +174,7 @@ impl Terminal {
             app,
             hwnd,
             outposts,
+            calls: std::cell::Cell::new([0; 2]),
         }
     }
 
@@ -211,9 +216,12 @@ impl Terminal {
                 let ask = ask(which);
                 let (sent, steps) = window_batch(*node, &ask);
                 let before = now_us();
-                let (answer, _) =
+                let (answer, made) =
                     outpost.batch(self.hwnd, WindowVerdict::Uia, sent.batch().clone());
                 let after = now_us();
+                let mut calls = self.calls.get();
+                calls[which] = made.uia;
+                self.calls.set(calls);
                 let (began, ended) = (answer.began_us, answer.ended_us);
                 assert!(
                     before <= began && began <= ended && ended <= after,
@@ -626,14 +634,36 @@ fn run(column: u32, length: u32, foreground: u32, background: u32) -> TerminalCo
 /// last character, as both terminals do (`terminal-colours.json`): a plain
 /// row; two red cells first; only the last cell's background green; and
 /// one blue cell at the seventeenth.
+///
+/// By remote operations, an outpost's first coloured read is two programs,
+/// the read's and the colours'. Its next reads the colours in the read's
+/// own program, at the size the first found, and gives the same runs. On a
+/// screen of another width the size kept is wrong, so the colours the
+/// read's program took are left and the colour program reads them: two
+/// programs once, and one again from the read after. By calls the read is
+/// the same calls each time.
 fn colours_are_read_as_exact_runs_both_ways() {
-    let terminal = Terminal::of("terminal-colours.json", "mockapp-reader-colours");
+    let mut terminal = Terminal::of("terminal-colours.json", "mockapp-reader-colours");
     let (white, red, blue, green) = (0x00FF_FFFF, 0x0000_00FF, 0x00FF_0000, 0x0000_FF00);
-    let (coloured, _, _) = terminal.window(|_| WindowAsk {
+    let colours = |_| WindowAsk {
         colours: true,
         ..plain(WindowRead::First)
-    });
+    };
+    let (coloured, _, _) = terminal.window(colours);
+    let first_calls = terminal.calls.get();
+    let (again, _, _) = terminal.window(colours);
+    let again_calls = terminal.calls.get();
     let (plain_read, _, _) = terminal.window(|_| plain(WindowRead::First));
+    // Five rows of 16 cells: the styles stay at their characters.
+    common::apply(
+        &mut terminal.app,
+        terminal.hwnd,
+        r"set-text term plain row       \n     ab in red  \n         last ce\nll on green  red\n at sixteen     \n",
+    );
+    let (resized, _, _) = terminal.window(colours);
+    let resized_calls = terminal.calls.get();
+    let (resized_again, _, _) = terminal.window(colours);
+    let resized_again_calls = terminal.calls.get();
     terminal.app.quit();
     assert_eq!(
         coloured.snapshot.colours,
@@ -647,6 +677,35 @@ fn colours_are_read_as_exact_runs_both_ways() {
                 run(17, 3, 0, white),
             ],
         ])
+    );
+    assert_eq!(again, coloured, "the read's own program reads the same");
+    assert_eq!(
+        resized.snapshot.colours,
+        Some(vec![
+            vec![run(0, 16, 0, white)],
+            vec![
+                run(0, 4, 0, white),
+                run(4, 2, red, white),
+                run(6, 10, 0, white)
+            ],
+            vec![run(0, 16, 0, white)],
+            vec![
+                run(0, 10, 0, white),
+                run(10, 1, 0, green),
+                run(11, 5, 0, white)
+            ],
+            vec![
+                run(0, 11, 0, white),
+                run(11, 1, blue, white),
+                run(12, 4, 0, white)
+            ],
+        ])
+    );
+    assert_eq!(resized_again, resized, "at the new size, the same");
+    assert_eq!(
+        [first_calls, again_calls, resized_calls, resized_again_calls],
+        [[2, 181], [1, 181], [2, 214], [1, 214]],
+        "the programs the remote outpost ran, and the calls the other made"
     );
     // But for its colours, the read is the read without them.
     assert_eq!(

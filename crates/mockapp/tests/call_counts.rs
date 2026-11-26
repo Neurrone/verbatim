@@ -3434,9 +3434,9 @@ fn caret_tell_program(caret: &str) -> u32 {
 /// step's calls in turn, 18: the caret, the selection and whether its
 /// start is at the text's start, the line, then the comparison's (the read
 /// the batch replaced shared its reads of the caret among them, 19). The
-/// program's instructions, under UI Automation's limit of 10,000: 140 for
+/// program's instructions, under UI Automation's limit of 10,000: 148 for
 /// the selection "alpha" in a line of plain text, compared with a baseline
-/// at the text's start, and 127 for the caret alone moved inside the line
+/// at the text's start, and 130 for the caret alone moved inside the line
 /// (the purpose-built program the batch replaced executed 90 and 48).
 fn caret_tell_reads_cost_exactly() {
     common::init_com();
@@ -3457,7 +3457,7 @@ fn caret_tell_reads_cost_exactly() {
             caret_tell_program("caret doc 0 5"),
             caret_tell_program("caret doc 3")
         ],
-        [140, 127],
+        [148, 130],
         "the caret tell's read's program, a selection and the caret alone"
     );
     ratchet.finish();

@@ -377,7 +377,7 @@ fn caret_reads_execute_exactly() {
     // text is selected.
     assert_eq!(
         [worst, typical],
-        [4446, 131],
+        [4454, 134],
         "caret read worst and typical"
     );
 }
@@ -410,7 +410,7 @@ fn densely_mixed_formatting_executes_exactly() {
     fixture.app.quit();
     // 2152 and 4144 by the focus's hand-written caret program, which this
     // generated read replaced (2026-11-22).
-    assert_eq!([sixteen, thirty_two], [2195, 4187], "17 and 33 stretches");
+    assert_eq!([sixteen, thirty_two], [2198, 4190], "17 and 33 stretches");
     assert_eq!(eighty, 64, "80 characters, cut at 64 stretches");
     assert_eq!(calls.uia, 1, "the 80 characters' read, one program");
 }
@@ -460,7 +460,7 @@ fn say_all_batches_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [languages, first],
-        [692, 715],
+        [694, 720],
         "a later batch in three languages, a first batch in one"
     );
     assert!(languages < LIMIT / 2 && first < LIMIT / 2);
@@ -517,7 +517,7 @@ fn range_selections_execute_exactly() {
         .collect();
     assert_eq!(changes, [(true, "alpha".to_owned())]);
     fixture.app.quit();
-    assert_eq!(press, [118, 99], "the review copy's first press");
+    assert_eq!(press, [123, 109], "the review copy's first press");
     assert!(press.iter().all(|&count| count < LIMIT / 2));
 }
 
@@ -603,7 +603,7 @@ fn generic_window_reads_execute_exactly() {
     assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [vec![230], vec![358]],
+        [vec![233], vec![353]],
         "terminal window first and capped"
     );
 }
@@ -612,7 +612,8 @@ fn generic_window_reads_execute_exactly() {
 /// screen: in the worst case, every cell's colours differing from its
 /// neighbours' (`terminal-checkered.json`), each colour program reads rows
 /// while a worst row still fits its budget and the next goes on from
-/// there; a plain screen's colours are one program.
+/// there; a plain screen's colours, read after it, are read by the window
+/// read's own program.
 fn generic_colours_execute_exactly() {
     common::init_com();
     let screen = vec!["x".repeat(120); 30].join(r"\n");
@@ -653,13 +654,16 @@ fn generic_colours_execute_exactly() {
     assert_eq!(plain_runs, vec![1; 29], "every row one run");
     assert_eq!(
         worst,
-        vec![230, 4106, 4099, 4099, 4099, 4099, 3285],
+        vec![233, 4106, 4099, 4099, 4099, 4099, 3285],
         "the window read's program, then the worst case's colour programs"
     );
+    // The plain screen is read on the thread that read the worst case, so
+    // its program reads the colours at the size that read found
+    // (`terminal_reader_colours_execute_exactly`).
     assert_eq!(
         plain,
-        vec![230, 1262],
-        "the window read's program, then a plain screen's"
+        vec![1502],
+        "the window read's program, a plain screen's colours in it"
     );
     assert!(worst.iter().all(|&count| count < LIMIT / 2));
 }
@@ -793,14 +797,14 @@ fn terminal_reader_batches_execute_exactly() {
     assert_eq!(
         counts,
         [
-            vec![202],
-            vec![245],
-            vec![203],
-            vec![322],
-            vec![322],
-            vec![169],
-            vec![31],
-            vec![313]
+            vec![207],
+            vec![242],
+            vec![206],
+            vec![303],
+            vec![303],
+            vec![153],
+            vec![39],
+            vec![294]
         ],
         "first, history block, whole, from a start, starting, history above, whole history, \
          and from a start past the text's end"
@@ -808,9 +812,14 @@ fn terminal_reader_batches_execute_exactly() {
 }
 
 /// The colours of a read of Core's terminal reader from a start, its
-/// largest batch, on a 120 by 30 screen: the read's program, then the
-/// colour programs, in the worst case, every cell's colours differing from
-/// its neighbours' (`terminal-checkered.json`), and on a plain screen.
+/// largest batch, on a 120 by 30 screen, in the worst case, every cell's
+/// colours differing from its neighbours' (`terminal-checkered.json`), and
+/// on a plain screen, read first. The first read on a thread knows no size
+/// to read colours at: the read's program, then the colour program. Every
+/// later read reads its first rows' colours in its own program, at the
+/// size the last read found, so a plain screen's read is one program, and
+/// the worst case's first program stops at the colours' budget and the
+/// colour programs go on from there.
 fn terminal_reader_colours_execute_exactly() {
     use verbatim_core::terminal::reader::WindowRead;
     common::init_com();
@@ -828,42 +837,174 @@ fn terminal_reader_colours_execute_exactly() {
         let shape = reader_shape(&text, Some(&next), |start| {
             reader_window(WindowRead::From { start, height: 30 }, (true, false))
         });
-        let mut colours = None;
-        let counts = each_counted(|| {
-            let answer = run_batch(&shape.segment(&fixture.uia));
-            colours = answer.steps.into_iter().last().and_then(|ran| match ran {
-                Ran::Done(Found::Colours(rows)) => Some(rows),
-                _ => None,
-            });
-        });
+        let reads: Vec<(Vec<u32>, Vec<usize>)> = (0..2)
+            .map(|_| {
+                let mut colours = None;
+                let counts = each_counted(|| {
+                    let answer = run_batch(&shape.segment(&fixture.uia));
+                    colours = answer.steps.into_iter().last().and_then(|ran| match ran {
+                        Ran::Done(Found::Colours(rows)) => Some(rows),
+                        _ => None,
+                    });
+                });
+                let runs = colours.expect("the colours").iter().map(Vec::len).collect();
+                (counts, runs)
+            })
+            .collect();
         fixture.app.quit();
-        let runs: Vec<usize> = colours.expect("the colours").iter().map(Vec::len).collect();
-        (counts, runs)
+        reads
     };
-    let (worst, worst_runs) = read(
-        "terminal-checkered.json",
-        "mockapp-instructions-reader-colours-worst",
-    );
-    let (plain, plain_runs) = read(
+    let plain = read(
         "terminal-plain-colours.json",
         "mockapp-instructions-reader-colours-plain",
+    );
+    // The worst case's reads run on the thread the plain screen's ran on,
+    // so its first already knows the size.
+    let worst = read(
+        "terminal-checkered.json",
+        "mockapp-instructions-reader-colours-worst",
     );
     // Thirty rows from the screen's top, which stop at the document's end
     // after twenty-nine, as mockapp counts the empty end of the text as the
     // screen's last row.
-    assert_eq!(worst_runs, vec![120; 29], "every cell its own run");
-    assert_eq!(plain_runs, vec![1; 29], "every row one run");
+    for (_, runs) in &worst {
+        assert_eq!(*runs, vec![120; 29], "every cell its own run");
+    }
+    for (_, runs) in &plain {
+        assert_eq!(*runs, vec![1; 29], "every row one run");
+    }
+    let counts = |reads: &[(Vec<u32>, Vec<usize>)]| -> Vec<Vec<u32>> {
+        reads.iter().map(|(counts, _)| counts.clone()).collect()
+    };
     assert_eq!(
-        worst,
-        vec![349, 4106, 4099, 4099, 4099, 4099, 3285],
-        "the read's program, then the worst case's colour programs"
+        counts(&plain),
+        [vec![330, 1262], vec![1599]],
+        "a plain screen: a first read's program and its colour program, then a read that is \
+         one program, colours and all"
     );
+    let capped = vec![4443, 4099, 4099, 4099, 4099, 3285];
+    assert_eq!(
+        counts(&worst),
+        [capped.clone(), capped],
+        "the worst case: the read's program with the first rows' colours, then the colour \
+         programs"
+    );
+    assert!(
+        counts(&worst)
+            .iter()
+            .chain(&counts(&plain))
+            .flatten()
+            .all(|&count| count < LIMIT / 2)
+    );
+}
+
+/// The calls the program of a read of Core's terminal reader makes to the
+/// provider, a read from a start on a screen of 4 rows, without the
+/// screen's colours and, once a read has found the size, with them: the
+/// text's element found once (`ProviderOptions`, `GetPropertyValue`,
+/// `HostRawElementProvider` and `Navigate`), its pattern and its document
+/// range read once, the comparison of the start with the next start made
+/// once, and no position copied that a step only reads. Core takes this
+/// read twice for every key, and Windows Terminal answers each call
+/// slowly while it echoes one.
+fn terminal_reader_reads_call_the_provider_exactly() {
+    use verbatim_core::terminal::reader::WindowRead;
+    common::init_com();
+    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-reader-provider");
+    let text = batch::Text::of(fixture.find("Terminal"));
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 4");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!(
+            r"set-text term {}ready>
+",
+            numbered(8)
+        ),
+    );
+    let height = std::num::NonZeroU32::new(3).expect("a height");
+    let block = reader_shape(&text, None, |_| {
+        reader_window(WindowRead::HistoryBlock { height }, (false, false))
+    });
+    let next = match run_batch(&block.segment(&fixture.uia))
+        .steps
+        .into_iter()
+        .nth(2)
+    {
+        Some(Ran::Done(Found::Move(moved))) => moved.to,
+        other => panic!("the next start's move, not {other:?}"),
+    };
+    let hits = |colours: bool| {
+        let shape = reader_shape(&text, Some(&next), |start| {
+            reader_window(WindowRead::From { start, height: 3 }, (colours, false))
+        });
+        common::reset_hits(fixture.hwnd);
+        let mut rows = None;
+        let programs = each_counted(|| {
+            let answer = run_batch(&shape.segment(&fixture.uia));
+            rows = answer.steps.into_iter().last().and_then(|ran| match ran {
+                Ran::Done(Found::Colours(rows)) => Some(rows.len()),
+                _ => None,
+            });
+        })
+        .len();
+        (programs, rows, common::read_hits(fixture.hwnd))
+    };
+    let plain = hits(false);
+    // The first coloured read finds the size; the second is the one pinned.
+    let first = hits(true);
+    let coloured = hits(true);
+    fixture.app.quit();
+    assert_eq!((first.0, first.1), (2, Some(3)), "the first coloured read");
+    let element = [
+        ("ProviderOptions", 2),
+        ("GetPatternProvider", 1),
+        ("GetPropertyValue", 1),
+        ("HostRawElementProvider", 1),
+        ("Navigate", 1),
+        ("ITextProvider::GetSelection", 1),
+        ("GetVisibleRanges", 1),
+        ("DocumentRange", 1),
+    ];
+    let with = |ranges: &[(&'static str, u32)]| -> Vec<(&'static str, u32)> {
+        element.iter().chain(ranges).copied().collect()
+    };
     assert_eq!(
         plain,
-        vec![349, 1262],
-        "the read's program, then a plain screen's"
+        (
+            1,
+            None,
+            with(&[
+                ("Clone", 14),
+                ("CompareEndpoints", 5),
+                ("ExpandToEnclosingUnit", 2),
+                ("GetText", 6),
+                ("Move", 5),
+                ("MoveEndpointByRange", 6),
+            ])
+        ),
+        "a read from a start: 47 calls"
     );
-    assert!(worst.iter().all(|&count| count < LIMIT / 2));
+    // The colours of 3 rows of 10 cells, which this fixture's provider
+    // answers cell by cell.
+    assert_eq!(
+        coloured,
+        (
+            1,
+            Some(3),
+            with(&[
+                ("Clone", 34),
+                ("CompareEndpoints", 9),
+                ("ExpandToEnclosingUnit", 3),
+                ("GetAttributeValue", 66),
+                ("GetText", 8),
+                ("Move", 28),
+                ("MoveEndpointByUnit", 21),
+                ("MoveEndpointByRange", 14),
+            ])
+        ),
+        "the same with the colours, in the one program"
+    );
 }
 
 /// A terminal's snapshot: a first read, and a read from where it said to
@@ -1053,7 +1194,7 @@ fn wait_polls_execute_exactly() {
     mixed.app.quit();
     assert_eq!(
         [typical, moved, deleting, sixteen],
-        [139, 303, 522, 2294],
+        [141, 306, 530, 2297],
         "a poll that finds nothing, a moved line key's, a deleting key's at the bound, \
          and 17 mixed stretches at the bound"
     );
@@ -1191,12 +1332,12 @@ fn batch_text_shapes_execute_exactly() {
             // comparison one cap, which the outpost never did: the
             // program builder's own caps differ, so each takes its own
             // constant (2026-11-22).
-            vec![4474],
+            vec![4482],
+            vec![149],
             vec![150],
-            vec![148],
-            vec![114, 99],
-            vec![53],
-            vec![749],
+            vec![123, 109],
+            vec![58],
+            vec![757],
         ],
         "the caret tell, Delete's starting read, next word, review select, a copy, \
          say-all's lines"
@@ -1319,6 +1460,10 @@ fn main() {
         (
             "terminal_reader_colours_execute_exactly",
             terminal_reader_colours_execute_exactly,
+        ),
+        (
+            "terminal_reader_reads_call_the_provider_exactly",
+            terminal_reader_reads_call_the_provider_exactly,
         ),
         (
             "terminal_snapshots_execute_exactly",
