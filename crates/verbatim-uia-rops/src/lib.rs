@@ -21,13 +21,8 @@
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
-//!   and says which path answered; for the terminal conformance runner
-//!   (`cargo xtask regenerate-terminal-conformance-expectations`), its
-//!   one caller, [`terminal_snapshot`]: the text from where the last read
-//!   said to start to the document's end in one `GetText`, with the
-//!   screen, the caret, and the screen's colours ([`ColourRun`]), where
-//!   the product reads a terminal by a batch of generic steps
-//!   ([`batch`]); for a terminal's command search, [`terminal_find`]; for
+//!   and says which path answered; for a terminal's command search,
+//!   [`terminal_find`]; for
 //!   the outpost finding its own copy of
 //!   an element the focus listener read, [`element_by_path`]: the element
 //!   reached from one the caller has by the runtime ids below it; and for
@@ -58,15 +53,13 @@ mod operation;
 mod path;
 mod terminal_colours;
 mod terminal_find;
-mod terminal_snapshot;
 mod text;
 mod watch;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
-    ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, CaretAnswer, CaretLineQuery,
-    MAX_COMPARED_TEXT, MAX_RUNS, RangeEnd, Run, RunAttributes, SelectionTextChange, TextAttribute,
-    UnitRead,
+    ANNOTATION_GRAMMAR_ERROR, ANNOTATION_SPELLING_ERROR, Attributes, MAX_COMPARED_TEXT, MAX_RUNS,
+    RangeEnd, Run, RunAttributes, SelectionTextChange, TextAttribute, UnitRead,
 };
 pub use error::{Error, Failure};
 pub use focus::{
@@ -86,14 +79,10 @@ pub use operation::{Operation, Outcome, Read, Value, counting, work};
 pub use path::{
     ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
 };
-pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, screen_height};
+pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun};
 pub use terminal_find::{
     FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
     terminal_find_remote,
-};
-pub use terminal_snapshot::{
-    Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
-    terminal_snapshot_remote,
 };
 pub use text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 pub use watch::{WatchAnswer, WatchQuery, watch_check_classic};

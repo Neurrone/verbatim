@@ -26,12 +26,16 @@ verbatim-control.workspace = true
 verbatim-e2e.workspace = true
 verbatim-model.workspace = true
 # The terminal conformance runner (`cargo xtask
-# regenerate-terminal-conformance-expectations`) reads real terminals with
-# Verbatim's own read program and writes the simulated terminal's
-# expectations.
+# regenerate-terminal-conformance-expectations`) reads real terminals as
+# Verbatim does, by the batches Core's terminal reader writes
+# (verbatim-core), run as the outpost's worker runs a run of text steps
+# (verbatim-outpost), and writes the simulated terminal's expectations. It
+# fails a read whose log says a step was not read by its program (tracing).
+tracing.workspace = true
+verbatim-core.workspace = true
+verbatim-outpost.workspace = true
 verbatim-term-sim.workspace = true
 verbatim-uia.workspace = true
-verbatim-uia-rops.workspace = true
 # The OneCore speech binding, for `xtask warm-speech`.
 windows.workspace = true
 

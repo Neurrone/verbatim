@@ -2648,13 +2648,15 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tracing",
  "verbatim-agent",
  "verbatim-control",
+ "verbatim-core",
  "verbatim-e2e",
  "verbatim-model",
+ "verbatim-outpost",
  "verbatim-term-sim",
  "verbatim-uia",
- "verbatim-uia-rops",
  "windows",
  "workspace-hack",
 ]

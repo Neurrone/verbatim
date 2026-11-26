@@ -2,8 +2,7 @@
 //! mockapp's UIA text provider, through a real outpost reading by remote
 //! operations and one reading by calls: each read's batch is run by both,
 //! read back by the reader, and must come out alike and as pinned. The
-//! cases are those the old read program's test pins
-//! (`terminal_snapshot.rs`): a first read; a read from the start the last
+//! cases: a first read; a read from the start the last
 //! one named, with nothing new, with output written since, and after a
 //! clear that leaves the start past the text's end; a first read again
 //! with its history block; the whole text; the rows above a start, as many
@@ -489,7 +488,14 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
     // The text cleared below the kept start: the start is refused, and the
     // read starts where the next will, the text's start.
     let (cleared, _, _) = terminal.window(|which| from(start[which]));
+    // A history read from the refused start reads from the next start too.
+    let history = terminal.history(|which| HistoryAsk::Above {
+        start: start[which],
+        above: 0,
+        height: height(3),
+    });
     terminal.app.quit();
+    assert_eq!(history, Ok((padded(&["cleared", "ready>"]), 0)));
     assert_eq!(
         cleared,
         Read {

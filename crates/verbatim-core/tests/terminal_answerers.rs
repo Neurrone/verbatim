@@ -3,8 +3,8 @@
 //! terminal, the reader's window batch, answered step by step as the
 //! terminal's provider answers each step's calls (`terminal_support`'s
 //! `steps`), reads back as the read the reference read
-//! (`verbatim_term_sim::Terminal::snapshot`, the old read program step for
-//! step) gives, field by field; and its history batch reads back as the
+//! (`verbatim_term_sim::Terminal::snapshot`, the read the conformance
+//! expectations record) gives, field by field; and its history batch reads back as the
 //! reference's text and rows. The command search, which stays on its old
 //! operation, is still compared as the steps compose it (Dickson,
 //! 2026-11-26, `docs/simplification-review/builds.md`).

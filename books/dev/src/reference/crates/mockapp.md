@@ -709,10 +709,6 @@ Each file's module comment says exactly what it asserts; in outline:
   Core's say-all over UIA text, which has no sentence unit, through Core's
   driver and a real outpost
   (`uia_say_all_speaks_by_sentence_without_a_sentence_unit`).
-- `terminal_snapshot.rs` reads `terminal.json`'s terminal with
-  `verbatim-uia-rops`'s terminal read program remotely and classically,
-  the two required to agree on every field, and pins the colours of
-  `terminal-colours.json` as exact runs both ways.
 - `terminal.rs` drives Core's reducer and a real outpost over the
   terminal: new output is said line by line with one UIA call a read
   remotely, and classically, and Backspace says what it deleted with no
@@ -721,10 +717,8 @@ Each file's module comment says exactly what it asserts; in outline:
   the screen.
 - `terminal_reader.rs` runs the batches of Core's terminal reader
   (`verbatim_core::terminal::reader`) through a real outpost remotely and
-  by calls, which must agree, and pins what the reader reads back: the
-  cases `terminal_snapshot.rs` pins of the conformance runner's read
-  program, a kept start
-  until a clear, the history block, the whole text and the rows above a
+  by calls, which must agree, and pins what the reader reads back: a
+  kept start until a clear, the history block, the whole text and the rows above a
   start, with history reads by place, the caret and a key's starting
   point, a provider reporting no selection, the colours as exact runs,
   and a start no longer held, which is the terminal gone; and a text

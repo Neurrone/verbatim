@@ -1856,7 +1856,7 @@ Terminal. A key costs as many coloured reads as its window holds: 1.0 to
 1.33 in the console host and 0.90 to 2.09 in Windows Terminal.
 
 A read by the reader's batch costs more than the purpose-built read
-(`verbatim_uia_rops::terminal_snapshot`) that Core sent before it.
+program that Core sent before it.
 Measured on 2026-11-26 on this machine, debug build, three runs of each
 of `measure_keys_conhost` and `measure_keys_windows_terminal` together: a
 key's time to its speech queued is a median of 9.1 to 9.3 ms against 7.6
@@ -1971,7 +1971,7 @@ console host and the pinned Windows Terminal 1.24.12741, medians of 20
 reads against the same read without colours:
 
 - A plain shell screen (bash's, 30 rows, 30 runs): 1,349 instructions in
-  the snapshot's own program; 2.6 ms more in the console host (2.9 against
+  the read's own program; 2.6 ms more in the console host (2.9 against
   0.35) and 1.6 in Windows Terminal (2.1 against 0.48).
 - PSReadLine's coloured command line (2 rows, 4 runs): 555 instructions;
   1.9 ms more in the console host and 1.2 in Windows Terminal.
@@ -1983,7 +1983,7 @@ reads against the same read without colours:
   against 0.35) and 4.9 in Windows Terminal (5.4 against 0.46).
 - The worst case, every cell's colours differing from its neighbours',
   reverse video on every other cell and true colour throughout (3,600
-  runs): six programs, the snapshot's of 4,151 instructions and five of
+  runs): six programs, the read's of 4,151 instructions and five of
   4,099 or fewer (24,644 in all), 72 ms in the console host and 31 in
   Windows Terminal.
 
@@ -2195,13 +2195,11 @@ first, the share of the limit in brackets:
   caret key's starting read for Delete, review's next word, review
   select, a copy and say-all's 32 lines, each under a tenth of the limit
   but the caret tell.
-- A terminal's snapshot: 50 for a first read, 90 with a start and the caret
-  and its line; no loop, so it does not grow with the history.
-- A terminal's colours on a 120 by 30 screen: 1,349 for a plain screen; in
-  the worst case six programs of 4,151 (42 percent), 4,099, 4,099, 4,099,
-  4,099 and 4,097. A program reads rows while a worst-case row (887 at 120
-  cells) fits its budget of 4,600, so a row wider than about 300 cells is
-  read alone, and one wider than about 1,300 is answered classically.
+- A terminal's colours: a program reads rows while a worst-case row (887
+  at 120 cells) fits its budget of 4,600, so a row wider than about 300
+  cells is read alone, and one wider than about 1,300 is answered
+  classically. The programs' counts on a 120 by 30 screen are pinned with
+  the reader's batches, below.
 - A terminal's upward search: 2,952 at its bound (`mockapp`'s
   `the_search_ends_after_its_calls_remote`), measured, not pinned.
 - The generic text operations composed as a read of a terminal's window,

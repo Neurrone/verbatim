@@ -273,9 +273,9 @@ impl Provider<'_> {
         })
     }
 
-    /// The read program's snapshot, step for step as its classic
-    /// implementation takes it, with the coordinate of the row its text
-    /// starts on.
+    /// One read's snapshot, the facts the conformance runner records of a
+    /// real terminal's read, each from the provider calls that give it,
+    /// with the coordinate of the row its text starts on.
     pub(crate) fn snapshot(&self, query: &Query) -> Result<(Snapshot, usize), Refused> {
         let document = self.document();
         let screen = self.visible();

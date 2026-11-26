@@ -1,12 +1,22 @@
 //! `cargo xtask regenerate-terminal-conformance-expectations`: writes each
 //! stream of `verbatim-term-sim`'s conformance corpus into the real console
 //! host and the end-to-end suite's pinned Windows Terminal, reads each
-//! after every chunk with Verbatim's own read program, and saves what it
+//! after every chunk as Verbatim reads a terminal, and saves what it
 //! answered as the expectations the simulated terminal is tested against
-//! (`books/dev/src/explanation/design/terminal-model.md`, "Testing"). Every read also takes the
-//! read program's colours, which must equal the colours read cell by cell,
-//! or the run fails. It opens terminal windows, so it runs on demand on a
-//! desktop, never in continuous integration.
+//! (`books/dev/src/explanation/design/terminal-model.md`, "Testing"). It opens terminal windows,
+//! so it runs on demand on a desktop, never in continuous integration.
+//!
+//! Each read is the window read Core's terminal reader writes
+//! (`verbatim_core::terminal::reader`), run as the outpost's worker runs a
+//! run of text steps (`verbatim_outpost::text::fused::run`) and read back
+//! by the reader: the first read of a stream is the reader's first read,
+//! and each later one names the start the read before answered and the
+//! height of the screen it found. An expectation's text is the text from
+//! that start alone, where a window read begins a screen above it, so a
+//! later read takes it by the reader's history read with no rows above the
+//! start. Every read also takes the screen's colours, which must equal the
+//! colours read cell by cell, or the run fails, as it does when a step was
+//! not read by its program.
 //!
 //! The terminal runs this program's `conformance-player`, which connects
 //! back over a local socket, writes each chunk it is sent, and then sets
@@ -21,18 +31,30 @@
 use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as IoWrite};
 use std::net::{TcpListener, TcpStream};
+use std::num::NonZeroU32;
 use std::os::windows::io::AsRawHandle as _;
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
+use verbatim_core::batch::{Answers, Sent};
+use verbatim_core::terminal::reader::{
+    HistoryAsk, WindowAsk, WindowRead, WindowReply, history_batch, history_of, window_batch,
+    window_of,
+};
+use verbatim_model::request::Reply;
+use verbatim_model::{
+    DEFECT_TARGET, NodeId, REMOTE_FALLBACK_TARGET, TerminalColourRun, TextAnchor,
+};
+use verbatim_outpost::text::uia::{UiaPos, UiaText};
+use verbatim_outpost::text::{Anchors, fused};
+
 use verbatim_term_sim::conformance::{
-    Answer, Expectation, Stream, expectation_path, inside_character, streams,
+    Answer, Chunk, Expectation, Stream, expectation_path, inside_character, streams,
 };
 use verbatim_term_sim::{Flavor, Run};
 use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
-use verbatim_uia_rops::{Path, SnapshotQuery, terminal_snapshot};
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Globalization::CP_UTF8;
 use windows::Win32::System::Console::{
@@ -314,6 +336,185 @@ fn text_element(
     Ok((element, pattern))
 }
 
+/// The node the runner's batches name: the terminal's text, the one node
+/// it reads.
+const TERMINAL: NodeId = NodeId::new(1);
+
+/// The log lines a read wrote that say a step was not read by its
+/// program: a fallback to the classic calls, or a defect.
+#[derive(Default)]
+struct Departures(Mutex<Vec<String>>);
+
+impl tracing::Subscriber for Departures {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        matches!(metadata.target(), REMOTE_FALLBACK_TARGET | DEFECT_TARGET)
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Fields(String);
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                let _ = write!(self.0, " {}={value:?}", field.name());
+            }
+        }
+        let mut line = Fields(event.metadata().target().to_owned());
+        event.record(&mut line);
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(line.0);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// A terminal as the outpost's worker reads one: its text, with what the
+/// outpost keeps with it, and the anchors its reads hold.
+struct Terminal<'a> {
+    uia: &'a Uia,
+    source: UiaText,
+    anchors: Anchors<UiaPos>,
+    window: isize,
+}
+
+impl Terminal<'_> {
+    /// Runs the batch `sent` as the outpost's worker runs a run of text
+    /// steps on one node, by remote programs: its answers. An error when a
+    /// step was read by the classic calls instead, or the run logged a
+    /// defect.
+    fn run<B>(&mut self, sent: &Sent<B>) -> Result<Answers<B>, String> {
+        let departures = Arc::new(Departures::default());
+        let answer = tracing::subscriber::with_default(Arc::clone(&departures), || {
+            fused::run(
+                self.uia,
+                (
+                    TERMINAL,
+                    &mut self.source,
+                    &mut self.anchors.node(TERMINAL.number()),
+                ),
+                (&sent.batch().steps, 0, &[]),
+                (Some(self.window), 0),
+            )
+        });
+        let departures = departures
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .join("; ");
+        if answer.read_classically || !departures.is_empty() {
+            return Err(format!("a read was not read by its programs: {departures}"));
+        }
+        Answers::parse(sent, Reply::Steps(answer.outcomes))
+            .ok_or_else(|| "a read's outcomes are not of its steps' kinds".to_owned())
+    }
+
+    /// The window read `ask` names, as Core's reader reads it back.
+    fn window(&mut self, ask: &WindowAsk) -> Result<WindowReply, String> {
+        let (sent, steps) = window_batch(TERMINAL, ask);
+        let answers = self.run(&sent)?;
+        window_of(&answers, &steps, ask, (0, 0))
+            .map_err(|failure| format!("the window read failed: {failure:?}"))
+    }
+
+    /// The text from `start`, or from the next read's start when `start`
+    /// is refused, to the text's end, as Core's reader reads its history
+    /// read with no rows above the start back.
+    fn text_from(&mut self, start: TextAnchor, height: NonZeroU32) -> Result<String, String> {
+        let ask = HistoryAsk::Above {
+            start,
+            above: 0,
+            height,
+        };
+        let (sent, steps) = history_batch(TERMINAL, &ask);
+        let answers = self.run(&sent)?;
+        history_of(&answers, &steps)
+            .map(|(text, _)| text)
+            .map_err(|failure| format!("the history read failed: {failure:?}"))
+    }
+}
+
+/// Sends chunk `index` of a stream to the player, and waits until it says
+/// the chunk is written. `inside` says the stream's bytes up to the
+/// chunk's end stop inside a character.
+fn send_chunk(
+    lines: &mut BufReader<TcpStream>,
+    mut writer: &TcpStream,
+    index: usize,
+    (chunk, inside): (&Chunk, bool),
+) -> Result<(), String> {
+    let hex = chunk
+        .as_bytes()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+    // A chunk that ends inside a character is marked by the console's
+    // title call, since a title sequence written after it would end the
+    // character; the terminal holds the character's first bytes and shows
+    // nothing new for them.
+    let mark = if inside { "call" } else { "sequence" };
+    writer
+        .write_all(
+            format!(
+                "chunk {index} {mark} {hex}
+"
+            )
+            .as_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut reply = String::new();
+    lines
+        .read_line(&mut reply)
+        .map_err(|error| format!("no reply from the player: {error}"))?;
+    if reply.trim() == "written" {
+        Ok(())
+    } else {
+        Err(format!("the player answered {reply:?}"))
+    }
+}
+
+/// Checks that the colours the read after chunk `index` took, `read`, are
+/// the colours read cell by cell, `by_cell`.
+fn check_colours(
+    index: usize,
+    read: Vec<Vec<TerminalColourRun>>,
+    by_cell: &[Vec<Run>],
+) -> Result<(), String> {
+    let cells = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
+    let read: Vec<Vec<Run>> = read
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|run| Run {
+                    column: cells(run.column),
+                    length: cells(run.length),
+                    foreground: run.foreground,
+                    background: run.background,
+                })
+                .collect()
+        })
+        .collect();
+    if read == by_cell {
+        return Ok(());
+    }
+    let row = read
+        .iter()
+        .zip(by_cell)
+        .position(|(read, cells)| read != cells);
+    Err(format!(
+        "after chunk {index}, the colour read's colours differ from the cells': {} rows read, {} by cell; first differing row {row:?}: read {:?}, by cell {:?}",
+        read.len(),
+        by_cell.len(),
+        row.and_then(|row| read.get(row)),
+        row.and_then(|row| by_cell.get(row)),
+    ))
+}
+
 /// Sends each chunk and reads the terminal once the player says it is on
 /// the screen.
 fn read_stream(
@@ -325,97 +526,71 @@ fn read_stream(
     flavor: Flavor,
 ) -> Result<Expectation, String> {
     let (element, pattern) = text_element(uia, window, flavor)?;
+    let mut terminal = Terminal {
+        uia,
+        source: UiaText::new(element, pattern.clone(), true),
+        anchors: Anchors::new(Arc::default()),
+        window: window.0 as isize,
+    };
     let mut lines = BufReader::new(connection.try_clone().map_err(|error| error.to_string())?);
-    let mut writer = connection;
-    let mut start: Option<IUIAutomationTextRange> = None;
+    let mut start: Option<TextAnchor> = None;
     let mut screen_rows = 0;
     let mut answers = Vec::new();
     let size = empty_screen_size(&pattern)?;
     let inside = inside_character(stream);
     for (index, (chunk, inside)) in stream.chunks.iter().zip(inside).enumerate() {
-        let hex = chunk
-            .as_bytes()
-            .iter()
-            .fold(String::new(), |mut hex, byte| {
-                let _ = write!(hex, "{byte:02x}");
-                hex
-            });
-        // A chunk that ends inside a character is marked by the console's
-        // title call, since a title sequence written after it would end the
-        // character; the terminal holds the character's first bytes and
-        // shows nothing new for them.
-        let mark = if inside { "call" } else { "sequence" };
-        writer
-            .write_all(format!("chunk {index} {mark} {hex}\n").as_bytes())
-            .map_err(|error| error.to_string())?;
-        let mut reply = String::new();
-        lines
-            .read_line(&mut reply)
-            .map_err(|error| format!("no reply from the player: {error}"))?;
-        if reply.trim() != "written" {
-            return Err(format!("the player answered {reply:?}"));
-        }
+        send_chunk(&mut lines, connection, index, (chunk, inside))?;
         wait_for_title(window, &format!("{title}#{index}"))?;
-        let query = SnapshotQuery {
-            element: &element,
-            pattern: &pattern,
-            start: start.as_ref(),
-            screen_rows,
-            whole: false,
-            // As the simulator's replay reads: from the start alone.
-            above: 0,
-            caret: None,
-            // Every read takes the colours, at the width the last read
-            // found, so the program's colour read is checked against the
-            // cell-by-cell reading below after every chunk.
-            colours: Some(size.0),
+        let ask = WindowAsk {
+            read: match start {
+                None => WindowRead::First,
+                Some(start) => WindowRead::From {
+                    start,
+                    height: screen_rows,
+                },
+            },
+            // Every read takes the colours, so the colour read is checked
+            // against the cell-by-cell reading below after every chunk.
+            colours: true,
+            starting: false,
+            output: false,
         };
-        let (snapshot, path) =
-            terminal_snapshot(uia, &query, true).map_err(|error| error.to_string())?;
-        if let Path::Fallback(error) = path {
-            return Err(format!("the read program failed and fell back: {error}"));
-        }
-        let screen = String::from_utf16_lossy(&snapshot.screen);
+        let reply = terminal
+            .window(&ask)
+            .map_err(|error| format!("after chunk {index}, {error}"))?;
+        let snapshot = reply.snapshot;
+        // As the simulator's replay reads: from the start alone. A window
+        // read that names a start and a height begins a screen above the
+        // start, so the text from the start is read by itself, and the
+        // start is the text's start when no row lies above it.
+        let (text, at_document_start) = match (start, NonZeroU32::new(screen_rows)) {
+            (Some(start), Some(height)) => {
+                let text = terminal
+                    .text_from(start, height)
+                    .map_err(|error| format!("after chunk {index}, {error}"))?;
+                if !snapshot.text.padded().ends_with(&text) {
+                    return Err(format!(
+                        "after chunk {index}, the text from the start is not the end of the window read's"
+                    ));
+                }
+                (text, snapshot.above == 0)
+            }
+            _ => (snapshot.text.padded(), snapshot.at_document_start),
+        };
+        let screen = snapshot.screen.padded();
         screen_rows = verbatim_term_sim::screen_rows(&screen);
-        start.clone_from(&snapshot.next_start);
+        start = Some(reply.start);
         let (caret_line, caret_column) = caret(&pattern).map_err(|error| error.to_string())?;
         let colours = colours(&pattern, size).map_err(|error| error.to_string())?;
-        let read: Vec<Vec<Run>> = snapshot
-            .colours
-            .unwrap_or_default()
-            .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(|run| Run {
-                        column: run.column,
-                        length: run.length,
-                        foreground: run.foreground,
-                        background: run.background,
-                    })
-                    .collect()
-            })
-            .collect();
-        if read != colours {
-            let row = read
-                .iter()
-                .zip(&colours)
-                .position(|(read, cells)| read != cells);
-            return Err(format!(
-                "after chunk {index}, the read program's colours differ from the cells': {} rows read, {} by cell; first differing row {row:?}: read {:?}, by cell {:?}",
-                read.len(),
-                colours.len(),
-                row.and_then(|row| read.get(row)),
-                row.and_then(|row| colours.get(row)),
-            ));
-        }
+        check_colours(index, snapshot.colours.unwrap_or_default(), &colours)?;
         answers.push(Answer {
-            text: String::from_utf16_lossy(&snapshot.text),
+            text,
             screen,
             from_start: snapshot.from_start,
             shrank: snapshot.shrank,
-            at_document_start: snapshot.at_document_start,
+            at_document_start,
             alternate: snapshot.alternate,
-            first_row: snapshot.first_row,
+            first_row: snapshot.first_row.padded(),
             caret_rows_to_end: snapshot.caret_rows_to_end,
             caret_line,
             caret_column,
@@ -517,7 +692,7 @@ fn cells(
 
 /// The stretches of one foreground and background in the `width` cells of
 /// the row starting at `start`, read cell by cell and joined where
-/// neighbours agree: the reference the read program's colours are checked
+/// neighbours agree: the reference the colour read's colours are checked
 /// against, which nothing about the providers' answers over stretches can
 /// disturb (a stretch answers its first cell's colour when every cell but
 /// its last has it, and the format unit stops only at rows, measured
