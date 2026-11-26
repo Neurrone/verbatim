@@ -44,6 +44,13 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the same stall in a second native dialog. Verbatim's GUI thread handled no message for about 4.5 s inside the file dialog's `ShowModal` (`gui.cpp`, `AskFile`); the listener reported the dialog hung, Core played the sound, and the dialog answered about 6.2 s after the key, after the step had failed.
   - Fix: owned by build 6 with the entry above. The file dialog's `ShowModal` is now timed in Verbatim's log like the message boxes, so the next stall's length is logged; what the thread waits on is still not known.
 
+## A key pressed as a terminal flood ends
+
+- `windows_terminal_line_key_flood` on GitHub's runner (run 45787264327, 2026-11-26, at 5b79a4e6; it passed at 4327da97 and 71cf8f3b)
+  - How: after Up Arrow as the flood ends, "flood line 93 …" was said where "ready> .\long.ps1" was expected first.
+  - Cause: the result depends on whether Core's last output read lands before or after the key, a window of about 25 ms. Landing after, it is the key's own read and the recalled line is said at once; landing before, the unread flood rows are spoken as output and the recalled line queues behind them. Only the old terminal reads ran, with no find, history read or fallback.
+  - Fix: the terminal work's step on how a key takes ownership of reads (`docs/simplification-review/builds.md`, the 2026-11-26 terminal entry), after the adapter. The scenario is not loosened.
+
 ## Console host scenarios
 
 - `conhost_leave_flood`, on the development VM only; it passes on GitHub's runner and stays there.
