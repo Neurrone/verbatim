@@ -61,6 +61,16 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the runner, as far as the artifacts show. The stand-in's form showed and took focus, then did not answer its first MSAA call for about 8 s (0.14 s in the passing run 45805762032); the outpost's probe timed out at 3 s and the sound is correct. The request made no UIA call and nothing fell back. `not-responding-wait-chains.txt` lists two blocked threads with no cycle: the form's UI thread and one of `dwm.exe`, which draws every window, so the desktop as a whole may have stalled. What they waited on is not known.
   - Fix: none yet. If the next not-responding failure on the runner again lists `dwm.exe`, the harness records the runner's load at that moment, and the stalls of Verbatim's own dialogs above are read again in that light.
 
+- `wpf_password` on GitHub's runner (run 45884584255, 2026-11-27, at 2b3959a5)
+  - How: "… window" where "… dialog", "User name edit", "dickson" was expected.
+  - Cause: the same runner stall. The compiled WPF host took about 33 s to show its window; Verbatim's first focus read probed its window, timed out after 3 s, fell back to MSAA and read a bare window. The next read found the host answering, but the scenario had ended. This is the mechanism of the entry 39091874 removed when the hosts were compiled, so compiling them was not enough on a stalled runner.
+  - Fix: as for the entries above.
+
+- `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci-arm64` (same run)
+  - How: UIA_E_TIMEOUT from `window_live` on the compiled Forms program it had just started, after 14.7 s; it took 2.7 to 7.8 s in the 11 runs before.
+  - Cause: the Forms program not answering UI Automation's first connection, the same family on the ARM64 runner; the log carries only the panic.
+  - Fix: as for the entries above.
+
 ## A key pressed as a terminal flood ends
 
 - `windows_terminal_line_key_flood` on GitHub's runner (run 45787264327, 2026-11-26, at 5b79a4e6; it passed at 4327da97 and 71cf8f3b)
