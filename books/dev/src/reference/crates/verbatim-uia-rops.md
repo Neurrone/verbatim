@@ -130,7 +130,9 @@ condition comparing two points finds both as a step's own points are
 found and makes one `CompareEndpoints` call, inside a try block of its
 own in a program, so a failed comparison is false; a point Core holds
 that is no longer held is found at planning, as by calls, and answers
-the step not there. Each node
+the step not there; a later step of the program that takes that step's
+result is skipped at planning too, since the program emits nothing for a
+step decided there. Each node
 a relation or a walk reaches fills its cache inside the provider with
 the absent record of `RemoteCache`, so a property the element lacks
 reads absent as it does by calls.

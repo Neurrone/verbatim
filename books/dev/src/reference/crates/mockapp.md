@@ -717,6 +717,16 @@ Each file's module comment says exactly what it asserts; in outline:
   module and gives each read to Core's reducer: new output is said line by
   line with one UIA call a read remotely, and classically, and Backspace
   says what it deleted with no caret event.
+- `terminal_reader.rs` runs the batches of Core's terminal reader
+  (`verbatim_core::terminal::reader`) through a real outpost remotely and
+  by calls, which must agree, and pins what the reader reads back: the
+  cases `terminal_snapshot.rs` pins of the old read program, a kept start
+  until a clear, the history block, the whole text and the rows above a
+  start, with history reads by place, the caret and a key's starting
+  point, a provider reporting no selection, the colours as exact runs,
+  and a start no longer held, which is the terminal gone. Its texts end
+  with a line break, as mockapp's `Move` puts a collapsed range at the
+  start of its line even when it moves no line.
 - `compare_points.rs` runs a condition comparing two text positions
   through a real outpost remotely and by calls, which must agree: each
   row of the condition's table a provider can give, the move of one line

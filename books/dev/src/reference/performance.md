@@ -2156,6 +2156,13 @@ first, the share of the limit in brackets:
   programs after it on a 120 by 30 screen, pinned in
   `generic_colours_execute_exactly`, one program for a plain screen and
   six in the worst case. `FindText` runs no program: it is by calls.
+- The batches of Core's terminal reader (`verbatim_core::terminal::reader`),
+  which nothing in the product sends yet: each one program with no loop,
+  pinned in `instruction_limit.rs`'s
+  `terminal_reader_batches_execute_exactly`, and a coloured read's
+  programs on a 120 by 30 screen in
+  `terminal_reader_colours_execute_exactly`, one colour program for a
+  plain screen and six in the worst case.
 
 ## Memory use
 

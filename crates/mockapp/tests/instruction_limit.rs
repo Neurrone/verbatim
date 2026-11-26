@@ -664,6 +664,208 @@ fn generic_colours_execute_exactly() {
     assert!(worst.iter().all(|&count| count < LIMIT / 2));
 }
 
+/// A batch Core's terminal reader wrote (`verbatim_core::terminal::reader`)
+/// for mockapp's terminal `text`, as a shape the executor runs here:
+/// `batch_of` is given the anchor the shape holds `start` under, when a
+/// start is given.
+fn reader_shape<'t>(
+    text: &'t batch::Text,
+    start: Option<&IUIAutomationTextRange>,
+    batch_of: impl FnOnce(verbatim_model::TextAnchor) -> verbatim_model::batch::Batch,
+) -> batch::Shape<'t> {
+    let mut shape = batch::Shape::of(Some(text));
+    let anchor = match start {
+        Some(start) => {
+            let point = shape.point(&batch::held(start, Endpoint::Start, true));
+            let verbatim_model::batch::Point::At(verbatim_model::TextPoint::At(position)) = point
+            else {
+                unreachable!("a held position")
+            };
+            position.anchor
+        }
+        None => verbatim_model::TextAnchor(0),
+    };
+    shape.steps = batch_of(anchor).steps;
+    shape.culture = false;
+    shape
+}
+
+/// The window read `read` of Core's terminal reader, as a batch.
+fn reader_window(
+    read: verbatim_core::terminal::reader::WindowRead,
+    (colours, starting): (bool, bool),
+) -> verbatim_model::batch::Batch {
+    let ask = verbatim_core::terminal::reader::WindowAsk {
+        read,
+        colours,
+        starting,
+        output: false,
+    };
+    verbatim_core::terminal::reader::window_batch(verbatim_model::NodeId::new(1), &ask)
+        .0
+        .batch()
+        .clone()
+}
+
+/// The start a read of Core's terminal reader names next on a screen of 30
+/// rows: where its history block read's move from the held end landed.
+fn reader_next_start(fixture: &Fixture, text: &batch::Text) -> IUIAutomationTextRange {
+    use verbatim_core::terminal::reader::WindowRead;
+    let height = std::num::NonZeroU32::new(30).expect("a height");
+    let block = reader_shape(text, None, |_| {
+        reader_window(WindowRead::HistoryBlock { height }, (false, false))
+    });
+    let answer = run_batch(&block.segment(&fixture.uia));
+    match answer.steps.into_iter().nth(2) {
+        Some(Ran::Done(Found::Move(moved))) => moved.to,
+        other => panic!("the next start's move, not {other:?}"),
+    }
+}
+
+/// The batches of Core's terminal reader, each one program: a first read;
+/// a first read again with its history block; the whole text; a read from
+/// a start, the largest, whose named start is used; the same as a caret
+/// key's starting read; the same read after a clear, when the next
+/// start's steps run instead; a history read from a start; and a whole
+/// history read. No step loops, so a long text costs the same
+/// instructions as a short one.
+fn terminal_reader_batches_execute_exactly() {
+    use verbatim_core::terminal::reader::{HistoryAsk, WindowRead, history_batch};
+    common::init_com();
+    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-reader");
+    let text = batch::Text::of(fixture.find("Terminal"));
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!(r"set-text term {}ready>\n", numbered(200)),
+    );
+    let height = std::num::NonZeroU32::new(30).expect("a height");
+    let next = reader_next_start(&fixture, &text);
+    let from = |anchor| WindowRead::From {
+        start: anchor,
+        height: 30,
+    };
+    let node = verbatim_model::NodeId::new(1);
+    let shapes = [
+        reader_shape(&text, None, |_| {
+            reader_window(WindowRead::First, (false, false))
+        }),
+        reader_shape(&text, None, |_| {
+            reader_window(WindowRead::HistoryBlock { height }, (false, false))
+        }),
+        reader_shape(&text, None, |_| {
+            reader_window(WindowRead::Whole { height: 30 }, (false, false))
+        }),
+        reader_shape(&text, Some(&next), |start| {
+            reader_window(from(start), (false, false))
+        }),
+        reader_shape(&text, Some(&next), |start| {
+            reader_window(from(start), (false, true))
+        }),
+        reader_shape(&text, Some(&next), |start| {
+            let ask = HistoryAsk::Above {
+                start,
+                above: 60,
+                height,
+            };
+            history_batch(node, &ask).0.batch().clone()
+        }),
+        reader_shape(&text, None, |_| {
+            history_batch(node, &HistoryAsk::Whole).0.batch().clone()
+        }),
+    ];
+    let mut counts: Vec<Vec<u32>> = shapes
+        .iter()
+        .map(|shape| {
+            each_counted(|| {
+                let _ = run_batch(&shape.segment(&fixture.uia));
+            })
+        })
+        .collect();
+    // The text cleared below the start: the next start's steps run.
+    common::apply(&mut fixture.app, fixture.hwnd, r"set-text term cleared\n");
+    counts.push(each_counted(|| {
+        let _ = run_batch(&shapes[3].segment(&fixture.uia));
+    }));
+    fixture.app.quit();
+    assert!(counts.iter().flatten().all(|&count| count < LIMIT / 2));
+    assert_eq!(
+        counts,
+        [
+            vec![202],
+            vec![245],
+            vec![203],
+            vec![322],
+            vec![322],
+            vec![169],
+            vec![31],
+            vec![313]
+        ],
+        "first, history block, whole, from a start, starting, history above, whole history, \
+         and from a start past the text's end"
+    );
+}
+
+/// The colours of a read of Core's terminal reader from a start, its
+/// largest batch, on a 120 by 30 screen: the read's program, then the
+/// colour programs, in the worst case, every cell's colours differing from
+/// its neighbours' (`terminal-checkered.json`), and on a plain screen.
+fn terminal_reader_colours_execute_exactly() {
+    use verbatim_core::terminal::reader::WindowRead;
+    common::init_com();
+    let screen = vec!["x".repeat(120); 30].join(r"\n");
+    let read = |fixture: &str, prefix: &str| {
+        let mut fixture = Fixture::start(fixture, prefix);
+        let text = batch::Text::of(fixture.find("Terminal"));
+        common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+        common::apply(
+            &mut fixture.app,
+            fixture.hwnd,
+            &format!("set-text term {screen}"),
+        );
+        let next = reader_next_start(&fixture, &text);
+        let shape = reader_shape(&text, Some(&next), |start| {
+            reader_window(WindowRead::From { start, height: 30 }, (true, false))
+        });
+        let mut colours = None;
+        let counts = each_counted(|| {
+            let answer = run_batch(&shape.segment(&fixture.uia));
+            colours = answer.steps.into_iter().last().and_then(|ran| match ran {
+                Ran::Done(Found::Colours(rows)) => Some(rows),
+                _ => None,
+            });
+        });
+        fixture.app.quit();
+        let runs: Vec<usize> = colours.expect("the colours").iter().map(Vec::len).collect();
+        (counts, runs)
+    };
+    let (worst, worst_runs) = read(
+        "terminal-checkered.json",
+        "mockapp-instructions-reader-colours-worst",
+    );
+    let (plain, plain_runs) = read(
+        "terminal-plain-colours.json",
+        "mockapp-instructions-reader-colours-plain",
+    );
+    // Thirty rows from the screen's top, which stop at the document's end
+    // after twenty-nine, as mockapp counts the empty end of the text as the
+    // screen's last row.
+    assert_eq!(worst_runs, vec![120; 29], "every cell its own run");
+    assert_eq!(plain_runs, vec![1; 29], "every row one run");
+    assert_eq!(
+        worst,
+        vec![349, 4106, 4099, 4099, 4099, 4099, 3285],
+        "the read's program, then the worst case's colour programs"
+    );
+    assert_eq!(
+        plain,
+        vec![349, 1262],
+        "the read's program, then a plain screen's"
+    );
+    assert!(worst.iter().all(|&count| count < LIMIT / 2));
+}
+
 /// A terminal's snapshot: a first read, and a read from where it said to
 /// start with the caret read in the same program, each taking four rows
 /// above its start (the history's block), as the outpost reads a focused
@@ -1109,6 +1311,14 @@ fn main() {
         (
             "generic_colours_execute_exactly",
             generic_colours_execute_exactly,
+        ),
+        (
+            "terminal_reader_batches_execute_exactly",
+            terminal_reader_batches_execute_exactly,
+        ),
+        (
+            "terminal_reader_colours_execute_exactly",
+            terminal_reader_colours_execute_exactly,
         ),
         (
             "terminal_snapshots_execute_exactly",

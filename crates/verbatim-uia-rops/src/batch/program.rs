@@ -2275,9 +2275,23 @@ impl<'a> State<'_, 'a> {
         };
         let mut key = Vec::with_capacity(range.len());
         let mut given = Vec::with_capacity(range.len());
-        let mut pre = Vec::with_capacity(range.len());
+        let mut pre: Vec<Option<Ran>> = Vec::with_capacity(range.len());
         for index in range.clone() {
-            match planner.lower(index) {
+            // A step that takes the result of one of this program's steps
+            // whose outcome was decided here, a start no longer held, is
+            // not run, as one naming a step not done is skipped: the
+            // program emits nothing its registers could name.
+            let names_unrun = self.step(index).references().into_iter().any(|place| {
+                self.index(place, index)
+                    .filter(|named| range.contains(named))
+                    .is_some_and(|named| pre[named - range.start].is_some())
+            });
+            let lowered = if names_unrun {
+                Err(Ran::Unrun(Unrun::Skipped))
+            } else {
+                planner.lower(index)
+            };
+            match lowered {
                 Ok((low, gate, giving)) => {
                     key.push((low, gate));
                     given.push(giving);
