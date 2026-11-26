@@ -504,9 +504,15 @@ fallbacks fill with its request, so both come from one shape.
 
 `terminal_snapshot(uia, query, remote)` (`TerminalSnapshotFn`) is the
 read of `books/dev/src/explanation/design/terminal-model.md`, "The read", which gives the
-reasons for its fields: the outpost reads every focused terminal with
-it, and `cargo xtask regenerate-terminal-conformance-expectations` reads
-the real terminals with it. A `SnapshotQuery` names the element and its
+reasons for its fields. Its one caller is the conformance runner:
+`cargo xtask regenerate-terminal-conformance-expectations` reads the
+real terminals with it, and the simulated terminal's reference read
+follows it step for step. The outpost does not run it: Core reads a
+terminal by a batch of generic steps ("The program builder and the
+ordinary-calls executor"),
+and moving the runner onto that read is not done, since it needs the
+outpost's executor in `xtask` and every expectation recorded again
+(Claude, 2026-11-26). A `SnapshotQuery` names the element and its
 text pattern; `start`, where the last read said to start (none for a
 first read); `screen_rows`, the screen's height as last found, 0 when not
 known; `whole`, to read the whole text instead; `above`, how many rows
@@ -611,10 +617,9 @@ documentation).
 
 ## The generic text operations added for a terminal
 
-The terminal's redesign will read a terminal's window by the list's
-generic operations, which only tests send until then (Dickson,
-2026-11-26; `crates/mockapp/tests/common/window_steps.rs`), each
-answered by the arms above:
+Core's terminal reader reads a terminal's window by the list's generic
+operations (`verbatim_core::terminal::reader`; Dickson, 2026-11-26),
+each answered by the arms above:
 
 - `Visible`: the first visible range, or the whole text's when the
   provider shows none, its text, and whether it starts at the text's
@@ -1006,8 +1011,8 @@ shape, a shape's program bound again, absent properties),
 `remote_ops.rs` (the focus ancestry, a navigation step, cached
 properties, a stalled and an exited provider), `call_counts.rs` (the
 calls of each read), `text.rs` (the caret read and the text steps),
-`watch_checks.rs` (a wait's polls), `terminal.rs` and
-`terminal_snapshot.rs` (the terminal's old read and search),
+`watch_checks.rs` (a wait's polls), `terminal.rs` (the terminal's command
+search) and `terminal_snapshot.rs` (the conformance runner's read),
 `terminal_window.rs` and `find_text.rs` (the generic text operations
 both ways: a window's steps, its marks, a wrapped line's rows and
 colours, and the search against Windows Terminal's two kinds of miss and

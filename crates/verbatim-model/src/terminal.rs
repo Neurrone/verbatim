@@ -165,8 +165,8 @@ pub struct TerminalMatch {
     pub text: String,
 }
 
-/// Which read Core asks a terminal's outpost for at once
-/// ([`crate::TextOp::TerminalReadNow`]).
+/// Which read of a terminal Core owes its rules, taken with the next
+/// read it sends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminalScope {
     /// A read as any other, whatever the on-demand state, before a review

@@ -343,8 +343,10 @@ tell, Core asks", which the protocol below carries.
   Core sends it, numbered (`RequestNumber`) and naming its window,
   asking a `Question`: a `Batch`, answered `Reply::Steps`, one outcome
   per step, and refused `Refusal::Malformed` when it does not parse; or
-  one of a terminal's three text operations (`Question::Terminal`, a
-  `TerminalAsk` of its node and `TextOp`), answered `Reply::Text`. The
+  a terminal's command search (`Question::Terminal`, a `TerminalAsk` of
+  its node and `TextOp`), answered `Reply::Text`, the one operation
+  outside the request list, kept until the command marks' journal
+  replaces it (Dickson, 2026-11-26). The
   focus reads are batches: a `FocusRead` of an MSAA candidate, the
   application's focus or a `Route`, the outpost's own copy of an element
   the listener read, which carries the route's steps, where its walk
@@ -663,30 +665,17 @@ full read and history read being batches
   alone, each row's colour runs (`TerminalColourRun`) from a point, for
   the rows of the screen a `Visible` step read, as wide as the line at its top, since the terminals answer
   a stretch whose last cell differs as one colour (Dickson, 2026-11-22).
-- `ReadTerminal(TerminalRead)`: a full read of the focused terminal from a
-  screen above the start anchor Core names (`None` for a first read) to the
-  document's end, answered `TerminalRead(TerminalReadReply)`: the
-  `TerminalSnapshot` with the screen, the caret and its line, the start
-  anchor the read minted at the top of its screen for a later read to name,
-  when the read began (`started_us`, on the shared clock, so a change
-  observed before it is covered by it), and the caret starting point when
-  `starting` named a unit. The request carries every fact Core owns that the
-  read uses: the scope (`Fresh`, `Whole`, or `HistoryBlock { height }`), the
-  screen's `height` and `width`, whether to take the screen's `colours`,
-  whether the window is a console host's (`console`), and whether it is an
-  output read (`output`), which Core asks outside the event queue
-  (`docs/design/readers-tell-core-asks-build3.md`).
-- `TerminalHistory { above, whole, start, height }`: the text from `above`
-  rows above the start anchor Core names to the document's end, or the whole
-  document, answered `TerminalHistory { text, above }`.
-- `TerminalFind { needle, from, rows, start }`: a command mark's line sought
-  by its first row's text outward from `from` rows above the start anchor,
-  at most 20 matches, `rows` rows read from each, answered
-  `TerminalFound { matches }` with a `TerminalMatch` for each.
+- `TextOp` has one operation, `TerminalFind { needle, from, rows, start }`:
+  a command mark's line sought by its first row's text outward from
+  `from` rows above the start anchor, at most 20 matches, `rows` rows
+  read from each, answered `TerminalFound { matches }` with a
+  `TerminalMatch` for each. A terminal's reads and history reads are
+  batches, which Core's terminal reader writes
+  (`verbatim_core::terminal::reader`).
 
-A terminal's three reads can also be answered `NoText` (no text
-interface), `Gone` (the node no longer exists) or `Unanswered` (no answer
-in time, or the read failed). These three are the `TextFailure`s
+A terminal's search can also be answered `NoText` (no text interface),
+`Gone` (the node no longer exists) or `Unanswered` (no answer in time, or
+the search failed). These three are the `TextFailure`s
 (`TextReply::into_failure`), which Core decodes beside the operation's
 own reply, so no answer of them fails to decode. A batch's text step
 answers its refusals and failures as its own outcome (`StepOutcome`).

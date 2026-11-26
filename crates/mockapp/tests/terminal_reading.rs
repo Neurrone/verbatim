@@ -13,12 +13,14 @@
 //!   which the outpost hooks once `Follow` names a console's terminal;
 //!   UI Automation's caret event and the system caret's are not used for
 //!   a console's terminal.
-//! - Core's "read the terminal" request reads from a screen above the
-//!   start anchor Core names and mints the start of its own screen; a
-//!   history read and a search count from the start Core names; the read
-//!   takes the colours only when Core asks; the whole document and a
-//!   history block are read when asked; a caret key's starting read mints
-//!   the key's caret starting point with the caret.
+//! - The window read Core's terminal reader writes
+//!   (`verbatim_core::terminal::reader`), sent to the worker as Core sends
+//!   it and read back by the reader, reads from the start anchor Core
+//!   names and holds the start of its own screen; a history read counts
+//!   from the start Core names; the read takes the colours only when Core
+//!   asks; the whole document and a history block are read when asked; a
+//!   caret key's starting read holds the key's caret starting point with
+//!   the caret.
 //! - A terminal caret key's watch has no event shortcut: a caret event, the
 //!   console's or Windows Terminal's, is told and leaves the watch polling
 //!   to its bound, and a caret moved with no event is found by a check; it
@@ -31,18 +33,20 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::num::NonZeroU32;
+
+use verbatim_core::batch::Answers;
+use verbatim_core::terminal::reader::{
+    HistoryAsk, WindowAsk, WindowRead, WindowReply, history_batch, history_of, window_batch,
+    window_of,
+};
 use verbatim_ia2::WinEventKind;
 use verbatim_model::batch::Waited;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyId;
-use verbatim_model::request::{
-    Answer, FollowGroup, Followed, Outcome, Question, Reply, TerminalAsk,
-};
+use verbatim_model::request::{FollowGroup, Followed, Outcome, Reply};
 use verbatim_model::tell::{EventObject, Payload};
-use verbatim_model::{
-    CallCounts, CaretReport, NodeId, TerminalRead, TerminalReadReply, TerminalScope,
-    TerminalSnapshot, TextAnchor, TextOp, TextReply, TextUnit,
-};
+use verbatim_model::{CallCounts, CaretReport, NodeId, TerminalSnapshot, TextAnchor};
 use verbatim_outpost::Heard;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::{Cached, ListenerEvent, Uia};
@@ -85,78 +89,48 @@ struct Terminal {
     node: NodeId,
     /// Whether its window is a console host's.
     console: bool,
-    /// The start the baseline minted.
+    /// The start the baseline held.
     start: TextAnchor,
 }
 
 impl Terminal {
-    /// A full read Core asks from `start` in `scope`, the screen's shape
-    /// `(height, width)` from Core's model, taking the colours when
-    /// `colours`.
-    fn ask(
-        &self,
-        start: Option<TextAnchor>,
-        scope: TerminalScope,
-        (height, width): (u32, u32),
-        colours: bool,
-    ) -> TerminalRead {
-        TerminalRead {
-            start,
-            scope,
-            height,
-            width,
-            colours,
-            console: self.console,
-            starting: None,
-            output: true,
-        }
-    }
-
-    /// The answer to `read`, a full read, which must be a read.
-    fn read(&self, read: TerminalRead) -> TerminalReadReply {
-        self.read_with_calls(read).0
+    /// The answer to the window read `ask`, run by the outpost's worker as
+    /// Core sends it and read back by Core's reader, which must be a read.
+    fn read(&self, ask: WindowAsk) -> WindowReply {
+        self.read_with_calls(ask).0
     }
 
     /// [`Self::read`], with the calls it made into mockapp.
-    fn read_with_calls(&self, read: TerminalRead) -> (TerminalReadReply, CallCounts) {
-        let number = self.outpost.request(
-            self.hwnd,
-            Question::Terminal(TerminalAsk {
-                node: self.node,
-                op: TextOp::ReadTerminal(read),
-            }),
-        );
-        match self.outpost.answer_with_calls(number) {
-            (
-                Answer {
-                    outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(reply))),
-                    ..
-                },
-                calls,
-            ) => (*reply, calls),
-            (other, _) => panic!("the outpost answered {other:?}, not a read"),
-        }
+    fn read_with_calls(&self, ask: WindowAsk) -> (WindowReply, CallCounts) {
+        let (sent, steps) = window_batch(self.node, &ask);
+        let number = self.outpost.request(self.hwnd, sent.batch().clone());
+        let (answer, calls) = self.outpost.answer_with_calls(number);
+        let times = (answer.began_us, answer.ended_us);
+        let Outcome::Result(reply) = answer.outcome else {
+            panic!("the outpost answered {:?}, not a read", answer.outcome)
+        };
+        let answers = Answers::parse(&sent, reply).expect("outcomes of the steps' kinds");
+        let reply = window_of(&answers, &steps, &ask, times).expect("a read");
+        (reply, calls)
     }
 
-    /// A fresh read from the start Core names, the screen's shape not yet
-    /// known to Core.
-    fn fresh_from(&self, start: TextAnchor) -> TerminalReadReply {
-        self.read(self.ask(Some(start), TerminalScope::Fresh, (0, 0), false))
+    /// A read from the start Core names, the screen's height not yet
+    /// known to Core, asked for the terminal's output.
+    fn fresh_from(&self, start: TextAnchor) -> WindowReply {
+        self.read(output(WindowRead::From { start, height: 0 }))
     }
 
-    /// The text reply to `op` on the terminal, asked as Core asks it.
-    fn text(&self, op: TextOp) -> TextReply {
-        let number = self.outpost.request(
-            self.hwnd,
-            Question::Terminal(TerminalAsk {
-                node: self.node,
-                op,
-            }),
-        );
-        match self.outpost.answer(number).outcome {
-            Outcome::Result(Reply::Text(reply)) => reply,
-            other => panic!("the outpost answered {other:?}, not a text reply"),
-        }
+    /// The history read `ask`, run by the outpost's worker and read back
+    /// by Core's reader: its text, padding kept, and its rows above the
+    /// start.
+    fn history(&self, ask: &HistoryAsk) -> (String, u32) {
+        let (sent, steps) = history_batch(self.node, ask);
+        let number = self.outpost.request(self.hwnd, sent.batch().clone());
+        let Outcome::Result(reply) = self.outpost.answer(number).outcome else {
+            panic!("the outpost did not answer the history read")
+        };
+        let answers = Answers::parse(&sent, reply).expect("outcomes of the steps' kinds");
+        history_of(&answers, &steps).expect("a history read")
     }
 
     /// The tell the outpost sends next, which must be a change tell of the
@@ -178,6 +152,26 @@ impl Terminal {
         let Self { app, outpost, .. } = self;
         drop(outpost);
         app.quit();
+    }
+}
+
+/// The window read `read` for the terminal's output, with no colours.
+fn output(read: WindowRead) -> WindowAsk {
+    WindowAsk {
+        read,
+        colours: false,
+        starting: false,
+        output: true,
+    }
+}
+
+/// A caret key's starting read from `start`, the screen's height not yet
+/// known to Core.
+fn starting_from(start: TextAnchor) -> WindowAsk {
+    WindowAsk {
+        starting: true,
+        output: false,
+        ..output(WindowRead::From { start, height: 0 })
     }
 }
 
@@ -221,9 +215,9 @@ fn start_with(name: &str, fixture: &str, id: &str, console: bool) -> Terminal {
         start: TextAnchor(0),
     };
     // The baseline: a first read, taking the screen alone.
-    let baseline = terminal.read(TerminalRead {
+    let baseline = terminal.read(WindowAsk {
         output: false,
-        ..terminal.ask(None, TerminalScope::Fresh, (0, 0), false)
+        ..output(WindowRead::First)
     });
     assert!(baseline.snapshot.caret.is_some());
     terminal.start = baseline.start;
@@ -350,16 +344,12 @@ fn a_read_counts_from_the_start_core_names() {
 fn the_whole_document_and_a_history_block_are_read_when_asked() {
     let mut terminal = start("mockapp-terminal-whole");
     write(&mut terminal, &["three", "four", "five"]);
-    let whole =
-        terminal.read(terminal.ask(Some(terminal.start), TerminalScope::Whole, (2, 20), false));
+    let whole = terminal.read(output(WindowRead::Whole { height: 2 }));
     assert_eq!(text(&whole.snapshot), after(&["three", "four", "five"]));
     assert!(whole.snapshot.at_document_start);
-    let block = terminal.read(terminal.ask(
-        Some(terminal.start),
-        TerminalScope::HistoryBlock { height: 2 },
-        (2, 20),
-        false,
-    ));
+    let block = terminal.read(output(WindowRead::HistoryBlock {
+        height: NonZeroU32::new(2).expect("a height"),
+    }));
     assert_eq!(
         text(&block.snapshot),
         rows(&["ready>", "three", "four", "five"])
@@ -375,16 +365,17 @@ fn history_above_the_start_core_names_is_read_by_place() {
     let mut terminal = start("mockapp-terminal-history");
     write(&mut terminal, &["three", "four", "five"]);
     let read = terminal.fresh_from(terminal.start);
-    let history = terminal.text(TextOp::TerminalHistory {
-        above: 2,
-        whole: false,
+    // The screen shows three rows of text, so the next read starts where
+    // this one's did.
+    let history = terminal.history(&HistoryAsk::Above {
         start: read.start,
-        height: 0,
+        above: 2,
+        height: NonZeroU32::new(3).expect("a height"),
     });
     assert_eq!(
         history,
-        TextReply::TerminalHistory {
-            text: [
+        (
+            [
                 "two                 \r\n",
                 "ready>              \r\n",
                 "three               \r\n",
@@ -392,8 +383,8 @@ fn history_above_the_start_core_names_is_read_by_place() {
                 "five                \r\n",
             ]
             .concat(),
-            above: 2,
-        }
+            2
+        )
     );
     terminal.outpost.settled();
     terminal.quit();
@@ -408,8 +399,13 @@ fn a_read_takes_the_colours_when_core_asks() {
     let without = terminal.fresh_from(terminal.start);
     assert!(without.snapshot.colours.is_none());
     write(&mut terminal, &["three"]);
-    let read =
-        terminal.read(terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 20), true));
+    let read = terminal.read(WindowAsk {
+        colours: true,
+        ..output(WindowRead::From {
+            start: terminal.start,
+            height: 0,
+        })
+    });
     assert_eq!(text(&read.snapshot), after(&["three"]));
     assert!(read.snapshot.colours.is_some());
     terminal.outpost.settled();
@@ -417,19 +413,15 @@ fn a_read_takes_the_colours_when_core_asks() {
 }
 
 /// A caret key's starting read in a terminal is a full read with its
-/// caret, and mints the key's caret starting point from the caret the read
+/// caret, and holds the key's caret starting point from the caret the read
 /// found, so it is one round trip, the remote program's one call, as a
 /// fresh read is. Converted from
 /// `the_read_before_a_held_key_is_a_read_with_its_caret` (build 1, "A
 /// terminal's caret key").
-fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
+fn a_starting_read_reads_the_caret_and_holds_the_starting_point() {
     let mut terminal = start("mockapp-terminal-starting-read");
     terminal.app.send("caret term 1");
-    let (read, calls) = terminal.read_with_calls(TerminalRead {
-        starting: Some(TextUnit::Character),
-        output: false,
-        ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
-    });
+    let (read, calls) = terminal.read_with_calls(starting_from(terminal.start));
     assert_eq!(caret_at(&read.snapshot), ("one\r\n", 1));
     assert!(read.snapshot.caret.is_some());
     assert!(read.point.is_some());
@@ -450,14 +442,10 @@ fn a_starting_read_reads_the_caret_and_mints_the_starting_point() {
 /// A caret key's starting read of the terminal, the caret where mockapp
 /// has it: the caret starting point it mints.
 fn starting_point(terminal: &Terminal) -> (TextAnchor, CaretReport) {
-    let read = terminal.read(TerminalRead {
-        starting: Some(TextUnit::Character),
-        output: false,
-        ..terminal.ask(Some(terminal.start), TerminalScope::Fresh, (0, 0), false)
-    });
+    let read = terminal.read(starting_from(terminal.start));
     let point = read
         .point
-        .expect("a starting read mints the starting point");
+        .expect("a starting read holds the starting point");
     let caret = read
         .snapshot
         .caret
@@ -716,8 +704,8 @@ fn main() {
             a_read_takes_the_colours_when_core_asks,
         ),
         (
-            "a_starting_read_reads_the_caret_and_mints_the_starting_point",
-            a_starting_read_reads_the_caret_and_mints_the_starting_point,
+            "a_starting_read_reads_the_caret_and_holds_the_starting_point",
+            a_starting_read_reads_the_caret_and_holds_the_starting_point,
         ),
         (
             "a_terminal_watch_finds_a_caret_moved_with_no_event",

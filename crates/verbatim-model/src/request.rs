@@ -7,8 +7,9 @@
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
 //! features and the extension surface: a batch of operations from one
 //! closed list ([`crate::batch`]). A new command adds no kind of request.
-//! The terminal's three text operations are carried beside it until the
-//! terminal's rebuild converts them ([`Question::Terminal`]).
+//! The terminal's command search is carried beside it until the command
+//! marks' journal replaces it ([`Question::Terminal`]; Dickson,
+//! 2026-11-26).
 
 use std::fmt;
 
@@ -73,22 +74,23 @@ pub struct Ask {
     pub request: Question,
 }
 
-/// What a request asks: a batch, or one of the terminal's three text
-/// operations, which the terminal's rebuild converts to batches.
+/// What a request asks: a batch, or the terminal's command search, the
+/// one operation outside the request list, which the command marks'
+/// journal replaces.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Question {
     /// A batch of operations.
     Batch(Batch),
-    /// A read, history read or search of a terminal's text.
+    /// A search of a terminal's text.
     Terminal(TerminalAsk),
 }
 
-/// One of the terminal's text operations on its node.
+/// The terminal's text operation on its node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalAsk {
     /// The terminal's node.
     pub node: NodeId,
-    /// What to read.
+    /// What to search for.
     pub op: TextOp,
 }
 
@@ -109,18 +111,14 @@ impl Question {
     }
 
     /// Whether Core asks it from outside the event queue
-    /// ([`Placement::Outside`]): a batch placed there, or a terminal's
-    /// read for its output
+    /// ([`Placement::Outside`]): a batch placed there, such as a
+    /// terminal's read for its output
     /// (`docs/design/readers-tell-core-asks-build3.md`), which a reader's
     /// worker makes after every request of the queue's waiting with it.
     #[must_use]
     pub fn outside_the_queue(&self) -> bool {
         match self {
             Self::Batch(batch) => batch.placement == Placement::Outside,
-            Self::Terminal(TerminalAsk {
-                op: TextOp::ReadTerminal(read),
-                ..
-            }) => read.output,
             Self::Terminal(_) => false,
         }
     }
@@ -573,9 +571,8 @@ impl Answer {
         self.visit(&mut |node| *node = node.with_outpost(outpost), &mut |_| {});
     }
 
-    /// The node ids and text anchors the answer carries, in order, but for
-    /// a text reply's anchors, which the protocol's own walk of a text
-    /// reply names.
+    /// The node ids and text anchors the answer carries, in order: a
+    /// batch's steps', since a terminal's search names none.
     #[must_use]
     pub fn named(&self) -> (Vec<NodeId>, Vec<TextAnchor>) {
         let mut copy = self.clone();
@@ -588,7 +585,7 @@ impl Answer {
     }
 
     /// Calls `nodes` on every node id and `anchors` on every text anchor
-    /// the answer carries, but for a text reply's anchors.
+    /// the answer carries.
     fn visit(
         &mut self,
         nodes: &mut dyn FnMut(&mut NodeId),

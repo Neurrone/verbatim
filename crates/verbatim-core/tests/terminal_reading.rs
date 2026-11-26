@@ -1395,8 +1395,7 @@ fn a_console_hosts_caret_key_is_watched_every_5_ms_to_100_ms_with_no_event() {
 /// A terminal caret key's watch outside the console host: a check every
 /// 10 ms, as NVDA's poll, to NVDA's bound multiplied by its terminal's 3
 /// (`NVDAObjects/UIA/winConsoleUIA.py` 470, 486), 300 ms, with no event
-/// taken as its effect. Converted from the read at the pass in Windows
-/// Terminal (`CoreToOutpost::ReadTerminal`), which goes into the watch.
+/// taken as its effect.
 #[test]
 fn a_windows_terminal_caret_key_is_watched_every_10_ms_to_300_ms_with_no_event() {
     let mut session = Session::new(Flavor::WindowsTerminal, 20, 4, 10);

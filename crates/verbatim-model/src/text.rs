@@ -714,27 +714,12 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// One of the terminal's old text operations an outpost answers
-/// ([`crate::request::Question::Terminal`]). Core sends only the search:
-/// its full read and history read are batches.
+/// The terminal's one text operation an outpost answers outside a batch
+/// ([`crate::request::Question::Terminal`]): the command search, kept
+/// until the command marks' journal replaces it (Dickson, 2026-11-26). A
+/// terminal's reads and history reads are batches.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextOp {
-    /// Read the history above the start the next read takes: from `above`
-    /// rows above it to the document's end, or the whole document when
-    /// `whole`. Answered [`TextReply::TerminalHistory`], which names the
-    /// read whose start that is.
-    TerminalHistory {
-        /// How many rows above the start.
-        above: u32,
-        /// Whether to read the whole document instead.
-        whole: bool,
-        /// The start anchor the rows are counted from, which Core names
-        /// (`docs/design/readers-tell-core-asks-build3.md`, "The full read
-        /// request and its starts").
-        start: TextAnchor,
-        /// The screen's height in rows, from Core's model.
-        height: u32,
-    },
     /// Search the focused terminal's text for `needle`, a row's text with
     /// no line break, outward from the row `from` rows above where the next
     /// read starts (negative below it): alternately the next match at or
@@ -754,76 +739,12 @@ pub enum TextOp {
         /// The start anchor the rows are counted from, which Core names.
         start: TextAnchor,
     },
-    /// Read the terminal: a full read from a screen above the start Core
-    /// names to the document's end, with the screen, the caret and its line
-    /// (`docs/design/readers-tell-core-asks-build3.md`, "The full read
-    /// request and its starts"). Answered [`TextReply::TerminalRead`].
-    ReadTerminal(TerminalRead),
-}
-
-/// Core's request to read a terminal ([`TextOp::ReadTerminal`]): every
-/// fact the read needs that Core owns travels in it and is used only
-/// inside its answer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalRead {
-    /// The start anchor to read from, a screen above it; `None` for a
-    /// first read, which takes the screen alone.
-    pub start: Option<TextAnchor>,
-    /// Which read: fresh, the whole document, or the history block with
-    /// the height the first read found.
-    pub scope: crate::TerminalScope,
-    /// The screen's height in rows from Core's model, 0 when Core has
-    /// none.
-    pub height: u32,
-    /// The screen's width in cells from Core's model, 0 when Core has
-    /// none.
-    pub width: u32,
-    /// Whether the read takes the screen's colours.
-    pub colours: bool,
-    /// Whether the terminal's window is a console host's, Core's fact from
-    /// the committed focus's answer.
-    pub console: bool,
-    /// When a caret key's entry sends it as its starting read, the key's
-    /// unit: the answer then also mints the key's caret starting point.
-    pub starting: Option<TextUnit>,
-    /// Whether it is an output read, which Core asks outside the event
-    /// queue and the worker makes after the event queue's requests; a
-    /// baseline, a caret key's starting and final reads and a review
-    /// command's fresh read are the event queue's.
-    pub output: bool,
-}
-
-/// The answer to [`TextOp::ReadTerminal`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalReadReply {
-    /// The read.
-    pub snapshot: crate::TerminalSnapshot,
-    /// The start anchor this read minted, at the top of its screen, which
-    /// a later read, history read or search may name.
-    pub start: TextAnchor,
-    /// When the read began, in microseconds on the clock every process of
-    /// a run shares: a change observed before it is covered by it.
-    pub started_us: u64,
-    /// The caret starting point the read minted, when the request named a
-    /// unit ([`TerminalRead::starting`]).
-    pub point: Option<TextAnchor>,
 }
 
 /// An outpost's answer to a text request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextReply {
-    /// The answer to [`TextOp::ReadTerminal`].
-    TerminalRead(Box<TerminalReadReply>),
-    /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
-    /// kept, and how many rows it holds above the start the next read
-    /// takes.
-    TerminalHistory {
-        /// The text.
-        text: String,
-        /// Rows above the start.
-        above: u32,
-    },
     /// The answer to [`TextOp::TerminalFind`].
     TerminalFound {
         /// The matches, alternately below and above the row sought from,
@@ -866,9 +787,7 @@ impl TextReply {
             TextReply::NoText => Ok(TextFailure::NoText),
             TextReply::Gone => Ok(TextFailure::Gone),
             TextReply::Unanswered => Ok(TextFailure::Unanswered),
-            own @ (TextReply::TerminalRead(_)
-            | TextReply::TerminalHistory { .. }
-            | TextReply::TerminalFound { .. }) => Err(own),
+            own @ TextReply::TerminalFound { .. } => Err(own),
         }
     }
 }

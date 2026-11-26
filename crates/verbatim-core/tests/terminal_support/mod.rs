@@ -185,7 +185,7 @@ impl Outpost {
         TextAnchor(self.minted)
     }
 
-    /// The old read operation's answer to `query`, begun at `at_ms`, with
+    /// The reference read's answer to `query`, begun at `at_ms`, with
     /// the screen's colours when `colours`: the rules' read, the snapshot
     /// the outpost sends, and where the next read starts.
     pub fn snapshot(
@@ -214,13 +214,14 @@ impl Outpost {
         (read, wire, snapshot.next_start)
     }
 
-    /// The history read from `above` rows above the start `start`, or the
-    /// whole document.
+    /// The reference history read from `above` rows above the start
+    /// `start`, or of the whole document: its text, padding kept, and the
+    /// rows it holds above the start.
     pub fn history(
         &self,
         start: TextAnchor,
         (above, whole, height): (u32, bool, u32),
-    ) -> TextReply {
+    ) -> (String, u32) {
         let query = Query {
             start: if whole { None } else { self.range(Some(start)) },
             screen_rows: height,
@@ -228,10 +229,7 @@ impl Outpost {
             above: if whole { 0 } else { above },
         };
         let snapshot = self.sim.snapshot(&query).expect("a simulated history read");
-        TextReply::TerminalHistory {
-            text: snapshot.text,
-            above: snapshot.above,
-        }
+        (snapshot.text, snapshot.above)
     }
 
     /// The search the outpost's find program makes
@@ -787,33 +785,25 @@ impl Session {
             return;
         }
         let TerminalAsk { op, .. } = terminal(&ask.request);
-        let outcome = {
-            match op {
-                TextOp::ReadTerminal(_) | TextOp::TerminalHistory { .. } => {
-                    panic!("a read Core's terminal reader did not write: {ask:?}")
-                }
-                TextOp::TerminalFind {
-                    needle,
-                    from,
-                    rows,
-                    start,
-                } => {
-                    if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
-                        self.write(&output, at_ms);
-                    }
-                    if self.unanswered_finds {
-                        Outcome::Refused(Refusal::Unsupported)
-                    } else {
-                        // The start Core names is one a read's steps held.
-                        let start = self.outpost.held(*start).map(Range::at);
-                        Outcome::Result(Reply::Text(self.outpost.find_from(
-                            start,
-                            needle,
-                            (*from, *rows),
-                        )))
-                    }
-                }
-            }
+        let TextOp::TerminalFind {
+            needle,
+            from,
+            rows,
+            start,
+        } = op;
+        if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
+            self.write(&output, at_ms);
+        }
+        let outcome = if self.unanswered_finds {
+            Outcome::Refused(Refusal::Unsupported)
+        } else {
+            // The start Core names is one a read's steps held.
+            let start = self.outpost.held(*start).map(Range::at);
+            Outcome::Result(Reply::Text(self.outpost.find_from(
+                start,
+                needle,
+                (*from, *rows),
+            )))
         };
         self.reply(&ask, outcome);
     }
@@ -952,12 +942,10 @@ impl Session {
                 Some(reader::Asked::History(_)) => Asked::History,
                 None => return,
             },
-            verbatim_model::request::Question::Terminal(TerminalAsk { op, .. }) => match op {
-                TextOp::TerminalFind { needle, .. } => Asked::Search(needle.clone()),
-                TextOp::ReadTerminal(_) | TextOp::TerminalHistory { .. } => {
-                    panic!("a read Core's terminal reader did not write: {ask:?}")
-                }
-            },
+            verbatim_model::request::Question::Terminal(TerminalAsk {
+                op: TextOp::TerminalFind { needle, .. },
+                ..
+            }) => Asked::Search(needle.clone()),
         };
         self.requests.push(asked);
     }

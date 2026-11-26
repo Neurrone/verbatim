@@ -713,14 +713,17 @@ Each file's module comment says exactly what it asserts; in outline:
   `verbatim-uia-rops`'s terminal read program remotely and classically,
   the two required to agree on every field, and pins the colours of
   `terminal-colours.json` as exact runs both ways.
-- `terminal.rs` reads the terminal through the outpost's `terminal`
-  module and gives each read to Core's reducer: new output is said line by
-  line with one UIA call a read remotely, and classically, and Backspace
-  says what it deleted with no caret event.
+- `terminal.rs` drives Core's reducer and a real outpost over the
+  terminal: new output is said line by line with one UIA call a read
+  remotely, and classically, and Backspace says what it deleted with no
+  caret event. It also runs the command search's program and its classic
+  implementation (`verbatim-uia-rops`'s `terminal_find`) from the top of
+  the screen.
 - `terminal_reader.rs` runs the batches of Core's terminal reader
   (`verbatim_core::terminal::reader`) through a real outpost remotely and
   by calls, which must agree, and pins what the reader reads back: the
-  cases `terminal_snapshot.rs` pins of the old read program, a kept start
+  cases `terminal_snapshot.rs` pins of the conformance runner's read
+  program, a kept start
   until a clear, the history block, the whole text and the rows above a
   start, with history reads by place, the caret and a key's starting
   point, a provider reporting no selection, the colours as exact runs,
@@ -747,11 +750,13 @@ Each file's module comment says exactly what it asserts; in outline:
   of miss. No product code sends these operations until the terminal is
   redesigned (Dickson, 2026-11-26).
 - `terminal_reading.rs` drives a real outpost's worker over the same
-  terminal and asserts the reads and answers it sends Core: focus-now and
-  foreground reports, each on-demand reading request and its answer, caret
-  events with and without text changes, the console host's caret, the
-  hooks' change events through MSAA, the whole document and history
-  blocks, colours requests, and the read before a held key.
+  terminal: each change signal told as one tell, a text change, a caret
+  event and the console host's caret among them; the window and history
+  reads Core's terminal reader writes, sent as Core sends them and read
+  back by the reader, from a start Core names, of the whole document and
+  a history block, with the colours when asked, and a caret key's
+  starting read with its starting point in one call; and a terminal
+  caret key's watch.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
   ancestry over `ancestry.json` (a five-level chain, a list and a tab
   control with selected children, which neither reads) and

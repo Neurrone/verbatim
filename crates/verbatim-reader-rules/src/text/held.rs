@@ -198,37 +198,6 @@ fn caret_and_selected<S: TextSource>(
     Ok((report, selected))
 }
 
-/// A terminal key's starting point, from the caret, selection and line
-/// `read` already found, read at `read_at_us`: a terminal's full read reads
-/// them in its own round trip, so the key's starting point is minted with
-/// no call of its own for the caret
-/// (`docs/design/readers-tell-core-asks-build3.md`, "The full read request
-/// and its starts"). The caret's report, and the starting point held.
-///
-/// # Errors
-///
-/// When the application does not answer or the node is gone.
-pub fn starting_from<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    read: CaretRead<S::Pos>,
-    read_at_us: u64,
-) -> TextResult<(CaretReport, TextAnchor)> {
-    let (line, offset) = read.line;
-    let report = report_for(
-        source,
-        anchors,
-        (&read.state, read_at_us),
-        (
-            Some((line, offset, read.formats)),
-            Some(read.selection_start),
-        ),
-        None,
-    )?;
-    let point = anchors.hold_last()?;
-    Ok((report, point))
-}
-
 /// The baseline held after a move: the read the move kept, when it kept
 /// one (its time changed from `kept_before`), else a fresh read of the
 /// caret begun at `read_at_us`.

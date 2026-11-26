@@ -534,11 +534,11 @@ fn the_plain_reader_answers_each_operation_as_a_plain_window() {
         answer(verbatim_model::request::Question::Terminal(
             verbatim_model::request::TerminalAsk {
                 node,
-                op: verbatim_model::TextOp::TerminalHistory {
-                    above: 0,
-                    whole: true,
+                op: verbatim_model::TextOp::TerminalFind {
+                    needle: "ready>".to_owned(),
+                    from: 0,
+                    rows: 1,
                     start: verbatim_model::TextAnchor(1),
-                    height: 1,
                 },
             }
         )),

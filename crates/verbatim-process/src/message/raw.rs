@@ -3,8 +3,8 @@
 //! answer do: a batch's whose steps answered a trimmed range's text
 //! (`ReadRange`), the visible text (`Visible`), a search's matches
 //! (`FindText`) or a screen's colours (`ReadColours`), whichever text they
-//! read; and a terminal's text operation's, to a terminal read, a history
-//! read and a search. Each such answer is a frame with a raw section.
+//! read; and a terminal's command search's, the one text operation outside
+//! a batch. Each such answer is a frame with a raw section.
 //! Every such text is in the raw section as UTF-8, its place in the JSON
 //! body a byte range, `[start, length]`; and colour runs are there as
 //! 16-byte records, four little-endian `u32`s (column, length, foreground,
@@ -27,10 +27,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::batch::{Done, FoundText, RangeText, StepOutcome, VisibleText};
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{Answer, Outcome, Probe, Reply, RequestNumber};
-use verbatim_model::{
-    CaretReport, TerminalColourRun, TerminalMatch, TerminalReadReply, TerminalSnapshot,
-    TerminalText, TextAnchor, TextReply,
-};
+use verbatim_model::{TerminalColourRun, TerminalMatch, TextAnchor, TextReply};
 
 /// A place in the raw section: where it starts and how many bytes it
 /// takes, written `[start, length]`.
@@ -68,7 +65,7 @@ enum WireOutcome<'a> {
 /// A [`Reply`] with texts or colours in the raw section.
 #[derive(Serialize, Deserialize)]
 enum WireResult<'a> {
-    Text(WireReply<'a>),
+    Text(WireReply),
     Steps(Vec<WireStep<'a>>),
 }
 
@@ -104,26 +101,10 @@ struct Found {
     text: Range,
 }
 
-/// The [`TextReply`]s that carry a terminal's text.
+/// The [`TextReply`] that carries a terminal's text.
 #[derive(Serialize, Deserialize)]
-#[expect(
-    clippy::enum_variant_names,
-    reason = "the variants' names are the model's, which the body carries"
-)]
-enum WireReply<'a> {
-    TerminalRead(Box<WireRead<'a>>),
-    TerminalHistory { text: Range, above: u32 },
+enum WireReply {
     TerminalFound { matches: Vec<Match> },
-}
-
-/// A [`TerminalReadReply`], its snapshot's texts and colours in the raw
-/// section.
-#[derive(Serialize, Deserialize)]
-struct WireRead<'a> {
-    snapshot: Snapshot<'a>,
-    start: TextAnchor,
-    started_us: u64,
-    point: Option<TextAnchor>,
 }
 
 /// A [`TerminalMatch`], its text in the raw section.
@@ -133,42 +114,7 @@ struct Match {
     text: Range,
 }
 
-/// A [`TerminalSnapshot`], its texts and colours in the raw section.
-#[derive(Serialize, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "the snapshot's own answers, as the model gives them"
-)]
-struct Snapshot<'a> {
-    text: Text<'a>,
-    screen: Text<'a>,
-    from_start: bool,
-    shrank: bool,
-    at_document_start: bool,
-    alternate: bool,
-    first_row: Text<'a>,
-    caret_rows_to_end: u32,
-    caret_line: Text<'a>,
-    caret_column: u32,
-    above: u32,
-    started_ms: u64,
-    ended_ms: u64,
-    waited: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    colours: Option<Colours>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    caret: Option<Cow<'a, CaretReport>>,
-}
-
-/// A [`TerminalText`], its text in the raw section and its line lengths
-/// in the body.
-#[derive(Serialize, Deserialize)]
-struct Text<'a> {
-    raw: Range,
-    lengths: Cow<'a, [(u32, u32)]>,
-}
-
-/// A read's colour runs: their records' range in the raw section, and how
+/// A screen's colour runs: their records' range in the raw section, and how
 /// many runs each row has, row by row.
 #[derive(Serialize, Deserialize)]
 struct Colours {
@@ -292,42 +238,21 @@ impl<'a> Layout<'a> {
         }
     }
 
-    /// A terminal's text operation's `reply` as the body gives it, its
-    /// texts and colours placed next in the raw section; `None` for a
-    /// reply with none.
-    fn reply(&mut self, reply: &'a TextReply) -> Option<WireReply<'a>> {
-        let layout = self;
-        let reply = match reply {
-            TextReply::TerminalRead(read) => {
-                let TerminalReadReply {
-                    snapshot,
-                    start,
-                    started_us,
-                    point,
-                } = &**read;
-                WireReply::TerminalRead(Box::new(WireRead {
-                    snapshot: layout.snapshot(snapshot),
-                    start: *start,
-                    started_us: *started_us,
-                    point: *point,
-                }))
-            }
-            TextReply::TerminalHistory { text, above } => WireReply::TerminalHistory {
-                text: layout.text(text),
-                above: *above,
-            },
-            TextReply::TerminalFound { matches } => WireReply::TerminalFound {
+    /// A terminal's search's `reply` as the body gives it, its matches'
+    /// texts placed next in the raw section; `None` for a reply with none.
+    fn reply(&mut self, reply: &'a TextReply) -> Option<WireReply> {
+        match reply {
+            TextReply::TerminalFound { matches } => Some(WireReply::TerminalFound {
                 matches: matches
                     .iter()
                     .map(|TerminalMatch { above, text }| Match {
                         above: *above,
-                        text: layout.text(text),
+                        text: self.text(text),
                     })
                     .collect(),
-            },
-            _ => return None,
-        };
-        Some(reply)
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -342,14 +267,6 @@ impl<'a> Layout<'a> {
         range
     }
 
-    fn terminal_text(&mut self, text: &'a TerminalText) -> Text<'a> {
-        let TerminalText { text, lengths } = text;
-        Text {
-            raw: self.text(text),
-            lengths: Cow::Borrowed(lengths),
-        }
-    }
-
     /// Places `rows`' runs next in the raw section.
     fn colours(&mut self, rows: &'a [Vec<TerminalColourRun>]) -> Colours {
         let counts: Vec<usize> = rows.iter().map(Vec::len).collect();
@@ -360,45 +277,6 @@ impl<'a> Layout<'a> {
         Colours {
             raw: range,
             rows: counts,
-        }
-    }
-
-    fn snapshot(&mut self, snapshot: &'a TerminalSnapshot) -> Snapshot<'a> {
-        let TerminalSnapshot {
-            text,
-            screen,
-            from_start,
-            shrank,
-            at_document_start,
-            alternate,
-            first_row,
-            caret_rows_to_end,
-            caret_line,
-            caret_column,
-            above,
-            started_ms,
-            ended_ms,
-            waited,
-            colours,
-            caret,
-        } = snapshot;
-        Snapshot {
-            text: self.terminal_text(text),
-            screen: self.terminal_text(screen),
-            from_start: *from_start,
-            shrank: *shrank,
-            at_document_start: *at_document_start,
-            alternate: *alternate,
-            first_row: self.terminal_text(first_row),
-            caret_rows_to_end: *caret_rows_to_end,
-            caret_line: self.terminal_text(caret_line),
-            caret_column: *caret_column,
-            above: *above,
-            started_ms: *started_ms,
-            ended_ms: *ended_ms,
-            waited: *waited,
-            colours: colours.as_deref().map(|rows| self.colours(rows)),
-            caret: caret.as_ref().map(Cow::Borrowed),
         }
     }
 }
@@ -537,39 +415,19 @@ impl<'s> Section<'s> {
         })
     }
 
-    /// A terminal's text operation's reply from the body's `reply`.
-    fn reply(&mut self, reply: WireReply<'_>) -> io::Result<TextReply> {
-        let section = self;
-        Ok(match reply {
-            WireReply::TerminalRead(read) => {
-                let WireRead {
-                    snapshot,
-                    start,
-                    started_us,
-                    point,
-                } = *read;
-                TextReply::TerminalRead(Box::new(TerminalReadReply {
-                    snapshot: section.snapshot(snapshot)?,
-                    start,
-                    started_us,
-                    point,
-                }))
-            }
-            WireReply::TerminalHistory { text, above } => TextReply::TerminalHistory {
-                text: section.text(text)?,
-                above,
-            },
-            WireReply::TerminalFound { matches } => TextReply::TerminalFound {
-                matches: matches
-                    .into_iter()
-                    .map(|Match { above, text }| {
-                        Ok(TerminalMatch {
-                            above,
-                            text: section.text(text)?,
-                        })
+    /// A terminal's search's reply from the body's `reply`.
+    fn reply(&mut self, reply: WireReply) -> io::Result<TextReply> {
+        let WireReply::TerminalFound { matches } = reply;
+        Ok(TextReply::TerminalFound {
+            matches: matches
+                .into_iter()
+                .map(|Match { above, text }| {
+                    Ok(TerminalMatch {
+                        above,
+                        text: self.text(text)?,
                     })
-                    .collect::<io::Result<_>>()?,
-            },
+                })
+                .collect::<io::Result<_>>()?,
         })
     }
 
@@ -597,13 +455,6 @@ impl<'s> Section<'s> {
             .map_err(|_| invalid("a text in the raw section is not UTF-8"))
     }
 
-    fn terminal_text(&mut self, Text { raw, lengths }: Text<'_>) -> io::Result<TerminalText> {
-        Ok(TerminalText {
-            text: self.text(raw)?,
-            lengths: lengths.into_owned(),
-        })
-    }
-
     /// The colour runs at `colours`' range, parted into its rows.
     fn colours(
         &mut self,
@@ -624,45 +475,6 @@ impl<'s> Section<'s> {
             .iter()
             .map(|&count| records.by_ref().take(count).map(run).collect())
             .collect())
-    }
-
-    fn snapshot(&mut self, snapshot: Snapshot<'_>) -> io::Result<TerminalSnapshot> {
-        let Snapshot {
-            text,
-            screen,
-            from_start,
-            shrank,
-            at_document_start,
-            alternate,
-            first_row,
-            caret_rows_to_end,
-            caret_line,
-            caret_column,
-            above,
-            started_ms,
-            ended_ms,
-            waited,
-            colours,
-            caret,
-        } = snapshot;
-        Ok(TerminalSnapshot {
-            text: self.terminal_text(text)?,
-            screen: self.terminal_text(screen)?,
-            from_start,
-            shrank,
-            at_document_start,
-            alternate,
-            first_row: self.terminal_text(first_row)?,
-            caret_rows_to_end,
-            caret_line: self.terminal_text(caret_line)?,
-            caret_column,
-            above,
-            started_ms,
-            ended_ms,
-            waited,
-            colours: colours.map(|colours| self.colours(colours)).transpose()?,
-            caret: caret.map(Cow::into_owned),
-        })
     }
 
     /// Checks that the ranges read, each starting where the last ended,

@@ -21,10 +21,14 @@
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
-//!   and says which path answered; for terminals, [`terminal_snapshot`]:
-//!   the text from where the last read said to start to the document's
-//!   end in one `GetText`, with the screen, the caret, and the screen's
-//!   colours ([`ColourRun`]) after a key; for the outpost finding its own copy of
+//!   and says which path answered; for the terminal conformance runner
+//!   (`cargo xtask regenerate-terminal-conformance-expectations`), its
+//!   one caller, [`terminal_snapshot`]: the text from where the last read
+//!   said to start to the document's end in one `GetText`, with the
+//!   screen, the caret, and the screen's colours ([`ColourRun`]), where
+//!   the product reads a terminal by a batch of generic steps
+//!   ([`batch`]); for a terminal's command search, [`terminal_find`]; for
+//!   the outpost finding its own copy of
 //!   an element the focus listener read, [`element_by_path`]: the element
 //!   reached from one the caller has by the runtime ids below it; and for
 //!   a focus's completion, [`focus_states`]: the focus's states, read once

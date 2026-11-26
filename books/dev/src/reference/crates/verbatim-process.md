@@ -276,8 +276,8 @@ Public API:
   private `message::raw` module; `docs/design/communication.md`, section
   4.2, which gives the body's forms): a batch's answer when a step
   answered a trimmed `ReadRange`, a `Visible`, a `FindText` or a
-  `ReadColours`, and a terminal's text operation's answer whose reply is a
-  `TerminalRead`, `TerminalHistory`, or `TerminalFound`. Each text is
+  `ReadColours`, and a terminal's command search's answer, whose reply is
+  a `TerminalFound`. Each text is
   UTF-8 there and a range in the JSON, and colour runs are 16-byte
   records of four little-endian `u32`s (column, length, foreground,
   background), the JSON giving their range and each row's run count. The module converts while encoding, borrowing from the message,
@@ -285,9 +285,9 @@ Public API:
   types know nothing of it. A range outside the section, invalid UTF-8,
   records that do not fill their range, a section longer or shorter than
   its ranges, or a section on any other message is a protocol error. For
-  example, a history whose text is `abc` has a header with
+  example, a search with one match whose text is `abc` has a header with
   `Raw-Length: 0000000003`, a body whose outcome is
-  `{"Result":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
+  `{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,3]}]}}}}`,
   and then the bytes `abc`. `message_kind(body)` reads a frame's variant
   name from its first bytes without parsing the rest; the relay reads it
   on every outpost frame.

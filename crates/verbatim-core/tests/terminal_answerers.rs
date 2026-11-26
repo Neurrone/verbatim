@@ -410,22 +410,18 @@ fn the_reader_reads_the_reference_read_in_the_shapes_the_terminal_tests_use() {
     assert_none(&differences);
 }
 
-/// The old history operation's answer and the history read Core's reader
-/// makes for the same start, rows above it and height, text and rows
-/// alike; and the whole history read, the whole document.
+/// The reference history read and the history read Core's reader makes
+/// for the same start, rows above it and height, text and rows alike; and
+/// the whole history read, the whole document.
 #[test]
-fn the_reader_reads_the_old_history_read() {
+fn the_reader_reads_the_reference_history_read() {
     for flavor in FLAVORS {
         let mut outpost = Outpost::new(flavor, 20, 4, 100);
         outpost.sim.write(written("line", 1..=40).as_bytes());
         let start = outpost.sim.visible().start;
         let (old, new) = (outpost.mint(Range::at(start)), outpost.hold(start));
         for (above, whole) in [(13, false), (31, false), (500, false), (0, true)] {
-            let TextReply::TerminalHistory { text, above: rows } =
-                outpost.history(old, (above, whole, 4))
-            else {
-                panic!("a history read's reply");
-            };
+            let (text, rows) = outpost.history(old, (above, whole, 4));
             let ask = if whole {
                 HistoryAsk::Whole
             } else {

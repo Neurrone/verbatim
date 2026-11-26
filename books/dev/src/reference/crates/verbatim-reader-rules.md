@@ -73,11 +73,9 @@ Public API:
   `ops` a `Caret` and a `CompareSelection`; `check` a wait's check by
   parts; `sentence` a move by sentence over a source that splits by
   paragraph, its clock read through the `now_us` its caller passes;
-  `held` a focus's caret read (`held::read_focus`), a text summary
-  (`held::summary`) and a terminal key's starting point
-  (`held::starting_from`), each taking a read UI Automation's program
-  made in one go when there is one; `caret_report_from` reports a caret
-  and line another program read. `facts` holds one node's text facts as
+  `held` a focus's caret read (`held::read_focus`) and a text summary
+  (`held::summary`), each taking a read UI Automation's program made in
+  one go when there is one. `facts` holds one node's text facts as
   pure data (`NodeAnchors`, `Anchor`, `LastRead`, `KeptSelection`,
   `ReadSelection`), which the outpost's reducer stores. `Anchors` keeps a
   backend's anchors by node for a reader that holds them for the whole

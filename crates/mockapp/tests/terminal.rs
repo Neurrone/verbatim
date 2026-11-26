@@ -11,8 +11,9 @@
 //! followed, each text change mockapp raises is told to Core, and Core
 //! reads the terminal when it chooses
 //! (`docs/design/readers-tell-core-asks-build3.md`), so a test asserts
-//! what Core says. The search tests drive `verbatim-outpost`'s terminal
-//! module on this thread, as the outpost's worker does.
+//! what Core says. The search tests run the search's program and its
+//! classic implementation (`verbatim-uia-rops`'s `terminal_find`) on this
+//! thread, from the top of the screen.
 //!
 //! What is checked: Core says the new output a read shows, line by line,
 //! and the read costs one call remotely; a terminal's typing is echoed
@@ -31,15 +32,11 @@ use std::rc::Rc;
 
 use verbatim_core::terminal::reader;
 use verbatim_model::request::{Question, TerminalAsk};
-use verbatim_model::{
-    CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
-    TerminalSnapshot, TextOp,
-};
-use verbatim_outpost::terminal::{ReadAsk, read};
+use verbatim_model::{CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TextOp};
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
-use verbatim_uia_rops::CaretLineQuery;
+use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
@@ -94,60 +91,20 @@ fn show_caret_on(app: &mut common::MockApp, hwnd: HWND, rows: &[&str], caret: us
     common::apply(app, hwnd, &format!("caret term {at} {at}"));
 }
 
-/// What Core names in a terminal's reads: the start the last read minted,
-/// and the screen's shape from its model, 0 before it has one
-/// (`docs/design/readers-tell-core-asks-build3.md`, "The full read request
-/// and its starts").
-#[derive(Default)]
-struct Terminal {
-    start: Option<IUIAutomationTextRange>,
-    height: u32,
-    width: u32,
-}
-
-impl Terminal {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// The start the last read minted, which a history read or search
-    /// counts from.
-    fn start(&self) -> &IUIAutomationTextRange {
-        self.start.as_ref().expect("a read before")
-    }
-}
-
-/// One fresh read of the terminal from the start the last read minted, as
-/// the worker makes it, and the snapshot it answers.
-fn read_terminal(
-    uia: &Uia,
-    source: &UiaText,
-    terminal: &mut Terminal,
-    remote: bool,
-) -> TerminalSnapshot {
-    let caret = CaretLineQuery {
-        element: source.element(),
-        pattern: source.pattern(),
-        max_text: 4096,
-        since: None,
-    };
-    let ask = ReadAsk {
-        start: terminal.start.as_ref(),
-        scope: TerminalScope::Fresh,
-        height: terminal.height,
-        width: terminal.width,
-        colours: false,
-    };
-    let mut answer = read(
-        uia,
-        (source.element(), source.pattern()),
-        caret,
-        &ask,
-        remote,
-    )
-    .expect("the terminal reads");
-    terminal.start = answer.next_start.take();
-    answer.snapshot
+/// The top of the terminal's screen, where a first read's start is and
+/// a search counts from: the visible range collapsed to its start.
+fn screen_top(source: &UiaText) -> IUIAutomationTextRange {
+    let screen = source
+        .pattern()
+        .visible_ranges()
+        .expect("the visible ranges")
+        .into_iter()
+        .next()
+        .expect("a visible range");
+    let top = screen.clone_range().expect("a copy");
+    top.move_endpoint_to(Endpoint::End, &top, Endpoint::Start)
+        .expect("collapsed");
+    top
 }
 
 /// The outpost's source for mockapp's terminal.
@@ -495,21 +452,20 @@ fn backspace_says_what_it_deleted_classic() {
     backspace_says_what_it_deleted(false);
 }
 
-/// The outpost's search for `needle` in `terminal`'s text, outward from the
-/// row `from` rows above where its next read starts, on the path under
+/// The outpost's search for `needle` in the terminal's text, outward from
+/// the row `from` rows above `start`, the top of its screen, on the path under
 /// test alone: the remote program, never falling back, or the classic one.
 fn find_on_path(
     uia: &Uia,
     source: &UiaText,
-    terminal: &Terminal,
+    start: &IUIAutomationTextRange,
     (needle, from): (&str, i32),
     remote: bool,
 ) -> Vec<verbatim_model::TerminalMatch> {
-    let start = terminal.start().clone();
     let query = verbatim_uia_rops::FindQuery {
         element: source.element(),
         pattern: source.pattern(),
-        start: &start,
+        start,
         needle,
         from,
         rows: 1,
@@ -539,9 +495,8 @@ fn a_failing_search_finds_nothing(remote: bool) {
     let uia = Uia::new().expect("a UIA client");
     common::apply(&mut app, hwnd, "screen term 3");
     let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, remote);
-    let found = find_on_path(&uia, &source, &terminal, ("two", 1), remote);
+    let top = screen_top(&source);
+    let found = find_on_path(&uia, &source, &top, ("two", 1), remote);
     assert_eq!(found, []);
     app.quit();
 }
@@ -599,11 +554,10 @@ fn a_search_whose_misses_answer_a_range(remote: bool) -> u32 {
         &["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"],
     );
     let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, remote);
+    let top = screen_top(&source);
     common::reset_hits(hwnd);
     assert_eq!(
-        find_on_path(&uia, &source, &terminal, ("y", 2), remote),
+        find_on_path(&uia, &source, &top, ("y", 2), remote),
         [
             found_row(2, "y 3"),
             found_row(3, "y 2"),
@@ -612,7 +566,7 @@ fn a_search_whose_misses_answer_a_range(remote: bool) -> u32 {
             found_row(0, "y 5"),
         ]
     );
-    assert_eq!(find_on_path(&uia, &source, &terminal, ("q", 2), remote), []);
+    assert_eq!(find_on_path(&uia, &source, &top, ("q", 2), remote), []);
     let faults = common::read_hits(hwnd)
         .into_iter()
         .find_map(|(name, count)| (name == "RPC_E_SERVERFAULT").then_some(count))
@@ -655,9 +609,8 @@ fn search_in(
     common::apply(&mut app, hwnd, "screen term 3");
     show(&mut app, hwnd, rows);
     let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, remote);
-    let found = find_on_path(&uia, &source, &terminal, (needle, from), remote);
+    let top = screen_top(&source);
+    let found = find_on_path(&uia, &source, &top, (needle, from), remote);
     app.quit();
     found
 }
@@ -737,13 +690,9 @@ fn the_search_ends_after_its_calls(remote: bool) {
     common::apply(&mut app, hwnd, "screen term 3");
     show(&mut app, hwnd, &rows);
     let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new();
-    let _ = read_terminal(&uia, &source, &mut terminal, remote);
+    let top = screen_top(&source);
     common::reset_hits(hwnd);
-    assert_eq!(
-        find_on_path(&uia, &source, &terminal, ("y", -10), remote),
-        []
-    );
+    assert_eq!(find_on_path(&uia, &source, &top, ("y", -10), remote), []);
     // Every `FindText` call the search made, the remote program's two over
     // the whole document among them.
     let calls = common::read_hits(hwnd)

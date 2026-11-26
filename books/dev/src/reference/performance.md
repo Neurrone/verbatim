@@ -1816,11 +1816,12 @@ reprint. What remains is the memory's and rules' work on every row ("A
 terminal's rotation") and the page faults of the heap taking pages back;
 Core's own part is about 0.2 to 0.5 ms.
 
-The outpost's conversion of a read into its snapshot, in one pass into
-buffers made for each read, its text sized up front, and its writing in
-the answer sent to Core (`terminal::unpadded_utf16`; the ignored
+The outpost's conversion of a read's text, in one pass into buffers made
+for each read, its text sized up front, and its writing in the answer
+sent to Core (`text::trim::unpadded_utf16`; the ignored
 `measure_conversion` in `crates/verbatim-outpost/src/terminal/tests.rs`,
-release, 2026-11-01, eleven runs): a whole document of 9,031 rows of 120
+which now builds the batch answer of a read; release, 2026-11-01, eleven
+runs, on the terminal's own reply that the batch answer replaced): a whole document of 9,031 rows of 120
 cells 1,947 to 2,128 µs with 78 to 80 page faults in Latin text, 2,036
 to 2,180 µs with 95 to 98 in Cyrillic; an ordinary read of two screens
 20 to 27 µs; 64 KiB, the write buffer, kept after a whole document. Paid

@@ -1,93 +1,23 @@
-//! A terminal read's text converted in one pass
-//! ([`super::unpadded_utf16`]) exactly as with two copies, with a
-//! measurement of what that saves.
+//! A measurement of what converting a terminal's read in one pass
+//! ([`unpadded_utf16`]) saves, and of what its answer costs to write and
+//! to parse. It is here, outside the text module, because it reads the
+//! process's page faults from Windows.
 
 use std::time::Instant;
 
+use verbatim_model::batch::{Done, RangeText, StepOutcome, VisibleText};
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{Answer, Outcome, Reply, RequestNumber};
-use verbatim_model::{
-    TerminalColourRun, TerminalReadReply, TerminalSnapshot, TerminalText, TextAnchor, TextReply,
-};
+use verbatim_model::{TerminalColourRun, TerminalText, TextAnchor};
 use verbatim_process::message::{decode_message, encode_message, put_message};
 use verbatim_process::transport::read_frame;
-use verbatim_term_sim::{Flavor, Query};
+
+use crate::text::trim::unpadded_utf16;
 
 /// What the outpost made of a read's UTF-16 text before it was converted
 /// in one pass: a copy as UTF-8, then a copy of that without the padding.
 fn two_copies(units: &[u16]) -> TerminalText {
     TerminalText::unpadded(&String::from_utf16_lossy(units))
-}
-
-/// `units` converted in one pass, checked against the two copies field by
-/// field and as the bytes sent.
-fn converted_alike(units: &[u16], what: &str) {
-    let one_pass = super::unpadded_utf16(units);
-    let expected = two_copies(units);
-    assert_eq!(one_pass, expected, "{what}");
-    assert_eq!(
-        serde_json::to_vec(&one_pass).expect("serializes"),
-        serde_json::to_vec(&expected).expect("serializes"),
-        "{what}"
-    );
-}
-
-/// Every corpus stream's whole document and screen, after each chunk, in
-/// both terminals, converts in one pass exactly as with two copies.
-#[test]
-fn a_reads_text_converted_in_one_pass_is_the_two_copies_exactly() {
-    use verbatim_term_sim::conformance::{history, streams};
-    for (name, stream) in streams() {
-        for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
-            let mut terminal = verbatim_term_sim::Terminal::new(flavor, 120, 30, history(flavor));
-            for (chunk, bytes) in stream.chunks.iter().enumerate() {
-                terminal.write(bytes.as_bytes());
-                let snapshot = terminal
-                    .snapshot(&Query {
-                        start: None,
-                        screen_rows: 30,
-                        whole: true,
-                        above: 0,
-                    })
-                    .expect("a simulated read");
-                for (part, text) in [("text", &snapshot.text), ("screen", &snapshot.screen)] {
-                    let units: Vec<u16> = text.encode_utf16().collect();
-                    converted_alike(
-                        &units,
-                        &format!("{name} in {flavor:?}, chunk {chunk}, {part}"),
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Unpaired surrogates become U+FFFD as with two copies, wherever they
-/// are, and line breaks, lone carriage returns and line feeds, padding and
-/// other white space are kept or left out alike.
-#[test]
-fn unpaired_surrogates_and_line_ends_convert_as_the_two_copies() {
-    let cases: [&[u16]; 14] = [
-        &[],
-        &[0xD800],
-        &[0xDC00, 0x61],
-        &[0x61, 0xD83D, 0x20, 0x20, 0x0D, 0x0A, 0x62],
-        &[0x61, 0x20, 0xD800, 0x20, 0x0D, 0x0A],
-        &[0xD83D, 0xDE00, 0x20, 0x20, 0x0D, 0x0A, 0x20, 0x20],
-        &[0x0D],
-        &[0x20, 0x0D],
-        &[0x0D, 0x0D, 0x0A, 0x0A],
-        &[0x61, 0x20, 0x0A, 0x20, 0x0D, 0x0A],
-        &[0x0D, 0x0A, 0x0D, 0x0A],
-        &[0x61, 0x09, 0x20, 0xA0, 0x20, 0x0D, 0x0A, 0x62, 0x20],
-        &[0x20, 0x20, 0x20, 0xDBFF, 0x0D, 0x20, 0x0A],
-        &[
-            0x6F, 0x6E, 0x65, 0x20, 0x20, 0x0D, 0x0A, 0x74, 0x77, 0x6F, 0x20, 0x20,
-        ],
-    ];
-    for (case, units) in cases.iter().enumerate() {
-        converted_alike(units, &format!("case {case}: {units:04X?}"));
-    }
 }
 
 /// `K32GetProcessMemoryInfo`'s counters, of which the measurement reads
@@ -153,41 +83,32 @@ fn screen_colours() -> Vec<Vec<TerminalColourRun>> {
     vec![row; 30]
 }
 
-/// A whole-document read of `text` and `screen`, with `colours`, in the
-/// answer the outpost sends Core.
+/// A whole read of `text` and `screen`, with `colours`, in the answer the
+/// outpost sends Core: a batch's, whose steps answered the visible text, a
+/// trimmed range and the screen's colours.
 fn answer(
     text: TerminalText,
     screen: TerminalText,
     colours: Option<Vec<Vec<TerminalColourRun>>>,
 ) -> OutpostToCore {
-    let snapshot = TerminalSnapshot {
-        text,
-        screen,
-        from_start: true,
-        shrank: false,
-        at_document_start: false,
-        alternate: false,
-        first_row: TerminalText::default(),
-        caret_rows_to_end: 1,
-        caret_line: TerminalText::default(),
-        caret_column: 0,
-        above: 30,
-        started_ms: 0,
-        ended_ms: 0,
-        waited: false,
-        colours,
-        caret: None,
-    };
+    let mut steps = vec![
+        StepOutcome::Done(Done::Visible(VisibleText {
+            start: TextAnchor(1),
+            end: TextAnchor(2),
+            at_text_start: false,
+            text: screen.text,
+            padded: screen.lengths,
+        })),
+        StepOutcome::Done(Done::ReadRange(RangeText {
+            text: text.text,
+            truncated: false,
+            padded: Some(text.lengths),
+        })),
+    ];
+    steps.extend(colours.map(|rows| StepOutcome::Done(Done::ReadColours(rows))));
     OutpostToCore::Answer(Answer {
         number: RequestNumber(1),
-        outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
-            TerminalReadReply {
-                snapshot,
-                start: TextAnchor(1),
-                started_us: 0,
-                point: None,
-            },
-        )))),
+        outcome: Outcome::Result(Reply::Steps(steps)),
         probes: Vec::new(),
         detail: String::new(),
         began_us: 0,
@@ -252,10 +173,7 @@ fn measure_conversion() {
         // bound.
         let mut buffer = Vec::new();
         let mut after = || {
-            let message = wire(
-                super::unpadded_utf16(&units),
-                super::unpadded_utf16(&screen),
-            );
+            let message = wire(unpadded_utf16(&units), unpadded_utf16(&screen));
             buffer.clear();
             put_message(&mut buffer, &message).expect("written");
             if buffer.capacity() > WRITE_KEPT_BYTES {
@@ -277,9 +195,7 @@ fn measure_conversion() {
             .expect("read")
             .expect("a frame");
         let parts = frame.parts();
-        let raw = parts
-            .raw
-            .expect("a terminal read's answer has a raw section");
+        let raw = parts.raw.expect("such an answer has a raw section");
         let parse = || decode_message::<OutpostToCore>(parts).expect("parsed");
         assert_eq!(parse(), message, "the answer read back");
         let started = Instant::now();

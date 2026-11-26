@@ -46,11 +46,11 @@ use verbatim_model::{
 };
 use verbatim_uia::text::{Endpoint, TextPatternExt, TextRangeExt, uia_text_unit};
 
-use verbatim_uia_rops::{Attributes, CaretAnswer, RunAttributes, TextAttribute, TextTarget};
+use verbatim_uia_rops::{Attributes, RunAttributes, TextAttribute, TextTarget};
 
 use super::{
-    CaretRead, CaretState, Formatting, MAX_CHUNK_UNITS, SelectionStart, Sentences, TextError,
-    TextResult, TextSource, Unit, UnitRead,
+    CaretState, Formatting, MAX_CHUNK_UNITS, Sentences, TextError, TextResult, TextSource, Unit,
+    UnitRead,
 };
 
 /// A position in UIA text: an end of a range.
@@ -293,35 +293,10 @@ impl UiaText {
     }
 
     /// The text pattern, for reads outside the text protocol (a terminal's
-    /// new output, `crate::terminal`).
+    /// command search, `crate::terminal`).
     #[must_use]
     pub fn pattern(&self) -> &IUIAutomationTextPattern {
         &self.pattern
-    }
-
-    /// The caret read another program made (a terminal's, read with its new
-    /// output, `crate::terminal`): the caret, the selection, and the
-    /// caret's line.
-    ///
-    /// # Errors
-    ///
-    /// [`TextError`] when a position cannot be made of the answer's ranges.
-    pub fn caret_read_from(&self, answer: CaretAnswer) -> TextResult<CaretRead<UiaPos>> {
-        let caret = UiaPos::new(&answer.caret, Endpoint::Start, answer.collapsed)?;
-        let selection = match &answer.selection {
-            Some(range) => Some((
-                UiaPos::new(range, Endpoint::Start, false)?,
-                UiaPos::new(range, Endpoint::End, false)?,
-            )),
-            None => None,
-        };
-        Ok(CaretRead {
-            state: CaretState { caret, selection },
-            line: unit_read(answer.line)?,
-            formats: Vec::new(),
-            selection_text: None,
-            selection_start: SelectionStart::unknown(),
-        })
     }
 
     /// What reads fetch beyond the text, as the request names it.
@@ -649,24 +624,6 @@ impl TextSource for UiaText {
     fn sentences(&self) -> Sentences {
         Sentences::Unsupported
     }
-}
-
-/// A unit the caret read returned, as a [`Unit`] and the caret's offset in
-/// it, its text cut to a chunk's limit.
-fn unit_read(read: verbatim_uia_rops::UnitRead) -> TextResult<(Unit<UiaPos>, usize)> {
-    let mut text = read.text;
-    let truncated = text.len() > MAX_CHUNK_UNITS;
-    text.truncate(MAX_CHUNK_UNITS);
-    let offset = read.offset.min(text.len());
-    Ok((
-        Unit {
-            start: UiaPos::new(&read.range, Endpoint::Start, false)?,
-            end: UiaPos::new(&read.range, Endpoint::End, false)?,
-            text,
-            truncated,
-        },
-        offset,
-    ))
 }
 
 /// A span's formatting as its stretches were read, as UTF-16 ranges of

@@ -179,16 +179,11 @@ pub(crate) fn named_by(request: &Question) -> Vec<(NodeId, Vec<TextAnchor>)> {
     }
 }
 
-/// The terminal's node a terminal's text operation is about, and every
-/// text anchor it names.
+/// The terminal's node a terminal's search is about, and the text anchor
+/// it names.
 fn terminal_named_by(ask: &TerminalAsk) -> (NodeId, Vec<TextAnchor>) {
-    let anchors = match &ask.op {
-        TextOp::ReadTerminal(read) => read.start.into_iter().collect(),
-        TextOp::TerminalHistory { start, .. } | TextOp::TerminalFind { start, .. } => {
-            vec![*start]
-        }
-    };
-    (ask.node, anchors)
+    let TextOp::TerminalFind { start, .. } = &ask.op;
+    (ask.node, vec![*start])
 }
 
 #[cfg(test)]

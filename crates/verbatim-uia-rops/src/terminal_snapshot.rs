@@ -1,5 +1,11 @@
-//! A terminal's snapshot (`books/dev/src/explanation/design/terminal-model.md`, "The read"):
-//! the text from where the last read said to start to the end of the
+//! A terminal's snapshot, the read the conformance runner records the
+//! real terminals' answers with (`cargo xtask
+//! regenerate-terminal-conformance-expectations`, its one caller) and the
+//! simulated terminal's reference read follows step for step. The product
+//! reads a terminal by a batch of the request list's generic steps
+//! instead ([`crate::batch`]).
+//!
+//! It is the text from where the last read said to start to the end of the
 //! document, read in one `GetText`, which the terminal answers from one
 //! locked state of its buffer (measured in both terminals, 2026-10-23), so
 //! everything spoken or counted comes from one consistent copy. The other
@@ -8,8 +14,8 @@
 //! the document's end moved back by the screen's height, which ignores
 //! where the user has scrolled the view; whether the start had to be
 //! refused because the text shrank or the start lay on the other screen;
-//! and the document's first row. After a key, the screen's colours are read
-//! too (`crate::terminal_colours`). A remote program reads it in one round
+//! and the document's first row. The screen's colours are read too when
+//! asked (`crate::terminal_colours`). A remote program reads it in one round
 //! trip, more only for a screen of many colours, and a classic
 //! implementation behind the same signature reads it call by call;
 //! [`terminal_snapshot`] is the one function callers use.

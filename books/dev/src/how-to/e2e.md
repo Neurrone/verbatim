@@ -224,16 +224,7 @@ The harness reads these; set them in the terminal that runs `cargo test`.
   which tells apart the console updates one kind stands for: 0x4002 for a
   region, 0x4003 for a single cell, 0x4004 for a scroll, and 0x4005 for a
   layout. These debug lines add no measurable latency. Set but empty,
-  Verbatim logs as its own configuration says. For a terminal's reads
-  during a flood, set it to
-  `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
-  each snapshot then logs `terminal snapshot timing` (the path, its time
-  in microseconds, its calls, whether it read the whole document, the
-  rows above its start, its text's length, and its flags), each read
-  `terminal read timing` (its time and how long its event waited in the
-  queue), and each caret read `caret read timing`. The console host's
-  outpost log then grows past the agent's 8 MB file limit, so read it from
-  `target\e2e-stage\logs\<Verbatim's pid>` rather than from the artifacts.
+  Verbatim logs as its own configuration says.
 - `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`: the run is not on a Windows 11
   desktop, so a local-only scenario run with it set fails ("Local-only
   scenarios" below). Unset, empty, or `0` runs them; any other value fails

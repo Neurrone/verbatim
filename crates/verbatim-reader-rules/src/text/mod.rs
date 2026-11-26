@@ -841,38 +841,6 @@ pub fn chunk_from<S: TextSource>(
     }
 }
 
-/// The report for a caret read another program already made, begun at
-/// `read_at_us` (a terminal's, read with its new output). With
-/// `keeps_last_read` the node's last read stays as it was, while a key's
-/// note lives: this read carries no facts, so replacing the one baseline
-/// would consume the key's effect unreported.
-///
-/// # Errors
-///
-/// [`TextError`] when the line's anchor cannot be made.
-pub fn caret_report_from<S: TextSource>(
-    source: &mut S,
-    anchors: &mut NodeText<'_, S::Pos>,
-    read: CaretRead<S::Pos>,
-    (read_at_us, keeps_last_read): (u64, bool),
-) -> TextResult<CaretReport> {
-    let kept = keeps_last_read.then(|| anchors.anchors.last.clone());
-    let report = report_for(
-        source,
-        anchors,
-        (&read.state, read_at_us),
-        (
-            Some((read.line.0, read.line.1, read.formats)),
-            Some(read.selection_start),
-        ),
-        None,
-    );
-    if let Some(kept) = kept {
-        anchors.anchors.last = kept;
-    }
-    report
-}
-
 /// The line containing the caret, and the caret's UTF-16 offset in it.
 fn caret_line<S: TextSource>(
     source: &mut S,

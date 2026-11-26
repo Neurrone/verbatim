@@ -1,8 +1,10 @@
 //! Core's requests, answered on the worker
 //! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
 //! build", "The focus answers" and Table 14), each answered once with one
-//! of the five outcomes: a batch (`super::batch`), or one of the
-//! terminal's three text operations. What a read reads is answered by its
+//! of the five outcomes: a batch (`super::batch`), or the terminal's
+//! command search, the one operation outside a batch, kept until the
+//! command marks' journal replaces it (Dickson, 2026-11-26). What a read
+//! reads is answered by its
 //! property set, each node with its nearest window's facts, read from
 //! Windows with no call into the application. The reads a batch's steps
 //! share are here: a node's properties as its snapshot holds them, its
@@ -53,7 +55,7 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
     let outcome = match &ask.request {
         Question::Batch(batch) => super::batch::answer(context, client, ask, batch, &mut probes),
         Question::Terminal(terminal_ask) => {
-            // A terminal's read consults no verdict of its own, but still
+            // A terminal's search consults no verdict of its own, but still
             // answers its window's probe, so that Core records the verdict
             // rather than count the probe timed out.
             let _ = verdict(context, hwnd_of(ask.window), ask.verdict, &mut probes);
@@ -71,7 +73,7 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
 }
 
 /// The node details `request`'s reads fetch: those its batch's property
-/// sets name; none for a terminal's text operation, which reads no node's
+/// sets name; none for a terminal's search, which reads no node's
 /// properties.
 pub(super) fn node_details(request: &Question) -> NodeDetailSet {
     match request {
@@ -80,10 +82,9 @@ pub(super) fn node_details(request: &Question) -> NodeDetailSet {
     }
 }
 
-/// A terminal's read, history read or search Core asks
-/// (`docs/design/readers-tell-core-asks-build3.md`): a terminal that is
-/// gone answers "not there", which ends Core's model of it, and any other
-/// read that brings nothing answers its reply, which Core takes as failed.
+/// A terminal's command search Core asks: a terminal that is gone answers
+/// "not there", which ends Core's model of it, and a search that brings
+/// nothing answers its reply, which Core takes as failed.
 fn terminal(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -93,22 +94,13 @@ fn terminal(
     let Some(uia) = client.uia() else {
         return Outcome::Result(Reply::Text(TextReply::Unanswered));
     };
-    let reply = match op {
-        TextOp::ReadTerminal(read) => text_reads::terminal_read(context, uia, node, read),
-        TextOp::TerminalHistory {
-            above,
-            whole,
-            start,
-            height,
-        } => text_reads::terminal_history(context, uia, node, (*start, *above, *whole, *height)),
-        TextOp::TerminalFind {
-            needle,
-            from,
-            rows,
-            start,
-        } => text_reads::terminal_find(context, uia, node, *start, (needle, *from, *rows)),
-    };
-    match reply {
+    let TextOp::TerminalFind {
+        needle,
+        from,
+        rows,
+        start,
+    } = op;
+    match text_reads::terminal_find(context, uia, node, *start, (needle, *from, *rows)) {
         TextReply::Gone => Outcome::NotThere,
         reply => Outcome::Result(Reply::Text(reply)),
     }

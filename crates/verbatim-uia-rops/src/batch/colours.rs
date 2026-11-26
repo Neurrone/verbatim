@@ -12,8 +12,8 @@
 //! ([`super::Resolve::colour_size`], [`fusable`]), a guess that can only
 //! cost calls, since the rows count only when the size this batch's own
 //! answers give is that size ([`finish`]) and the colour programs read
-//! them otherwise. The outpost sized the old read's first rows from Core's
-//! model; a batch names no size, so the text's reader keeps the last one.
+//! them otherwise. A batch names no size, so the text's reader keeps the
+//! last one.
 
 use windows::Win32::UI::Accessibility::{IUIAutomationTextRange, TextUnit_Line};
 
