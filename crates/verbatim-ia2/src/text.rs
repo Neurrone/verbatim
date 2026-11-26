@@ -25,7 +25,7 @@ use verbatim_model::batch::{
 };
 use verbatim_model::property::TextSummary;
 use verbatim_model::request::{FocusCaret, FocusCaretRead};
-use verbatim_model::{NodeId, TextAnchor, TextReply, TextUnit};
+use verbatim_model::{NodeId, TextAnchor, TextFailure, TextUnit};
 use verbatim_reader_rules::text::{
     self as rules, CallStep, CaretState, NodeText, Sentences, TextError, TextResult, TextSource,
     Unit,
@@ -74,16 +74,16 @@ fn on_text<T>(
     node: NodeId,
     named: &[u64],
     mut read: impl FnMut(&mut EditText, &mut NodeText<'_, u32>) -> T,
-) -> Result<T, TextReply> {
-    let (hwnd, object, child) = resolver.key_of(node).ok_or(TextReply::Gone)?;
-    let version = edit_version(hwnd, object, child).ok_or(TextReply::NoText)?;
+) -> Result<T, TextFailure> {
+    let (hwnd, object, child) = resolver.key_of(node).ok_or(TextFailure::Gone)?;
+    let version = edit_version(hwnd, object, child).ok_or(TextFailure::NoText)?;
     let mut source = EditText::new(hwnd, version);
     let mut found = None;
     resolver.edit_anchors(node, named, &mut |anchors| {
         found = Some(read(&mut source, anchors));
     });
     // The resolver runs the read exactly once.
-    found.ok_or(TextReply::Unanswered)
+    found.ok_or(TextFailure::Unanswered)
 }
 
 /// A text step on an MSAA node, its points and held reads resolved by the
@@ -121,7 +121,7 @@ pub fn step(step: TextStep, node: NodeId, resolver: &dyn TextResolve) -> StepOut
                     tracing::debug!(reason, "a batch's text step failed");
                     StepOutcome::Failed
                 }
-                Err(reply) => refused(&reply, node),
+                Err(reply) => refused(reply, node),
             }
         }
         TextStep::Caret => {
@@ -152,7 +152,7 @@ pub fn step(step: TextStep, node: NodeId, resolver: &dyn TextResolve) -> StepOut
                 })
             });
             match ran {
-                Err(reply) => refused(&reply, node),
+                Err(reply) => refused(reply, node),
                 Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
                 Ok(Err(TextError::Failed(reason))) => {
                     tracing::debug!(reason, "a move by sentence failed");
@@ -168,12 +168,12 @@ pub fn step(step: TextStep, node: NodeId, resolver: &dyn TextResolve) -> StepOut
 /// The outcome of a text step on `node` whose read `ran`, its result made
 /// by `done`.
 fn outcome<T>(
-    ran: Result<TextResult<T>, TextReply>,
+    ran: Result<TextResult<T>, TextFailure>,
     node: NodeId,
     done: impl FnOnce(T) -> Result<Done, Missing>,
 ) -> StepOutcome {
     match ran {
-        Err(reply) => refused(&reply, node),
+        Err(reply) => refused(reply, node),
         Ok(Err(TextError::Gone)) => StepOutcome::NotThere(Missing::Node(node)),
         Ok(Err(TextError::Failed(reason))) => {
             tracing::debug!(reason, "a batch's text step failed");
@@ -185,15 +185,11 @@ fn outcome<T>(
 
 /// The outcome of a text step on `node` whose text could not be opened,
 /// `reply` saying why.
-fn refused(reply: &TextReply, node: NodeId) -> StepOutcome {
+fn refused(reply: TextFailure, node: NodeId) -> StepOutcome {
     match reply {
-        TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
-        TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
-        TextReply::Unanswered => StepOutcome::Failed,
-        other => {
-            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
-            StepOutcome::Failed
-        }
+        TextFailure::NoText => StepOutcome::Refused(StepRefusal::NoText),
+        TextFailure::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        TextFailure::Unanswered => StepOutcome::Failed,
     }
 }
 
@@ -221,7 +217,7 @@ pub fn check(
     resolver: &dyn TextResolve,
     node: NodeId,
     ask: rules::check::CheckAsk<'_>,
-) -> Result<TextResult<Option<Waited>>, TextReply> {
+) -> Result<TextResult<Option<Waited>>, TextFailure> {
     on_text(
         resolver,
         node,
@@ -244,7 +240,7 @@ pub fn focus_caret(resolver: &dyn TextResolve, node: NodeId) -> FocusCaret {
         rules::held::read_focus(source, anchors, (None, read_at_us))
     });
     match read {
-        Err(TextReply::NoText) => FocusCaret::NoText,
+        Err(TextFailure::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
         Ok(Ok((caret, selected, baseline))) => FocusCaret::Read(Box::new(FocusCaretRead {
             caret,

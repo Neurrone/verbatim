@@ -57,7 +57,8 @@ pub const MAX_READ_AHEAD_TEXT: usize = 32 * 1024;
 /// every anchor Core holds (`SrState::held_anchors` in `verbatim-core`,
 /// sent to the outpost alongside the held nodes) and may forget any other
 /// once it has minted 64 newer ones for the node; a request naming a
-/// forgotten anchor is answered [`TextReply::AnchorLost`].
+/// forgotten anchor is answered not there
+/// ([`crate::batch::Missing::Anchor`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TextAnchor(pub u64);
 
@@ -119,8 +120,8 @@ pub enum TextUnit {
     /// The provider's line, soft-wrapped lines included. Core never splits
     /// text on line breaks to find lines.
     Line,
-    /// A sentence. Providers without one (UIA has none) answer
-    /// [`TextReply::UnsupportedUnit`].
+    /// A sentence. Providers without one (UIA has none) refuse it
+    /// ([`crate::batch::StepRefusal::NoSuchUnit`]).
     Sentence,
     /// The provider's paragraph.
     Paragraph,
@@ -659,7 +660,7 @@ impl TextDetails {
     };
 }
 
-/// The answer to [`TextOp::MoveBySentence`].
+/// The answer to [`crate::batch::Op::MoveBySentence`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SentenceMoved {
     /// The caret moved to this sentence, in this line.
@@ -714,82 +715,18 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// The terminal's one text operation an outpost answers outside a batch
-/// ([`crate::request::Question::Terminal`]): the command search, kept
-/// until the command marks' journal replaces it (Dickson, 2026-11-26). A
-/// terminal's reads and history reads are batches.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextOp {
-    /// Search the focused terminal's text for `needle`, a row's text with
-    /// no line break, outward from the row `from` rows above where the next
-    /// read starts (negative below it): alternately the next match at or
-    /// below that row and the next above it, that row's own first, at most
-    /// 20 matches that start a row, reading `rows` rows of text from each,
-    /// over a bounded number of `FindText` calls.
-    /// For a command mark above the rows Core keeps ("Features and
-    /// settings"). A failing search in one direction finds nothing more
-    /// there. Answered [`TextReply::TerminalFound`].
-    TerminalFind {
-        /// The text sought.
-        needle: String,
-        /// The row the search starts at, in rows above the start.
-        from: i32,
-        /// How many rows to read from each match.
-        rows: u32,
-        /// The start anchor the rows are counted from, which Core names.
-        start: TextAnchor,
-    },
-}
-
-/// An outpost's answer to a text request.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum TextReply {
-    /// The answer to [`TextOp::TerminalFind`].
-    TerminalFound {
-        /// The matches, alternately below and above the row sought from,
-        /// nearest first in each direction.
-        matches: Vec<crate::TerminalMatch>,
-    },
-    /// The node has no text interface at all. Core falls back to the node's
-    /// value or name, as NVDA's object review does.
+/// Why a text read gave no text: the three answers a reader gives in
+/// place of what was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFailure {
+    /// The node has no text interface at all, so no caret and no
+    /// selection. Core falls back to the node's value or name, as NVDA's
+    /// object review does.
     NoText,
     /// The node no longer exists.
     Gone,
     /// The application did not answer in time, or the read failed.
     Unanswered,
-}
-
-/// The answers an outpost can give any text request in place of its op's
-/// own reply: the variants of [`TextReply`] that no op names as its own.
-/// Core parses every text request's result into either the op's own reply
-/// or one of these, so no answer a correct outpost gives fails to decode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TextFailure {
-    /// [`TextReply::NoText`]: the node has no text, so no caret and no
-    /// selection.
-    NoText,
-    /// [`TextReply::Gone`].
-    Gone,
-    /// [`TextReply::Unanswered`].
-    Unanswered,
-}
-
-impl TextReply {
-    /// The failure this reply is, or the reply itself when it is an op's
-    /// own reply.
-    ///
-    /// # Errors
-    ///
-    /// The reply itself, when it is no failure.
-    pub fn into_failure(self) -> Result<TextFailure, Self> {
-        match self {
-            TextReply::NoText => Ok(TextFailure::NoText),
-            TextReply::Gone => Ok(TextFailure::Gone),
-            TextReply::Unanswered => Ok(TextFailure::Unanswered),
-            own @ TextReply::TerminalFound { .. } => Err(own),
-        }
-    }
 }
 
 /// What a caret key does, as Core's caret handling knows it: the motion

@@ -836,9 +836,8 @@ anchors are (Table 16 of
   and its executor refuses the move as no such unit.
 - `Visible`, `Move`, `FindText` and `ReadColours`, and a whole or
   trimmed `ReadText` and a trimmed `ReadRange`, the steps Core's terminal
-  reader reads a terminal by (`verbatim_core::terminal::reader`), all but
-  `FindText`, which only tests send
-  (`crates/mockapp/tests/common/window_steps.rs`), run in the UI Automation executor
+  reader reads and searches a terminal by
+  (`verbatim_core::terminal::reader`), run in the UI Automation executor
   as every text step does (`text::fused`): `Visible`'s ends and a move's
   start and landing held as anchors, a trimmed text made by
   `text::trim::unpadded_utf16` with each line's padded length, a search's
@@ -855,8 +854,6 @@ anchors are (Table 16 of
   (`docs/design/readers-tell-core-asks-build1.md`, "The watch" and Table
   15). The starting texts the effect test compares come with the wait,
   from Core.
-- A terminal's command search (`Question::Terminal`) is the terminal's
-  own, under "Terminals" below.
 
 - A UIA node has text when its element has a text pattern, fetched once and kept with the node. `NoText` is kept only
   until the node is next the focus or raises a caret or text event
@@ -942,7 +939,7 @@ shown root and two for a hidden one.
 
 Each `CoreToOutpost::Request` is one program on the worker
 (`outpost/asked.rs`), answered once with one of the five outcomes: a
-batch (`outpost/batch.rs`), or a terminal's command search. A window with no verdict in force in Core is probed first,
+batch (`outpost/batch.rs`). A window with no verdict in force in Core is probed first,
 once per batch, and the probe carried in the answer. Each node read
 carries its nearest window's facts (`NodeWindow`, read from Windows with
 no call into the application) and its properties by the step's set.
@@ -968,16 +965,10 @@ the UI Automation executor's (Dickson, 2026-11-22): the terminals answer a
 stretch whose last cell differs as one colour, and their format unit
 stops only at rows, so no read of formatting gives a row's colours.
 
-The terminal's command search is the one remaining temporary exception
-to "an operation is implemented only inside its backend's executor"
-(Dickson, 2026-11-26): `Question::Terminal`'s one `TextOp`,
-`TerminalFind`, runs in the outpost's `terminal` module over
-`verbatim_uia_rops`' `terminal_find`, beside the executors, and is
-answered as `Reply::Text` ("Terminals", below). The command marks'
-journal replaces it with one-way `FindText` and deletes it. A terminal's
-full read and its history read are batches of the generic operations
-(`Visible`, `Move`, `ReadColours`, a trimmed read and a condition
-comparing two points), written by Core's terminal reader
+A terminal's full read, its history read and its command search are
+batches of the generic operations (`Visible`, `Move`, `FindText`,
+`ReadColours`, a trimmed read and a condition comparing two points),
+written by Core's terminal reader
 (`verbatim_core::terminal::reader`) and run by the executors like any
 batch.
 
@@ -1309,8 +1300,7 @@ The outpost reads a focused terminal as Core asks, by the batches Core's
 terminal reader writes, and Core's terminal model aligns each read and
 applies the reading rules (`books/dev/src/explanation/design/terminal-model.md`,
 "Where it runs"; [verbatim-core](verbatim-core.md), "Core's terminal
-model"); the `terminal` module holds only the command search. The
-outpost judges nothing a read says and keeps nothing of a
+model"). The outpost judges nothing a read says and keeps nothing of a
 terminal between reads but the start anchors Core names, held as text
 anchors until `NodesHeld` lets them go. A UIA element of class `TermControl` (Windows
 Terminal) or `WPFTermControl` (Visual Studio), or a focus in a
@@ -1348,20 +1338,18 @@ provider gives no handle for the window, which the classic walk finds.
   worker waits for the move (`Registration::settle`) before the first
   read. The console host's console events are hooked when `Follow` first
   names it ("The console host's events", above).
-- History: Core's history read is a batch too (the reader's
-  `history_batch`). The command search, `TextOp::TerminalFind`
-  (`text_reads::terminal_find`, through `terminal::find` and
-  `verbatim_uia_rops::terminal_find`, classic fallback behind it), finds
-  a command mark's line from the start anchor Core names, answered
-  `TextReply::TerminalFound`, and Core picks the match. A start anchor
-  released while a request names it is held until the answer; one that
-  no longer exists ends the request as the anchor lost.
+- History and the command search: Core's history read and its search for
+  a command mark's line are batches too (the reader's `history_batch` and
+  `search_batch`), counted from the start anchor Core names, and Core
+  picks the match. A start anchor released while a request names it is
+  held until the answer; one that no longer exists ends the request as
+  the anchor lost.
 - The listener ignores every UIA notification from a terminal
   (`verbatim_uia::map::ignores_notifications`), as NVDA's terminal overlays
   do, or output would be spoken twice.
 - Tests: `text/trim/tests.rs` checks the one-pass conversion
   (`text::trim::unpadded_utf16`) over `verbatim-term-sim`, and
-  `terminal/tests.rs` holds its measurement (`measure_conversion`,
+  `conversion_measure.rs` holds its measurement (`measure_conversion`,
   ignored); mockapp's `terminal`, `terminal_reading` and
   `terminal_reader` tests drive a real outpost through its request
   driver.

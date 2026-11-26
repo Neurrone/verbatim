@@ -27,8 +27,9 @@
 //!   of its two foreground reports one input as Core takes them, where the console raised its terminal's focus again before
 //!   Core handled the first, and Verbatim said "terminal" twice. Its two
 //!   answers to the terminal's read, replies of an operation since
-//!   deleted, are each the text reply "unanswered", which Core takes as
-//!   it took them: no answer to the batch it now sends.
+//!   deleted, are each a batch's answer with no steps, which fits no
+//!   batch, so Core takes them as it took those replies: no answer to the
+//!   batch it now sends.
 //! - `measure_focus_text_box_uia_focuses.jsonl`: the listener's start and
 //!   its 46 UI Automation focus tells of `measure_focus_text_box`'s dump of
 //!   2026-11-18, at commit ce3305a1: two Windows Forms text boxes, each
@@ -224,7 +225,6 @@ fn replay(name: &str) -> Replayed {
                                 _ => None,
                             }
                         }
-                        verbatim_model::request::Question::Terminal(_) => None,
                     };
                     if let Some((token, keep)) = kept {
                         listener.pending.push((

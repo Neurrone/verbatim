@@ -7,9 +7,6 @@
 //! outcomes ([`Outcome`]). One request list is shared by Core's own
 //! features and the extension surface: a batch of operations from one
 //! closed list ([`crate::batch`]). A new command adds no kind of request.
-//! The terminal's command search is carried beside it until the command
-//! marks' journal replaces it ([`Question::Terminal`]; Dickson,
-//! 2026-11-26).
 
 use std::fmt;
 
@@ -17,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::batch::{Batch, Malformed, Placement, StepOutcome};
 use crate::property::{PropertyId, PropertyValue, PropertyValues, RuntimeId};
-use crate::{CaretReport, NodeId, Pid, TextAnchor, TextOp, TextReply, WindowHandle};
+use crate::{CaretReport, NodeId, Pid, TextAnchor, WindowHandle};
 
 /// A reader Core asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -74,24 +71,11 @@ pub struct Ask {
     pub request: Question,
 }
 
-/// What a request asks: a batch, or the terminal's command search, the
-/// one operation outside the request list, which the command marks'
-/// journal replaces.
+/// What a request asks: a batch of operations from the request list.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Question {
     /// A batch of operations.
     Batch(Batch),
-    /// A search of a terminal's text.
-    Terminal(TerminalAsk),
-}
-
-/// The terminal's text operation on its node.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalAsk {
-    /// The terminal's node.
-    pub node: NodeId,
-    /// What to search for.
-    pub op: TextOp,
 }
 
 impl From<Batch> for Question {
@@ -101,15 +85,6 @@ impl From<Batch> for Question {
 }
 
 impl Question {
-    /// The terminal's operation it is, `None` for a batch.
-    #[must_use]
-    pub const fn terminal(&self) -> Option<&TerminalAsk> {
-        match self {
-            Self::Terminal(ask) => Some(ask),
-            Self::Batch(_) => None,
-        }
-    }
-
     /// Whether Core asks it from outside the event queue
     /// ([`Placement::Outside`]): a batch placed there, such as a
     /// terminal's read for its output
@@ -117,10 +92,8 @@ impl Question {
     /// worker makes after every request of the queue's waiting with it.
     #[must_use]
     pub fn outside_the_queue(&self) -> bool {
-        match self {
-            Self::Batch(batch) => batch.placement == Placement::Outside,
-            Self::Terminal(_) => false,
-        }
+        let Self::Batch(batch) = self;
+        batch.placement == Placement::Outside
     }
 }
 
@@ -484,8 +457,6 @@ pub struct FocusCaretRead {
 /// A result: the first of the five outcomes, by request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reply {
-    /// A terminal's text operation's reply.
-    Text(TextReply),
     /// A batch's: one outcome per step, in order.
     Steps(Vec<StepOutcome>),
 }
@@ -556,10 +527,8 @@ impl Ask {
         fn unstamp(node: &mut NodeId) {
             *node = node.unstamped();
         }
-        match &mut self.request {
-            Question::Batch(batch) => batch.visit_nodes(&mut unstamp),
-            Question::Terminal(ask) => unstamp(&mut ask.node),
-        }
+        let Question::Batch(batch) = &mut self.request;
+        batch.visit_nodes(&mut unstamp);
     }
 }
 

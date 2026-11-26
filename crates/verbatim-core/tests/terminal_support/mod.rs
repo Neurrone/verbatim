@@ -39,12 +39,12 @@ use verbatim_model::property::{
 use verbatim_model::request::{
     Answer, Ask, CaretBinding, FocusCaret, FocusNode, FocusRead, ForegroundReport, Instance,
     NodeRead, NodeWindow, Outcome, Press, PressAction, QueueEffect, QueueInput, Reader, Refusal,
-    Reply, TerminalAsk,
+    Reply,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     CaretKey, Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent,
-    SpeechMark, TextAnchor, TextOp, TextReply, TraceId, WindowHandle,
+    SpeechMark, TextAnchor, TraceId, WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Position, Query, Range, Terminal};
 use verbatim_text::terminal_rows::{Read, ReadText};
@@ -232,26 +232,21 @@ impl Outpost {
         (snapshot.text, snapshot.above)
     }
 
-    /// The search the outpost's find program makes
-    /// (`verbatim_uia_rops::terminal_find`): the rows starting with
-    /// `needle`, outward from the row `from` rows above the start `start`,
-    /// alternately the next at or below it and the next above it, at most
-    /// 20, each with `rows` rows of text read from it.
-    pub fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
-        self.find_from(self.range(Some(start)), needle, (from, rows))
-    }
-
-    /// [`Outpost::find`], from the range the start Core named holds.
-    pub fn find_from(
+    /// The simulated terminal's rows starting with `needle`, outward from
+    /// the row `from` rows above `start`, alternately the next at or below
+    /// it and the next above it, at most 20, each with `rows` rows of text
+    /// read from it: the reference a command search is compared with.
+    #[allow(dead_code, reason = "used by some of the test binaries alone")]
+    pub fn rows_starting_with(
         &self,
-        start: Option<Range>,
+        start: Range,
         needle: &str,
         (from, rows): (i32, u32),
-    ) -> TextReply {
+    ) -> Vec<verbatim_model::TerminalMatch> {
         // The document from its start, and how many rows lie above the
         // start, read by moving that far up from it.
         let query = Query {
-            start,
+            start: Some(start),
             screen_rows: 0,
             whole: false,
             above: u32::MAX / 2,
@@ -293,15 +288,13 @@ impl Outpost {
             taken.push(row);
             going_down = !going_down;
         }
-        TextReply::TerminalFound {
-            matches: taken
-                .into_iter()
-                .map(|row| verbatim_model::TerminalMatch {
-                    above: i32::try_from(start - at(&row)).expect("rows"),
-                    text: text_of(row),
-                })
-                .collect(),
-        }
+        taken
+            .into_iter()
+            .map(|row| verbatim_model::TerminalMatch {
+                above: i32::try_from(start - at(&row)).expect("rows"),
+                text: text_of(row),
+            })
+            .collect()
     }
 
     /// The screen's colours as the read program gives them.
@@ -736,76 +729,50 @@ impl Session {
                         front: verbatim_model::request::Front::Hung,
                     }
                 }
-                _ => QueueInput::RefusedHung(ask.number),
+                verbatim_model::request::Question::Batch(_) => QueueInput::RefusedHung(ask.number),
             };
             let input = self.queued_input(TraceId::from_raw(2), refused);
             let effects = self.step(input);
             self.take(effects, None);
             return;
         }
-        if let verbatim_model::request::Question::Batch(batch) = &ask.request {
-            // A key's wait sees its effect at once: the terminal's full
-            // read follows it.
-            if let Some(verbatim_model::batch::Op::WaitForCaret { .. }) =
-                batch.steps.first().map(|step| &step.op)
-            {
-                let waited = verbatim_model::batch::StepOutcome::Done(
-                    verbatim_model::batch::Done::WaitForCaret(
-                        verbatim_model::batch::Waited::Effect,
-                    ),
-                );
-                self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
-                return;
-            }
-            // A batch Core's terminal reader wrote: held back when the
-            // test holds its kind of read, and else answered.
-            if let Some(read) = reader::asked(batch) {
-                match read {
-                    reader::Asked::Window(window)
-                        if self.hold_whole && matches!(window.read, WindowRead::Whole { .. }) =>
-                    {
-                        self.held = Some((ask, read));
-                    }
-                    reader::Asked::Window(window) if self.hold_output && window.output => {
-                        self.held_output.push_back((ask, read));
-                    }
-                    reader::Asked::Search(_) => self.answer_search(&ask),
-                    read => self.answer_read(&ask, &read),
-                }
-                return;
-            }
-            // Another batch of generic text steps, step by step.
-            if steps::answers(batch) {
-                let outcomes = self.outpost.run(batch);
-                self.reply(&ask, Outcome::Result(Reply::Steps(outcomes)));
-                return;
-            }
-            let found = Found::Read(focus_read(self.depth, self.console));
-            let outcome = readers::outcome(batch, &found);
-            self.reply(&ask, outcome);
+        let verbatim_model::request::Question::Batch(batch) = &ask.request;
+        // A key's wait sees its effect at once: the terminal's full
+        // read follows it.
+        if let Some(verbatim_model::batch::Op::WaitForCaret { .. }) =
+            batch.steps.first().map(|step| &step.op)
+        {
+            let waited = verbatim_model::batch::StepOutcome::Done(
+                verbatim_model::batch::Done::WaitForCaret(verbatim_model::batch::Waited::Effect),
+            );
+            self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
             return;
         }
-        let TerminalAsk { op, .. } = terminal(&ask.request);
-        let TextOp::TerminalFind {
-            needle,
-            from,
-            rows,
-            start,
-        } = op;
-        if let Some((output, at_ms)) = self.output_before_finds.pop_front() {
-            self.write(&output, at_ms);
+        // A batch Core's terminal reader wrote: held back when the
+        // test holds its kind of read, and else answered.
+        if let Some(read) = reader::asked(batch) {
+            match read {
+                reader::Asked::Window(window)
+                    if self.hold_whole && matches!(window.read, WindowRead::Whole { .. }) =>
+                {
+                    self.held = Some((ask, read));
+                }
+                reader::Asked::Window(window) if self.hold_output && window.output => {
+                    self.held_output.push_back((ask, read));
+                }
+                reader::Asked::Search(_) => self.answer_search(&ask),
+                read => self.answer_read(&ask, &read),
+            }
+            return;
         }
-        let outcome = if self.unanswered_finds {
-            Outcome::Refused(Refusal::Unsupported)
-        } else {
-            // The start Core names is one a read's steps held.
-            let start = self.outpost.held(*start).map(Range::at);
-            Outcome::Result(Reply::Text(self.outpost.find_from(
-                start,
-                needle,
-                (*from, *rows),
-            )))
-        };
+        // Another batch of generic text steps, step by step.
+        if steps::answers(batch) {
+            let outcomes = self.outpost.run(batch);
+            self.reply(&ask, Outcome::Result(Reply::Steps(outcomes)));
+            return;
+        }
+        let found = Found::Read(focus_read(self.depth, self.console));
+        let outcome = readers::outcome(batch, &found);
         self.reply(&ask, outcome);
     }
 
@@ -961,10 +928,6 @@ impl Session {
                 Some(reader::Asked::Search(search)) => Asked::Search(search.needle().to_owned()),
                 None => return,
             },
-            verbatim_model::request::Question::Terminal(TerminalAsk {
-                op: TextOp::TerminalFind { needle, .. },
-                ..
-            }) => Asked::Search(needle.clone()),
         };
         self.requests.push(asked);
     }
@@ -1118,9 +1081,7 @@ impl Session {
         let effects = self.step(input);
         self.take(effects, None);
         let ask = self.pending.pop_front().expect("the read after the return");
-        let verbatim_model::request::Question::Batch(batch) = &ask.request else {
-            panic!("the read after the return: {ask:?}");
-        };
+        let verbatim_model::request::Question::Batch(batch) = &ask.request;
         assert!(
             batch.reads_focus_first(),
             "the read after the return: {ask:?}"
@@ -1150,16 +1111,5 @@ impl Session {
 fn batch_of(ask: &Ask) -> &Batch {
     match &ask.request {
         verbatim_model::request::Question::Batch(batch) => batch,
-        other @ verbatim_model::request::Question::Terminal(_) => {
-            panic!("a batch, not {other:?}")
-        }
     }
-}
-
-/// `question` as a terminal's text operation: these tests state the
-/// terminal's requests, and a batch is answered before it.
-fn terminal(question: &verbatim_model::request::Question) -> &TerminalAsk {
-    question
-        .terminal()
-        .expect("a terminal's text operation, where a batch was asked")
 }

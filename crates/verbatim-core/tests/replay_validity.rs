@@ -60,7 +60,7 @@ fn text_answer(desk: &mut Desk, at_us: u64, facts: &Facts) {
             verbatim_model::request::Question::Batch(batch) if *asked == number => {
                 Some(batch.clone())
             }
-            _ => None,
+            verbatim_model::request::Question::Batch(_) => None,
         })
         .expect("the text batch out");
     answer_at(

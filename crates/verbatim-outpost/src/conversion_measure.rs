@@ -120,7 +120,7 @@ fn answer(
 /// it in the answer the outpost sends Core, before and after the conversion
 /// in one pass, and the time Core takes to parse that
 /// answer's frame: run with `cargo test --release -p verbatim-outpost --lib
-/// terminal::tests::measure_conversion -- --ignored --nocapture
+/// conversion_measure::measure_conversion -- --ignored --nocapture
 /// --test-threads=1`. A whole document of a full history (9,031 rows and
 /// a screen of 30) in Latin and in Cyrillic text, an ordinary read (two
 /// screens), and an ordinary read with its screen's colours at their most

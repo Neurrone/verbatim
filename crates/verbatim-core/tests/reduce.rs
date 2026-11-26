@@ -544,7 +544,7 @@ impl Recorded {
                 verbatim_model::request::Question::Batch(batch) if *asked == number => {
                     Some(batch.clone())
                 }
-                _ => None,
+                verbatim_model::request::Question::Batch(_) => None,
             })
             .expect("a batch asked");
         self.feed(QueueInput::Answer {
@@ -1036,7 +1036,7 @@ fn raw_found(desk: &mut Desk, to: Instance, number: u64, found: &Found) -> Vec<E
             verbatim_model::request::Question::Batch(batch) if *asked == number => {
                 Some(batch.clone())
             }
-            _ => None,
+            verbatim_model::request::Question::Batch(_) => None,
         })
         .expect("a batch asked");
     desk.at_us += 1_000;
@@ -2332,7 +2332,6 @@ fn a_uia_group_and_an_msaa_group_of_one_window_are_two_entries() {
                 _ => None,
             })
             .expect("a full read"),
-        verbatim_model::request::Question::Terminal(other) => panic!("a batch: {other:?}"),
     };
     let met = known
         .iter()
@@ -2711,19 +2710,15 @@ fn review(
         let Some((_, _, request)) = one_sent(desk) else {
             return heard;
         };
-        let reply = match request {
-            "Properties" => {
-                heard = desk.reply_object(verbatim_model::request::NodeRead {
-                    node: None,
-                    window: ONE.node_window(),
-                    values: desk::values_of(navigator),
-                });
-                continue;
-            }
-            "Text" => Reply::Text(verbatim_model::TextReply::NoText),
-            other => panic!("a review read these tests do not answer: {other}"),
-        };
-        heard = desk.reply(reply);
+        assert_eq!(
+            request, "Properties",
+            "a review read these tests do not answer"
+        );
+        heard = desk.reply_object(verbatim_model::request::NodeRead {
+            node: None,
+            window: ONE.node_window(),
+            values: desk::values_of(navigator),
+        });
     }
 }
 

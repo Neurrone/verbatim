@@ -438,7 +438,6 @@ pub(crate) fn uia_focus_read(
 pub(crate) fn kind(ask: &Ask) -> &'static str {
     match &ask.request {
         Question::Batch(batch) => batch_kind(batch),
-        Question::Terminal(_) => "other",
     }
 }
 
@@ -766,7 +765,6 @@ fn sent_completion(
                     } => Some((*route, known)),
                     _ => None,
                 }),
-                Question::Terminal(_) => None,
             },
             _ => None,
         })

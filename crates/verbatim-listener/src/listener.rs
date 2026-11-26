@@ -757,12 +757,9 @@ fn ask((readers, kept): (&Readers<UiaReading>, &Kept), ask: Box<Ask>) {
     };
     // A request is routed by the object it reads, a batch's first step's
     // subject, which every later step's kept element shares
-    // (`asked::batch_object`); a terminal's text operation is the
-    // outpost's.
-    let object = match &ask.request {
-        Question::Batch(batch) => asked::batch_object(batch),
-        Question::Terminal(_) => None,
-    };
+    // (`asked::batch_object`).
+    let Question::Batch(batch) = &ask.request;
+    let object = asked::batch_object(batch);
     let Some(object) = object else {
         answer(Outcome::Refused(Refusal::Unsupported));
         return;

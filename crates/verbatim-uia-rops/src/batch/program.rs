@@ -2103,8 +2103,8 @@ impl Emit<'_> {
     /// imported at `text`: false when its search fails, answers null, or
     /// answers what the search for [`ABSENT`] answers. The search is made
     /// by the first `FindText` of the program that seeks this needle in
-    /// this text, and its answer shared by the rest, as the old search
-    /// sought it once for both ways.
+    /// this text, and its answer shared by the rest, so that a search
+    /// made each way seeks it once.
     fn somewhere(
         &self,
         b: &mut Builder,

@@ -31,10 +31,9 @@ use windows::Win32::UI::Accessibility::IUIAutomationTextPattern;
 use windows::core::AgileReference;
 
 use verbatim_model::request::{FocusCaret, FocusCaretRead};
-use verbatim_model::{NodeId, Role, TextDetails, TextReply};
+use verbatim_model::{NodeId, Role, TextDetails, TextFailure};
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Interning as _, Kept};
-use verbatim_uia_rops::Path;
 
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{self, NodeTextCopy, Slot, TextError};
@@ -255,12 +254,12 @@ fn uia_source(
     context: &RequestContext<'_>,
     node_id: NodeId,
     details: TextDetails,
-) -> Result<UiaText, TextReply> {
+) -> Result<UiaText, TextFailure> {
     let element = context
         .store
         .element_of(node_id)
         .and_then(|agile| agile.resolve().ok())
-        .ok_or(TextReply::Gone)?;
+        .ok_or(TextFailure::Gone)?;
     let kept = patterns_of(context, node_id);
     let found = if let Some(found) = kept {
         found
@@ -269,7 +268,7 @@ fn uia_source(
             let fetched = match verbatim_uia::text::text_pattern(element.live().element()) {
                 Ok(text_pattern) => AgileReference::new(&text_pattern).ok(),
                 Err(error) if verbatim_uia::element_is_gone(&error) => {
-                    return Err(TextReply::Gone);
+                    return Err(TextFailure::Gone);
                 }
                 // An answer with no pattern: the element has none.
                 Err(error) if error.code().is_ok() => None,
@@ -278,7 +277,7 @@ fn uia_source(
                 // next read fetches again.
                 Err(error) => {
                     tracing::debug!(%error, "the text pattern could not be fetched");
-                    return Err(TextReply::Unanswered);
+                    return Err(TextFailure::Unanswered);
                 }
             };
             // Kept for the program's next commit to write: what it replaces
@@ -292,9 +291,9 @@ fn uia_source(
         }
     };
     let Some(text_pattern) = found else {
-        return Err(TextReply::NoText);
+        return Err(TextFailure::NoText);
     };
-    let text_pattern = text_pattern.resolve().map_err(|_| TextReply::Gone)?;
+    let text_pattern = text_pattern.resolve().map_err(|_| TextFailure::Gone)?;
     let class = element.read().class_name;
     let terminal = is_terminal_class(class.as_deref())
         || super::followed::terminal(context).is_some_and(|(followed, _)| followed == node_id);
@@ -450,7 +449,7 @@ fn on_uia_text<T>(
     node_id: NodeId,
     (details, named): (TextDetails, &[u64]),
     read: impl FnOnce(&mut UiaText, &mut text::NodeText<'_, UiaPos>) -> T,
-) -> Result<T, TextReply> {
+) -> Result<T, TextFailure> {
     let mut source = uia_source(context, node_id, details)?;
     let mut call = uia_call(context, node_id, named);
     let read = read(&mut source, &mut call.text());
@@ -486,17 +485,6 @@ impl verbatim_ia2::text::TextResolve for EditFacts<'_, '_> {
     }
 }
 
-/// The reply a text read that failed answers.
-fn failed_reply(error: TextError) -> TextReply {
-    match error {
-        TextError::Gone => TextReply::Gone,
-        TextError::Failed(reason) => {
-            tracing::debug!(reason, "a text request was not answered");
-            TextReply::Unanswered
-        }
-    }
-}
-
 /// A run of a batch's fusable text steps on UI Automation node `node_id`
 /// through the program builder ([`text::fused::run`]), `first` being the
 /// place of its first step and `earlier` the outcomes of the steps before
@@ -513,7 +501,7 @@ pub(super) fn fused_steps(
         usize,
         &[verbatim_model::batch::StepOutcome],
     ),
-) -> Result<Vec<verbatim_model::batch::StepOutcome>, TextReply> {
+) -> Result<Vec<verbatim_model::batch::StepOutcome>, TextFailure> {
     for step in steps {
         if let verbatim_model::batch::Op::Caret {
             adopt: Some(adopt), ..
@@ -628,10 +616,10 @@ pub(super) fn watch(
 /// read as one that did not move (`editableText.py` 121 to 127); else the
 /// check's end, if it ended the wait.
 fn watch_outcome(
-    ran: Result<crate::text::TextResult<Option<verbatim_model::batch::Waited>>, TextReply>,
+    ran: Result<crate::text::TextResult<Option<verbatim_model::batch::Waited>>, TextFailure>,
 ) -> Option<WaitEnded> {
     match ran {
-        Err(TextReply::Gone) | Ok(Err(TextError::Gone)) => Some(WaitEnded::NotThere),
+        Err(TextFailure::Gone) | Ok(Err(TextError::Gone)) => Some(WaitEnded::NotThere),
         Err(reply) => {
             tracing::debug!(?reply, "a wait's text could not be opened");
             None
@@ -650,7 +638,7 @@ pub(super) fn uia_text(
     context: &RequestContext<'_>,
     node_id: NodeId,
     details: TextDetails,
-) -> Result<UiaText, TextReply> {
+) -> Result<UiaText, TextFailure> {
     uia_source(context, node_id, details)
 }
 
@@ -682,70 +670,13 @@ pub(super) fn focus_caret(
             },
         );
     match read {
-        Err(TextReply::NoText) => FocusCaret::NoText,
+        Err(TextFailure::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,
         Ok(Ok((caret, selected, baseline))) => FocusCaret::Read(Box::new(FocusCaretRead {
             caret,
             selected_text: selected.map(|selected| selected.text),
             baseline,
         })),
-    }
-}
-
-/// The range a start anchor Core named holds in `call`, `Err` with the reply
-/// a start no longer held answers: the anchor was forgotten with its
-/// window (Table 16, column E), so the terminal is not there.
-fn named_start(
-    call: &mut TextCall<UiaPos, RangeKey>,
-    start: verbatim_model::TextAnchor,
-) -> Result<windows::Win32::UI::Accessibility::IUIAutomationTextRange, TextReply> {
-    let pos = call.text().anchor_point(start).ok_or(TextReply::Gone)?;
-    pos.range_end()
-        .map(|(range, _)| range)
-        .map_err(failed_reply)
-}
-
-/// Searches terminal `node_id` for a command mark's line from the start
-/// anchor Core names, for Core's command
-/// ([`verbatim_model::TextOp::TerminalFind`]).
-pub(super) fn terminal_find(
-    context: &RequestContext<'_>,
-    uia: &verbatim_uia::Uia,
-    node_id: NodeId,
-    start: verbatim_model::TextAnchor,
-    (needle, from, rows): (&str, i32, u32),
-) -> TextReply {
-    let source = match uia_source(context, node_id, TextDetails::NONE) {
-        Ok(source) => source,
-        Err(reply) => return reply,
-    };
-    let mut call = uia_call(context, node_id, &[start.0]);
-    let start = match named_start(&mut call, start) {
-        Ok(range) => range,
-        Err(reply) => return reply,
-    };
-    let window = super::asked::known_nearest_of(context, node_id);
-    let remote = context.tries_remote(window);
-    match crate::terminal::find(
-        uia,
-        (source.element(), source.pattern()),
-        &start,
-        (needle, from, rows),
-        remote,
-    ) {
-        Ok(found) => {
-            if let Path::Fallback(error) = &found.path {
-                super::remote_fell_back("terminal find", window, error);
-            }
-            TextReply::TerminalFound {
-                matches: found.matches,
-            }
-        }
-        Err(TextError::Gone) => TextReply::Gone,
-        Err(TextError::Failed(reason)) => {
-            tracing::debug!(reason, "a terminal could not be searched");
-            TextReply::Unanswered
-        }
     }
 }
 
@@ -758,15 +689,15 @@ mod watch_tests {
     /// point gone ends it as not there.
     #[test]
     fn a_watch_read_that_fails_is_no_effect_and_only_a_gone_node_is_not_there() {
-        for failed in [TextReply::Unanswered, TextReply::NoText] {
-            assert_eq!(watch_outcome(Err(failed.clone())), None, "{failed:?}");
+        for failed in [TextFailure::Unanswered, TextFailure::NoText] {
+            assert_eq!(watch_outcome(Err(failed)), None, "{failed:?}");
         }
         assert_eq!(
             watch_outcome(Ok(Err(TextError::Failed("busy".to_owned())))),
             None
         );
         assert_eq!(
-            watch_outcome(Err(TextReply::Gone)),
+            watch_outcome(Err(TextFailure::Gone)),
             Some(WaitEnded::NotThere)
         );
         assert_eq!(

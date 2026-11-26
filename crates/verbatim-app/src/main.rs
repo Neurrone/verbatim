@@ -1737,7 +1737,6 @@ impl ReducerThread<'_> {
             // what is in front, which Core judges; every other request is
             // answered "not responding".
             let in_front = match &ask.request {
-                verbatim_model::request::Question::Terminal(_) => false,
                 verbatim_model::request::Question::Batch(batch) => batch.reads_focus_first(),
             };
             let refused = if in_front {

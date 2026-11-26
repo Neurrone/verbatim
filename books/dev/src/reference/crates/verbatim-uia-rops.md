@@ -23,9 +23,8 @@ for the fallback rule, which is per operation. The reads that are not
 operations of the list keep a remote program and a classic
 implementation of the same signature behind one entry point that
 chooses between them and answers with a `Path`: the focus ancestry, an
-element found by its path, a focus's states after its registration, and
-a terminal's command search, the terminal's old operation kept until
-Core sends the search as a batch (Dickson, 2026-11-26). Every UIA
+element found by its path, and a focus's states after its registration.
+Every UIA
 path in the outpost that makes a sequence of calls to the application
 runs through one or the other; "Where remote operations are not used"
 lists the rest.
@@ -500,29 +499,6 @@ Every program here that fills a cache builds its requests from the
 `Fill`'s properties and patterns (`RemoteCache`), and the classic
 fallbacks fill with its request, so both come from one shape.
 
-## Layer 3: a command mark's line
-
-`terminal_find(uia, query, remote)` looks for a command mark's line by its
-first row's text (`FindQuery`): outward from the row `from` rows above
-where the next read starts, alternately the next match at or below it and
-the next above it, at most `FIND_MATCHES` (20) matches that start a row
-over at most `FIND_CALLS` (100) `FindText` calls, so that a needle found
-mostly within rows ends rather than walking the whole history
-(`books/dev/src/reference/performance.md`, "A terminal's upward search"). Each match that
-starts a row gives a `FindMatch`: its rows above that start, and the text
-of `rows` rows from it, for the caller to check by its line's hash. A
-failing call means nothing more is found in that direction. The program
-is built for each search, about 30 instructions a `FindText` call.
-Windows Terminal answers a search that finds nothing with a range on
-which some calls fail with `RPC_E_SERVERFAULT`, which ends a remote
-operation whatever try block holds the call, so the program makes none
-of those calls: it first searches the whole document and compares the hit
-with the range a search for text no terminal holds answers, ending with
-nothing found when they are equal, and compares each later hit with the
-span searched before calling it, which fails, closing that direction,
-when the hit is the not-found range (`terminal_find.rs`'s module
-documentation).
-
 ## The generic text operations added for a terminal
 
 Core's terminal reader reads a terminal's window by the list's generic
@@ -936,8 +912,7 @@ shape, a shape's program bound again, absent properties),
 `remote_ops.rs` (the focus ancestry, a navigation step, cached
 properties, a stalled and an exited provider), `call_counts.rs` (the
 calls of each read), `text.rs` (the caret read and the text steps),
-`watch_checks.rs` (a wait's polls), `terminal.rs` (the terminal's command
-search), `terminal_reader.rs` (the batches of Core's terminal reader
+`watch_checks.rs` (a wait's polls), `terminal_reader.rs` (the batches of Core's terminal reader
 through a real outpost),
 `terminal_window.rs` and `find_text.rs` (the generic text operations
 both ways: a window's steps, its marks, a wrapped line's rows and

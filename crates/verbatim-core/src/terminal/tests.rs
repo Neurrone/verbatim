@@ -585,9 +585,6 @@ fn failed(
     move |ask| {
         let steps = match &ask.request {
             verbatim_model::request::Question::Batch(batch) => batch.steps.len(),
-            other @ verbatim_model::request::Question::Terminal(_) => {
-                panic!("a batch, not {other:?}")
-            }
         };
         (
             verbatim_model::request::Reply::Steps(vec![failure.clone(); steps]),
@@ -603,9 +600,6 @@ fn full_read_of(ask: &verbatim_model::request::Ask) -> WindowAsk {
             Some(super::reader::Asked::Window(ask)) => ask,
             other => panic!("a full read of the terminal, not {other:?}: {batch:?}"),
         },
-        other @ verbatim_model::request::Question::Terminal(_) => {
-            panic!("a full read of the terminal, not {other:?}")
-        }
     }
 }
 

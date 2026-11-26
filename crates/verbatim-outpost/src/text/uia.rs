@@ -285,20 +285,6 @@ impl UiaText {
         std::mem::take(&mut self.read_classically)
     }
 
-    /// The element with the text, for reads outside the text protocol (a
-    /// terminal's new output, `crate::terminal`).
-    #[must_use]
-    pub fn element(&self) -> &IUIAutomationElement {
-        &self.element
-    }
-
-    /// The text pattern, for reads outside the text protocol (a terminal's
-    /// command search, `crate::terminal`).
-    #[must_use]
-    pub fn pattern(&self) -> &IUIAutomationTextPattern {
-        &self.pattern
-    }
-
     /// What reads fetch beyond the text, as the request names it.
     #[must_use]
     pub fn details_read(&self) -> TextDetails {

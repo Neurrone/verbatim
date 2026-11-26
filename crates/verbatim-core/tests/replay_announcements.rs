@@ -331,9 +331,6 @@ fn win32_apply(desk: &mut Desk) {
                     read_only_window,
                 )),
             ),
-            Question::Terminal(other) => {
-                panic!("a request the session does not answer: {other:?}")
-            }
         }),
     };
     let first = events[0].t_us;

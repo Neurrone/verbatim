@@ -11,16 +11,14 @@
 //! followed, each text change mockapp raises is told to Core, and Core
 //! reads the terminal when it chooses
 //! (`docs/design/readers-tell-core-asks-build3.md`), so a test asserts
-//! what Core says. The search tests run the search's program and its
-//! classic implementation (`verbatim-uia-rops`'s `terminal_find`) on this
-//! thread, from the top of the screen.
+//! what Core says.
 //!
 //! What is checked: Core says the new output a read shows, line by line,
 //! and the read costs one call remotely; a terminal's typing is echoed
 //! character by character and Backspace says what it deleted, the keys
 //! reaching the rules through Core; "Report status bar" reads the rows
 //! below the caret after a fresh read; and a command's line, marked when it
-//! was entered, is found by the outpost's search, and the history read
+//! was entered, is found by Core's search batch, and the history read
 //! counted from the start Core names, while output scrolls.
 
 mod common;
@@ -33,12 +31,9 @@ use std::rc::Rc;
 use verbatim_core::terminal::reader;
 use verbatim_model::request::Question;
 use verbatim_model::{CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent};
-use verbatim_outpost::text::uia::UiaText;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
-use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
 
 use common::core_driver::{CoreDriver, CoreTime, Utterance};
 use common::outpost::OutpostUnderTest;
@@ -49,12 +44,6 @@ const WIDTH: usize = 12;
 
 /// What a step said that is nothing.
 const NOTHING: [Utterance; 0] = [];
-
-/// mockapp's terminal's element, found by its name
-/// (`common::named_element`), which passes the window's title bar by.
-fn terminal_element(uia: &Uia, hwnd: HWND) -> IUIAutomationElement {
-    common::named_element(uia, hwnd, "Terminal")
-}
 
 /// `rows` as a terminal's text: each padded to [`WIDTH`] and ended by a
 /// carriage return and line feed, escaped for `set-text`; and the UTF-16
@@ -89,29 +78,6 @@ fn show_caret_on(app: &mut common::MockApp, hwnd: HWND, rows: &[&str], caret: us
     let at = caret * row_units + rows[caret].encode_utf16().count();
     common::apply(app, hwnd, &format!("set-text term {text}"));
     common::apply(app, hwnd, &format!("caret term {at} {at}"));
-}
-
-/// The top of the terminal's screen, where a first read's start is and
-/// a search counts from: the visible range collapsed to its start.
-fn screen_top(source: &UiaText) -> IUIAutomationTextRange {
-    let screen = source
-        .pattern()
-        .visible_ranges()
-        .expect("the visible ranges")
-        .into_iter()
-        .next()
-        .expect("a visible range");
-    let top = screen.clone_range().expect("a copy");
-    top.move_endpoint_to(Endpoint::End, &top, Endpoint::Start)
-        .expect("collapsed");
-    top
-}
-
-/// The outpost's source for mockapp's terminal.
-fn source(uia: &Uia, hwnd: HWND, remote: bool) -> UiaText {
-    let element = terminal_element(uia, hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-    UiaText::new(element, pattern, true).remote(remote)
 }
 
 fn uia_calls(uia: u32) -> CallCounts {
@@ -447,267 +413,6 @@ fn backspace_says_what_it_deleted_classic() {
     backspace_says_what_it_deleted(false);
 }
 
-/// The outpost's search for `needle` in the terminal's text, outward from
-/// the row `from` rows above `start`, the top of its screen, on the path under
-/// test alone: the remote program, never falling back, or the classic one.
-fn find_on_path(
-    uia: &Uia,
-    source: &UiaText,
-    start: &IUIAutomationTextRange,
-    (needle, from): (&str, i32),
-    remote: bool,
-) -> Vec<verbatim_model::TerminalMatch> {
-    let query = verbatim_uia_rops::FindQuery {
-        element: source.element(),
-        pattern: source.pattern(),
-        start,
-        needle,
-        from,
-        rows: 1,
-    };
-    let found = if remote {
-        verbatim_uia_rops::terminal_find_remote(uia, &query)
-    } else {
-        verbatim_uia_rops::terminal_find_classic(uia, &query)
-    };
-    found
-        .expect("the search runs on its path")
-        .into_iter()
-        .map(|found| verbatim_model::TerminalMatch {
-            above: found.above,
-            text: found.text,
-        })
-        .collect()
-}
-
-/// A provider whose `FindText` fails (`terminal_find_fails.json`): the
-/// search finds nothing, and is no error.
-fn a_failing_search_finds_nothing(remote: bool) {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-find-fails");
-    let mut app = common::spawn("terminal_find_fails.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 3");
-    let source = source(&uia, hwnd, remote);
-    let top = screen_top(&source);
-    let found = find_on_path(&uia, &source, &top, ("two", 1), remote);
-    assert_eq!(found, []);
-    app.quit();
-}
-
-fn a_failing_search_finds_nothing_remote() {
-    a_failing_search_finds_nothing(true);
-}
-
-fn a_failing_search_finds_nothing_classic() {
-    a_failing_search_finds_nothing(false);
-}
-
-/// A provider whose `FindText` fails when it searches backward
-/// (`terminal_find_backward_fails.json`): the failure closes the search's
-/// upward direction alone, and the search goes on downward from its row.
-fn a_failing_search_goes_on_in_the_other_direction(remote: bool) {
-    let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"];
-    let found = search_in("terminal_find_backward_fails.json", &rows, ("y", 2), remote);
-    assert_eq!(
-        found,
-        [
-            found_row(2, "y 3"),
-            found_row(1, "y 4"),
-            found_row(0, "y 5"),
-        ]
-    );
-}
-
-fn a_failing_search_goes_on_in_the_other_direction_remote() {
-    a_failing_search_goes_on_in_the_other_direction(true);
-}
-
-fn a_failing_search_goes_on_in_the_other_direction_classic() {
-    a_failing_search_goes_on_in_the_other_direction(false);
-}
-
-/// A provider whose `FindText` answers a search that finds nothing with a
-/// range rather than null, as Windows Terminal's does
-/// (`terminal_find_misses_answer_a_range.json`): the search takes every
-/// match outward from its row, each direction ending where the text is
-/// only elsewhere, and finds nothing for text that is nowhere. The remote
-/// program makes no call that Windows Terminal answers with
-/// `RPC_E_SERVERFAULT`, which would end it there; the classic
-/// implementation's failed calls only end a direction.
-fn a_search_whose_misses_answer_a_range(remote: bool) -> u32 {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-find-misses");
-    let mut app = common::spawn("terminal_find_misses_answer_a_range.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 3");
-    show(
-        &mut app,
-        hwnd,
-        &["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"],
-    );
-    let source = source(&uia, hwnd, remote);
-    let top = screen_top(&source);
-    common::reset_hits(hwnd);
-    assert_eq!(
-        find_on_path(&uia, &source, &top, ("y", 2), remote),
-        [
-            found_row(2, "y 3"),
-            found_row(3, "y 2"),
-            found_row(1, "y 4"),
-            found_row(4, "y 1"),
-            found_row(0, "y 5"),
-        ]
-    );
-    assert_eq!(find_on_path(&uia, &source, &top, ("q", 2), remote), []);
-    let faults = common::read_hits(hwnd)
-        .into_iter()
-        .find_map(|(name, count)| (name == "RPC_E_SERVERFAULT").then_some(count))
-        .unwrap_or(0);
-    app.quit();
-    faults
-}
-
-fn a_search_whose_misses_answer_a_range_finds_its_matches_remote() {
-    assert_eq!(a_search_whose_misses_answer_a_range(true), 0);
-}
-
-fn a_search_whose_misses_answer_a_range_finds_its_matches_classic() {
-    let _ = a_search_whose_misses_answer_a_range(false);
-}
-
-/// The outpost's search for `needle` over every row of `rows`, outward
-/// from the row `from` rows above where the next read starts, on a screen
-/// of three rows.
-fn search(
-    rows: &[&str],
-    needle_from: (&str, i32),
-    remote: bool,
-) -> Vec<verbatim_model::TerminalMatch> {
-    search_in("terminal.json", rows, needle_from, remote)
-}
-
-/// As [`search`], on the terminal of `fixture`.
-fn search_in(
-    fixture: &str,
-    rows: &[&str],
-    (needle, from): (&str, i32),
-    remote: bool,
-) -> Vec<verbatim_model::TerminalMatch> {
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-find");
-    let mut app = common::spawn(fixture, "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 3");
-    show(&mut app, hwnd, rows);
-    let source = source(&uia, hwnd, remote);
-    let top = screen_top(&source);
-    let found = find_on_path(&uia, &source, &top, (needle, from), remote);
-    app.quit();
-    found
-}
-
-/// A match: its rows above the start, and its row's text as read.
-fn found_row(above: i32, text: &str) -> verbatim_model::TerminalMatch {
-    verbatim_model::TerminalMatch {
-        above,
-        text: format!("{text:WIDTH$}\r\n"),
-    }
-}
-
-/// A short needle found within rows far more often than at a row's start,
-/// as a short command's text is, sought up from below the document's end:
-/// only the rows that start with it are matches, nearest first, a longer
-/// row starting with it among them for Core to check by its line's hash,
-/// and the hits within rows do not use up the matches a search takes.
-fn the_search_takes_rows_starting_with_the_needle(remote: bool) {
-    let within = " y y y y y y";
-    let mut rows = vec!["y", "yes"];
-    rows.extend([within; 5]);
-    rows.push("ready>");
-    let found = search(&rows, ("y", -10), remote);
-    assert_eq!(found, [found_row(5, "yes"), found_row(6, "y")]);
-}
-
-fn the_search_takes_rows_starting_with_the_needle_remote() {
-    the_search_takes_rows_starting_with_the_needle(true);
-}
-
-fn the_search_takes_rows_starting_with_the_needle_classic() {
-    the_search_takes_rows_starting_with_the_needle(false);
-}
-
-/// From a row in the middle, the search takes that row's match first, then
-/// alternately the next above and the next below.
-fn the_search_works_outward_from_its_row(remote: bool) {
-    let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"];
-    // The document's seven rows end with an empty line, and the start is
-    // the screen's top, three rows from the end: "y 3", on row 2, is two
-    // rows above it.
-    let found = search(&rows, ("y", 2), remote);
-    assert_eq!(
-        found,
-        [
-            found_row(2, "y 3"),
-            found_row(3, "y 2"),
-            found_row(1, "y 4"),
-            found_row(4, "y 1"),
-            found_row(0, "y 5"),
-        ]
-    );
-}
-
-fn the_search_works_outward_from_its_row_remote() {
-    the_search_works_outward_from_its_row(true);
-}
-
-fn the_search_works_outward_from_its_row_classic() {
-    the_search_works_outward_from_its_row(false);
-}
-
-/// A needle found within rows more often than the search's `FindText`
-/// calls allow ends the search before a row starting with it, further
-/// away, is reached.
-fn the_search_ends_after_its_calls(remote: bool) {
-    let within = " y y y y y y";
-    let mut rows = vec!["y"];
-    // Six hits a row, a row more than the calls allow.
-    rows.extend(vec![within; verbatim_uia_rops::FIND_CALLS / 6 + 1]);
-    rows.push("ready>");
-    common::init_com();
-    let title = common::unique_title("mockapp-terminal-find-calls");
-    let mut app = common::spawn("terminal.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 3");
-    show(&mut app, hwnd, &rows);
-    let source = source(&uia, hwnd, remote);
-    let top = screen_top(&source);
-    common::reset_hits(hwnd);
-    assert_eq!(find_on_path(&uia, &source, &top, ("y", -10), remote), []);
-    // Every `FindText` call the search made, the remote program's two over
-    // the whole document among them.
-    let calls = common::read_hits(hwnd)
-        .into_iter()
-        .find_map(|(name, count)| (name == "FindText").then_some(count));
-    app.quit();
-    assert_eq!(
-        calls,
-        Some(u32::try_from(verbatim_uia_rops::FIND_CALLS).expect("a small bound"))
-    );
-}
-
-fn the_search_ends_after_its_calls_remote() {
-    the_search_ends_after_its_calls(true);
-}
-
-fn the_search_ends_after_its_calls_classic() {
-    the_search_ends_after_its_calls(false);
-}
-
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -754,54 +459,6 @@ fn main() {
         (
             "the_history_is_placed_while_output_scrolls_remote",
             the_history_is_placed_while_output_scrolls_remote,
-        ),
-        (
-            "the_search_works_outward_from_its_row_remote",
-            the_search_works_outward_from_its_row_remote,
-        ),
-        (
-            "the_search_works_outward_from_its_row_classic",
-            the_search_works_outward_from_its_row_classic,
-        ),
-        (
-            "a_failing_search_finds_nothing_remote",
-            a_failing_search_finds_nothing_remote,
-        ),
-        (
-            "a_failing_search_finds_nothing_classic",
-            a_failing_search_finds_nothing_classic,
-        ),
-        (
-            "a_search_whose_misses_answer_a_range_finds_its_matches_remote",
-            a_search_whose_misses_answer_a_range_finds_its_matches_remote,
-        ),
-        (
-            "a_search_whose_misses_answer_a_range_finds_its_matches_classic",
-            a_search_whose_misses_answer_a_range_finds_its_matches_classic,
-        ),
-        (
-            "a_failing_search_goes_on_in_the_other_direction_remote",
-            a_failing_search_goes_on_in_the_other_direction_remote,
-        ),
-        (
-            "a_failing_search_goes_on_in_the_other_direction_classic",
-            a_failing_search_goes_on_in_the_other_direction_classic,
-        ),
-        (
-            "the_search_takes_rows_starting_with_the_needle_remote",
-            the_search_takes_rows_starting_with_the_needle_remote,
-        ),
-        (
-            "the_search_takes_rows_starting_with_the_needle_classic",
-            the_search_takes_rows_starting_with_the_needle_classic,
-        ),
-        (
-            "the_search_ends_after_its_calls_remote",
-            the_search_ends_after_its_calls_remote,
-        ),
-        (
-            "the_search_ends_after_its_calls_classic",
-            the_search_ends_after_its_calls_classic,
         ),
     ]);
 }

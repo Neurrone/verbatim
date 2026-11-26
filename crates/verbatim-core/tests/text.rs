@@ -208,7 +208,7 @@ fn heard_of(effect: Effect) -> Option<Heard> {
             {
                 Heard::Asked(of_any(batch))
             }
-            other => Heard::Sent(desk::kind(other)),
+            other @ verbatim_model::request::Question::Batch(_) => Heard::Sent(desk::kind(other)),
         }),
         Effect::Queue(QueueEffect::SendStrokes(sent)) => Some(Heard::Strokes(sent.len())),
         Effect::Queue(QueueEffect::Cancel { .. }) => Some(Heard::Cancelled),

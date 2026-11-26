@@ -374,10 +374,9 @@ mod tests {
 
     /// Every failure a history read or a search can be answered decodes as
     /// its answer, a terminal whose text was not read included; only a
-    /// reply of another request's kind is malformed.
+    /// reply of another request's shape is malformed.
     #[test]
     fn a_follow_ups_failures_decode_and_another_reply_does_not() {
-        use verbatim_model::TextReply;
         use verbatim_model::batch::{Done, Missing, StepRefusal};
         let search = Search {
             window: window(),
@@ -414,10 +413,6 @@ mod tests {
             search.decode(Reply::Steps(Vec::new()), Stamps::default()),
             None
         );
-        assert_eq!(
-            search.decode(Reply::Text(TextReply::Unanswered), Stamps::default()),
-            None
-        );
         // A step answered with another kind's result is malformed.
         let other = vec![
             StepOutcome::Done(Done::FindText(Vec::new())),
@@ -450,10 +445,6 @@ mod tests {
                 "{failure:?}"
             );
         }
-        assert_eq!(
-            history.decode(Reply::Text(TextReply::Unanswered), Stamps::default()),
-            None
-        );
         assert_eq!(
             history.decode(Reply::Steps(Vec::new()), Stamps::default()),
             None

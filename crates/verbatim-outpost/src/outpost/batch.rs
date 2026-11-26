@@ -33,7 +33,7 @@ use verbatim_model::request::{
     Ask, Followed, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
 };
 use verbatim_model::{
-    Backend, NodeId, NodeSnapshot, QueryKind, TextPoint, TextPosition, TextReply,
+    Backend, NodeId, NodeSnapshot, QueryKind, TextFailure, TextPoint, TextPosition,
 };
 
 use super::RequestContext;
@@ -477,7 +477,7 @@ impl Run<'_, '_> {
                     Err(reply) => reply,
                 }
             }
-            None => TextReply::Unanswered,
+            None => TextFailure::Unanswered,
         };
         let mut outcomes = self.outcomes.clone();
         for step in steps {
@@ -485,7 +485,7 @@ impl Run<'_, '_> {
                 Ok(Gate::Skip) => StepOutcome::Skipped,
                 // The text did not open, so there are no points to
                 // compare: the step answers that.
-                Ok(Gate::Run | Gate::Compare { .. }) => text_refused(&reply, node),
+                Ok(Gate::Run | Gate::Compare { .. }) => text_refused(reply, node),
                 Err(KindMismatch) => {
                     tracing::error!(target: verbatim_model::DEFECT_TARGET, ?step, "a step's condition names a result it cannot test");
                     StepOutcome::Failed
@@ -1241,14 +1241,10 @@ fn failed(error: &ReadError, node: NodeId) -> StepOutcome {
 
 /// The outcome of a text step on `node` whose text could not be opened,
 /// `reply` saying why (the design's section 6, the reply rows).
-fn text_refused(reply: &TextReply, node: NodeId) -> StepOutcome {
+fn text_refused(reply: TextFailure, node: NodeId) -> StepOutcome {
     match reply {
-        TextReply::NoText => StepOutcome::Refused(StepRefusal::NoText),
-        TextReply::Gone => StepOutcome::NotThere(Missing::Node(node)),
-        TextReply::Unanswered => StepOutcome::Failed,
-        other => {
-            tracing::error!(target: verbatim_model::DEFECT_TARGET, ?other, "a text step answered with a reply of another request");
-            StepOutcome::Failed
-        }
+        TextFailure::NoText => StepOutcome::Refused(StepRefusal::NoText),
+        TextFailure::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        TextFailure::Unanswered => StepOutcome::Failed,
     }
 }

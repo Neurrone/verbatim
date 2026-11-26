@@ -31,31 +31,25 @@ use verbatim_model::batch::{Op, Subject};
 use verbatim_model::request::{Answer, Ask, Cancel, Outcome, Question, RequestNumber};
 
 /// The window of the MSAA ids `request`'s subject is named by: a batch
-/// with a step on an MSAA object. A terminal's text operation names none.
+/// with a step on an MSAA object.
 fn ids_window(request: &Question) -> Option<WindowHandle> {
-    match request {
-        Question::Batch(batch) => batch.steps.iter().find_map(|step| match step.op.subject() {
-            Some(Subject::Msaa { ids, .. }) => Some(ids.window),
-            _ => None,
-        }),
-        Question::Terminal(_) => None,
-    }
+    let Question::Batch(batch) = request;
+    batch.steps.iter().find_map(|step| match step.op.subject() {
+        Some(Subject::Msaa { ids, .. }) => Some(ids.window),
+        _ => None,
+    })
 }
 
 /// Whether `request` only moves the outpost's registration: a batch of
 /// `Follow` steps alone, which names the whole registration, and at least
 /// one of them.
 fn is_follow(request: &Question) -> bool {
-    match request {
-        Question::Batch(batch) => {
-            !batch.steps.is_empty()
-                && batch
-                    .steps
-                    .iter()
-                    .all(|step| matches!(step.op, Op::Follow(_)))
-        }
-        Question::Terminal(_) => false,
-    }
+    let Question::Batch(batch) = request;
+    !batch.steps.is_empty()
+        && batch
+            .steps
+            .iter()
+            .all(|step| matches!(step.op, Op::Follow(_)))
 }
 
 /// What a cancel does.

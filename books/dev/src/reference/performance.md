@@ -1819,7 +1819,7 @@ Core's own part is about 0.2 to 0.5 ms.
 The outpost's conversion of a read's text, in one pass into buffers made
 for each read, its text sized up front, and its writing in the answer
 sent to Core (`text::trim::unpadded_utf16`; the ignored
-`measure_conversion` in `crates/verbatim-outpost/src/terminal/tests.rs`,
+`measure_conversion` in `crates/verbatim-outpost/src/conversion_measure.rs`,
 which now builds the batch answer of a read; release, 2026-11-01, eleven
 runs, on the terminal's own reply that the batch answer replaced): a whole document of 9,031 rows of 120
 cells 1,947 to 2,128 µs with 78 to 80 page faults in Latin text, 2,036

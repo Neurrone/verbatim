@@ -171,7 +171,6 @@ fn read_effect(step: &mut Step, effect: Effect) {
     match effect {
         Effect::Queue(QueueEffect::Send { ask, .. }) => match ask.request {
             Question::Batch(batch) => step.sent.push((ask.number.0, batch)),
-            other @ Question::Terminal(_) => panic!("a text batch: {other:?}"),
         },
         Effect::Queue(QueueEffect::Cancel { cancel, .. }) => step.cancelled.push(cancel),
         Effect::Queue(QueueEffect::AnswerDropped { number, .. }) => step.dropped.push(number.0),

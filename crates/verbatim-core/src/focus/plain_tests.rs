@@ -531,22 +531,6 @@ fn the_plain_reader_answers_each_operation_as_a_plain_window() {
         ])))
     );
     assert_eq!(
-        answer(verbatim_model::request::Question::Terminal(
-            verbatim_model::request::TerminalAsk {
-                node,
-                op: verbatim_model::TextOp::TerminalFind {
-                    needle: "ready>".to_owned(),
-                    from: 0,
-                    rows: 1,
-                    start: verbatim_model::TextAnchor(1),
-                },
-            }
-        )),
-        Some(WireOutcome::Result(Reply::Text(
-            verbatim_model::TextReply::NoText
-        )))
-    );
-    assert_eq!(
         answer(plain_batch(vec![Op::Activate {
             subject: Subject::Node(NodeId::in_outpost(OutpostId(3), 1)),
         }])),
@@ -1270,6 +1254,29 @@ fn the_plain_reader_refuses_an_old_generation_and_an_operation_it_does_not_run()
             Malformed::NotRun {
                 step: Place(1),
                 op: OpKind::Ancestors,
+            }
+        )))
+    );
+    // A terminal's command search names a terminal, never the plain
+    // window, which has no text to search.
+    assert_eq!(
+        super::answer(
+            &reader,
+            &plain_batch(vec![Op::FindText {
+                subject: Subject::Node(plain_node(1)),
+                at: verbatim_model::batch::Point::At(verbatim_model::TextPoint::Caret),
+                needle: "ready>".to_owned(),
+                backward: true,
+                unit_start: Some(verbatim_model::TextUnit::Line),
+                read: 1,
+                limit: 20,
+                calls: 100,
+            }])
+        ),
+        Some(WireOutcome::Refused(Refusal::Malformed(
+            Malformed::NotRun {
+                step: Place(0),
+                op: OpKind::FindText,
             }
         )))
     );

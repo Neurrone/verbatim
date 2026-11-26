@@ -203,9 +203,7 @@ impl Terminal {
         };
         let mut steps = Builder::<WindowSteps>::named();
         add_steps(&mut steps, *node, &ask);
-        let Question::Batch(batch) = steps.finish().question() else {
-            unreachable!("a builder's batch")
-        };
+        let Question::Batch(batch) = steps.finish().question();
         let (answer, calls) = outpost.batch(self.hwnd, WindowVerdict::Uia, batch);
         // By remote operations, a read with no search is one program, and
         // the colours one more: no step fell back to calls.

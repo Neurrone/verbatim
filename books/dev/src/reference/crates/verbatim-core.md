@@ -209,11 +209,8 @@ a token (a terminal's output reads and baseline).
   the request and resumed with the outcome, decoded once as the request's
   reply type, so no paused function outlives its entry. A reply type
   holds every result a correct reader can give the request: a batch's is
-  one outcome per step (`batch::Answers`), a terminal's text operation's
-  the operation's own reply or a `TextFailure`
-  (`text_request::decode_text`), each handled where the request is made.
-  A result that still does not decode, one of another request's kind or
-  a batch's answer that does not fit the batch sent, is a malformed
+  one outcome per step (`batch::Answers`), handled where the request is
+  made. A result that still does not decode, a batch's answer that does not fit the batch sent, is a malformed
   answer: refused as undecodable and logged, the reader not replaced.
 - The table also keeps the recovery set, the windows found hung, which the
   shell checks every half second until each answers again. A window

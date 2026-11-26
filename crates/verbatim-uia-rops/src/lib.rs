@@ -21,9 +21,7 @@
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
-//!   and says which path answered; for a terminal's command search,
-//!   [`terminal_find`]; for
-//!   the outpost finding its own copy of
+//!   and says which path answered; for the outpost finding its own copy of
 //!   an element the focus listener read, [`element_by_path`]: the element
 //!   reached from one the caller has by the runtime ids below it; and for
 //!   a focus's completion, [`focus_states`]: the focus's states, read once
@@ -52,7 +50,6 @@ mod opcode;
 mod operation;
 mod path;
 mod terminal_colours;
-mod terminal_find;
 mod text;
 mod watch;
 
@@ -80,9 +77,5 @@ pub use path::{
     ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
 };
 pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun};
-pub use terminal_find::{
-    FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
-    terminal_find_remote,
-};
 pub use text::{FoundPoint, Movement, Position, TextFrom, TextTarget, UnitText};
 pub use watch::{WatchAnswer, WatchQuery, watch_check_classic};

@@ -224,9 +224,7 @@ fn an_element_gone_under_the_same_node_forgets_its_caret_and_model() {
 
 // "Identical reads" (`docs/design/readers-tell-core-asks-build3.md`): Core
 // gives the rules no read identical to the last one it gave them, unless the
-// read waited or is the first after the focus arrived. Moved from the
-// outpost's `terminal/tests.rs`, where the outpost dropped such a read
-// before sending it.
+// read waited or is the first after the focus arrived.
 
 /// The terminal the identical-read tests read: node 9 of outpost 1.
 fn watched() -> NodeId {

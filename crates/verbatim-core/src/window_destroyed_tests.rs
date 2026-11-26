@@ -83,7 +83,6 @@ fn asked(question: &verbatim_model::request::Question) -> String {
             "{:?}",
             batch.steps.iter().map(|step| &step.op).collect::<Vec<_>>()
         ),
-        verbatim_model::request::Question::Terminal(ask) => format!("{ask:?}"),
     }
 }
 

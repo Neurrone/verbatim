@@ -14,18 +14,6 @@ fn run(column: u32, length: u32, foreground: u32, background: u32) -> TerminalCo
     }
 }
 
-/// The answer to request 4 with `reply`.
-fn answer(reply: TextReply) -> OutpostToCore {
-    OutpostToCore::Answer(Answer {
-        number: RequestNumber(4),
-        outcome: Outcome::Result(Reply::Text(reply)),
-        probes: Vec::new(),
-        detail: String::new(),
-        began_us: 7,
-        ended_us: 9,
-    })
-}
-
 /// The body and raw section of `message`'s frame.
 fn parts_of(message: &OutpostToCore) -> (Vec<u8>, Option<Vec<u8>>) {
     let frame = encode_message(message).expect("encoded");
@@ -36,95 +24,16 @@ fn parts_of(message: &OutpostToCore) -> (Vec<u8>, Option<Vec<u8>>) {
     (body.to_vec(), raw.map(<[u8]>::to_vec))
 }
 
+/// A message with nothing for the raw section is framed exactly as its
+/// JSON alone always was, with no `Raw-Length` line: a pong, and answers
+/// that are not results.
 #[test]
-fn a_searchs_answers_round_trip_through_the_raw_section() {
-    let latin = "$ ls -l   \r\ntotal 0   \r\n".repeat(3);
-    let cyrillic = "привет мир  \r\nэто тест\r\n".repeat(3);
-    let messages = [
-        answer(TextReply::TerminalFound {
-            matches: vec![
-                TerminalMatch {
-                    above: -1,
-                    text: latin.clone(),
-                },
-                TerminalMatch {
-                    above: 3,
-                    text: String::new(),
-                },
-                TerminalMatch {
-                    above: 4,
-                    text: cyrillic,
-                },
-            ],
-        }),
-        answer(TextReply::TerminalFound {
-            matches: Vec::new(),
-        }),
-        // The answer's probes and detail.
-        OutpostToCore::Answer(Answer {
-            number: RequestNumber(5),
-            outcome: Outcome::Result(Reply::Text(TextReply::TerminalFound {
-                matches: vec![TerminalMatch {
-                    above: 2,
-                    text: latin,
-                }],
-            })),
-            probes: vec![Probe {
-                window: WindowHandle(0x10),
-                thread: 7,
-                provider: true,
-                began_us: 8,
-            }],
-            detail: "slow".to_owned(),
-            began_us: 20,
-            ended_us: 21,
-        }),
-    ];
-    for message in &messages {
-        let (body, raw) = parts_of(message);
-        let raw = raw.expect("a search's answer has a raw section");
-        let read: OutpostToCore = decode_message(Parts {
-            body: &body,
-            raw: Some(&raw),
-        })
-        .expect("decoded");
-        assert_eq!(&read, message);
-    }
-}
-
-/// A search's texts are the raw section, the body naming their ranges.
-#[test]
-fn a_searchs_texts_are_the_raw_section() {
-    let (body, raw) = parts_of(&answer(TextReply::TerminalFound {
-        matches: vec![
-            TerminalMatch {
-                above: 0,
-                text: "de".to_owned(),
-            },
-            TerminalMatch {
-                above: -1,
-                text: "f".to_owned(),
-            },
-        ],
-    }));
-    assert_eq!(
-        String::from_utf8(body).expect("UTF-8"),
-        r#"{"Answer":{"number":4,"outcome":{"Result":{"Text":{"TerminalFound":{"matches":[{"above":0,"text":[0,2]},{"above":-1,"text":[2,1]}]}}}},"began_us":7,"ended_us":9}}"#
-    );
-    assert_eq!(raw, Some(b"def".to_vec()));
-}
-
-/// A message with no terminal text is framed exactly as its JSON alone
-/// always was, with no `Raw-Length` line: a pong, and answers of other
-/// kinds, a terminal's refusal among them.
-#[test]
-fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
+fn a_message_without_a_text_for_the_raw_section_is_framed_as_its_json_alone() {
     let messages = [
         OutpostToCore::Pong {
             parked_count: 0,
             written_at_us: 2,
         },
-        answer(TextReply::NoText),
         OutpostToCore::Answer(Answer {
             number: RequestNumber(4),
             outcome: Outcome::NotThere,
@@ -152,11 +61,11 @@ fn a_message_without_a_terminals_text_is_framed_as_its_json_alone() {
     }
 }
 
-/// A search's answer of one match whose text is at `range`, read from a
-/// frame with `raw` as its raw section.
+/// A batch's answer of one search with one match whose text is at
+/// `range`, read from a frame with `raw` as its raw section.
 fn one_match(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
     let body = format!(
-        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{range}}}]}}}}}}}},"began_us":7,"ended_us":9}}}}"#
+        r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Steps":[{{"FindText":[{{"to_end":3,"text":{range}}}]}}]}}}},"began_us":7,"ended_us":9}}}}"#
     );
     OutpostToCore::from_parts(Parts {
         body: body.as_bytes(),
@@ -168,66 +77,12 @@ fn one_match(range: &str, raw: &[u8]) -> io::Result<OutpostToCore> {
 fn a_range_the_raw_section_does_not_hold_is_a_protocol_error() {
     assert_eq!(
         one_match("[0,3]", b"abc").expect("the well-formed frame reads"),
-        answer(TextReply::TerminalFound {
-            matches: vec![TerminalMatch {
-                above: 0,
-                text: "abc".to_owned(),
-            }],
-        })
+        steps(vec![found(&["abc"])])
     );
     for range in ["[0,4]", "[2,2]", "[18446744073709551615,2]"] {
         let error = one_match(range, b"abc").expect_err("refused");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{range}");
     }
-}
-
-/// Ranges that overlap or leave a gap are a protocol error, though their
-/// lengths add up to the raw section's: the ranges must tile it, each
-/// starting where the last ended.
-#[test]
-fn ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
-    let found = |first: &str, second: &str| {
-        let body = format!(
-            r#"{{"Answer":{{"number":4,"outcome":{{"Result":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}]}}}}}}}},"began_us":7,"ended_us":9}}}}"#
-        );
-        OutpostToCore::from_parts(Parts {
-            body: body.as_bytes(),
-            raw: Some(b"abcdef"),
-        })
-    };
-    let matches = |first: &str, second: &str| {
-        answer(TextReply::TerminalFound {
-            matches: vec![
-                TerminalMatch {
-                    above: 0,
-                    text: first.to_owned(),
-                },
-                TerminalMatch {
-                    above: 1,
-                    text: second.to_owned(),
-                },
-            ],
-        })
-    };
-    assert_eq!(
-        found("[0,3]", "[3,3]").expect("the well-formed frame reads"),
-        matches("abc", "def")
-    );
-    // Overlapping, a gap then a repeat, and out of order.
-    for (first, second) in [("[0,3]", "[0,3]"), ("[3,3]", "[3,3]"), ("[3,3]", "[0,3]")] {
-        let error = found(first, second).expect_err("refused");
-        assert_eq!(
-            error.kind(),
-            io::ErrorKind::InvalidData,
-            "{first} then {second}"
-        );
-    }
-}
-
-#[test]
-fn text_that_is_not_utf8_is_a_protocol_error() {
-    let error = one_match("[0,2]", &[0xC3, 0x28]).expect_err("refused");
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
@@ -458,7 +313,9 @@ fn a_batchs_answer_with_nothing_for_the_raw_section_is_its_json_alone() {
     );
 }
 
-/// A batch's ranges must tile the raw section as a search's do.
+/// Ranges that overlap or leave a gap are a protocol error, though their
+/// lengths add up to the raw section's: the ranges must tile it, each
+/// starting where the last ended.
 #[test]
 fn a_batchs_ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
     let read = |first: &str, second: &str, raw: &[u8]| {
@@ -474,10 +331,11 @@ fn a_batchs_ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
         read("[0,3]", "[3,3]", b"abcdef").expect("the well-formed frame reads"),
         steps(vec![trimmed("abc"), found(&["def"])])
     );
-    // Overlapping, out of order, past the end, short of the end, and not
-    // UTF-8.
+    // Overlapping, a gap then a repeat, out of order, past the end, short
+    // of the end, and not UTF-8.
     for (first, second, raw) in [
         ("[0,3]", "[0,3]", &b"abcdef"[..]),
+        ("[3,3]", "[3,3]", b"abcdef"),
         ("[3,3]", "[0,3]", b"abcdef"),
         ("[0,3]", "[3,4]", b"abcdef"),
         ("[0,3]", "[3,2]", b"abcdef"),

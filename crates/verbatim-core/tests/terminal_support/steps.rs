@@ -8,9 +8,8 @@
 //! (`verbatim_core::terminal::reader`), which a session gives this
 //! answerer. `terminal_answerers.rs` drives it with those batches too and
 //! compares what the reader reads back with the reference read, field by
-//! field, and the reader's command search with the old search, which
-//! `Outpost::find` answers (Dickson, 2026-11-26,
-//! `docs/simplification-review/builds.md`).
+//! field, and the reader's command search with the simulated terminal's
+//! rows that start with the text sought (`Outpost::rows_starting_with`).
 
 #![expect(
     clippy::result_large_err,

@@ -374,10 +374,7 @@ fn keyed(held: &mut Held, at_us: u64, reply: Found) -> Vec<(String, Option<u64>)
 /// A request as these tests name it: a focus read by its kind and whether
 /// it checks for a hidden dialog first.
 fn sent(request: &Question) -> String {
-    let batch = match request {
-        Question::Batch(batch) => batch,
-        Question::Terminal(other) => return format!("{other:?}"),
-    };
+    let Question::Batch(batch) = request;
     let checks = |batch: &verbatim_model::batch::Batch| {
         if batch.steps.iter().any(|step| {
             matches!(

@@ -113,7 +113,6 @@ impl Request for HoldRead {
                 ] => Some(read.values.clone()),
                 _ => None,
             },
-            Reply::Text(_) => None,
         }
     }
 }

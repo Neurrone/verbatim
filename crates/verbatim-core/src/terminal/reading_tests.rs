@@ -65,7 +65,6 @@ fn wants(state: &mut SrState) -> Vec<(Want, u64)> {
                     Some(reader::Asked::Window(_)) => Want::Baseline,
                     other => panic!("an unexpected request: {other:?} of {batch:?}"),
                 },
-                other @ Question::Terminal(_) => panic!("an unexpected request: {other:?}"),
             };
             (
                 want,

@@ -265,7 +265,6 @@ impl TerminalStage {
                 Some(Asked::Window(_)) => Some(Self::Final),
                 Some(Asked::History(_) | Asked::Search(_)) | None => None,
             },
-            Question::Terminal(_) => None,
         }
     }
 
@@ -293,9 +292,7 @@ impl TerminalStage {
 /// When the bound of `request`'s wait passes, when its first step is a
 /// caret wait.
 fn wait_bound(request: &Question) -> Option<u64> {
-    let Question::Batch(batch) = request else {
-        return None;
-    };
+    let Question::Batch(batch) = request;
     match &batch.steps.first()?.op {
         Op::WaitForCaret { wait, .. } => {
             Some(wait.passed_at_us.saturating_add(u64::from(wait.bound_us)))

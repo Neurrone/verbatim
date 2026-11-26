@@ -134,7 +134,7 @@ fn step(held: &mut Held, at_us: u64, input: Input<Entry>) -> Step {
                     ASKED.with(|asked| asked.borrow_mut().insert(ask.number.0, batch.clone()));
                     step.text.push((ask.number.0, batch.clone()));
                 }
-                _ => step.other += 1,
+                verbatim_model::request::Question::Batch(_) => step.other += 1,
             },
             Said::Speak(utterance, _) => step.said.push(
                 utterance
@@ -922,7 +922,6 @@ fn named_details(held: &mut Held, object: i32) -> Option<TextDetails> {
                     _ => None,
                 })
             }
-            verbatim_model::request::Question::Terminal(_) => None,
         },
         _ => None,
     })

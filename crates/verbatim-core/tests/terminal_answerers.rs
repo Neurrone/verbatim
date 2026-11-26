@@ -6,8 +6,7 @@
 //! (`verbatim_term_sim::Terminal::snapshot`, the read the conformance
 //! expectations record) gives, field by field; and its history batch reads back as the
 //! reference's text and rows. The reader's command search batch is compared
-//! with the old search, which Core still sends (Dickson, 2026-11-26,
-//! `docs/simplification-review/builds.md`).
+//! with the simulated terminal's rows that start with the text sought.
 //!
 //! The states are every chunk of every stream of the conformance corpus,
 //! in both terminals, and the shapes Core's terminal tests use: a full
@@ -31,7 +30,7 @@ use verbatim_core::terminal::reader::{
     search_batch, search_of, window_batch, window_of,
 };
 use verbatim_model::request::Reply;
-use verbatim_model::{TerminalMatch, TerminalText, TextAnchor, TextFailure, TextReply};
+use verbatim_model::{TerminalMatch, TerminalText, TextAnchor, TextFailure};
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query, Range};
 
@@ -562,12 +561,13 @@ fn searched(
     search_of(&answers, &steps).unwrap_or_else(|failure| panic!("{failure:?}: {outcomes:#?}"))
 }
 
-/// The old search and the reader's search batch answer alike, for a
-/// needle that starts rows above and below the row searched from, one
-/// that starts more rows than a search keeps, one that starts none, and
-/// one found only within rows.
+/// The reader's search batch answers the simulated terminal's rows that
+/// start with the needle, outward from the row searched from, for a
+/// needle that starts rows above and below that row, one that starts more
+/// rows than a search keeps, one that starts none, and one found only
+/// within rows.
 #[test]
-fn the_readers_search_answers_as_the_old_search() {
+fn the_readers_search_answers_the_rows_starting_with_its_needle() {
     for flavor in FLAVORS {
         let mut outpost = Outpost::new(flavor, 30, 4, 200);
         let mut text = String::new();
@@ -577,7 +577,7 @@ fn the_readers_search_answers_as_the_old_search() {
         text.push_str("  $ echo indented\r\n$ ");
         outpost.sim.write(text.as_bytes());
         let start = outpost.sim.visible().start;
-        let (old, new) = (outpost.mint(Range::at(start)), outpost.hold(start));
+        let held = outpost.hold(start);
         for needle in [
             "$ echo 7",
             "$ echo 2",
@@ -587,12 +587,9 @@ fn the_readers_search_answers_as_the_old_search() {
             "of $ echo",
         ] {
             for (from, rows) in [(0, 1), (19, 1), (40, 2), (-2, 1), (500, 1)] {
-                let TextReply::TerminalFound { matches } =
-                    outpost.find(old, needle, (from, u32::from(rows)))
-                else {
-                    panic!("a search's reply");
-                };
-                let composed = searched(&mut outpost, new, needle, (from, rows));
+                let rows_starting =
+                    outpost.rows_starting_with(Range::at(start), needle, (from, u32::from(rows)));
+                let composed = searched(&mut outpost, held, needle, (from, rows));
                 let unpadded = |matches: &[TerminalMatch]| -> Vec<(i32, String)> {
                     matches
                         .iter()
@@ -601,7 +598,7 @@ fn the_readers_search_answers_as_the_old_search() {
                 };
                 assert_eq!(
                     unpadded(&composed),
-                    unpadded(&matches),
+                    unpadded(&rows_starting),
                     "{flavor:?}, {needle:?} from {from}, {rows} rows"
                 );
             }

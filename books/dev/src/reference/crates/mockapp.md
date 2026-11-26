@@ -712,9 +712,8 @@ Each file's module comment says exactly what it asserts; in outline:
 - `terminal.rs` drives Core's reducer and a real outpost over the
   terminal: new output is said line by line with one UIA call a read
   remotely, and classically, and Backspace says what it deleted with no
-  caret event. It also runs the command search's program and its classic
-  implementation (`verbatim-uia-rops`'s `terminal_find`) from the top of
-  the screen.
+  caret event; and a command mark above the rows Core keeps is found by
+  Core's search batch, both ways and while output scrolls.
 - `terminal_reader.rs` runs the batches of Core's terminal reader
   (`verbatim_core::terminal::reader`) through a real outpost remotely and
   by calls, which must agree, and pins what the reader reads back: a
@@ -741,8 +740,7 @@ Each file's module comment says exactly what it asserts; in outline:
   outpost remotely and by calls, the two required to agree on every
   field, the remote read one program; they pin the window, the colours of
   `terminal-colours.json` as exact runs, and the search against each kind
-  of miss. No product code sends these operations until the terminal is
-  redesigned (Dickson, 2026-11-26).
+  of miss, a failing search and its bound on calls.
 - `terminal_reading.rs` drives a real outpost's worker over the same
   terminal: each change signal told as one tell, a text change, a caret
   event and the console host's caret among them; the window and history

@@ -28,7 +28,7 @@ The memory, the alignment and the rules run in Core, in the reducer (Dickson, 20
 
 The outpost keeps the provider range where the next read starts, the screen's size as Core last told it, the latest end of a key's window that takes the colours, the merging of change signals and the reading-on-demand state machine (so a flood does not wake Core per line), and the noted caret. Every read it takes crosses to Core, those that say nothing included, since only Core can judge a read; it drops only a live read identical to the last one sent in every field but its times and caret report, and never a read that waited for Core's speech queue or the first after the focus arrives (Dickson, 2026-10-26).
 
-The memory and alignment are in `crates/verbatim-text/src/terminal_rows.rs`, the rules in `crates/verbatim-text/src/terminal_reading.rs`, both run by `crates/verbatim-core/src/terminal_model.rs`; the flood policy is in `crates/verbatim-core/src/terminal.rs`, and the outpost's reads in `crates/verbatim-outpost/src/terminal.rs`.
+The memory and alignment are in `crates/verbatim-text/src/terminal_rows.rs`, the rules in `crates/verbatim-text/src/terminal_reading.rs`, both run by `crates/verbatim-core/src/terminal_model.rs`; the flood policy is in `crates/verbatim-core/src/terminal.rs`, and the batches Core reads and searches a terminal by, which the outpost's executors run, in `crates/verbatim-core/src/terminal/reader.rs`.
 
 ## The rules
 

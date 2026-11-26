@@ -194,7 +194,6 @@ fn values_of(reply: Reply) -> Option<PropertyValues> {
             }
             _ => None,
         },
-        Reply::Text(_) => None,
     }
 }
 

@@ -341,12 +341,9 @@ tell, Core asks", which the protocol below carries.
   `HeldIds`), `WindowShown` and `IsContent`.
 - `request`: the shared request list's envelope. `Ask` is a request as
   Core sends it, numbered (`RequestNumber`) and naming its window,
-  asking a `Question`: a `Batch`, answered `Reply::Steps`, one outcome
-  per step, and refused `Refusal::Malformed` when it does not parse; or
-  a terminal's command search (`Question::Terminal`, a `TerminalAsk` of
-  its node and `TextOp`), answered `Reply::Text`, the one operation
-  outside the request list, kept until the command marks' journal
-  replaces it (Dickson, 2026-11-26). The
+  asking a `Question`, which is a `Batch`, answered `Reply::Steps`, one
+  outcome per step, and refused `Refusal::Malformed` when it does not
+  parse. The
   focus reads are batches: a `FocusRead` of an MSAA candidate, the
   application's focus or a `Route`, the outpost's own copy of an element
   the listener read, which carries the route's steps, where its walk
@@ -614,10 +611,9 @@ control plane's event stream; no reader sends them.
 A text request is a batch of the request list's text operations,
 which Core's event queue sends to the node's outpost
 (`QueueEffect::Send`); its answer reaches Core as `QueueInput::Answer`
-carrying one outcome per step. A terminal's three old reads are its own
-`TextOp`s, answered with a `TextReply`; Core sends only the search, its
-full read and history read being batches
-(`verbatim_core::terminal::reader`). The operations:
+carrying one outcome per step. A terminal's reads, history reads and
+command search are batches too (`verbatim_core::terminal::reader`). The
+operations:
 
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
@@ -645,8 +641,8 @@ full read and history read being batches
   the next baseline; `Locate` a point's place on the screen, with its
   offset and the text's length in text measured by character offsets.
 - The generic text operations added for a terminal, which Core's
-  terminal reader reads one by (`verbatim_core::terminal::reader`), all
-  but `FindText`, which only tests send (Dickson, 2026-11-26): `Visible`, the first visible range,
+  terminal reader reads and searches one by
+  (`verbatim_core::terminal::reader`): `Visible`, the first visible range,
   its ends held, whether it starts at the text's start, and its text
   trimmed; `Move`, a point moved by units from the point itself, its
   start and landing held, refused (`StepRefusal::OutsideText`) for a held
@@ -659,28 +655,20 @@ full read and history read being batches
   when the provider gave no selection at all and the caret stands in at
   the text's start (Claude, 2026-11-26);
   `FindText`, a needle sought from a point to the text's end or back to
-  its start, by calls, at most `MAX_FIND_MATCHES` matches over at most
+  its start, at most `MAX_FIND_MATCHES` matches over at most
   `MAX_FIND_CALLS` calls, each with its units to the text's end and its
-  text (`FoundText`); and `ReadColours`, the one operation for terminals
+  text (`FoundText`), which Core's reader reads into a `TerminalMatch`
+  for each, in rows above the start; and `ReadColours`, the one operation for terminals
   alone, each row's colour runs (`TerminalColourRun`) from a point, for
   the rows of the screen a `Visible` step read, as wide as the line at its top, since the terminals answer
   a stretch whose last cell differs as one colour (Dickson, 2026-11-22).
-- `TextOp` has one operation, `TerminalFind { needle, from, rows, start }`:
-  a command mark's line sought by its first row's text outward from
-  `from` rows above the start anchor, at most 20 matches, `rows` rows
-  read from each, answered `TerminalFound { matches }` with a
-  `TerminalMatch` for each. A terminal's reads and history reads are
-  batches, which Core's terminal reader writes
-  (`verbatim_core::terminal::reader`).
-
-A terminal's search can also be answered `NoText` (no text interface),
-`Gone` (the node no longer exists) or `Unanswered` (no answer in time, or
-the search failed). These three are the `TextFailure`s
-(`TextReply::into_failure`), which Core decodes beside the operation's
-own reply, so no answer of them fails to decode. A batch's text step
-answers its refusals and failures as its own outcome (`StepOutcome`).
-The same three say why a node's text could not be opened, which the
-outpost and the MSAA text arms turn into a step's outcome.
+A batch's text step answers its refusals and failures as its own
+outcome (`StepOutcome`). The three `TextFailure`s, `NoText` (no text
+interface), `Gone` (the node no longer exists) and `Unanswered` (no
+answer in time, or the read failed), say why a node's text could not be
+opened, which the outpost and the MSAA text arms turn into a step's
+outcome, and are what Core's terminal reader answers for a read or
+search whose steps did not all run.
 
 ### Inputs from the shell
 

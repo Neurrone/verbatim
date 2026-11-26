@@ -22,8 +22,8 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 
 - `windows_terminal_control_flood` on GitHub's runner (run 41697089785, 2026-11-03, when the steps were `windows_terminal_command_marks`, and run 42487419395, 2026-11-08)
   - How: after Verbatim+Alt+Up (the previous command mark), Verbatim played its "application not responding" sound where the mark's line "ready> .\long.ps1" was expected.
-  - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal (`TerminalFind`, `crates/verbatim-uia-rops/src/terminal_find.rs`, bounded at 100 calls). In run 42487419395 the search took 6.4 s in Windows Terminal (`elapsed_us=6404203`), Windows judged the window hung, and the sound played as the rule says.
-  - Fix: the terminal's redesign (Dickson, 2026-11-26), whose first measurement is one search in Windows Terminal on the runner against this 6.4 s; the request list's `FindText`, each way to its own 100 calls, is kept in the executors for it. The test is not loosened.
+  - Cause: the mark lay above the rows Core keeps, so Core asked the outpost to search the terminal, then by a search program of its own bounded at 100 `FindText` calls for both ways together. In run 42487419395 the search took 6.4 s in Windows Terminal (`elapsed_us=6404203`), Windows judged the window hung, and the sound played as the rule says.
+  - Fix: Core's search is now its terminal reader's batch, a `FindText` each way with 100 calls each (`verbatim_core::terminal::reader::search_batch`; Dickson, 2026-11-26), and this scenario's marks steps on the runner are its measurement against this 6.4 s, read from the artifacts whether the scenario passes or not. The test is not loosened.
 
 ## The caret watch's baseline anchor released while it waits
 

@@ -35,7 +35,7 @@ pub(super) struct UiaNode<'a, 'c> {
     /// The element the outpost keeps, or found by its route, once asked.
     element: OnceCell<IUIAutomationElement>,
     /// Its text, opened once asked, for a `Read` of its text summary.
-    text: OnceCell<Result<crate::text::uia::UiaText, verbatim_model::TextReply>>,
+    text: OnceCell<Result<crate::text::uia::UiaText, verbatim_model::TextFailure>>,
 }
 
 impl<'a, 'c> UiaNode<'a, 'c> {
@@ -59,15 +59,15 @@ impl<'a, 'c> UiaNode<'a, 'c> {
     /// Its text, opened at the first ask: the step's outcome when it has
     /// none, is gone, or did not answer.
     fn source(&self) -> Result<&crate::text::uia::UiaText, Ran> {
-        use verbatim_model::TextReply;
+        use verbatim_model::TextFailure;
         match self.text.get_or_init(|| {
             super::text_reads::uia_text(self.context, self.node, verbatim_model::TextDetails::NONE)
         }) {
             Ok(source) => Ok(source),
-            Err(TextReply::NoText) => Err(Ran::Unrun(Unrun::Refused(
+            Err(TextFailure::NoText) => Err(Ran::Unrun(Unrun::Refused(
                 verbatim_model::batch::StepRefusal::NoText,
             ))),
-            Err(TextReply::Gone) => Err(Ran::Unrun(Unrun::NotThere(Missing::Node(self.node)))),
+            Err(TextFailure::Gone) => Err(Ran::Unrun(Unrun::NotThere(Missing::Node(self.node)))),
             Err(_) => Err(Ran::Failed),
         }
     }

@@ -177,10 +177,8 @@ impl Table {
     /// The batch request `number` is, while it waits or is out.
     #[cfg(test)]
     pub(crate) fn batch_for_tests(&self, number: u64) -> Option<verbatim_model::batch::Batch> {
-        match &self.live.get(&RequestNumber(number))?.request {
-            Question::Batch(batch) => Some(batch.clone()),
-            Question::Terminal(_) => None,
-        }
+        let Question::Batch(batch) = &self.live.get(&RequestNumber(number))?.request;
+        Some(batch.clone())
     }
 
     /// The batches waiting or out, by number.
@@ -188,9 +186,9 @@ impl Table {
     pub(crate) fn batches_for_tests(&self) -> Vec<(u64, verbatim_model::batch::Batch)> {
         self.live
             .iter()
-            .filter_map(|(number, live)| match &live.request {
-                Question::Batch(batch) => Some((number.0, batch.clone())),
-                Question::Terminal(_) => None,
+            .map(|(number, live)| {
+                let Question::Batch(batch) = &live.request;
+                (number.0, batch.clone())
             })
             .collect()
     }

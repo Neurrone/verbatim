@@ -110,7 +110,7 @@ fn route(held: &mut Held, at_us: u64, input: &QueueInput) -> Vec<String> {
                     known.unwrap_or_default()
                 )
             }
-            _ => format!("send {:?} other", to.reader),
+            verbatim_model::request::Question::Batch(_) => format!("send {:?} other", to.reader),
         }),
         Said::Speak(utterance, _) => Some(
             utterance

@@ -3,13 +3,12 @@
 //! move to the row, the search down and up from it, each way to 20
 //! matches that start a row over 100 calls), against mockapp's UIA text
 //! provider, through a real outpost reading by remote operations and one
-//! reading by calls, which must answer alike. No product code searches a
-//! terminal this way until the terminal is redesigned (Dickson,
-//! 2026-11-26); the test keeps the executors' arms of the operation
-//! covered: a provider whose search fails, one whose backward search
-//! fails, one whose misses answer a range as Windows Terminal's do, the
-//! rows that start with the needle, the order outward from a row, and the
-//! bound on calls.
+//! reading by calls, which must answer alike. Core's command search makes
+//! the same two searches (`verbatim_core::terminal::reader::search_batch`);
+//! these tests cover the executors' arms of the operation: a provider
+//! whose search fails, one whose backward search fails, one whose misses
+//! answer a range as Windows Terminal's do, the rows that start with the
+//! needle, the order outward from a row, and the bound on calls.
 
 mod common;
 #[path = "common/harness.rs"]

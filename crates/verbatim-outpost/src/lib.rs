@@ -8,16 +8,17 @@
 //! protocol (milestone M4): reading, waiting for the caret, and selecting in
 //! a node's text, over UIA's text pattern and the Win32 edit controls'
 //! messages. [`driver`] sends an outpost Core's requests where no Core
-//! runs: the attach mode and mockapp's harness. [`terminal`] finds a terminal's new output by an anchored diff
-//! of its text (milestone M4 item 9). The message layer every end shares is
+//! runs: the attach mode and mockapp's harness. The message layer every end shares is
 //! `verbatim_process::message`.
 
 pub mod arbitration;
 pub mod driver;
 mod gates;
 pub mod outpost;
-pub mod terminal;
 pub mod text;
+
+#[cfg(test)]
+mod conversion_measure;
 
 pub use outpost::{
     FocusWindowReader, FocusedElementReader, Heard, HeardObserver, Outpost, RequestCallsObserver,

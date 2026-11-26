@@ -1,10 +1,9 @@
 //! How an outpost's answers that carry large texts or colour runs cross
-//! the pipe (`docs/design/communication.md`, section 4.2). Two kinds of
-//! answer do: a batch's whose steps answered a trimmed range's text
-//! (`ReadRange`), the visible text (`Visible`), a search's matches
-//! (`FindText`) or a screen's colours (`ReadColours`), whichever text they
-//! read; and a terminal's command search's, the one text operation outside
-//! a batch. Each such answer is a frame with a raw section.
+//! the pipe (`docs/design/communication.md`, section 4.2): a batch's
+//! answer whose steps answered a trimmed range's text (`ReadRange`), the
+//! visible text (`Visible`), a search's matches (`FindText`) or a screen's
+//! colours (`ReadColours`), whichever text they read. Each such answer is
+//! a frame with a raw section.
 //! Every such text is in the raw section as UTF-8, its place in the JSON
 //! body a byte range, `[start, length]`; and colour runs are there as
 //! 16-byte records, four little-endian `u32`s (column, length, foreground,
@@ -27,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::batch::{Done, FoundText, RangeText, StepOutcome, VisibleText};
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{Answer, Outcome, Probe, Reply, RequestNumber};
-use verbatim_model::{TerminalColourRun, TerminalMatch, TextAnchor, TextReply};
+use verbatim_model::{TerminalColourRun, TextAnchor};
 
 /// A place in the raw section: where it starts and how many bytes it
 /// takes, written `[start, length]`.
@@ -65,7 +64,6 @@ enum WireOutcome<'a> {
 /// A [`Reply`] with texts or colours in the raw section.
 #[derive(Serialize, Deserialize)]
 enum WireResult<'a> {
-    Text(WireReply),
     Steps(Vec<WireStep<'a>>),
 }
 
@@ -98,19 +96,6 @@ enum WireStep<'a> {
 #[derive(Serialize, Deserialize)]
 struct Found {
     to_end: u32,
-    text: Range,
-}
-
-/// The [`TextReply`] that carries a terminal's text.
-#[derive(Serialize, Deserialize)]
-enum WireReply {
-    TerminalFound { matches: Vec<Match> },
-}
-
-/// A [`TerminalMatch`], its text in the raw section.
-#[derive(Serialize, Deserialize)]
-struct Match {
-    above: i32,
     text: Range,
 }
 
@@ -159,15 +144,11 @@ impl<'a> WithRaw<'a> {
             return None;
         };
         let mut layout = Layout::default();
-        let result = match reply {
-            Reply::Text(reply) => WireResult::Text(layout.reply(reply)?),
-            Reply::Steps(steps) => {
-                if !steps.iter().any(in_raw) {
-                    return None;
-                }
-                WireResult::Steps(steps.iter().map(|step| layout.step(step)).collect())
-            }
-        };
+        let Reply::Steps(steps) = reply;
+        if !steps.iter().any(in_raw) {
+            return None;
+        }
+        let result = WireResult::Steps(steps.iter().map(|step| layout.step(step)).collect());
         Some(Self {
             wire: Wire::Answer(WireAnswer {
                 number: *number,
@@ -235,23 +216,6 @@ impl<'a> Layout<'a> {
             ),
             StepOutcome::Done(Done::ReadColours(rows)) => WireStep::ReadColours(self.colours(rows)),
             other => WireStep::Body(Cow::Borrowed(other)),
-        }
-    }
-
-    /// A terminal's search's `reply` as the body gives it, its matches'
-    /// texts placed next in the raw section; `None` for a reply with none.
-    fn reply(&mut self, reply: &'a TextReply) -> Option<WireReply> {
-        match reply {
-            TextReply::TerminalFound { matches } => Some(WireReply::TerminalFound {
-                matches: matches
-                    .iter()
-                    .map(|TerminalMatch { above, text }| Match {
-                        above: *above,
-                        text: self.text(text),
-                    })
-                    .collect(),
-            }),
-            _ => None,
         }
     }
 }
@@ -326,23 +290,19 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToCore> {
         bytes: raw,
         next: 0,
     };
-    let reply = match result {
-        WireResult::Text(reply) => Reply::Text(section.reply(reply)?),
-        WireResult::Steps(steps) => {
-            let steps: Vec<StepOutcome> = steps
-                .into_iter()
-                .map(|step| section.step(step))
-                .collect::<io::Result<_>>()?;
-            // A batch's answer with nothing for the raw section is framed
-            // as its body alone.
-            if !steps.iter().any(in_raw) {
-                return Err(invalid(
-                    "a frame has a raw section its batch's answer does not take",
-                ));
-            }
-            Reply::Steps(steps)
-        }
-    };
+    let WireResult::Steps(steps) = result;
+    let steps: Vec<StepOutcome> = steps
+        .into_iter()
+        .map(|step| section.step(step))
+        .collect::<io::Result<_>>()?;
+    // A batch's answer with nothing for the raw section is framed as its
+    // body alone.
+    if !steps.iter().any(in_raw) {
+        return Err(invalid(
+            "a frame has a raw section its batch's answer does not take",
+        ));
+    }
+    let reply = Reply::Steps(steps);
     section.finish()?;
     Ok(OutpostToCore::Answer(Answer {
         number,
@@ -412,22 +372,6 @@ impl<'s> Section<'s> {
             WireStep::ReadColours(colours) => {
                 StepOutcome::Done(Done::ReadColours(self.colours(colours)?))
             }
-        })
-    }
-
-    /// A terminal's search's reply from the body's `reply`.
-    fn reply(&mut self, reply: WireReply) -> io::Result<TextReply> {
-        let WireReply::TerminalFound { matches } = reply;
-        Ok(TextReply::TerminalFound {
-            matches: matches
-                .into_iter()
-                .map(|Match { above, text }| {
-                    Ok(TerminalMatch {
-                        above,
-                        text: self.text(text)?,
-                    })
-                })
-                .collect::<io::Result<_>>()?,
         })
     }
 

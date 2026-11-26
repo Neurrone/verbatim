@@ -557,9 +557,7 @@ fn window_shape<'t>(
     };
     let mut steps = verbatim_core::batch::Builder::<WindowSteps>::named();
     add_steps(&mut steps, verbatim_model::NodeId::new(1), &ask);
-    let verbatim_model::request::Question::Batch(sent) = steps.finish().question() else {
-        unreachable!("a builder's batch")
-    };
+    let verbatim_model::request::Question::Batch(sent) = steps.finish().question();
     shape.steps = sent.steps;
     shape.culture = false;
     shape

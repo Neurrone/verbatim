@@ -1272,9 +1272,7 @@ fn the_batch_walk_meets_every_node_it_names_and_unstamps_them() {
     sent.visit_nodes(&mut |node| met.push(node.number()));
     assert_eq!(met, (1..=9).collect::<Vec<_>>());
     ask.unstamp();
-    let crate::request::Question::Batch(mut unstamped) = ask.request else {
-        panic!("a batch stays a batch");
-    };
+    let crate::request::Question::Batch(mut unstamped) = ask.request;
     unstamped.visit_nodes(&mut |node| assert_eq!(node.outpost(), Some(OutpostId::UNASSIGNED)));
 }
 

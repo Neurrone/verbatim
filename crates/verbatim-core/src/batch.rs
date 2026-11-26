@@ -1391,12 +1391,10 @@ impl<B: 'static> Asked<B> {
 
 impl<B> Answers<B> {
     /// `reply` as the answers to `sent`: one outcome per step, each result
-    /// of its step's kind; `None` for any other reply, a malformed answer.
+    /// of its step's kind; `None` for a malformed answer.
     #[must_use]
     pub fn parse(sent: &Sent<B>, reply: Reply) -> Option<Self> {
-        let Reply::Steps(outcomes) = reply else {
-            return None;
-        };
+        let Reply::Steps(outcomes) = reply;
         let fits = outcomes.len() == sent.batch.steps.len()
             && sent
                 .batch
