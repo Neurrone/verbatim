@@ -702,7 +702,9 @@ outpost and the MSAA text arms turn into a step's outcome.
   `QueueInput::SpeechCut { key }` (the press of key `key`, a modifier
   included, cut speech off),
   `QueueInput::UtteranceCancelled` and `QueueInput::UtteranceFailed`,
-  `QueueInput::Due` (the time Core last asked to be woken at came),
+  `QueueInput::Due` (the time Core last asked to be woken at came, with
+  the window Windows names in front, `LiveFront`, while a check after a
+  menu, popup or switcher end waits),
   `QueueInput::TerminalDue { at_ms }` for `TerminalTimer`, and
   `QueueInput::LockKeyRead { key, on }` for `LockKeyToggled`; a mark
   reached is `QueueInput::MarkReached`, which joins the event queue.

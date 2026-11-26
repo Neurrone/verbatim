@@ -4,15 +4,20 @@
 //!
 //! The check: a menu end, popup end or switch end reaching the front when
 //! the run before it executed no focus notes the committed focus, and
-//! 50 ms later Core appends a check entry. At its turn, if the committed
-//! focus is unchanged, Core asks the foreground application's outpost for
+//! 50 ms later Core appends a check entry, the wake that brings it
+//! carrying what Windows names in front then, read live by Core's shell
+//! ([`due`]), as NVDA's timer asks Windows for the foreground window where
+//! Core's record waits for the listener's report (Dickson, 2026-11-26). At
+//! its turn, if the committed focus is unchanged, Core asks the outpost of
+//! that window's application for
 //! its focus with the focused state as a fact, which the outpost reads of
 //! an MSAA focus over every ancestor up to the desktop, reading the focus
 //! in full only when focused; Core judges the answer by the one
 //! definition's menu-check rows (`super::validity`): NVDA's duplicate test
 //! and the focused state for an MSAA answer, neither for a UI Automation
 //! one. NVDA: `IAccessibleHandler/__init__.py` 976 to 1002, 760 to
-//! 782; `NVDAObjects/IAccessible/__init__.py` 874 to 892.
+//! 782; `NVDAObjects/IAccessible/__init__.py` 874 to 892;
+//! `NVDAObjects/window/__init__.py` 162 to 181.
 //!
 //! The UI Automation menu opening is dropped at its arrival while a
 //! focus-kind entry that counts as pending by the one definition, raised
@@ -22,6 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
+use verbatim_model::request::LiveFront;
 use verbatim_model::{NodeId, TraceId};
 
 use super::backend::BackendCache;
@@ -31,7 +37,7 @@ use super::plain::HungRead;
 use super::retake::{Focused, current_if_focused, read_by};
 use super::validity::{self, Answered, Pending, Settled, Subject, Validity, View, Within};
 use crate::entries::{Candidate, Entries, Entry};
-use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome};
+use crate::event_queue::{Cx, FOCUS_DUE_US, Item, Outcome, RequestWindow};
 use crate::state::SrState;
 use std::collections::VecDeque;
 
@@ -50,9 +56,25 @@ pub(crate) enum CheckedEnd {
     Switch,
 }
 
+/// What is in front for a check: the check's one lifecycle, waiting for
+/// its time and then holding what the wake that brought it carried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum InFront {
+    /// The check waits for its time.
+    Waiting,
+    /// Windows named this window in front when the check came due.
+    Window(RequestWindow),
+    /// Windows named no window in front.
+    Nothing,
+    /// The window in front could not be read: no reader can be asked.
+    Gone,
+}
+
 /// The check entry: the committed focus's node as the end noted it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MenuCheck {
+    /// What is in front, read live when the check comes due ([`due`]).
+    pub(crate) in_front: InFront,
     /// The committed focus's node when the end reached the front, `None`
     /// with nothing committed or an own focus: the check compares the
     /// node, not NVDA's object identity (`docs/parity/focus-events.md`).
@@ -110,6 +132,7 @@ pub(crate) async fn slot(mut cx: Cx<Entries>, candidate: Candidate, run_executed
         _ => CheckedEnd::MenuOrPopup,
     };
     let check = MenuCheck {
+        in_front: InFront::Waiting,
         committed,
         end,
         trace_id: candidate.tell.trace_id,
@@ -161,17 +184,55 @@ async fn start(cx: &mut Cx<Entries>, candidate: &Candidate, run_executed: bool) 
     super::msaa_run::executed(cx, candidate, &read, &known);
 }
 
-/// The function of a check entry: the foreground application's focus read
-/// with its focused state as a fact, in full only when focused, then
-/// judged by the one definition's menu-check rows.
+/// The wake at `at_us` carries `in_front`, what Core's shell read of
+/// Windows in front as it made the wake: every check whose time has come
+/// takes it, before the wake's step joins the check to the queue. The
+/// shell reads whenever a check waits (`SrState::menu_check_waits`), so a
+/// check never joins without it.
+pub(crate) fn due(state: &mut SrState, at_us: u64, in_front: &LiveFront) {
+    let read = match in_front {
+        LiveFront::Window(front) => InFront::Window(RequestWindow {
+            handle: front.window,
+            top_level: front.window,
+            root_owner: front.root_owner,
+            process: front.process,
+            thread: front.thread,
+            // The foreground window is top-level: its own root.
+            by_class: verbatim_model::class::by_class(&front.class, &front.class),
+        }),
+        LiveFront::Nothing => InFront::Nothing,
+        LiveFront::Gone => InFront::Gone,
+    };
+    for entry in state.queue.later_due_mut(at_us) {
+        if let Entry::MenuCheck(check) = entry {
+            check.in_front = read;
+        }
+    }
+}
+
+/// The function of a check entry: the focus of the application Windows
+/// named in front when the check came due, read with its focused state as
+/// a fact, in full only when focused, then judged by the one definition's
+/// menu-check rows. With no window in front the read names the foreground
+/// record's window, and Core's shell answers it unsent with the desktop
+/// (`super::plain::decide`); a window in front that could not be read ends
+/// the check, as NVDA's fake focus does nothing with no focus object
+/// (`IAccessibleHandler/__init__.py` 995 to 997).
 pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
     if cx.facts().versions.committed_node() != check.committed {
         return;
     }
-    let Some(foreground) = cx.foreground() else {
-        return;
+    let window = match check.in_front {
+        InFront::Window(window) => window,
+        InFront::Nothing => {
+            let Some(foreground) = cx.foreground() else {
+                return;
+            };
+            foreground.window()
+        }
+        // A check joins the queue only by a wake, which carries the read.
+        InFront::Gone | InFront::Waiting => return,
     };
-    let window = foreground.window();
     let due_us = cx.due_in(FOCUS_DUE_US);
     let known = known_for(&cx, window.process);
     let Some(outcome) = current_if_focused(&mut cx, window, known.sent.clone(), due_us).await

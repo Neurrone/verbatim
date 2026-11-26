@@ -127,7 +127,7 @@ fn rounds_until(desk: &mut Desk, until: u64) -> Vec<Heard> {
         desk.at_us = wake;
         desk.wake = None;
         let mut checks = Vec::new();
-        for effect in desk.feed(QueueInput::Due) {
+        for effect in desk.feed(QueueInput::Due { in_front: None }) {
             match effect {
                 Effect::Queue(QueueEffect::WakeAt(next)) => desk.wake = next,
                 Effect::Queue(QueueEffect::CheckHung(windows)) => checks.extend(windows),

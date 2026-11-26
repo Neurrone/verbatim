@@ -5,7 +5,9 @@
 //! listener's report of the ghost window now in front, which reached Core
 //! 3.7 to 13.5 ms after the menu closed, the shell giving the reducer the
 //! ghost and the event queue the hung window it stands for; the check 50
-//! ms after the end, NVDA's fake focus, asked of hungwin's outpost; and the
+//! ms after the end, NVDA's fake focus, its wake carrying the window
+//! Windows names in front then, read live by the shell, asked of hungwin's
+//! outpost; and the
 //! shell's refusal of it as hung with the ghost read in front. NVDA says
 //! "hungwin (Not Responding)  window" there in 20 of 20 runs, by its plain
 //! window object of the ghost (`IAccessibleHandler/__init__.py` 976 to
@@ -21,7 +23,7 @@ use readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::PropertyValues;
 use verbatim_model::request::{
-    ForegroundReport, Front, GhostFront, QueueInput, Reader, RequestNumber,
+    ForegroundReport, Front, FrontWindow, GhostFront, LiveFront, QueueInput, Reader, RequestNumber,
 };
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
@@ -59,6 +61,21 @@ fn report(app: App) -> QueueInput {
         integrity: None,
         own_integrity: None,
     })
+}
+
+/// Core's wake as the shell makes it with a check waiting, Windows naming
+/// `app`'s top-level window in front: for hungwin, the hung window its
+/// ghost stands for, as the shell maps it.
+fn due_over(app: App) -> QueueInput {
+    QueueInput::Due {
+        in_front: Some(LiveFront::Window(FrontWindow {
+            window: app.top_level(),
+            root_owner: app.top_level(),
+            process: app.pid,
+            thread: 41,
+            class: "Frame".to_owned(),
+        })),
+    }
 }
 
 /// The menu's item "Settings...", focused.
@@ -147,7 +164,7 @@ fn closed_over_the_ghost(report_after_us: u64) -> Vec<Heard> {
     assert_eq!(desk.step_at(100_400, end(EventKind::MenuEnd, 100_400)), []);
     assert_eq!(ghost_in_front(&mut desk, 100_400 + report_after_us), []);
     assert_eq!(
-        desk.step_at(150_000, QueueInput::Due),
+        desk.step_at(150_000, due_over(HUNGWIN)),
         [Heard::Sent(Reader::Outpost(HUNGWIN.pid), "CurrentFocus")]
     );
     let [(number, _, _)] = desk.sent[..] else {
@@ -197,20 +214,35 @@ fn the_ghosts_report_13_5_ms_after_the_menu_closed_speaks_the_plain_window() {
 }
 
 /// The ghost's report delayed past the check, which the recordings never
-/// show (a recorded limit): the check asks the window still in the
-/// record, Verbatim's own, whose focus is not focused once the menu has
-/// gone, so nothing is said, and the report that follows says nothing
-/// either.
+/// show: the foreground record still names Verbatim's window, and the
+/// check asks hungwin all the same, by the window Windows names in front
+/// when the check comes due, as NVDA's fake focus asks Windows
+/// (`IAccessibleHandler/__init__.py` 991 to 995;
+/// `NVDAObjects/window/__init__.py` 162 to 181; Dickson, 2026-11-26). The
+/// plain window is spoken as in the recorded order, and the report that
+/// follows says nothing more.
 #[test]
-fn the_ghosts_report_after_the_check_says_nothing() {
+fn the_ghosts_report_after_the_check_still_asks_hungwin() {
     let mut desk = menu_open();
     assert_eq!(desk.step_at(100_000, end(EventKind::PopupEnd, 100_000)), []);
     assert_eq!(desk.step_at(100_400, end(EventKind::MenuEnd, 100_400)), []);
     assert_eq!(
-        desk.step_at(150_000, QueueInput::Due),
-        [Heard::Sent(Reader::Outpost(VERBATIM.pid), "CurrentFocus")]
+        desk.step_at(150_000, due_over(HUNGWIN)),
+        [Heard::Sent(Reader::Outpost(HUNGWIN.pid), "CurrentFocus")]
     );
-    assert_eq!(desk.reply_found(&Found::Unfocused), []);
+    let [(number, _, _)] = desk.sent[..] else {
+        panic!("one check asked: {:?}", desk.sent);
+    };
+    assert_eq!(
+        desk.step_at(
+            151_000,
+            QueueInput::InFront {
+                number: RequestNumber(number),
+                front: ghost(),
+            },
+        ),
+        plain_spoken()
+    );
     assert_eq!(ghost_in_front(&mut desk, 160_000), []);
 }
 
@@ -232,7 +264,8 @@ fn window_event(kind: EventKind, at_us: u64) -> QueueInput {
 /// of `menu_end_over_a_hung_window`'s first run (its flight recorder's
 /// lines 60 to 68): the popup end, the menu window's destroy, the menu end
 /// and its hide, then the check 60 ms later, with no foreground report,
-/// since Windows activated nothing. The check names Verbatim's window, the
+/// since Windows activated nothing. The check's wake carries that no
+/// window is in front, so it names Verbatim's window, the
 /// one still in the record, and the shell, finding no window in front,
 /// answers it with the desktop: NVDA's fake focus then focuses its
 /// `Desktop`, "Desktop  window" (1 of 18 Escapes in the captures; Dickson,
@@ -251,7 +284,12 @@ fn the_menu_closed_with_no_window_in_front_speaks_the_desktop() {
         []
     );
     assert_eq!(
-        desk.step_at(161_000, QueueInput::Due),
+        desk.step_at(
+            161_000,
+            QueueInput::Due {
+                in_front: Some(LiveFront::Nothing)
+            }
+        ),
         [Heard::Sent(Reader::Outpost(VERBATIM.pid), "CurrentFocus")]
     );
     let [(number, _, _)] = desk.sent[..] else {

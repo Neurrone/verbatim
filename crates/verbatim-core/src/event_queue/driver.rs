@@ -346,6 +346,16 @@ impl<E, F> Queue<E, F> {
         self.timers.iter().map(|(_, entry)| entry)
     }
 
+    /// Every entry Core appends later whose time has come by `now_us`, to
+    /// be given what the wake at `now_us` carries for it before that wake's
+    /// step joins it.
+    pub(crate) fn later_due_mut(&mut self, now_us: u64) -> impl Iterator<Item = &mut E> {
+        self.timers
+            .iter_mut()
+            .filter(move |(at_us, _)| *at_us <= now_us)
+            .map(|(_, entry)| entry)
+    }
+
     /// The listener generation the owner thread last reported started.
     pub(crate) fn listener(&self) -> Option<u64> {
         self.record.listener

@@ -507,15 +507,15 @@ fn msaa_ok_heard(app: App, foreground: Option<(App, u64)>) -> Vec<Heard> {
 }
 
 /// A menu's end told on `app`'s window and its check 50 ms later: what the
-/// end and the check's wake did, the check's read of the foreground
-/// application's focus asked.
+/// end and the check's wake did, `app`'s window the one Windows names in
+/// front then, the check's read of its application's focus asked.
 fn menu_ended(desk: &mut Desk, app: App) {
     assert_eq!(
         desk.tell(LISTENER, msaa_tell(app, EventKind::MenuEnd, -4)),
         []
     );
     assert_eq!(
-        desk.due(),
+        desk.due_over(app),
         [Heard::Sent(Reader::Outpost(app.pid), "CurrentFocus")]
     );
 }

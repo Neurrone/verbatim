@@ -1907,11 +1907,17 @@ impl ReducerThread<'_> {
     }
 
     /// Tells Core once the time it asked to be woken at is past, and moves
-    /// the terminal's timer and the lock keys' reads on.
+    /// the terminal's timer and the lock keys' reads on. While a check
+    /// after a menu, popup or switcher end waits for its time, the wake
+    /// carries the window Windows names in front, read here with local
+    /// calls ([`hang_check::live_front`]): the one read of Windows the
+    /// shell makes for a decision of Core's, not to be made for any other
+    /// input (Dickson, 2026-11-26).
     fn expire(&mut self) {
         let shared = now_us();
         if self.queue_due.take_if(|due| *due <= shared).is_some() {
-            self.queue(QueueInput::Due);
+            let in_front = self.state.menu_check_waits().then(hang_check::live_front);
+            self.queue(QueueInput::Due { in_front });
         }
         // The terminal's timer, once its due time is past; the step moves
         // the due time past it (`SrState::terminal_timer_due`).

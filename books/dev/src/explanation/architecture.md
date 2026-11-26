@@ -448,8 +448,11 @@ that are global by nature:
   only report that a window came to the foreground, from which Core takes
   the keyboard hook's view of the foreground (section 5), attention and
   its foreground record (section 2); and the end of a menu or switcher is
-  told to Core, which asks the foreground application for its focus if
-  its own has not changed shortly after, as NVDA's fake focus does.
+  told to Core, which asks the application of the window in front for
+  its focus if its own has not changed shortly after, as NVDA's fake
+  focus does; that window is the one Windows names when the check comes
+  due, which Core's shell reads and Core's wake carries (ADR 0003, "A
+  frozen window").
 
 The listener's contract: **its callbacks and its writer never make a
 cross-process call**; its registration thread's one desktop-wide

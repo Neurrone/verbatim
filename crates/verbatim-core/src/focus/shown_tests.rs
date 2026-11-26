@@ -918,8 +918,12 @@ fn the_secure_desktop_while_postponed() {
     let _ = switch(&mut held, 2_000, true);
     let due = 2_000 + crate::input_desktop::RETURN_DELAY_US;
     let trace = (TraceId::from_raw(due), due);
-    let returned =
-        crate::entries::route(&mut held.state, &mut held.runtime, trace, &QueueInput::Due);
+    let returned = crate::entries::route(
+        &mut held.state,
+        &mut held.runtime,
+        trace,
+        &QueueInput::Due { in_front: None },
+    );
     let asked: Vec<String> = returned
         .said()
         .into_iter()
@@ -1026,6 +1030,15 @@ fn a_tray_menu_over_a_hidden_dialog_then_escape() {
     let mut end = msaa_tell(-4);
     end.kind = EventKind::PopupEnd;
     let _ = step(&mut held, 2_000, crate::entries::tests::entry(end));
+    let front = Foreground {
+        window: WindowHandle(DIALOG),
+        root_owner: WindowHandle(DIALOG),
+        process: APP,
+        thread: 41,
+        by_class: None,
+        ..Foreground::BLANK
+    };
+    crate::entries::tests::in_front_at(&mut held, 52_000, &front);
     assert_eq!(step(&mut held, 52_000, Input::Tick), [ASK_CURRENT]);
     assert_eq!(answer_out(&mut held, 52_100, hidden_dialog()), NOTHING);
     assert!(held.state.versions.postponed.is_some());

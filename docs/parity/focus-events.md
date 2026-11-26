@@ -514,7 +514,11 @@ focus is already due within the limiter's pump window, as NVDA's pump
 keeps one menu event and fakes the focus once; a focus committed between
 the two ends puts the later end in a later pump of NVDA's, which fakes
 the focus again. At its turn, if the committed focus's node is
-unchanged, Core asks the foreground application's outpost for its focus,
+unchanged, Core asks for its focus the outpost of the application whose
+window Windows named in front when the check came due, which Core's shell
+reads live and Core's wake carries, as `objectWithFocus` takes the
+foreground window when NVDA's timer runs
+(`NVDAObjects/window/__init__.py` 162 to 181; Dickson, 2026-11-26),
 the outpost reading an MSAA focus's focused state over every ancestor up
 to the desktop as a fact and reading the focus in full only when it has
 it; Core judges the answer by the one definition's menu-check rows, the
@@ -527,7 +531,8 @@ follows it with no limit, the outpost for at most 64 steps. The outpost takes th
 keyboard focus at once, before any call that can block, as NVDA's timer
 takes the foreground window and its thread's focus window. Core's
 `a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer`,
-`a_checked_msaa_focus_answered_unfocused_is_refused_and_not_spoken`; mockapp's
+`a_checked_msaa_focus_answered_unfocused_is_refused_and_not_spoken`,
+`a_check_asks_the_application_windows_names_in_front_not_the_records`; mockapp's
 `a_fake_focus_whose_focused_ancestor_core_knows_is_spoken`,
 `a_focus_now_takes_the_focus_window_before_its_probe`,
 `a_focus_committed_before_the_check_ends_it_with_no_read` and

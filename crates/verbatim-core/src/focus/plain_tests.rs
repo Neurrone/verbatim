@@ -144,6 +144,7 @@ fn end(kind: EventKind) -> Input<Entry> {
 fn checked(kind: EventKind) -> Held {
     let mut state = in_front();
     assert_eq!(effects(&mut state, 1_000, end(kind)), Vec::<String>::new());
+    crate::entries::tests::in_front_at(&mut state, 51_000, &IN_FRONT);
     assert_eq!(
         effects(&mut state, 51_000, Input::Tick),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
@@ -347,7 +348,7 @@ fn returned() -> Held {
     let asked: Vec<String> = route(
         &mut state,
         10_000 + crate::input_desktop::RETURN_DELAY_US,
-        &QueueInput::Due,
+        &QueueInput::Due { in_front: None },
     )
     .into_iter()
     .filter_map(|said| match said {
@@ -575,6 +576,7 @@ fn a_request_on_an_older_plain_node_is_not_there() {
         effects(&mut state, 100_000, end(EventKind::PopupEnd)),
         Vec::<String>::new()
     );
+    crate::entries::tests::in_front_at(&mut state, 150_000, &IN_FRONT);
     assert_eq!(
         effects(&mut state, 150_000, Input::Tick),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
@@ -698,6 +700,7 @@ fn another_windows_destroy_leaves_the_ghost_and_the_next_commit_replaces_the_dea
         effects(&mut state, 100_000, end(EventKind::PopupEnd)),
         Vec::<String>::new()
     );
+    crate::entries::tests::in_front_at(&mut state, 150_000, &IN_FRONT);
     assert_eq!(
         effects(&mut state, 150_000, Input::Tick),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]

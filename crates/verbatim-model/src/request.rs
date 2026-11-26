@@ -735,6 +735,40 @@ pub struct GhostFront {
     pub unavailable: bool,
 }
 
+/// What Windows names in front when a check after a menu, popup or
+/// switcher end comes due ([`QueueInput::Due`]), read by Core's shell with
+/// calls to Windows only, none into an application.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LiveFront {
+    /// This window is in front.
+    Window(FrontWindow),
+    /// No window is in front (`GetForegroundWindow` names none).
+    Nothing,
+    /// The window in front went before its owner was read, or is a console
+    /// window whose console host cannot be read: no reader can be asked
+    /// about it.
+    Gone,
+}
+
+/// The foreground window as a request names it, read live
+/// ([`LiveFront::Window`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontWindow {
+    /// The window `GetForegroundWindow` names, or for a ghost window the
+    /// hung window it stands in for, as the listener's report names it
+    /// ([`ForegroundReport::window`]).
+    pub window: WindowHandle,
+    /// The top of its owner chain.
+    pub root_owner: WindowHandle,
+    /// The process whose outpost reads it: the window's owner, or for a
+    /// console window its console host.
+    pub process: Pid,
+    /// The thread that owns the window.
+    pub thread: u32,
+    /// Its class.
+    pub class: String,
+}
+
 /// The foreground record as the listener reports it to the event queue:
 /// the window `GetForegroundWindow` names, once it names it, from which
 /// Core decides attention and what the keyboard hook reads of the
@@ -839,7 +873,17 @@ pub enum QueueInput {
         hung: crate::tell::Hung,
     },
     /// The time Core last asked to be woken at came.
-    Due,
+    Due {
+        /// What Windows names in front, read live by Core's shell as it
+        /// makes this input, while a check after a menu, popup or switcher
+        /// end waits for its time; `None` while none waits. The checks this
+        /// wake brings ask by it, as NVDA's fake focus asks Windows for
+        /// the foreground window when its timer runs, since the listener's
+        /// foreground report can come later than the check (Dickson,
+        /// 2026-11-26). The one read of Windows' state the shell makes for
+        /// a decision of Core's.
+        in_front: Option<LiveFront>,
+    },
     /// The processes whose windows nothing is read from: the end-to-end
     /// harness's own, given once at startup; none for real users.
     Ignored(Vec<Pid>),

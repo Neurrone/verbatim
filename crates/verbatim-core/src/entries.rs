@@ -1218,7 +1218,15 @@ pub(crate) fn route(
             process: *process,
         },
         QueueInput::WindowHung { hung, .. } => Input::WindowHung(hung_window(hung)),
-        QueueInput::Due => Input::Tick,
+        QueueInput::Due { in_front } => {
+            // The checks after a menu, popup or switcher end that this wake
+            // brings ask by what Windows named in front as the shell made
+            // it (Dickson, 2026-11-26).
+            if let Some(in_front) = in_front {
+                crate::focus::menus::due(state, at_us, in_front);
+            }
+            Input::Tick
+        }
         QueueInput::Press(press) => Input::Entry(Entry::Press(Box::new(PressEntry::new(
             trace_id,
             (**press).clone(),

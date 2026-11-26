@@ -762,11 +762,36 @@ impl Desk {
         self.found(to, number, found)
     }
 
-    /// The queue's wake fed, at the time Core asked for.
+    /// The queue's wake fed, at the time Core asked for, with no check
+    /// after a menu, popup or switcher end waiting, whose wake carries the
+    /// window in front ([`Desk::due_over`]).
     pub fn due(&mut self) -> Vec<Heard> {
+        assert!(
+            !self.state.menu_check_waits(),
+            "a check waits: its wake carries the window in front"
+        );
         let wake = self.wake.expect("a wake asked for");
         self.at_us = self.at_us.max(wake) - 1_000;
-        self.step(QueueInput::Due)
+        self.step(QueueInput::Due { in_front: None })
+    }
+
+    /// The queue's wake fed, at the time Core asked for, as the shell makes
+    /// it while a check after a menu, popup or switcher end waits: with
+    /// `app`'s top-level window the one Windows names in front.
+    pub fn due_over(&mut self, app: App) -> Vec<Heard> {
+        let wake = self.wake.expect("a wake asked for");
+        self.at_us = self.at_us.max(wake) - 1_000;
+        self.step(QueueInput::Due {
+            in_front: Some(verbatim_model::request::LiveFront::Window(
+                verbatim_model::request::FrontWindow {
+                    window: app.top_level(),
+                    root_owner: app.top_level(),
+                    process: app.pid,
+                    thread: 41,
+                    class: "Frame".to_owned(),
+                },
+            )),
+        })
     }
 
     /// The focus on `focus` in `app`, under `ancestors`, outermost first,

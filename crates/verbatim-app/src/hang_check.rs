@@ -9,9 +9,13 @@
 //! same way (`UIAHandler/utils.py` 438 to 459;
 //! `IAccessibleHandler/__init__.py` 556 to 576). Every call is local to
 //! Windows; none reaches the application.
+//!
+//! The shell's one other read of Windows for a decision of Core's is here
+//! too: the foreground window as Core's wake carries it for the check after
+//! a menu, popup or switcher end ([`live_front`]; Dickson, 2026-11-26).
 
 use verbatim_model::WindowHandle;
-use verbatim_model::request::{DesktopFront, Front, GhostFront};
+use verbatim_model::request::{DesktopFront, Front, FrontWindow, GhostFront, LiveFront};
 
 /// The window Windows judges for `window`: the hung window a ghost
 /// window stands in for (`HungWindowFromGhostWindow`), else `window`
@@ -66,6 +70,15 @@ trait FrontReads {
     /// The thread and process that own `window`
     /// (`GetWindowThreadProcessId`).
     fn owner(&self, window: isize) -> (u32, u32);
+    /// The process whose outpost reads `window`: its owner, or a console
+    /// window's console host; `None` for a window that is gone and for a
+    /// console window whose host cannot be read
+    /// (`verbatim_win32::provider::provider_process`).
+    fn provider(&self, window: isize) -> Option<u32>;
+    /// The top of `window`'s owner chain (`GetAncestor`, `GA_ROOTOWNER`).
+    fn root_owner(&self, window: isize) -> isize;
+    /// `window`'s class (`GetClassNameW`).
+    fn class(&self, window: isize) -> String;
 }
 
 /// The reads of the running system.
@@ -113,6 +126,18 @@ impl FrontReads for Windows {
     fn owner(&self, window: isize) -> (u32, u32) {
         verbatim_win32::window::window_owner(window)
     }
+
+    fn provider(&self, window: isize) -> Option<u32> {
+        verbatim_win32::provider::provider_process(window)
+    }
+
+    fn root_owner(&self, window: isize) -> isize {
+        verbatim_win32::window::root_owner_of(window)
+    }
+
+    fn class(&self, window: isize) -> String {
+        verbatim_win32::window::window_class_name(window)
+    }
 }
 
 /// What is in front, read live when the shell answers a read of an
@@ -132,6 +157,38 @@ pub(crate) fn front() -> Front {
 /// is in front, as NVDA's fake focus reads the desktop.
 pub(crate) fn nothing_in_front() -> bool {
     Windows.foreground() == 0
+}
+
+/// The window Windows names in front, read as the shell makes Core's wake
+/// while a check after a menu, popup or switcher end waits for its time
+/// (`SrState::menu_check_waits`): the wake carries it and the check asks
+/// by it, as NVDA's fake focus asks Windows for the foreground window when
+/// its timer runs (`NVDAObjects/window/__init__.py` 162 to 181), where
+/// Core's foreground record waits for the listener's report (Dickson,
+/// 2026-11-26). A ghost is mapped to the hung window it stands for, as the
+/// listener's report is. The shell decides nothing: Core does.
+pub(crate) fn live_front() -> LiveFront {
+    live_front_of(&Windows)
+}
+
+/// [`live_front`] over `reads`.
+fn live_front_of(reads: &impl FrontReads) -> LiveFront {
+    let foreground = reads.foreground();
+    if foreground == 0 {
+        return LiveFront::Nothing;
+    }
+    let window = reads.ghost_of(foreground).unwrap_or(foreground);
+    let Some(process) = reads.provider(window) else {
+        return LiveFront::Gone;
+    };
+    let (thread, _) = reads.owner(window);
+    LiveFront::Window(FrontWindow {
+        window: window_handle(window),
+        root_owner: window_handle(reads.root_owner(window)),
+        process: verbatim_model::Pid(process),
+        thread,
+        class: reads.class(window),
+    })
 }
 
 /// [`front`] over `reads`.
@@ -254,6 +311,63 @@ mod tests {
             let window = u32::try_from(window).unwrap();
             (window + 100, window + 1_000)
         }
+
+        fn provider(&self, window: isize) -> Option<u32> {
+            self.existing
+                .contains(&window)
+                .then(|| u32::try_from(window).unwrap() + 2_000)
+        }
+
+        fn root_owner(&self, window: isize) -> isize {
+            window + 10
+        }
+
+        fn class(&self, window: isize) -> String {
+            format!("class {window}")
+        }
+    }
+
+    /// The window in front is read with the process whose outpost reads
+    /// it, which is not its owner for a console window and so is read
+    /// apart from it, its owning thread, its root owner and its class; a
+    /// ghost as the hung window it stands for.
+    #[test]
+    fn the_live_front_is_the_window_in_front_or_the_hung_window_its_ghost_stands_for() {
+        let window = |window: u64| {
+            let small = u32::try_from(window).unwrap();
+            LiveFront::Window(FrontWindow {
+                window: WindowHandle(window),
+                root_owner: WindowHandle(window + 10),
+                process: verbatim_model::Pid(small + 2_000),
+                thread: small + 100,
+                class: format!("class {window}"),
+            })
+        };
+        let plain = Reads {
+            foreground: 7,
+            existing: vec![7],
+            ..Reads::default()
+        };
+        assert_eq!(live_front_of(&plain), window(7));
+        let ghost = Reads {
+            foreground: 7,
+            existing: vec![7, 9],
+            ghost: Some((7, 9)),
+            ..Reads::default()
+        };
+        assert_eq!(live_front_of(&ghost), window(9));
+    }
+
+    /// No window in front is nothing, and a window in front with no
+    /// process to ask is gone.
+    #[test]
+    fn the_live_front_with_no_window_is_nothing_and_an_unreadable_one_is_gone() {
+        assert_eq!(live_front_of(&Reads::default()), LiveFront::Nothing);
+        let gone = Reads {
+            foreground: 7,
+            ..Reads::default()
+        };
+        assert_eq!(live_front_of(&gone), LiveFront::Gone);
     }
 
     /// A ghost in front, whose thread has no focus window, is the ghost

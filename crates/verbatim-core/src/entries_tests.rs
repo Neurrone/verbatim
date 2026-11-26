@@ -326,8 +326,48 @@ impl std::ops::DerefMut for Held {
 /// each request sent by its reader and kind, each utterance by its
 /// segments, every other effect left out.
 pub(crate) fn feed_at(held: &mut Held, at_us: u64, input: Input<Entry>) -> Vec<String> {
-    feed(&mut held.state, &mut held.runtime, Timed { at_us, input })
-        .unwrap()
+    read_as_a_test(feed(&mut held.state, &mut held.runtime, Timed { at_us, input }).unwrap())
+}
+
+/// Core's wake at `at_us` as the shell feeds it, with `in_front` what it
+/// read of Windows in front for the checks after a menu, popup or switcher
+/// end, `None` when none waited: the step's effects as [`feed_at`] gives
+/// them.
+pub(crate) fn due_at(
+    held: &mut Held,
+    at_us: u64,
+    in_front: Option<verbatim_model::request::LiveFront>,
+) -> Vec<String> {
+    read_as_a_test(
+        crate::entries::route(
+            &mut held.state,
+            &mut held.runtime,
+            (verbatim_model::TraceId::from_raw(1), at_us),
+            &verbatim_model::request::QueueInput::Due { in_front },
+        )
+        .said(),
+    )
+}
+
+/// The checks after a menu, popup or switcher end due by `at_us` take what
+/// the shell's wake carries for them, Windows naming `front`'s window in
+/// front (`crate::focus::menus::due`), for a test that then feeds the
+/// wake's tick itself.
+pub(crate) fn in_front_at(held: &mut Held, at_us: u64, front: &Foreground) {
+    let in_front =
+        verbatim_model::request::LiveFront::Window(verbatim_model::request::FrontWindow {
+            window: front.window,
+            root_owner: front.root_owner,
+            process: front.process,
+            thread: front.thread,
+            class: String::new(),
+        });
+    crate::focus::menus::due(&mut held.state, at_us, &in_front);
+}
+
+/// `effects` as a test reads them ([`feed_at`]).
+fn read_as_a_test(effects: Vec<Said>) -> Vec<String> {
+    effects
         .into_iter()
         .filter_map(|effect| match effect {
             Effect::Queue(QueueEffect::Send { to, ask }) => {
@@ -1840,7 +1880,7 @@ fn a_request_from_outside_the_queue_past_its_due_time_is_cancelled_and_answered(
     use verbatim_model::request::{Cancel, CancelReason, QueueEffect, QueueInput};
     let mut held = taskbar_read_out();
     let due_us = 2_000 + crate::event_queue::OTHER_DUE_US;
-    let effects = shell_feeds(&mut held, due_us, QueueInput::Due);
+    let effects = shell_feeds(&mut held, due_us, QueueInput::Due { in_front: None });
     assert!(
         effects.contains(&Said::Queue(QueueEffect::Cancel {
             to: EXPLORER,
@@ -1869,7 +1909,7 @@ fn a_request_from_outside_the_queue_has_its_window_checked_for_a_hang() {
     let effects = shell_feeds(
         &mut held,
         2_000 + crate::event_queue::HANG_ROUND_US,
-        QueueInput::Due,
+        QueueInput::Due { in_front: None },
     );
     assert_eq!(
         effects,

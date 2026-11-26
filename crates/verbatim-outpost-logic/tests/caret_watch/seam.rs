@@ -321,7 +321,7 @@ impl Seam {
             }
             if self.wake.is_some_and(|wake| wake <= at) {
                 self.wake = None;
-                seen.extend(self.core(QueueInput::Due, app));
+                seen.extend(self.core(QueueInput::Due { in_front: None }, app));
                 continue;
             }
             if self.outpost_timer().is_some_and(|due| due <= at) {

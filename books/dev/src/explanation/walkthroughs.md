@@ -129,8 +129,8 @@ releases Alt. Notepad has no outpost yet.
 9. **The switcher's end.** At its turn Core notes the committed focus and,
    50 ms later, appends a check entry; at the check's turn, if a focus has
    been committed since, the usual case, it ends with no read; otherwise
-   Core asks the foreground application's outpost for its focus, NVDA's
-   fake focus.
+   Core asks the outpost of the application whose window Windows named
+   in front when the check came due for its focus, NVDA's fake focus.
 
 The order is Core's arrival order, as NVDA's is its queue's: the listener
 tells every event of every application through one pipe, so a desktop

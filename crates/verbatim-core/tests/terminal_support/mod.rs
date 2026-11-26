@@ -1081,7 +1081,7 @@ impl Session {
     pub fn due(&mut self) {
         let wake = self.wake.take().expect("Core asked to be woken");
         self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
-        self.queue(QueueInput::Due);
+        self.queue(QueueInput::Due { in_front: None });
         while !self.checks.is_empty() {
             let checks = std::mem::take(&mut self.checks);
             for window in checks {
@@ -1126,7 +1126,7 @@ impl Session {
         });
         let wake = self.wake.take().expect("the read after the return timed");
         self.at_ms = self.at_ms.max(wake.div_ceil(1_000));
-        let input = self.queued_input(TraceId::from_raw(1), QueueInput::Due);
+        let input = self.queued_input(TraceId::from_raw(1), QueueInput::Due { in_front: None });
         let effects = self.step(input);
         self.take(effects, None);
         let ask = self.pending.pop_front().expect("the read after the return");

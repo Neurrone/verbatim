@@ -210,11 +210,19 @@ fn a_failed_launch_starts_again_at_once_then_after_its_backoff() {
         })
     );
     assert_eq!(
-        route(&mut held, 1_199 + 1_000_000, &QueueInput::Due),
+        route(
+            &mut held,
+            1_199 + 1_000_000,
+            &QueueInput::Due { in_front: None }
+        ),
         Vec::<String>::new()
     );
     assert_eq!(
-        route(&mut held, 1_200 + 1_000_000, &QueueInput::Due),
+        route(
+            &mut held,
+            1_200 + 1_000_000,
+            &QueueInput::Due { in_front: None }
+        ),
         ["start 40"]
     );
     assert_eq!(stage(&held), Some(Stage::Launching));
@@ -249,11 +257,19 @@ fn a_generation_with_no_pong_for_nine_seconds_is_ended_and_replaced() {
     let mut held = committed();
     assert_eq!(route(&mut held, 5_000_000, &pong(0)), Vec::<String>::new());
     assert_eq!(
-        route(&mut held, 4_999_999 + LIVENESS_US, &QueueInput::Due),
+        route(
+            &mut held,
+            4_999_999 + LIVENESS_US,
+            &QueueInput::Due { in_front: None }
+        ),
         Vec::<String>::new()
     );
     assert_eq!(
-        route(&mut held, 5_000_000 + LIVENESS_US, &QueueInput::Due),
+        route(
+            &mut held,
+            5_000_000 + LIVENESS_US,
+            &QueueInput::Due { in_front: None }
+        ),
         ["end 3", "start 40"]
     );
     assert!(matches!(held.state.versions.committed, Committed::Ended(_)));
@@ -328,7 +344,11 @@ fn a_second_failure_waits_out_its_backoff_and_then_is_not_replaced_unasked() {
         })
     );
     assert_eq!(
-        route(&mut held, 3_000 + 1_000_000, &QueueInput::Due),
+        route(
+            &mut held,
+            3_000 + 1_000_000,
+            &QueueInput::Due { in_front: None }
+        ),
         Vec::<String>::new()
     );
     assert_eq!(stage(&held), None);
@@ -417,7 +437,7 @@ fn an_idle_outpost_holding_nothing_is_kept() {
         at_us += 3_000_000;
         assert_eq!(route(&mut held, at_us, &pong(0)), Vec::<String>::new());
         assert_eq!(
-            route(&mut held, at_us + 1, &QueueInput::Due),
+            route(&mut held, at_us + 1, &QueueInput::Due { in_front: None }),
             Vec::<String>::new()
         );
     }

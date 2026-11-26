@@ -169,11 +169,19 @@ fn the_return_reads_the_front_focus_200_ms_later_and_says_its_title() {
     let _ = route(&mut held, 1_000, &switch(false));
     assert_eq!(route(&mut held, 2_000, &switch(true)), Vec::<String>::new());
     assert_eq!(
-        route(&mut held, 2_000 + RETURN_DELAY_US - 1, &QueueInput::Due),
+        route(
+            &mut held,
+            2_000 + RETURN_DELAY_US - 1,
+            &QueueInput::Due { in_front: None }
+        ),
         Vec::<String>::new()
     );
     assert_eq!(
-        route(&mut held, 2_000 + RETURN_DELAY_US, &QueueInput::Due),
+        route(
+            &mut held,
+            2_000 + RETURN_DELAY_US,
+            &QueueInput::Due { in_front: None }
+        ),
         ["send Outpost(Pid(40)) CurrentFocus known 0"]
     );
     assert_eq!(held.state.desktop.input, InputDesktop::User);
@@ -200,7 +208,11 @@ fn a_switch_away_while_the_return_is_pending_cancels_the_read() {
     assert_eq!(held.state.desktop.input, InputDesktop::Other);
     assert_eq!(held.state.desktop.switches_away, 2);
     assert_eq!(
-        route(&mut held, 2_000 + RETURN_DELAY_US, &QueueInput::Due),
+        route(
+            &mut held,
+            2_000 + RETURN_DELAY_US,
+            &QueueInput::Due { in_front: None }
+        ),
         Vec::<String>::new()
     );
 }

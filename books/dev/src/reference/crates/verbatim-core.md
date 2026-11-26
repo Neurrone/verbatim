@@ -945,8 +945,13 @@ queue. A menu, popup or switcher end whose run executed no focus makes
 the check entry 50 ms later (`focus::menus`, NVDA's fake focus), one for
 the ends of one pump that noted the same committed focus
 (`event_queue::PUMP_WINDOW_US`): with the
-committed focus's node unchanged (`Versions::committed_node`), it asks the foreground application's current
-focus with its focused state first (`retake::current_if_focused`: a
+committed focus's node unchanged (`Versions::committed_node`), it asks the current
+focus of the application whose window Windows named in front when the
+check came due (`menus::InFront`, which the wake's `QueueInput::Due`
+carries and `menus::due` gives every check due by that wake before the
+wake's step joins it to the queue; no window in front names the
+foreground record's window, and a window that could not be read ends the
+check) with its focused state first (`retake::current_if_focused`: a
 `Test` of the focus whose matcher holds of one without the focused
 state, then its `FocusRead` unless it matched), the outpost reading an
 MSAA focus's focused state over every ancestor up to the desktop; the answer is judged by the one definition's

@@ -652,6 +652,18 @@ impl SrState {
         self.toggle_keys.front().copied()
     }
 
+    /// Whether a check after a menu, popup or switcher end waits for its
+    /// time (`crate::focus::menus`): the shell then reads what Windows
+    /// names in front as it makes Core's wake, and the wake carries it
+    /// ([`verbatim_model::request::QueueInput::Due`]). A view of the state,
+    /// read as the wake is made, so the shell keeps no copy.
+    #[must_use]
+    pub fn menu_check_waits(&self) -> bool {
+        self.queue
+            .later()
+            .any(|entry| matches!(entry, crate::entries::Entry::MenuCheck(_)))
+    }
+
     /// When the focused terminal's quiet-period timer is due, on the run's
     /// shared clock: the shell enters [`verbatim_model::Input::TerminalTimer`]
     /// with this time once it is past. A view of the focused terminal's

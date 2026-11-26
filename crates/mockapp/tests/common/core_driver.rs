@@ -47,8 +47,8 @@ use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::protocol::OutpostToCore;
 use verbatim_model::request::{
-    Answer, Ask, ForegroundReport, Instance, ProcessFact, QueueEffect, QueueInput, Reader,
-    RequestNumber,
+    Answer, Ask, ForegroundReport, FrontWindow, Instance, LiveFront, ProcessFact, QueueEffect,
+    QueueInput, Reader, RequestNumber,
 };
 use verbatim_model::stroke::{HeldStroke, Stroke};
 use verbatim_model::tell::{ElementToken, Event, EventObject, Payload};
@@ -713,11 +713,25 @@ impl CoreDriver {
     }
 
     /// Wakes Core at the time it last asked to be woken at, when it asked,
-    /// moving its clock on to that time.
+    /// moving its clock on to that time. While a check after a menu, popup
+    /// or switcher end waits, the wake carries the window in front as the
+    /// shell's does, here the window the outpost reads as the foreground,
+    /// since a test's window is not Windows' foreground window.
     pub fn due(&mut self) -> Step {
         if let Some(wake) = self.wake.take() {
             self.clock.reach(wake);
-            self.feed(QueueInput::Due);
+            let in_front = self.state.menu_check_waits().then(|| {
+                let window = self.outpost.foreground();
+                let (thread, process) = verbatim_win32::window::window_owner(window);
+                LiveFront::Window(FrontWindow {
+                    window: WindowHandle::from(window),
+                    root_owner: WindowHandle::from(verbatim_win32::window::root_owner_of(window)),
+                    process: Pid(process),
+                    thread,
+                    class: verbatim_win32::window::window_class_name(window),
+                })
+            });
+            self.feed(QueueInput::Due { in_front });
         }
         self.take()
     }

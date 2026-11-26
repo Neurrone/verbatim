@@ -459,6 +459,7 @@ fn asked(kind: Kind) -> (Held, Instance, u64) {
             found_at(&mut held, 2_200, (OUTPOST, 2), item_answer("Alpha", (1, 3)));
             tell.kind = EventKind::MenuEnd;
             feed_at(&mut held, 2_300, entry(tell));
+            crate::entries::tests::in_front_at(&mut held, 60_000, &IN_FRONT);
             Input::Tick
         }
         Kind::Startup => Input::Foreground(IN_FRONT),
@@ -752,7 +753,7 @@ fn a_desktop_switch_while_the_identity_read_is_out_leaves_its_answer_a_duplicate
         &mut held.state,
         &mut held.runtime,
         (TraceId::from_raw(1), due),
-        &QueueInput::Due,
+        &QueueInput::Due { in_front: None },
     );
     assert_eq!(
         held.state.queue.batches_for_tests().len(),
@@ -902,6 +903,7 @@ fn pair_in(order: &[Step]) -> (Vec<String>, usize) {
             }
             Step::Due => {
                 at_us += 60_000;
+                crate::entries::tests::in_front_at(&mut held, at_us, &IN_FRONT);
                 crate::event_queue::Input::Tick
             }
             Step::ListFocus => entry(list_tell(at_us)),

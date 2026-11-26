@@ -5,13 +5,14 @@ use crate::entries::tests::found_at;
 use crate::readers::Found;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue};
-use verbatim_model::request::Outcome;
+use verbatim_model::request::{FrontWindow, Instance, LiveFront, Outcome, Reader};
 use verbatim_model::tell::{ElementToken, Read};
-use verbatim_model::{Role, State, StateSet, WindowHandle};
+use verbatim_model::{Pid, Role, State, StateSet, WindowHandle};
 
 use crate::entries::tests::{
-    APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, asked_completion, entry,
-    feed_at, focus_read, held, listener_answer, msaa_tell, node, ready, uia_tell, values,
+    APP, Held, LISTENER, NOTHING, OUTPOST, SPOKEN, SPOKEN_FOLLOWED, asked_completion, due_at,
+    entry, feed_at, focus_read, held, listener_answer, msaa_tell, node, ready, ready_at, uia_tell,
+    values,
 };
 use crate::event_queue::{Foreground, Input};
 
@@ -39,6 +40,18 @@ fn in_front() -> Held {
         ),
     );
     state
+}
+
+/// Windows naming the foreground record's window in front, as the shell
+/// reads it for a wake that finds a check waiting.
+fn the_records() -> LiveFront {
+    LiveFront::Window(FrontWindow {
+        window: IN_FRONT.window,
+        root_owner: IN_FRONT.root_owner,
+        process: IN_FRONT.process,
+        thread: IN_FRONT.thread,
+        class: String::new(),
+    })
 }
 
 /// An MSAA menu end tell on window 5.
@@ -77,9 +90,9 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
         .key_joined(verbatim_model::KeySeq::new(3));
     let fence = state.state.arrivals.fence();
     assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
-    assert_eq!(feed_at(&mut state, 1_049, Input::Tick), NOTHING);
+    assert_eq!(due_at(&mut state, 1_049, Some(the_records())), NOTHING);
     assert_eq!(
-        feed_at(&mut state, 51_000, Input::Tick),
+        due_at(&mut state, 51_000, Some(the_records())),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
     );
     state
@@ -94,6 +107,55 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
         state.state.versions.last.as_ref().map(|last| last.since),
         Some(Some(fence))
     );
+}
+
+/// A menu ends while the foreground record still names its application,
+/// the listener's report of the window that came in front being late, and
+/// Windows names another application's window in front when the check
+/// comes due: the check asks that application, as NVDA's fake focus asks
+/// Windows for the foreground window when its timer runs
+/// (`IAccessibleHandler/__init__.py` 991 to 995; `NVDAObjects/window/__init__.py`
+/// 162 to 181; Dickson, 2026-11-26).
+#[test]
+fn a_check_asks_the_application_windows_names_in_front_not_the_records() {
+    const OTHER: Instance = Instance {
+        reader: Reader::Outpost(Pid(70)),
+        generation: 9,
+    };
+    let mut state = in_front();
+    assert_eq!(ready_at(&mut state, 300, OTHER), NOTHING);
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    let other = FrontWindow {
+        window: WindowHandle(8),
+        root_owner: WindowHandle(8),
+        process: Pid(70),
+        thread: 71,
+        class: String::new(),
+    };
+    assert_eq!(
+        due_at(&mut state, 51_000, Some(LiveFront::Window(other))),
+        ["send Outpost(Pid(70)) CurrentFocus with the focused state as a fact"]
+    );
+}
+
+/// A wake that finds no window in front names the record's window, whose
+/// request the shell answers unsent with the desktop
+/// (`tests/hung_menu_end.rs`); one whose window in front went before it was
+/// read asks nothing, as NVDA's fake focus does nothing with no focus
+/// object (`IAccessibleHandler/__init__.py` 995 to 997).
+#[test]
+fn a_check_with_no_window_in_front_names_the_records_and_a_gone_one_asks_nothing() {
+    let mut state = in_front();
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    assert_eq!(
+        due_at(&mut state, 51_000, Some(LiveFront::Nothing)),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    let mut state = in_front();
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    assert_eq!(due_at(&mut state, 51_000, Some(LiveFront::Gone)), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+    assert!(state.state.queue_idle());
 }
 
 /// A popup menu opened from the edit "Field" closes with no focus event
@@ -117,7 +179,7 @@ fn a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_
     value_change.kind = EventKind::ValueChange;
     assert_eq!(feed_at(&mut state, 2_000, entry(value_change)), NOTHING);
     assert!(state.versions.live().unwrap().kept.selection.text_changed);
-    feed_at(&mut state, 51_000, Input::Tick);
+    due_at(&mut state, 51_000, Some(the_records()));
     assert_eq!(
         found_at(&mut state, 52_000, (OUTPOST, 2), focused(true)),
         ["Label(\"OK\") Role(Button)"]
@@ -133,7 +195,7 @@ fn a_value_change_of_the_committed_edit_before_the_check_leaves_it_to_speak_the_
 fn a_checked_msaa_focus_answered_unfocused_is_refused_and_not_spoken() {
     let mut state = in_front();
     feed_at(&mut state, 1_000, menu_end());
-    feed_at(&mut state, 51_000, Input::Tick);
+    due_at(&mut state, 51_000, Some(the_records()));
     assert_eq!(
         found_at(&mut state, 52_000, (OUTPOST, 2), focused(false)),
         NOTHING
@@ -157,10 +219,10 @@ fn a_popup_end_and_a_menu_end_of_one_pump_make_one_check() {
     assert_eq!(feed_at(&mut state, 1_000, entry(popup_end)), NOTHING);
     assert_eq!(feed_at(&mut state, 1_400, menu_end()), NOTHING);
     assert_eq!(
-        feed_at(&mut state, 51_000, Input::Tick),
+        due_at(&mut state, 51_000, Some(the_records())),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
     );
-    assert_eq!(feed_at(&mut state, 51_400, Input::Tick), NOTHING);
+    assert_eq!(due_at(&mut state, 51_400, Some(the_records())), NOTHING);
     assert_eq!(
         feed_at(
             &mut state,
@@ -205,9 +267,9 @@ fn a_menu_end_after_a_focus_committed_since_the_first_end_makes_its_own_check() 
         SPOKEN_FOLLOWED
     );
     assert_eq!(feed_at(&mut state, 9_000, menu_end()), NOTHING);
-    assert_eq!(feed_at(&mut state, 51_000, Input::Tick), NOTHING);
+    assert_eq!(due_at(&mut state, 51_000, Some(the_records())), NOTHING);
     assert_eq!(
-        feed_at(&mut state, 59_000, Input::Tick),
+        due_at(&mut state, 59_000, Some(the_records())),
         ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
     );
     assert_eq!(
@@ -229,7 +291,7 @@ fn a_focus_committed_before_the_check_ends_it_with_no_read() {
     feed_at(&mut state, 2_000, entry(msaa_tell(-5)));
     let tried = Found::Read(focus_read(Some(held(-5))));
     assert_eq!(found_at(&mut state, 3_000, (OUTPOST, 2), tried), SPOKEN);
-    assert_eq!(feed_at(&mut state, 51_000, Input::Tick), NOTHING);
+    assert_eq!(due_at(&mut state, 51_000, Some(the_records())), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
 }
 
@@ -244,7 +306,7 @@ fn a_menu_end_after_a_run_that_executed_a_focus_makes_no_check() {
     feed_at(&mut state, 1_100, menu_end());
     let tried = Found::Read(focus_read(Some(held(-5))));
     assert_eq!(found_at(&mut state, 2_000, (OUTPOST, 2), tried), SPOKEN);
-    assert_eq!(feed_at(&mut state, 60_000, Input::Tick), NOTHING);
+    assert_eq!(due_at(&mut state, 60_000, Some(the_records())), NOTHING);
     assert!(state.queue.front_for_tests().is_none());
 }
 

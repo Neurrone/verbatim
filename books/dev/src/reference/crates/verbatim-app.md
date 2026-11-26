@@ -240,7 +240,14 @@ Milestone M4's text protocol is wired here (`books/dev/src/reference/crates/verb
   is executed on the named key's trace.
   `QueueEffect::WakeAt` sets or clears the time Core's event queue asked
   to be woken at, kept beside the reducer thread's other deadlines
-  (`next_deadline`); when it passes, the thread enters `QueueInput::Due`.
+  (`next_deadline`); when it passes, the thread enters `QueueInput::Due`,
+  which carries the window Windows names in front
+  (`hang_check::live_front`: the foreground window, a ghost mapped to the
+  hung window it stands for, with its root owner, class, owning thread
+  and the process whose outpost reads it, a console window's console
+  host) while a check after a menu, popup or switcher end waits
+  (`SrState::menu_check_waits`), the one read of Windows the shell makes
+  for a decision of Core's (ADR 0003).
   `QueueEffect::Cancel` sends the reader of a request Core gave up on
   `CoreToListener::Cancel` or `CoreToOutpost::Cancel`.
   The focused terminal's quiet-period timer is another of those
