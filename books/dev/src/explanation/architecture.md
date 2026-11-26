@@ -26,8 +26,7 @@ screen reader in both rendered and source form.
   treats what it sends as untrusted ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md), "Who holds what").
   Why: NVDA shows in-process access is what makes large documents fast,
   and a page's text changes and live region text cannot be had from
-  outside the application. Decided 2026-07-13. Amended 2026-07-15 and
-  2026-11-13 (Dickson).
+  outside the application. Decided 2026-11-13 (Dickson).
 - **D3, the end-to-end suite runs wherever an agent runs; CI is hosted
   runners only.** The suite talks to the agent at an address: loopback by
   default, on a hosted runner or a developer's machine, or the address of
@@ -37,18 +36,16 @@ screen reader in both rendered and source form.
   never NVDA. The suite drives no hypervisor itself: Dickson ruled on
   2026-11-20 that the Hyper-V harness go, since no one used it, and that
   driving a Verbatim on another machine stay. Why: a suite needing no VM
-  runs in CI and on the development VM alike. Decided 2026-07-13.
-  Amended 2026-10-01.
+  runs in CI and on the development VM alike. Decided 2026-10-01.
 - **D4, the GUI is wxWidgets through a C++ layer.** The C++ layer,
   compiled by the GUI crate's build script through cxx, is widget glue
   only; Rust keeps `main` and all logic and resolves every string
   (section 11). Why: wxWidgets accessibility is proven in NVDA's own GUI,
-  C++ reaches all of it, and the build stays one cargo command. Decided 2026-07-13. Amended
+  C++ reaches all of it, and the build stays one cargo command. Decided
   2026-10-06.
 - **D5, the audio device seam.** The mixer (D17) writes to the
   `AudioDevice` trait, and WASAPI implements it. Why: backends can change
-  without touching the speech pipeline. Decided 2026-07-13. Amended
-  2026-10-04.
+  without touching the speech pipeline. Decided 2026-10-04.
 - **D6, extensions are Wasm components or contained native code.** Their WIT-defined API is
   deny-by-default, with capabilities derived from a component's imports,
   never declared; wasmtime is the runtime, named only by `verbatim-ext`.
@@ -60,8 +57,7 @@ screen reader in both rendered and source form.
   Why: unlike NVDA's Python add-ons, the surface is enumerable from the
   binary, an extension's crash, hang or escape from the runtime reaches
   only its own container, and one way of running modules serves built-ins
-  and third parties alike. Decided 2026-07-13. Amended 2026-10-24,
-  2026-10-31, 2026-11-06 and 2026-11-09 (Dickson).
+  and third parties alike. Decided 2026-11-09 (Dickson).
 - **D7, braille last.** Braille is implemented last, with its traits and
   pipeline seams present from the start. Why: no hardware is available
   for development. Decided 2026-07-13.
@@ -70,7 +66,7 @@ screen reader in both rendered and source form.
   narrow user endpoint, always on, and a developer endpoint only in
   developer mode. Why: Remote then rides on infrastructure the end-to-end
   tests exercise daily, and a user's machine exposes only what users'
-  features need. Decided 2026-07-13. Amended 2026-10-31 (Dickson).
+  features need. Decided 2026-10-31 (Dickson).
 - **D9, one outpost process per application.** Each application has its
   own outpost; a shared host stays a possible later optimization behind
   the same protocol (section 1). Why: a thread blocked in a cross-process
@@ -83,7 +79,7 @@ screen reader in both rendered and source form.
   of about 10,000 a second stops that process's delivery for every
   application, and a crash inside UIA ends the whole process; the boundary
   costs about 2 MB and 3 wake-ups an event per application. Decided
-  2026-07-13. Amended 2026-11-02 (Dickson).
+  2026-11-02 (Dickson).
 - **D10, localization is Fluent.** Through `i18n-embed`, English is
   compiled in as the fallback, other locales load from a `locale` folder,
   every lookup goes through `fl!`, and no user-visible string is
@@ -98,8 +94,7 @@ screen reader in both rendered and source form.
   and only the pipeline's last stage flattens them through a theme whose
   default speaks and sounds as NVDA does by default, plus Verbatim's own
   cues (section 6; `books/dev/src/reference/crates/verbatim-model.md`, "Themes").
-  Why: earcons and voice styling become a theme swap. Decided 2026-07-15.
-  Amended 2026-10-07.
+  Why: earcons and voice styling become a theme swap. Decided 2026-10-07.
 - **D13, the focus listener.** One permanent listener process holds
   every desktop-wide registration: the UIA focus handler and global
   event group, and every WinEvent hook but a console host's five
@@ -128,9 +123,7 @@ screen reader in both rendered and source form.
   hold the listener's reads into that application for up to one
   connection timeout
   (`uia-facts/a-pending-connection-holds-its-own-processs-other-calls/`).
-  Decided 2026-07-16. Amended 2026-10-20 (Dickson), 2026-11-02 (Dickson:
-  the foreground change), 2026-11-06 (Dickson: the pending
-  connection's cost accepted) and 2026-11-13 (Dickson).
+  Decided 2026-11-13 (Dickson).
 - **D14, attention follows focus.** Attention moves only on the focus
   listener's foreground change, never on a focus or an outpost's report,
   and the foreground is announced, never a gate. Each event rule is
@@ -143,25 +136,19 @@ screen reader in both rendered and source form.
   orders events, keys and commands by arrival in its one event queue;
   and facts Core carries in a request are used only inside that
   request's answer ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md); section 2). Why: a foreground gate failed broker-hosted
-  applications and background events users expect. Decided 2026-09-02.
-  Amended 2026-10-25 (Dickson, 2026-10-26), 2026-10-30 (Dickson: no state
-  of Core is sent to a reader, [the ownership model](design/ownership.md)),
-  2026-10-31 (the ported rules both readers apply are defined in
-  `verbatim-reader-rules`, section 2), 2026-11-02 (Dickson: attention
-  moves only on the listener's foreground change, and a focus is judged
-  against Core's record of the window in front) and 2026-11-13 (Dickson:
-  readers tell, Core asks).
+  applications and background events users expect. Decided 2026-11-13
+  (Dickson).
 - **D15, the latency budget is split in two and measured per stage.** The
   OS event to the utterance queued takes 10 ms or less on every backend,
   and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
   (section 6). Why: the process hops cost under a millisecond, so the
   time goes elsewhere and only a per-stage budget finds it. Decided
-  2026-09-02. Amended 2026-10-05.
+  2026-10-05.
 - **D16, recordings take their audio from Verbatim's own rendering.** A tee
   copies the mixer's output to a WAV muxed with the screen capture, and
   everything audible goes through the mixer (`books/dev/src/how-to/e2e.md`). Why:
   recordings then need no audio device and work while heard live. Decided
-  2026-09-02. Amended 2026-10-04.
+  2026-10-04.
 - **D17, every utterance has one truthful ending, measured at playback.**
   Each utterance's speech sequence is plain data with an id, ending once,
   as completed, cancelled or failed; synthesizers only produce PCM, and
@@ -178,8 +165,8 @@ screen reader in both rendered and source form.
   whose native code is built only for x86 holds nothing else. Verbatim is
   GPL version 3 or later, and eSpeak NG is linked into the host only. Why:
   an engine's crash or hang costs one restartable process, never Core, and
-  never the other engine Verbatim falls back to. Decided 2026-10-04.
-  Amended 2026-10-22, 2026-11-06 and 2026-11-09 (Dickson).
+  never the other engine Verbatim falls back to. Decided 2026-11-09
+  (Dickson).
 
 ## 1. Process and thread model
 
@@ -270,8 +257,6 @@ trials against a provider of uia-facts' own, the provider went on serving
 after every kill
 (`uia-facts/a-provider-continues-when-a-client-is-killed-in-the-middle-of-its-call/`).
 The job's kill-on-close stays the guarantee for a Core that dies.
-Amended on 2026-11-06 (Dickson): 1 second before the kill, in place of
-the 21-second limit, built in M6.2.
 
 A child ends itself with `TerminateProcess` once its shutdown is done,
 never by returning from `main`. Keep it that way unless the following is
@@ -458,7 +443,7 @@ The listener's contract: **its callbacks and its writer never make a
 cross-process call**; its registration thread's one desktop-wide
 registration, made at its start, waits on the foreground application while
 UIA reads the system's focus, up to about 6 seconds for one that does not
-answer (`docs/design/cross-process-calls-study.md`, instance 2). So the
+answer ([ADR 0005](../reference/adr/0005-calls-that-reach-another-application.md), "The listener's start"). So the
 listener installs its WinEvent hooks first and makes that registration on
 a thread of its own: its MSAA facts flow at once, its pipe thread answers
 the supervisor's pings throughout, and its UIA events are dropped until
@@ -534,7 +519,7 @@ sends it a remote operation or connects to one of its windows, and an
 outpost connects to, probes and walks up into only its own application's
 windows, except one connection where the focus or the window hierarchy
 changes between its check and its call
-(`docs/design/cross-process-calls-study.md`), and it searches for no node
+([ADR 0005](../reference/adr/0005-calls-that-reach-another-application.md), "Checking where a call landed"), and it searches for no node
 by runtime id, since such a search enters any child window of another
 process; it reads
 another process's window above the focus through MSAA; object navigation's
@@ -551,7 +536,8 @@ a window above the process boundary holds the reading of the focus below
 it, in the listener and in that focus's outpost; and the foreground
 application holds the listener's UIA events, and so Verbatim's readiness
 to take input, at its start
-(`docs/design/cross-process-calls-study.md`, instances 1 and 2). That is
+([ADR 0005](../reference/adr/0005-calls-that-reach-another-application.md), "Reading above the process boundary" and "The listener's start").
+That is
 why the listener is a process of its own and not threads in one UIA host
 beside the outposts: nothing short of a process boundary isolates the
 first stall, and in a shared host it would hold every application's UIA
@@ -605,7 +591,7 @@ Core's features are async functions run on its thread by its event queue
 is async functions"): only a request to a reader can be awaited, and the
 shell (imperative) sends it, checking its window for a hang first, and
 enters the answer as an `Input`; `Speak` enters the speech pipeline. A timer whose due time the state keeps is a view, not an
-effect: after each step the shell reads the focused terminal's quiet-period
+effect (Dickson, 2026-11-03): after each step the shell reads the focused terminal's quiet-period
 timer and the next lock key's read from `SrState` and waits for the earlier,
 entering its `Input` once it is past, so a timer whose owner the state dropped
 is gone with it. Only the focused terminal's timer counts, and a step that
@@ -613,7 +599,6 @@ fires a timer moves its due time past the time it fired at, or the view would
 fire on every wake. Core keeps every other due time on its own clock
 (requests' due times, the half-second hang round, held keys' 150 ms
 releases), and the shell keeps one timer for the earliest.
-Amended 2026-11-03 (Dickson: timers the state keeps are views).
 Consequences:
 
 - **Determinism.** A recorded triple of initial state, input sequence, and
@@ -747,8 +732,7 @@ M16) for Java applications.
   the provider process in one cross-process round trip. Wrapped in a `verbatim-uia-rops`
   crate and used for: ancestor-chain retrieval on focus events, bulk text
   attribute runs, terminal text-range walking, and browse-mode buffer batch
-  fetches. ARM64 behavior is still to be verified (R3, deferred on
-  2026-10-06).
+  fetches. On ARM64 they are tested against mockapp only (R3).
 - **Terminals.** TextPattern plus remote ops. The outpost tells Core of
   every change of the focused terminal and reads it when Core asks,
   sending each read to Core, whose terminal memory aligns it
@@ -1032,7 +1016,7 @@ The threat model and its mitigations are in
   contained process of its own. Core still loads some third-party native code in-process:
   the shell extensions a file dialog brings, the input methods of its text
   fields, and other programs' global hook DLLs on its message-pumping
-  threads. The GUI stays in Core by decision. Amended 2026-11-05 and 2026-11-06 (Dickson).
+  threads. The GUI stays in Core by decision (Dickson, 2026-11-06).
 - **UIAccess**: reading elevated apps' UI from a non-elevated Verbatim
   requires `uiAccess=true`, which requires signed binaries in a trusted path —
   an installer/signing prerequisite tracked from the start (R5).
@@ -1191,10 +1175,10 @@ otherwise.
   VM profile; user reports drive any deeper investigation); consolidation
   into shared hosts as the fallback (D9).
 - **R3 — Remote-ops on ARM64.** API limits or behavior differences.
-  Mitigation: verify on ARM64 before relying on remote operations there.
-  The verification was planned alongside the first terminal work (M4) and
-  was deferred on 2026-10-06: M4 is built and verified on x64 only, and
-  the ARM64 verification is not yet scheduled to a milestone.
+  Mitigation: the `ci-arm64` job runs every mockapp test of remote
+  operations, the instruction-limit tests included, on an ARM64 runner on
+  every push. Real applications on ARM64 remain unverified, and that
+  verification is not scheduled to a milestone.
 - **R4 — Eloquence complications.** DLL architecture or licensing issues.
   Mitigation: native host is already arch-flexible; the PoC has its own
   milestone (M6), so a complication delays only Eloquence, not the host,

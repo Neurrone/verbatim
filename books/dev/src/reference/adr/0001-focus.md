@@ -1,8 +1,8 @@
 # ADR 0001: Focus
 
-Status: decided. First decided 2026-10-10; amended 2026-10-29, 2026-11-02, 2026-11-07, 2026-11-08 and 2026-11-13.
+Status: decided, 2026-11-13.
 
-How focus works today is explained in [How focus works](../../explanation/design/focus.md). This record keeps why it works that way: the problem, the options weighed, what was chosen and by whom, and the limits accepted. The sections amended on 2026-11-13 state decisions of [ADR 0003](0003-readers-tell-core-asks.md), which the code follows.
+How focus works today is explained in [How focus works](../../explanation/design/focus.md). This record keeps why it works that way: the problem, the options weighed, what was chosen and by whom, and the limits accepted. The sections dated 2026-11-13 state decisions of [ADR 0003](0003-readers-tell-core-asks.md), which the code follows.
 
 ## The problem
 
@@ -18,7 +18,7 @@ Dickson's constraints for any design: something must still notice a new applicat
 
 ## Decisions
 
-### Who reads a UI Automation focus (Dickson, 2026-10-10; weighed again 2026-10-29; amended 2026-11-13)
+### Who reads a UI Automation focus (Dickson, 2026-11-13)
 
 Chosen: the focus listener holds the desktop-wide UI Automation focus registration, tells Core of each focus event and keeps its element, and reads that element only when Core asks; with the listener's answer, a snapshot and the element's route, Core asks the application's outpost to complete the read, its node ids, an MSAA window above it and the chain above the process boundary, the two requests under one due time ([ADR 0003](0003-readers-tell-core-asks.md), "A UI Automation focus read"). Reason: only the listener holds the element, which cannot leave its process, and only the outpost connects to its application. While a hung window holds the listener's UI Automation events, no UI Automation focus is announced until the window answers, as in NVDA, with no MSAA stand-in, because announcing from MSAA would sound different and a visible failure is better.
 
@@ -30,29 +30,29 @@ Weighed:
 - Each outpost reads its own application's focus with `GetFocusedElement`: rejected, because `GetFocusedElement` does not always name the event's sender (Start's search results), failed reads of a starting application drop the focus, and every new window's first focus would wait on a connection.
 - One process hosting every UI Automation client: declined (Dickson, 2026-10-20), because a hung window holding that process's events would be heard everywhere.
 
-### The listener's checks, ported from NVDA's focus handler (Dickson, 2026-10-12; amended 2026-11-07 and 2026-11-13)
+### The listener's checks, ported from NVDA's focus handler (Dickson, 2026-11-13)
 
 NVDA's focus handler's checks keep NVDA's order: the native check by NVDA's MSAA class list, the duplicate check, the acceptance test on the sender's nearest window, the console window's and the hidden frame's refusals, and the sender's keyboard focus. The acceptance test is judged in Core, a pure rule over the window facts the listener gathers as the event arrives and the tell carries, written from the parity document on focus events ([ADR 0003](0003-readers-tell-core-asks.md), "Acceptance judged in Core"); the checks that make calls into the application are made, for a UI Automation event, by the listener's check thread for its application as the event is delivered, before its tell is sent, and their results are judged in Core, because checks inside the read Core asks for would run behind the previous read and miss focuses in a burst (Dickson, 2026-11-15); the listener makes NVDA's hung test as the event arrives and judges nothing else. Reason: three parity defects had one cause, NVDA's handler rebuilt piece by piece with each check placed where it suited Verbatim, and a pure rule makes each verdict testable from its inputs. The earlier element's keyboard focus is read before the sender's, as NVDA reads them (Dickson, 2026-11-02), because Windows Terminal raises its terminal's focus twice at launch, and reading the sender first took the earlier element for another one and said the terminal again.
 
-### One teller for each kind of event (Dickson, 2026-10-10; kept 2026-10-25 and 2026-10-29; amended 2026-11-13)
+### One teller for each kind of event (Dickson, 2026-11-13)
 
 Each kind of event has exactly one teller, and every event reaches Core's one event queue in arrival order: the listener holds every desktop-wide WinEvent hook and the UI Automation focus registration, and an outpost holds no WinEvent hook, except a console host's outpost, which keeps the console's five events; an outpost tells Core of the UI Automation property changes of the objects Core has it follow, and of text and caret events ([ADR 0003](0003-readers-tell-core-asks.md), "Who holds what"). Reason: no event reaches Core twice by two routes with no order between them, and an event raised after a focus is not handled before it, as NVDA's one queue guarantees; with one route there is no marker and no hand-over of an application's first events. The listener's events and an outpost's UI Automation events still have no order between them, which only the narrow rule repairs ([ADR 0003](0003-readers-tell-core-asks.md), "The narrow ordering rule").
 
 Weighed and rejected: ordering both routes by observation time with a watermark, which delays every event; a per-window hand-over to a group-scoped registration, which rests on an undocumented route; and the listener as the only UI Automation route, which would move the text and terminal code into the listener and give up D9's reclamation.
 
-### MSAA focuses stay with the outpost (Dickson, 2026-11-07; amended 2026-11-13)
+### MSAA focuses stay with the outpost (Dickson, 2026-11-13)
 
 The listener tells Core of an MSAA focus with the rest of every application's MSAA events, through its desktop-wide hooks, and the application's outpost reads it at Core's request ([ADR 0003](0003-readers-tell-core-asks.md), "Who holds what"). NVDA's event limiter and its runs of focus events, which need an application's MSAA events in order, are applied in Core to the MSAA entries waiting in its event queue ([ADR 0003](0003-readers-tell-core-asks.md), "Flood limiters and the merge").
 
-### One input to Core, in arrival order (Dickson, 2026-10-10; amended 2026-11-13)
+### One input to Core, in arrival order (Dickson, 2026-11-13)
 
 Everything enters Core's inbox in the order it arrives, and every application event, key and command joins Core's one event queue and is judged in that order, as NVDA queues gestures with events ([ADR 0003](0003-readers-tell-core-asks.md), "Core's inbox and the event queue"). No read starts before Core's request, so no report is ordered by stamps: a foreground change ends the entries waiting or asked whose request names a window outside the new foreground window's tree or owner chain. Rejected: ordering Core's input by observation time, which needs a reorder buffer that waits for the slowest outpost, a delay on every input that NVDA does not have (weighed again and kept rejected by Dickson, 2026-11-08, when a reference model ordered by observation time could not be matched by any Core that takes its input in arrival order).
 
-### One judge per fact (Dickson, 2026-10-29; amended 2026-10-30 and 2026-11-13)
+### One judge per fact (Dickson, 2026-11-13)
 
 Core holds the one focus ancestry and judges repeats, acceptance and the foreground; a reader drops an event only by NVDA's local checks that cannot hang and the listener's drops on an event's own cached class and automation id, and every other rule is Core's ([ADR 0003](0003-readers-tell-core-asks.md), "Readers tell, Core asks"). Each window has one backend verdict, Core's (class lists, then one raw probe, kept as NVDA keeps it, half a second); an outpost keeps a verdict only within one request ([ADR 0004](0004-focus-validity.md)), and the listener's native check is a function of the class names that both processes compute from one table. Evaluated and discarded: sending every reader a copy of Core's focus to judge against, because a copy judged in another process disagrees with the original while messages are in flight, and a focus returning to an element while Core's notice was on its way was never spoken; and a verdict made in each process, because two verdicts for one window spoke a focus late or twice where NVDA speaks it once.
 
-### The foreground and the window title (Dickson, 2026-10-30 and 2026-11-02; amended 2026-11-08 and 2026-11-13)
+### The foreground and the window title (Dickson, 2026-11-13)
 
 - Every test against the foreground is Core's, made in arrival order: a foreground change ends the entries whose request names a window outside the new foreground window's tree or owner chain, judged by window, so another window of the same application counts ([ADR 0003](0003-readers-tell-core-asks.md), "Core's inbox and the event queue").
 - The listener's foreground message is the only report of a foreground change. A change into a top-level window unrelated to the committed focus empties the readers' last focus, in arrival order, and with it empty the duplicate tests, the whole-window refusal and the ancestors Core already knows behave as with no earlier focus, so a return says the window's title and the focus; the committed focus stays for commands and typed echo ([ADR 0003](0003-readers-tell-core-asks.md), "The ancestors Core already knows and leaving a window"). Reason: the return from a busy application is always read and said as the same switch. Rejected: a placeholder focus for the window, because NVDA keeps its focus object, so object navigation and reporting the focus would differ. Kept as a deliberate difference after being weighed against NVDA (Dickson, 2026-11-08): NVDA drops a foreground change into a UI Automation window and keeps its focus, so on a return from such a window that raised no focus its duplicate check says nothing, where Verbatim announces the switch.
@@ -61,7 +61,7 @@ Core holds the one focus ancestry and judges repeats, acceptance and the foregro
 - The title rule adds no title when the new ancestry meets the earlier one at an object they share (Claude, 2026-11-08, accepted as it is by Dickson, 2026-11-08). Reason: NVDA compares its focus ancestry with the one before, and speaks the window in front only when its focus difference level is at most 1, that is when the two differ just below the desktop (`eventHandler.doPreGainFocus`). Evaluated and discarded: meeting the ancestries only above the new foreground window's own entry, which was right on the way into a window owned by another process's window but said the owner's title on the way back.
 - A focus from an application the user has left that still waits in the event queue when the foreground changes ends unspoken, judged by its window, a kept difference: NVDA's queue would speak it before the change.
 
-### A focus read is complete or nothing (Dickson, 2026-11-07; amended 2026-11-13)
+### A focus read is complete or nothing (Dickson, 2026-11-13)
 
 Chosen: Verbatim waits for a slow or hung application as NVDA does and says nothing for it until it answers. Only Core stops waiting: it gives a read up on Windows' live hung report, at its due time (13 seconds for a focus read, 11 for others) or when the foreground leaves the read's window, drops every late answer, and when a window it gave up on as hung answers again it asks the application for its current focus, so the focus is spoken when the hang ends, as NVDA's is; the readers keep no deadline and no moved-on rule ([ADR 0003](0003-readers-tell-core-asks.md), "A frozen window"). A control focused just before a hang is spoken with its line when the application answers (capture of 2026-11-07).
 
@@ -88,7 +88,7 @@ A failed or timed-out walk step continues from the parent window of the outermos
 
 Within one outpost, a UI Automation element keeps the node its runtime id has, and an MSAA object is given a kept node's id only when NVDA's `IAccessible._isEqual` holds, its location compared (Dickson, 2026-10-30). Evaluated and discarded: taking two MSAA containers of one role and name as one, because a second unnamed toolbar was then not announced. Two objects of different backends are never equal, as NVDA's (Dickson, 2026-11-07). A window above the process boundary is described from Windows' state with no call into the process that serves it (Dickson, 2026-10-29), because a call into a busy host held the focus below it for the host's whole stall. Such a window is a stand-in that equals any entry with the same handle (the reason is Claude's, from the parity audit): NVDA reads that window through its own API, so both of its ancestries hold the same object there and meet, and the stand-in is the only way Verbatim's can. Weighed: having the owner's outpost read that window; deferred, because it needs a request between outposts, and the stand-in gives NVDA's result whenever Core already holds the owner. It is the named alternative if the stand-in causes problems.
 
-### Reusing an earlier ancestry (Dickson, 2026-11-07; amended 2026-11-13)
+### Reusing an earlier ancestry (Dickson, 2026-11-13)
 
 The problem: a walk that stops at saved ancestors and copies them can speak a stale one, as Alt+Tab back to Windows Terminal spoke its old title. NVDA never speaks a stale name: it walks live to the lowest common ancestor with its focus ancestry, which after a visit elsewhere belongs to the other application.
 
@@ -98,7 +98,7 @@ Weighed and rejected: an ancestry cache per application in each reader, made saf
 
 Limit: a return to an application after another application's focus was committed walks its ancestry to the top live, 14.0 ms against 6.2 ms with a cache.
 
-### One ordered focus queue (Dickson, 2026-11-08; amended 2026-11-13)
+### One ordered focus queue (Dickson, 2026-11-13)
 
 Chosen: Core's event queue is NVDA's one ordered queue, widened to every application event, key and command, and Core keeps NVDA's two facts apart: the committed focus, NVDA's focus object, and the readers' last focus, NVDA's last queued focus ([ADR 0003](0003-readers-tell-core-asks.md), "Core's inbox and the event queue" and "The two versions of the focus").
 
@@ -126,7 +126,7 @@ Verbatim+Tab is one request, at its turn in the event queue, that reads the comm
 
 With nothing committed it says "No focus", asking nothing. Over an ended focus, whose reader has gone, nothing is said: a recorded limitation. Over the sleeping focus, Core's own focus while a secure desktop is in front, nothing is said, since NVDA runs no script while its focus is the sleeping object (`inputCore.py` 566 to 569; Dickson's confirmed default, 2026-11-20).
 
-### Window messages, shell items and test limits (Claude, 2026-11-07, accepted by Dickson 2026-11-08; the shell items' wait Dickson's, 2026-11-07; amended 2026-11-13)
+### Window messages, shell items and test limits (Dickson, 2026-11-13)
 
 A window message is sent once, bounded by Core's due time for its request. NVDA's 400 ms slices were measured: a timed-out send is never delivered later, and `SMTO_ABORTIFHUNG` did not refuse slices after the window was reported hung, so slicing ends NVDA's wait only at its watchdog's cancel, and one send matches its outcome.
 
@@ -144,7 +144,7 @@ The outpost finds its own copy of a UI Automation focus by the path the listener
 
 One focus-following group per outpost, built once, added to the new focus's element and then removed from the previous one, never registered on a window's subtree, as NVDA follows the focus. Reason: moving a registration by removing everything and adding it again reached two UI Automation defects, a crash on a saved event and a text area that stopped receiving events.
 
-### Time limits (Dickson, 2026-10-10; amended 2026-11-06 and 2026-11-13)
+### Time limits (Dickson, 2026-11-13)
 
 UI Automation's connection and transaction timeouts are process-wide, so each process sets them once at its start: 2 seconds and 10 seconds, the transaction timeout below Core's 11-second due time for a request ([ADR 0003](0003-readers-tell-core-asks.md), "A frozen window"), so that a slow call fails and the worker carries on. A read that blocks is bounded by Core's due time for its request, and the listener keeps no watchdog thread of its own (2026-11-21).
 

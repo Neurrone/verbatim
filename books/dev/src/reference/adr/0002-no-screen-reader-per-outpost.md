@@ -1,6 +1,6 @@
 # ADR 0002: No screen reader per outpost
 
-Status: decided, 2026-11-10; amended 2026-11-13.
+Status: decided, 2026-11-13.
 
 This record keeps why the keys, the focus and everything that depends on them are judged in Core and not in each application's outpost: the problem, the options weighed, what was chosen and by whom, and the limits accepted. How the processes are laid out is in [the architecture](../../explanation/architecture.md), section 1, and how a focus travels is in [How focus works](../../explanation/design/focus.md).
 
@@ -31,7 +31,7 @@ Weighed and rejected:
 - Focus alone judged in the outposts, with the relay telling each outpost when another application's focus passes. Rejected, because the keys stay in Core and need the focus there, so nothing that reads the focus would become simpler, and a third place would hold which application's focus is current.
 - A keyboard hook in each application's outpost, installed while that application is in front and removed when it is not, so that a key and the application's reads meet beside the application (Dickson, 2026-11-12). Rejected, because a key pressed in the gap at a switch between applications reaches the old outpost's hook or none, so Verbatim's modifier or Caps Lock would act on the application; a held modifier or held caret key would have to be carried across the switch; no outpost is in front on the desktop, in an ignored process or while one is starting; a stuck outpost is killed and its hook goes with it, at the moment stop-speech and Alt+Tab matter most; and Windows removes a hook that answers too slowly without telling the process. A permanent fallback hook in Core would mean two hooks judging one key.
 
-### What an outpost keeps for Core (Dickson, 2026-11-10; amended 2026-11-13)
+### What an outpost keeps for Core (Dickson, 2026-11-13)
 
 A reader keeps nothing for Core between requests but held objects, the requests waiting in an outpost's table and a terminal's "changed" flag, and judges nothing about them: each request carries what it needs and gets one answer ([ADR 0003](0003-readers-tell-core-asks.md), "Readers tell, Core asks"). Reason: an interaction's progress then lives in one place, Core's, and an outpost's ending or its worker's abandonment loses nothing Core has to reconcile. A design that needs the outpost to remember something for Core between two requests says why one request cannot carry it.
 
