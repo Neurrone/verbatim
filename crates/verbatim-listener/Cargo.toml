@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-listener"
-description = "The focus listener process: the desktop-global UIA focus registration and MSAA hooks, and the reading threads that judge and read each UIA focus"
+description = "The focus listener process: the desktop-wide UIA registration and WinEvent hooks, the tells of each event to Core, and the threads that read at Core's request"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

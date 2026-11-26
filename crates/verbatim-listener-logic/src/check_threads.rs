@@ -1,7 +1,7 @@
 //! The listener's check threads' records
 //! (`books/dev/src/reference/crates/verbatim-listener-logic.md`, "The check threads"): one thread
 //! per application whose UI Automation events the listener hears, its
-//! record keyed by the application's process generation, taking that
+//! record keyed by the application's process id, taking that
 //! application's events in arrival order.
 //!
 //! The records and their queues sit under one lock, the listener's: a

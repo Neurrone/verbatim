@@ -1488,7 +1488,7 @@ The answer updates the caret and speaks, queued:
 - With Shift, and Control+A: every part that became selected, then every
   part that became unselected, as NVDA orders them
   (`editing::selection_segments`), 512 characters or more as their count;
-  a change in general terms (`content_changed`) speaks the whole new
+  a change in general terms (`editing::General`) speaks the whole new
   selection.
 - A selection no key made arrives as a caret tell, an event-queue entry
   (`caret_tell.rs`): at its turn on the committed focus, with no focus

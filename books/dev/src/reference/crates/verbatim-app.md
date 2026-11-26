@@ -529,17 +529,11 @@ knowing for review:
   (`key_seen`, called on the hook thread, one atomic store of a time and
   a flag packed in one `AtomicU64`, since no lock may be taken on the hook
   thread) is kept as the last key, and each line ends with the time from it to the speech
-  queued, whatever trace the speech came on. verbatim.exe's relay stamps
-  (`EventTiming::core_received_at_us` and those after it, and
-  `core_read_at_us` on the way back; `docs/design/communication.md`, section 10.1),
-  and the senders' own stamps (the listener's handling's end and write, the
-  outpost's write; `docs/design/communication.md`, section 10.1)
-  split the spans across verbatim.exe: the listener's handling, its queue and
-  its pipe to verbatim.exe (or the reducer's span to verbatim.exe), the
-  time a fact was held for its starting outpost, verbatim.exe's own relay
-  time, and verbatim.exe to the outpost; and, back from the outpost, its
-  outbound queue, its pipe to verbatim.exe's reader, and the wait for the
-  reducer. The event's stages are one message's own: the
+  queued, whatever trace the speech came on. When no key started the
+  trace, its first point is when the reader observed the event
+  (`EventTiming::observed_at_us`), and the reducer's stage runs from the
+  message's receipt in Core (`event_received`) to its handling. The
+  event's stages are one message's own: the
   message whose reduction first asked for speech on the trace, which Core
   tells the ledger as it hands the utterance to the pipeline
   (`speech_requested`, on the reducer thread, so a message received before

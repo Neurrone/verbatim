@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-listener-logic"
-description = "The focus listener's pure logic: its read scheduler, the menu end's grace, its foreground watch and the vocabulary of a focus event"
+description = "The focus listener's pure logic: its check threads' calls, the reading threads' schedule of Core's requests, its foreground watch, its kept elements and what it decides of a WinEvent before telling Core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
