@@ -1287,7 +1287,14 @@ struct Shared {
     /// For each text a `FindText` searches, by its import: whether the
     /// search for [`ABSENT`] was made, and its answer.
     absent: Vec<(usize, Reg<kind::Bool>, Reg<kind::TextRange>)>,
+    /// For each needle a `FindText` seeks, by its text's import and the
+    /// needle: whether its search of the whole text was made, and whether
+    /// it is there ([`Emit::somewhere`]).
+    present: Vec<(Sought, Reg<kind::Bool>, Reg<kind::Bool>)>,
 }
+
+/// What a `FindText` seeks: its text's import and the needle.
+type Sought = (usize, String);
 
 /// What a comparison of two points names: the steps and the points.
 type ComparedKey = ([Option<usize>; 2], Option<(usize, Pt, Pt)>);
@@ -1318,7 +1325,20 @@ impl Shared {
             .collect();
         searched.sort_unstable();
         searched.dedup();
+        let mut needles: Vec<(usize, String)> = key
+            .iter()
+            .filter_map(|(low, _)| match low {
+                Low::FindText((text, _), (needle, _), ..) => Some((*text, needle.clone())),
+                _ => None,
+            })
+            .collect();
+        needles.sort_unstable();
+        needles.dedup();
         Self {
+            present: needles
+                .into_iter()
+                .map(|sought| (sought, b.new_bool(false), b.new_bool(false)))
+                .collect(),
             absent: searched
                 .into_iter()
                 .map(|import| {
@@ -1977,7 +1997,9 @@ impl Emit<'_> {
     /// with it, which fails into the try block and ends the search with
     /// what it found.
     ///
-    /// The two searches of the whole text are outside the step's `calls`.
+    /// The two searches of the whole text, each made once in a program
+    /// for a text and needle and shared by its steps, are outside the
+    /// step's `calls`.
     /// Limits: output that trims the needle from the history after the
     /// first search makes a later miss the nowhere kind, whose call ends
     /// the run, and the fallback rule runs the step by calls; and a
@@ -2027,9 +2049,13 @@ impl Emit<'_> {
             } else {
                 b.text_range_move_endpoint_by_range(span, c.start, at, c.start);
             }
+            let sought = needle;
             let needle = b.string(needle);
             let no = b.bool(false);
-            let open = self.somewhere(b, text, document, needle);
+            // The search's own copy, which a miss or a failed call closes.
+            let open = b.new_bool(false);
+            let present = self.somewhere(b, text, document, (sought, needle));
+            b.set(open, present);
             let call = FindCall {
                 span,
                 needle,
@@ -2075,15 +2101,43 @@ impl Emit<'_> {
 
     /// Emits whether `needle` is anywhere in `document`, the whole text
     /// imported at `text`: false when its search fails, answers null, or
-    /// answers what the search for [`ABSENT`] answers.
+    /// answers what the search for [`ABSENT`] answers. The search is made
+    /// by the first `FindText` of the program that seeks this needle in
+    /// this text, and its answer shared by the rest, as the old search
+    /// sought it once for both ways.
     fn somewhere(
         &self,
         b: &mut Builder,
         text: usize,
         document: Reg<kind::TextRange>,
-        needle: Reg<kind::Str>,
+        (sought, needle): (&str, Reg<kind::Str>),
     ) -> Reg<kind::Bool> {
-        let present = b.new_bool(false);
+        let Some(&(_, searched, present)) = self
+            .shared
+            .present
+            .iter()
+            .find(|((import, wanted), ..)| *import == text && wanted == sought)
+        else {
+            unreachable_import()
+        };
+        let unsearched = b.not(searched);
+        b.if_(unsearched, |b| {
+            let yes = b.bool(true);
+            b.set(searched, yes);
+            self.search_whole(b, text, document, (needle, present));
+        });
+        present
+    }
+
+    /// Emits the search of `document` for `needle` that sets `present`
+    /// ([`Self::somewhere`]).
+    fn search_whole(
+        &self,
+        b: &mut Builder,
+        text: usize,
+        document: Reg<kind::TextRange>,
+        (needle, present): (Reg<kind::Str>, Reg<kind::Bool>),
+    ) {
         let no = b.bool(false);
         b.try_catch(
             |b| {
@@ -2107,7 +2161,6 @@ impl Emit<'_> {
             // Not searchable: nothing found.
             |_, _| {},
         );
-        present
     }
 
     /// Emits one `FindText` call of a search, inside the search's try

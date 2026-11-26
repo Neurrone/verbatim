@@ -1913,11 +1913,11 @@ passed over and counts as a call, and each way makes at most 100 `FindText`
 calls (`SEARCH_CALLS`; Dickson, 2026-11-26), because a one-letter needle
 would otherwise walk the whole history.
 
-- Calls: a line found once at its place makes 6 `FindText` calls, the
-  search of the whole text for each way, the search for text no terminal
-  holds, the line, and a miss each way. At most 203: 100 each way and the
-  three over the whole text. A press, at most three searches, makes at
-  most 609.
+- Calls: a line found once at its place makes 5 `FindText` calls by the
+  program, the search of the whole text that the two ways share, the
+  search for text no terminal holds, the line, and a miss each way. At
+  most 202: 100 each way and the two over the whole text. A press, at
+  most three searches, makes at most 606.
 - Instructions: pinned in `instruction_limit.rs`'s
   `searches_execute_exactly`, one program at the bound, under half the
   limit.

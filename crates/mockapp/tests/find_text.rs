@@ -287,9 +287,9 @@ fn the_search_works_outward_from_its_row() {
 /// `FindText` calls allow ends that way before a row starting with it,
 /// further away, is reached: one call down over the empty span below the
 /// document's end, and a hundred up, for each of the two outposts, and
-/// for the one reading by remote operations three more, outside a way's
-/// calls: each way's search of the whole text, and the search for text no
-/// terminal holds.
+/// for the one reading by remote operations two more, outside a way's
+/// calls: the search of the whole text, which the two ways share, and the
+/// search for text no terminal holds.
 fn the_search_ends_after_its_calls() {
     let within = " y y y y y y";
     let mut rows = vec!["y"];
@@ -303,7 +303,7 @@ fn the_search_ends_after_its_calls() {
         .into_iter()
         .find_map(|(name, count)| (name == "FindText").then_some(count));
     app.quit();
-    assert_eq!(calls, Some(2 * 101 + 3), "both outposts' searches' calls");
+    assert_eq!(calls, Some(2 * 101 + 2), "both outposts' searches' calls");
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).

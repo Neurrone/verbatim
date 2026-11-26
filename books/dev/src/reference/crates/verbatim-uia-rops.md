@@ -554,8 +554,11 @@ each answered by the arms above:
   which ends a remote run whatever try block holds the call, so the
   program makes none of them (`batch/program.rs`, `Emit::find_text`).
   It first searches the whole text and compares the hit with the answer
-  for text no terminal holds, which every `FindText` of a program
-  shares: equal, null or failed is nothing found, with no other call.
+  for text no terminal holds: equal, null or failed is nothing found,
+  with no other call. Each of those searches is made once in a program,
+  the first for each text and needle and the second for each text, and
+  shared by its `FindText` steps, so the command search's two ways search
+  the whole text once.
   And before any call on a hit it compares the span searched with the
   hit, a call on a real range, which fails into the search's try block
   when the hit is that range. Those searches of the whole text are

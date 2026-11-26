@@ -888,8 +888,8 @@ fn text_start(text: &batch::Text) -> IUIAutomationTextRange {
 /// The command search of Core's terminal reader, `FindText` each way from
 /// a row, is one program that makes exactly the calls its steps ask: typically, a
 /// line found once at its own row, each way ending at its first miss; a
-/// line found nowhere, which makes no call but the search of the whole
-/// text for each way; and at its bound, each way's hundred calls spent
+/// line found nowhere, which makes no call but the one search of the whole
+/// text both ways share; and at its bound, each way's hundred calls spent
 /// and its twenty matches taken, eighty hits within rows passed over
 /// between them. The three costs the emitter declares are these counts'
 /// differences: the bound's run stays under the limit.
@@ -925,7 +925,7 @@ fn searches_execute_exactly() {
             (
                 usize::from(calls.min(19)),
                 usize::from(calls.min(19)),
-                2 * u32::from(calls) + 3
+                2 * u32::from(calls) + 2
             ),
             "{calls} calls each way"
         );
@@ -935,13 +935,13 @@ fn searches_execute_exactly() {
     assert_eq!(
         typical,
         Searched {
-            programs: vec![223],
+            programs: vec![219],
             down: vec![(0, "end".to_owned())],
             up: Vec::new(),
-            // Toward the end: the whole text, the text no terminal holds,
-            // the line and a miss. Toward the start: the whole text and a
-            // miss.
-            find_calls: 6,
+            // The whole text, once for both ways, and the text no terminal
+            // holds; toward the end, the line and a miss; toward the
+            // start, a miss.
+            find_calls: 5,
             faults: 0,
         },
         "a line found once"
@@ -949,10 +949,11 @@ fn searches_execute_exactly() {
     assert_eq!(
         nowhere,
         Searched {
-            programs: vec![150],
+            programs: vec![152],
             down: Vec::new(),
             up: Vec::new(),
-            find_calls: 2,
+            // The whole text, once for both ways.
+            find_calls: 1,
             faults: 0,
         },
         "a line found nowhere"
@@ -964,15 +965,15 @@ fn searches_execute_exactly() {
             bound.find_calls,
             bound.faults
         ),
-        (20, 20, 203, 0),
-        "the bound: a hundred calls each way, and three over the whole text"
+        (20, 20, 202, 0),
+        "the bound: a hundred calls each way, the whole text once and the text no terminal holds"
     );
     // A call whose hit is passed over executes 20 instructions, and a
-    // match 8 more: (1389 - 1229) / 8 and (1229 - 220) / 36, the costs the
+    // match 8 more: (1385 - 1225) / 8 and (1225 - 216) / 36, the costs the
     // emitter declares (`FIND_CALL` and `FIND_MATCH`, `batch/program.rs`).
     assert_eq!(
         (counts, bound.programs),
-        ([vec![220], vec![1229], vec![1389]], vec![4485]),
+        ([vec![216], vec![1225], vec![1385]], vec![4481]),
         "one call each way, 19, 23, and the bound"
     );
 }
@@ -1009,13 +1010,13 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         both,
         Searched {
-            programs: vec![337],
+            programs: vec![332],
             down: vec![row(3, "y 3"), row(2, "y 4"), row(1, "y 5")],
             up: vec![row(4, "y 2"), row(5, "y 1")],
-            // The whole text twice and the text no terminal holds, three
+            // The whole text once and the text no terminal holds, three
             // lines and a miss toward the end, two and a miss toward the
             // start.
-            find_calls: 10,
+            find_calls: 9,
             faults: 0,
         },
         "a line found each way"
@@ -1023,10 +1024,10 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         one,
         Searched {
-            programs: vec![225],
+            programs: vec![220],
             down: vec![row(1, "y 5")],
             up: Vec::new(),
-            find_calls: 6,
+            find_calls: 5,
             faults: 0,
         },
         "a line found toward the end only"
@@ -1034,11 +1035,12 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         nowhere,
         Searched {
-            programs: vec![167],
+            programs: vec![162],
             down: Vec::new(),
             up: Vec::new(),
-            // The whole text for each way, and the text no terminal holds.
-            find_calls: 3,
+            // The whole text once for both ways, and the text no terminal
+            // holds.
+            find_calls: 2,
             faults: 0,
         },
         "a line found nowhere"
