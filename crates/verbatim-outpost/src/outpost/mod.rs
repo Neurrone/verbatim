@@ -383,9 +383,9 @@ impl<'a> RequestContext<'a> {
         })
     }
 
-    /// The request a review command's live read of a node
-    /// (`Query::ReadNode`) is made with: a node read alone, with its table's
-    /// row and column counts.
+    /// The request a batch's `Read` or `Test` of a node is made with, a
+    /// review command's live read among them: a node read alone, with its
+    /// table's row and column counts.
     fn read_node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
         uia.request(verbatim_uia::NodeGates {
             counts: Some(()),

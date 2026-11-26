@@ -194,7 +194,7 @@ navigator, and the navigator object it has stays when the object dies; a
 command on it does what the object's dead calls do. Verbatim follows NVDA
 throughout (Dickson, 2026-11-09), and the review cursor reads live: every
 review command is a press of the key line, reading the application first
-(`Query::ReadNode` for an object's name and value, and a line read for a
+(a batch's `Read` of the object's properties, and a line read for a
 text command that answers from its line), so a press costs one round
 trip. Only a focus, the to-focus command and a successful object
 navigation move the navigator. "No navigator object" is said only when
