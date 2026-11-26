@@ -4,7 +4,7 @@ Each page here explains how one piece of finished work works today, with no alte
 
 Records of work still being designed or built are kept in the repository and are published here once that work is finished.
 
-- [Ownership](ownership.md) — one owner for every fact, the rules every component follows, and the five builds that applied them: the one judge, input, messages, output, and the outpost store and reducer.
+- [Ownership](ownership.md) — one owner for every fact: who owns what and how each rule is held, with its decisions in [ADR 0006](../../reference/adr/0006-one-owner-per-fact.md).
 - [How focus works](focus.md) — how a focus change travels from an application to speech, with its decisions in [ADR 0001](../../reference/adr/0001-focus.md).
 - [Focus validity](focus-validity.md) — how every focus candidate, MSAA and UI Automation, is judged by one definition in Core, at its turn and while a caret key waits, with its decisions in [ADR 0004](../../reference/adr/0004-focus-validity.md).
 - [The listener without connections](listener-without-connections.md) — why only an application's own outpost connects to it.

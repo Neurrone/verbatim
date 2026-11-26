@@ -33,6 +33,7 @@
   - [ADR 0003: Readers tell, Core asks](reference/adr/0003-readers-tell-core-asks.md)
   - [ADR 0004: One definition of focus validity, decided in Core](reference/adr/0004-focus-validity.md)
   - [ADR 0005: Calls that reach another application](reference/adr/0005-calls-that-reach-another-application.md)
+  - [ADR 0006: One owner for every fact](reference/adr/0006-one-owner-per-fact.md)
 - [Crate guides](reference/crates/readme.md)
   - [verbatim-model](reference/crates/verbatim-model.md)
   - [verbatim-i18n](reference/crates/verbatim-i18n.md)

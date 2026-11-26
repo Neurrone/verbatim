@@ -293,7 +293,8 @@ bound memory use; state rebuilds from live queries on demand.
 
 Every fact has one owner, one thread or one state machine run by one
 thread, and others learn it from one-way reports or views
-([the ownership model](design/ownership.md)). Core owns every word, every
+([the ownership model](design/ownership.md);
+[ADR 0006](../reference/adr/0006-one-owner-per-fact.md)). Core owns every word, every
 rule and every fact across applications: readers tell, Core asks
 ([ADR 0003](../reference/adr/0003-readers-tell-core-asks.md)). An outpost
 does mechanical work on objects it holds, only on Core's request: read,
