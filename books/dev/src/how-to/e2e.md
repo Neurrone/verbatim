@@ -454,6 +454,10 @@ Each group uploads, for passing and failing runs alike:
 
 - `e2e-group-<group>`: the group's test output and the agent's standard
   output and error logs, and nothing else.
+- `e2e-symbols-<group>`, only when one of the group's scenarios dumped
+  Verbatim (a `verbatim-<pid>.dmp` in its directory): the job's
+  `verbatim.exe` and `verbatim.pdb`, which a debugger needs beside the
+  minidump ("Reading Verbatim's minidump").
 - `e2e-<scenario>`: for each scenario the group ran, its whole directory,
   video included, so one scenario's run is downloaded alone; its
   `summary.txt` says whether it passed. No artifact holds every scenario.
@@ -556,10 +560,17 @@ losing any of them fails the run:
   message.
 - `verbatim-<pid>.txt` and `verbatim-<pid>.dmp`, only when the body
   failed because a wait for speech ran out (an utterance not queued, not
-  started or not ended in time): Verbatim's state, processor time and
+  started or not ended in time), or failed after the
+  application-not-responding sound with one of the windows whose wait
+  chains were read, a window not responding or the foreground window,
+  being Verbatim's own: Verbatim's state, processor time and
   modules, one fact a line as in `launched-process-<pid>.txt` below, and
-  its minidump, read once the wait chains above are. A line summing them
-  up is appended to the failure message.
+  its minidump, read once the wait chains above are, while a stalled
+  thread may still be stalled. A line summing them
+  up is appended to the failure message. The minidump holds every
+  thread's stack and registers and no other memory, so it stays small (a
+  few megabytes at most), and "Reading Verbatim's minidump" below says
+  how to read it. No other application is dumped for the sound.
 - `launched-process-<pid>.txt`, beside `wait-chains.txt` and only with
   it: the process the harness launched to open the window, as the agent
   read it when the wait ran out. One fact a line: whether it still runs
@@ -666,6 +677,36 @@ foreground window, entering a menu, a focus change that left the focus it
 announced, or interrupting speech; the lines just above the `cancelled`
 line show what. A timeout and an outright connection failure read
 differently: the second appends "underlying error: ...".
+
+## Reading Verbatim's minidump
+
+`verbatim-<pid>.dmp` ("What a run leaves behind") answers what each of
+Verbatim's threads was doing when the body failed, such as the call its
+GUI thread was blocked in when a wait chain says only "blocked". Read it
+with cdb ([Debugging other processes with cdb](debugging.md)):
+
+```
+cdbX64.exe -z <scenario>\verbatim-<pid>.dmp -y "srv*<repository>\target\symbols*https://msdl.microsoft.com/download/symbols;<build>" -i "<build>" -c "~*k 40; q"
+```
+
+- `<build>` is the folder holding the `verbatim.exe` and `verbatim.pdb`
+  of the build that ran: `target\debug` for a local run while nothing has
+  been rebuilt, and for a run on GitHub the downloaded `e2e-symbols-<group>`
+  artifact of the same job (`gh run download <run> -n e2e-symbols-<group>`).
+  The debugger needs the executable as well as the PDB, because a minidump
+  holds no code and x64 and ARM64 stacks are walked with the unwind tables
+  in the executable: without it, the frames of Windows' DLLs above
+  Verbatim's first frame are still named, and everything below is a guess.
+- Windows' own DLLs need nothing from the run: the debugger fetches each
+  one's image and PDB from Microsoft's symbol server by the timestamp and
+  size the minidump records, so a dump from GitHub's Windows Server reads
+  on this machine. It needs network access the first time.
+- Use the debugger of the dump's architecture, `cdbARM64.exe` for a dump
+  from an ARM64 runner.
+- The GUI thread is the one whose id the wait chain's line names:
+  `~~[<id in hexadecimal>]k 40` prints its stack alone (cdb prints thread
+  ids in hexadecimal, the wait chains in decimal). The blocking call is
+  the top of the stack, read downwards to the first frame of Verbatim's.
 
 ## Remote-operation fallbacks fail a scenario
 

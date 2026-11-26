@@ -516,6 +516,20 @@ jobs:
             verbatim-agent-stdout.log
             verbatim-agent-stderr.log
           if-no-files-found: ignore
+      # Only when a scenario dumped Verbatim (verbatim-<pid>.dmp in its
+      # directory): the executable and PDB of this job's build, which a
+      # debugger needs beside the minidump to walk and name Verbatim's own
+      # frames (books/dev/src/how-to/e2e.md, "Reading Verbatim's minidump").
+      # System DLLs' come from Microsoft's symbol server.
+      - name: Upload Verbatim's executable and symbols for a minidump
+        if: always() && hashFiles('target/e2e-artifacts/**/verbatim-*.dmp') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-symbols-${{ matrix.group }}
+          path: |
+            target/debug/verbatim.exe
+            target/debug/verbatim.pdb
+          if-no-files-found: error
       # One artifact per scenario that ran, passing or failing, named
       # e2e-<scenario> and holding its whole directory: video, timeline,
       # logs, and summary.txt, whose "result:" line says whether it

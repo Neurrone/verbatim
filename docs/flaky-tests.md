@@ -42,7 +42,12 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 - `quit_inside_a_file_dialog` on GitHub's runner (run 45772404137, 2026-11-26, at 5809c5b5; it passed at 18debaf6)
   - How: after Enter on "Import...", only "sound: app-not-responding" was heard where the Import a Theme dialog's four utterances were expected.
   - Cause: the same stall in a second native dialog. Verbatim's GUI thread handled no message for about 4.5 s inside the file dialog's `ShowModal` (`gui.cpp`, `AskFile`); the listener reported the dialog hung, Core played the sound, and the dialog answered about 6.2 s after the key, after the step had failed.
-  - Fix: owned by build 6 with the entry above. The file dialog's `ShowModal` is now timed in Verbatim's log like the message boxes, so the next stall's length is logged; what the thread waits on is still not known.
+  - Fix: owned by build 6 with the entry above. The file dialog's `ShowModal` is timed in Verbatim's log like the message boxes.
+
+- `quit_inside_a_file_dialog` on GitHub's runner again (run 45805762032, 2026-11-26): the third stall, about one in 30 runs on GitHub and none in 40 dispatched runs locally.
+  - How: as above, after Enter on "Import...".
+  - Cause: the file dialog's `ShowModal` took 8,122 ms (`stderr.log`). The wait chain read while it was stalled, `not-responding-wait-chains.txt`, says only "window 0x10292 (pid 5380), thread 3860: thread 3860 of verbatim.exe pid 5380 (blocked); no cycle": the GUI thread is blocked on something Wait Chain Traversal does not follow, so no other thread or process is named.
+  - Fix: the cause is still open, and the next stall names it. When the sound follows a window of Verbatim's own, the harness now dumps Verbatim straight after the wait chains, as `verbatim-<pid>.dmp` in the scenario's artifacts with every thread's stack, and the job uploads its `verbatim.exe` and `verbatim.pdb` as `e2e-symbols-<group>`; `books/dev/src/how-to/e2e.md`, "Reading Verbatim's minidump", says how to read the GUI thread's stack from them. A stall in Verbatim's own code then goes to the build that owns that code; a stall inside Windows' dialog goes to Dickson.
 
 ## A key pressed as a terminal flood ends
 

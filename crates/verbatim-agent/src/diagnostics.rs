@@ -251,4 +251,86 @@ mod tests {
         assert_eq!(read.dump_error, None);
         assert_eq!(&dump[..4], b"MDMP", "a minidump");
     }
+
+    /// A little-endian `u32` of `dump` at `offset`.
+    fn u32_at(dump: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(dump[offset..offset + 4].try_into().expect("four bytes"))
+    }
+
+    /// A launched process blocked in a call, here PowerShell reading a
+    /// standard input nothing writes to, once it has set an event to say it
+    /// runs, is dumped as a debugger needs to
+    /// name that call: the minidump lists its threads
+    /// (`ThreadListStream`), each with its registers and the bytes of its
+    /// stack, and its modules (`ModuleListStream`), by which a debugger
+    /// finds their symbols; and it holds no stream of the process's whole
+    /// memory (`Memory64ListStream`), so it stays small.
+    #[test]
+    fn a_blocked_process_s_dump_holds_each_thread_s_stack_and_not_its_memory() {
+        const THREAD_LIST: u32 = 3;
+        const MODULE_LIST: u32 = 4;
+        const MEMORY_64_LIST: u32 = 9;
+        let _launching = process::LAUNCHING
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let ready = format!("Local\\verbatim-agent-test-dump-{}", std::process::id());
+        crate::events::create(&ready).expect("creates the event");
+        let (pid, _) = process::launch(
+            "powershell",
+            &[
+                "-NoProfile".to_owned(),
+                "-Command".to_owned(),
+                format!(
+                    "[void][Threading.EventWaitHandle]::OpenExisting('{ready}').Set(); [Console]::In.ReadLine()"
+                ),
+            ],
+            None,
+            &[],
+            None,
+            None,
+            (false, false, true),
+        )
+        .expect("spawns PowerShell");
+        let began = crate::events::wait(&ready, pid, Duration::from_secs(30)).expect("waits");
+        let dir = std::env::temp_dir().join(format!(
+            "verbatim-agent-blocked-dump-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("makes the folder");
+        let path = dir.join("blocked.dmp");
+        let written = write_dump(pid, path.to_str().expect("a UTF-8 temporary path"));
+        let state = process::status(pid).expect("reads the state");
+        process::kill(pid).expect("ends PowerShell");
+        let dump = std::fs::read(&path).expect("reads the minidump");
+        std::fs::remove_dir_all(&dir).expect("removes the folder");
+        assert_eq!(began, crate::protocol::EventOutcome::Signalled);
+        assert_eq!(written, Ok(()));
+        assert_eq!(state, ProcessState::Running, "it still waited when dumped");
+
+        // The header: signature, version, stream count, directory offset;
+        // then each directory entry: stream type, size, offset.
+        let directory = u32_at(&dump, 12) as usize;
+        let streams: Vec<(u32, usize)> = (0..u32_at(&dump, 8) as usize)
+            .map(|index| directory + index * 12)
+            .map(|entry| (u32_at(&dump, entry), u32_at(&dump, entry + 8) as usize))
+            .collect();
+        let stream = |kind: u32| streams.iter().find(|(found, _)| *found == kind);
+        assert!(stream(MODULE_LIST).is_some(), "the modules are listed");
+        assert_eq!(stream(MEMORY_64_LIST), None, "no stream of all memory");
+        let &(_, threads) = stream(THREAD_LIST).expect("the threads are listed");
+        let count = u32_at(&dump, threads) as usize;
+        assert!(count > 0, "at least its first thread");
+        // A thread's entry is 48 bytes: its stack's size is at byte 32
+        // and its registers' at byte 40.
+        let without: Vec<u32> = (0..count)
+            .map(|index| threads + 4 + index * 48)
+            .filter(|&entry| u32_at(&dump, entry + 32) == 0 || u32_at(&dump, entry + 40) == 0)
+            .map(|entry| u32_at(&dump, entry))
+            .collect();
+        assert_eq!(
+            without,
+            Vec::<u32>::new(),
+            "threads with no stack or registers"
+        );
+    }
 }

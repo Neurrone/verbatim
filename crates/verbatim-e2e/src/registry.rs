@@ -771,7 +771,9 @@ fn run(def: &ScenarioDef, mode: Mode) {
         if let Some(note) = scenario.record_not_responding_wait_chains() {
             message = format!("{message}\n{note}");
         }
-        if dumps_verbatim && let Some(note) = scenario.record_verbatim_dump() {
+        if dumps_verbatim
+            && let Some(note) = scenario.record_verbatim_dump("a wait for speech ran out")
+        {
             message = format!("{message}\n{note}");
         }
         (message, point)

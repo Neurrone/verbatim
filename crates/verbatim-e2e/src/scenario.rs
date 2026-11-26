@@ -2697,31 +2697,54 @@ impl Scenario {
     /// window the desktop reports as not responding, and of the foreground
     /// window's (`Request::WaitChains`), so the failure names what the
     /// application waited on; written to the artifacts as
-    /// `not-responding-wait-chains.txt`. Returns a note for the failure's
-    /// message, or `None` when the sound was not heard.
+    /// `not-responding-wait-chains.txt`. When one of those windows is
+    /// Verbatim's own, Verbatim is dumped next
+    /// ([`Scenario::record_verbatim_dump`]), since a wait chain names no
+    /// function and the minidump holds every thread's stack; no other
+    /// application is dumped. Returns a note for the failure's message, or
+    /// `None` when the sound was not heard.
     pub fn record_not_responding_wait_chains(&mut self) -> Option<String> {
         if self.is_comparing() || !self.speech.not_responding_heard() {
             return None;
         }
-        let chains = match self.agent.foreground_info() {
-            Ok(desktop) => not_responding_wait_chains(&mut self.agent, &desktop),
-            Err(error) => vec![format!("the desktop could not be read: {error}")],
+        let (chains, verbatim_s) = match self.agent.foreground_info() {
+            Ok(desktop) => (
+                not_responding_wait_chains(&mut self.agent, &desktop),
+                self.verbatim_pid()
+                    .is_some_and(|pid| owns_a_chain_window(&desktop, pid)),
+            ),
+            Err(error) => (
+                vec![format!("the desktop could not be read: {error}")],
+                false,
+            ),
         };
-        let note = format!(
+        let mut note = format!(
             "Verbatim played the application-not-responding sound; what the windows not responding, and the foreground window, waited on when the body failed ({NOT_RESPONDING_WAIT_CHAINS_FILE_NAME}):\n{}",
             chains.join("\n")
         );
         self.not_responding_chains = Some(chains);
+        if verbatim_s
+            && let Some(dumped) =
+                self.record_verbatim_dump("one of those windows is Verbatim's own")
+        {
+            note = format!("{note}\n{dumped}");
+        }
         Some(note)
     }
 
-    /// Dumps Verbatim, for a body that failed because a wait for speech ran
-    /// out ([`crate::speech::SpeechFailure::waited_out`]): its state,
-    /// processor time and modules, and its minidump, kept as
+    /// Dumps Verbatim, `why` in the note: for a body that failed because a
+    /// wait for speech ran out
+    /// ([`crate::speech::SpeechFailure::waited_out`]), or after the
+    /// application-not-responding sound for a window of Verbatim's own
+    /// ([`Scenario::record_not_responding_wait_chains`]). Its state,
+    /// processor time and modules, and its minidump, are kept as
     /// `verbatim-<pid>.txt` and `.dmp` in the scenario's artifacts. Returns
     /// a note for the failure's message; `None` in compare mode, which has
-    /// no Verbatim.
-    pub fn record_verbatim_dump(&mut self) -> Option<String> {
+    /// no Verbatim, and when this body's failure has dumped it already.
+    pub fn record_verbatim_dump(&mut self, why: &str) -> Option<String> {
+        if self.verbatim_dump.is_some() {
+            return None;
+        }
         let pid = self.verbatim_pid()?;
         let dump = process_dump(
             &mut self.agent,
@@ -2735,7 +2758,7 @@ impl Scenario {
             String::new()
         };
         let note = format!(
-            "a wait for speech ran out, so Verbatim was dumped: {}; see {VERBATIM_DUMP_FILE_STEM}-{pid}.txt{minidump}",
+            "{why}, so Verbatim was dumped: {}; see {VERBATIM_DUMP_FILE_STEM}-{pid}.txt{minidump}",
             dump.summary
         );
         self.verbatim_dump = Some((pid, dump));
@@ -4519,27 +4542,53 @@ fn window_wait_chains(
     }
 }
 
+/// The windows of `desktop` whose threads' wait chains are read after the
+/// application-not-responding sound: each window reported as not
+/// responding, once, then the foreground window when it is not one of
+/// them; and whether any is reported as not responding.
+fn chain_windows(desktop: &ForegroundInfo) -> (Vec<&WindowInfo>, bool) {
+    let mut windows: Vec<&WindowInfo> = Vec::new();
+    for window in desktop.foreground.iter().chain(&desktop.windows) {
+        if window.hung && windows.iter().all(|listed| listed.window != window.window) {
+            windows.push(window);
+        }
+    }
+    let any_hung = !windows.is_empty();
+    if let Some(foreground) = &desktop.foreground
+        && windows
+            .iter()
+            .all(|listed| listed.window != foreground.window)
+    {
+        windows.push(foreground);
+    }
+    (windows, any_hung)
+}
+
+/// Whether process `pid` owns one of [`chain_windows`]' windows of
+/// `desktop`: with Verbatim's pid, whether the window Verbatim may have
+/// called not responding is its own, so that Verbatim, and never another
+/// application, is dumped. The foreground window counts though Windows
+/// does not report it as not responding, because Verbatim's own test of a
+/// window answers sooner than the five seconds Windows waits.
+fn owns_a_chain_window(desktop: &ForegroundInfo, pid: u32) -> bool {
+    chain_windows(desktop)
+        .0
+        .iter()
+        .any(|window| window.pid == pid)
+}
+
 /// With `desktop` as the body failed: the wait chain of the thread owning
 /// each window `desktop` reports as not responding, then of the
 /// foreground window's, when it is not one of them, each on one line
 /// ([`describe_wait_chain`]); one line saying why when they could not be
 /// read, and one saying so when no window is not responding.
 fn not_responding_wait_chains(agent: &mut AgentClient, desktop: &ForegroundInfo) -> Vec<String> {
-    let mut windows: Vec<u64> = Vec::new();
-    for window in desktop.foreground.iter().chain(&desktop.windows) {
-        if window.hung && !windows.contains(&window.window) {
-            windows.push(window.window);
-        }
-    }
+    let (windows, any_hung) = chain_windows(desktop);
     let mut lines = Vec::new();
-    if windows.is_empty() {
+    if !any_hung {
         lines.push("no window was reported as not responding".to_owned());
     }
-    if let Some(foreground) = &desktop.foreground
-        && !windows.contains(&foreground.window)
-    {
-        windows.push(foreground.window);
-    }
+    let windows = windows.iter().map(|window| window.window).collect();
     match agent.wait_chains(windows, Vec::new()) {
         Ok(chains) => lines.extend(chains.iter().map(describe_wait_chain)),
         Err(error) => lines.push(format!("the wait chains could not be read: {error}")),
@@ -4930,6 +4979,67 @@ mod minimize_tests {
             describe_wait_chain(&denied),
             "pid 14224, thread 7000: could not be read: Access is denied. (0x80070005)"
         );
+    }
+
+    /// After the not-responding sound the chains are read for each window
+    /// not responding, once, then the foreground window; and Verbatim is
+    /// dumped only when its process owns one of them, never for another
+    /// application's window or a window of its own that is neither.
+    #[test]
+    fn verbatim_is_dumped_only_for_a_chain_window_of_its_own() {
+        let window = |window: u64, pid: u32, hung: bool| WindowInfo {
+            window,
+            pid,
+            title: String::new(),
+            class: String::new(),
+            image: String::new(),
+            cloaked: false,
+            minimized: false,
+            hung,
+            no_activate: false,
+            hidden: false,
+        };
+        let handles = |desktop: &ForegroundInfo| {
+            let (windows, any_hung) = chain_windows(desktop);
+            let windows: Vec<u64> = windows.iter().map(|window| window.window).collect();
+            (windows, any_hung)
+        };
+        // Verbatim, pid 5380, owns the not-responding foreground dialog,
+        // listed twice, and a responding window behind it.
+        let own_dialog = ForegroundInfo {
+            foreground: Some(window(0x10292, 5380, true)),
+            windows: vec![
+                window(0x10292, 5380, true),
+                window(0x200, 940, false),
+                window(0x300, 5380, false),
+            ],
+        };
+        assert_eq!(handles(&own_dialog), (vec![0x10292], true));
+        assert!(owns_a_chain_window(&own_dialog, 5380));
+        assert!(!owns_a_chain_window(&own_dialog, 940));
+        // Another application's window is not responding behind Verbatim's
+        // responding foreground window: both are read, and both own one.
+        let other_hung = ForegroundInfo {
+            foreground: Some(window(0x300, 5380, false)),
+            windows: vec![window(0x300, 5380, false), window(0x200, 940, true)],
+        };
+        assert_eq!(handles(&other_hung), (vec![0x200, 0x300], true));
+        assert!(owns_a_chain_window(&other_hung, 5380));
+        assert!(owns_a_chain_window(&other_hung, 940));
+        // Nothing is reported as not responding and another application
+        // holds the foreground: Verbatim's window behind it is not read.
+        let none_hung = ForegroundInfo {
+            foreground: Some(window(0x200, 940, false)),
+            windows: vec![window(0x200, 940, false), window(0x300, 5380, false)],
+        };
+        assert_eq!(handles(&none_hung), (vec![0x200], false));
+        assert!(!owns_a_chain_window(&none_hung, 5380));
+        let empty = ForegroundInfo {
+            foreground: None,
+            windows: Vec::new(),
+        };
+        assert_eq!(handles(&empty), (Vec::new(), false));
+        assert!(!owns_a_chain_window(&empty, 5380));
     }
 
     /// A launched process is described by its state, its processor time,

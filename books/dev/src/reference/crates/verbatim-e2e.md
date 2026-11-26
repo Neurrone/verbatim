@@ -246,7 +246,10 @@ hook, carrying its message, its `FailurePoint` (the failing step's
 trace, its entries on the timeline, and the instant it failed), and
 `waited_out`, whether a wait for speech ran out rather than speech
 differing; the registry dumps Verbatim for such a failure
-(`Scenario::record_verbatim_dump`). Any other
+(`Scenario::record_verbatim_dump`), and for any failure after the
+application-not-responding sound when a window whose wait chain is read
+is Verbatim's own (`Scenario::record_not_responding_wait_chains`), once a
+body. Any other
 failure's point is the step under way when the body ended
 (`FailurePoint::now`), or at the end of the run for a problem found after
 the body. Once the logs are collected the run panics with the whole
