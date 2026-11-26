@@ -56,6 +56,11 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the runner, as far as the artifacts show. The stand-in's form showed and took focus, then did not answer its first MSAA call for about 8 s (0.14 s in the passing run 45805762032); the outpost's probe timed out at 3 s and the sound is correct. The request made no UIA call and nothing fell back. `not-responding-wait-chains.txt` lists two blocked threads with no cycle: the form's UI thread and one of `dwm.exe`, which draws every window, so the desktop as a whole may have stalled. What they waited on is not known.
   - Fix: none yet. If the next not-responding failure on the runner again lists `dwm.exe`, the harness records the runner's load at that moment, and the stalls of Verbatim's own dialogs above are read again in that light.
 
+- `quit_inside_a_file_dialog` on GitHub's runner (run 45845095452, 2026-11-26, at 520ca5f9)
+  - How: "sound: app-not-responding" where the file dialog's opening was expected; the dialog's `ShowModal` took 54,762 ms.
+  - Cause: the same stall, and again desktop-wide: the wait chains list a blocked thread of `dwm.exe` beside Verbatim's GUI thread, and the harness's own dump of Verbatim failed because the agent could not read the process within 10 s (`verbatim-696.txt`). So the stall is the runner's, not the dialog's; what blocks is still not known, since the dump is what would have named it.
+  - Fix: none yet. The next step is to record the runner's load when the sound fires, and to let the dump wait longer than the stall.
+
 ## A key pressed as a terminal flood ends
 
 - `windows_terminal_line_key_flood` on GitHub's runner (run 45787264327, 2026-11-26, at 5b79a4e6; it passed at 4327da97 and 71cf8f3b)
