@@ -1,10 +1,8 @@
 //! Core's requests, answered on the worker
 //! (`docs/design/readers-tell-core-asks-build1.md`, "The outpost in this
 //! build", "The focus answers" and Table 14), each answered once with one
-//! of the five outcomes: a batch (`super::batch`), or the terminal's
-//! command search, the one operation outside a batch, kept until the
-//! command marks' journal replaces it (Dickson, 2026-11-26). What a read
-//! reads is answered by its
+//! of the five outcomes: a batch (`super::batch`), the one kind of
+//! request. What a read reads is answered by its
 //! property set, each node with its nearest window's facts, read from
 //! Windows with no call into the application. The reads a batch's steps
 //! share are here: a node's properties as its snapshot holds them, its

@@ -39,7 +39,7 @@ their NVDA meanings and are documented in [docs/nvda](https://github.com/Neurron
 - **Backend** — one client stack over an accessibility API: UIA
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
   [Architecture](../explanation/architecture.md) section 4.
-- **Batch** — a request of the request list: at most four steps, each
+- **Batch** — a request of the request list: a few steps (the model's guide gives the limit), each
   an operation on a subject with an optional condition, answered with
   one outcome per step. Core builds one with `cx.batch`; each reader
   parses it once on arrival and refuses one that does not parse, whole.

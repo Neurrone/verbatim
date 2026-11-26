@@ -1188,7 +1188,7 @@ controlled selection, an element of the focus's ControllerFor relation or
 inside one, is a batch's `Related` controller-for and a `Descendants` of
 every node it found, one program where the window allows.
 
-## Messages to Core## Messages to Core
+## Messages to Core
 
 The thread that sends a message writes it itself (`outpost::outbound`,
 through the transport's `Sender`; `docs/design/communication.md`, section
