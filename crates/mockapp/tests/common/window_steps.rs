@@ -54,8 +54,8 @@ use verbatim_core::batch::{Answers, Builder, Got, Ref, Search, kind};
 /// More rows than any terminal holds, for moving to the end of the text.
 const FAR: i32 = 1_000_000;
 
-/// How many `FindText` calls the search for a mark's line makes at most,
-/// as the outpost's search always made.
+/// How many `FindText` calls each way of the search for a mark's line
+/// makes at most, as Core's terminal reader asks.
 const MARK_SEARCH_CALLS: u8 = 100;
 
 /// An end mark the read names: a held range at an earlier read's document

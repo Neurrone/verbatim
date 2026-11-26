@@ -254,7 +254,7 @@ fn the_status_bar_is_read_below_the_caret_classic() {
 
 /// A command is typed at the prompt and entered, so Core marks its line;
 /// output carries it above the rows Core keeps; Verbatim+Alt+Up Arrow then
-/// finds it with the outpost's search, moves the review cursor there and
+/// finds it with Core's search batch, moves the review cursor there and
 /// speaks it, and a second press, with no mark above, says nothing.
 fn command_marks_move_the_review_cursor(remote: bool) {
     let mut driven = with_a_command("mockapp-terminal-marks", remote);

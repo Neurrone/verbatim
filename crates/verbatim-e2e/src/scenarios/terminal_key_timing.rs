@@ -36,7 +36,7 @@
 //!   command's line and speaks it, newest first: "echo three", `short.ps1`'s
 //!   line, `gated.ps1`'s line, and "echo one" twice; the last three lie
 //!   more than a hundred rows above the prompt, above the rows Core keeps,
-//!   so each is found by the outpost's search, the match nearest its own
+//!   so each is found by Core's search batch, the match nearest its own
 //!   mark. A sixth press says nothing, past the oldest mark, and
 //!   Verbatim+Alt+Down Arrow goes back to the newer "echo one", then to
 //!   `gated.ps1`'s line. Last, `cls`, heard as the prompt, which in both
