@@ -1674,14 +1674,13 @@ How far a full history rotated between two reads is settled by the read
 itself (`books/dev/src/explanation/design/terminal-model.md`, "The read" and "The rules in
 detail"): every read starts a screen above the last read's screen, so that
 screen stays inside it for a rotation of up to two screens less a row. A
-rotation past that keeps no row of the last read, and the whole document
-is read once.
+rotation past that keeps no row of the last read and is a lost read,
+handled within itself; nothing more is read.
 
 Measured on 2026-10-24 on this machine, release build, 120 by 30, a full
 history of 9,001 rows: in the console host the read program's snapshot
 takes 0.45 to 1.06 ms for a rotation of 0 to 1,000 rows, 7,318 UTF-16
-units; a rotation of 61 rows or more adds the whole document's snapshot,
-25 to 29 ms and 1.1 million units. A terminal's first read takes only the
+units. A terminal's first read takes only the
 screen; when the document goes on above it, it is read again at once with
 a screen of rows above, one such snapshot each time the outpost begins
 reading a terminal.
@@ -1701,28 +1700,25 @@ overflow 30 to 31% more, the clear and reprint 26 to 28% more, and the
 bimodal wide lines 36 to 62% more:
 
 - A rotation of 58 rows, settled in one read: 37 to 42 µs.
-- A rotation of 61 rows, and of 1,000 rows, each a lost read and the whole
-  document of 1.1 MB: 1.2 to 1.4 ms.
-- The same 1,000 rows of lines one cell short of the width: 1.3 to 1.9,
-  bimodal; of Cyrillic text, 1.9 MB: 1.7 to 1.8.
-- An overflow of 10,000 lines keeping nothing of the last read, about
-  9,000 lines spoken: numbered lines 1.0 to 1.1 ms; lines one cell short
-  1.4 to 1.5; Cyrillic 1.8 to 2.0; lines of two rows 1.2.
-- A clear and a reprint of 8,905 rows, read whole: 1.0 to 1.1 ms.
+- Since 2026-11-27 a lost read is handled within its own read, of two
+  screens ("A terminal's count read"); one run that day, medians over both
+  terminals: a rotation of 61 rows, and of 1,000 rows, each a lost read: 30
+  to 36 µs; the same 1,000 rows of lines one cell short of the width 36,
+  of Cyrillic text 50 to 51; over a 32,766-row history 30.
+- An overflow of 10,000 lines keeping nothing of the last read, 60 lines
+  spoken, one run on 2026-11-27: numbered lines 31 to 32 µs; lines one
+  cell short 34 to 35; Cyrillic 46 to 48; lines of two rows 30 to 31.
+- A clear and a reprint of 8,905 rows, the read and its count read, one
+  run on 2026-11-27: 48 to 49 µs.
 - 1,000 lines of one repeated line, an ordinary read: 46 to 49 µs.
 - 1,000 lines walking through the last screen's texts, so only the screen
   is aligned: 1.0 ms.
-- The subsequence's worst case, 8,000 lines drawn from the last screen's
-  texts then 60 new lines: 1.7 to 1.9 ms.
+- 8,000 lines drawn from the last screen's texts then 60 new lines, which
+  was the subsequence's worst case over a whole document, 1.7 to 1.9 ms: a
+  read of two screens, 30 µs (one run, 2026-11-27).
 - A screen of 29 rows of Chinese text each rewritten with its last
   character changed, every row paired with its old row by likeness: 1.0
   ms.
-
-With the lookups as they are now, 2026-11-01: a rotation of 1,000 rows
-over a console buffer enlarged to its greatest height, 32,766 rows, a
-lost read and the whole document of 4.0 MB, takes 4.9 ms, past the
-reducer's 2 ms budget for a read (`books/dev/src/explanation/design/terminal-model.md`,
-"Costs").
 
 The bound is what the work must touch: hashing and copying every row's
 text once (about 0.1 ms a megabyte each), the vectors kept per row, and in
@@ -1731,6 +1727,28 @@ sharing its text. No case allocates a block of a megabyte or more, because
 such a block takes pages of its own at about 120 µs a megabyte to fill and
 free; a read's rows share strings of about 64 KB or 1,024 rows
 (`books/dev/src/reference/crates/verbatim-text.md`, "`Text`").
+
+### A terminal's count read
+
+After a start that shrank under a clear, a lost read is read once more as
+a count read, whose next start's probe moves to the text's start in one
+`Move`, counting the rows above the read
+(`books/dev/src/explanation/design/terminal-model.md`, rule 6). The
+provider walks every row above the read in that call, holding the
+console's lock in the console host and the terminal's lock against its
+output thread in Windows Terminal, so the program's output waits while it
+walks. Measured on 2026-11-27 on this machine by a probe outside
+Verbatim, the managed UI Automation client's `MoveEndpointByUnit` by
+lines from a collapsed range at the document's end to its start, against
+`GetText` of the whole document, 25 runs each: the walk took under 1 ms
+in a full console history of 9,001 rows, in one enlarged to 32,766 rows,
+and in Windows Terminal's full history, where the whole document's
+`GetText` took 24 ms, 93 ms and 6.4 ms at the median. No test pins these
+figures. In the replay of the Claude Code and Pi recordings
+(`crates/verbatim-core/tests/terminal_transcripts.rs`, counted once in a
+scratch run on 2026-11-27), 0 to 3 reads a recording have their start
+refused and none asks a count read, as none asked the whole document
+before.
 
 ### A full-screen program's exit
 
@@ -1777,24 +1795,19 @@ machine, three runs, medians in µs over both terminals:
 
 - An ordinary read of one new line: 1,329 to 1,354 bytes, of which the
   screen 264 to 272; reducer 73 to 76; parse 7.
-- A rotation of 61 rows: the read, 52 to 54, keeps nothing and asks for
-  the whole document, 72.0 to 72.3 KB; reducer 1,396 to 1,644; parse 121 to
-  132.
-- A lost read after 10,000 lines: the read 52 to 55, then the whole
-  document, 81.9 to 82.2 KB, every line handed to the flood policy; reducer
-  2,854 to 3,041; parse 126 to 138.
+- A rotation of 61 rows, and a lost read after 10,000 lines, each read
+  alone since 2026-11-27: 1,347 to 1,462 bytes; reducer 60 to 63; parse 8
+  (one run, 2026-11-27).
 - A full-screen program's exit, its read the whole document: 72.0 to 72.2
   KB; reducer 1,460 to 1,697; parse 125 to 130.
-- A clear and a reprint of 8,905 rows: the read 49 to 55, then the whole
-  document, 160.3 to 160.4 KB; reducer 2,515 to 2,874; parse 142 to 159.
-- `clear; dir`, a clear and 100 lines: the read 2,043 to 2,087 bytes, 41
-  to 43 µs, and the whole document of about a hundred rows, 2,690 to 2,734
-  bytes, 64 to 67.
+- A clear and a reprint of 8,905 rows, and `clear; dir`, a clear and 100
+  lines: the read, 2,061 to 2,279 bytes, 42 to 44, then the count read of
+  as many bytes, 57 to 64 (one run, 2026-11-27).
 
-The whole document after a lost read and after a clear and reprint are
-over the reducer's budget of 2 ms a step
-(`docs/design/communication.md`, decision 9) at the median, and the other
-cases are within it; the slowest of their 31 runs reach 3.8 to 4.2 ms.
+Every case is within the reducer's budget of 2 ms a step
+(`docs/design/communication.md`, decision 9) at the median; the
+full-screen program's exit, its read the whole document, comes nearest
+(1,838 to 1,855 µs on 2026-11-27, its slowest runs 2.2 to 2.3 ms).
 The alignment of a whole document stays on the reducer (Dickson,
 2026-10-26, who would rather optimize than move it off as an effect, when
 every case measured 1.1 to 1.9 ms). The read's form is not the cost: the
@@ -1839,7 +1852,7 @@ frame's raw section.
 - The reducer's time per input carrying a read: a live read 101 to 116 µs
   at the median and 182 to 406 at the 99th percentile, an answer to
   Core's request 53 to 83. Over the 2 ms budget: the whole document after
-  a lost read, 2.0 to 2.3 ms, and 3 of the 1,822 reads of `conhost_flood`,
+  a lost read, 2.0 to 2.3 ms, a read no longer taken since 2026-11-27, and 3 of the 1,822 reads of `conhost_flood`,
   the largest 4.7 ms; no key scenario's step (the largest 1.35).
 - Wake-ups: sending every read to Core costs 2.6 percent more wake-ups of
   all processes over the console host's flood and 2.5 percent over Windows

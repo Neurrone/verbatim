@@ -291,8 +291,9 @@ const CLEAR_HOST: &str = "\x1b[H\x1b[2J\x1b[3J";
 /// history cleared and 100 lines written while the outpost holds, as
 /// `clear; dir` in one line: the read at the group's end finds the document
 /// shorter than the last read's, its start refused and nothing of it kept,
-/// so the whole document is read and is all new, its 101 lines counted as
-/// about, less the 10 heard last.
+/// so it is read again as a count read, which keeps nothing either: its 60
+/// rows are new and the 41 above it counted, its 101 lines counted as
+/// about, less the 10 heard last (Claude, 2026-11-27).
 #[test]
 fn output_after_windows_terminals_clear_is_all_new_and_counted_as_about() {
     let mut session = terminal(Flavor::WindowsTerminal, &written("old line", 1..=200), 10);
@@ -321,9 +322,9 @@ fn output_after_windows_terminals_clear_is_all_new_and_counted_as_about() {
 /// document's start; once the first of those has been heard, 9,100 lines
 /// written while the outpost holds. The read at the cleared group's end
 /// keeps nothing of the screen before, which the clear set aside and which
-/// is no longer in the buffer, so it is a lost read, and the whole
-/// document, Windows Terminal's 9,031 rows, holds nothing of the last
-/// read: more went by than it holds, less the 15 heard last.
+/// is no longer in the buffer, so it is a lost read; the read, from the
+/// document's start, Windows Terminal's 9,031 rows, holds nothing of the
+/// last read: more went by than it holds, less the 15 heard last.
 #[test]
 fn a_flood_after_windows_terminals_clear_says_more_than_it_holds() {
     let mut session = terminal(Flavor::WindowsTerminal, "", 15);
@@ -361,8 +362,8 @@ fn a_flood_after_windows_terminals_clear_says_more_than_it_holds() {
 /// A fresh console host, with no history, taking 9,100 lines in one write
 /// before its first read, at limits of 10: its 9,001 rows keep fill lines
 /// 101 to 9,100 and the prompt, the read keeps nothing of the screen before
-/// and no screen is aside, so it is a lost read, and the whole document
-/// holds nothing of the last read: its first 10 lines are heard, then more
+/// and no screen is aside, so it is a lost read, the read itself the whole
+/// document, from its start: its first 10 lines are heard, then more
 /// than it holds less the 20 heard went by.
 #[test]
 fn a_flood_onto_a_fresh_console_host_says_more_than_it_holds() {
@@ -387,9 +388,9 @@ fn a_flood_onto_a_fresh_console_host_says_more_than_it_holds() {
 /// scroll region over the rows above, at limits of 15: a group's worth of
 /// lines written into the region, then, once the first has been heard,
 /// lines to 12,000 and the footer redrawn while the outpost holds. The read
-/// at the group's end finds its start gone with the rotating history, the
-/// whole document holds nothing of the last read but the footer at its
-/// row, so the lines above it are all new: more than the console host's
+/// at the group's end reaches the document's start and keeps nothing of the
+/// last read but the footer at its row, so it is lost and the lines above it
+/// are all new: more than the console host's
 /// 9,001 rows less the 15 heard last went by, then the footer's new text.
 /// Removing the region and clearing the screen speaks what follows. Each
 /// line starts with a carriage return and a line feed, as the console

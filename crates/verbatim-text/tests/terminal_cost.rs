@@ -10,8 +10,8 @@
 //! Each case fills a 120 by 30 terminal of each kind with a full history of
 //! distinct lines, reads it as the outpost does (the first read, then its
 //! history block, then one ordinary read), writes the case's output, and
-//! times each read the rules then take until they ask for no other, the
-//! whole document included when they ask for it. Only the reader's own
+//! times each read the rules then take until they ask for no other, a
+//! count read included when they ask for one. Only the reader's own
 //! time is counted, not the simulated terminal's: the reads are taken once
 //! and given again to a fresh reader for each run.
 
@@ -114,10 +114,8 @@ enum Output {
     /// that repeats no stretch of them.
     Shuffled(usize),
     /// This many lines, each one of the last screen's texts drawn at
-    /// random, then 60 new lines: the read before the whole document keeps
-    /// nothing, and in the whole document the last screen's rows are found
-    /// at one place and their texts at thousands, the most rows for the
-    /// subsequence to compare.
+    /// random, then 60 new lines: the last screen's texts at thousands of
+    /// rows, the most for the subsequence to compare.
     Echoed(usize),
     /// The screen's lines but its caret's written again from its top, each
     /// with its last character changed: every row of the screen is a gap

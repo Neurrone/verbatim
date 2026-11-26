@@ -925,8 +925,9 @@ Each exists in both terminals unless named for one.
   write has landed before Core's ask at the group's last line, and they
   are heard as the rest of the group, "skipped more than N lines", and the last 15, N
   being the lines the terminal's buffer holds less the 15 last lines
-  (9,016 in Windows Terminal, 8,986 in the console host), so each
-  terminal's provider reads its whole document. The flood policy's counts
+  (9,016 in Windows Terminal, 8,986 in the console host): the read at the
+  group's end reaches the document's start, so each terminal's provider
+  reads its whole document in that one read. The flood policy's counts
   for the other kinds of flood are tested with the reading rules in
   `crates/verbatim-core/tests/terminal_floods.rs`. Outpost logs are collected in
   chunks, since a flood's debug log can be larger than one read of the

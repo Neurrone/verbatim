@@ -97,8 +97,8 @@ terminal model").
   of one length (`lengths`); it crosses to Core as
   `verbatim_model::TerminalText`. `unpadded` makes one and `padded` gives
   the text back. The memory splits rows from it without copying padding.
-- `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
-  memory per terminal.
+- `TerminalMemory::new` and `TerminalMemory::read(&Read, report) -> Outcome`,
+  `report` whether new output is reported: one memory per terminal.
   - `above`: how many rows the next read takes above its start, a screen
     as the last read found it, none before the first read.
   - `rows`: the last read's rows as `Rows`, counted from its first row:
@@ -134,11 +134,14 @@ terminal model").
     end;
   - the rotation, whether the first row continues a line from above, the
     caret's row, the screen's width and height, a `Switch` of screens,
-    `lost` (a `Lost`: `About`, `MoreThan` or `Uncounted`) for a lost read
-    read whole, `by_text`, `first`, and `rewritten` (a program may have
+    `lost` (a `Lost`: `About { above }` after a count read, `Uncounted`
+    when only the screen was aligned, `MoreThan` otherwise) for a lost read, `by_text`, `first`, and `rewritten` (a program may have
     printed its history again);
-  - each set alone with the memory unchanged: `whole_document` (read the
-    whole document and give that instead), `history_block` (read again
+  - each set alone with the memory unchanged: `count_read` (a lost read
+    left to the caller: read again from the same start as a count read,
+    whose `Read::rows_above` counts the rows above it, and give that
+    instead; with new output not reported, start the memory again with
+    `restart`), `history_block` (read again
     with no start, counting a screen up from the document's end, with a
     screen above), and `blank` (the screen shows no text where the last
     read's had text).
@@ -205,11 +208,13 @@ terminal model").
 - Lost reads. A read is lost when it keeps and pairs nothing and is no new
   screen, or when, positions not trusted and the start not refused, it
   keeps no row with text the last read had at or above the caret, or
-  keeps them equally well at two places. The memory asks for the whole
-  document and aligns that: found at one place, the rows below are new,
-  counted as `Lost::About`; found nowhere, `Lost::MoreThan` (or `About`
-  after a refused start); at more than one place, only the screen is
-  aligned and the count is `Lost::Uncounted`.
+  keeps them equally well at two places. It is handled within itself,
+  `Lost::MoreThan`: every row it did not keep is new; at more than one
+  place only its screen is aligned, `Lost::Uncounted`; its anchors keep their places
+  (`keep_places`). After a start that shrank, the memory asks for a count
+  read instead, and when that keeps nothing every row is new and the rows
+  above it are `Lost::About { above }`. With new output not reported, any
+  lost read is left to the caller to start the memory again.
 - Screens. A read keeping and pairing nothing is a new screen
   (`Switch::New`) when its screen starts at the document's start or the
   aside screen is found in it: its rows are new, the review position goes
@@ -244,7 +249,7 @@ above that from the provider. Once a read is handled, `trim` drops the
 rows above the history block and the reading rules drop their state of
 those rows with it; every read first trims what the last left. Nothing
 counted from the last read's first row moves, since the memory keeps how
-many rows it dropped. A whole document of 9,000 rows therefore leaves the
+many rows it dropped. A read of the whole document, 9,000 rows, therefore leaves the
 same memory as an ordinary read, about 60 rows of a 120 by 30 screen, and
 the aside screen adds at most 60 hashes. With the reading rules, about
 21 KB is held between reads at that size, about 450 bytes per row kept.
@@ -253,8 +258,8 @@ the aside screen adds at most 60 hashes. With the reading rules, about
 
 The memory's and the rules' time together, at 120 by 30 with a full
 history, is about 50 microseconds for an ordinary read and under 2.5
-milliseconds for the costliest (a lost read's whole document, an overflow
-that keeps nothing, a clear and reprint, or the subsequence's worst case);
+milliseconds for the costliest (an overflow that keeps nothing, a clear
+and reprint, or the subsequence's worst case);
 handling a whole-document read raises the peak by a few megabytes. The
 figures are in `books/dev/src/reference/performance.md`, "A terminal's rotation" and "A
 terminal's reads in Core". The alignment's lookups by row hash are
@@ -302,7 +307,7 @@ every new line goes to Core.
   - `set_settings(Settings)`.
   - `caret_line_input()`, above.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
-  `timer` due time, `whole_document` and `history_block` as in the
+  `timer` due time, `count_read` and `history_block` as in the
   `Outcome`, the read's `Outcome`, and `followed`, whether a key moved the
   caret within its window and the review position followed it.
 - `Speech`: a new line (`Line`, blank with empty text, which Core counts

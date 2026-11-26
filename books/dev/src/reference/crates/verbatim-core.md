@@ -120,8 +120,10 @@ guide maps those behaviors onto the crate's types and modules.
   the focused terminal's full reads, its history reads and its command
   search (Dickson, 2026-11-26).
   - `WindowAsk` (`read`, `colours`, `starting`, `output`) with
-    `WindowRead` (`First`, `From { start, height }`,
-    `HistoryBlock { height }`, `Whole { height }`), and `HistoryAsk`
+    `WindowRead` (`First`, `From { start, height, count }`, a count read
+    probing from the next read's start to the text's start so that the
+    snapshot's `rows_above` counts the rows above it, and
+    `HistoryBlock { height }`), and `HistoryAsk`
     (`Whole`, `Above { start, above, height }`): what Core asks, each read
     with only the facts it has.
   - `window_batch(node, &WindowAsk)` and `history_batch(node, &HistoryAsk)`:
@@ -1601,12 +1603,13 @@ console's caret event is its caret.
   the backlog looked at: when more lines wait than that, everything but
   the newest "Last lines to speak" becomes one skip, spoken as
   `Phrase::SkippedLines`, `Phrase::SkippedUncountedLines`
-  (`Skipped::Uncounted`), `Phrase::SkippedMoreThanLines`
+  (`Skipped::Uncounted`, after a lost read whose rows fit at more than one
+  place, and for a lost read's "more than" count of none), `Phrase::SkippedMoreThanLines`
   (`Skipped::MoreThan`, lines lost past the terminal's history) or
-  `Phrase::SkippedAboutLines` (`Skipped::About`, counted from text after a
-  lost read); `Skipped::plus` combines kinds, "more than" winning. A lost
-  read sends a count of none of its kind ahead of its lines, each marked
-  `Counted`. The next group follows, until everything waiting has been
+  `Phrase::SkippedAboutLines` (`Skipped::About`, after a count read);
+  `Skipped::plus` combines kinds, "more than" winning. A lost read sends a
+  count of its kind ahead of its lines, of none or, after a count read, of
+  the rows above it, each line marked `Counted`. The next group follows, until everything waiting has been
   heard.
 - Bounds: behind the group being spoken, the waiting queue keeps at most
   as many lines as either limit keeps, older ones folded into the count,
@@ -1709,7 +1712,7 @@ held at the next read's start) and the answers to the requests they make;
 - Reads. A full read is the reader's window batch
   (`terminal::reader::window_batch`) of a `WindowAsk`: which read, by the
   scope the rules owe (from the start the model names with the screen's
-  height, the whole text, or a history block; the screen alone before a
+  height, as a count read when the rules owe one, or a history block; the screen alone before a
   height is known), whether to take colours, whether it is a caret key's
   starting read, and whether it is an output read. The reading keeps the
   ask of a read it has out (`Reading::Out`, `Baselining`) and reads the
@@ -1760,7 +1763,7 @@ real one does, and holds its reading while Core's flood policy asks it to;
 `tests/terminal_floods.rs` drives the reading rules and the flood policy
 together through floods at the harness's terminal size and history.
 Both assert what is heard and what Core asked for by its purpose alone
-(`Asked`: a read, the whole document, a first read again, a history read,
+(`Asked`: a read, a count read, a first read again, a history read,
 a search with its text, a caret key's watch), so that they hold whichever
 way Core asks a terminal (Claude, 2026-11-26). The support's simulated
 terminal answers each generic text step of a batch as the provider would

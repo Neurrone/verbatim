@@ -717,7 +717,7 @@ Each file's module comment says exactly what it asserts; in outline:
 - `terminal_reader.rs` runs the batches of Core's terminal reader
   (`verbatim_core::terminal::reader`) through a real outpost remotely and
   by calls, which must agree, and pins what the reader reads back: a
-  kept start until a clear, the history block, the whole text and the rows above a
+  kept start until a clear, the history block, a count read and the rows above a
   start, with history reads by place, the caret and a key's starting
   point, a provider reporting no selection, the colours as exact runs,
   and a start no longer held, which is the terminal gone; and a text
@@ -745,8 +745,7 @@ Each file's module comment says exactly what it asserts; in outline:
   terminal: each change signal told as one tell, a text change, a caret
   event and the console host's caret among them; the window and history
   reads Core's terminal reader writes, sent as Core sends them and read
-  back by the reader, from a start Core names, of the whole document and
-  a history block, with the colours when asked, and a caret key's
+  back by the reader, from a start Core names and a history block, with the colours when asked, and a caret key's
   starting read with its starting point in one call; and a terminal
   caret key's watch.
 - `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus

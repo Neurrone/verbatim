@@ -598,6 +598,8 @@ control plane's event stream; no reader sends them.
   `screen`, the document's `first_row` and the `caret_line`, each a
   `TerminalText`; the flags `from_start`, `shrank`, `at_document_start`
   and `alternate`; `caret_rows_to_end`, `caret_column`, and `above`;
+  `rows_above`, for a count read whose start was refused, the rows above
+  it (`TerminalScope::Count`, the read Core owes after such a lost read);
   `started_ms` and `ended_ms` on the shared clock (`ended_ms` 0 when not
   known); `waited`; the screen's `colours` when taken, rows of `TerminalColourRun`; and the
   `caret`. A `TerminalText` is text without the spaces that pad its lines

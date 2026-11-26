@@ -4,14 +4,16 @@
 //! host, each its own code (`books/dev/src/reference/testing.md`). These are the acceptance
 //! tests of the terminal reading package (`docs/parity/terminals.md`, "The
 //! backlog" and "Reading a terminal on demand"): when Core reaches the end
-//! of a group it asks, and the outpost reads up to the end; the anchor's
-//! line has left a full history, so the read is lost, Core reads the whole
-//! document, about 1.1 million characters, through each terminal's own UI
-//! Automation text provider, and Verbatim says "skipped more than N lines".
-//! The counts and the lost read's logic are covered at the same sizes by
+//! of a group it asks, and the outpost reads up to the end; the start the
+//! last read kept lies within a screen of the text's start, so the read,
+//! from a screen above it, is the whole document, about 1.1 million
+//! characters, through each terminal's own UI Automation text provider; it
+//! keeps nothing of the last read, so it is lost, and Verbatim says
+//! "skipped more than N lines" with nothing more read. The counts and the
+//! lost read's logic are covered at the same sizes by
 //! `crates/verbatim-core/tests/terminal_floods.rs`; these scenarios keep the
-//! real providers' whole-document read and a real write landing against a
-//! real hold.
+//! real providers' read of the whole document and a real write landing
+//! against a real hold.
 //!
 //! Both limits are 15 ([`HALF`]), half their default, not the 10 of the
 //! other flood scenarios, so that a group's worth of lines is waiting when

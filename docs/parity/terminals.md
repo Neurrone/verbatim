@@ -133,13 +133,23 @@ settings", Core's flood policy).
   is "skipped lines" when the count is lost; "skipped more than N lines"
   when the lines went by past the terminal's history, as when one write
   larger than the history follows a fresh or cleared screen, N the
-  history's rows left unspoken; and "skipped about N lines" when a lost
-  read counted them from text, as after Windows Terminal's clear followed
-  by more than a screen of output before the next read, such as
-  `clear; dir` typed as one line, whose every line after the clear is new
-  (Dickson, 2026-10-25). Nothing is lost for good: every line is still
-  there for the review cursor (the `*_flood` and
+  history's rows left unspoken; and "skipped about N lines" after Windows
+  Terminal's clear followed by more than a screen of output before the
+  next read, such as `clear; dir` typed as one line, whose every line
+  after the clear is new, the rows above the read counted by a count read
+  (Dickson, 2026-10-25; Claude, 2026-11-27). Nothing is lost for good:
+  every line is still there for the review cursor (the `*_flood` and
   `*_scrollback_overflow_during_group` scenarios).
+- Pending Dickson's approval (Claude, 2026-11-27): once the history is
+  full, a flood that carries the last read's rows above the next read
+  says "skipped more than N lines", N the lines that read shows and does
+  not speak, under his ruling that a full history's count says "more
+  than" (2026-11-26). 2,000 lines into a full history at limits of 10,
+  the first 12 read and the rest written while Core holds: Verbatim said
+  "flood line 1" to "flood line 10", "skipped about 1981 lines", "flood
+  line 1992" to "flood line 2000", the prompt; it now says the same with
+  "skipped more than 50 lines" (`crates/verbatim-core/tests/terminal_floods.rs`).
+  NVDA speaks all 2,000 lines, queued.
 - While the flood policy holds, Core sends no read for the changes told:
   it reads them when a group's last line is handed to speech; a cut while
   it holds reads them at once with a silent read, which speaks only its

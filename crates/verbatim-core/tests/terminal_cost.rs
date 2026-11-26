@@ -9,8 +9,8 @@
 //! Each case fills a 120 by 30 terminal of each kind with a full history of
 //! distinct numbered lines, read as the outpost reads for Core
 //! (`terminal_support`), writes the case's output, and lets Core take the
-//! reads that follow, the whole document included when its rules ask for
-//! it. Each input that carries a read (the answer to the window read of
+//! reads that follow, a count read included when its rules ask for one.
+//! Each input that carries a read (the answer to the window read of
 //! Core's terminal reader, a batch) is then timed through `reduce` itself,
 //! from a clone of the state before the case's output, its JSON's parse
 //! timed apart, and its size given as the JSON of the read the reader
@@ -55,7 +55,8 @@ enum Output {
     /// A clear of the screen and the history, then this many lines.
     ClearAndReprint(usize),
     /// A full-screen program opened, drawn and read, then closed: the
-    /// read after it reads the whole document.
+    /// read after it starts at the alternate screen's top, and so reads the
+    /// whole document.
     FullScreenExit,
 }
 

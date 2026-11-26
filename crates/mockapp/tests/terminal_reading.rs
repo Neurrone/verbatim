@@ -18,7 +18,7 @@
 //!   it and read back by the reader, reads from the start anchor Core
 //!   names and holds the start of its own screen; a history read counts
 //!   from the start Core names; the read takes the colours only when Core
-//!   asks; the whole document and a history block are read when asked; a
+//!   asks; a history block is read when asked; a
 //!   caret key's starting read holds the key's caret starting point with
 //!   the caret.
 //! - A terminal caret key's watch has no event shortcut: a caret event, the
