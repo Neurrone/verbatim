@@ -443,6 +443,9 @@ struct Planner<'p, 's, 'a> {
     state: &'p State<'s, 'a>,
     range: Range<usize>,
     imports: Vec<Import>,
+    /// The outcome of each step of the program planned so far that was
+    /// decided here, before the program runs; `None` for a step lowered.
+    pre: Vec<Option<Ran>>,
 }
 
 impl<'p, 'a> Planner<'p, '_, 'a> {
@@ -708,9 +711,21 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
         let Some(condition) = step.when else {
             return Ok(gate);
         };
+        // A step of the program whose outcome was decided here emitted
+        // nothing the program could test, so its outcome decides the
+        // condition here, as the calls decide it: one skipped skips the
+        // step, and one refused, not there or failed makes the test false.
+        let skipped = |ran: &Ran| matches!(ran, Ran::Unrun(Unrun::Skipped));
         if let Test::Step { on, check } = condition.test
             && let Some(here) = self.here(on, index)
         {
+            if let Some(decided) = &self.pre[here] {
+                return if !skipped(decided) && condition.negated {
+                    Ok(gate)
+                } else {
+                    Err(Ran::Unrun(Unrun::Skipped))
+                };
+            }
             return match check {
                 Check::Found => {
                     gate.found = Some((here, condition.negated));
@@ -730,10 +745,20 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
             Ok(Holds::Skip) => return Err(Ran::Unrun(Unrun::Skipped)),
             Ok(Holds::Compare { points, negated }) => {
                 let mut names = [None; 2];
+                let mut failed = false;
                 for (slot, place) in condition.compared().into_iter().enumerate() {
-                    names[slot.min(1)] = self.here(place, index);
+                    let Some(here) = self.here(place, index) else {
+                        continue;
+                    };
+                    match &self.pre[here] {
+                        Some(decided) if skipped(decided) => {
+                            return Err(Ran::Unrun(Unrun::Skipped));
+                        }
+                        Some(_) => failed = true,
+                        None => names[slot.min(1)] = Some(here),
+                    }
                 }
-                let points = match (points, step.op.subject()) {
+                let points = match (points.filter(|_| !failed), step.op.subject()) {
                     (None, _) => None,
                     (Some(_), None) => {
                         return Err(Defect("a comparison on a step of no subject").ran());
@@ -2272,10 +2297,10 @@ impl<'a> State<'_, 'a> {
             state: self,
             range: range.clone(),
             imports: Vec::new(),
+            pre: Vec::with_capacity(range.len()),
         };
         let mut key = Vec::with_capacity(range.len());
         let mut given = Vec::with_capacity(range.len());
-        let mut pre: Vec<Option<Ran>> = Vec::with_capacity(range.len());
         for index in range.clone() {
             // A step that takes the result of one of this program's steps
             // whose outcome was decided here, a start no longer held, is
@@ -2284,7 +2309,7 @@ impl<'a> State<'_, 'a> {
             let names_unrun = self.step(index).references().into_iter().any(|place| {
                 self.index(place, index)
                     .filter(|named| range.contains(named))
-                    .is_some_and(|named| pre[named - range.start].is_some())
+                    .is_some_and(|named| planner.pre[named - range.start].is_some())
             });
             let lowered = if names_unrun {
                 Err(Ran::Unrun(Unrun::Skipped))
@@ -2295,12 +2320,12 @@ impl<'a> State<'_, 'a> {
                 Ok((low, gate, giving)) => {
                     key.push((low, gate));
                     given.push(giving);
-                    pre.push(None);
+                    planner.pre.push(None);
                 }
                 Err(ran) => {
                     given.push(Given::Nothing);
                     key.push((Low::Unemitted, Gate::OPEN));
-                    pre.push(Some(ran));
+                    planner.pre.push(Some(ran));
                 }
             }
         }
@@ -2308,7 +2333,7 @@ impl<'a> State<'_, 'a> {
             key,
             imports: planner.imports,
             given,
-            pre,
+            pre: planner.pre,
         }
     }
 }

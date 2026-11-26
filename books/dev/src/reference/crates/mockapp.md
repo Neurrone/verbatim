@@ -724,14 +724,18 @@ Each file's module comment says exactly what it asserts; in outline:
   until a clear, the history block, the whole text and the rows above a
   start, with history reads by place, the caret and a key's starting
   point, a provider reporting no selection, the colours as exact runs,
-  and a start no longer held, which is the terminal gone. Its texts end
-  with a line break, as mockapp's `Move` puts a collapsed range at the
-  start of its line even when it moves no line.
+  and a start no longer held, which is the terminal gone; and a text
+  whose last row has no line break after it, a prompt, read to its end.
+  mockapp's `Move` leaves a collapsed range that moves no unit where it
+  is, as the console host's and Windows Terminal's stay at the text's end
+  when moved forward from it (probed 2026-11-26).
 - `compare_points.rs` runs a condition comparing two text positions
   through a real outpost remotely and by calls, which must agree: each
   row of the condition's table a provider can give, the move of one line
   back that goes nowhere at the text's start, and the move forward from
-  the text's end that later output stays past; and a caret read's
+  the text's end that later output stays past; a condition naming a step
+  whose outcome is decided before any call, a move from an anchor no
+  longer held and a step taking its landing; and a caret read's
   `reported` and a trimmed range read whole, the same way.
 - `terminal_window.rs` and `find_text.rs` run the request list's generic
   text operations (`Visible`, `Move`, `FindText`, `ReadColours`, a whole

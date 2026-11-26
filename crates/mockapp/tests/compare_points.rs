@@ -329,6 +329,64 @@ fn a_comparison_runs_or_skips_its_step_as_the_table_says() {
     terminal.app.quit();
 }
 
+/// A condition naming a step whose outcome its reader decides before it
+/// makes a call, a move from an anchor no longer held and a step that
+/// takes that move's landing: the step not there makes a test of it
+/// false, so only a negated test runs its step, and the step skipped
+/// skips every step testing it.
+fn a_condition_naming_a_step_decided_before_any_call_is_decided_by_its_outcome() {
+    let rows = ["r 1", "r 2", "r 3"];
+    let terminal = Terminal::start("mockapp-compare-decided", &rows);
+    let held_points = terminal.hold(&[2]);
+    let missing = TextAnchor(987_654);
+    let ran = terminal.both(
+        |batch, node, points| {
+            let third = held(points[0]).into();
+            let end = batch.move_point(node, TextPoint::End.into(), lines(FAR));
+            let gone = batch.move_point(node, held(missing).into(), lines(-1));
+            batch
+                .when(Cond::not_after(gone.landed(), end.landed()))
+                .move_point(node, third, lines(-1));
+            batch
+                .when(!Cond::not_after(gone.landed(), end.landed()))
+                .move_point(node, third, lines(-1));
+            batch.when(gone.found()).move_point(node, third, lines(-1));
+            batch.when(!gone.found()).move_point(node, third, lines(-1));
+            let skipped = batch.move_point(node, gone.landed(), lines(-1));
+            batch
+                .when(Cond::not_after(end.landed(), skipped.landed()))
+                .move_point(node, third, lines(-1));
+            batch
+                .when(!Cond::not_after(end.landed(), skipped.landed()))
+                .move_point(node, third, lines(-1));
+            batch
+                .when(skipped.found())
+                .move_point(node, third, lines(-1));
+            batch
+                .when(!skipped.found())
+                .move_point(node, third, lines(-1));
+        },
+        &held_points,
+    );
+    assert_eq!(
+        ran,
+        [
+            Ran::Moved(0),
+            Ran::Missing(missing),
+            Ran::Skipped,
+            Ran::Moved(-1),
+            Ran::Skipped,
+            Ran::Moved(-1),
+            Ran::Skipped,
+            Ran::Skipped,
+            Ran::Skipped,
+            Ran::Skipped,
+            Ran::Skipped,
+        ]
+    );
+    terminal.app.quit();
+}
+
 /// A move of one line back goes nowhere from the text's start and one
 /// line from anywhere else; a move forward from the text's end goes
 /// nowhere, and a read to where it landed leaves out what is written
@@ -452,6 +510,10 @@ fn main() {
         (
             "a_comparison_runs_or_skips_its_step_as_the_table_says",
             a_comparison_runs_or_skips_its_step_as_the_table_says,
+        ),
+        (
+            "a_condition_naming_a_step_decided_before_any_call_is_decided_by_its_outcome",
+            a_condition_naming_a_step_decided_before_any_call_is_decided_by_its_outcome,
         ),
         (
             "the_probe_tells_the_texts_start_and_the_fixed_end_stays_before_later_output",

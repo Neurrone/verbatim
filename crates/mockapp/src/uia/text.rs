@@ -1009,6 +1009,12 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                 moved -= 1;
             }
         }
+        // A collapsed range that cannot move stays where it is, as the
+        // console host's and Windows Terminal's stay at the text's end
+        // when moved forward from it (probed 2026-11-26).
+        if collapsed && moved == 0 {
+            return Ok(0);
+        }
         let (start, end) = spans[at];
         self.start.set(start);
         self.end.set(if collapsed { start } else { end });

@@ -678,6 +678,42 @@ fn a_start_no_longer_held_is_the_terminal_gone_both_ways() {
     assert_eq!(history, Err(TextFailure::Gone));
 }
 
+/// A text whose last row has no line break after it, as the console host
+/// gives a prompt: the held end is the text's end, so every read ends with
+/// that row. Both real terminals leave a range at the text's end there
+/// when it is moved forward by lines, 0 lines moved (probed 2026-11-26 in
+/// the console host and Windows Terminal).
+fn a_last_row_with_no_line_break_is_read_both_ways() {
+    let mut terminal = Terminal::of("terminal.json", "mockapp-reader-no-break");
+    common::apply(&mut terminal.app, terminal.hwnd, "screen term 2");
+    let shown = format!("{}ready>", padded(&["r 1", "r 2", "r 3"]))
+        .replace('\r', "\\r")
+        .replace('\n', "\\n");
+    common::apply(
+        &mut terminal.app,
+        terminal.hwnd,
+        &format!("set-text term {shown}"),
+    );
+    common::apply(&mut terminal.app, terminal.hwnd, "caret term 0 0");
+    let texts: Vec<String> = [
+        WindowRead::First,
+        WindowRead::HistoryBlock { height: height(2) },
+        WindowRead::Whole { height: 2 },
+    ]
+    .into_iter()
+    .map(|read| terminal.window(|_| plain(read)).0.snapshot.text.text)
+    .collect();
+    terminal.app.quit();
+    assert_eq!(
+        texts,
+        [
+            "r 3\r\nready>",
+            "r 1\r\nr 2\r\nr 3\r\nready>",
+            "r 1\r\nr 2\r\nr 3\r\nready>",
+        ]
+    );
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -705,6 +741,10 @@ fn main() {
         (
             "a_start_no_longer_held_is_the_terminal_gone_both_ways",
             a_start_no_longer_held_is_the_terminal_gone_both_ways,
+        ),
+        (
+            "a_last_row_with_no_line_break_is_read_both_ways",
+            a_last_row_with_no_line_break_is_read_both_ways,
         ),
     ]);
 }
