@@ -103,7 +103,7 @@ A dialog's name and text are read only once it is shown (Dickson, 2026-11-19). A
 
 - **The outpost reports a fact.** A focus read that Core asks to check (an MSAA focus's or foreground's read, a read of the current focus, a UI Automation focus's completion) first takes its window's top-level window and whether it is visible, two local calls. Only when it is hidden does the outpost read the role of its client object, two calls into the application; a dialog's role (a dialog, an alert or a property page) answers that window alone, and nothing more is read. A role read that fails answers "not there", never "not a dialog".
 - **The read ends its entry, and Core keeps the dialog as postponed** (Dickson, 2026-11-20: "For the dialog: ok"). Nothing is held: the entries behind are judged at their turn.
-- **The listener tells Core of a top-level window's show when that window is in front.** At that tell's turn, or at a foreground report naming the dialog, Core reads the focus again and speaks it as a re-take: the dialog with its text, then its field.
+- **The listener tells Core of a top-level window's show when that window is in front.** At that tell's turn, or at a foreground report naming the dialog, Core reads the focus again and speaks it as a re-take: the dialog with its text, then its field. The show's tell says by its own facts that the window is in front, so its read does not wait for a foreground report.
 
 Entries that arrive meanwhile are judged at their turn against the focus Core has. Any focus committed ends the postponement, and nothing is said for the dialog: an owned message box, a menu, the owner's focus or another application's. A focus refused by its read leaves the postponement for the show. The dialog's destruction ends it at once.
 

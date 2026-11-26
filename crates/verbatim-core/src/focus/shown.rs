@@ -4,9 +4,10 @@
 //! with the hidden check that meets a hidden dialog ends its entry, and
 //! Core keeps one fact, the postponed dialog ([`Postponed`]), in its focus
 //! record. The listener tells of a top-level window's show when that window
-//! is in front; at that tell's turn, or at a foreground report naming the
-//! dialog, the focus is read again. Typed text or a command pressed while
-//! the dialog is postponed and in front reads the focus first, as it is.
+//! is in front, which the tell's own facts say; at that tell's turn, or at
+//! a foreground report naming the dialog, the focus is read again. Typed
+//! text or a command pressed while the dialog is postponed and the
+//! foreground record names it reads the focus first, as it is.
 //! A reader's focus executed, Core's own commit and the dialog's
 //! destruction end the fact; the committed focus spoken again in place
 //! (`Commit::InPlace`) leaves it.
@@ -134,13 +135,17 @@ pub(crate) fn postpone_dialog(cx: &mut Cx<Entries>, dialog: &NodeWindow) {
 }
 
 /// The entry a tell `tell` becomes when it is the show of a top-level
-/// window of a class outside NVDA's show classes, which the listener tells
-/// only while the window is in front: the read at its turn, which asks
-/// nothing unless that window is the postponed dialog ([`shown_due`]).
+/// window of a class outside NVDA's show classes that its own facts name
+/// in front, read by the listener as it placed the tell: the read at its
+/// turn, which asks nothing unless that window is the postponed dialog
+/// ([`shown_due`]); the foreground record is not read
+/// (`books/dev/src/explanation/design/focus.md`, "A dialog read once it is
+/// shown").
 pub(crate) fn of_show(tell: &Event) -> Option<CurrentFocus> {
     let facts = window_facts(tell)?;
     if tell.kind != EventKind::Show
         || facts.window.handle != facts.root.handle
+        || facts.foreground != facts.window.handle
         || super::acceptance::show_class(&facts.window.class)
     {
         return None;
@@ -154,14 +159,14 @@ pub(crate) fn of_show(tell: &Event) -> Option<CurrentFocus> {
 }
 
 /// Whether the show's entry for `window` reads the focus at its turn: the
-/// postponed dialog is `window`, and it is in front.
+/// postponed dialog is `window`. What made the entry said the window is in
+/// front: the show's tell by its own facts ([`of_show`]), or the foreground
+/// report whose marker joined it ([`marker`]).
 pub(crate) fn shown_due(cx: &Cx<Entries>, window: WindowHandle) -> bool {
-    let postponed = cx
-        .facts()
+    cx.facts()
         .versions
         .postponed
-        .is_some_and(|postponed| postponed.dialog.handle == window);
-    postponed && cx.foreground().is_some_and(|front| front.window == window)
+        .is_some_and(|postponed| postponed.dialog.handle == window)
 }
 
 /// The foreground marker for `window` at its turn: when `window` is the
@@ -184,7 +189,9 @@ pub(crate) fn marker(cx: &mut Cx<Entries>, window: WindowHandle) {
     cx.join(crate::entries::Entry::CurrentFocus(Box::new(read)));
 }
 
-/// A press other than a caret key, while the postponed dialog is in front:
+/// A press other than a caret key, while the foreground record names the
+/// postponed dialog. A key carries no window facts of its own, and the
+/// keyboard hook's view of the foreground is made from that record. Then
 /// the focus is read first, as it is, stamped with the postponing entry's
 /// fence and committed, so that the press is judged against it and its
 /// cut silences what the read says. A caret key, whose action was bound at
@@ -201,7 +208,8 @@ pub(crate) async fn before_press(cx: &mut Cx<Entries>, press: &PressEntry) {
     let Some(postponed) = cx.facts().versions.postponed.filter(|_| judges) else {
         return;
     };
-    if !shown_due(cx, postponed.dialog.handle) {
+    let dialog = postponed.dialog.handle;
+    if cx.foreground().is_none_or(|front| front.window != dialog) {
         return;
     }
     let read = CurrentFocus {

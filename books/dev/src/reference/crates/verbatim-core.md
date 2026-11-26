@@ -258,16 +258,17 @@ dialog, and returns `None`, ending the entry. `Versions::execute` and
 destruction (`Logic::window_destroyed`); `Versions::respoken` leaves it.
 
 A `Show` tell of a top-level window whose class is none of NVDA's show
-classes becomes a current-focus entry of `Why::Shown` (`shown::of_show`),
-and the foreground marker naming the postponed dialog joins one
+classes, and whose own facts name that window in front, becomes a
+current-focus entry of `Why::Shown` (`shown::of_show`), and the
+foreground marker naming the postponed dialog joins one
 (`shown::marker`); at its turn it reads only while the fact names its
-window and the foreground record names it in front (`shown::shown_due`).
+window (`shown::shown_due`), and does not read the foreground record.
 `retake::read_current` is the one place a read of the current focus is
 judged, by its reason: `Startup` and `Returned` execute, `Retake`,
 `Recovered` and `Shown` go through `retake()`; the shell's answer in
 front goes to `plain::decide`, `Shown` as a re-take. A press other than
-a caret key calls `shown::before_press` at its turn: with the dialog postponed and in
-front, it reads the current focus as it is through `read_current::<AsItIs>`,
+a caret key calls `shown::before_press` at its turn: with the dialog postponed and
+named by the foreground record, which the keyboard hook's view is made from, it reads the current focus as it is through `read_current::<AsItIs>`,
 whose decode refuses a hidden dialog, its speech stamped with the postponed fence, which
 `Executed::deliver` takes for every caller. Tests: `focus::shown::tests`,
 the design's sequences in Import's recorded order, the stand-in's marked;

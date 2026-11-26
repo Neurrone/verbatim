@@ -334,7 +334,7 @@ pub(crate) fn reader_ended(
 }
 
 /// The function of a current-focus entry. The show's entry reads only
-/// while the postponed dialog it names is in front.
+/// while the window it names is the postponed dialog.
 pub(crate) async fn run(mut cx: Cx<Entries>, entry: CurrentFocus) {
     if entry.why == Why::Shown && !super::shown::shown_due(&cx, entry.window.handle) {
         return;

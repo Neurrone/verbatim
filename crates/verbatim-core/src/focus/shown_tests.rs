@@ -137,6 +137,17 @@ fn show(window: u64, at_us: u64) -> Input<Entry> {
     )
 }
 
+/// A show of the dialog whose facts name `front` in front, another window:
+/// the foreground left the dialog between the hook's read and the tell's.
+fn show_behind(front: u64, at_us: u64) -> Input<Entry> {
+    tell(
+        EventKind::Show,
+        (DIALOG, DIALOG, OWNER),
+        (front, at_us),
+        (APP, false),
+    )
+}
+
 /// The dialog's foreground tell, raised at `at_us`.
 fn dialog_foreground(at_us: u64) -> Input<Entry> {
     tell(
@@ -525,7 +536,7 @@ fn what_leaves_the_dialog_for_its_show() {
             assert_eq!(answer_out(&mut held, 1_160, reply), NOTHING);
         }
         if held.state.queue.foreground_process() == Some(OTHER_APP) {
-            assert_eq!(shown(&mut held, 1_170), NOTHING);
+            assert_eq!(step(&mut held, 1_170, show_behind(70, 1_170)), NOTHING);
             let back = in_front(DIALOG, OWNER, APP);
             assert_eq!(step(&mut held, 1_180, back), [ASK_CURRENT]);
             let read = field_read(Some("File name:"));
@@ -534,6 +545,57 @@ fn what_leaves_the_dialog_for_its_show() {
             shown_speaks_the_dialog(&mut held, 1_200);
         }
     }
+}
+
+/// The dialog postponed by its field's focus with no foreground report
+/// for it, the record still naming its owner.
+fn postponed_with_no_report() -> Held {
+    let mut held = ready();
+    step(&mut held, 100, in_front(OWNER, OWNER, APP));
+    let _ = found_step(&mut held, 200, (OUTPOST, 1), owner_button_read());
+    let _ = step(&mut held, 900, press(1, 900, typed("\r")));
+    assert_eq!(
+        step(&mut held, 1_010, field_focus(1_010)),
+        ["send Outpost(Pid(40)) Candidate 31 Check"]
+    );
+    assert_eq!(answer_out(&mut held, 1_100, hidden_dialog()), NOTHING);
+    assert!(held.state.versions.postponed.is_some());
+    let record = held.state.queue.foreground().map(|front| front.window);
+    assert_eq!(record, Some(WindowHandle(OWNER)));
+    held
+}
+
+/// The dialog's show told with no foreground report for the dialog, the
+/// record still naming its owner: the show's own facts name the dialog in
+/// front, so it is read at its show and spoken with its text, whatever
+/// Core's foreground record holds.
+#[test]
+fn a_show_with_no_foreground_report_reads_the_dialog() {
+    let mut held = postponed_with_no_report();
+    shown_speaks_the_dialog(&mut held, 1_200);
+}
+
+/// The dialog's foreground report arriving after its show was told and
+/// spoken changes none of the speech: the report says nothing, and a
+/// second show asks nothing.
+#[test]
+fn a_foreground_report_after_the_dialogs_show_says_nothing() {
+    let mut held = postponed_with_no_report();
+    shown_speaks_the_dialog(&mut held, 1_200);
+    let late = in_front(DIALOG, OWNER, APP);
+    assert_eq!(step(&mut held, 1_300, late), NOTHING);
+    assert_eq!(shown(&mut held, 1_400), NOTHING);
+}
+
+/// A show whose own facts name another window in front asks nothing, even
+/// with the record naming the dialog: the dialog stays for a show told
+/// with it in front.
+#[test]
+fn a_show_whose_facts_name_another_window_in_front_asks_nothing() {
+    let mut held = postponed();
+    assert_eq!(step(&mut held, 1_150, show_behind(70, 1_150)), NOTHING);
+    assert!(held.state.versions.postponed.is_some());
+    shown_speaks_the_dialog(&mut held, 1_200);
 }
 
 /// A modifier alone cuts speech and joins no entry: the show's entry,
