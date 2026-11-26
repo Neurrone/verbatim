@@ -27,11 +27,12 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::batch::{Batch, Chunks, Done, Missing, RangeText, StepOutcome, StepRefusal};
 use verbatim_model::{
     MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, TerminalMatch, TextAnchor, TextChunk,
-    TextMovement, TextOp, TextPoint, TextUnit,
+    TextMovement, TextPoint, TextUnit,
 };
 use verbatim_text::terminal_rows::{Anchor, Row, rows_of};
 
 use super::{HistoryRead, TERMINAL_ANCHORS, TerminalModel};
+use crate::terminal::reader::SearchAsk;
 use crate::text_request::{LocalStep, Span};
 
 /// What a history read asked for: rows from `above` rows above the start,
@@ -787,18 +788,16 @@ fn read_range(
 /// How many searches one move between command marks makes at most: a mark
 /// whose line is gone costs one search before it is dropped, and a press
 /// that reaches this bound without finding a mark says nothing, the marks
-/// not yet tried kept for the next press. Each search costs an estimated 60
-/// milliseconds when its line is the nearest of 20 rows starting with its
-/// text and at most about 300 when its text is mostly found within rows
-/// (`books/dev/src/reference/performance.md`, "A terminal's command marks"), so a press waits
-/// at most about 900 milliseconds for its searches.
+/// not yet tried kept for the next press. What a search costs, and so how
+/// long a press waits for its searches, is in
+/// `books/dev/src/reference/performance.md`, "A terminal's command marks".
 pub(crate) const MARK_SEARCHES: u32 = 3;
 
 /// The search a command mark's move needs for a mark above the rows Core
 /// keeps: the request, and the hash of the mark's line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Search {
-    pub(crate) op: TextOp,
+    pub(crate) ask: SearchAsk,
     pub(crate) hash: u64,
 }
 
@@ -826,7 +825,7 @@ enum Resolved {
 /// (`books/dev/src/explanation/design/terminal-model.md`, "Features and settings"), after the
 /// fresh read: each mark, nearest first, is found by its line's text,
 /// within the memory near its place, and above the memory by the search
-/// the outpost runs ([`TextOp::TerminalFind`]), outward from its place; a
+/// the outpost runs ([`SearchAsk`]), each way from its place; a
 /// mark not found is dropped, and the next one tried, with nothing said.
 /// The answer is a line move's (a line read at the start of the mark's
 /// row), the review position going there; `None` when no mark is
@@ -890,7 +889,7 @@ pub(crate) fn mark(
             // No start to count a search from, as before the history block
             // the first read asked for: the move ends, the mark kept.
             Err(None) => return Ok(None),
-            Err(Some(op)) => match found.take() {
+            Err(Some(ask)) => match found.take() {
                 Some(found) if found.hash == candidate.line_hash => match found.rows {
                     Some(rows) => from_search(&rows, candidate),
                     // Counted from a start whose row left the memory: the
@@ -901,7 +900,7 @@ pub(crate) fn mark(
                 _ => {
                     *searches = searches.saturating_add(1);
                     return Err(Search {
-                        op,
+                        ask,
                         hash: candidate.line_hash,
                     });
                 }
@@ -981,7 +980,7 @@ fn starts_at(model: &TerminalModel, row: isize, hash: u64) -> bool {
 /// document or its line's text is not known. Otherwise the search for it
 /// above the memory ([`mark_search`]), `None` when the model names no
 /// start to count it from.
-fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, Option<TextOp>> {
+fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, Option<SearchAsk>> {
     let rows = model.reader.memory().rows();
     let first_kept = isize_of(rows.first_kept());
     let len = isize_of(rows.len());
@@ -1031,16 +1030,16 @@ fn from_search(rows: &[(isize, Row)], mark: Anchor) -> Resolved {
 }
 
 /// The search for command mark `sought`'s line, whose mark is on row `row`
-/// above the memory: its first row's text, outward from the mark's row,
+/// above the memory: its first row's text, each way from the mark's row,
 /// counted in rows above the start the model names, which the search
 /// names too.
-fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> Option<TextOp> {
-    Some(TextOp::TerminalFind {
-        needle: sought.text.clone(),
-        from: i32::try_from(start_row(model).saturating_sub(row)).unwrap_or(i32::MAX),
-        rows: sought.rows,
-        start: model.start?,
-    })
+fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> Option<SearchAsk> {
+    Some(SearchAsk::new(
+        model.start?,
+        sought.text.clone(),
+        i32::try_from(start_row(model).saturating_sub(row)).unwrap_or(i32::MAX),
+        sought.rows,
+    ))
 }
 
 /// The row of the memory's last read where the start it names lies: the

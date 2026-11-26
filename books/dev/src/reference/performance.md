@@ -1898,26 +1898,42 @@ character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
 ### A terminal's upward search
 
 Moving to a command mark above the rows Core keeps searches for the mark's
-line's first row, unpadded (`verbatim_uia_rops::terminal_find`; Dickson,
-2026-10-26), outward from the mark's place, alternately below and above,
-in one remote operation of at most 20 matches, each checked by its line's
-hash in Core, because the console host's `FindText` also matches a longer
-row with the same start. A failing call ends that direction, and the
-program makes none of the calls on the range Windows Terminal returns for
-nothing found that would end it (`terminal_find.rs`'s module
-documentation). A hit within a row is passed over uncounted, so the search is
-bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`), the
-remote program's two over the whole document among them,
-because a one-letter needle would otherwise walk the whole history.
+line's first row, unpadded (Dickson, 2026-10-26), each way from the mark's
+place: one batch of Core's terminal reader
+(`verbatim_core::terminal::reader::search_batch`), two moves and a
+`FindText` toward the text's end and one toward its start, one remote
+operation. Each way takes at most 20 matches that start a row, and Core
+keeps at most 20 of the two ways', each checked by its line's hash,
+because the console host's `FindText` also matches a longer row with the
+same start. A failing call ends that way, and the program makes none of
+the calls on the range Windows Terminal returns for nothing found that
+would end it ([verbatim-uia-rops](crates/verbatim-uia-rops.md), "The
+generic text operations added for a terminal"). A hit within a row is
+passed over, and counts within the 100 `FindText` calls each way is
+bounded at (`SEARCH_CALLS`; Dickson, 2026-11-26), because a one-letter
+needle would otherwise walk the whole history.
 
-- Instructions: at the bound with 19 matches taken, its worst case, 3,065
-  against mockapp, under a third of the limit.
-- Time: one `FindText` costs 0.1 to 0.2 ms classically wherever the text
-  is, and about 3 inside a program, against either terminal with a full
-  scrollback of 9,001 lines. The search is not measured in a real
-  terminal; it is estimated at about 60 ms for 20 calls and about 300 at
-  the bound of 100. Against mockapp, debug, a search at the bound took 1.2
-  ms remotely and 61 classically.
+- Calls: a line found once at its place makes 6 `FindText` calls, the
+  search of the whole text for each way, the search for text no terminal
+  holds, the line, and a miss each way. At most 203: 100 each way and the
+  three over the whole text. A press, at most three searches, makes at
+  most 609.
+- Instructions: pinned in `instruction_limit.rs`'s
+  `searches_execute_exactly`, one program at the bound, under half the
+  limit.
+- Time against mockapp, debug, the median of 20 runs: a line found once
+  0.6 to 0.9 ms by the program and 2.6 to 3.4 by calls; at the bound,
+  with 40 matches taken, 3.7 ms by the program and 121 by calls. The
+  search program this batch replaced, bounded at 100 calls for both ways
+  together, took 0.4 ms for a line found once and 0.9 at its bound.
+- Time in a real terminal: one `FindText` costs 0.1 to 0.2 ms by calls
+  wherever the text is, and about 3 inside a program, against either
+  terminal with a full scrollback of 9,001 lines, so a search at the
+  bound is estimated at about 600 ms. On GitHub's runner one search of at
+  most 100 calls in Windows Terminal took 6.4 s
+  (`docs/flaky-tests.md`); at that rate a search at both ways' bounds
+  outlasts a press's due time of 11 s, and the press says nothing
+  (`books/dev/src/explanation/design/terminal-model.md`, "Limits").
 
 The reading itself never searches: its read program keeps a range where
 the next read starts.
@@ -1942,8 +1958,8 @@ measured. Nothing in either is on the event or speech path.
   marks and rows in the reducer; a mark above the rows Core keeps adds one
   search per mark tried ("A terminal's upward search"), an estimated 60 ms
   when its line is the nearest of 20 rows starting with its text and at
-  most about 300. A press makes at most three searches
-  (`review::MARK_SEARCHES`), so it waits at most about 900 ms, and never
+  most about 600. A press makes at most three searches
+  (`review::MARK_SEARCHES`), so it waits at most about 1,800 ms, and never
   asks for the same answer twice.
 
 ### A terminal's status bar

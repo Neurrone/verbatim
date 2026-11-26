@@ -31,8 +31,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use verbatim_core::terminal::reader;
-use verbatim_model::request::{Question, TerminalAsk};
-use verbatim_model::{CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TextOp};
+use verbatim_model::request::Question;
+use verbatim_model::{CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent};
 use verbatim_outpost::text::uia::UiaText;
 use verbatim_process::arguments::OutpostOptions;
 use verbatim_uia::Uia;
@@ -335,13 +335,8 @@ fn command_marks_are_found_while_output_scrolls(remote: bool) {
     let mut driven = with_a_command("mockapp-terminal-marks-scrolling", remote);
     let finds = driven.before_first(
         |request| {
-            matches!(
-                request.terminal(),
-                Some(TerminalAsk {
-                    op: TextOp::TerminalFind { .. },
-                    ..
-                })
-            )
+            matches!(request, Question::Batch(batch)
+                if matches!(reader::asked(batch), Some(reader::Asked::Search(_))))
         },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );

@@ -117,8 +117,8 @@ guide maps those behaviors onto the crate's types and modules.
 - `terminal::reader`: a terminal's reads as batches of the request list's
   generic text steps, and their answers read back as the reading rules'
   read; the module's documentation lists each batch's steps. They carry
-  the focused terminal's full reads and its history reads; the command
-  search stays on the terminal's old operation (Dickson, 2026-11-26).
+  the focused terminal's full reads, its history reads and its command
+  search (Dickson, 2026-11-26).
   - `WindowAsk` (`read`, `colours`, `starting`, `output`) with
     `WindowRead` (`First`, `From { start, height }`,
     `HistoryBlock { height }`, `Whole { height }`), and `HistoryAsk`
@@ -133,9 +133,23 @@ guide maps those behaviors onto the crate's types and modules.
     with, a start no longer held being the terminal gone. The times are
     the answer's own. `history_of` gives a history read's padded text and
     its rows above the start.
+  - `SearchAsk::new(start, needle, from, rows)`: a command search, for
+    the rows that start with `needle` each way from the row `from` rows
+    above the start an earlier read named, reading `rows` rows from each
+    match, at least 1 and at most 255, a step's most.
+    `search_batch(node, &SearchAsk)` is its batch: a move from the start
+    to the text's end, a move to the row, taken wherever it lands, and a
+    `FindText` toward the end and one toward the start, each to
+    `SEARCH_MATCHES` (20) matches over `SEARCH_CALLS` (100) calls.
+    `search_of` reads the answers as the matches, alternately the next
+    toward the end and the next toward the start, at most 20, each in
+    rows above the start (`TerminalMatch`); a search with a step not done
+    answers its failure and no matches, the terminal gone when any step's
+    node or start is not there, so that its caller drops no mark.
   - `asked(&Batch)`: the ask whose builder writes exactly that batch
-    (`Asked::Window` or `Asked::History`), `None` for any other batch; a
-    caret key's stage tables and the tests tell a terminal's read by it.
+    (`Asked::Window`, `Asked::History` or `Asked::Search`), `None` for
+    any other batch; a caret key's stage tables and the tests tell a
+    terminal's read by it.
 - `supervisor`: Core's supervisor's pure decisions. The outpost
   generation record Core's reducer owns (`record`, crate-private, applied
   by the event queue's driver; Table 5 of
@@ -1734,8 +1748,9 @@ held at the next read's start) and the answers to the requests they make;
   (`TerminalReader::caret_line_input`) marks the line (`MarkLine`).
   Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`, with
   `terminal::commands::command_mark`) try the marks beyond the review position, nearest
-  first, by their line's hash in the memory and above it with
-  `TextOp::TerminalFind`, whose matches are placed with `review::placed`;
+  first, by their line's hash in the memory and above it with the
+  reader's search batch (`terminal::reader::search_batch`), whose matches
+  are placed with `review::placed`;
   a press makes at most `review::MARK_SEARCHES` (3) searches. Output
   written just before Control+C during a mark search can be spoken, a
   limit Dickson accepted (2026-11-16).
@@ -1753,9 +1768,8 @@ a search with its text, a caret key's watch), so that they hold whichever
 way Core asks a terminal (Claude, 2026-11-26). The support's simulated
 terminal answers each generic text step of a batch as the provider would
 (`tests/terminal_support/steps.rs`), given the batches of Core's terminal
-reader, which `terminal::reader::asked` tells apart, and answers the
-search's old operation (`Outpost::find`); the old search is also composed
-of those steps. The unit tests beside the rules state a read as the rules
+reader, which `terminal::reader::asked` tells apart, the command search
+among them. The unit tests beside the rules state a read as the rules
 take it and answer Core's batch with the outcomes that read back as it
 (`terminal/reader_answers.rs`, each answer read back and compared before
 it is given). `tests/terminal_answerers.rs` runs the batches of Core's
@@ -1764,7 +1778,9 @@ the reader reads back with the simulated terminal's reference read, field
 by field, after every chunk of every corpus stream and in the shapes the
 terminal tests use, and pins the cases the reference read has none of: a
 read that takes exactly the rows above its start, a provider that reports
-no selection, a start no longer held and a start past the text's end. `tests/terminal_transcripts.rs` replays
+no selection, a start no longer held and a start past the text's end; it
+also compares the reader's command search with the rows of the simulated
+terminal that start with the text sought. `tests/terminal_transcripts.rs` replays
 every recording of the corpus through `reduce` in both terminals and
 compares everything heard with the transcripts pinned from the reading
 of 2026-11-26 in `tests/fixtures/terminal_transcripts/`; a transcript

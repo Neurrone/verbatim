@@ -17,9 +17,9 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 use verbatim_model::batch::{Batch, StepOutcome};
-use verbatim_model::request::{Reply, TerminalAsk};
+use verbatim_model::request::Reply;
 use verbatim_model::{
-    Effect, Message, NodeId, TextAnchor, TextFailure, TextOp, TextPoint, TextReply, TraceId,
+    Effect, Message, NodeId, TerminalMatch, TextAnchor, TextFailure, TextPoint, TraceId,
     UtteranceSegment,
 };
 
@@ -27,7 +27,7 @@ use crate::batch::Answers;
 use crate::entries::Entries;
 use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow, Stamps};
 use crate::state::SrState;
-use crate::terminal::reader::{self, HistoryAsk};
+use crate::terminal::reader::{self, HistoryAsk, SearchAsk};
 use crate::terminal::reading;
 use crate::terminal_model::{self, review};
 
@@ -64,17 +64,17 @@ impl Request for HistoryRead {
     }
 }
 
-/// A search on the focused terminal, a follow-up of a review command, on
-/// the terminal's old operation (Dickson, 2026-11-26).
+/// A command mark's search on the focused terminal, a follow-up of a
+/// review command: the batch Core's terminal reader writes for it.
 #[derive(Debug)]
-struct FollowUp {
+struct Search {
     window: RequestWindow,
     node: NodeId,
-    op: TextOp,
+    ask: SearchAsk,
 }
 
-impl Request for FollowUp {
-    type Reply = Result<TextReply, TextFailure>;
+impl Request for Search {
+    type Reply = Result<Vec<TerminalMatch>, TextFailure>;
 
     fn reader(&self) -> Reader {
         Reader::Outpost(self.window.process)
@@ -85,17 +85,13 @@ impl Request for FollowUp {
     }
 
     fn wire(&self) -> verbatim_model::request::Question {
-        verbatim_model::request::Question::Terminal(TerminalAsk {
-            node: self.node,
-            op: self.op.clone(),
-        })
+        reader::search_batch(self.node, &self.ask).0.question()
     }
 
     fn decode(&self, reply: Reply, _: Stamps) -> Option<Self::Reply> {
-        crate::text_request::decode_text(reply, |reply| match reply {
-            reply @ TextReply::TerminalFound { .. } => Some(reply),
-            _ => None,
-        })
+        let (sent, steps) = reader::search_batch(self.node, &self.ask);
+        let answers = Answers::parse(&sent, reply)?;
+        Some(reader::search_of(&answers, &steps))
     }
 }
 
@@ -283,10 +279,10 @@ pub(crate) async fn command_mark(
         let (place, _) = place_at_start(&mut cx.facts_mut(), node)?;
         let outcome = cx
             .ask(
-                FollowUp {
+                Search {
                     window,
                     node,
-                    op: search.op,
+                    ask: search.ask,
                 },
                 due_us,
             )
@@ -295,7 +291,7 @@ pub(crate) async fn command_mark(
         reading::speak_read(cx, None);
         // A search that never ran ends the move, saying nothing, every mark
         // kept.
-        let Outcome::Result(Ok(TextReply::TerminalFound { matches, .. })) = outcome else {
+        let Outcome::Result(Ok(matches)) = outcome else {
             return None;
         };
         let facts = cx.facts();
@@ -381,24 +377,35 @@ mod tests {
     /// reply of another request's kind is malformed.
     #[test]
     fn a_follow_ups_failures_decode_and_another_reply_does_not() {
-        use verbatim_model::batch::{Missing, StepRefusal};
-        let search = FollowUp {
+        use verbatim_model::TextReply;
+        use verbatim_model::batch::{Done, Missing, StepRefusal};
+        let search = Search {
             window: window(),
             node: NodeId::new(1),
-            op: TextOp::TerminalFind {
-                needle: "$".to_owned(),
-                from: 0,
-                rows: 1,
-                start: verbatim_model::TextAnchor(1),
-            },
+            ask: SearchAsk::new(verbatim_model::TextAnchor(1), "$".to_owned(), 0, 1),
         };
-        for (reply, failure) in [
-            (TextReply::NoText, TextFailure::NoText),
-            (TextReply::Gone, TextFailure::Gone),
-            (TextReply::Unanswered, TextFailure::Unanswered),
+        // A search's first step, the move from its start to the text's
+        // end, ended each way a step can end without a result, the steps
+        // after it skipped.
+        for (outcome, failure) in [
+            (
+                StepOutcome::Refused(StepRefusal::NoText),
+                TextFailure::NoText,
+            ),
+            (
+                StepOutcome::NotThere(Missing::Node(NodeId::new(1))),
+                TextFailure::Gone,
+            ),
+            (StepOutcome::Failed, TextFailure::Unanswered),
         ] {
+            let steps = vec![
+                outcome,
+                StepOutcome::Skipped,
+                StepOutcome::Skipped,
+                StepOutcome::Skipped,
+            ];
             assert_eq!(
-                search.decode(Reply::Text(reply), Stamps::default()),
+                search.decode(Reply::Steps(steps), Stamps::default()),
                 Some(Err(failure)),
                 "{failure:?}"
             );
@@ -407,6 +414,18 @@ mod tests {
             search.decode(Reply::Steps(Vec::new()), Stamps::default()),
             None
         );
+        assert_eq!(
+            search.decode(Reply::Text(TextReply::Unanswered), Stamps::default()),
+            None
+        );
+        // A step answered with another kind's result is malformed.
+        let other = vec![
+            StepOutcome::Done(Done::FindText(Vec::new())),
+            StepOutcome::Skipped,
+            StepOutcome::Skipped,
+            StepOutcome::Skipped,
+        ];
+        assert_eq!(search.decode(Reply::Steps(other), Stamps::default()), None);
         // A history read's one step, the whole text's, ended each way a
         // step can end without a result.
         let history = HistoryRead {
