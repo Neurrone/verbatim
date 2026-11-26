@@ -1718,6 +1718,10 @@ Core sends, and each generic text step of a batch as the provider would
 (`tests/terminal_support/steps.rs`), with the old read, history read and
 search composed of those steps. `tests/terminal_answerers.rs` compares the
 two field by field after every chunk of every corpus stream and in the
-shapes the terminal tests use.
+shapes the terminal tests use. `tests/terminal_transcripts.rs` replays
+every recording of the corpus through `reduce` in both terminals and
+compares everything heard with the transcripts pinned from the reading
+of 2026-11-26 in `tests/fixtures/terminal_transcripts/`; a transcript
+that differs prints its section as it is now.
 `tests/terminal_cost.rs` is a measurement, not a test
 (`books/dev/src/reference/performance.md`, "A terminal's reads in Core").
