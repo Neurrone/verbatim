@@ -612,8 +612,10 @@ control plane's event stream; no reader sends them.
 A text request is a batch of the request list's text operations,
 which Core's event queue sends to the node's outpost
 (`QueueEffect::Send`); its answer reaches Core as `QueueInput::Answer`
-carrying one outcome per step. A terminal's three reads are its own
-`TextOp`s, answered with a `TextReply`. The operations:
+carrying one outcome per step. A terminal's three old reads are its own
+`TextOp`s, answered with a `TextReply`; Core sends only the search, its
+full read and history read being batches
+(`verbatim_core::terminal::reader`). The operations:
 
 - Selection changes: each `SelectionChange` is `selected` or not, its
   `text` cut to `MAX_SELECTION_TEXT_BYTES` (4 KB), and its full count of
@@ -640,9 +642,9 @@ carrying one outcome per step. A terminal's three reads are its own
   selects, two equal points moving the caret, and a `Caret` after it holds
   the next baseline; `Locate` a point's place on the screen, with its
   offset and the text's length in text measured by character offsets.
-- The generic text operations added for a terminal, which the
-  terminal's redesign will read by and only tests send until then
-  (Dickson, 2026-11-26): `Visible`, the first visible range,
+- The generic text operations added for a terminal, which Core's
+  terminal reader reads one by (`verbatim_core::terminal::reader`), all
+  but `FindText`, which only tests send (Dickson, 2026-11-26): `Visible`, the first visible range,
   its ends held, whether it starts at the text's start, and its text
   trimmed; `Move`, a point moved by units from the point itself, its
   start and landing held, refused (`StepRefusal::OutsideText`) for a held

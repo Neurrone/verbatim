@@ -8,10 +8,10 @@
 //! entry.
 
 use verbatim_model::batch::{CaretWait, EffectTest, Op, OpKind, StepRefusal, Waited};
-use verbatim_model::request::{CancelReason, CaretBinding, Question, TerminalAsk};
+use verbatim_model::request::{CancelReason, CaretBinding, Question};
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReport, KeySeq, NodeId, SentenceMoved, TextAnchor, TextChunk,
-    TextDetails, TextMovement, TextOp, TextProvider, TextUnit, TraceId, UtteranceSegment,
+    TextDetails, TextMovement, TextProvider, TextUnit, TraceId, UtteranceSegment,
 };
 
 use crate::batch::Got;
@@ -21,6 +21,7 @@ use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::focus::validity::{Pending, Within, pending_behind_front};
 use crate::keys::strokes::StrokeStatus;
 use crate::state::SrState;
+use crate::terminal::reader::Asked;
 
 /// How long after the pass a watch looks for the key's effect: NVDA's
 /// `caretMoveTimeoutMs` (`docs/parity/text.md`).
@@ -125,16 +126,13 @@ fn first_is(question: &Question, kind: OpKind) -> bool {
 
 /// Whether the front entry `front`, a caret key, no longer needs
 /// `request`: its starting read, once its stroke went by its 150 ms
-/// release or was dropped at a switch away from the user's desktop.
+/// release or was dropped at a switch away from the user's desktop. A
+/// starting read opens with the caret, an edit field's and a terminal's
+/// alike.
 pub(crate) fn unneeded(state: &SrState, front: &CaretPress, request: &Question) -> bool {
-    let starting = match request {
-        Question::Terminal(TerminalAsk { op, .. }) => match op {
-            TextOp::ReadTerminal(read) => read.starting.is_some(),
-            _ => false,
-        },
-        question @ Question::Batch(_) => first_is(question, OpKind::Caret),
-    };
-    starting && front.held && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
+    first_is(request, OpKind::Caret)
+        && front.held
+        && state.strokes.status(front.key_seq) != StrokeStatus::Unsent
 }
 
 /// What joins the queue behind a caret key, as its stage tables read it.
@@ -258,13 +256,16 @@ impl TerminalStage {
             return Some(Self::Watching { bound_at_us });
         }
         match request {
-            Question::Terminal(TerminalAsk { op, .. }) => match op {
-                TextOp::ReadTerminal(read) if read.starting.is_some() => Some(Self::Starting),
-                TextOp::ReadTerminal(_) => Some(Self::Final),
-                _ => None,
-            },
             question if crate::focus::msaa_run::is_confirmation(question) => Some(Self::Confirming),
-            Question::Batch(_) => None,
+            // The terminal's full read, as its reader wrote it: the
+            // starting read reads the caret first, and any other is the
+            // final read.
+            Question::Batch(batch) => match crate::terminal::reader::asked(batch) {
+                Some(Asked::Window(ask)) if ask.starting => Some(Self::Starting),
+                Some(Asked::Window(_)) => Some(Self::Final),
+                Some(Asked::History(_)) | None => None,
+            },
+            Question::Terminal(_) => None,
         }
     }
 
@@ -671,15 +672,7 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
         return terminal_pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
-    let Some(started) = terminal_read(
-        cx,
-        press,
-        binding.node,
-        Some(press.key.motion.unit()),
-        due_us,
-    )
-    .await
-    else {
+    let Some(started) = terminal_read(cx, press, binding.node, true, due_us).await else {
         return terminal_pass(cx, press);
     };
     let passed_at_us = cx.now_us();
@@ -750,20 +743,20 @@ async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretB
             return Reached::Sent;
         }
     }
-    let _ = terminal_read(cx, press, binding.node, None, due_us).await;
+    let _ = terminal_read(cx, press, binding.node, false, due_us).await;
     Reached::Sent
 }
 
-/// A terminal key's full read of `node`, its starting read when `starting`
-/// names the key's unit: the model takes its answer, and the terminal's
-/// waiting speech, then the read's own, is said. `None` when it brought no
-/// read; else the caret starting point it minted, if any, with the caret
-/// it was minted from.
+/// A terminal key's full read of `node`, its starting read when
+/// `starting`: the model takes its answer, and the terminal's waiting
+/// speech, then the read's own, is said. `None` when it brought no read;
+/// else the caret starting point it held, if any, with the caret it was
+/// held from.
 async fn terminal_read(
     cx: &mut Cx<Entries>,
     press: &CaretPress,
     node: NodeId,
-    starting: Option<verbatim_model::TextUnit>,
+    starting: bool,
     due_us: u64,
 ) -> Option<Option<(TextAnchor, CaretReport)>> {
     let now_us = cx.now_us();

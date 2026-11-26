@@ -43,7 +43,7 @@ use crate::focus::backend::{BackendCache, JudgedWindow, WindowKey};
 pub(crate) use driver::{Core, Cx, Queue, ReplayMismatch, State};
 pub(crate) use inbox::{CoreRequest, Input, Timed};
 pub(crate) use limiter::{Item, MsaaClass, MsaaKey, PUMP_WINDOW_US, Place};
-pub(crate) use request::{Outcome, Refused, Request};
+pub(crate) use request::{Outcome, Refused, Request, Stamps};
 pub(crate) use table::{Asker, Live};
 
 /// A focus read's due time: 13 seconds from the moment Core decides to
@@ -274,14 +274,15 @@ pub(crate) trait Logic: Sized + 'static {
         Vec::new()
     }
 
-    /// A request Core's facts asked under `token` ended with `outcome`, at
-    /// `now_us` with `foreground` the foreground record: what the facts
-    /// keep of it changes, what that says goes into `said`, and the
-    /// entries returned join the back.
+    /// A request Core's facts asked under `token` ended with `outcome`, a
+    /// result with when its reader's worker ran it, at `now_us` with
+    /// `foreground` the foreground record: what the facts keep of it
+    /// changes, what that says goes into `said`, and the entries returned
+    /// join the back.
     fn facts_answered(
         facts: &mut Self::Facts,
         token: u64,
-        outcome: Outcome<verbatim_model::request::Reply>,
+        outcome: Outcome<(verbatim_model::request::Reply, Stamps)>,
         (now_us, foreground): (u64, Option<Foreground>),
         said: &mut Vec<Effect>,
     ) -> Vec<Self::Entry> {

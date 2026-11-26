@@ -1,10 +1,12 @@
 //! Test support: a read of a terminal's window composed of the request
 //! list's generic text steps (`Visible`, `Move`, `FindText`, `ReadColours`
 //! and a whole or trimmed `ReadText` and `ReadRange`), and the window made
-//! of their outcomes ([`window_of`]). No product code reads a terminal
-//! this way: Core reads one by the terminal's old operations until the
-//! terminal is redesigned (Dickson, 2026-11-26). The composition is kept
-//! here so that the executors' arms of these operations stay tested
+//! of their outcomes ([`window_of`]). No product code sends this
+//! composition: Core's terminal reader
+//! (`verbatim_core::terminal::reader`) writes its own batches of these
+//! operations, and the search stays on the terminal's old operation
+//! (Dickson, 2026-11-26). The composition is kept here so that the
+//! executors' arms of these operations, `FindText` among them, stay tested
 //! together, by remote operations and by calls, in the order a window
 //! read needs them.
 //!

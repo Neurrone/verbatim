@@ -5,13 +5,12 @@
 //! ([`Outpost::run`]), and the terminal's old search composed of those
 //! steps ([`add_search`] with [`matches_of`]).
 //!
-//! Core reads a terminal by the old operations, which the first answerer
-//! (`Outpost::read`, `history` and `find`) answers, so no request of
-//! today's Core reaches this one. `terminal_answerers.rs` drives it with
-//! the batches of Core's terminal reader
-//! (`verbatim_core::terminal::reader`) and compares what the reader reads
-//! back with the reference read, field by field; the command search stays
-//! on its old operation, and is compared as composed here (Dickson,
+//! Core reads a terminal by the batches of its terminal reader
+//! (`verbatim_core::terminal::reader`), which a session gives this
+//! answerer. `terminal_answerers.rs` drives it with those batches too and
+//! compares what the reader reads back with the reference read, field by
+//! field; the command search stays on its old operation, which
+//! `Outpost::find` answers, and is compared as composed here (Dickson,
 //! 2026-11-26, `docs/simplification-review/builds.md`).
 
 #![expect(

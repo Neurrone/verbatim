@@ -35,9 +35,8 @@
 //! and the two sets without their probes; a whole history read is one
 //! trimmed range from the text's start to its end.
 //!
-//! Nothing in Core sends these batches yet: the terminal's old operations
-//! (`verbatim_model::TextOp`) still carry its reads, and the command search
-//! stays on its old operation (Dickson, 2026-11-26).
+//! The command search stays on its old operation
+//! (`verbatim_model::TextOp::TerminalFind`; Dickson, 2026-11-26).
 
 use std::num::NonZeroU32;
 
@@ -49,6 +48,10 @@ use verbatim_model::{
 };
 
 use crate::batch::{Answers, At, Builder, Cond, Got, Ref, Sent, kind};
+
+#[cfg(test)]
+#[path = "reader_answers.rs"]
+pub(crate) mod answers;
 
 /// More rows than any terminal holds.
 const FAR: i32 = 1_000_000;
@@ -99,6 +102,17 @@ pub struct WindowAsk {
     pub starting: bool,
     /// Whether it is an output read, asked outside the event queue.
     pub output: bool,
+}
+
+impl WindowAsk {
+    /// The start the read names, when it names one.
+    #[must_use]
+    pub const fn start(&self) -> Option<TextAnchor> {
+        match self.read {
+            WindowRead::From { start, .. } => Some(start),
+            WindowRead::First | WindowRead::HistoryBlock { .. } | WindowRead::Whole { .. } => None,
+        }
+    }
 }
 
 /// What Core asks of a history read.

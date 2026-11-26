@@ -8,12 +8,14 @@
 //! in the order Core sends them, and the speech Core queues played by
 //! reaching each utterance's marks.
 //!
-//! The simulated terminal answers in two ways. The first answers the
-//! terminal's old operations (`Outpost::read`, `history` and `find`),
-//! which is all today's Core sends. The second (`steps`) answers each
-//! generic text step of a batch as the terminal's provider would, and is
-//! given any batch that opens with one; `terminal_answerers.rs` checks
-//! that its steps compose to the first's answers.
+//! The simulated terminal answers Core's reads as its provider would:
+//! each generic text step of a batch (`steps`), given the batches Core's
+//! terminal reader wrote (`verbatim_core::terminal::reader::asked` tells
+//! which read one is) and any other that opens with a text step. The
+//! command search stays on the terminal's old operation, which
+//! `Outpost::find` answers (Dickson, 2026-11-26). `Outpost::snapshot` and
+//! `Outpost::history` are the simulated terminal's reference read, which
+//! `terminal_answerers.rs` compares the reader's reads with.
 //!
 //! What a test asserts of a session does not depend on which way Core
 //! asks: what was heard ([`Session::heard`]), and what Core asked for by
@@ -26,7 +28,10 @@ pub mod steps;
 use crate::readers::{self, Found};
 use std::collections::{BTreeMap, VecDeque};
 
+use verbatim_core::batch::Answers;
+use verbatim_core::terminal::reader::{self, WindowRead};
 use verbatim_core::{SrState, reduce, snapshot_of};
+use verbatim_model::batch::Batch;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::{
     PropertyAnswer, PropertyId, PropertyValue, PropertyValues, RuntimeId,
@@ -39,8 +44,7 @@ use verbatim_model::request::{
 use verbatim_model::tell::{Event, EventObject, Payload, TellWindow};
 use verbatim_model::{
     CaretKey, Earcon, Effect, Input, KeySeq, NodeId, OutpostId, Pid, Role, SegmentContent,
-    SpeechMark, TerminalRead, TerminalReadReply, TerminalScope, TextAnchor, TextOp, TextReply,
-    TraceId, WindowHandle,
+    SpeechMark, TextAnchor, TextOp, TextReply, TraceId, WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Position, Query, Range, Terminal};
 use verbatim_text::terminal_rows::{Read, ReadText};
@@ -210,61 +214,6 @@ impl Outpost {
         (read, wire, snapshot.next_start)
     }
 
-    /// The read `request` asks, begun at `at_ms`: the rules' read and the
-    /// answer the outpost sends.
-    pub fn read(&mut self, request: &TerminalRead, at_ms: u64) -> (Read, TerminalReadReply) {
-        let query = match request.scope {
-            TerminalScope::Whole => Query {
-                start: None,
-                screen_rows: request.height,
-                whole: true,
-                above: 0,
-            },
-            TerminalScope::HistoryBlock { height } => Query {
-                start: None,
-                screen_rows: height,
-                whole: false,
-                above: height,
-            },
-            TerminalScope::Fresh => Query {
-                start: self.range(request.start),
-                screen_rows: request.height,
-                whole: false,
-                above: request.height,
-            },
-        };
-        let (read, mut wire, next) = self.snapshot(&query, request.colours, at_ms);
-        let start = self.mint(next);
-        let point = request.starting.map(|_| self.mint(next));
-        // The caret a key's starting point is minted from, as the outpost
-        // reports it with the point: its line, the caret at its column.
-        if let Some(point) = point {
-            let line = read.caret_line.trim_end().to_owned();
-            let offset = u32::try_from(read.caret_column.min(line.len())).expect("a short row");
-            wire.caret = Some(verbatim_model::CaretReport {
-                line: verbatim_model::TextChunk {
-                    unit: verbatim_model::TextUnit::Line,
-                    text: line,
-                    start: point,
-                    offset,
-                    languages: Vec::new(),
-                    first: false,
-                    last: false,
-                    truncated: false,
-                    formats: Vec::new(),
-                },
-                selection: None,
-            });
-        }
-        let reply = TerminalReadReply {
-            snapshot: wire,
-            start,
-            started_us: at_ms * 1_000,
-            point,
-        };
-        (read, reply)
-    }
-
     /// The history read from `above` rows above the start `start`, or the
     /// whole document.
     pub fn history(
@@ -291,10 +240,20 @@ impl Outpost {
     /// alternately the next at or below it and the next above it, at most
     /// 20, each with `rows` rows of text read from it.
     pub fn find(&self, start: TextAnchor, needle: &str, (from, rows): (i32, u32)) -> TextReply {
+        self.find_from(self.range(Some(start)), needle, (from, rows))
+    }
+
+    /// [`Outpost::find`], from the range the start Core named holds.
+    pub fn find_from(
+        &self,
+        start: Option<Range>,
+        needle: &str,
+        (from, rows): (i32, u32),
+    ) -> TextReply {
         // The document from its start, and how many rows lie above the
         // start, read by moving that far up from it.
         let query = Query {
-            start: self.range(Some(start)),
+            start,
             screen_rows: 0,
             whole: false,
             above: u32::MAX / 2,
@@ -533,7 +492,7 @@ pub struct Session {
     /// Whether the outpost holds back a whole read Core asks for, until
     /// [`Session::answer_held`].
     pub hold_whole: bool,
-    held: Option<Ask>,
+    held: Option<(Ask, reader::Asked)>,
     /// Whether the outpost answers Core's searches refused, as its worker
     /// does when the terminal lost the focus before searching.
     pub unanswered_finds: bool,
@@ -569,7 +528,7 @@ pub struct Session {
     /// Whether the outpost holds back Core's output reads, until
     /// [`Session::release_output`].
     pub hold_output: bool,
-    held_output: VecDeque<Ask>,
+    held_output: VecDeque<(Ask, reader::Asked)>,
     /// Whether the terminal's window is hung: the shell's live hang check
     /// refuses every request to it unsent, and answers Core's checks of it
     /// hung.
@@ -800,21 +759,26 @@ impl Session {
                 self.reply(&ask, Outcome::Result(Reply::Steps(vec![waited])));
                 return;
             }
-            // A batch Core's terminal reader wrote, or another of generic
-            // text steps: the terminal's second answerer, step by step. A
-            // window read began at the session's time, or when
-            // [`Session::next_read_began`] says.
-            let read = verbatim_core::terminal::reader::asked(batch);
-            if read.is_some() || steps::answers(batch) {
-                let outcomes = self.outpost.run(batch);
-                let began_ms = match read {
-                    Some(verbatim_core::terminal::reader::Asked::Window(_)) => {
-                        self.next_read_began.take()
+            // A batch Core's terminal reader wrote: held back when the
+            // test holds its kind of read, and else answered.
+            if let Some(read) = reader::asked(batch) {
+                match read {
+                    reader::Asked::Window(window)
+                        if self.hold_whole && matches!(window.read, WindowRead::Whole { .. }) =>
+                    {
+                        self.held = Some((ask, read));
                     }
-                    _ => None,
+                    reader::Asked::Window(window) if self.hold_output && window.output => {
+                        self.held_output.push_back((ask, read));
+                    }
+                    read => self.answer_read(&ask, read),
                 }
-                .unwrap_or(self.at_ms);
-                self.reply_begun(&ask, Outcome::Result(Reply::Steps(outcomes)), began_ms);
+                return;
+            }
+            // Another batch of generic text steps, step by step.
+            if steps::answers(batch) {
+                let outcomes = self.outpost.run(batch);
+                self.reply(&ask, Outcome::Result(Reply::Steps(outcomes)));
                 return;
             }
             let found = Found::Read(focus_read(self.depth, self.console));
@@ -825,31 +789,8 @@ impl Session {
         let TerminalAsk { op, .. } = terminal(&ask.request);
         let outcome = {
             match op {
-                TextOp::ReadTerminal(read) => {
-                    if self.hold_whole && read.scope == TerminalScope::Whole {
-                        self.held = Some(ask);
-                        return;
-                    }
-                    if self.hold_output && read.output {
-                        self.held_output.push_back(ask);
-                        return;
-                    }
-                    Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
-                        self.full_read(read),
-                    ))))
-                }
-                TextOp::TerminalHistory {
-                    above,
-                    whole,
-                    start,
-                    height,
-                } => {
-                    if let Some((output, at_ms)) = self.output_before_histories.pop_front() {
-                        self.write(&output, at_ms);
-                    }
-                    Outcome::Result(Reply::Text(
-                        self.outpost.history(*start, (*above, *whole, *height)),
-                    ))
+                TextOp::ReadTerminal(_) | TextOp::TerminalHistory { .. } => {
+                    panic!("a read Core's terminal reader did not write: {ask:?}")
                 }
                 TextOp::TerminalFind {
                     needle,
@@ -863,8 +804,10 @@ impl Session {
                     if self.unanswered_finds {
                         Outcome::Refused(Refusal::Unsupported)
                     } else {
-                        Outcome::Result(Reply::Text(self.outpost.find(
-                            *start,
+                        // The start Core names is one a read's steps held.
+                        let start = self.outpost.held(*start).map(Range::at);
+                        Outcome::Result(Reply::Text(self.outpost.find_from(
+                            start,
                             needle,
                             (*from, *rows),
                         )))
@@ -875,23 +818,43 @@ impl Session {
         self.reply(&ask, outcome);
     }
 
-    /// The full read `read`, taken at the session's time, begun then or at
-    /// [`Session::next_read_began`].
-    fn full_read(&mut self, read: &TerminalRead) -> TerminalReadReply {
-        let (_, mut reply) = self.outpost.read(read, self.at_ms);
-        if let Some(began) = self.next_read_began.take() {
-            reply.snapshot.started_ms = began;
-            reply.started_us = began * 1_000;
+    /// Answers `ask`, the read `read` of Core's terminal reader, each step
+    /// as the simulated terminal's provider answers it, taken at the
+    /// session's time. A window read began then, or when
+    /// [`Session::next_read_began`] says, and what the reader reads back
+    /// of its answer is kept ([`Session::answered_reads`]); output a test
+    /// queued before a history read is written first.
+    fn answer_read(&mut self, ask: &Ask, read: reader::Asked) {
+        let batch = batch_of(ask);
+        match read {
+            reader::Asked::Window(window) => {
+                let outcomes = self.outpost.run(batch);
+                let began_ms = self.next_read_began.take().unwrap_or(self.at_ms);
+                let (sent, steps) = reader::window_batch(node(), &window);
+                assert_eq!(sent.batch(), batch, "the read asked of the terminal's node");
+                let answers = Answers::parse(&sent, Reply::Steps(outcomes.clone()))
+                    .expect("an outcome of each step's kind");
+                let times = (began_ms * 1_000, self.at_ms * 1_000);
+                if let Ok(reply) = reader::window_of(&answers, &steps, &window, times) {
+                    self.answered_reads.push(reply.snapshot);
+                }
+                self.reply_begun(ask, Outcome::Result(Reply::Steps(outcomes)), began_ms);
+            }
+            reader::Asked::History(_) => {
+                if let Some((output, at_ms)) = self.output_before_histories.pop_front() {
+                    self.write(&output, at_ms);
+                }
+                let outcomes = self.outpost.run(batch);
+                self.reply(ask, Outcome::Result(Reply::Steps(outcomes)));
+            }
         }
-        self.answered_reads.push(reply.snapshot.clone());
-        reply
     }
 
     /// Answers the output reads held back, taken at `at_ms`.
     pub fn release_output(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
-        while let Some(ask) = self.held_output.pop_front() {
-            self.answer(ask);
+        while let Some((ask, read)) = self.held_output.pop_front() {
+            self.answer_read(&ask, read);
         }
         self.run(Vec::new());
         self.settle();
@@ -959,18 +922,8 @@ impl Session {
 
     /// Answers the whole read held back.
     pub fn answer_held(&mut self) {
-        let ask = self.held.take().expect("a whole read held back");
-        let TerminalAsk {
-            op: TextOp::ReadTerminal(read),
-            ..
-        } = terminal(&ask.request)
-        else {
-            panic!("a read held back");
-        };
-        let read = *read;
-        let reply = self.full_read(&read);
-        let outcome = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(reply))));
-        self.reply(&ask, outcome);
+        let (ask, read) = self.held.take().expect("a whole read held back");
+        self.answer_read(&ask, read);
         self.run(Vec::new());
         self.settle();
     }
@@ -985,22 +938,26 @@ impl Session {
             self.requests.push(Asked::Watch);
             return;
         }
-        let verbatim_model::request::Question::Terminal(TerminalAsk { op, .. }) = &ask.request
-        else {
-            return;
-        };
-        let asked = match op {
-            TextOp::ReadTerminal(read) => match (read.scope, read.output, read.starting) {
-                (TerminalScope::Whole, ..) => Asked::Whole,
-                (TerminalScope::HistoryBlock { .. }, ..) => Asked::FirstAgain,
-                (TerminalScope::Fresh, true, _) => {
-                    self.output_reads += 1;
-                    return;
-                }
-                (TerminalScope::Fresh, false, _) => Asked::Read,
+        let asked = match &ask.request {
+            verbatim_model::request::Question::Batch(batch) => match reader::asked(batch) {
+                Some(reader::Asked::Window(window)) => match window.read {
+                    WindowRead::Whole { .. } => Asked::Whole,
+                    WindowRead::HistoryBlock { .. } => Asked::FirstAgain,
+                    WindowRead::From { .. } | WindowRead::First if window.output => {
+                        self.output_reads += 1;
+                        return;
+                    }
+                    WindowRead::From { .. } | WindowRead::First => Asked::Read,
+                },
+                Some(reader::Asked::History(_)) => Asked::History,
+                None => return,
             },
-            TextOp::TerminalHistory { .. } => Asked::History,
-            TextOp::TerminalFind { needle, .. } => Asked::Search(needle.clone()),
+            verbatim_model::request::Question::Terminal(TerminalAsk { op, .. }) => match op {
+                TextOp::TerminalFind { needle, .. } => Asked::Search(needle.clone()),
+                TextOp::ReadTerminal(_) | TextOp::TerminalHistory { .. } => {
+                    panic!("a read Core's terminal reader did not write: {ask:?}")
+                }
+            },
         };
         self.requests.push(asked);
     }
@@ -1179,6 +1136,16 @@ impl Session {
     /// The requests made since the last [`Session::requests`], taken.
     pub fn requests(&mut self) -> Vec<Asked> {
         std::mem::take(&mut self.requests)
+    }
+}
+
+/// The batch `ask` asks.
+fn batch_of(ask: &Ask) -> &Batch {
+    match &ask.request {
+        verbatim_model::request::Question::Batch(batch) => batch,
+        other @ verbatim_model::request::Question::Terminal(_) => {
+            panic!("a batch, not {other:?}")
+        }
     }
 }
 

@@ -5,9 +5,22 @@
 
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
 use verbatim_model::request::{CancelReason, Front, Question, Refusal, Reply};
 
 use super::{Reader, RequestWindow};
+
+/// When a reader's worker ran a request, as its answer stamps it
+/// (`verbatim_model::request::Answer`), in microseconds on the run's shared
+/// clock: 0 for both for an ending no worker made, Core's own or a
+/// reader's refusal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Stamps {
+    /// When the worker began it.
+    pub(crate) began_us: u64,
+    /// When the worker ended it.
+    pub(crate) ended_us: u64,
+}
 
 /// A request an entry's function can ask, with the type of its result.
 pub(crate) trait Request: Debug + Unpin + 'static {
@@ -20,13 +33,14 @@ pub(crate) trait Request: Debug + Unpin + 'static {
     fn window(&self) -> RequestWindow;
     /// The request as it is sent.
     fn wire(&self) -> Question;
-    /// A result as it arrived, decoded against the request sent. The
+    /// A result as it arrived, with when its reader's worker ran it
+    /// (`ran`), decoded against the request sent. The
     /// reply type holds every result a correct reader can answer the
     /// request with, its failures included (a text request's
     /// [`verbatim_model::TextFailure`], a batch's step outcomes), so
     /// `None` is only for a malformed answer: a result of another
     /// request's kind or shape.
-    fn decode(&self, reply: Reply) -> Option<Self::Reply>;
+    fn decode(&self, reply: Reply, ran: Stamps) -> Option<Self::Reply>;
 
     /// The shell's answer to a read of an application's current focus it
     /// refused because the window was hung, what it read in front,
@@ -69,6 +83,14 @@ pub(crate) enum Outcome<T> {
 }
 
 impl<T> Outcome<T> {
+    /// The outcome, its result turned by `turn`.
+    pub(crate) fn map<U>(self, turn: impl FnOnce(T) -> U) -> Outcome<U> {
+        match self.split() {
+            Ok(answer) => Outcome::Result(turn(answer)),
+            Err(other) => other,
+        }
+    }
+
     /// The result, or the outcome that is not one, as an outcome of any
     /// request.
     pub(crate) fn split<U>(self) -> Result<T, Outcome<U>> {

@@ -79,7 +79,7 @@ use verbatim_model::request::{Front, KnownAncestor, MsaaIds, Question, QueueEffe
 use verbatim_model::tell::ElementToken;
 use verbatim_model::{Backend, NodeId, TextAnchor, TextDetails, TextMovement, TextPoint, TextUnit};
 
-use crate::event_queue::{Reader, Request, RequestWindow};
+use crate::event_queue::{Reader, Request, RequestWindow, Stamps};
 
 /// The result kinds, one per operation, each naming the type of its
 /// result.
@@ -1225,7 +1225,7 @@ impl<B: 'static> Request for Asked<B> {
         self.sent.question()
     }
 
-    fn decode(&self, reply: Reply) -> Option<Answers<B>> {
+    fn decode(&self, reply: Reply, _: Stamps) -> Option<Answers<B>> {
         Answers::parse(&self.sent, reply)
     }
 
@@ -1288,9 +1288,9 @@ impl<B: 'static, T: fmt::Debug + 'static> Request for Judged<B, T> {
         self.asked.wire()
     }
 
-    fn decode(&self, reply: Reply) -> Option<T> {
+    fn decode(&self, reply: Reply, ran: Stamps) -> Option<T> {
         self.asked
-            .decode(reply)
+            .decode(reply, ran)
             .and_then(|answers| (self.judge)(&answers))
     }
 

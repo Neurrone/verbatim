@@ -10,13 +10,16 @@
 //! distinct numbered lines, read as the outpost reads for Core
 //! (`terminal_support`), writes the case's output, and lets Core take the
 //! reads that follow, the whole document included when its rules ask for
-//! it. Each input that carries a read (a live snapshot, or the answer to
-//! Core's request for one) is then timed through `reduce` itself, from a
-//! clone of the state before the case's output, its frame's JSON parse
-//! timed apart, and its size given as encoded: the snapshot without its
-//! padding, and, for comparison, the same read with its texts padded as
-//! the plan first had them. A 2,000-line console-host flood read in 1,054
-//! reads, as measured live on 2026-10-08, gives the bytes a flood moves.
+//! it. Each input that carries a read (the answer to the window read of
+//! Core's terminal reader, a batch) is then timed through `reduce` itself,
+//! from a clone of the state before the case's output, its JSON's parse
+//! timed apart, and its size given as the JSON of the read the reader
+//! reads back: the snapshot without its padding, and, for comparison, the
+//! same read with its texts padded as the plan first had them. A
+//! 2,000-line console-host flood read in 1,054 reads, as measured live on
+//! 2026-10-08, gives the size of a flood's reads by the same measure, the
+//! JSON of each read the reader reads back, not the bytes of the step
+//! answers that cross the pipe.
 
 #![expect(
     clippy::disallowed_types,
@@ -33,8 +36,9 @@ use std::time::{Duration, Instant};
 
 use terminal_support::Session;
 use verbatim_core::reduce;
+use verbatim_model::batch::{Done, StepOutcome};
 use verbatim_model::request::{Answer, Outcome, QueueInput, Reply};
-use verbatim_model::{Input, TerminalReadReply, TerminalSnapshot, TerminalText, TextReply};
+use verbatim_model::{Input, TerminalSnapshot, TerminalText};
 use verbatim_term_sim::Flavor;
 use verbatim_term_sim::conformance::history;
 
@@ -87,24 +91,25 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// The read an input carries, if any: a full read's answer.
-fn read_of(input: &Input) -> Option<&TerminalSnapshot> {
+/// Whether `input` carries a full read: a batch's answer with the screen's
+/// text, which only the terminal reader's window read takes.
+fn carries_read(input: &Input) -> bool {
     match input {
         Input::Queue {
             input:
                 QueueInput::Answer {
                     answer:
                         Answer {
-                            outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
-                            began_us: 0,
-                            ended_us: 0,
+                            outcome: Outcome::Result(Reply::Steps(steps)),
                             ..
                         },
                     ..
                 },
             ..
-        } => Some(&read.snapshot),
-        _ => None,
+        } => steps
+            .iter()
+            .any(|step| matches!(step, StepOutcome::Done(Done::Visible(_)))),
+        _ => false,
     }
 }
 
@@ -123,30 +128,9 @@ fn padded(snapshot: &TerminalSnapshot) -> TerminalSnapshot {
     }
 }
 
-/// The JSON of `snapshot` as its answer carries it.
-fn encoded(input: &Input, snapshot: TerminalSnapshot) -> String {
-    let Input::Queue {
-        input:
-            QueueInput::Answer {
-                answer:
-                    Answer {
-                        outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(read))),
-                        began_us: 0,
-                        ended_us: 0,
-                        ..
-                    },
-                ..
-            },
-        ..
-    } = input
-    else {
-        unreachable!("an input that carries a read");
-    };
-    serde_json::to_string(&TextReply::TerminalRead(Box::new(TerminalReadReply {
-        snapshot,
-        ..(**read).clone()
-    })))
-    .expect("a read serializes")
+/// The JSON of `snapshot`.
+fn encoded(snapshot: &TerminalSnapshot) -> String {
+    serde_json::to_string(snapshot).expect("a read serializes")
 }
 
 /// Lines `range`, each `prefix` and its number, ended.
@@ -190,12 +174,16 @@ struct Times {
     parse_padded: Vec<Duration>,
 }
 
-/// Times `input`, a read, from `state`: its frame's parse, the padded
-/// form's parse, the read rebuilt from it, and the reducer's step.
-fn time(state: &mut verbatim_core::SrState, input: &Input, times: &mut Times) {
-    let snapshot = read_of(input).expect("a read");
+/// Times `input`, which carries the read `snapshot`, from `state`: its
+/// JSON's parse, the padded read's parse, the rules' read rebuilt from the
+/// read, and the reducer's step.
+fn time(
+    state: &mut verbatim_core::SrState,
+    (input, snapshot): (&Input, &TerminalSnapshot),
+    times: &mut Times,
+) {
     let frame = serde_json::to_string(input).expect("an input serializes");
-    let padded_frame = encoded(input, padded(snapshot));
+    let padded_frame = encoded(&padded(snapshot));
     let started = Instant::now();
     let parsed: Input = serde_json::from_str(&frame).expect("an input parses");
     times.parse.push(started.elapsed());
@@ -227,6 +215,7 @@ fn measure(case: &Case, flavor: Flavor) -> String {
     }
     let before = session.state.clone();
     session.log.clear();
+    let read_before = session.answered_reads.len();
     let output = match case.output {
         Output::Lines(count) => numbered("", last + 1..=last + count),
         Output::ClearAndReprint(count) => {
@@ -239,27 +228,29 @@ fn measure(case: &Case, flavor: Flavor) -> String {
     let reads: Vec<usize> = inputs
         .iter()
         .enumerate()
-        .filter_map(|(at, input)| read_of(input).map(|_| at))
+        .filter_map(|(at, input)| carries_read(input).then_some(at))
         .collect();
+    // The reads the reader read back of those answers, in their order.
+    let snapshots = &session.answered_reads[read_before..];
+    assert_eq!(snapshots.len(), reads.len(), "a read for each answer");
     let mut times: Vec<Times> = reads.iter().map(|_| Times::default()).collect();
     for _ in 0..RUNS {
         let mut state = before.clone();
         for (at, input) in inputs.iter().enumerate() {
             match reads.iter().position(|read| *read == at) {
-                Some(read) => time(&mut state, input, &mut times[read]),
+                Some(read) => time(&mut state, (input, &snapshots[read]), &mut times[read]),
                 None => {
                     let _ = reduce(&mut state, &mut verbatim_core::Runtime::default(), input);
                 }
             }
         }
     }
-    let parts: Vec<String> = reads
+    let parts: Vec<String> = snapshots
         .iter()
         .zip(&mut times)
-        .map(|(&at, times)| {
-            let snapshot = read_of(&inputs[at]).expect("a read");
-            let shrunk = encoded(&inputs[at], snapshot.clone());
-            let full = encoded(&inputs[at], padded(snapshot));
+        .map(|(snapshot, times)| {
+            let shrunk = encoded(snapshot);
+            let full = encoded(&padded(snapshot));
             let screen = serde_json::to_string(&snapshot.screen)
                 .expect("a text serializes")
                 .len();
@@ -294,7 +285,7 @@ fn flood() -> String {
         history(Flavor::ConsoleHost),
     );
     session.write("PS> .\\flood.ps1\r\n", 100);
-    session.log.clear();
+    let read_before = session.answered_reads.len();
     let (reads, lines) = (1054, 2000);
     let doubles = lines - reads;
     let mut line = 0;
@@ -307,12 +298,10 @@ fn flood() -> String {
         line += count;
     }
     let (mut shrunk, mut full, mut count) = (0, 0, 0);
-    for (input, _) in &session.log {
-        if let Some(snapshot) = read_of(input) {
-            shrunk += encoded(input, snapshot.clone()).len();
-            full += encoded(input, padded(snapshot)).len();
-            count += 1;
-        }
+    for snapshot in &session.answered_reads[read_before..] {
+        shrunk += encoded(snapshot).len();
+        full += encoded(&padded(snapshot)).len();
+        count += 1;
     }
     format!(
         "a 2,000-line console-host flood in {reads} live reads: {count} reads in all, {shrunk} bytes ({full} padded)"

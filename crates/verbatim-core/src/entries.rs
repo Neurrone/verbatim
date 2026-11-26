@@ -738,11 +738,12 @@ impl Logic for Entries {
     fn facts_answered(
         facts: &mut SrState,
         token: u64,
-        outcome: Outcome<verbatim_model::request::Reply>,
+        outcome: Outcome<(verbatim_model::request::Reply, crate::event_queue::Stamps)>,
         (now_us, _): (u64, Option<Foreground>),
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
         if let Some(bar) = crate::progress::ended(facts, token) {
+            let outcome = outcome.map(|(reply, _)| reply);
             said.extend(crate::progress::answered(facts, bar, outcome));
             return Vec::new();
         }

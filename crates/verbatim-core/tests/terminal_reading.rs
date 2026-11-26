@@ -1369,8 +1369,8 @@ const MOVES: verbatim_model::batch::EffectTest = verbatim_model::batch::EffectTe
 
 /// A terminal caret key's watch in the console host
 /// (`books/dev/src/reference/crates/verbatim-core.md`, "Terminals"): from the starting point its
-/// starting read minted (anchor 3, after
-/// the baseline's start, 1, and the starting read's own, 2), from its pass
+/// starting read held, its caret's (anchor 12, the first its steps held,
+/// after the 11 the baseline's steps held), from its pass
 /// at 300 ms, a check every 5 ms (Verbatim-only, ruled 2026-10-26) to
 /// NVDA's 100 ms bound, its multiplier 1 on consoles (`winConsoleUIA.py`
 /// 470), no event taken as its effect, and no unit read at its end, the
@@ -1382,7 +1382,7 @@ fn a_console_hosts_caret_key_is_watched_every_5_ms_to_100_ms_with_no_event() {
     assert_eq!(
         held_up_watch(&mut session),
         [(
-            verbatim_model::TextAnchor(3),
+            verbatim_model::TextAnchor(12),
             300_000,
             5_000,
             100_000,
@@ -1403,7 +1403,7 @@ fn a_windows_terminal_caret_key_is_watched_every_10_ms_to_300_ms_with_no_event()
     assert_eq!(
         held_up_watch(&mut session),
         [(
-            verbatim_model::TextAnchor(3),
+            verbatim_model::TextAnchor(12),
             300_000,
             10_000,
             300_000,

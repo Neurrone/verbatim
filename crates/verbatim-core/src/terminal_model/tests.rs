@@ -283,7 +283,7 @@ impl Watch {
         self.anchors.push(snapshot.next_start);
         let start = TextAnchor(u64::try_from(self.anchors.len()).expect("a small count"));
         let unpadded = verbatim_model::TerminalText::unpadded;
-        let reply = verbatim_model::TerminalReadReply {
+        let reply = crate::terminal::reader::WindowReply {
             snapshot: verbatim_model::TerminalSnapshot {
                 text: unpadded(&snapshot.text),
                 screen: unpadded(&snapshot.screen),

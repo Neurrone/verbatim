@@ -36,7 +36,7 @@ use verbatim_model::{Earcon, Effect};
 
 use super::inbox::Timed;
 use super::limiter::{self, Item};
-use super::request::{Outcome, Refused, Request};
+use super::request::{Outcome, Refused, Request, Stamps};
 use super::table::{Ending, Live, Order, Owner, Stage, Table};
 use super::{Foreground, Function, Instance, Logic, Reader, RequestWindow, Route};
 use crate::focus::backend::BackendCache;
@@ -855,8 +855,8 @@ struct Typed<R: Request> {
 }
 
 impl<R: Request> Typed<R> {
-    fn decode(&self, reply: Reply) -> Result<R::Reply, Undecodable> {
-        self.request.decode(reply).ok_or(Undecodable)
+    fn decode(&self, reply: Reply, ran: Stamps) -> Result<R::Reply, Undecodable> {
+        self.request.decode(reply, ran).ok_or(Undecodable)
     }
 }
 
@@ -868,18 +868,19 @@ pub(super) fn widen<T>(outcome: Outcome<Infallible>) -> Outcome<T> {
     }
 }
 
-/// `ending` as Core's outcome, a result left as it arrived.
-pub(super) fn outcome_of(ending: Ending) -> Result<Reply, Outcome<Infallible>> {
+/// `ending` as Core's outcome, a result left as it arrived, with when
+/// its reader's worker ran it.
+pub(super) fn outcome_of(ending: Ending) -> Result<(Reply, Stamps), Outcome<Infallible>> {
     match ending {
         // Decoded only by a current-focus read's own reply.
         Ending::InFront(_) => Err(Outcome::Refused(Refused::Undecodable)),
-        Ending::Answered(WireOutcome::Result(reply)) => Ok(reply),
-        Ending::Answered(WireOutcome::Refused(refusal)) => {
+        Ending::Answered(WireOutcome::Result(reply), ran) => Ok((reply, ran)),
+        Ending::Answered(WireOutcome::Refused(refusal), _) => {
             Err(Outcome::Refused(Refused::Reader(refusal)))
         }
-        Ending::Answered(WireOutcome::NotThere) => Err(Outcome::NotThere),
-        Ending::Answered(WireOutcome::NotResponding) => Err(Outcome::NotResponding),
-        Ending::Answered(WireOutcome::Ended) => Err(Outcome::ReaderEnded),
+        Ending::Answered(WireOutcome::NotThere, _) => Err(Outcome::NotThere),
+        Ending::Answered(WireOutcome::NotResponding, _) => Err(Outcome::NotResponding),
+        Ending::Answered(WireOutcome::Ended, _) => Err(Outcome::ReaderEnded),
         Ending::NoLongerAwaited(reason) => Err(Outcome::NoLongerAwaited(reason)),
     }
 }
@@ -892,7 +893,7 @@ impl<R: Request> Slot for Typed<R> {
                 None => (Outcome::Refused(Refused::Undecodable), true),
             },
             ending => match outcome_of(ending) {
-                Ok(reply) => match self.decode(reply) {
+                Ok((reply, ran)) => match self.decode(reply, ran) {
                     Ok(reply) => (Outcome::Result(reply), false),
                     Err(Undecodable) => (Outcome::Refused(Refused::Undecodable), true),
                 },

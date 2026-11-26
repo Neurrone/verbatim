@@ -1466,7 +1466,9 @@ its probe adds 1 window message (above):
   protected or not, each with 1 connection and no window message, so the
   minimum is met remotely; classically 46, and 54 with a selection. A UIA
   terminal (`terminal_reading.json`), its caret read with its focus and
-  its baseline read after it, 11 remotely and 57 classically, each with 1
+  its baseline read after it, 11 remotely and 64 classically, the
+  baseline's generic steps each making their own calls (57 with the old
+  read's classic implementation), each with 1
   connection and no window message. A classic edit control through
   MSAA 40 MSAA calls and 6 window messages, 2 of them the roles of the
   focused-state check of a control without the keyboard focus; one of the
@@ -1600,15 +1602,20 @@ The echo itself makes no call: the hook translates the key locally
 
 A focused terminal's text changed: the outpost reads it and sends the read
 to Core, whose rules judge it (`books/dev/src/explanation/design/terminal-model.md`, "The read"
-and "Where it runs"): one snapshot (`verbatim_uia_rops::terminal_snapshot`)
+and "Where it runs"): the window batch of Core's terminal reader
+(`verbatim_core::terminal::reader`), one program
 of the text from a screen above the last read's screen to the document's
 end in one `GetText`, with the screen, where the next read starts, the
 document's first row, and the caret and its line. Measured against
 mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
 
-- Minimum and today: 1 UIA call for every read, the first after the focus
-  included (`new_output_is_said_line_by_line_remote`). Classically, one
-  call per provider method of the snapshot's classic implementation.
+- Minimum and today: 1 UIA call for every read without colours, the
+  first after the focus included
+  (`new_output_is_said_line_by_line_remote`); a read that takes the
+  screen's colours makes one more for a plain screen, its colour program,
+  and up to six more in the worst case
+  (`terminal_reader_colours_execute_exactly`). Classically, one call per
+  provider method of each step's calls.
 - Bound: one call whatever the history and however many lines changed; the
   text read grows only with the output since the last read.
 - A caret key is held for a read before it is sent on, which in a terminal
@@ -1618,8 +1625,8 @@ mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
 ### A terminal's caret
 
 A terminal raises no caret event for every character echoed, so every
-read takes the caret and its line in the same program
-(`verbatim_uia_rops::SnapshotQuery::caret`), and Core takes it as its
+read takes the caret and its line in the same program (the window
+batch's `Caret` step and its line), and Core takes it as its
 caret. A caret event of either terminal reads the terminal itself.
 
 ### A terminal flood
@@ -1743,7 +1750,8 @@ application's focus line.
 
 ### A terminal's reads in Core
 
-Each read crosses the pipe as a snapshot and is aligned on the reducer
+Each read crosses the pipe as the outcomes of its batch's steps, is read
+back as a snapshot by Core's terminal reader and is aligned on the reducer
 (`books/dev/src/explanation/design/terminal-model.md`, "Where it runs"). Measured through
 `reduce` by `crates/verbatim-core/tests/terminal_cost.rs`, an ignored test
 (`cargo test --release -p verbatim-core --test terminal_cost -- --ignored
@@ -1827,6 +1835,17 @@ operation and message more for every other key; 39 of 911 in Windows
 Terminal. A key costs as many coloured reads as its window holds: 1.0 to
 1.33 in the console host and 0.90 to 2.09 in Windows Terminal.
 
+Since Core reads a terminal by its reader's batches, a read that takes the
+colours is two remote programs, the window's and the colours', where the
+old read's one program took both. Measured on 2026-11-26 on this machine,
+debug build, three runs before and three after of `measure_keys_conhost`
+and `measure_keys_windows_terminal` together: the outpost's time for a
+request went from a median of 3.1 to 4.2 ms in the console host and from
+2.1 to 4.5 ms in Windows Terminal, and a key's time to its speech queued
+from a median of 7.6 to 7.8 ms to 10.7 to 11.3 ms, its 99th percentile
+from 52 to 56 ms to 56 ms. Fusing the colours into the window's program
+is the terminal work's next step on this cost.
+
 From the last key the hook saw to the speech queued, announcements of one
 character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
 
@@ -1874,7 +1893,7 @@ measured. Nothing in either is on the event or speech path.
 
 - A review command whose place lies above the rows a terminal's memory
   keeps makes at most one history read, one remote operation
-  (`review::History`, `verbatim_uia_rops::terminal_snapshot`) from two
+  (`review::History`, the terminal reader's `history_batch`) from two
   screens above the place to the document's end (Dickson, 2026-10-25).
 - The second screen above lets up to a screen of output scroll while the
   read is out without a second read, at about 0.12 ms.
@@ -2157,7 +2176,8 @@ first, the share of the limit in brackets:
   `generic_colours_execute_exactly`, one program for a plain screen and
   six in the worst case. `FindText` runs no program: it is by calls.
 - The batches of Core's terminal reader (`verbatim_core::terminal::reader`),
-  which nothing in the product sends yet: each one program with no loop,
+  which carry a focused terminal's full reads and history reads: each one
+  program with no loop,
   pinned in `instruction_limit.rs`'s
   `terminal_reader_batches_execute_exactly`, and a coloured read's
   programs on a 120 by 30 screen in

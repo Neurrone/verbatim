@@ -18,7 +18,7 @@ use verbatim_model::request::{
 };
 use verbatim_model::{Pid, WindowHandle};
 
-use super::{Instance, Reader, RequestWindow, Route};
+use super::{Instance, Reader, RequestWindow, Route, Stamps};
 use crate::focus::backend::BackendCache;
 
 /// Who asked a request outside the event queue, by the token the shell
@@ -116,10 +116,11 @@ impl Live {
 /// How a live request ended.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Ending {
-    /// Its reader answered, or Core answered for it: "not responding"
-    /// when the shell refused to send it to a hung window, "ended" when
-    /// its reader ended, and Core's plain reader's answer.
-    Answered(WireOutcome),
+    /// Its reader answered, with when its worker ran it, or Core answered
+    /// for it, with no stamps: "not responding" when the shell refused to
+    /// send it to a hung window, "ended" when its reader ended, and Core's
+    /// plain reader's answer.
+    Answered(WireOutcome, Stamps),
     /// The shell answered a read of an application's current focus unsent
     /// with what it read in front ([`Front`]), which only that request's
     /// reply decodes ([`super::Request::decode_in_front`]).
@@ -240,7 +241,11 @@ impl Table {
         if !plain {
             return None;
         }
-        self.end(number, Ending::Answered(outcome), &mut Vec::new())
+        self.end(
+            number,
+            Ending::Answered(outcome, Stamps::default()),
+            &mut Vec::new(),
+        )
     }
 
     /// The live request `number`.
@@ -302,14 +307,15 @@ impl Table {
         })
     }
 
-    /// An answer from `from` to `number`: the live request's ending when
-    /// `from` is the instance it is out to; `Err` with whether it is late
-    /// (no longer awaited) otherwise, dropped by number.
+    /// An answer from `from` to `number`, `outcome`, its worker's stamps
+    /// `ran`: the live request's ending when `from` is the instance it is
+    /// out to; `Err` with whether it is late (no longer awaited) otherwise,
+    /// dropped by number.
     pub(crate) fn answer(
         &mut self,
         from: Instance,
         number: RequestNumber,
-        outcome: WireOutcome,
+        (outcome, ran): (WireOutcome, Stamps),
     ) -> Result<Ended, Dropped> {
         if self
             .live
@@ -317,7 +323,7 @@ impl Table {
             .is_some_and(|live| matches!(live.stage, Stage::Out { to, .. } if to == from))
         {
             return self
-                .end(number, Ending::Answered(outcome), &mut Vec::new())
+                .end(number, Ending::Answered(outcome, ran), &mut Vec::new())
                 .ok_or(Dropped::Unknown);
         }
         if self.late.get(&number) == Some(&from) {
@@ -339,7 +345,7 @@ impl Table {
         }
         self.end(
             number,
-            Ending::Answered(WireOutcome::NotResponding),
+            Ending::Answered(WireOutcome::NotResponding, Stamps::default()),
             &mut Vec::new(),
         )
     }
@@ -413,7 +419,7 @@ impl Table {
             .filter_map(|number| {
                 self.end(
                     number,
-                    Ending::Answered(WireOutcome::Ended),
+                    Ending::Answered(WireOutcome::Ended, Stamps::default()),
                     &mut Vec::new(),
                 )
             })
@@ -434,7 +440,11 @@ impl Table {
         numbers
             .into_iter()
             .filter_map(|number| {
-                self.end(number, Ending::Answered(outcome.clone()), &mut Vec::new())
+                self.end(
+                    number,
+                    Ending::Answered(outcome.clone(), Stamps::default()),
+                    &mut Vec::new(),
+                )
             })
             .collect()
     }

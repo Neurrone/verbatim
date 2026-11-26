@@ -5,10 +5,8 @@
 //! (`super::super::tests`), and whole sessions through the event queue
 //! (`tests/terminal_reading.rs`, `tests/terminal_floods.rs`).
 
-use verbatim_model::request::{
-    CancelReason, FollowGroup, Followed, Question, Refusal, Reply, TerminalAsk,
-};
-use verbatim_model::{NodeId, OutpostId, Pid, TerminalReadReply, TextAnchor, TextOp, TextReply};
+use verbatim_model::request::{CancelReason, FollowGroup, Followed, Question, Refusal, Reply};
+use verbatim_model::{NodeId, OutpostId, Pid, TextAnchor};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::*;
@@ -62,15 +60,12 @@ fn wants(state: &mut SrState) -> Vec<(Want, u64)> {
                 {
                     Want::Follow
                 }
-                Question::Terminal(TerminalAsk {
-                    op: TextOp::ReadTerminal(read),
-                    ..
-                }) if read.output => Want::Output,
-                Question::Terminal(TerminalAsk {
-                    op: TextOp::ReadTerminal(_),
-                    ..
-                }) => Want::Baseline,
-                other => panic!("an unexpected request: {other:?}"),
+                Question::Batch(batch) => match reader::asked(&batch) {
+                    Some(reader::Asked::Window(ask)) if ask.output => Want::Output,
+                    Some(reader::Asked::Window(_)) => Want::Baseline,
+                    other => panic!("an unexpected request: {other:?} of {batch:?}"),
+                },
+                other @ Question::Terminal(_) => panic!("an unexpected request: {other:?}"),
             };
             (
                 want,
@@ -86,7 +81,7 @@ fn kinds(wants: &[(Want, u64)]) -> Vec<Want> {
 }
 
 /// A read of the terminal showing `text`, begun at `started_us`.
-fn read(text: &str, started_us: u64) -> Outcome<Reply> {
+fn read(text: &str, started_us: u64) -> Outcome<WindowReply> {
     let read = Read {
         text: ReadText::unpadded(text),
         screen: text.to_owned(),
@@ -101,19 +96,51 @@ fn read(text: &str, started_us: u64) -> Outcome<Reply> {
         at_ms: started_us / 1_000,
         above: 0,
     };
-    Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
-        TerminalReadReply {
-            snapshot: crate::snapshot_of(&read, false, None),
-            start: TextAnchor(1),
-            started_us,
-            point: None,
-        },
-    ))))
+    Outcome::Result(WindowReply {
+        snapshot: crate::snapshot_of(&read, false, None),
+        start: TextAnchor(1),
+        started_us,
+        point: None,
+    })
+}
+
+/// What the read asked under `token` asks, when one is out.
+fn asked_under(state: &SrState, token: u64) -> Option<WindowAsk> {
+    match state.terminal_focus.focused {
+        FocusedTerminal::Baselining {
+            read: Some((read, ask)),
+            ..
+        } if read == token => Some(ask),
+        FocusedTerminal::Modelled {
+            reading: Reading::Out {
+                token: out, ask, ..
+            },
+            ..
+        } if out == token => Some(ask),
+        _ => None,
+    }
 }
 
 /// Answers `token` with `outcome` at `now_us`, returning the entries that
-/// join.
-fn answer(state: &mut SrState, token: u64, outcome: Outcome<Reply>, now_us: u64) -> Vec<Entry> {
+/// join: a read as the outcomes of the batch asked under `token` that read
+/// back as it (`reader::answers`), and for a token with no read out, a
+/// first read's.
+fn answer(
+    state: &mut SrState,
+    token: u64,
+    outcome: Outcome<WindowReply>,
+    now_us: u64,
+) -> Vec<Entry> {
+    let ask = asked_under(state, token).unwrap_or(WindowAsk {
+        read: WindowRead::First,
+        colours: false,
+        starting: false,
+        output: false,
+    });
+    let outcome = outcome.map(|reply| {
+        let (outcomes, (began_us, ended_us)) = reader::answers::outcomes(node(), &ask, &reply);
+        (Reply::Steps(outcomes), Stamps { began_us, ended_us })
+    });
     let mut said = Vec::new();
     answered(
         state,
@@ -310,11 +337,11 @@ fn a_hung_read_stalls_until_the_window_answers_then_reads_once() {
 #[test]
 fn a_change_told_while_an_entrys_read_is_out_waits_behind_it() {
     let mut state = modelled();
-    let asked = entry_read(&mut state, node(), None, 10_000).expect("the focused terminal");
+    let asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
     told(&mut state, node(), 10_500, 10_500);
     assert_eq!(reading(&state), Reading::Behind { told: 10_500 });
     assert_eq!(wants(&mut state), []);
-    let Outcome::Result(Reply::Text(TextReply::TerminalRead(reply))) = read("$ x", 10_200) else {
+    let Outcome::Result(reply) = read("$ x", 10_200) else {
         unreachable!("a read");
     };
     let _ = entry_read_ended(
@@ -566,8 +593,8 @@ fn an_entrys_read_with_no_baseline_out_is_taken_as_the_baseline() {
         Outcome::Refused(crate::event_queue::Refused::Reader(Refusal::Unsupported)),
         2_000,
     );
-    let asked = entry_read(&mut state, node(), None, 3_000).expect("the focused terminal");
-    let Outcome::Result(Reply::Text(TextReply::TerminalRead(reply))) = read("$ ", 3_000) else {
+    let asked = entry_read(&mut state, node(), false, 3_000).expect("the focused terminal");
+    let Outcome::Result(reply) = read("$ ", 3_000) else {
         unreachable!("a read");
     };
     let _ = entry_read_ended(
@@ -587,7 +614,7 @@ fn lines_spoken_in_full_make_a_live_terminal_hold() {
     lines_full(&mut state);
     assert_eq!(reading(&state), Reading::Holding { told: None });
     let mut state = modelled();
-    let _asked = entry_read(&mut state, node(), None, 10_000).expect("the focused terminal");
+    let _asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
     told(&mut state, node(), 10_500, 10_500);
     lines_full(&mut state);
     assert_eq!(reading(&state), Reading::Holding { told: Some(10_500) });
@@ -725,7 +752,7 @@ fn the_window_answering_again_reads_the_terminal_once() {
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Output]);
 
     let mut state = modelled();
-    let _asked = entry_read(&mut state, node(), None, 10_000).expect("the focused terminal");
+    let _asked = entry_read(&mut state, node(), false, 10_000).expect("the focused terminal");
     recovered(&mut state, &window(), 600_000);
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow]);
     assert_eq!(reading(&state), Reading::Behind { told: 600_000 });

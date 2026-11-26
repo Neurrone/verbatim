@@ -14,6 +14,8 @@
 
 use std::collections::BTreeSet;
 
+use std::num::NonZeroU32;
+
 use verbatim_model::batch::{Batch, StepOutcome};
 use verbatim_model::request::{Reply, TerminalAsk};
 use verbatim_model::{
@@ -21,14 +23,49 @@ use verbatim_model::{
     UtteranceSegment,
 };
 
+use crate::batch::Answers;
 use crate::entries::Entries;
-use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow};
+use crate::event_queue::{Cx, Outcome, Reader, Request, RequestWindow, Stamps};
 use crate::state::SrState;
+use crate::terminal::reader::{self, HistoryAsk};
 use crate::terminal::reading;
 use crate::terminal_model::{self, review};
 
-/// A history read or a search on the focused terminal, a follow-up of a
-/// review command.
+/// A history read of the focused terminal, a follow-up of a review
+/// command: the reader's history read as a batch.
+#[derive(Debug)]
+struct HistoryRead {
+    window: RequestWindow,
+    node: NodeId,
+    ask: HistoryAsk,
+}
+
+impl Request for HistoryRead {
+    /// The text read, padding kept, and how many rows it holds above the
+    /// start it was counted from.
+    type Reply = Result<(String, u32), TextFailure>;
+
+    fn reader(&self) -> Reader {
+        Reader::Outpost(self.window.process)
+    }
+
+    fn window(&self) -> RequestWindow {
+        self.window
+    }
+
+    fn wire(&self) -> verbatim_model::request::Question {
+        reader::history_batch(self.node, &self.ask).0.question()
+    }
+
+    fn decode(&self, reply: Reply, _: Stamps) -> Option<Self::Reply> {
+        let (sent, steps) = reader::history_batch(self.node, &self.ask);
+        let answers = Answers::parse(&sent, reply)?;
+        Some(reader::history_of(&answers, &steps))
+    }
+}
+
+/// A search on the focused terminal, a follow-up of a review command, on
+/// the terminal's old operation (Dickson, 2026-11-26).
 #[derive(Debug)]
 struct FollowUp {
     window: RequestWindow,
@@ -54,11 +91,9 @@ impl Request for FollowUp {
         })
     }
 
-    fn decode(&self, reply: Reply) -> Option<Self::Reply> {
+    fn decode(&self, reply: Reply, _: Stamps) -> Option<Self::Reply> {
         crate::text_request::decode_text(reply, |reply| match reply {
-            reply @ (TextReply::TerminalHistory { .. } | TextReply::TerminalFound { .. }) => {
-                Some(reply)
-            }
+            reply @ TextReply::TerminalFound { .. } => Some(reply),
             _ => None,
         })
     }
@@ -85,7 +120,7 @@ fn held_anchors(state: &SrState, node: NodeId) -> BTreeSet<TextAnchor> {
 /// read's own. A read that brings nothing leaves the memory as it stands.
 pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId, due_us: u64) {
     let now_us = cx.now_us();
-    let Some(asked) = reading::entry_read(&mut cx.facts_mut(), node, None, now_us) else {
+    let Some(asked) = reading::entry_read(&mut cx.facts_mut(), node, false, now_us) else {
         return;
     };
     let reply = match cx.ask(asked, due_us).await {
@@ -173,30 +208,30 @@ pub(crate) async fn answer(
         } else {
             above.saturating_add(height)
         };
+        // The next read's start is counted from the screen's height, which
+        // a model whose memory holds rows has.
+        let height = if whole {
+            None
+        } else {
+            Some(NonZeroU32::new(height)?)
+        };
         let (place, start) = place_at_start(&mut cx.facts_mut(), node)?;
-        let request = FollowUp {
-            window,
-            node,
-            op: TextOp::TerminalHistory {
-                above,
-                whole,
+        let ask = match height {
+            None => HistoryAsk::Whole,
+            Some(height) => HistoryAsk::Above {
                 start,
+                above,
                 height,
             },
         };
-        let outcome = cx.ask(request, due_us).await;
+        let outcome = cx.ask(HistoryRead { window, node, ask }, due_us).await;
         let row = place_row(&mut cx.facts_mut(), node, place);
         // The terminal's output read meanwhile is heard before the
         // command's words (build 3, "Answers and speech").
         reading::speak_read(cx, None);
         // A history read that fails, the terminal's text unread included,
         // ends the command saying nothing.
-        let Outcome::Result(Ok(TextReply::TerminalHistory {
-            text,
-            above: rows_above,
-            ..
-        })) = outcome
-        else {
+        let Outcome::Result(Ok((text, rows_above))) = outcome else {
             return None;
         };
         let facts = cx.facts();
@@ -330,26 +365,31 @@ mod tests {
 
     use super::*;
 
+    fn window() -> RequestWindow {
+        RequestWindow {
+            handle: verbatim_model::WindowHandle(1),
+            top_level: verbatim_model::WindowHandle(1),
+            root_owner: verbatim_model::WindowHandle(1),
+            process: verbatim_model::Pid(1),
+            thread: 1,
+            by_class: None,
+        }
+    }
+
     /// Every failure a history read or a search can be answered decodes as
     /// its answer, a terminal whose text was not read included; only a
     /// reply of another request's kind is malformed.
     #[test]
     fn a_follow_ups_failures_decode_and_another_reply_does_not() {
-        let follow_up = FollowUp {
-            window: crate::event_queue::RequestWindow {
-                handle: verbatim_model::WindowHandle(1),
-                top_level: verbatim_model::WindowHandle(1),
-                root_owner: verbatim_model::WindowHandle(1),
-                process: verbatim_model::Pid(1),
-                thread: 1,
-                by_class: None,
-            },
+        use verbatim_model::batch::{Missing, StepRefusal};
+        let search = FollowUp {
+            window: window(),
             node: NodeId::new(1),
-            op: TextOp::TerminalHistory {
-                above: 0,
-                whole: false,
+            op: TextOp::TerminalFind {
+                needle: "$".to_owned(),
+                from: 0,
+                rows: 1,
                 start: verbatim_model::TextAnchor(1),
-                height: 1,
             },
         };
         for (reply, failure) in [
@@ -358,11 +398,46 @@ mod tests {
             (TextReply::Unanswered, TextFailure::Unanswered),
         ] {
             assert_eq!(
-                follow_up.decode(Reply::Text(reply)),
+                search.decode(Reply::Text(reply), Stamps::default()),
                 Some(Err(failure)),
                 "{failure:?}"
             );
         }
-        assert_eq!(follow_up.decode(Reply::Steps(Vec::new())), None);
+        assert_eq!(
+            search.decode(Reply::Steps(Vec::new()), Stamps::default()),
+            None
+        );
+        // A history read's one step, the whole text's, ended each way a
+        // step can end without a result.
+        let history = HistoryRead {
+            window: window(),
+            node: NodeId::new(1),
+            ask: HistoryAsk::Whole,
+        };
+        for (outcome, failure) in [
+            (
+                StepOutcome::Refused(StepRefusal::NoText),
+                TextFailure::NoText,
+            ),
+            (
+                StepOutcome::NotThere(Missing::Node(NodeId::new(1))),
+                TextFailure::Gone,
+            ),
+            (StepOutcome::Failed, TextFailure::Unanswered),
+        ] {
+            assert_eq!(
+                history.decode(Reply::Steps(vec![outcome]), Stamps::default()),
+                Some(Err(failure)),
+                "{failure:?}"
+            );
+        }
+        assert_eq!(
+            history.decode(Reply::Text(TextReply::Unanswered), Stamps::default()),
+            None
+        );
+        assert_eq!(
+            history.decode(Reply::Steps(Vec::new()), Stamps::default()),
+            None
+        );
     }
 }

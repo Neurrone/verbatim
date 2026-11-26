@@ -116,9 +116,9 @@ guide maps those behaviors onto the crate's types and modules.
   `read_at(&TerminalSnapshot)`: see "Core's terminal model".
 - `terminal::reader`: a terminal's reads as batches of the request list's
   generic text steps, and their answers read back as the reading rules'
-  read; the module's documentation lists each batch's steps. Nothing in
-  Core sends these batches yet: the terminal's old operations still carry
-  its reads.
+  read; the module's documentation lists each batch's steps. They carry
+  the focused terminal's full reads and its history reads; the command
+  search stays on the terminal's old operation (Dickson, 2026-11-26).
   - `WindowAsk` (`read`, `colours`, `starting`, `output`) with
     `WindowRead` (`First`, `From { start, height }`,
     `HistoryBlock { height }`, `Whole { height }`), and `HistoryAsk`
@@ -134,7 +134,8 @@ guide maps those behaviors onto the crate's types and modules.
     the answer's own. `history_of` gives a history read's padded text and
     its rows above the start.
   - `asked(&Batch)`: the ask whose builder writes exactly that batch
-    (`Asked::Window` or `Asked::History`), `None` for any other batch.
+    (`Asked::Window` or `Asked::History`), `None` for any other batch; a
+    caret key's stage tables and the tests tell a terminal's read by it.
 - `supervisor`: Core's supervisor's pure decisions. The outpost
   generation record Core's reducer owns (`record`, crate-private, applied
   by the event queue's driver; Table 5 of
@@ -1637,8 +1638,9 @@ as the real one does.
 
 The reading rules run in Core (`books/dev/src/explanation/design/terminal-model.md`, "Where it
 runs"): `terminal_model.rs` and `terminal_model/review.rs` take each full
-read of a terminal (`TextReply::TerminalRead`, the snapshot with the start
-anchor it minted) and the answers to the requests they make;
+read of a terminal (`terminal::reader::WindowReply`, the snapshot Core's
+terminal reader reads back of its window batch's answer, with the anchor
+held at the next read's start) and the answers to the requests they make;
 `terminal/reading.rs` is the focused terminal's life and its reading.
 
 - Public: `read_of(&TerminalSnapshot)`, the rules' `Read` of a snapshot
@@ -1682,7 +1684,7 @@ anchor it minted) and the answers to the requests they make;
   its kind, a clearing key as `Forget` then `Other`. Whether a read takes
   the screen's colours is Core's decision from the keys kept
   (`KEY_WINDOW_MS` from a key's time) and the last read, sent in the read's
-  request (`TerminalRead::colours`). Before a read
+  request (`WindowAsk::colours`). Before a read
   taken at S (`read_at`) is given to the rules, every kept key at or
   before S is given in order; before the timer at T, those up to T; past
   256 kept keys the oldest is given at once. Leaving the terminal tells
@@ -1693,9 +1695,18 @@ anchor it minted) and the answers to the requests they make;
   read's time; its speech and effects go out as `Effect::ForKey` for that
   key. A read with no speech key, and the timer's speech, carry the
   input's trace.
-- Reads. A full read is a `TextOp::ReadTerminal(TerminalRead)`: the start
-  anchor the model names, the scope, the screen's shape from the model,
-  whether to take colours, and whether the window is a console host's. A
+- Reads. A full read is the reader's window batch
+  (`terminal::reader::window_batch`) of a `WindowAsk`: which read, by the
+  scope the rules owe (from the start the model names with the screen's
+  height, the whole text, or a history block; the screen alone before a
+  height is known), whether to take colours, whether it is a caret key's
+  starting read, and whether it is an output read. The reading keeps the
+  ask of a read it has out (`Reading::Out`, `Baselining`) and reads the
+  answer back with it, at the times the reader's worker stamped on the
+  answer (`Answer::began_us` and `ended_us`, which the event queue hands
+  to `Request::decode` and `Logic::facts_answered` as `Stamps`); a read
+  that found the terminal's node or the start named gone ends as "not
+  there". A
   read identical to the last one given to the rules, with its times,
   number, start and caret left out, is skipped unless it is the first
   after the focus arrived. A read's caret report becomes Core's caret at
@@ -1709,7 +1720,8 @@ anchor it minted) and the answers to the requests they make;
 - Review commands. A review command in a focused modelled terminal is one
   entry on the event queue (`terminal/commands.rs`): it sends one fresh full
   read and answers from the memory the model then holds. Rows above the
-  memory are asked for with `TextOp::TerminalHistory { above, whole, start, height }`, a
+  memory are asked for with the reader's history batch (`history_batch` of
+  `HistoryAsk::Above { start, above, height }`, or `Whole`), a
   screen more than needed, and placed from the start anchor Core named, which
   the outpost holds until the answer (`NodesHeld` lets it go); an anchor whose
   row left the memory ends the command silently, marks kept. The memory's rows carry anchors with
@@ -1739,11 +1751,15 @@ Both assert what is heard and what Core asked for by its purpose alone
 (`Asked`: a read, the whole document, a first read again, a history read,
 a search with its text, a caret key's watch), so that they hold whichever
 way Core asks a terminal (Claude, 2026-11-26). The support's simulated
-terminal answers in two ways: the terminal's old operations, which is all
-Core sends, and each generic text step of a batch as the provider would
-(`tests/terminal_support/steps.rs`), with the old search composed of
-those steps. `tests/terminal_answerers.rs` runs the batches of Core's
-terminal reader (`terminal::reader`) through the second and compares what
+terminal answers each generic text step of a batch as the provider would
+(`tests/terminal_support/steps.rs`), given the batches of Core's terminal
+reader, which `terminal::reader::asked` tells apart, and answers the
+search's old operation (`Outpost::find`); the old search is also composed
+of those steps. The unit tests beside the rules state a read as the rules
+take it and answer Core's batch with the outcomes that read back as it
+(`terminal/reader_answers.rs`, each answer read back and compared before
+it is given). `tests/terminal_answerers.rs` runs the batches of Core's
+terminal reader (`terminal::reader`) through the support and compares what
 the reader reads back with the simulated terminal's reference read, field
 by field, after every chunk of every corpus stream and in the shapes the
 terminal tests use, and pins the cases the reference read has none of: a

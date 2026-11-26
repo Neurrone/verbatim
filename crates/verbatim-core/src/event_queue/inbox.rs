@@ -13,7 +13,7 @@ use verbatim_model::{Effect, Pid, WindowHandle};
 
 use super::driver::{Beginning, Core, State, outcome_of, widen};
 use super::limiter::{self, Item};
-use super::request::{Outcome, Refused};
+use super::request::{Outcome, Refused, Stamps};
 use super::table::{Asker, Dropped, Ended, Ending, Owner};
 use super::{Cause, Foreground, Instance, Logic, Reader, RequestWindow};
 
@@ -282,13 +282,17 @@ impl<L: Logic> Core<L> {
     /// probes it brings are recorded; a late answer, or one naming no
     /// request out to its sender, is dropped.
     fn answered(&mut self, from: Instance, answer: Answer) {
-        let answered =
-            self.shared
-                .borrow_mut()
-                .state
-                .queue
-                .table
-                .answer(from, answer.number, answer.outcome);
+        let answered = self.shared.borrow_mut().state.queue.table.answer(
+            from,
+            answer.number,
+            (
+                answer.outcome,
+                Stamps {
+                    began_us: answer.began_us,
+                    ended_us: answer.ended_us,
+                },
+            ),
+        );
         match answered {
             Ok(ended) => {
                 // A probe of the request's own window is kept under the
@@ -461,7 +465,7 @@ impl<L: Logic> Core<L> {
                 // Core's own endings, a result that did not decode and Core
                 // no longer awaiting it, are the asker's "ended or stopped".
                 let outcome = match outcome_of(ended.ending) {
-                    Ok(reply) => WireOutcome::Result(reply),
+                    Ok((reply, _)) => WireOutcome::Result(reply),
                     Err(Outcome::Result(never)) => match never {},
                     Err(Outcome::Refused(Refused::Reader(refusal))) => {
                         WireOutcome::Refused(refusal)

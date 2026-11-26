@@ -15,8 +15,11 @@ use std::collections::VecDeque;
 
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, Input, Message, NodeId, Phrase, ReaderSettings, ReviewCommand,
-    Role, SegmentContent, SpeechMark, SpeechPriority, TextOp, TextReply, TraceId,
+    Role, SegmentContent, SpeechMark, SpeechPriority, TraceId,
 };
+
+use super::reader::{WindowAsk, WindowReply};
+use verbatim_model::batch::StepOutcome;
 
 use super::{
     Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit, caret_key_kind,
@@ -539,12 +542,11 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
     let _ = state.wants.take_for_tests();
     let before = state.clone();
     let mut said = Vec::new();
+    let (answer, ran) = answer_to(&FIRST, &read_reply("line 31"));
     let entries = super::reading::answered(
         &mut state,
         read,
-        crate::event_queue::Outcome::Result(verbatim_model::request::Reply::Text(
-            TextReply::TerminalRead(Box::new(read_reply("line 31"))),
-        )),
+        crate::event_queue::Outcome::Result((answer, ran)),
         (1_000, TraceId::from_raw(4)),
         &mut said,
     );
@@ -552,8 +554,63 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
     assert_eq!(state, before);
 }
 
+/// A first read, the screen alone.
+const FIRST: WindowAsk = WindowAsk {
+    read: super::reader::WindowRead::First,
+    colours: false,
+    starting: false,
+    output: false,
+};
+
+/// The answer to the terminal's full read `ask` names that its reader
+/// reads back as `reply` (`reader::answers`), with when the read ran.
+fn answer_to(
+    ask: &WindowAsk,
+    reply: &WindowReply,
+) -> (verbatim_model::request::Reply, crate::event_queue::Stamps) {
+    let (outcomes, (began_us, ended_us)) =
+        super::reader::answers::outcomes(id(TERMINAL), ask, reply);
+    (
+        verbatim_model::request::Reply::Steps(outcomes),
+        crate::event_queue::Stamps { began_us, ended_us },
+    )
+}
+
+/// A failed read's answer, as the outpost answers its batch: every step
+/// ended `failure`, the text unread or a call failed.
+fn failed(
+    failure: StepOutcome,
+) -> impl Fn(&verbatim_model::request::Ask) -> (verbatim_model::request::Reply, crate::event_queue::Stamps)
+{
+    move |ask| {
+        let steps = match &ask.request {
+            verbatim_model::request::Question::Batch(batch) => batch.steps.len(),
+            other @ verbatim_model::request::Question::Terminal(_) => {
+                panic!("a batch, not {other:?}")
+            }
+        };
+        (
+            verbatim_model::request::Reply::Steps(vec![failure.clone(); steps]),
+            crate::event_queue::Stamps::default(),
+        )
+    }
+}
+
+/// The full read of the terminal `ask` asks, as its reader wrote it.
+fn full_read_of(ask: &verbatim_model::request::Ask) -> WindowAsk {
+    match &ask.request {
+        verbatim_model::request::Question::Batch(batch) => match super::reader::asked(batch) {
+            Some(super::reader::Asked::Window(ask)) => ask,
+            other => panic!("a full read of the terminal, not {other:?}: {batch:?}"),
+        },
+        other @ verbatim_model::request::Question::Terminal(_) => {
+            panic!("a full read of the terminal, not {other:?}")
+        }
+    }
+}
+
 /// A read of the terminal showing `text` on its one row.
-fn read_reply(text: &str) -> verbatim_model::TerminalReadReply {
+fn read_reply(text: &str) -> WindowReply {
     let read = verbatim_text::terminal_rows::Read {
         text: verbatim_text::terminal_rows::ReadText::unpadded(text),
         screen: text.to_owned(),
@@ -568,7 +625,7 @@ fn read_reply(text: &str) -> verbatim_model::TerminalReadReply {
         at_ms: 1,
         above: 0,
     };
-    verbatim_model::TerminalReadReply {
+    WindowReply {
         snapshot: crate::snapshot_of(&read, false, None),
         start: verbatim_model::TextAnchor(1),
         started_us: 1_000,
@@ -1344,91 +1401,101 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
         Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply,
     };
     // Review current line pressed as key `key`, its fresh read answered
-    // `outcome`: whether anything was logged as malformed, and what was
-    // said.
-    let review = |state: &mut SrState, key: u64, outcome: Outcome| -> (bool, Vec<String>) {
-        let effects = reduce(
-            state,
-            &mut crate::Runtime::default(),
-            &Input::Queue {
-                trace_id: TraceId::from_raw(7),
-                at_us: key * 10_000,
-                input: QueueInput::Press(Box::new(Press {
-                    key_seq: verbatim_model::KeySeq::new(key),
-                    pressed_at_us: key * 10_000,
-                    action: PressAction::Command {
-                        command: ReviewCommand::ReviewCurrentLine,
-                        repeat: 0,
-                    },
-                })),
-            },
-        );
-        let numbers: Vec<_> = effects
-            .into_iter()
-            .filter_map(|effect| match effect {
-                Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask.number),
-                _ => None,
-            })
-            .collect();
-        let [number] = numbers[..] else {
-            panic!("one read asked: {numbers:?}");
-        };
-        let effects = reduce(
-            state,
-            &mut crate::Runtime::default(),
-            &Input::Queue {
-                trace_id: TraceId::from_raw(8),
-                at_us: key * 10_000 + 1_000,
-                input: QueueInput::Answer {
-                    from: crate::entries::tests::OUTPOST,
-                    answer: Answer {
-                        number,
-                        outcome,
-                        probes: Vec::new(),
-                        detail: String::new(),
-                        began_us: 0,
-                        ended_us: 0,
+    // by `answer`, given what it asks: whether anything was logged as
+    // malformed, and what was said.
+    let review =
+        |state: &mut SrState,
+         key: u64,
+         answer: &dyn Fn(&verbatim_model::request::Ask) -> (Reply, crate::event_queue::Stamps)|
+         -> (bool, Vec<String>) {
+            let effects = reduce(
+                state,
+                &mut crate::Runtime::default(),
+                &Input::Queue {
+                    trace_id: TraceId::from_raw(7),
+                    at_us: key * 10_000,
+                    input: QueueInput::Press(Box::new(Press {
+                        key_seq: verbatim_model::KeySeq::new(key),
+                        pressed_at_us: key * 10_000,
+                        action: PressAction::Command {
+                            command: ReviewCommand::ReviewCurrentLine,
+                            repeat: 0,
+                        },
+                    })),
+                },
+            );
+            let asked: Vec<_> = effects
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    Effect::Queue(QueueEffect::Send { ask, .. }) => Some(ask),
+                    _ => None,
+                })
+                .collect();
+            let [ask] = &asked[..] else {
+                panic!("one read asked: {asked:?}");
+            };
+            let number = ask.number;
+            let (reply, ran) = answer(ask);
+            let effects = reduce(
+                state,
+                &mut crate::Runtime::default(),
+                &Input::Queue {
+                    trace_id: TraceId::from_raw(8),
+                    at_us: key * 10_000 + 1_000,
+                    input: QueueInput::Answer {
+                        from: crate::entries::tests::OUTPOST,
+                        answer: Answer {
+                            number,
+                            outcome: Outcome::Result(reply),
+                            probes: Vec::new(),
+                            detail: String::new(),
+                            began_us: ran.began_us,
+                            ended_us: ran.ended_us,
+                        },
                     },
                 },
-            },
-        );
-        let undecodable = effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::Queue(QueueEffect::Undecodable(_))));
-        let spoken = effects
-            .into_iter()
-            .map(|effect| match effect {
-                Effect::ForKey(_, effect) => *effect,
-                effect => effect,
-            })
-            .filter_map(|effect| match effect {
-                Effect::Speak(utterance, _) => Some(words(&utterance.segments)),
-                _ => None,
-            })
-            .collect();
-        (undecodable, spoken)
-    };
+            );
+            let undecodable = effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Queue(QueueEffect::Undecodable(_))));
+            let spoken = effects
+                .into_iter()
+                .map(|effect| match effect {
+                    Effect::ForKey(_, effect) => *effect,
+                    effect => effect,
+                })
+                .filter_map(|effect| match effect {
+                    Effect::Speak(utterance, _) => Some(words(&utterance.segments)),
+                    _ => None,
+                })
+                .collect();
+            (undecodable, spoken)
+        };
+    let failures = [
+        StepOutcome::Refused(verbatim_model::batch::StepRefusal::NoText),
+        StepOutcome::Failed,
+    ];
     // With nothing in the model's memory, a failed fresh read ends the
     // command saying nothing.
-    for failure in [TextReply::NoText, TextReply::Unanswered] {
+    for failure in &failures {
         let mut state = terminal();
         assert_eq!(
-            review(&mut state, 1, Outcome::Result(Reply::Text(failure.clone()))),
+            review(&mut state, 1, &failed(failure.clone())),
             (false, Vec::new()),
             "{failure:?}"
         );
     }
-    for failure in [TextReply::NoText, TextReply::Unanswered] {
+    for failure in &failures {
         let mut state = terminal();
-        let read = Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(read_reply(
-            "ready>",
-        )))));
         assert_eq!(
-            review(&mut state, 1, read),
+            review(&mut state, 1, &|ask| answer_to(
+                &full_read_of(ask),
+                &read_reply("ready>")
+            )),
             (false, vec!["ready>".to_owned()])
         );
         assert_eq!(
-            review(&mut state, 2, Outcome::Result(Reply::Text(failure.clone()))),
+            review(&mut state, 2, &failed(failure.clone())),
             (false, vec!["ready>".to_owned()]),
             "{failure:?}"
         );
@@ -1437,9 +1504,7 @@ fn a_review_commands_fresh_read_answered_with_a_failure_decodes() {
 
 #[test]
 fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
-    use verbatim_model::request::{
-        Answer, Outcome, Press, PressAction, QueueEffect, QueueInput, Reply,
-    };
+    use verbatim_model::request::{Answer, Outcome, Press, PressAction, QueueEffect, QueueInput};
     let mut state = terminal();
     // A review command pressed, its fresh read of the terminal answered
     // showing "ready>": what it said.
@@ -1470,16 +1535,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         let [ask] = &asked[..] else {
             panic!("one read asked: {asked:?}");
         };
-        assert!(
-            matches!(
-                ask.request,
-                verbatim_model::request::Question::Terminal(verbatim_model::request::TerminalAsk {
-                    op: TextOp::ReadTerminal(_),
-                    ..
-                })
-            ),
-            "{ask:?}"
-        );
+        let (reply, ran) = answer_to(&full_read_of(ask), &read_reply("ready>"));
         let effects = reduce(
             state,
             &mut crate::Runtime::default(),
@@ -1490,13 +1546,11 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
                     from: crate::entries::tests::OUTPOST,
                     answer: Answer {
                         number: ask.number,
-                        outcome: Outcome::Result(Reply::Text(TextReply::TerminalRead(Box::new(
-                            read_reply("ready>"),
-                        )))),
+                        outcome: Outcome::Result(reply),
                         probes: Vec::new(),
                         detail: String::new(),
-                        began_us: 0,
-                        ended_us: 0,
+                        began_us: ran.began_us,
+                        ended_us: ran.ended_us,
                     },
                 },
             },

@@ -714,8 +714,9 @@ pub struct EditSelection {
     pub end: u32,
 }
 
-/// One of the terminal's text operations Core asks its outpost
-/// ([`crate::request::Question::Terminal`]).
+/// One of the terminal's old text operations an outpost answers
+/// ([`crate::request::Question::Terminal`]). Core sends only the search:
+/// its full read and history read are batches.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextOp {
     /// Read the history above the start the next read takes: from `above`

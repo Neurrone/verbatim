@@ -103,7 +103,7 @@ impl Request for HoldRead {
         .into()
     }
 
-    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
         match reply {
             Reply::Steps(steps) => match steps.as_slice() {
                 [

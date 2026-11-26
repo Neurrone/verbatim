@@ -835,8 +835,9 @@ anchors are (Table 16 of
   not there, by its anchor. UI Automation's text has no sentence unit,
   and its executor refuses the move as no such unit.
 - `Visible`, `Move`, `FindText` and `ReadColours`, and a whole or
-  trimmed `ReadText` and a trimmed `ReadRange`, the steps the terminal's
-  redesign will read a terminal by, which only tests send today
+  trimmed `ReadText` and a trimmed `ReadRange`, the steps Core's terminal
+  reader reads a terminal by (`verbatim_core::terminal::reader`), all but
+  `FindText`, which only tests send
   (`crates/mockapp/tests/common/window_steps.rs`), run in the UI Automation executor
   as every text step does (`text::fused`): `Visible`'s ends and a move's
   start and landing held as anchors, a trimmed text made by
@@ -974,11 +975,13 @@ the terminal's redesign (Dickson, 2026-11-26): the full read, the history
 read and the search (`Question::Terminal`, `TextOp`) run in the outpost's
 `terminal` module over `verbatim_uia_rops`' `terminal_snapshot` and
 `terminal_find`, beside the executors, and are answered as
-`Reply::Text` ("Terminals", below). Core reads a terminal by them alone.
-The generic operations added for a terminal (`Visible`, `Move`,
-`FindText`, `ReadColours`, and a whole or trimmed read) stay in the
-executors with their tests, for the redesign to use; no product code
-sends them until then.
+`Reply::Text` ("Terminals", below). Core sends only the search by them:
+its full read and its history read of a terminal are batches of the
+generic operations (`Visible`, `Move`, `ReadColours`, a trimmed read and a
+condition comparing two points), written by Core's terminal reader
+(`verbatim_core::terminal::reader`) and run by the executors like any
+batch; the old read and history read stay answered until they are
+deleted.
 
 What still runs outside the executors, counted at the one-path change's
 end (2026-11-22), is the dispatcher's chaining across backends (four
@@ -1325,7 +1328,12 @@ provider gives no handle for the window, which the classic walk finds.
   the signals of the same window or element and kind that wait together
   (`a_windows_console_updates_merge_into_one_while_they_wait`). The outpost
   keeps no "changed, not yet read" flag: Core alone does.
-- A read is one `TextOp::ReadTerminal(TerminalRead)` of Core's
+- Core's full read of a terminal is a batch of generic text steps, one
+  program by remote operations, with a second for the colours when Core
+  asks them, or the same steps by calls
+  (`verbatim_core::terminal::reader`); the outpost keeps nothing of the
+  terminal but the anchors it holds for Core. The old read, which Core no
+  longer sends, is still answered: one `TextOp::ReadTerminal(TerminalRead)`
   (`text_reads::terminal_read`, through `terminal::read`, `verbatim_uia_rops::terminal_snapshot`, classic fallback
   behind it): text from a screen above the start anchor Core names to the
   end in one `GetText`, the screen, the caret and its line, and colours when
@@ -1347,7 +1355,8 @@ provider gives no handle for the window, which the classic walk finds.
   read waits for the worker's current request, up to a search's length.
 - Keys and reading settings are Core's, and so is whether a read takes
   colours. A caret key's starting and final reads in a terminal are
-  `ReadTerminal` requests of Core's caret key entry.
+  window batches of Core's caret key entry, the starting read's caret
+  step holding the key's starting point.
 - Windows Terminal's reads never wait for a frame. Windows Terminal raises
   no change for writes of blank lines only, so such a scroll is read at
   the next change.
@@ -1355,7 +1364,9 @@ provider gives no handle for the window, which the classic walk finds.
   worker waits for the move (`Registration::settle`) before the first
   read. The console host's console events are hooked when `Follow` first
   names it ("The console host's events", above).
-- History: `TextOp::TerminalHistory { above, whole, start, height }` reads rows
+- History: Core's history read is a batch too (the reader's
+  `history_batch`). The old operation, still answered,
+  `TextOp::TerminalHistory { above, whole, start, height }` reads rows
   above the start anchor Core names, padding kept, answered
   `TextReply::TerminalHistory` with the rows above the start and the read
   number whose start it is (`terminal::history`, `History`);

@@ -29,7 +29,8 @@ mod harness;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use verbatim_model::request::TerminalAsk;
+use verbatim_core::terminal::reader;
+use verbatim_model::request::{Question, TerminalAsk};
 use verbatim_model::{
     CallCounts, CaretKey, CaretMotion, ReviewCommand, SegmentContent, TerminalScope,
     TerminalSnapshot, TextOp,
@@ -242,7 +243,7 @@ impl Driven {
     /// picks.
     fn before_first(
         &mut self,
-        of: fn(&TextOp) -> bool,
+        of: fn(&Question) -> bool,
         act: impl FnOnce(&mut common::MockApp, HWND) + 'static,
     ) -> Rc<RefCell<u32>> {
         let app = Rc::clone(&self.app);
@@ -251,10 +252,7 @@ impl Driven {
         let counted = Rc::clone(&count);
         let mut act = Some(act);
         self.core.observe_sends(Some(Box::new(move |ask, outpost| {
-            let Some(TerminalAsk { op, .. }) = ask.request.terminal() else {
-                return;
-            };
-            if !of(op) {
+            if !of(&ask.request) {
                 return;
             }
             *counted.borrow_mut() += 1;
@@ -379,7 +377,15 @@ fn show_after_ls(app: &mut common::MockApp, hwnd: HWND, lines: u32) {
 fn command_marks_are_found_while_output_scrolls(remote: bool) {
     let mut driven = with_a_command("mockapp-terminal-marks-scrolling", remote);
     let finds = driven.before_first(
-        |op| matches!(op, TextOp::TerminalFind { .. }),
+        |request| {
+            matches!(
+                request.terminal(),
+                Some(TerminalAsk {
+                    op: TextOp::TerminalFind { .. },
+                    ..
+                })
+            )
+        },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
     let step = driven.core.command(ReviewCommand::PreviousCommandMark);
@@ -412,7 +418,10 @@ fn the_history_is_placed_while_output_scrolls_remote() {
     let step = driven.core.command(ReviewCommand::PreviousCommandMark);
     assert_eq!(step.spoken(), [text("ready>ls")]);
     let histories = driven.before_first(
-        |op| matches!(op, TextOp::TerminalHistory { .. }),
+        |request| {
+            matches!(request, Question::Batch(batch)
+                if matches!(reader::asked(batch), Some(reader::Asked::History(_))))
+        },
         |app, hwnd| show_after_ls(app, hwnd, 13),
     );
     let step = driven.core.command(ReviewCommand::ReviewNextLine);

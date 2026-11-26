@@ -1,7 +1,8 @@
 //! Core's model of each terminal it reads (`books/dev/src/explanation/design/terminal-model.md`,
 //! "Where it runs"): the reading rules, with their memory of the terminal's
 //! rows, run here in the reducer, and the outpost only reads what Core asks
-//! for and sends each read back ([`TerminalReadReply`]).
+//! for and sends each read back, which Core's terminal reader gives as
+//! the rules' read ([`WindowReply`]).
 //!
 //! For each terminal node it reads, Core keeps the rules
 //! ([`TerminalReader`], behind an `Arc` so that a checkpoint's clone of the
@@ -46,8 +47,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Effect, NodeId, OutpostId, TerminalColourRun, TerminalReadReply, TerminalScope,
-    TerminalSnapshot, TerminalText, TextAnchor, TraceId,
+    Effect, NodeId, OutpostId, TerminalColourRun, TerminalScope, TerminalSnapshot, TerminalText,
+    TextAnchor, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
@@ -55,6 +56,7 @@ use verbatim_text::terminal_reading::{
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
 use crate::state::SrState;
+use crate::terminal::reader::WindowReply;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::CaretAt;
@@ -725,7 +727,7 @@ pub(crate) struct Taken {
 pub(crate) fn take(
     state: &mut SrState,
     node: NodeId,
-    reply: &TerminalReadReply,
+    reply: &WindowReply,
     (named, waited): (Option<TextAnchor>, bool),
 ) -> Taken {
     let snapshot = &reply.snapshot;

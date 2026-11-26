@@ -130,7 +130,7 @@ impl Request for ReadName {
         wire()
     }
 
-    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
         values_of(reply)
     }
 }
@@ -154,7 +154,7 @@ impl Request for ReadPlain {
         plain_wire()
     }
 
-    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
+    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
         values_of(reply)
     }
 }
@@ -1666,8 +1666,8 @@ impl Request for ReadProbed {
         wire()
     }
 
-    fn decode(&self, reply: Reply) -> Option<PropertyValues> {
-        ReadName.decode(reply)
+    fn decode(&self, reply: Reply, _: super::Stamps) -> Option<PropertyValues> {
+        ReadName.decode(reply, super::Stamps::default())
     }
 }
 
