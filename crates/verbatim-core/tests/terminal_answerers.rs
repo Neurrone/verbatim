@@ -578,7 +578,14 @@ fn the_readers_search_answers_as_the_old_search() {
         outpost.sim.write(text.as_bytes());
         let start = outpost.sim.visible().start;
         let (old, new) = (outpost.mint(Range::at(start)), outpost.hold(start));
-        for needle in ["$ echo 7", "$ echo 2", "$ echo", "$ nothing", "output"] {
+        for needle in [
+            "$ echo 7",
+            "$ echo 2",
+            "$ echo",
+            "$ nothing",
+            "output",
+            "of $ echo",
+        ] {
             for (from, rows) in [(0, 1), (19, 1), (40, 2), (-2, 1), (500, 1)] {
                 let TextReply::TerminalFound { matches } =
                     outpost.find(old, needle, (from, u32::from(rows)))

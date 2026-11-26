@@ -168,8 +168,8 @@ Cases no reader can resolve from the text, and cases decided as not handled:
 - Rows a program reprints that no read showed, such as Pi's earlier conversation, are spoken as new.
 - A character typed just after a recalled line is spoken as output when a read lands between them, since no text tells recalled text from typed (Dickson, 2026-10-26).
 - A command mark's search ends each way after 100 `FindText` calls, so a mark whose line lies past more than 100 hits within rows, each way it could be found, is dropped as not found (Dickson, 2026-11-26).
-- A press's searches share its due time of 11 seconds. In a terminal slow enough that a search spending both ways' calls outlasts it, the press says nothing and drops no mark (Dickson, 2026-11-26).
-- A command mark's line of more than 255 rows is read short by its search, so its hash does not match and the mark is dropped.
+- A press's searches share its due time of 11 seconds. In a terminal slow enough that a search spending both ways' calls outlasts it, the press says nothing and drops no mark; this follows from the bound for each way and waits for Dickson's approval (Claude, 2026-11-26).
+- A command mark's line of more than 255 rows is read short by its search, so its hash does not match and the mark is dropped (Claude, 2026-11-26).
 - Colours that change with no key and no text change are not heard (Dickson, 2026-10-23).
 - A hidden cursor parked away from the user's attention gives the caret nothing useful to say.
 - Panes side by side share rows, so a change is not attributed to its pane (Dickson, 2026-10-23).

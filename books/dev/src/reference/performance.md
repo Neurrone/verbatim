@@ -1909,9 +1909,9 @@ same start. A failing call ends that way, and the program makes none of
 the calls on the range Windows Terminal returns for nothing found that
 would end it ([verbatim-uia-rops](crates/verbatim-uia-rops.md), "The
 generic text operations added for a terminal"). A hit within a row is
-passed over, and counts within the 100 `FindText` calls each way is
-bounded at (`SEARCH_CALLS`; Dickson, 2026-11-26), because a one-letter
-needle would otherwise walk the whole history.
+passed over and counts as a call, and each way makes at most 100 `FindText`
+calls (`SEARCH_CALLS`; Dickson, 2026-11-26), because a one-letter needle
+would otherwise walk the whole history.
 
 - Calls: a line found once at its place makes 6 `FindText` calls, the
   search of the whole text for each way, the search for text no terminal
@@ -1957,10 +1957,11 @@ measured. Nothing in either is on the event or speech path.
 - A move between marks costs one fresh read per press and a walk over the
   marks and rows in the reducer; a mark above the rows Core keeps adds one
   search per mark tried ("A terminal's upward search"), an estimated 60 ms
-  when its line is the nearest of 20 rows starting with its text and at
-  most about 600. A press makes at most three searches
-  (`review::MARK_SEARCHES`), so it waits at most about 1,800 ms, and never
-  asks for the same answer twice.
+  when its line is the nearest of 20 rows starting with its text and
+  about 600 at both ways' bounds, by the estimate of 3 ms a call; the
+  time GitHub's runner took is under "A terminal's upward search". A
+  press makes at most three searches (`review::MARK_SEARCHES`) under its
+  one due time, and never asks for the same answer twice.
 
 ### A terminal's status bar
 
