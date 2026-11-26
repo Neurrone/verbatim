@@ -97,12 +97,10 @@ feature needs no protocol or waiting state of its own.
 
 Its decision record is
 [ADR 0003, "Readers tell, Core asks"](../books/dev/src/reference/adr/0003-readers-tell-core-asks.md),
-decided by Dickson on 2026-11-13. Its build notes are
-[readers-tell-core-asks.md](design/readers-tell-core-asks.md), which
-hold what a new session needs to resume: each build's scope, code locations and state
-tables, the rules Core applies with NVDA's source lines, the small
-behaviours that must be moved when code is deleted, the measurements,
-and what each later milestone must not lose.
+decided by Dickson on 2026-11-13. What it built is described in the
+crate guides, Core's above all; what each later milestone must keep of
+it is in [the milestone rules](design/ownership-milestone-rules.md)
+and, for M5, [build A's design](design/m5-build-a.md), section 20.
 
 ### The model, in short
 
@@ -127,7 +125,7 @@ and what each later milestone must not lose.
 ### Before the builds
 
 These change no state and may run side by side. The first three were
-done on 2026-11-14; the build notes give their figures.
+done on 2026-11-14.
 
 - The latency of one crossing between the listener and Core, measured
   with `crates/verbatim-process/examples/crossing.rs`: about 15 to 45
@@ -184,12 +182,10 @@ build, used wherever they can be (Dickson, 2026-11-14).
   the line of held keys removed (Dickson, 2026-11-15 and 2026-11-16).
   The marker, the hand-over of an application's first events, the live
   re-read and the readers' ancestry caches go. It replaces the ancestry
-  cache build that was planned. Design:
-  `docs/design/readers-tell-core-asks-build1.md`.
+  cache build that was planned.
 - Build 2: Core names the text provider and the details to fetch in
   each request, and `Fetches` goes; the formatting memory is kept on
-  each focus record; control fields when built. Design:
-  `docs/design/readers-tell-core-asks-build2.md`.
+  each focus record; control fields when built.
 - Build 3, terminals: every change told, reads asked outside the event
   queue, and the start of every read named by Core, which takes in
   M6.4's first item. Design:
@@ -217,8 +213,10 @@ drag events and effects, layout invalidated for suggestion lists).
 - M13: some of NVDA's support reads an application's own object model
   or its text through window messages (Word's older interface, Excel's
   borders, charts, Scintilla), which no request reaches yet.
-- The build notes list about twenty statements in the project's own
-  documents that the pinned NVDA source or the code contradicts.
+- About twenty statements in the project's own documents that the
+  pinned NVDA source or the code contradicts are listed in
+  [the milestone rules](design/ownership-milestone-rules.md),
+  "Statements found contradicted".
 
 ## Exact replay of a paused entry
 
@@ -550,8 +548,8 @@ just before it. All five builds are built; the rules for the planned milestones 
 
 Replaced by build 1 of "Readers tell, Core asks": Core's caret key entry,
 its stroke line and the outpost's watch give a key's caret one owner
-(`docs/design/readers-tell-core-asks-build1.md`, "Keys and commands in
-this build"; [holding caret keys](../books/dev/src/explanation/design/key-holding.md)).
+(`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on
+the event queue"; [holding caret keys](../books/dev/src/explanation/design/key-holding.md)).
 
 ### Deferred
 

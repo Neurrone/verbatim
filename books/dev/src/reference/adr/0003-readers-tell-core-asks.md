@@ -2,7 +2,7 @@
 
 Status: decided, 2026-11-13, by Dickson; the model and every ruling in it are his. Built in three builds by the phase "Readers tell, Core asks" in [the roadmap](https://github.com/Neurrone/verbatim/blob/main/docs/roadmap.md); [How focus works](../../explanation/design/focus.md) and the crate guides describe the code.
 
-This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. Every rule in full, with NVDA's source for each, the order of the builds and the measurements are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
+This record keeps why Verbatim's readers stop reading on their own and read only when Core asks: the problem, the decisions with their reasons, the options weighed, and the limits accepted. The rules as built are in the crate guides, [Core's](../crates/verbatim-core.md) above all, and NVDA's behaviour beside each in [the parity ledger](https://github.com/Neurrone/verbatim/blob/main/docs/parity/readme.md); what each later milestone must keep of this model is in [the milestone rules](https://github.com/Neurrone/verbatim/blob/main/docs/design/ownership-milestone-rules.md).
 
 ## The problem
 
@@ -178,7 +178,7 @@ Two additions exist to save calls or wake-ups: the watch in the outpost (a round
 
 ## What Verbatim keeps beyond NVDA
 
-Every rule is marked either as restoring NVDA's rule or as Verbatim-only. There are 29 Verbatim-only items; each, with its reason, is marked in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md), "Core's rules".
+Every rule either restores NVDA's rule or is Verbatim-only. There are 29 Verbatim-only items, grouped by their reason:
 
 - Forced by reading from outside the application (8): holding caret keys with the 150 ms release; facts carried in requests; held objects and their generations; kept event elements, a UI Automation focus completed by the outpost in a second request; the narrow rule; the silent re-take after a reader is replaced; destroys told for windows only, routed by the raising thread; a request waiting for its outpost to start.
 - Forced by Core never blocking (5): Core's stop, with its cancel abandoning a running call only when the foreground moved away; the re-ask for the focus when a hung window answers again; requests outside the event queue; ending entries at a foreground change, judged by window; from M8.7, the below-the-lock-screen fact gathered at arrival, since the reducer makes no Windows call.
@@ -205,7 +205,7 @@ Each changes on a fact that has changed: no reader acts on an event itself, no r
 - ADR 0001, "The listener's checks": the checks that make calls are made by the listener's check thread at the event's delivery, before the tell, and judged in Core; acceptance moves to Core.
 - [ADR 0002](0002-no-screen-reader-per-outpost.md): "Core judges keys and focus" stays; a reader's own choice of what to read narrows to the local drops; the record is renamed "No screen reader per outpost" and gains the keyboard hook in each outpost as a rejected option, as Dickson asked on 2026-11-12.
 - The progress-bar design (2026-11-09): replaced by Core's asks (2026-11-20).
-- Also amended, each named with its build in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md): the key-holding design's waits, selection-key holding and the shell's line of held keys, the caret and selection rework's rules, the outpost's hang record, the ownership design's scope rule, security mitigation B3's wording, and the parity ledger's text entries that describe them.
+- Also amended: the key-holding design's waits, selection-key holding and the shell's line of held keys, the caret and selection rework's rules, the outpost's hang record, the ownership design's scope rule, security mitigation B3's wording, and the parity ledger's text entries that describe them.
 
 ## Weighed and rejected
 
@@ -236,7 +236,6 @@ Each changes on a fact that has changed: no reader acts on an event itself, no r
 - Two more crossings per event-driven read: a tell to Core and a request back before the first call, and one more wake of Core per UI Automation focus, read in two requests. A burst of focus events is read one round trip at a time; for the console flood of 1,911 reads, about 3,800 more crossings and 1,900 more wakes of Core. NVDA reads in its own process.
 - One more caret check per key: every caret key costs up to about ten checks (twenty in the console host), each a call into the application, while its caret has not moved, and the read after every focus with text, caret move and say-all move that today's outpost skips is made. NVDA's loop polls the same way.
 - A return to an application after another application's focus was committed walks its ancestry to the top live: 14.0 ms against 6.2 ms with today's cache. NVDA walks up to the ancestors of its own focus the same way.
-- Further limits, each with its size, are marked "a limit" in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
 
 ## Decided after the reviews (Dickson, 2026-11-12)
 
@@ -251,7 +250,7 @@ The reviews left eight questions, each put to Dickson with a sequence and the sp
 - Entries already in the event queue when the secure desktop comes up run as NVDA's do: a focus that was waiting is spoken after the switch. Reason: no added rule.
 - The single record of an outpost generation's life (M6.2) is built together with the event-queue build, since both change the same code.
 
-Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevated windows in a standard user's session. Microsoft's documents disagree; [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md), "M8.7, UIAccess and secure screens", say what to verify.
+Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevated windows in a standard user's session. Microsoft's documents disagree; [the milestone rules](https://github.com/Neurrone/verbatim/blob/main/docs/design/ownership-milestone-rules.md), "M8.7, UIAccess and secure screens", say what to verify.
 
 ## Left to later milestones
 
@@ -264,7 +263,7 @@ Still to be verified, before M8.7 relies on it: whether UIAccess reaches elevate
 
 ## Core's code is async functions (Dickson, 2026-11-14)
 
-Core's logic is written as async functions run on Core's thread, from the event queue and focus build, under five rules: only a request to a reader can be awaited; each request names the type of its answer, which the queue decodes once; every request gets exactly one outcome, so no paused function outlives its entry; the recorder's checkpoint is the state at the front entry's start plus the inputs since, so replay stays exact; and a state dump shows each entry, the answers it has had and the request out. Reason: a feature's handling reads top to bottom like NVDA's and keeps its code in one place, while the dumps and exact replay the project relies on are kept. Limits: a copied fact held across a wait is not caught by the compiler and is checked in review; the checkpoint copies Core's state at entry boundaries, whose cost grows with the application. The trial and its figures are in [the build notes](https://github.com/Neurrone/verbatim/blob/main/docs/design/readers-tell-core-asks.md).
+Core's logic is written as async functions run on Core's thread, from the event queue and focus build, under five rules: only a request to a reader can be awaited; each request names the type of its answer, which the queue decodes once; every request gets exactly one outcome, so no paused function outlives its entry; the recorder's checkpoint is the state at the front entry's start plus the inputs since, so replay stays exact; and a state dump shows each entry, the answers it has had and the request out. Reason: a feature's handling reads top to bottom like NVDA's and keeps its code in one place, while the dumps and exact replay the project relies on are kept. Limits: a copied fact held across a wait is not caught by the compiler and is checked in review; the checkpoint copies Core's state at entry boundaries, whose cost grows with the application.
 
 ## Before the build, and the order of building
 

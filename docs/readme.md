@@ -74,17 +74,10 @@ captures and troubleshooting.
 - [Experiments](../experiments/readme.md) — the experiments behind the
   UIA faults and the surveys behind design choices, one folder each.
 - Design records of work still being designed or built:
-  - [readers-tell-core-asks.md](design/readers-tell-core-asks.md) — the
-    build notes of "Readers tell, Core asks" (ADR 0003): each build's
-    scope, code, state tables and messages, Core's rules with NVDA's
-    source, the behaviours the deleted code carries, the measurements,
-    and what later milestones must keep.
-  - [readers-tell-core-asks-build1.md](design/readers-tell-core-asks-build1.md),
-    [readers-tell-core-asks-build2.md](design/readers-tell-core-asks-build2.md)
-    and [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
-    — the approved designs of its three builds, which are built: the event queue, focus
-    and announcements, with keys and text; Core naming the text provider
-    and the details, with the formatting memory; and terminals.
+  - [readers-tell-core-asks-build3.md](design/readers-tell-core-asks-build3.md)
+    — the approved design of the terminals build of "Readers tell, Core
+    asks" (ADR 0003), which is built; the terminal code's comments cite
+    its tables until the terminal rebuild replaces that code.
   - [terminal-rebuild.md](design/terminal-rebuild.md) — the study for
     M6.4's rebuild of the terminal reading on NVDA's loop: the inventory,
     state tables, the defects replayed, and each Verbatim-only feature's
@@ -93,8 +86,9 @@ captures and troubleshooting.
     from an event or a key to sound; published once its audio step is
     built.
   - [ownership-milestone-rules.md](design/ownership-milestone-rules.md) —
-    the ownership rules each planned milestone follows, and the evidence
-    behind them.
+    the ownership rules each planned milestone follows, what each must
+    keep of ADR 0003's model, the statements found contradicted, and the
+    evidence behind them.
   - [extensions.md](design/extensions.md) — the extension system,
     published once M5 builds it.
   - [security-model.md](design/security-model.md) — the threat model
