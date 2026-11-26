@@ -30,12 +30,19 @@ use windows::Win32::UI::Accessibility::{
 pub struct Text {
     pub element: IUIAutomationElement,
     pub pattern: IUIAutomationTextPattern,
+    /// The rows and the width the text's last colour read found, as the
+    /// outpost keeps them with a node's text.
+    pub colours_at: std::cell::Cell<Option<(u32, u32)>>,
 }
 
 impl Text {
     pub fn of(element: IUIAutomationElement) -> Self {
         let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
-        Self { element, pattern }
+        Self {
+            element,
+            pattern,
+            colours_at: std::cell::Cell::new(None),
+        }
     }
 
     pub fn target(&self) -> TextTarget<'_> {
@@ -325,6 +332,14 @@ impl verbatim_uia_rops::batch::Resolve for Shape<'_> {
             formats,
             learning,
         })
+    }
+
+    fn colour_size(&self, _subject: &Subject) -> Option<(u32, u32)> {
+        self.text.expect("a text").colours_at.get()
+    }
+
+    fn keep_colour_size(&self, _subject: &Subject, size: (u32, u32)) {
+        self.text.expect("a text").colours_at.set(Some(size));
     }
 
     fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {

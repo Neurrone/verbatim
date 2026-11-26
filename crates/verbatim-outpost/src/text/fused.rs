@@ -211,6 +211,17 @@ impl Resolve for TextResolver<'_, '_> {
         node_text(self.node, self.source, subject)
     }
 
+    fn colour_size(&self, subject: &Subject) -> Option<(u32, u32)> {
+        node_text(self.node, self.source, subject).ok()?;
+        self.source.colours_at()
+    }
+
+    fn keep_colour_size(&self, subject: &Subject, size: (u32, u32)) {
+        if node_text(self.node, self.source, subject).is_ok() {
+            self.source.keep_colours_at(size);
+        }
+    }
+
     fn point(&self, point: &Point) -> Result<HeldAt, Ran> {
         let position = outside_position(point, self.earlier)
             .ok_or_else(|| defect("a point names a step that holds none"))?;

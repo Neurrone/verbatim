@@ -252,6 +252,18 @@ pub trait Resolve {
     fn wait_check(&self) -> Result<WaitCheck<'_>, Ran> {
         Err(Defect("a caret wait on a resolver that holds no wait").ran())
     }
+
+    /// The rows and the width the last colour read of the text `subject`
+    /// names found, as [`Resolve::keep_colour_size`] was given them: the
+    /// size its next window read's program reads its colours at. `None`
+    /// when none is kept, so the colour programs read them all.
+    fn colour_size(&self, _subject: &Subject) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Keeps `size`, the rows and the width a colour read of the text
+    /// `subject` names found, with that text, so that it ends with it.
+    fn keep_colour_size(&self, _subject: &Subject, _size: (u32, u32)) {}
 }
 
 /// Where an `Ancestors` walk starts and how it stops, as the outpost
@@ -781,6 +793,11 @@ struct State<'s, 'a> {
     segment: &'s Segment<'a>,
     ran: Vec<Option<Ran>>,
     read_classically: bool,
+    /// The colour read whose rows a program read and failed at, in the
+    /// program or in a colour program going on from it: its rerun reads
+    /// classically, as a colour program's failure always sent the read to
+    /// the classic reads, with no second try of the programs.
+    colours_failed: Option<usize>,
 }
 
 impl<'s, 'a> State<'s, 'a> {
@@ -789,6 +806,7 @@ impl<'s, 'a> State<'s, 'a> {
             segment,
             ran: segment.steps.iter().map(|_| None).collect(),
             read_classically: false,
+            colours_failed: None,
         }
     }
 

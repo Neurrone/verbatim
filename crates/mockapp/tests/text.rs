@@ -689,6 +689,7 @@ fn remote_and_classic_text_reads_agree() {
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
+        colours_at: std::cell::Cell::new(None),
     };
     let units = |from: &At, movement, count| {
         units_both(&text, from, (movement, TextUnit::Line, count), true)
@@ -852,6 +853,7 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
+        colours_at: std::cell::Cell::new(None),
     };
     let units = |movement, count| {
         units_both(
@@ -1406,6 +1408,7 @@ fn a_backward_move_is_counted_backward_both_ways() {
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
+        colours_at: std::cell::Cell::new(None),
     };
     let units = |unit, count| {
         units_both(
@@ -1448,6 +1451,7 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
+        colours_at: std::cell::Cell::new(None),
     };
     common::apply(&mut app, hwnd, "caret doc 0");
     let remote = units_both(

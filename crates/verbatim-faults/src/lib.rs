@@ -84,6 +84,11 @@ pub enum Fault {
     /// does (`verbatim-uia-rops`'s `batch`, its ordinary-calls executor).
     /// Subject: the step's place, a `u8`.
     StepCallsFail,
+    /// A colour program that goes on from the rows an earlier program read
+    /// fails before it runs, with `E_FAIL` (`verbatim-uia-rops`'s
+    /// `terminal_colours::go_on_remote`). Subject: how many rows were read
+    /// before it, a `usize`.
+    ColourProgramFails,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

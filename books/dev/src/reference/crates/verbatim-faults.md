@@ -28,7 +28,9 @@ Public API:
   step, loops past the instruction limit before a step, or loses its
   answer after it ran; `StepCallsFail` (a `u8`, the step's place), where
   `verbatim-uia-rops`'s ordinary-calls executor fails a step with `E_FAIL`
-  before its calls; and `WindowMessageSent` (`(window, message, timeout,
+  before its calls; `ColourProgramFails` (a `usize`, the rows read before
+  it), where a colour program going on from an earlier program's rows
+  fails before it runs; and `WindowMessageSent` (`(window, message, timeout,
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries

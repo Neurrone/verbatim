@@ -7,14 +7,13 @@
 //!
 //! The first of those programs is the window read's own when the colour
 //! read follows its screen's `Visible` in one program: the builder emits
-//! the first rows' read there ([`emit_from`]) at the size the last colour
-//! read on this thread found ([`fusable_size`]), a guess that can only
+//! the first rows' read there ([`emit_from`]) at the size the text's last
+//! colour read found, which the resolver keeps with the text
+//! ([`super::Resolve::colour_size`], [`fusable`]), a guess that can only
 //! cost calls, since the rows count only when the size this batch's own
 //! answers give is that size ([`finish`]) and the colour programs read
 //! them otherwise. The outpost sized the old read's first rows from Core's
-//! model; a batch names no size, so the executor keeps the last one.
-
-use std::cell::Cell;
+//! model; a batch names no size, so the text's reader keeps the last one.
 
 use windows::Win32::UI::Accessibility::{IUIAutomationTextRange, TextUnit_Line};
 
@@ -42,25 +41,12 @@ const FUSED_WIDTH: u32 = 300;
 )]
 pub(super) const FUSED_COST: u32 = COLOUR_BUDGET as u32 + 60;
 
-thread_local! {
-    /// The rows and the width the last colour read on this thread found.
-    static LAST_SIZE: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
-}
-
-/// Keeps `size`, the rows and the width a colour read found, as the size
-/// the next window read's program reads its colours at.
-pub(super) fn note_size(size: (u32, u32)) {
-    LAST_SIZE.with(|last| last.set(Some(size)));
-}
-
-/// The rows and the width a window read's program reads its colours at:
-/// the last colour read's on this thread, when it read any rows no wider
-/// than [`FUSED_WIDTH`]. A guess: the program's rows are taken only when
-/// its batch's answers give the same size.
-pub(super) fn fusable_size() -> Option<(u32, u32)> {
-    LAST_SIZE
-        .with(Cell::get)
-        .filter(|&(rows, width)| rows > 0 && (1..=FUSED_WIDTH).contains(&width))
+/// Whether a window read's program reads its colours at `size`, the rows
+/// and the width the text's last colour read found: it read rows, no wider
+/// than [`FUSED_WIDTH`]. The size is a guess: the program's rows are taken
+/// only when its batch's answers give the same size.
+pub(super) fn fusable((rows, width): (u32, u32)) -> bool {
+    rows > 0 && (1..=FUSED_WIDTH).contains(&width)
 }
 
 /// A colour read's first program's registers: the rows', and where the

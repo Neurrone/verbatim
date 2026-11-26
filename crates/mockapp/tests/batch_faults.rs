@@ -8,7 +8,10 @@
 //! rerun, the act made twice; a run stopped partway, its unreached steps
 //! rerun; and a run past the instruction limit, logged as a defect and not
 //! run again. Each outcome is the one the calls alone answer, and every
-//! rerun step is logged as a fallback.
+//! rerun step is logged as a fallback. A colour read whose rows its
+//! window read's program read and failed at, or whose colour program
+//! going on from them failed, is read classically with no second try of
+//! the programs, and logged once.
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -224,6 +227,122 @@ fn an_overrun_is_a_defect() {
     fixture.app.quit();
 }
 
+/// The window read of Core's terminal reader with the screen's colours,
+/// of mockapp's terminal `text`.
+fn coloured_read(text: &Text) -> batch::Shape<'_> {
+    use verbatim_core::terminal::reader::{WindowAsk, WindowRead, window_batch};
+    let ask = WindowAsk {
+        read: WindowRead::First,
+        colours: true,
+        starting: false,
+        output: false,
+    };
+    let mut shape = batch::Shape::of(Some(text));
+    shape
+        .steps
+        .clone_from(&window_batch(batch::TEXT, &ask).0.batch().steps);
+    shape.culture = false;
+    shape
+}
+
+/// What a coloured read ran and answered: how many programs, the colour
+/// rows, and the lines it logged.
+type ColouredRead = (
+    usize,
+    Option<Vec<Vec<verbatim_uia_rops::ColourRun>>>,
+    Vec<String>,
+);
+
+/// Runs `shape`, a coloured read, with `armed` in force.
+fn read_colours(
+    uia: &Uia,
+    shape: &batch::Shape<'_>,
+    armed: Option<verbatim_faults::Guard>,
+) -> ColouredRead {
+    use verbatim_uia_rops::batch::{Found, Ran};
+    let targets = Arc::new(Targets::default());
+    verbatim_uia_rops::counting::start();
+    let answer =
+        tracing::subscriber::with_default(Arc::clone(&targets), || run_batch(&shape.segment(uia)));
+    let programs = verbatim_uia_rops::counting::stop().len();
+    drop(armed);
+    let rows = answer.steps.into_iter().last().and_then(|ran| match ran {
+        Ran::Done(Found::Colours(rows)) => Some(rows),
+        _ => None,
+    });
+    let logged = targets.0.lock().expect("the log").clone();
+    (programs, rows, logged)
+}
+
+/// mockapp's terminal of `fixture`, with a client reading it.
+fn terminal(fixture: &str, name: &str) -> (common::MockApp, HWND, Uia, Text) {
+    common::init_com();
+    let title = common::unique_title(name);
+    let app = common::spawn(fixture, "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let text = Text::of(common::named_element(&uia, hwnd, "Terminal"));
+    (app, hwnd, uia, text)
+}
+
+/// A window read's program fails at its colour step, the rows read at the
+/// size the text's last colour read found: the step is rerun classically,
+/// the same rows as the programs read, with no colour program tried and
+/// one line logged.
+fn a_colour_step_failing_in_its_program_is_read_classically_once() {
+    let (app, _, uia, text) = terminal("terminal-colours.json", "mockapp-faults-colour-step");
+    let shape = coloured_read(&text);
+    let first = read_colours(&uia, &shape, None);
+    let again = read_colours(&uia, &shape, None);
+    let colours = u8::try_from(shape.steps.len() - 1).expect("a few steps");
+    let armed = verbatim_faults::arm(
+        Fault::ProgramStepFails,
+        move |place: &u8| *place == colours,
+        1,
+    );
+    let failed = read_colours(&uia, &shape, Some(armed));
+    app.quit();
+    assert_eq!(first.1.as_ref().map(Vec::len), Some(4), "four rows");
+    assert_eq!((first.0, &first.2), (2, &Vec::new()), "the first read");
+    assert_eq!(again, (1, first.1.clone(), Vec::new()), "the next read");
+    assert_eq!(
+        failed,
+        (1, first.1, vec![FALLBACK.to_owned()]),
+        "the read whose colour step failed"
+    );
+}
+
+/// The colour program that goes on from the rows a window read's program
+/// read fails, on a screen whose every cell differs from its neighbours
+/// (`terminal-checkered.json`, 9 rows of 120 cells): the colour read is
+/// rerun classically, the same rows, with no further program and one line
+/// logged.
+fn a_colour_program_failing_after_the_reads_own_is_read_classically_once() {
+    let (mut app, hwnd, uia, text) =
+        terminal("terminal-checkered.json", "mockapp-faults-colour-program");
+    common::apply(&mut app, hwnd, "screen term 10");
+    let screen = vec!["x".repeat(120); 10].join(r"\n");
+    common::apply(&mut app, hwnd, &format!("set-text term {screen}"));
+    let shape = coloured_read(&text);
+    let first = read_colours(&uia, &shape, None);
+    let again = read_colours(&uia, &shape, None);
+    let armed = verbatim_faults::arm(Fault::ColourProgramFails, |_: &usize| true, 1);
+    let failed = read_colours(&uia, &shape, Some(armed));
+    app.quit();
+    let runs: Option<Vec<usize>> = first
+        .1
+        .as_ref()
+        .map(|rows| rows.iter().map(Vec::len).collect());
+    assert_eq!(runs, Some(vec![120; 9]), "every cell its own run");
+    assert_eq!((first.0, &first.2), (3, &Vec::new()), "the first read");
+    assert_eq!(again, (2, first.1.clone(), Vec::new()), "the next read");
+    assert_eq!(
+        failed,
+        (1, first.1, vec![FALLBACK.to_owned()]),
+        "the read whose colour program failed"
+    );
+}
+
 fn main() {
     harness::run_isolated(&[
         (
@@ -240,5 +359,13 @@ fn main() {
             a_run_stopped_partway_reruns_what_it_did_not_reach,
         ),
         ("an_overrun_is_a_defect", an_overrun_is_a_defect),
+        (
+            "a_colour_step_failing_in_its_program_is_read_classically_once",
+            a_colour_step_failing_in_its_program_is_read_classically_once,
+        ),
+        (
+            "a_colour_program_failing_after_the_reads_own_is_read_classically_once",
+            a_colour_program_failing_after_the_reads_own_is_read_classically_once,
+        ),
     ]);
 }

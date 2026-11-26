@@ -1613,11 +1613,14 @@ mockapp's `tests/fixtures/terminal.json` (`tests/terminal.rs`).
   focus included (`new_output_is_said_line_by_line_remote`), and for a
   read that takes a plain screen's colours once a colour read has found
   the screen's size; the worst case's colours take five more. A colour
-  read with no size kept or at another size than the one kept, the first
-  on an outpost's thread or after a resize, makes one call more, and a
-  screen wider than 300 cells always does
+  read with no size kept or at another size than the one kept, a
+  terminal's first or the first after a resize, makes one call more, and
+  a screen wider than 300 cells always does
   (`terminal_reader_colours_execute_exactly`, and `mockapp`'s
-  `colours_are_read_as_exact_runs_both_ways` for the resize).
+  `colours_are_read_as_exact_runs_both_ways` for the resize). The size is
+  kept for each terminal, so two panes of different sizes read by turns
+  cost one call a read
+  (`two_terminals_read_by_turns_each_keep_their_own_size_both_ways`).
   Classically, one call per provider method of each step's calls.
 - Inside the application, the read's program calls the provider as often
   as a purpose-built program would, 47 times for a read from a start

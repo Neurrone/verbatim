@@ -149,11 +149,22 @@ fn worst_of_op(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
         Op::CompareSelection { .. } => 120,
         Op::Locate { at, .. } => 20 + point_cost(state, at),
         Op::WaitForCaret { .. } => WAIT_CHECK,
-        Op::ReadColours { .. } if super::colours::fusable_size().is_some() => {
+        Op::ReadColours { subject, .. } if fused_size(state, subject).is_some() => {
             super::colours::FUSED_COST
         }
         _ => 0,
     }
+}
+
+/// The rows and the width a program reads the colours of `subject`'s text
+/// at: the size its last colour read found, kept with the text, when a
+/// program may read colours at it.
+fn fused_size(state: &State<'_, '_>, subject: &Subject) -> Option<(u32, u32)> {
+    state
+        .segment
+        .resolver
+        .colour_size(subject)
+        .filter(|&size| super::colours::fusable(size))
 }
 
 /// Whether a program of the steps from `start` reads the colours of the
@@ -162,8 +173,10 @@ fn worst_of_op(state: &State<'_, '_>, index: usize, prior: u32) -> u32 {
 /// runs the colour programs alone.
 fn fuses_colours(state: &State<'_, '_>, start: usize, index: usize) -> bool {
     match &state.step(index).op {
-        Op::ReadColours { screen, .. } => {
-            super::colours::fusable_size().is_some()
+        Op::ReadColours {
+            subject, screen, ..
+        } => {
+            fused_size(state, subject).is_some()
                 && state.index(*screen, index).is_some_and(|at| {
                     at >= start && matches!(state.step(at).op, Op::Visible { .. })
                 })
@@ -976,8 +989,10 @@ impl<'p, 'a> Planner<'p, '_, 'a> {
                 (Low::Locate(element, self.point(at, index)?), Given::Nothing)
             }
             Op::WaitForCaret { .. } => (self.wait_check()?, Given::Nothing),
-            Op::ReadColours { screen, .. } => {
-                let planned = super::colours::fusable_size().zip(self.here(*screen, index));
+            Op::ReadColours {
+                subject, screen, ..
+            } => {
+                let planned = fused_size(state, subject).zip(self.here(*screen, index));
                 let Some((size, screen)) = planned else {
                     return Err(Defect("a colour read in a program that cannot read it").ran());
                 };
@@ -1203,7 +1218,8 @@ enum Imported {
 /// document range, null until the first step that needs one reads it
 /// inside its own try block, and the comparisons of two points already
 /// made. The document range is the text as the first step to need it
-/// found it, as the reads of one program always were of one text.
+/// found it: a step that read it anew, as each did before, could see text
+/// written since an earlier step of its program read.
 struct Shared {
     /// For each text's element, by its import: its pattern and its
     /// document range.
@@ -2266,10 +2282,18 @@ impl<'a> State<'_, 'a> {
                 this.rerun(index..this.segment.steps.len(), why);
                 this.segment.steps.len()
             };
+            // A colour read whose rows the program read and failed at, or
+            // whose colour programs failed going on from them, is read
+            // classically by its rerun: one try of the programs, and the
+            // rerun's one line in the log.
+            let colours = matches!(self.step(index).op, Op::ReadColours { .. });
             let ran = match Ended::of(status) {
                 Ended::Done => match self.found(index, (emitted, given[place]), outcome) {
                     Ok(ran) => ran,
-                    Err(why) => return rerun(self, &why),
+                    Err(why) => {
+                        self.colours_failed = colours.then_some(index);
+                        return rerun(self, &why);
+                    }
                 },
                 Ended::Skipped => Ran::Unrun(Unrun::Skipped),
                 Ended::Cut => {
@@ -2292,7 +2316,10 @@ impl<'a> State<'_, 'a> {
                 Ended::Failed(code) => {
                     let why = Error::Uia(windows::core::Error::from(windows::core::HRESULT(code)));
                     match failed(&why) {
-                        Ran::Failed => return rerun(self, &why),
+                        Ran::Failed => {
+                            self.colours_failed = colours.then_some(index);
+                            return rerun(self, &why);
+                        }
                         gone => gone,
                     }
                 }

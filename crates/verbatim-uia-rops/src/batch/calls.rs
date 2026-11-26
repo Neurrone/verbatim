@@ -234,8 +234,8 @@ fn found(state: &State<'_, '_>, index: usize) -> Result<Found, Ran> {
             let at = Point::Of(*screen, PointOf::VisibleStart);
             let from = point(state, index, resolver.text(subject)?, &at)?;
             let size = colour_size(state, index, (*screen, *top))?;
-            super::colours::note_size(size);
-            colours(state, &from, size).map(Found::Colours)
+            resolver.keep_colour_size(subject, size);
+            colours(state, index, &from, size).map(Found::Colours)
         }
         Op::MoveBySentence { subject, .. } => no_sentences(resolver.text(subject)?),
         op @ (Op::Read { .. }
@@ -943,17 +943,20 @@ fn lengths_of(text: &str) -> Vec<u32> {
         .collect()
 }
 
-/// `ReadColours`' arms: the rows' colours from `from`'s point, by the
-/// colour programs when the segment may run programs, the fallback
-/// logged, or by the classic reads.
+/// `ReadColours`' arms for the step at `index`: the rows' colours from
+/// `from`'s point, by the colour programs when the segment may run
+/// programs, the fallback logged, or by the classic reads, as also after
+/// a program that read the step's rows failed, whose rerun logged it.
 fn colours(
     state: &State<'_, '_>,
+    index: usize,
     from: &FoundPoint,
     (rows, width): (u32, u32),
 ) -> Result<Vec<Vec<crate::ColourRun>>, Ran> {
     let width = usize::try_from(width).unwrap_or(usize::MAX);
-    let (rows, path) = super::colours::row_colours(from, (rows, width), state.segment.remote)
-        .map_err(call_failed)?;
+    let remote = state.segment.remote && state.colours_failed != Some(index);
+    let (rows, path) =
+        super::colours::row_colours(from, (rows, width), remote).map_err(call_failed)?;
     if let crate::focus::Path::Fallback(error) = &path {
         super::remote_fell_back("read colours", state.segment.window, error);
     }

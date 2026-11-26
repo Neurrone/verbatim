@@ -612,8 +612,8 @@ fn generic_window_reads_execute_exactly() {
 /// screen: in the worst case, every cell's colours differing from its
 /// neighbours' (`terminal-checkered.json`), each colour program reads rows
 /// while a worst row still fits its budget and the next goes on from
-/// there; a plain screen's colours, read after it, are read by the window
-/// read's own program.
+/// there; a plain screen's colours are one program. Each text is read
+/// once, so neither read has a size kept to read colours at.
 fn generic_colours_execute_exactly() {
     common::init_com();
     let screen = vec!["x".repeat(120); 30].join(r"\n");
@@ -657,13 +657,10 @@ fn generic_colours_execute_exactly() {
         vec![233, 4106, 4099, 4099, 4099, 4099, 3285],
         "the window read's program, then the worst case's colour programs"
     );
-    // The plain screen is read on the thread that read the worst case, so
-    // its program reads the colours at the size that read found
-    // (`terminal_reader_colours_execute_exactly`).
     assert_eq!(
         plain,
-        vec![1502],
-        "the window read's program, a plain screen's colours in it"
+        vec![233, 1262],
+        "the window read's program, then a plain screen's"
     );
     assert!(worst.iter().all(|&count| count < LIMIT / 2));
 }
@@ -814,12 +811,12 @@ fn terminal_reader_batches_execute_exactly() {
 /// The colours of a read of Core's terminal reader from a start, its
 /// largest batch, on a 120 by 30 screen, in the worst case, every cell's
 /// colours differing from its neighbours' (`terminal-checkered.json`), and
-/// on a plain screen, read first. The first read on a thread knows no size
-/// to read colours at: the read's program, then the colour program. Every
-/// later read reads its first rows' colours in its own program, at the
-/// size the last read found, so a plain screen's read is one program, and
-/// the worst case's first program stops at the colours' budget and the
-/// colour programs go on from there.
+/// on a plain screen. A text's first colour read has no size kept to read
+/// colours at: the read's program, then the colour programs. Every later
+/// read of that text reads its first rows' colours in its own program, at
+/// the size its last read found, so a plain screen's read is one program,
+/// and the worst case's first program stops at the colours' budget and
+/// the colour programs go on from there.
 fn terminal_reader_colours_execute_exactly() {
     use verbatim_core::terminal::reader::WindowRead;
     common::init_com();
@@ -858,8 +855,6 @@ fn terminal_reader_colours_execute_exactly() {
         "terminal-plain-colours.json",
         "mockapp-instructions-reader-colours-plain",
     );
-    // The worst case's reads run on the thread the plain screen's ran on,
-    // so its first already knows the size.
     let worst = read(
         "terminal-checkered.json",
         "mockapp-instructions-reader-colours-worst",
@@ -882,12 +877,14 @@ fn terminal_reader_colours_execute_exactly() {
         "a plain screen: a first read's program and its colour program, then a read that is \
          one program, colours and all"
     );
-    let capped = vec![4443, 4099, 4099, 4099, 4099, 3285];
     assert_eq!(
         counts(&worst),
-        [capped.clone(), capped],
-        "the worst case: the read's program with the first rows' colours, then the colour \
-         programs"
+        [
+            vec![330, 4106, 4099, 4099, 4099, 4099, 3285],
+            vec![4443, 4099, 4099, 4099, 4099, 3285]
+        ],
+        "the worst case: a first read's program and its colour programs, then the read's \
+         program with the first rows' colours and the colour programs that go on"
     );
     assert!(
         counts(&worst)
@@ -1004,6 +1001,95 @@ fn terminal_reader_reads_call_the_provider_exactly() {
             ])
         ),
         "the same with the colours, in the one program"
+    );
+}
+
+/// A colour read after a step whose declared worst case leaves no room for
+/// the colours' budget under the instruction limit: a line read with its
+/// formatting (7,700 instructions declared for the formatting), then the
+/// screen, the line at its top and the colours, on a plain 120 by 30
+/// screen. The size is kept by the first read, yet the second's program
+/// ends before the colours as the first's did, and the colour program
+/// reads them; the same steps without the formatting fit, and are one
+/// program.
+fn a_colour_read_that_does_not_fit_its_program_runs_the_colour_programs() {
+    use verbatim_model::batch::{Op, Place, Subject};
+    use verbatim_model::{TextPoint, TextUnit};
+    common::init_com();
+    let screen = vec!["x".repeat(120); 30].join(r"\n");
+    let mut fixture = Fixture::start(
+        "terminal-plain-colours.json",
+        "mockapp-instructions-colours-no-room",
+    );
+    let text = batch::Text::of(fixture.find("Terminal"));
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!("set-text term {screen}"),
+    );
+    let subject = Subject::Node(batch::TEXT);
+    let shape = |formats: bool| {
+        let mut shape = batch::Shape::of(Some(&text));
+        shape.culture = false;
+        shape
+            .step(batch::read_text(
+                verbatim_model::batch::Point::At(TextPoint::Caret),
+                (None, TextUnit::Line, 1),
+                formats,
+            ))
+            .step(Op::Visible {
+                subject: subject.clone(),
+            })
+            .step(Op::ReadText {
+                subject: subject.clone(),
+                at: verbatim_model::batch::Point::Of(
+                    Place(1),
+                    verbatim_model::batch::PointOf::VisibleStart,
+                ),
+                movement: None,
+                unit: TextUnit::Line,
+                count: 1,
+                details: verbatim_model::TextDetails::NONE,
+                whole: false,
+                trim: true,
+            })
+            .step(Op::ReadColours {
+                subject: subject.clone(),
+                screen: Place(1),
+                top: Place(2),
+            });
+        shape
+    };
+    let read = |shape: &batch::Shape<'_>| {
+        let mut rows = None;
+        let counts = each_counted(|| {
+            let answer = run_batch(&shape.segment(&fixture.uia));
+            rows = answer.steps.into_iter().last().and_then(|ran| match ran {
+                Ran::Done(Found::Colours(rows)) => Some(rows.len()),
+                _ => None,
+            });
+        });
+        assert_eq!(rows, Some(29), "the screen's rows");
+        counts
+    };
+    let (formatted, plain) = (shape(true), shape(false));
+    let counts = [
+        read(&formatted),
+        read(&formatted),
+        read(&plain),
+        read(&formatted),
+    ];
+    fixture.app.quit();
+    assert_eq!(
+        counts,
+        [
+            vec![234, 1262],
+            vec![234, 1262],
+            vec![1379],
+            vec![234, 1262]
+        ],
+        "with the formatting, twice; without it, once the size is kept; and with it again"
     );
 }
 
@@ -1464,6 +1550,10 @@ fn main() {
         (
             "terminal_reader_reads_call_the_provider_exactly",
             terminal_reader_reads_call_the_provider_exactly,
+        ),
+        (
+            "a_colour_read_that_does_not_fit_its_program_runs_the_colour_programs",
+            a_colour_read_that_does_not_fit_its_program_runs_the_colour_programs,
         ),
         (
             "terminal_snapshots_execute_exactly",

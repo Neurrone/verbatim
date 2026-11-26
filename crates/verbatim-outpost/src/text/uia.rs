@@ -176,12 +176,17 @@ pub struct UiaText {
     window: Option<isize>,
     details: TextDetails,
     support: TextSupport,
+    /// The rows and the width the text's last colour read found, as
+    /// [`TextSupport::colours_at`] keeps them: set while a run's resolver
+    /// holds the text shared.
+    colours_at: std::cell::Cell<Option<(u32, u32)>>,
     read_classically: bool,
 }
 
 /// What a control is known to support of the text attributes the caret
-/// read can read, learned from its own answers and kept by the outpost for
-/// as long as the control is read.
+/// read can read, and the size a terminal's last colour read found, each
+/// learned from its own answers and kept by the outpost for as long as
+/// the control is read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextSupport {
     /// The attributes it answered "not supported" for: never asked again.
@@ -189,6 +194,12 @@ pub struct TextSupport {
     /// The attributes it answered with something else: asked without
     /// watching for "not supported".
     pub supported: Attributes,
+    /// The rows and the width its last colour read found, which its next
+    /// window read's program reads its colours at (the verbatim-uia-rops
+    /// crate guide, "The colours"). Kept with the node, since two panes of
+    /// one Windows Terminal window differ in nothing else: one process, no
+    /// window of their own, and a runtime id each (probed 2026-11-26).
+    pub colours_at: Option<(u32, u32)>,
 }
 
 impl UiaText {
@@ -211,6 +222,7 @@ impl UiaText {
             window: None,
             details: TextDetails::NONE,
             support: TextSupport::default(),
+            colours_at: std::cell::Cell::new(None),
             read_classically: false,
         }
     }
@@ -235,14 +247,29 @@ impl UiaText {
     #[must_use]
     pub fn support(mut self, support: TextSupport) -> Self {
         self.support = support;
+        self.colours_at.set(support.colours_at);
         self
+    }
+
+    /// The rows and the width the text's last colour read found.
+    #[must_use]
+    pub fn colours_at(&self) -> Option<(u32, u32)> {
+        self.colours_at.get()
+    }
+
+    /// Keeps `size`, the rows and the width a colour read found.
+    pub fn keep_colours_at(&self, size: (u32, u32)) {
+        self.colours_at.set(Some(size));
     }
 
     /// What the control is known to support now, the earlier reads' and
     /// this text's, for the caller to keep for the next read.
     #[must_use]
     pub fn known_support(&self) -> TextSupport {
-        self.support
+        TextSupport {
+            colours_at: self.colours_at.get(),
+            ..self.support
+        }
     }
 
     /// The window the text is in, for a fallback's log.

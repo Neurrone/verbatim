@@ -11,7 +11,8 @@
 //! place; the caret, a caret key's starting point and a provider that
 //! reports no selection; the screen's colours as exact runs, read by the
 //! colour programs and by the read's own program, at the size kept and
-//! after a resize; and a start the outpost no longer holds.
+//! after a resize, and for two terminals of one outpost read by turns;
+//! and a start the outpost no longer holds.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -107,6 +108,9 @@ struct Terminal {
     /// The UI Automation calls each outpost made for the last window read,
     /// the remote one's first: for it, the programs it ran.
     calls: std::cell::Cell<[u32; 2]>,
+    /// The calls mockapp's provider answered for the remote outpost's
+    /// last window read.
+    provider: std::cell::Cell<u32>,
 }
 
 /// The anchors the two outposts hold for one place, the remote one's
@@ -133,8 +137,6 @@ impl Terminal {
         let title = common::unique_title(name);
         let mut app = common::spawn(fixture, "uia", &title);
         let hwnd = common::find_window(&title);
-        let uia = Uia::new().expect("a UIA client");
-        let element = common::named_element(&uia, hwnd, "Terminal");
         app.send("set-focus term");
         let outposts = [true, false]
             .into_iter()
@@ -145,28 +147,7 @@ impl Terminal {
                         remote_operations: remote,
                     },
                 );
-                outpost.read_focus_as(&element);
-                let focus = Batch {
-                    steps: vec![Step {
-                        op: Op::FocusRead {
-                            subject: Subject::Focus,
-                            known: Vec::new(),
-                            set: common::outpost::focus_set(),
-                            details: TextDetails::NONE,
-                        },
-                        when: None,
-                    }],
-                    placement: Placement::Queue,
-                    spare: None,
-                };
-                let (answer, _) = outpost.batch(hwnd, WindowVerdict::Uia, focus);
-                let Outcome::Result(Reply::Steps(steps)) = answer.outcome else {
-                    panic!("steps, not {:?}", answer.outcome)
-                };
-                let Some(StepOutcome::Done(Done::FocusRead(read))) = steps.first() else {
-                    panic!("the focus read, not {steps:?}")
-                };
-                let node = read.focus.read.node.expect("the terminal's node");
+                let node = Self::focused(&outpost, hwnd, "Terminal");
                 (outpost, node)
             })
             .collect();
@@ -175,7 +156,58 @@ impl Terminal {
             hwnd,
             outposts,
             calls: std::cell::Cell::new([0; 2]),
+            provider: std::cell::Cell::new(0),
         }
+    }
+
+    /// The node `outpost` mints for the element named `name`, read as its
+    /// focus.
+    fn focused(outpost: &OutpostUnderTest, hwnd: HWND, name: &str) -> NodeId {
+        let uia = Uia::new().expect("a UIA client");
+        outpost.read_focus_as(&common::named_element(&uia, hwnd, name));
+        let focus = Batch {
+            steps: vec![Step {
+                op: Op::FocusRead {
+                    subject: Subject::Focus,
+                    known: Vec::new(),
+                    set: common::outpost::focus_set(),
+                    details: TextDetails::NONE,
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
+        };
+        let (answer, _) = outpost.batch(hwnd, WindowVerdict::Uia, focus);
+        let Outcome::Result(Reply::Steps(steps)) = answer.outcome else {
+            panic!("steps, not {:?}", answer.outcome)
+        };
+        let Some(StepOutcome::Done(Done::FocusRead(read))) = steps.first() else {
+            panic!("the focus read, not {steps:?}")
+        };
+        read.focus.read.node.expect("the terminal's node")
+    }
+
+    /// The nodes the two outposts read, the remote one's first.
+    fn nodes(&self) -> [NodeId; 2] {
+        [self.outposts[0].1, self.outposts[1].1]
+    }
+
+    /// Makes the two outposts read `nodes`, nodes each still holds.
+    fn read_nodes(&mut self, nodes: [NodeId; 2]) {
+        for (outpost, node) in self.outposts.iter_mut().zip(nodes) {
+            outpost.1 = node;
+        }
+    }
+
+    /// Moves the focus to the element `id` named `name`, a second
+    /// terminal, which both outposts read from now on: its nodes.
+    fn focus(&mut self, id: &str, name: &str) -> [NodeId; 2] {
+        self.app.send(&format!("set-focus {id}"));
+        for (outpost, node) in &mut self.outposts {
+            *node = Self::focused(outpost, self.hwnd, name);
+        }
+        self.nodes()
     }
 
     /// Shows `rows`, the caret at the text's start, raising no event.
@@ -215,10 +247,17 @@ impl Terminal {
             .map(|(which, (outpost, node))| {
                 let ask = ask(which);
                 let (sent, steps) = window_batch(*node, &ask);
+                if which == 0 {
+                    common::reset_hits(self.hwnd);
+                }
                 let before = now_us();
                 let (answer, made) =
                     outpost.batch(self.hwnd, WindowVerdict::Uia, sent.batch().clone());
                 let after = now_us();
+                if which == 0 {
+                    let hits = common::read_hits(self.hwnd);
+                    self.provider.set(hits.iter().map(|(_, count)| count).sum());
+                }
                 let mut calls = self.calls.get();
                 calls[which] = made.uia;
                 self.calls.set(calls);
@@ -720,6 +759,54 @@ fn colours_are_read_as_exact_runs_both_ways() {
     );
 }
 
+/// Two terminals of one outpost, as two panes of one Windows Terminal
+/// window are, 4 rows of 20 cells and 3 rows of 12 (`terminal-two-panes.json`),
+/// read by turns with their colours: each keeps the size of its own last
+/// colour read, so once each has been read, every read is one program
+/// whichever was read before it, and calls the provider as often as that
+/// terminal's reads do when it is read alone. A size kept for the reading
+/// thread made each turn read the rows at the other terminal's size,
+/// leave them, and run the colour program too.
+fn two_terminals_read_by_turns_each_keep_their_own_size_both_ways() {
+    let mut terminal = Terminal::of("terminal-two-panes.json", "mockapp-reader-panes");
+    let colours = |_| WindowAsk {
+        colours: true,
+        ..plain(WindowRead::First)
+    };
+    let wide = terminal.nodes();
+    let mut reads = Vec::new();
+    let mut read = |terminal: &Terminal| {
+        let (read, _, _) = terminal.window(colours);
+        reads.push((terminal.calls.get()[0], terminal.provider.get()));
+        read.snapshot.colours.expect("the colours").len()
+    };
+    let wide_rows = [read(&terminal), read(&terminal)];
+    let narrow = terminal.focus("term2", "Second terminal");
+    let narrow_rows = [read(&terminal), read(&terminal)];
+    for nodes in [wide, narrow, wide, narrow] {
+        terminal.read_nodes(nodes);
+        let rows = read(&terminal);
+        assert_eq!(rows, if nodes == wide { 4 } else { 3 });
+    }
+    terminal.app.quit();
+    assert_eq!((wide_rows, narrow_rows), ([4, 4], [3, 3]));
+    assert_eq!(
+        reads,
+        [
+            (2, 232),
+            (1, 232),
+            (2, 139),
+            (1, 139),
+            (1, 232),
+            (1, 139),
+            (1, 232),
+            (1, 139)
+        ],
+        "each read's programs and provider calls: each terminal's first and second, then \
+         the two by turns"
+    );
+}
+
 /// A start Core names that the outpost no longer holds is the terminal
 /// gone, for a window read and for a history read, by remote operations
 /// and by calls.
@@ -796,6 +883,10 @@ fn main() {
         (
             "colours_are_read_as_exact_runs_both_ways",
             colours_are_read_as_exact_runs_both_ways,
+        ),
+        (
+            "two_terminals_read_by_turns_each_keep_their_own_size_both_ways",
+            two_terminals_read_by_turns_each_keep_their_own_size_both_ways,
         ),
         (
             "a_start_no_longer_held_is_the_terminal_gone_both_ways",

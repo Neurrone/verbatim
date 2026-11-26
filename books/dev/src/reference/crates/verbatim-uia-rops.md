@@ -672,8 +672,10 @@ same checks call by call.
 The first of those programs is the window read's own. A program's rows
 and their width are built into it, and a batch sizes its colours from
 its own answers, the screen's text and the line at its top, which the
-program has not read when it is built. So the executor keeps the size
-the last colour read on its thread found (`colours::fusable_size`), and
+program has not read when it is built. So the size a text's last colour
+read found is kept with that text, by the resolver
+(`Resolve::colour_size` and `keep_colour_size`; the outpost keeps it in
+the node's `TextSupport`, so it ends with the node), and
 a `ReadColours` whose screen's `Visible` is a step of the same program
 is emitted into that program at that size (`colours::emit_from`, the
 same instructions the colour program starts with), when the width is
@@ -684,12 +686,25 @@ cost calls: when the program has run, the size its batch's own answers
 give is computed as the call arm computes it, the rows are taken only
 when it is the size they were read at (`colours::finish`, which goes on
 with the colour programs from the row where the program stopped), and
-at any other size, after a resize or in another terminal of the same
-process, the colour programs read them all and that size is kept. The
-first colour read on a thread, a screen wider than 300 cells and a
-colour read whose screen an earlier program read run the colour
-programs alone. The old read took the size from Core's model; a batch
-names none, so the executor keeps it (Claude, 2026-11-26).
+at any other size, after a resize, the colour programs read them all
+and that size is kept. A text's first colour read, a screen wider than
+300 cells and a colour read whose screen an earlier program read run
+the colour programs alone, as does one whose program's declared worst
+case would pass the instruction limit with the colours' budget
+(`a_colour_read_that_does_not_fit_its_program_runs_the_colour_programs`).
+The old read took the size from Core's model; a batch names none, so
+the text's reader keeps it (Claude, 2026-11-26). The size is kept for
+each text and not for the reading thread, because one thread reads
+every pane of a Windows Terminal window, and panes of different sizes
+read by turns would each read the rows at the other's size, leave them
+and run the colour programs too
+(`two_terminals_read_by_turns_each_keep_their_own_size_both_ways`).
+
+A colour read whose rows its window read's program read and failed at,
+or whose colour program going on from them failed, is rerun by the
+classic reads alone (`State::colours_failed`): the programs are tried
+once and the fallback logged once, as when the colour programs ran
+apart (`mockapp`'s `batch_faults`).
 
 On a 120 by 30 screen a plain screen's read is one program, colours and
 all, and the worst case, every cell's colours differing from its

@@ -576,6 +576,29 @@ impl ColourRegisters {
     }
 }
 
+/// Fails when a test armed the colour program that goes on after `read`
+/// rows to fail (`verbatim_faults::Fault::ColourProgramFails`).
+#[cfg(any(test, feature = "faults"))]
+fn injected_failure(read: usize) -> Result<(), Error> {
+    if verbatim_faults::hit(verbatim_faults::Fault::ColourProgramFails, &read) {
+        return Err(Error::Execute(windows::core::Error::new(
+            windows::Win32::Foundation::E_FAIL,
+            "a test failed the colour program",
+        )));
+    }
+    Ok(())
+}
+
+/// No test arms a failure in a build without fault points.
+#[cfg(not(any(test, feature = "faults")))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the signature of the build with fault points"
+)]
+const fn injected_failure(_: usize) -> Result<(), Error> {
+    Ok(())
+}
+
 /// Reads the rows from `row` on, program after program, until they reach
 /// `limit` or `height` rows are read in all, appending them to `rows`.
 pub(crate) fn go_on_remote(
@@ -605,6 +628,7 @@ pub(crate) fn go_on_remote(
             )
         });
         let before = rows.len();
+        injected_failure(before)?;
         batch = registers.read(&operation.execute()?, width, rows)?;
         if rows.len() == before {
             break;
