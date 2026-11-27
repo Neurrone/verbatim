@@ -57,13 +57,7 @@ pub(crate) struct Need {
 
 /// The caret as the read before the request found it: its row of the
 /// memory's last read and its column in characters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CaretAt {
-    /// Its row.
-    pub(crate) row: usize,
-    /// Its column, in characters.
-    pub(crate) column: usize,
-}
+pub(crate) use verbatim_text::terminal_rows::ReadCaret;
 
 /// Whether Core answers a request naming `points` from `model`'s memory:
 /// each is the caret, the start, the end, or a position at an anchor Core
@@ -107,16 +101,12 @@ fn answer_step(
     next_anchor: &mut u64,
     held: &BTreeSet<TextAnchor>,
 ) -> Result<StepOutcome, Need> {
-    let caret = model.caret;
+    let caret = model.caret();
     let plan = {
-        let above = history.map(|read| {
-            (
-                read.first,
-                read.rows.iter().map(Line::from).collect(),
-                read.reached,
-            )
-        });
-        let mut rows = Rows { model, above };
+        let mut rows = Rows {
+            model,
+            above: history,
+        };
         match step {
             LocalStep::Read {
                 at,
@@ -147,29 +137,11 @@ fn answer_step(
     Ok(finish(model, plan, &mut mint, held))
 }
 
-/// One row of the terminal's text.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Line {
-    text: String,
-    wraps: bool,
-    hash: u64,
-}
-
-impl From<&Row> for Line {
-    fn from(row: &Row) -> Self {
-        Self {
-            text: row.text.to_string(),
-            wraps: row.wraps,
-            hash: row.line_hash,
-        }
-    }
-}
-
 /// A row to send as a chunk.
 #[derive(Debug)]
 struct Chunked {
     row: isize,
-    line: Line,
+    line: Row,
     /// The byte offset of the point in its text.
     offset: usize,
     first: bool,
@@ -189,7 +161,7 @@ enum Plan {
     Word {
         moved: i32,
         row: isize,
-        line: Line,
+        line: Row,
         word: std::ops::Range<usize>,
         offset: usize,
     },
@@ -243,7 +215,7 @@ fn finish(
             Anchor {
                 row: chunked.row,
                 column: 0,
-                line_hash: chunked.line.hash,
+                line_hash: chunked.line.line_hash,
             },
             held,
         );
@@ -251,7 +223,7 @@ fn finish(
             unit: TextUnit::Line,
             start: TextAnchor(number),
             offset: u32::try_from(chunked.offset).unwrap_or(u32::MAX),
-            text: chunked.line.text,
+            text: chunked.line.text.to_string(),
             languages: Vec::new(),
             first: chunked.first,
             last: chunked.last,
@@ -266,7 +238,7 @@ fn finish(
                 column: verbatim_text::proven::text_in(&chunked.line.text, ..chunked.offset)
                     .chars()
                     .count(),
-                line_hash: chunked.line.hash,
+                line_hash: chunked.line.line_hash,
             };
             let chunk = chunk_of(model, chunked);
             model.rules().memory_mut().set_review_anchor(review);
@@ -306,7 +278,7 @@ fn finish(
                 Anchor {
                     row,
                     column,
-                    line_hash: line.hash,
+                    line_hash: line.line_hash,
                 },
                 held,
             );
@@ -337,7 +309,7 @@ struct Rows<'a> {
     model: &'a TerminalModel,
     /// The history read last ([`super::TerminalModel::history`]): its
     /// first row, its rows, and whether it reached the document's start.
-    above: Option<(isize, Vec<Line>, bool)>,
+    above: Option<&'a HistoryRead>,
 }
 
 impl Rows<'_> {
@@ -353,7 +325,7 @@ impl Rows<'_> {
 
     /// The screen's height, in rows.
     fn height(&self) -> isize {
-        isize_of(usize::try_from(self.model.height).unwrap_or(0))
+        isize_of(usize::try_from(self.model.height()).unwrap_or(0))
     }
 
     /// The row the next read starts at: the screen's top.
@@ -369,11 +341,15 @@ impl Rows<'_> {
     /// The document's first row, when it is known: the memory's last read
     /// started there, or the history's read reached it.
     fn known_first(&self) -> Option<isize> {
-        if self.model.at_document_start {
+        if self.model.at_document_start() {
             return Some(0);
         }
         match &self.above {
-            Some((first, _, true)) => Some(*first),
+            Some(HistoryRead {
+                first,
+                reached: true,
+                ..
+            }) => Some(*first),
             _ => None,
         }
     }
@@ -399,25 +375,25 @@ impl Rows<'_> {
 
     /// Row `row`, read from the history when the memory does not keep it;
     /// `None` when there is no such row.
-    fn row(&mut self, row: isize) -> Result<Option<Line>, Need> {
+    fn row(&mut self, row: isize) -> Result<Option<Row>, Need> {
         if row > self.last() {
             return Ok(None);
         }
         if row >= self.first_kept() {
             let index = usize::try_from(row).unwrap_or(0);
-            return Ok(self.model.reader.memory().rows().get(index).map(Line::from));
+            return Ok(self.model.reader.memory().rows().get(index).cloned());
         }
         if self.known_first().is_some_and(|first| row < first) {
             return Ok(None);
         }
-        let covered = matches!(&self.above, Some((first, _, _)) if *first <= row);
+        let covered = matches!(self.above, Some(read) if read.first <= row);
         if !covered {
             return Err(self.need(Some(row)));
         }
-        Ok(self.above.as_ref().and_then(|(first, rows, _)| {
-            usize::try_from(row.saturating_sub(*first))
+        Ok(self.above.and_then(|read| {
+            usize::try_from(row.saturating_sub(read.first))
                 .ok()
-                .and_then(|at| rows.get(at))
+                .and_then(|at| read.rows.get(at))
                 .cloned()
         }))
     }
@@ -449,7 +425,7 @@ impl Rows<'_> {
                 if (top..=bottom).contains(&candidate)
                     && self
                         .row(candidate)?
-                        .is_some_and(|line| line.hash == line_hash)
+                        .is_some_and(|line| line.line_hash == line_hash)
                 {
                     return Ok(Some(candidate));
                 }
@@ -507,7 +483,7 @@ fn lost(at: TextPoint) -> StepOutcome {
 /// a row's start or a word's first character.
 fn resolve(
     rows: &mut Rows<'_>,
-    caret: Option<CaretAt>,
+    caret: Option<ReadCaret>,
     point: TextPoint,
 ) -> Result<Result<Point, StepOutcome>, Need> {
     let at_caret = |rows: &mut Rows<'_>| -> Result<Point, Need> {
@@ -611,7 +587,7 @@ fn moved(
 /// A read of one unit, a row.
 fn read_unit(
     rows: &mut Rows<'_>,
-    caret: Option<CaretAt>,
+    caret: Option<ReadCaret>,
     (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
 ) -> Result<Plan, Need> {
     if unit != TextUnit::Line {
@@ -634,7 +610,7 @@ fn read_unit(
 /// Rows read ahead, for say-all.
 fn read_ahead(
     rows: &mut Rows<'_>,
-    caret: Option<CaretAt>,
+    caret: Option<ReadCaret>,
     (at, movement, unit): (TextPoint, Option<TextMovement>, TextUnit),
     count: u8,
 ) -> Result<Plan, Need> {
@@ -677,7 +653,7 @@ fn read_ahead(
 /// the word at `at`, moved by `movement`, a move by word.
 fn read_word(
     rows: &mut Rows<'_>,
-    caret: Option<CaretAt>,
+    caret: Option<ReadCaret>,
     (at, movement): (TextPoint, Option<TextMovement>),
 ) -> Result<Plan, Need> {
     let count = match movement {
@@ -693,7 +669,7 @@ fn read_word(
         Err(outcome) => return Ok(Plan::Outcome(outcome)),
     };
     let found = crate::text_request::local_word(
-        |row| Ok(rows.row(row)?.map(|line| line.text)),
+        |row| Ok(rows.row(row)?.map(|line| line.text.to_string())),
         (point.row, point.offset),
         count,
     )?;
@@ -723,7 +699,7 @@ fn read_word(
 /// a line break between them.
 fn read_range(
     rows: &mut Rows<'_>,
-    caret: Option<CaretAt>,
+    caret: Option<ReadCaret>,
     Span {
         start,
         end,
@@ -815,7 +791,7 @@ pub(crate) struct Placed {
 /// What became of one command mark a move looked at.
 enum Resolved {
     /// Its line is on this row, whose first row's text is this.
-    Found(isize, Line),
+    Found(isize, Row),
     /// Its line is nowhere: the mark is dropped.
     Gone,
 }
@@ -856,7 +832,7 @@ pub(crate) fn mark(
     let len = isize_of(rows.len());
     let first_kept = isize_of(rows.first_kept());
     let review = review
-        .or_else(|| model.caret.map(|caret| isize_of(caret.row)))
+        .or_else(|| model.caret().map(|caret| isize_of(caret.row)))
         .unwrap_or(len.saturating_sub(1));
     // Up goes above the review position's line, not its own first row.
     let mut review_start = review;
@@ -919,7 +895,7 @@ pub(crate) fn mark(
                     .replace_mark(candidate, Some(mark));
                 let chunked = Chunked {
                     row,
-                    first: model.at_document_start && row == 0,
+                    first: model.at_document_start() && row == 0,
                     last: row == len.saturating_sub(1),
                     line,
                     offset: 0,
@@ -997,15 +973,15 @@ fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, Option
             usize::try_from(row)
                 .ok()
                 .and_then(|at| rows.get(at))
-                .map(Line::from)
+                .cloned()
         };
         if let Some((row, line)) = nearest.and_then(|row| Some((row, line(row)?))) {
             return Ok(Resolved::Found(row, line));
         }
-        if first_kept == 0 && model.at_document_start {
+        if first_kept == 0 && model.at_document_start() {
             return Ok(Resolved::Gone);
         }
-    } else if model.at_document_start && mark.row < 0 {
+    } else if model.at_document_start() && mark.row < 0 {
         return Ok(Resolved::Gone);
     }
     let Some(sought) = model
@@ -1025,7 +1001,7 @@ fn from_search(rows: &[(isize, Row)], mark: Anchor) -> Resolved {
     rows.iter()
         .min_by_key(|(row, _)| (row.abs_diff(mark.row), *row))
         .map_or(Resolved::Gone, |(row, first)| {
-            Resolved::Found(*row, Line::from(first))
+            Resolved::Found(*row, first.clone())
         })
 }
 
@@ -1045,7 +1021,7 @@ fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> O
 /// The row of the memory's last read where the start it names lies: the
 /// screen's top.
 pub(crate) fn start_row(model: &TerminalModel) -> isize {
-    let screen = isize_of(usize::try_from(model.height).unwrap_or(0));
+    let screen = isize_of(usize::try_from(model.height()).unwrap_or(0));
     isize_of(model.reader.memory().rows().len())
         .saturating_sub(screen)
         .max(0)
@@ -1063,7 +1039,7 @@ pub(crate) fn placed_history(
     text: &str,
     (rows_above, start): (u32, isize),
 ) -> HistoryRead {
-    let rows = rows_of(text, model.width);
+    let rows = rows_of(text, model.width());
     if asked.whole {
         let len = isize_of(model.reader.memory().rows().len());
         return HistoryRead {
@@ -1098,7 +1074,7 @@ pub(crate) fn placed(
     let rows = matches
         .iter()
         .filter_map(|found| {
-            let first = rows_of(&found.text, model.width).into_iter().next()?;
+            let first = rows_of(&found.text, model.width()).into_iter().next()?;
             let row = start.saturating_sub(isize::try_from(found.above).unwrap_or(0));
             (first.line_hash == hash && (row < first_kept || starts_at(model, row, hash)))
                 .then_some((row, first))
@@ -1119,7 +1095,7 @@ pub(crate) fn placed(
 pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
     let rows = model.reader.memory().rows();
     let len = rows.len();
-    let height = usize::try_from(model.height).unwrap_or(usize::MAX);
+    let height = usize::try_from(model.height()).unwrap_or(usize::MAX);
     let top = len.saturating_sub(height).max(rows.first_kept());
     let blank = |row: usize| rows.get(row).is_none_or(Row::is_blank);
     let wraps = |row: usize| rows.get(row).is_some_and(|found| found.wraps);
@@ -1149,7 +1125,7 @@ pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
         }
         lines
     };
-    if let Some(caret) = model.caret {
+    if let Some(caret) = model.caret() {
         let mut end = caret.row;
         while wraps(end) && end.saturating_add(1) < len {
             end = end.saturating_add(1);

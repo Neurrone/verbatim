@@ -61,7 +61,7 @@ use crate::state::SrState;
 use crate::terminal::reader::WindowReply;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
-pub(crate) use review::CaretAt;
+pub(crate) use review::ReadCaret;
 
 /// How many terminals Core keeps a model of, the most recently read: a
 /// terminal's memory lives while its node does.
@@ -146,12 +146,8 @@ pub(crate) struct TerminalModel {
     /// When the newest read taken began, in microseconds on the shared
     /// clock: a change observed before it is covered by it.
     pub(crate) started_us: u64,
-    /// A hash of the last read given to the rules, its times, number,
-    /// start and caret left out.
-    given: Option<u64>,
-    /// Whether the next read is the first after the focus arrived, which
-    /// is given to the rules even when identical to the last.
-    pub(crate) focus_arrived: bool,
+    /// Which read is given to the rules next, however like the last.
+    given: Given,
     /// The lines of the command marks set, newest last, at most twice
     /// [`MARKS`], for the marks the memory and the aside screen keep.
     pub(crate) mark_lines: VecDeque<MarkLine>,
@@ -163,16 +159,19 @@ pub(crate) struct TerminalModel {
     /// The places the review answers minted, each a text anchor's number
     /// and the memory's place for it, oldest first.
     pub(crate) places: VecDeque<(u64, u64)>,
-    /// The caret as the last read found it.
-    pub(crate) caret: Option<CaretAt>,
-    /// Whether the last read started at the document's start.
-    pub(crate) at_document_start: bool,
-    /// The screen's height in rows and width in cells as the last read
-    /// found them.
-    pub(crate) height: u32,
-    pub(crate) width: usize,
-    /// When the rules' quiet-period timer is due.
-    due_ms: Option<u64>,
+}
+
+/// The read given to the rules before, by which a read identical to it is
+/// not given again (Dickson, 2026-10-26).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Given {
+    /// None since the focus arrived: the next read is given whatever it
+    /// shows. The rules' own "first read after the focus" ends later, at the
+    /// first read they handle whole, past one with no text.
+    Focus,
+    /// The hash of the last read given, its times, number, start and caret
+    /// left out ([`fingerprint`]).
+    Last(u64),
 }
 
 /// Core's models of the terminals it reads, the most recently read last,
@@ -233,17 +232,35 @@ impl TerminalModel {
             last_read: None,
             sends: 0,
             started_us: 0,
-            given: None,
-            focus_arrived: true,
+            given: Given::Focus,
             mark_lines: VecDeque::new(),
             pending_mark: None,
             places: VecDeque::new(),
-            caret: None,
-            at_document_start: false,
-            height: 0,
-            width: 0,
-            due_ms: None,
         }
+    }
+
+    /// The caret as the last read the memory took found it
+    /// ([`verbatim_text::terminal_rows::TerminalMemory::caret`]).
+    pub(crate) fn caret(&self) -> Option<ReadCaret> {
+        self.reader.memory().caret()
+    }
+
+    /// The screen's height in rows as the last read the memory took found
+    /// it; 0 before the first.
+    pub(crate) fn height(&self) -> u32 {
+        u32::try_from(self.reader.memory().height()).unwrap_or(u32::MAX)
+    }
+
+    /// The screen's width in cells as the last read the memory took found
+    /// it; 0 before the first.
+    pub(crate) fn width(&self) -> usize {
+        self.reader.memory().width()
+    }
+
+    /// Whether the last read the memory took started at the document's
+    /// start.
+    pub(crate) fn at_document_start(&self) -> bool {
+        self.reader.memory().at_document_start()
     }
 
     /// The rules, to change: copied first when a checkpoint shares them.
@@ -269,8 +286,7 @@ impl TerminalModel {
         if key.kind == TerminalKeyKind::Enter && self.reader.caret_line_input() {
             self.mark_caret_line(key.at_ms);
         }
-        let step = self.rules().key(rules_key(key));
-        self.due_ms = step.timer;
+        let _ = self.rules().key(rules_key(key));
     }
 
     /// The newest key's window, given to the rules or not, as the rules
@@ -306,7 +322,7 @@ impl TerminalModel {
     /// quiet period after the key ends, so that the read that shows the
     /// input printed elsewhere marks it there ("Features and settings").
     fn mark_caret_line(&mut self, at_ms: u64) {
-        let Some(caret) = self.caret else {
+        let Some(caret) = self.caret() else {
             return;
         };
         let Some(mark) = self.rules().memory_mut().add_mark(caret.row) else {
@@ -366,7 +382,7 @@ impl TerminalModel {
             return;
         }
         let kept = memory.rows();
-        let caret = self.caret.map_or(kept.len(), |caret| caret.row);
+        let caret = memory.caret().map_or(kept.len(), |caret| caret.row);
         let found = (0..rows.len())
             .filter(|&row| {
                 rows.get(row) == Some(&NewRow::New)
@@ -400,16 +416,14 @@ impl TerminalModel {
     /// The focus arrived at the terminal at `at_ms`: the rules are told,
     /// and its next read is given to them whatever it shows.
     pub(crate) fn focused(&mut self, at_ms: u64) {
-        let step = self.rules().focus(at_ms);
-        self.due_ms = step.timer;
-        self.focus_arrived = true;
+        let _ = self.rules().focus(at_ms);
+        self.given = Given::Focus;
     }
 
     /// The focus left the terminal: the rules are told, and its waiting
     /// keys dropped.
     pub(crate) fn blurred(&mut self) {
-        let step = self.rules().blur();
-        self.due_ms = step.timer;
+        let _ = self.rules().blur();
         self.pending.clear();
     }
 }
@@ -457,7 +471,7 @@ pub(crate) fn focused(state: &SrState) -> Option<NodeId> {
 /// time, and no other's, so a model dropped or left has no timer. The
 /// shell reads it after each step ([`SrState::terminal_timer_due`]).
 pub(crate) fn due(state: &SrState) -> Option<u64> {
-    model_of(state, focused(state)?)?.due_ms
+    model_of(state, focused(state)?)?.reader.due()
 }
 
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
@@ -778,15 +792,14 @@ pub(crate) fn take(
     let mut fingerprinted = snapshot.clone();
     fingerprinted.waited = waited;
     let print = fingerprint(&fingerprinted);
-    if !waited && !model.focus_arrived && model.given == Some(print) {
+    if !waited && model.given == Given::Last(print) {
         return Taken {
             speech: None,
             key: SpeechKey::default(),
             generation,
         };
     }
-    model.given = Some(print);
-    model.focus_arrived = false;
+    model.given = Given::Last(print);
     model.give_keys(at_ms);
     let mut read = read_of(snapshot);
     // Only a start the read named can be refused, so the rules ask for a
@@ -800,7 +813,6 @@ pub(crate) fn take(
     }
     let colours = snapshot.colours.as_deref().map(colours_of);
     let step = model.rules().read(&read, waited, colours.as_deref());
-    model.due_ms = step.timer;
     let key = model.speech_key(at_ms);
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
@@ -826,12 +838,6 @@ pub(crate) fn take(
         };
     }
     if let Some(outcome) = &step.outcome {
-        model.height = height;
-        model.width = outcome.width;
-        model.caret = outcome.caret.map(|row| CaretAt {
-            row,
-            column: read.caret_column,
-        });
         if !outcome.blank {
             model.settle_mark(&outcome.rows, at_ms);
         }
@@ -843,7 +849,6 @@ pub(crate) fn take(
     } else if model.start.is_none() {
         model.start = Some(reply.start);
     }
-    model.at_document_start = read.at_document_start;
     if let Some(caret) = &snapshot.caret {
         crate::editing::take_caret(state, node, caret.clone());
     }
@@ -878,11 +883,10 @@ pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<E
     };
     model.give_keys(at_ms);
     let step = model.rules().timer(at_ms);
-    model.due_ms = step.timer;
     debug_assert!(
-        model.due_ms.is_none_or(|due_ms| due_ms > at_ms),
+        step.timer.is_none_or(|due_ms| due_ms > at_ms),
         "the quiet-period timer fired at {at_ms} is due again at {:?}",
-        model.due_ms
+        step.timer
     );
     crate::terminal::speech(state, trace_id, at_ms, node, speech_of(step))
 }
@@ -893,8 +897,7 @@ pub(crate) fn sync_settings(state: &mut SrState) {
     let settings = settings_of(state);
     for model in state.terminals.iter_mut() {
         if model.reader.settings() != settings {
-            let step = model.rules().set_settings(settings);
-            model.due_ms = step.timer;
+            let _ = model.rules().set_settings(settings);
         }
     }
 }

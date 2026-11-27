@@ -305,15 +305,15 @@ fn full_read(
         (TerminalScope::HistoryBlock { height }, _) => unnamed(height),
         (TerminalScope::Count { start }, _) => WindowRead::From {
             start,
-            height: model.height,
+            height: model.height(),
             count: true,
         },
         (TerminalScope::Fresh, Some(start)) => WindowRead::From {
             start,
-            height: model.height,
+            height: model.height(),
             count: false,
         },
-        (TerminalScope::Fresh, None) => unnamed(model.height),
+        (TerminalScope::Fresh, None) => unnamed(model.height()),
     };
     WindowAsk {
         read,

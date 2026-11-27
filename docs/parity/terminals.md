@@ -354,6 +354,18 @@ two lines leaves Verbatim's review cursor on the line reviewed. The
 the terminal scenarios `docs/roadmap.md`, "The terminal redesign",
 brings back to passing.
 
+- Pending Dickson (Claude, 2026-11-27): a review command whose fresh read
+  lands between a program's clear and its reprint, the screen showing no
+  text, reads the memory's last read with text at its caret, since a read
+  with no text changes nothing in the memory (rule 10): "one" then
+  "ready> abc" on screen, cleared, and review current line says
+  "ready> abc". Before, it read the cleared read's caret row against the
+  memory's rows, and said nothing there. NVDA reviews the console's live
+  text (`nvda/source/NVDAObjects/UIA/winConsoleUIA.py`,
+  `ConsoleUIATextInfo` and `_WinTerminalUIATextInfo`), so it reviews the
+  blank screen and says "blank" (`nvda/source/speech/speech.py` 1935 to
+  1939).
+
 ### Windows and tabs
 
 Verbatim: **matched (verified)**.

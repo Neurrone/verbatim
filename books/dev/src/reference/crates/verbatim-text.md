@@ -101,6 +101,11 @@ terminal model").
   `report` whether new output is reported: one memory per terminal.
   - `above`: how many rows the next read takes above its start, a screen
     as the last read found it, none before the first read.
+  - `width`, `height`, `caret` and `at_document_start`: the screen's shape,
+    the caret (a `ReadCaret`, its row and its column in that row) and
+    whether the last read the memory took started at the document's start,
+    each as that read found it, which a read with no text leaves; the one
+    record of them, which Core reads rather than copies.
   - `rows`: the last read's rows as `Rows`, counted from its first row:
     `len`, `first_kept`, `kept`, and `get` of a `Row` (its text as a
     `Text`, a 64-bit hash, whether it wraps onto the next row, its line's
@@ -225,7 +230,7 @@ terminal model").
   document's start keeps something. It only recognises the screen coming
   back and is never spoken.
 - A read whose screen shows no text where the last had text changes
-  nothing (`blank`).
+  nothing (`blank`), the caret the memory keeps included.
 - Starting again, after a resize or `restart`: each anchor is found by its
   line's hash nearest its old place, at its character position within the
   line, so the review cursor stays on its character however the line
@@ -306,6 +311,10 @@ every new line goes to Core.
     which forget held typing), or `Other`.
   - `focus(at_ms)` and `blur()`.
   - `timer(now_ms)`: the timer the last step asked for came due.
+  - `due()`: when the timer is due as the rules now stand, the same time
+    each step gives, for a caller that asks rather than keeps it (Core). It
+    looks at every row's line, a few hundred at most, and Core's shell
+    asks it after every step.
   - `set_settings(Settings)`.
   - `caret_line_input()`, above.
 - The keys' window, the one place its 300 milliseconds is judged: a

@@ -114,10 +114,17 @@ fn held_anchors(state: &SrState, node: NodeId) -> BTreeSet<TextAnchor> {
 /// command (Table 6, column A): its answer is taken by the model, and the
 /// terminal's speech waiting ahead of the first focus is said, then the
 /// read's own. A read that brings nothing leaves the memory as it stands.
-pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId, due_us: u64) {
+/// Returns whether the read came and its screen shows no text; the memory
+/// then stays as its last read left it ("A read with no text").
+pub(crate) async fn fresh(
+    cx: &mut Cx<Entries>,
+    trace_id: TraceId,
+    node: NodeId,
+    due_us: u64,
+) -> bool {
     let now_us = cx.now_us();
     let Some(asked) = reading::entry_read(&mut cx.facts_mut(), node, false, now_us) else {
-        return;
+        return false;
     };
     let reply = match cx.ask(asked, due_us).await {
         // A read that fails, the terminal's text unread included, brings
@@ -130,6 +137,9 @@ pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId,
         | Outcome::ReaderEnded
         | Outcome::NoLongerAwaited(_) => None,
     };
+    let blank = reply.as_deref().is_some_and(|reply| {
+        !verbatim_text::terminal_rows::shows_text(&reply.snapshot.screen.text)
+    });
     if let Some(reply) = reply.as_deref() {
         cx.emit(reading::observed(&asked.terminal, reply, trace_id));
     }
@@ -141,6 +151,7 @@ pub(crate) async fn fresh(cx: &mut Cx<Entries>, trace_id: TraceId, node: NodeId,
         (now_us, trace_id),
     );
     reading::speak_read(cx, entry);
+    blank
 }
 
 /// The place Core puts in terminal `node`'s memory at the row of the start
@@ -185,7 +196,7 @@ pub(crate) async fn answer(
             let mut mint = facts.next_terminal_anchor;
             let model = terminal_model::model_mut(&mut facts, node)?;
             let answer = review::answer(model, (batch, history.as_ref()), &mut mint, &held);
-            let height = model.height;
+            let height = model.height();
             facts.next_terminal_anchor = mint;
             match answer {
                 Ok(outcomes) => return Some(outcomes),
@@ -314,8 +325,12 @@ pub(crate) async fn status_bar(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u
         return;
     };
     let due_us = cx.due_in(crate::event_queue::OTHER_DUE_US);
-    fresh(&mut cx, trace_id, node, due_us).await;
-    let footer = {
+    // A screen showing no text has no footer, whatever the memory keeps of
+    // the last read with text.
+    let blank = fresh(&mut cx, trace_id, node, due_us).await;
+    let footer = if blank {
+        Vec::new()
+    } else {
         let facts = cx.facts();
         let Some(model) = terminal_model::model_of(&facts, node) else {
             return;

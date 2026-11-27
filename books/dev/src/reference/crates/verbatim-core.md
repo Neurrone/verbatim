@@ -1767,12 +1767,18 @@ held at the next read's start) and the answers to the requests they make;
   outpost's dropped, each only through `SrState::drop_models`: the rules
   (`TerminalReader`) behind an `Arc`, the model's generation, the keys not
   yet given to them, the history rows that came, the review places, the
-  caret and screen shape, the start anchor the next read names (the start
-  of the last read whose screen showed text, or the first), the scope the
-  rules owe (`Fresh`, `Whole` or `HistoryBlock`, taken by the next full
-  read sent), when the newest read began, and the quiet-period timer's due
-  time. A model is made with the baseline while the terminal has the
-  focus.
+  start anchor the next read names (the start of the last read whose
+  screen showed text, or the first), the scope the rules owe (`Fresh`,
+  `Whole` or `HistoryBlock`, taken by the next full read sent), when the
+  newest read began, and `Given`, the read given before: `Focus`, none
+  since the focus arrived, so the next is given whatever it shows, or
+  `Last` with its hash, so an identical read that did not wait is not
+  given. The caret, the screen's shape and whether the last read started
+  at the document's start are the memory's, read through
+  `TerminalModel::caret`, `width`, `height` and `at_document_start`, and
+  the quiet-period timer's due time is the rules' (`TerminalReader::due`):
+  the model keeps no copy of them. A model is made with the baseline while
+  the terminal has the focus.
 - Keys. Every key input while the focus is a modeled terminal is kept by
   its kind, a clearing key as `Forget` then `Other`. Whether a read takes
   the screen's colours is Core's decision from the newest key's window, as
@@ -1833,8 +1839,9 @@ held at the next read's start) and the answers to the requests they make;
   the top bit set (`TERMINAL_ANCHORS`), a range no outpost mints from, with
   at most 64 places beyond those Core holds. "Report status bar"
   (`terminal::commands::status_bar`) reads the focused modelled
-  terminal's footer (`review::footer`) after a fresh read, or says
-  `Message::NoStatusLineFound` outside one.
+  terminal's footer (`review::footer`) after a fresh read, none when that
+  read's screen shows no text (`terminal::commands::fresh` says so), or
+  says `Message::NoStatusLineFound` outside one.
 - Command marks. Enter on a caret line holding input
   (`TerminalReader::caret_line_input`) marks the line (`MarkLine`).
   Verbatim+Alt+Up and Down Arrow (`review_text::command_mark`, with

@@ -293,6 +293,18 @@ fn the_review_reads_where_the_caret_is() {
     assert_eq!(session.heard(), plain(&["ready> abc", "c"]));
 }
 
+#[test]
+fn after_a_read_with_no_text_the_review_reads_where_the_last_reads_caret_was() {
+    // The memory keeps the last read with text, and its caret with it
+    // (pending Dickson, `docs/parity/terminals.md`, "The review cursor while
+    // output is written").
+    let mut session = showing(20, 4, 100, "one\r\nready> abc");
+    session.write("\x1b[H\x1b[2J", 100);
+    let _ = session.heard();
+    session.press(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["ready> abc"]));
+}
+
 /// Review words in a terminal Core reads are Core's own words over its
 /// rows (the request list's design, section 6, the local answerers), so
 /// word review keeps the words it had: previous word from a row's first
@@ -775,6 +787,17 @@ fn a_blank_screen_has_no_status_bar_information() {
 }
 
 #[test]
+fn a_screen_cleared_before_the_command_has_no_status_bar_information() {
+    // The command's fresh read, like the read before it, shows no text,
+    // though the memory keeps the rows of the last read with text.
+    let mut session = showing(20, 4, 100, "one\r\ntwo\r\nready>");
+    session.write("\x1b[H\x1b[2J", 100);
+    let _ = session.heard();
+    session.press(&command(STATUS_BAR));
+    assert_eq!(session.heard(), plain(&["Message(NoStatusBarInformation)"]));
+}
+
+#[test]
 fn the_status_bar_is_spelled_on_the_second_press_and_copied_on_the_third() {
     let mut session = showing(20, 4, 100, "one\r\nab\r\ncd\x1b[1;4H");
     // The lines spelled as one text, the space between them spelled.
@@ -906,6 +929,29 @@ fn enter_on_a_typed_line_marks_it_and_a_bare_enter_does_not() {
     session.press(&command(UP));
     assert_eq!(session.heard(), []);
     assert_eq!(session.requests(), [FRESH, FRESH]);
+}
+
+#[test]
+fn enter_after_a_read_with_no_text_marks_the_typed_line() {
+    // A read lands between a clear and its reprint, the caret homed, and
+    // Enter is given with the next read: the line the memory keeps at the
+    // caret, which holds the typing, is the one marked.
+    let mut session = showing(30, 6, 100, "one\r\ntwo\r\n$ ");
+    let mut at_ms = 1000;
+    for character in ["l", "s"] {
+        let (_, input) = typed(character, at_ms);
+        session.press(&input);
+        session.write(character, at_ms + 5);
+        at_ms += 10;
+    }
+    session.write("\x1b[H\x1b[2J", at_ms);
+    let (_, input) = typed("\r", at_ms + 10);
+    session.press(&input);
+    session.write("$ ls\r\nfile\r\n$ ", at_ms + 15);
+    let _ = session.heard();
+    let _ = session.requests();
+    session.press(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ ls"]));
 }
 
 #[test]

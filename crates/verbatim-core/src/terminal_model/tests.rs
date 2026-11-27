@@ -276,7 +276,7 @@ impl Watch {
         self.sim.write(bytes.as_bytes());
         let model = super::model_of(&self.state, watched());
         let named = model.and_then(|model| model.start);
-        let height = model.map_or(0, |model| model.height);
+        let height = model.map_or(0, super::TerminalModel::height);
         let snapshot = self
             .sim
             .snapshot(&verbatim_term_sim::Query {
@@ -382,7 +382,7 @@ fn a_waited_read_identical_to_the_last_is_given_so_a_row_changed_around_it_is_no
             text: "70%".to_owned(),
         }])
     );
-    assert_eq!(watch.model().due_ms, None);
+    assert_eq!(watch.model().reader.due(), None);
 }
 
 /// The read after the focus returns is given though it is identical to the
@@ -397,6 +397,19 @@ fn the_read_after_the_focus_returns_is_given_though_identical() {
     assert!(watch.write("", 300, false).speech.is_none());
     super::model_or_new(&mut watch.state, watched()).focused(350);
     assert!(watch.write("", 400, false).speech.is_some());
+}
+
+/// The focus's exception to the identical-read rule ends at the first read
+/// given after the focus: a read identical to that one is not given.
+#[test]
+fn the_focus_exception_ends_at_the_first_read_given() {
+    let mut watch = Watch::new();
+    let _ = watch.write("50%", 100, false);
+    let _ = watch.write("", 200, false);
+    assert!(watch.write("", 300, false).speech.is_none());
+    super::model_or_new(&mut watch.state, watched()).focused(350);
+    assert!(watch.write("", 400, false).speech.is_some());
+    assert!(watch.write("", 500, false).speech.is_none());
 }
 
 /// A key of `kind` Core took at `at_ms`, under trace 7, numbered 3.

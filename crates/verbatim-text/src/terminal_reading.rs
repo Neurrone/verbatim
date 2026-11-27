@@ -541,7 +541,6 @@ struct Screen {
     /// The first row of each row's line, an index of `rows`.
     starts: Vec<usize>,
     caret: Option<Caret>,
-    size: (usize, usize),
     /// The screen's first row, an index of `rows`: rows above it are in
     /// the history, where no program redraws them.
     top: usize,
@@ -957,14 +956,14 @@ impl TerminalReader {
     pub fn timer(&mut self, now_ms: u64) -> Step {
         let mut step = Step::default();
         self.release(now_ms, &mut step.speech);
-        step.timer = self.next_due();
+        step.timer = self.due();
         step
     }
 
     /// A step with nothing to say, and the timer as it now stands.
     fn idle(&self) -> Step {
         Step {
-            timer: self.next_due(),
+            timer: self.due(),
             ..Step::default()
         }
     }
@@ -997,8 +996,11 @@ impl TerminalReader {
         }
     }
 
-    /// When the earliest hold is due.
-    fn next_due(&self) -> Option<u64> {
+    /// When the earliest hold is due: when to call [`TerminalReader::timer`],
+    /// as each [`Step`] says, for a caller that asks rather than keeps it.
+    /// It looks at every row's line.
+    #[must_use]
+    pub fn due(&self) -> Option<u64> {
         self.screen
             .rows
             .iter()
@@ -1127,11 +1129,16 @@ impl TerminalReader {
         colours: Option<&[Vec<ColourRun>]>,
     ) -> Step {
         let now = read.at_ms;
+        // The screen's shape as the last read the memory took found it,
+        // `(0, 0)` before the first. A lost read with output unreported,
+        // whose memory starts again, never changes it, since a changed
+        // shape starts the memory again first ("Starting again").
+        let shape = (memory.width(), memory.height());
         let mut outcome = memory.read(read, self.settings.report_new_output);
         if outcome.history_block {
             return Step {
                 history_block: true,
-                timer: self.next_due(),
+                timer: self.due(),
                 outcome: Some(outcome),
                 ..Step::default()
             };
@@ -1140,7 +1147,7 @@ impl TerminalReader {
             // A read whose screen shows no text changes nothing ("A read with
             // no text").
             return Step {
-                timer: self.next_due(),
+                timer: self.due(),
                 outcome: Some(outcome),
                 ..Step::default()
             };
@@ -1149,7 +1156,7 @@ impl TerminalReader {
             if self.settings.report_new_output {
                 return Step {
                     count_read: true,
-                    timer: self.next_due(),
+                    timer: self.due(),
                     outcome: Some(outcome),
                     ..Step::default()
                 };
@@ -1203,7 +1210,6 @@ impl TerminalReader {
                 .collect(),
             starts: vec![0; rows.len()],
             caret: None,
-            size: (outcome.width, outcome.height),
             top: rows.len().saturating_sub(outcome.height),
             skipped: 0,
         };
@@ -1244,7 +1250,7 @@ impl TerminalReader {
                 .map(|row| row.checked_sub(skip).and_then(|at| colours.get(at)))
                 .collect()
         });
-        let resized = previous.size != (0, 0) && previous.size != screen.size;
+        let resized = shape != (0, 0) && shape != (outcome.width, outcome.height);
         let silent = self.fresh || !self.focused || outcome.first || resized;
         let report = self.settings.report_new_output && !silent;
         let mut step = Step::default();
@@ -1851,7 +1857,7 @@ impl TerminalReader {
         // Of the read, only what "The memory" needs is kept.
         let dropped = memory.trim();
         self.screen.trim(dropped);
-        step.timer = self.next_due();
+        step.timer = self.due();
         step.outcome = Some(outcome);
         step
     }

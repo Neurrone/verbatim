@@ -584,6 +584,33 @@ struct Lingering {
     at: isize,
 }
 
+/// The caret as the last read the memory took found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReadCaret {
+    /// Its row of the last read.
+    pub row: usize,
+    /// Its column in its row, in characters.
+    pub column: usize,
+    /// Its column along its line, in characters from the line's start, as
+    /// the reading rules count it, which tells a line written where the
+    /// caret's line started from that line rewritten ("The alignment").
+    /// Counted when the read is taken, before a trim can drop the line's
+    /// start.
+    line_column: usize,
+}
+
+impl ReadCaret {
+    /// The caret of `read`, split into `rows`, on row `row`.
+    fn of(rows: &[Row], row: Option<usize>, read: &Read) -> Option<Self> {
+        row.map(|row| Self {
+            row,
+            column: read.caret_column,
+            line_column: line_column(rows, row, read.caret_column),
+        })
+    }
+}
+
 /// One screen's memory. Its rows are the last read's from `skipped` on;
 /// the next read's start, the caret, lingering rows and the anchors are
 /// counted as the last read's rows are.
@@ -602,12 +629,7 @@ struct Screen {
     next: usize,
     /// Whether the last read started at the document's start.
     at_document_start: bool,
-    caret: Option<usize>,
-    /// The caret's column along its line, in characters from the line's
-    /// start, as the reading rules count it, which tells a line written
-    /// where the caret's line started from that line rewritten ("The
-    /// alignment").
-    caret_column: usize,
+    caret: Option<ReadCaret>,
     /// Whether the last read's screen showed text.
     shows_text: bool,
     lingering: Vec<Lingering>,
@@ -698,8 +720,7 @@ impl Screen {
     /// A memory of `rows`, a read whose query gave the screen's height as
     /// `asked`, 0 for a first read, with no history of its own.
     fn fresh(rows: Vec<Row>, read: &Read, (width, height): (usize, usize), asked: usize) -> Self {
-        let caret = caret_row(rows.len(), read.caret_rows_to_end);
-        let caret_column = caret.map_or(0, |row| line_column(&rows, row, read.caret_column));
+        let caret = ReadCaret::of(&rows, caret_row(rows.len(), read.caret_rows_to_end), read);
         let mut fresh = Self {
             next: next_of(rows.len(), read.above, asked),
             rows,
@@ -707,7 +728,6 @@ impl Screen {
             height,
             at_document_start: read.at_document_start,
             caret,
-            caret_column,
             shows_text: shows_text(&read.screen),
             ..Self::default()
         };
@@ -823,7 +843,37 @@ impl TerminalMemory {
     /// screen, as the last read found it; none before the first.
     #[must_use]
     pub fn above(&self) -> usize {
+        self.height()
+    }
+
+    /// The screen's height in rows as the last read the memory took found
+    /// it; 0 before the first.
+    #[must_use]
+    pub fn height(&self) -> usize {
         self.screen.as_ref().map_or(0, |screen| screen.height)
+    }
+
+    /// The screen's width in cells as the last read the memory took found
+    /// it; 0 before the first.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.screen.as_ref().map_or(0, |screen| screen.width)
+    }
+
+    /// The caret as the last read the memory took found it, when it was in
+    /// that read: a read with no text leaves it, as it leaves the rows.
+    #[must_use]
+    pub fn caret(&self) -> Option<ReadCaret> {
+        self.screen.as_ref().and_then(|screen| screen.caret)
+    }
+
+    /// Whether the last read the memory took started at the document's
+    /// start.
+    #[must_use]
+    pub fn at_document_start(&self) -> bool {
+        self.screen
+            .as_ref()
+            .is_some_and(|screen| screen.at_document_start)
     }
 
     /// The rows of the last read, counted from its first row, of which
@@ -1491,7 +1541,7 @@ fn ambiguous(memory: &Screen, rows: &[Row], within: Range<usize>) -> bool {
     let old = &memory.rows;
     let caret = memory
         .caret
-        .and_then(|row| row.checked_sub(memory.skipped))
+        .and_then(|caret| caret.row.checked_sub(memory.skipped))
         .unwrap_or(old.len());
     let votes = shift_votes(old, 0..old.len().min(caret.saturating_add(1)), rows, within);
     let best = votes.counts.iter().copied().max().unwrap_or(0);
@@ -2053,11 +2103,11 @@ fn classify(
     // rewritten, unless it only lost text while the caret moved forward
     // over text both reads show unchanged, as a clear writing its prompt
     // where a homed caret was (Dickson, 2026-10-25).
-    if let (Some(old_row), Some(caret)) = (
+    if let (Some((old_row, old_column)), Some(caret)) = (
         memory
             .caret
-            .and_then(|row| row.checked_sub(memory.skipped))
-            .filter(|&row| row < count),
+            .and_then(|old| Some((old.row.checked_sub(memory.skipped)?, old.line_column)))
+            .filter(|&(row, _)| row < count),
         caret,
     ) {
         let first = line_start(old, old_row);
@@ -2068,7 +2118,7 @@ fn classify(
             && is_gone(&fates, first)
             && is_new(&new, to)
             && !written_past(
-                (old, first, memory.caret_column),
+                (old, first, old_column),
                 (rows, to, line_column(rows, caret, read.caret_column)),
             )
         {
@@ -2114,7 +2164,9 @@ fn classify(
         );
     }
     // Gone rows that linger, and lingering rows taken back.
-    let old_caret = memory.caret.and_then(|row| row.checked_sub(memory.skipped));
+    let old_caret = memory
+        .caret
+        .and_then(|caret| caret.row.checked_sub(memory.skipped));
     for (from, (fate, old_row)) in fates.iter_mut().zip(old).enumerate() {
         if *fate != GONE {
             continue;
@@ -2253,7 +2305,7 @@ fn remember(
             });
         }
     }
-    let caret_column = caret.map_or(0, |row| line_column(&rows, row, read.caret_column));
+    let read_caret = ReadCaret::of(&rows, caret, read);
     let mut next = Screen {
         next: next_of(rows.len(), read.above, memory.height),
         rows,
@@ -2261,8 +2313,7 @@ fn remember(
         width,
         height,
         at_document_start: read.at_document_start,
-        caret,
-        caret_column,
+        caret: read_caret,
         shows_text: shows_text(&read.screen),
         lingering,
         review: None,
@@ -2338,7 +2389,7 @@ fn map_anchor(
     if aligned.refused && above(anchor.row) {
         return refind(anchor, memory.total(), line_offset(memory, &anchor), rows).or_else(|| {
             next.caret
-                .and_then(|row| anchor_at(rows, row, read.caret_column))
+                .and_then(|caret| anchor_at(rows, caret.row, caret.column))
         });
     }
     // Where row `row` of the last read is now, when it survived.
@@ -2388,7 +2439,7 @@ fn map_anchor(
         },
         None => next
             .caret
-            .and_then(|row| anchor_at(rows, row, read.caret_column)),
+            .and_then(|caret| anchor_at(rows, caret.row, caret.column)),
     }
 }
 
