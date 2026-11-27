@@ -211,6 +211,7 @@ pub fn focus_now_with(
         ancestors: ancestors.iter().map(|&node| key(app, node)).collect(),
         foreground: foreground.map(|(app, node)| key(app, node)),
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     }
 }
 
@@ -316,6 +317,7 @@ fn heard_of(effect: Effect) -> Option<Heard> {
                 ancestors: now.ancestors.iter().map(node).collect(),
                 foreground: now.foreground.as_ref().map(node),
                 menu_item_of_focus: now.menu_item_of_focus,
+                replaced: now.replaced.iter().map(node).collect(),
             }))
         }
         Effect::StopSpeech => Some(Heard::Stop),

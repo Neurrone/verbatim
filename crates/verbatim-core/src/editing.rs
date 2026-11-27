@@ -554,11 +554,12 @@ fn place_caret(
 /// "Reading rules", rule 24).
 pub(crate) fn follow_caret(state: &mut SrState, node: NodeId) {
     if state.settings.follow_caret
-        && let Some(navigator) = state.navigator.as_mut()
-        && navigator.object.id == node
-        && !is_grid(navigator.object.role)
+        && state
+            .navigator_object()
+            .is_some_and(|object| !is_grid(object.role))
+        && let Some(text) = state.navigator_text_on(node)
     {
-        navigator.text = ReviewText::Caret;
+        *text = ReviewText::Caret;
     }
 }
 

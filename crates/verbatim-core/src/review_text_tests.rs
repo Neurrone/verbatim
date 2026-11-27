@@ -39,7 +39,7 @@ fn committed(name: &str, role: Role) -> Held {
     let mut read = focus_read(None);
     read.focus.read.values = values(name, role);
     let _ = found_at(&mut state, 600, (OUTPOST, 1), Found::Read(read));
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+    assert_eq!(state.navigator_object().unwrap().id, node(2));
     state
 }
 
@@ -586,7 +586,7 @@ fn flat_text_reads_the_description_with_descriptions_off() {
         ),
         ["Text(\"Inbox 3 unread\")"]
     );
-    let object = &state.navigator.as_ref().unwrap().object;
+    let object = state.navigator_object().unwrap();
     assert_eq!(object.details.description, None);
 }
 

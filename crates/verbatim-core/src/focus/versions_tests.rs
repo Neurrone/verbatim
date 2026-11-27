@@ -42,12 +42,13 @@ pub(crate) fn focus(top_level: u64) -> Focus {
             trace_id: None,
             observed_at_us: 0,
             reported_format: verbatim_model::TextAttributes::default(),
+            value_read_us: None,
             caret: None,
         },
         kept: Kept {
             read_by: ReadBy::Uia {
                 runtime_id: RuntimeId(vec![42, 1]),
-                token: Some(ElementToken(3)),
+                token: (),
             },
             place: Place {
                 window: WindowHandle(top_level + 1),
@@ -78,7 +79,7 @@ pub(crate) fn focus(top_level: u64) -> Focus {
 
 fn normal() -> Versions {
     let mut versions = Versions::default();
-    versions.execute(focus(10), Fence::default());
+    versions.execute(focus(10), Fence::default(), Some(ElementToken(3)));
     versions
 }
 
@@ -102,7 +103,10 @@ fn at_startup_core_commits_its_own_focus_and_the_last_stays_empty() {
 #[test]
 fn a_reader_focus_executing_becomes_both_versions() {
     let versions = normal();
-    assert_eq!(versions.last, Some(focus(10).last(Fence::default())));
+    assert_eq!(
+        versions.last,
+        Some(focus(10).last(Fence::default(), Some(ElementToken(3))))
+    );
     assert_eq!(versions.committed, Committed::Read(Box::new(focus(10))));
 }
 
@@ -163,8 +167,11 @@ fn an_empty_last_is_not_restored_by_a_related_marker() {
 fn with_the_last_empty_a_reader_focus_becomes_both_again() {
     let mut versions = normal();
     versions.foreground_marker(WindowHandle(20), WindowHandle(20));
-    versions.execute(focus(20), Fence::default());
-    assert_eq!(versions.last, Some(focus(20).last(Fence::default())));
+    versions.execute(focus(20), Fence::default(), Some(ElementToken(3)));
+    assert_eq!(
+        versions.last,
+        Some(focus(20).last(Fence::default(), Some(ElementToken(3))))
+    );
 }
 
 #[test]
@@ -174,7 +181,10 @@ fn the_committed_readers_end_marks_it_ended_and_asks_a_retake() {
     assert_eq!(versions, normal());
     assert_eq!(versions.outpost_ended(OUTPOST), ReaderEnd::Retake);
     assert_eq!(versions.committed, Committed::Ended(Box::new(focus(10))));
-    assert_eq!(versions.last, Some(focus(10).last(Fence::default())));
+    assert_eq!(
+        versions.last,
+        Some(focus(10).last(Fence::default(), Some(ElementToken(3))))
+    );
     // Nothing of an ended generation is known, and its caret target is
     // dead.
     assert_eq!(versions.known_ancestors(Some(OUTPOST)), Vec::new());
@@ -200,7 +210,7 @@ fn the_sleeping_focus_has_no_ancestors_and_relates_to_nothing() {
     versions.foreground_marker(WindowHandle(10), WindowHandle(10));
     assert_eq!(versions.last, None);
     // A reader focus after it becomes both versions.
-    versions.execute(focus(10), Fence::default());
+    versions.execute(focus(10), Fence::default(), Some(ElementToken(3)));
     assert_eq!(versions, normal());
 }
 
@@ -218,7 +228,7 @@ fn an_msaa_focus_read_through_acc_focus_is_kept_with_no_event_ids() {
         held_child: 3,
     };
     let mut versions = Versions::default();
-    versions.execute(focus, Fence::default());
+    versions.execute(focus, Fence::default(), Some(ElementToken(3)));
     assert!(matches!(
         versions.last.as_ref().map(|last| &last.read_by),
         Some(ReadBy::Msaa { event: None, .. })
@@ -242,7 +252,7 @@ fn an_ended_generations_focus_keeps_known_what_another_generation_minted() {
     line.insert(0, owner);
     dialog.line = line.into();
     let mut versions = Versions::default();
-    versions.execute(dialog, Fence::default());
+    versions.execute(dialog, Fence::default(), Some(ElementToken(3)));
     // While the dialog's generation lives, the owner's node goes only to
     // the owner's generation.
     assert_eq!(

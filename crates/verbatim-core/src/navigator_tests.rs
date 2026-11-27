@@ -89,9 +89,13 @@ fn a_navigation_moves_the_navigator_and_announces_the_node_reached() {
         ),
         ["Label(\"Buttons\") Role(Group)"]
     );
-    let navigator = state.navigator.as_ref().unwrap();
-    assert_eq!(navigator.object.id, node(7));
-    assert_eq!(navigator.window.unwrap().handle, WindowHandle(6));
+    let Some(crate::state::NavigatorAt::Object { object, window }) =
+        state.navigator.as_ref().map(|navigator| &navigator.at)
+    else {
+        panic!("the navigator is on the object reached");
+    };
+    assert_eq!(object.id, node(7));
+    assert_eq!(window.unwrap().handle, WindowHandle(6));
 }
 
 /// A navigation reaching a node in a window no process could be read as
@@ -123,7 +127,7 @@ fn every_navigation_direction_speaks_its_own_edge_message() {
         let mut state = committed();
         let _ = feed_at(&mut state, 1_000, press(1, command, 0));
         assert_eq!(feed_at(&mut state, 2_000, navigated(3, None)), [message]);
-        assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+        assert_eq!(state.navigator_object().unwrap().id, node(2));
     }
 }
 
@@ -148,7 +152,7 @@ fn a_gone_object_says_the_edge_and_an_ended_reader_nothing() {
         ),
         Vec::<String>::new()
     );
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+    assert_eq!(state.navigator_object().unwrap().id, node(2));
 }
 
 /// A second press waits behind the first and runs from where the first
@@ -390,7 +394,7 @@ fn moving_to_the_focus_says_so_then_the_focus() {
         feed_at(&mut state, 3_000, press(2, ReviewCommand::ToFocus, 0)),
         ["Message(MoveToFocus) Label(\"OK\") Role(Button)"]
     );
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+    assert_eq!(state.navigator_object().unwrap().id, node(2));
 }
 
 /// `values` with `id` set to `value`.
@@ -455,7 +459,7 @@ fn every_direction_from_an_object_not_there_says_its_edge() {
             ),
             [message]
         );
-        assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+        assert_eq!(state.navigator_object().unwrap().id, node(2));
     }
 }
 
@@ -473,7 +477,7 @@ fn a_navigation_not_answered_says_nothing_and_leaves_the_navigator_put() {
             feed_at(&mut state, 2_000, answer_outcome(OUTPOST, 3, outcome)),
             Vec::<String>::new()
         );
-        assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+        assert_eq!(state.navigator_object().unwrap().id, node(2));
     }
 }
 
@@ -498,7 +502,7 @@ fn moving_to_the_focus_behind_a_navigation_speaks_after_it() {
             "Message(MoveToFocus) Label(\"OK\") Role(Button)"
         ]
     );
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+    assert_eq!(state.navigator_object().unwrap().id, node(2));
 }
 
 #[test]
@@ -1079,5 +1083,251 @@ fn a_focus_behind_a_navigation_and_a_report_is_executed_after_them() {
             "send Outpost(Pid(40)) Follow"
         ]
     );
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(3));
+    assert_eq!(state.navigator_object().unwrap().id, node(3));
+}
+
+/// [`committed`], then a focus told for the element of runtime id 42.2,
+/// stopped while its window is hung; the window answers again and the
+/// recovered read, request 4, finds an element of runtime id 42.7 in the
+/// same outpost that reads the same as the focus: it is taken silently
+/// with its new node 7.
+fn recovered_anew() -> Held {
+    recovered_from(committed())
+}
+
+/// [`recovered_anew`] from `state`, [`committed`] as a test left it.
+fn recovered_from(mut state: Held) -> Held {
+    let kept = vec![(
+        verbatim_model::tell::ElementToken(3),
+        verbatim_model::tell::Read::Answered(true),
+    )];
+    assert_eq!(
+        feed_at(
+            &mut state,
+            1_000,
+            crate::entries::tests::entry(crate::entries::tests::uia_tell(2, kept))
+        ),
+        ["send Listener ReadObject"]
+    );
+    let _ = feed_at(
+        &mut state,
+        1_100,
+        Input::HangCheck {
+            window: WindowHandle(5),
+            hung: true,
+        },
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            1_600,
+            Input::HangCheck {
+                window: WindowHandle(5),
+                hung: false,
+            }
+        ),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    let mut read = focus_read(None);
+    read.focus.read.node = Some(node(7));
+    read.focus.runtime_id = Some(verbatim_model::property::RuntimeId(vec![42, 7]));
+    assert_eq!(
+        found_at(&mut state, 1_700, (OUTPOST, 4), Found::Read(read)),
+        ["send Outpost(Pid(40)) Follow"]
+    );
+    assert_eq!(
+        state
+            .versions
+            .focus()
+            .map(|focus| focus.context.snapshot.id),
+        Some(node(7))
+    );
+    state
+}
+
+/// A silent re-take in a live outpost moves the committed focus to a new
+/// node: the navigator, which is the focus, goes with it, so reporting the
+/// current object reads the new node, as NVDA's navigator is the focus
+/// object itself (`api.py` 189 to 190).
+#[test]
+fn the_navigator_on_the_focus_follows_a_silent_retake_in_a_live_outpost() {
+    let mut state = recovered_anew();
+    assert_eq!(
+        feed_at(&mut state, 2_000, press(1, ReviewCommand::ReportObject, 0)),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        crate::entries::tests::last_op(&state)
+            .as_ref()
+            .map(|op| match op {
+                verbatim_model::batch::Op::Read { subject, .. } => subject.clone(),
+                other => panic!("a read, not {other:?}"),
+            }),
+        Some(verbatim_model::batch::Subject::Node(node(7)))
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            2_100,
+            answer(
+                OUTPOST,
+                6,
+                crate::entries::tests::properties(values("OK", Role::Button))
+            )
+        ),
+        ["Label(\"OK\") Role(Button)"]
+    );
+}
+
+/// A navigator the user moved off the focus stays where it is when the
+/// focus is taken silently.
+#[test]
+fn a_navigator_off_the_focus_stays_put_at_a_silent_retake() {
+    let mut state = committed();
+    let _ = feed_at(&mut state, 900, press(1, ReviewCommand::Parent, 0));
+    let _ = feed_at(
+        &mut state,
+        950,
+        navigated(3, Some(reached(1, 4, "Editor", Role::Window))),
+    );
+    let mut state = {
+        let kept = vec![(
+            verbatim_model::tell::ElementToken(3),
+            verbatim_model::tell::Read::Answered(true),
+        )];
+        let _ = feed_at(
+            &mut state,
+            1_000,
+            crate::entries::tests::entry(crate::entries::tests::uia_tell(2, kept)),
+        );
+        let _ = feed_at(
+            &mut state,
+            1_100,
+            Input::HangCheck {
+                window: WindowHandle(5),
+                hung: true,
+            },
+        );
+        let _ = feed_at(
+            &mut state,
+            1_600,
+            Input::HangCheck {
+                window: WindowHandle(5),
+                hung: false,
+            },
+        );
+        let mut read = focus_read(None);
+        read.focus.read.node = Some(node(7));
+        read.focus.runtime_id = Some(verbatim_model::property::RuntimeId(vec![42, 7]));
+        let number = state.state.queue.last_number_for_tests();
+        assert_eq!(
+            found_at(&mut state, 1_700, (OUTPOST, number), Found::Read(read)),
+            ["send Outpost(Pid(40)) Follow"]
+        );
+        state
+    };
+    assert_eq!(
+        feed_at(&mut state, 2_000, press(2, ReviewCommand::Activate, 0)),
+        ["send Outpost(Pid(40)) other"]
+    );
+    assert_eq!(
+        crate::entries::tests::last_op(&state).as_ref(),
+        Some(&verbatim_model::batch::Op::Activate {
+            subject: verbatim_model::batch::Subject::Node(node(1)),
+        })
+    );
+}
+
+/// While Core's own focus is committed for the secure desktop, the
+/// navigator on the focus reads nothing: its commands say nothing.
+#[test]
+fn the_navigator_on_the_focus_says_nothing_under_the_secure_desktop() {
+    let mut state = committed();
+    let switch = verbatim_model::request::QueueInput::Tell {
+        from: crate::entries::tests::LISTENER,
+        tell: Box::new(verbatim_model::tell::Event {
+            trace_id: TraceId::from_raw(8),
+            kind: verbatim_model::event_kind::EventKind::DesktopSwitch,
+            process: APP,
+            application: "app".to_owned(),
+            thread: 41,
+            at_us: 1_000,
+            object: verbatim_model::tell::EventObject::Msaa {
+                window: WindowHandle(0),
+                object: 0,
+                child: 0,
+            },
+            cached: PropertyValues::default(),
+            payload: verbatim_model::tell::Payload::DesktopSwitch {
+                input_desktop_open: false,
+            },
+            window: verbatim_model::tell::TellWindow::NoWindow,
+            checked: None,
+        }),
+    };
+    let _ = crate::entries::route(
+        &mut state.state,
+        &mut state.runtime,
+        (TraceId::from_raw(1), 1_000),
+        &switch,
+    );
+    assert!(matches!(
+        state.versions.committed,
+        crate::focus::versions::Committed::Own
+    ));
+    assert_eq!(
+        feed_at(&mut state, 1_100, press(1, ReviewCommand::ReportObject, 0)),
+        NOTHING
+    );
+}
+
+/// A navigator on the focus keeps its review across a silent re-take in a
+/// live outpost that moves the focus to a new node, except a position in
+/// the old node's text, whose anchors name that node: such a review
+/// starts again at the caret. NVDA has no re-take and keeps its position
+/// (`docs/parity/review.md`, "Review after a silent re-take", pending
+/// Dickson).
+#[test]
+fn a_silent_retake_to_a_new_node_drops_only_a_review_position_in_text() {
+    use crate::state::{FlatPosition, ReviewPosition, ReviewText};
+    let point = verbatim_model::TextPosition::at(verbatim_model::TextAnchor(5));
+    let at = ReviewPosition {
+        line: std::sync::Arc::new(verbatim_model::TextChunk {
+            unit: verbatim_model::TextUnit::Line,
+            text: "one
+"
+            .to_owned(),
+            start: verbatim_model::TextAnchor(5),
+            offset: 0,
+            languages: Vec::new(),
+            first: false,
+            last: false,
+            truncated: false,
+            formats: Vec::new(),
+        }),
+        offset: 0,
+        column: 0,
+    };
+    let cases = [
+        (ReviewText::At(at), ReviewText::Unknown),
+        (ReviewText::Point(point), ReviewText::Unknown),
+        (
+            ReviewText::Flat(FlatPosition {
+                offset: 3,
+                column: 3,
+            }),
+            ReviewText::Flat(FlatPosition {
+                offset: 3,
+                column: 3,
+            }),
+        ),
+        (ReviewText::Caret, ReviewText::Caret),
+    ];
+    for (before, after) in cases {
+        let mut state = committed();
+        state.navigator.as_mut().unwrap().text = before;
+        let state = recovered_from(state);
+        assert_eq!(state.navigator.as_ref().unwrap().text, after);
+        assert_eq!(state.navigator_object().unwrap().id, node(7));
+    }
 }

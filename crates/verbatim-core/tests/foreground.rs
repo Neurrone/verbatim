@@ -450,6 +450,7 @@ fn now(app: App, focus: u64, ancestors: &[u64], foreground: Option<u64>) -> Hear
         ancestors: ancestors.iter().map(|&number| key(number)).collect(),
         foreground: foreground.map(key),
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     })
 }
 

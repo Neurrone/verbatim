@@ -281,7 +281,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         return;
     };
     let origin = Origin::of_read(check.trace_id, window, check.fence);
-    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, read_by);
+    let executed = execute(&mut cx.facts_mut(), &origin, &read, &known, &read_by);
     let fence = crate::entries::front_fence(&cx);
     executed.deliver(&mut cx, fence);
 }

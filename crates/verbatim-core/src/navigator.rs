@@ -7,10 +7,11 @@
 //! at a time on its queue; a command whose request is out is left to
 //! finish.
 //!
-//! The navigator object's window is the committed focus's when the object
-//! is that focus's node, else the one the read that put the navigator
-//! there found. An object with neither, the focus executed and no longer
-//! the committed focus's node, is read by no command.
+//! A navigator on the focus is the committed focus itself, its object and
+//! window the record's, while its reader lives; one on an object is asked
+//! in the window the read that reached it found. A navigator on the focus
+//! while no live reader's focus is committed, or on an object in a window
+//! no process serves, is read by no command.
 
 use verbatim_model::batch::Relation;
 use verbatim_model::property::{PropertyId, PropertyValues};
@@ -26,7 +27,7 @@ use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
 use crate::keys::entry::ReviewPress;
 use crate::reduce::{self, Reason};
-use crate::state::{Navigator, NavigatorRead, SrState};
+use crate::state::{Navigator, NavigatorAt, NavigatorRead, SrState};
 use crate::text_request::Answerer;
 
 /// The navigator object and its window, as a command finds them at its
@@ -50,17 +51,17 @@ pub(crate) fn found(state: &SrState) -> Found {
     let Some(navigator) = state.navigator.as_ref() else {
         return Found::Nothing;
     };
-    let window = match state.versions.live() {
-        Some(focus) if focus.context.snapshot.id == navigator.object.id => Some(focus.kept.asked),
-        _ => navigator.window,
-    };
-    match window {
-        Some(window) => Found::On(Box::new(On {
-            object: navigator.object.clone(),
+    let on = match &navigator.at {
+        NavigatorAt::Focus => state.versions.live().map(|focus| On {
+            object: focus.context.snapshot.clone(),
+            window: focus.kept.asked,
+        }),
+        NavigatorAt::Object { object, window } => window.map(|window| On {
+            object: (**object).clone(),
             window,
-        })),
-        None => Found::Unread,
-    }
+        }),
+    };
+    on.map_or(Found::Unread, |on| Found::On(Box::new(on)))
 }
 
 /// The values of `set` of node `node`, read live by the outpost of
@@ -264,6 +265,7 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
     };
     let set = crate::details::node_set(&cx.facts(), &crate::report_focus::ANNOUNCED_SET);
     let due_us = cx.due_in(OTHER_DUE_US);
+    let sent_us = cx.now_us();
     let Outcome::Result(values) = read_values(
         &mut cx,
         (on.window.process, on.window, on.object.id),
@@ -284,30 +286,30 @@ pub(crate) async fn report_object(mut cx: Cx<Entries>, press: ReviewPress) {
     };
     let (object, of_focus) = {
         let mut facts = cx.facts_mut();
-        // The navigator is the focus's own object when it is the focus's
-        // reading, not a copy a navigation fetched of the same node.
-        let of_focus = match (
-            facts.versions.focus().map(|focus| &focus.context),
-            facts.navigator.as_ref(),
-        ) {
-            (Some(focus), Some(navigator)) => focus.snapshot == navigator.object,
-            _ => false,
-        };
         let Some(navigator) = facts.navigator.as_mut() else {
             return;
         };
-        // The desktop window keeps the name Core gives it, which a live
-        // read of the window does not carry.
-        if !navigator.object.details.desktop_window {
-            navigator.object = live;
+        match &mut navigator.at {
+            // The navigator is the focus object: the live read is spoken,
+            // and becomes what was last spoken of the focus below.
+            NavigatorAt::Focus => (live, true),
+            // An object reached by navigation, the focus's own node
+            // included, is a separate object: it takes the live read. The
+            // desktop window keeps the name Core gives it, which a live
+            // read of the window does not carry.
+            NavigatorAt::Object { object, .. } => {
+                if !object.details.desktop_window {
+                    **object = live;
+                }
+                ((**object).clone(), false)
+            }
         }
-        (navigator.object.clone(), of_focus)
     };
     let has_text = editing::may_have_text(object.role);
     match press.repeat {
         0 => {
             if of_focus {
-                reduce::focus_read_spoken(&mut cx.facts_mut(), &object);
+                reduce::focus_read_spoken(&mut cx.facts_mut(), &object, Some(sent_us));
             }
             announce(&mut cx, trace_id, (&object, on.window), Reason::Query).await;
         }
@@ -348,8 +350,8 @@ pub(crate) async fn to_focus(mut cx: Cx<Entries>, trace_id: TraceId) {
     };
     let said = {
         let mut facts = cx.facts_mut();
-        facts.navigator = Some(Navigator::on(object.clone(), Some(window)));
-        reduce::focus_spoken_now(&mut facts, &object);
+        facts.navigator = Some(Navigator::on_focus());
+        reduce::focus_read_spoken(&mut facts, &object, None);
         reduce::navigator_utterance(&mut facts, trace_id, &object, Reason::Focus)
     };
     let mut said = said;

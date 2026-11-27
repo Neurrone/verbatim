@@ -189,6 +189,7 @@ fn plain_spoken() -> Vec<Heard> {
             ancestors: Vec::new(),
             foreground: None,
             menu_item_of_focus: None,
+            replaced: Vec::new(),
         }),
         Heard::Stop,
         queued(vec![
@@ -313,6 +314,7 @@ fn the_menu_closed_with_no_window_in_front_speaks_the_desktop() {
                 ancestors: Vec::new(),
                 foreground: None,
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             }),
             Heard::Stop,
             queued(vec![

@@ -277,6 +277,7 @@ fn expected_effects() -> Vec<Vec<Seen>> {
                 ancestors: Vec::new(),
                 foreground: None,
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             })),
             speech(
                 7,

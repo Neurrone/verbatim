@@ -862,3 +862,93 @@ fn a_command_mark_outside_a_modelled_terminal_says_nothing_and_stops_say_all() {
         "{previous:?}"
     );
 }
+
+/// Say-all from the review cursor goes on across a silent re-take that
+/// finds the focus under a new node (a hung window answering again): the
+/// one writer carries say-all to the new node, so reaching a sentence
+/// still moves the review cursor, and the next review command reads where
+/// reading stopped, in the new node.
+#[test]
+fn say_all_from_the_review_cursor_follows_a_silent_retake_to_a_new_node() {
+    let mut state = editing();
+    let _ = step(&mut state, 900, press(1, ReviewCommand::ReviewCurrentLine));
+    let _ = feed_at(
+        &mut state,
+        950,
+        text_answer(
+            3,
+            text_batches::one(text_batches::chunks(0, vec![line("one\n", 100, 0)])),
+        ),
+    );
+    let _ = step(&mut state, 1_000, press(2, ReviewCommand::SayAllFromReview));
+    let paragraph = TextChunk {
+        unit: TextUnit::Paragraph,
+        last: true,
+        ..line("A b. C d.\n", 500, 0)
+    };
+    let read = step(&mut state, 1_100, chunks(4, vec![paragraph]));
+    assert_eq!(read.texts(), [["A b. "], ["C d."]]);
+    // A focus told for another element is stopped while its window is
+    // hung; the window answers again and the recovered read finds the
+    // focus, reading the same, under node 7.
+    let kept = vec![(
+        verbatim_model::tell::ElementToken(3),
+        verbatim_model::tell::Read::Answered(true),
+    )];
+    let _ = feed_at(
+        &mut state,
+        1_150,
+        crate::entries::tests::entry(crate::entries::tests::uia_tell(2, kept)),
+    );
+    let _ = feed_at(
+        &mut state,
+        1_160,
+        Input::HangCheck {
+            window: WindowHandle(5),
+            hung: true,
+        },
+    );
+    let _ = feed_at(
+        &mut state,
+        1_170,
+        Input::HangCheck {
+            window: WindowHandle(5),
+            hung: false,
+        },
+    );
+    let mut retaken = focus_read(None);
+    retaken.focus.read.values = values("Body", Role::EditableText);
+    retaken.focus.read.node = Some(node(7));
+    retaken.focus.runtime_id = Some(verbatim_model::property::RuntimeId(vec![42, 7]));
+    let number = state.state.queue.last_number_for_tests();
+    let _ = found_at(&mut state, 1_180, (OUTPOST, number), Found::Read(retaken));
+    assert_eq!(
+        state.versions.committed_node(),
+        Some(node(7)),
+        "taken silently under its new node"
+    );
+    assert_eq!(
+        state.say_all.as_ref().map(|say_all| say_all.node),
+        Some(node(7))
+    );
+    let reached = step(&mut state, 1_200, at_mark(read.said[1].marks[0]));
+    assert!(reached.sent.is_empty(), "{reached:?}");
+    let _ = step(&mut state, 1_300, passed_key(3));
+    let next = step(
+        &mut state,
+        1_400,
+        press(4, ReviewCommand::ReviewCurrentLine),
+    );
+    let (_, batch) = next.one_sent();
+    assert_eq!(
+        batch,
+        text_batches::line(
+            node(7),
+            TextPoint::At(TextPosition {
+                anchor: TextAnchor(500),
+                offset: 5
+            }),
+            None
+        )
+    );
+}

@@ -580,12 +580,18 @@ code is in `reduce.rs` unless named.
   off, and cancellation of expired focus speech"). Speech is `Queued`
   except a selection in a list the focus controls and a notification
   whose processing hint asks to interrupt; a key press cancels speech in
-  the hook ([verbatim-input](verbatim-input.md)). On every focus change
-  the reducer first emits `Effect::DropExpiredSpeech` with a `FocusNow`
-  built from the new focus, its ancestors, and the state's foreground
-  node, then `Effect::StopSpeech` when the focus brings a new top-level
-  window or enters a menu bar, menu, or menu item. Speech for the new
-  focus follows, so these never cut it off.
+  the hook ([verbatim-input](verbatim-input.md)). `reduce::write`, the
+  one writer of a reader's focus, answers `Effect::DropExpiredSpeech`
+  with a `FocusNow` built from the focus, its line, and the state's
+  foreground node at every write, so the speech manager's view of the
+  focus, which it judges waiting speech against at its turn, is fed by
+  that writer alone. A spoken focus emits it first, then
+  `Effect::StopSpeech` when the focus brings a new top-level window or
+  enters a menu bar, menu, or menu item; speech for the new focus
+  follows, so these never cut it off. A silent re-take
+  (`reduce::take_silently`) emits it too, its `replaced` naming the
+  nodes of the focus and line it replaced, the same objects under ended
+  ids.
 - The focus announcement (`docs/nvda/speech.md`, "Which states are
   spoken, and in what order", "When the role is spoken", "Where the level
   goes", "What an object with text says"). Context first, then name, role,
@@ -678,8 +684,12 @@ code is in `reduce.rs` unless named.
   re-take (`retake::reader_ended`), naming the foreground record's window
   when the focus's application holds attention and the window its read
   named otherwise; while it is `Ended`, no known ancestor that generation
-  minted is sent. The listener's end marks nothing ended: it clears the
-  last focus's element token and re-takes the foreground window once,
+  minted is sent. The listener's element token is held once, on the
+  readers' last focus (`ReadBy<Option<ElementToken>>`, `HeldBy`); the
+  committed focus keeps the identity alone (`Kept::read_by`, a
+  `ReadBy`), and `LastFocus::names` compares identities. The listener's
+  end marks nothing ended: it clears that token and re-takes the
+  foreground window once,
   except for a plain focus, Core's own focus or none. The recovered read
   and the show's read are judged as the re-take is. A system caret tell
   has a target only while the last focus names the committed focus, its
@@ -786,10 +796,13 @@ code is in `reduce.rs` unless named.
   states. A repeat never moves the record. A focus taken moves it, and
   so does a report that speaks the focus's reading (Verbatim+Tab's
   answer of the focus, reporting the current object while the navigator
-  holds the reading, and the navigator's return to the focus), whatever the reason
-  it is spoken. A navigation that lands on the focus's node fetches a
-  separate object, so reporting it moves the record only when it equals
-  the reading. A name, value or description change on the focus moves it
+  is on the focus, and the navigator's return to the focus), whatever the
+  reason it is spoken. A navigation that lands on the focus's node
+  fetches a separate object, so reporting it never moves the record. A
+  live read of the focus that moves the record also writes the reading's
+  value and the time its request was sent (`FocusContext::value_read_us`),
+  and a UI Automation value change raised before then is stale and says
+  nothing (`reduce::stale_value`). A name, value or description change on the focus moves it
   to the new reading even when nothing is spoken, as NVDA's property
   cache does, and so does a state change on the focus, except an
   outpost's UI Automation change without the focused state on a focus
@@ -955,8 +968,16 @@ code is in `reduce.rs` unless named.
 
 ## Object navigation and review
 
-(`docs/parity/review.md`.) `SrState` carries a navigator object and a
-review cursor that follow focus. The navigator's commands are
+(`docs/parity/review.md`.) `SrState` carries a navigator and a review
+cursor that follow focus. The navigator is one of two places
+(`state::NavigatorAt`): on the focus, where it holds no copy and its
+object and window are the committed focus's record, read by
+`Navigator::object`; or on an object a navigation or a controlled
+selection reached, with the window its read found, `None` for a window
+no process serves. Every focus spoken puts it on the focus; a silent
+re-take keeps it where it is, putting it on the focus when there is
+none and dropping a review position in text when the focus's node
+changed. The navigator's commands are
 event-queue entries (`navigator.rs`): each resolves the navigator object
 at its turn and makes its reads as the queue's requests, naming the
 object's window, so each holds the queue until its last answer.

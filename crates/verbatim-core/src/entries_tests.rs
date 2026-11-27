@@ -1723,7 +1723,7 @@ fn a_focus_on_a_shell_staging_window_is_taken_and_says_nothing() {
             "{class}"
         );
         assert_eq!(state.versions.focus().unwrap().context.snapshot.id, node(2));
-        assert_eq!(state.navigator.as_ref().unwrap().object.id, node(2));
+        assert_eq!(state.navigator_object().unwrap().id, node(2));
     }
 }
 

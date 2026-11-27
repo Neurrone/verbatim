@@ -312,8 +312,10 @@ impl Playback {
                 Effect::StopSpeech => self.queued.clear(),
                 Effect::ForKey(_, effect) => self.take(state, vec![*effect]),
                 // The event queue's own effects as it settles, the
-                // outpost's start and the next wake.
-                Effect::Queue(_) => {}
+                // outpost's start and the next wake; and where the focus now
+                // is, for the speech manager's expiry, which these tests do
+                // not model.
+                Effect::Queue(_) | Effect::DropExpiredSpeech(_) => {}
                 other => panic!("unexpected effect: {other:?}"),
             }
         }

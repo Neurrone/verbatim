@@ -890,6 +890,7 @@ fn a_uia_owner_window_above_another_process_meets_its_stand_in() {
                 // dialog's top-level window.
                 foreground: Some(ObjectKey::of_id(TWO.node(3))),
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             }),
             queued(label_role("Owned", Role::Dialog)),
             queued(label_role("OK", Role::Button)),
@@ -1543,6 +1544,7 @@ fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
                 ],
                 foreground: Some(ObjectKey::of_id(ONE.node(FRAME))),
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             }),
             queued(label_role("General", Role::Group)),
             queued(label_role("Cancel", Role::Button)),
@@ -2087,6 +2089,7 @@ fn a_new_chain_meets_the_previous_one_at_a_window_reported_by_two_outposts() {
                 ],
                 foreground: Some(ObjectKey::of_id(ONE.node(1))),
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             }),
             queued(label_role("Settings", Role::Window)),
             queued(label_role("Search", Role::EditableText)),
@@ -2630,6 +2633,7 @@ fn focus_speech_holds_while_its_node_is_the_focus_or_contains_it() {
         ancestors: vec![ObjectKey::of_id(NodeId::new(1))],
         foreground: Some(ObjectKey::of_id(NodeId::new(9))),
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     };
     let left = FocusValidity {
         node: NodeId::new(2),

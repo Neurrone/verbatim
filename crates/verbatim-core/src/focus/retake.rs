@@ -19,7 +19,7 @@ use super::FOCUS_SET;
 use super::execute::{Executed, Known, Origin, execute, retake};
 use super::shown::Check;
 use super::validity::{Answered, CandidateFacts, Unread};
-use super::versions::{Committed, ReadBy};
+use super::versions::{Committed, HeldBy, ReadBy};
 use crate::batch::{Answers, Got, On, Ref, kind};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, FOCUS_DUE_US, Foreground, Instance, Outcome, Reader, RequestWindow};
@@ -233,7 +233,7 @@ pub(crate) async fn current_full(
 /// How a current-focus answer is named: by the MSAA ids it carries, else
 /// by its runtime id, which the listener holds behind no token; `None`
 /// for an answer with neither, a reader's fault.
-pub(crate) fn read_by(read: &FocusRead) -> Option<ReadBy> {
+pub(crate) fn read_by(read: &FocusRead) -> Option<HeldBy> {
     match (&read.msaa, &read.focus.runtime_id) {
         (Some(held), _) => Some(ReadBy::Msaa {
             event: Some(held.event),
@@ -386,11 +386,11 @@ pub(crate) async fn read_current(cx: &mut Cx<Entries>, read: &CurrentFocus, dept
         let mut facts = cx.facts_mut();
         match read.why {
             Why::Startup | Why::Returned => {
-                execute(&mut facts, &origin, &answer, &Known::default(), read_by)
+                execute(&mut facts, &origin, &answer, &Known::default(), &read_by)
             }
             Why::Recovered if duplicate => Executed::default(),
             Why::Retake | Why::Recovered | Why::Shown => {
-                retake(&mut facts, &origin, &answer, read_by)
+                retake(&mut facts, &origin, &answer, &read_by)
             }
         }
     };

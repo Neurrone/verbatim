@@ -98,6 +98,7 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
     let (process, asked, node, set) = request;
     let window = asked.node_window();
     let due_us = cx.due_in(OTHER_DUE_US);
+    let sent_us = cx.now_us();
     let Outcome::Result(values) =
         crate::navigator::read_values(&mut cx, (process, asked, node), &set, due_us).await
     else {
@@ -123,19 +124,25 @@ pub(crate) async fn run(mut cx: Cx<Entries>, trace_id: TraceId, repeat: u8) {
     };
     let said = {
         let mut facts = cx.facts_mut();
-        speak(&mut facts, trace_id, (&snapshot, summary), repeat)
+        speak(
+            &mut facts,
+            (trace_id, sent_us),
+            (&snapshot, summary),
+            repeat,
+        )
     };
     for effect in said {
         cx.emit(effect);
     }
 }
 
-/// What one press says of `node`, with its text summary, for its `repeat`
-/// count: the object, then its text, for the first press; its name
-/// spelled for the second; spelled with character descriptions after.
+/// What one press says of `node`, read live by a request sent at
+/// `sent_us`, with its text summary, for its `repeat` count: the object,
+/// then its text, for the first press; its name spelled for the second;
+/// spelled with character descriptions after.
 fn speak(
     state: &mut crate::state::SrState,
-    trace_id: TraceId,
+    (trace_id, sent_us): (TraceId, u64),
     (node, summary): (&NodeSnapshot, Option<TextSummary>),
     repeat: u8,
 ) -> Vec<Effect> {
@@ -145,7 +152,7 @@ fn speak(
         return vec![about(trace_id, node, segments)];
     }
     let mut effects = vec![Effect::Speak(
-        crate::reduce::announce_query(state, trace_id, node),
+        crate::reduce::announce_query(state, trace_id, node, sent_us),
         None,
     )];
     if editing::may_have_text(node.role) {

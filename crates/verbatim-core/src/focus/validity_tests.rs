@@ -383,7 +383,7 @@ fn a_uia_focus_on_the_last_focuss_element_still_focused_is_a_duplicate() {
 fn the_menu_opening_on_the_committed_element_takes_acceptance_then_executes_it_again() {
     let committed = crate::focus::versions::tests::focus(4);
     let both = Versions {
-        last: Some(committed.last(Fence::default())),
+        last: Some(committed.last(Fence::default(), None)),
         committed: Committed::Read(Box::new(committed)),
         postponed: None,
     };
@@ -538,7 +538,7 @@ fn committed_item() -> (Versions, NodeSnapshot) {
     };
     focus.context.snapshot = snapshot.clone();
     let mut versions = Versions::default();
-    versions.execute(focus, fence(3));
+    versions.execute(focus, fence(3), None);
     (versions, snapshot)
 }
 

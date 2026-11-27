@@ -529,7 +529,7 @@ fn commit(
         alt_held: false,
         foreground_is_shell: false,
     });
-    execute(state, &origin, &read, &Known::default(), ReadBy::Plain)
+    execute(state, &origin, &read, &Known::default(), &ReadBy::Plain)
 }
 
 #[cfg(test)]

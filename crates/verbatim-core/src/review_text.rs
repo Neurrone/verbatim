@@ -41,8 +41,8 @@ use crate::keys::entry::Fence;
 use crate::keys::entry::ReviewPress;
 use crate::navigator::Found;
 use crate::state::{
-    FlatPosition, Landing, LandingPlace, Marked, MarkerEnds, ReviewPosition, ReviewText,
-    SharedChunk, SrState, StartMarker,
+    FlatPosition, Landing, LandingPlace, Marked, MarkerEnds, Navigator, NavigatorAt,
+    ReviewPosition, ReviewText, SharedChunk, SrState, StartMarker,
 };
 use crate::text;
 use crate::text_request::{Answerer, LocalStep, Missed, Span, TextAnswers, got};
@@ -322,10 +322,15 @@ fn span_through(span: Span) -> Option<(At<Review>, At<Review>)> {
 /// at its review position or caret is read first for a command that
 /// answers from it.
 pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
+    let Some((node, role)) = state
+        .navigator_object()
+        .map(|object| (object.id, object.role))
+    else {
+        return Next::Said(Vec::new());
+    };
     let Some(navigator) = state.navigator.as_mut() else {
         return Next::Said(Vec::new());
     };
-    let node = navigator.object.id;
     match navigator.text.clone() {
         ReviewText::At(position) if answers_from_line(press.command) => {
             seed(press, node, TextPoint::At(point_of(&position)))
@@ -342,10 +347,12 @@ pub(crate) fn begin(state: &mut SrState, press: ReviewPress) -> Next {
                 .focus()
                 .map(|focus| &focus.context)
                 .is_some_and(|focus| focus.snapshot.id == node && focus.caret.is_some());
-            if has_caret || may_have_text(navigator.object.role) {
+            if has_caret || may_have_text(role) {
                 seed(press, node, TextPoint::Caret)
             } else {
-                navigator.text = ReviewText::Flat(FlatPosition::default());
+                if let Some(navigator) = state.navigator.as_mut() {
+                    navigator.text = ReviewText::Flat(FlatPosition::default());
+                }
                 Next::ReadObject
             }
         }
@@ -428,12 +435,7 @@ async fn run_next(
                 answered(&mut cx.facts_mut(), trace_id, (node, press), then, &answers)
             }
             Next::ReadObject => {
-                let Some(object) = cx
-                    .facts()
-                    .navigator
-                    .as_ref()
-                    .map(|navigator| navigator.object.clone())
-                else {
+                let Some(object) = cx.facts().navigator_object().cloned() else {
                     return;
                 };
                 // The description is read whatever the theme reports, as
@@ -494,6 +496,9 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
         let Some(navigator) = facts.navigator.as_ref() else {
             return;
         };
+        let Some(object) = navigator.object(&facts.versions) else {
+            return;
+        };
         let (from, place) = match &navigator.text {
             ReviewText::At(position) => (
                 TextPoint::At(point_of(position)),
@@ -501,7 +506,7 @@ pub(crate) async fn command_mark(mut cx: Cx<Entries>, press: ReviewPress, fence:
             ),
             _ => (TextPoint::Caret, LandingPlace::Start),
         };
-        (navigator.object.id, from, place)
+        (object.id, from, place)
     };
     if crate::terminal::reading::modelled(&cx.facts()) != Some(node) {
         return;
@@ -1149,9 +1154,8 @@ fn worded(answers: &TextAnswers<Review>, word: &WordRead) -> Result<Worded, Miss
 /// Whether `node` is still the navigator object.
 fn on_navigator(state: &SrState, node: NodeId) -> bool {
     state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| navigator.object.id == node)
+        .navigator_object()
+        .is_some_and(|object| object.id == node)
 }
 
 /// What a press does with a line or word read of `node` that gave no
@@ -1279,12 +1283,17 @@ fn object_read(state: &mut SrState, mut live: verbatim_model::NodeSnapshot) -> S
     {
         live.details.description = None;
     }
-    if let Some(navigator) = state.navigator.as_mut()
-        // The desktop window keeps the name Core gives it, which a live
-        // read of the window does not carry.
-        && !navigator.object.details.desktop_window
+    // An object the navigator reached takes the live read; the focus is
+    // read from its own record and keeps no copy. The desktop window keeps
+    // the name Core gives it, which a live read of the window does not
+    // carry.
+    if let Some(Navigator {
+        at: NavigatorAt::Object { object, .. },
+        ..
+    }) = state.navigator.as_mut()
+        && !object.details.desktop_window
     {
-        navigator.object = live;
+        **object = live;
     }
     text
 }
@@ -1309,10 +1318,12 @@ pub(crate) fn flat_text(object: &verbatim_model::NodeSnapshot) -> String {
 /// position, kept where it is still a character boundary of the text and
 /// otherwise at the start, on the line there, and the press run there.
 fn on_flat(state: &mut SrState, press: ReviewPress, text: &str) -> Next {
+    let Some(node) = state.navigator_object().map(|object| object.id) else {
+        return Next::Said(Vec::new());
+    };
     let Some(navigator) = state.navigator.as_mut() else {
         return Next::Said(Vec::new());
     };
-    let node = navigator.object.id;
     let at = match navigator.text {
         ReviewText::Flat(at) if at.offset <= text.len() && text.is_char_boundary(at.offset) => at,
         _ => FlatPosition::default(),
@@ -1617,9 +1628,8 @@ fn words_said(
 /// Whether the navigator object is a terminal.
 fn navigator_grid(state: &SrState) -> bool {
     state
-        .navigator
-        .as_ref()
-        .is_some_and(|navigator| is_grid(navigator.object.role))
+        .navigator_object()
+        .is_some_and(|object| is_grid(object.role))
 }
 
 /// Lands the review cursor on a line it moved to and speaks there; when the

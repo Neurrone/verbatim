@@ -1094,3 +1094,123 @@ fn a_value_change_accepted_by_background_bars_reported_goes_on_past_a_foreground
     assert_eq!(judged(true), (true, false), "the setting on: goes on");
     assert_eq!(judged(false), (false, true), "the setting off: stopped");
 }
+
+/// The slider "Rate" at `value`'s properties as a live read answers them.
+fn rate(value: &str) -> PropertyValues {
+    let mut values = values("Rate", Role::Slider);
+    values.0.push(PropertyAnswer {
+        id: PropertyId::Value,
+        value: Some(PropertyValue::Text(value.to_owned())),
+    });
+    values
+}
+
+/// The slider "Rate" at 5, committed from the listener's focus tell.
+fn slider_committed() -> Held {
+    let mut state = asked_completion();
+    let mut read = focus_read(None);
+    read.focus.read.values = rate("5");
+    let _ = found_at(&mut state, 3_000, (OUTPOST, 2), Found::Read(read));
+    state
+}
+
+/// The outpost's tell of the slider's value becoming `value`, raised at
+/// `raised_us`.
+fn rate_changed(value: &str, raised_us: u64) -> Input<crate::entries::Entry> {
+    let mut tell = followed_change(
+        PropertyId::Value,
+        Some(PropertyValue::Text(value.to_owned())),
+    );
+    tell.at_us = raised_us;
+    Input::Entry(crate::entries::Entry::of_tell(OUTPOST, tell, false).unwrap())
+}
+
+/// Report current object pressed as key `key` at `at_us`, its live read,
+/// request `number`, answering the slider at `value`: what it said.
+fn reported(state: &mut Held, (key, at_us): (u64, u64), number: u64, value: &str) -> Vec<String> {
+    let _ = feed_at(
+        state,
+        at_us,
+        press(key, verbatim_model::ReviewCommand::ReportObject),
+    );
+    feed_at(
+        state,
+        at_us + 500,
+        answer(
+            OUTPOST,
+            number,
+            crate::entries::tests::properties(rate(value)),
+        ),
+    )
+}
+
+/// The slider moves 5, 6, 7. Report current object reads 6, then, in a
+/// later press, 7; each moves what was last spoken of the focus, as the
+/// navigator is the focus object and NVDA's query speech writes its
+/// property cache (`api.py` 189 to 190, `speech/speech.py` 770 to 773).
+/// The two value changes, raised before the second read was sent, are
+/// each handled on its own after it: stale, they say nothing, as NVDA's
+/// value change reads the value live and finds it spoken
+/// (`NVDAObjects/UIA/__init__.py` 1172 to 1184).
+#[test]
+fn value_changes_raised_before_a_later_report_of_the_focus_are_silent() {
+    let mut state = slider_committed();
+    assert_eq!(
+        reported(&mut state, (1, 4_000), 4, "6"),
+        ["Label(\"Rate\") Role(Slider) Value(\"6\")"]
+    );
+    assert_eq!(
+        reported(&mut state, (2, 6_000), 5, "7"),
+        ["Label(\"Rate\") Role(Slider) Value(\"7\")"]
+    );
+    assert_eq!(
+        feed_at(&mut state, 7_000, rate_changed("6", 3_500)),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(&mut state, 8_000, rate_changed("7", 5_500)),
+        NOTHING
+    );
+}
+
+/// As [`value_changes_raised_before_a_later_report_of_the_focus_are_silent`],
+/// the two value changes arriving while the second read is out, merged
+/// into the later one: stale, it says nothing.
+#[test]
+fn merged_value_changes_raised_before_a_later_report_of_the_focus_are_silent() {
+    let mut state = slider_committed();
+    let _ = reported(&mut state, (1, 4_000), 4, "6");
+    let _ = feed_at(
+        &mut state,
+        6_000,
+        press(2, verbatim_model::ReviewCommand::ReportObject),
+    );
+    assert_eq!(
+        feed_at(&mut state, 6_100, rate_changed("6", 3_500)),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(&mut state, 6_200, rate_changed("7", 5_500)),
+        NOTHING
+    );
+    assert_eq!(
+        feed_at(
+            &mut state,
+            6_500,
+            answer(OUTPOST, 5, crate::entries::tests::properties(rate("7")))
+        ),
+        ["Label(\"Rate\") Role(Slider) Value(\"7\")"]
+    );
+}
+
+/// A value change raised after the report's read was sent is news: it is
+/// spoken.
+#[test]
+fn a_value_change_raised_after_a_report_of_the_focus_is_spoken() {
+    let mut state = slider_committed();
+    let _ = reported(&mut state, (1, 4_000), 4, "6");
+    assert_eq!(
+        feed_at(&mut state, 7_000, rate_changed("7", 6_000)),
+        ["Value(\"7\")"]
+    );
+}

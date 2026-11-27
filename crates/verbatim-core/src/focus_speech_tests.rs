@@ -1914,6 +1914,7 @@ fn the_same_window_reported_by_another_outpost_is_not_reannounced() {
                 ],
                 foreground: Some(verbatim_model::ObjectKey::of_id(ONE.node(FRAME))),
                 menu_item_of_focus: None,
+                replaced: Vec::new(),
             }),
             queued(vec![UtteranceSegment::label("Display"), role(Role::Group)]),
             queued(vec![

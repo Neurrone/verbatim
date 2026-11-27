@@ -187,6 +187,7 @@ pub(crate) fn focus_now_with(
         ancestors: ancestors.iter().map(|&node| key(app, node)).collect(),
         foreground: foreground.map(|(app, node)| key(app, node)),
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     }
 }
 
@@ -254,6 +255,7 @@ fn said_heard(said: Said) -> Option<Heard> {
                 ancestors: now.ancestors.iter().map(node).collect(),
                 foreground: now.foreground.as_ref().map(node),
                 menu_item_of_focus: now.menu_item_of_focus,
+                replaced: now.replaced.iter().map(node).collect(),
             }))
         }
         Said::StopSpeech => Some(Heard::Stop),

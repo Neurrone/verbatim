@@ -133,10 +133,9 @@ pub(crate) fn start_in_queue(
     };
     let mut effects = stop(state);
     let grid = state
-        .navigator
-        .as_ref()
-        .filter(|navigator| navigator.object.id == node)
-        .map(|navigator| navigator.object.role)
+        .navigator_object()
+        .filter(|object| object.id == node)
+        .map(|object| object.role)
         .or_else(|| {
             state
                 .versions
@@ -311,6 +310,12 @@ fn read_next(state: &mut SrState) {
 /// speech what it can take, and reads on when little is left to speak;
 /// ends at the document's end, and on any failure.
 pub(crate) fn reply(state: &mut SrState, answer: Result<&Chunks, Missed>) -> Vec<Effect> {
+    let grid = state.say_all.as_ref().is_some_and(|say_all| {
+        state
+            .navigator_object()
+            .filter(|object| object.id == say_all.node)
+            .is_some_and(|object| is_grid(object.role))
+    });
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
@@ -328,11 +333,6 @@ pub(crate) fn reply(state: &mut SrState, answer: Result<&Chunks, Missed>) -> Vec
     if (say_all.last_chunk.is_some() && moved == 0) || chunks.is_empty() {
         say_all.finished = true;
     } else {
-        let grid = state
-            .navigator
-            .as_ref()
-            .filter(|navigator| navigator.object.id == say_all.node)
-            .is_some_and(|navigator| is_grid(navigator.object.role));
         let mut first = say_all.last_chunk.is_none();
         for chunk in chunks {
             let by_sentence =
@@ -628,12 +628,8 @@ fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> (Vec<Effect>, O
                 position,
                 line,
             });
-        } else if let Some(navigator) = state
-            .navigator
-            .as_mut()
-            .filter(|navigator| navigator.object.id == node)
-        {
-            navigator.text = ReviewText::Point(position);
+        } else if let Some(text) = state.navigator_text_on(node) {
+            *text = ReviewText::Point(position);
         }
     }
     let mut effects = hand_out(state);

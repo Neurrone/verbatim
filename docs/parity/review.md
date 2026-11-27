@@ -45,14 +45,32 @@ the focus, and the setting is part of the settings package (M4.3).
 
 report / spell / copy on 1st/2nd/3rd press.
 NVDA: script repeat counting ([Keyboard input](../nvda/input.md)), reading
-the object live. Verbatim: **matched (unverified)**. A name, value, or
-state change on the focus also updates the navigator's copy while it
-rests there, so the report reads the object as it is now. The spelled
+the object live. Verbatim: **matched (unverified)**. A navigator on the
+focus is the committed focus itself, as NVDA's navigator is its focus
+object (`api.py` 189 to 190), so the report reads the focus's node live
+and what it says becomes what was last spoken of the focus, as NVDA's
+query writes the object's property cache (`speech/speech.py` 770 to
+773). A node navigation reaches is a separate object, even the focus's
+own, as in NVDA. A UI Automation value change raised before such a live
+read of the focus was sent says nothing, since the read already spoke a
+newer value, where NVDA reads the value live at the change and finds it
+spoken (`NVDAObjects/UIA/__init__.py` 1172 to 1184; Claude,
+2026-11-27). The spelled
 text and the copy wording are covered under the messages entries below.
 An object with text (an edit field, a document, a terminal) spells and
 copies its name followed by its selected text or the line at its caret,
 as NVDA does ([Speech](../nvda/speech.md), "What an object with text
 says"), checked against NVDA transcripts in Notepad.
+
+### Review after a silent re-take
+
+NVDA has no re-take: its navigator stays the same focus object, and its
+review position stays where it was. Verbatim: **different**, pending
+Dickson (Claude, 2026-11-27). A silent re-take in a live outpost that
+reads the same focus under a new node keeps the navigator on the focus;
+a review position in the old node's text, whose anchors name that node,
+starts again at the caret, while flat review and review at the caret
+keep their place.
 
 ### Report focus
 

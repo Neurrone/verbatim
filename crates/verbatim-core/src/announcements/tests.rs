@@ -584,7 +584,7 @@ fn a_selected_item_the_focus_controls_is_read_completed_and_spoken_as_a_focus() 
         state
             .navigator
             .as_ref()
-            .map(|navigator| navigator.object.id),
+            .and_then(|navigator| navigator.object(&state.versions).map(|object| object.id)),
         Some(node(7))
     );
 }
@@ -610,7 +610,7 @@ fn a_selected_item_whose_relation_cannot_be_read_says_nothing() {
         state
             .navigator
             .as_ref()
-            .map(|navigator| navigator.object.id),
+            .and_then(|navigator| navigator.object(&state.versions).map(|object| object.id)),
         Some(node(7))
     );
 }

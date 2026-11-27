@@ -207,7 +207,7 @@ fn a_menu_end_over_a_ghost_speaks_the_plain_window_with_no_sound_and_watches_hun
         state
             .navigator
             .as_ref()
-            .map(|navigator| navigator.object.id),
+            .and_then(|navigator| navigator.object(&state.versions).map(|object| object.id)),
         Some(plain_node(1))
     );
     assert_eq!(

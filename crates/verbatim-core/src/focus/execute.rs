@@ -16,7 +16,7 @@ use verbatim_model::{
     WindowFacts, WindowHandle,
 };
 
-use super::versions::{Kept, LineEntry, Place, ReadBy};
+use super::versions::{HeldBy, Kept, LineEntry, Place, ReadBy};
 use crate::entries::Entries;
 use crate::entries::window_facts;
 use crate::event_queue::Cx;
@@ -59,6 +59,9 @@ pub(crate) enum Commit {
         kept: Kept,
         /// The speech fence of the entry that read it.
         fence: Fence,
+        /// The listener's token for its element, when it keeps it, which
+        /// the readers' last focus alone holds.
+        token: Option<verbatim_model::tell::ElementToken>,
     },
     /// The committed focus, a live reader's, spoken again, as a UI
     /// Automation menu opening on it does: it is written back with only
@@ -233,6 +236,8 @@ impl Origin {
 struct Ready {
     report: Report,
     kept: Kept,
+    /// The listener's token for the focus's element, when it keeps it.
+    token: Option<verbatim_model::tell::ElementToken>,
     foreground: Option<NodeSnapshot>,
 }
 
@@ -246,7 +251,7 @@ fn ready(
     origin: &Origin,
     read: &FocusRead,
     known: &Known,
-    read_by: ReadBy,
+    read_by: &HeldBy,
 ) -> Option<Ready> {
     let backend = read_by.backend();
     let mut node = snapshot(&read.focus, backend)?;
@@ -330,7 +335,7 @@ fn ready(
     let mut selection = crate::text_facts::SelectionFacts::default();
     crate::text_facts::focus_answered(&mut selection, &read.caret);
     let kept = Kept {
-        read_by,
+        read_by: read_by.identity(),
         place,
         asked: origin.asked,
         foreground: read.foreground.as_ref().and_then(|node| node.read.node),
@@ -353,6 +358,7 @@ fn ready(
     Some(Ready {
         report,
         kept,
+        token: read_by.token(),
         foreground,
     })
 }
@@ -413,7 +419,7 @@ pub(crate) fn execute(
     origin: &Origin,
     read: &FocusRead,
     known: &Known,
-    read_by: ReadBy,
+    read_by: &HeldBy,
 ) -> Executed {
     if ignored(state, origin) {
         return Executed::default();
@@ -441,6 +447,7 @@ pub(crate) fn execute(
     let new = Commit::New {
         kept: ready.kept,
         fence: origin.fence,
+        token: ready.token,
     };
     said.extend(crate::reduce::execute_report(
         state,
@@ -580,8 +587,9 @@ pub(crate) fn again(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 }
 
 /// Judges a re-take's `read` against the focus Core holds: one that reads
-/// the same is taken silently with its new ids, the navigator moved only
-/// if there is none and the caret baseline kept; a different one is
+/// the same is taken silently with its new ids, speech told of them, the
+/// navigator kept as [`crate::reduce::take_silently`] says and the caret
+/// baseline kept; a different one is
 /// executed. With the readers' last focus empty it is executed and spoken
 /// (an accepted corner;
 /// `books/dev/src/reference/crates/verbatim-core.md`, "Focus, events and objects", the committed focus).
@@ -589,13 +597,13 @@ pub(crate) fn retake(
     state: &mut SrState,
     origin: &Origin,
     read: &FocusRead,
-    read_by: ReadBy,
+    read_by: &HeldBy,
 ) -> Executed {
     if ignored(state, origin) {
         return Executed::default();
     }
     let known = Known::default();
-    let Some(mut ready) = ready(state, origin, read, &known, read_by.clone()) else {
+    let Some(mut ready) = ready(state, origin, read, &known, read_by) else {
         return Executed::default();
     };
     let Some(old) = state.versions.focus().filter(|focus| {
@@ -614,14 +622,15 @@ pub(crate) fn retake(
     let new = Commit::New {
         kept: ready.kept,
         fence: origin.fence,
+        token: ready.token,
     };
-    crate::reduce::take_silently(state, &ready.report, new);
-    let said = crate::terminal::reading::committed(
+    let mut said = vec![crate::reduce::take_silently(state, &ready.report, new)];
+    said.extend(crate::terminal::reading::committed(
         state,
         terminal,
         follows,
         (origin.observed_at_us, false),
-    );
+    ));
     Executed {
         said,
         committed: true,

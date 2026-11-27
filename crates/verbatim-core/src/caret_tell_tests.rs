@@ -993,3 +993,81 @@ fn a_focus_answer_with_no_caret_clears_the_baseline_and_the_flag() {
     assert!(!text_changed(&held));
     assert_eq!(held.state.focus_caret(node(2)), None);
 }
+
+/// The listener that restarts after its predecessor ended.
+const RESTARTED: crate::event_queue::Instance = crate::event_queue::Instance {
+    reader: crate::event_queue::Reader::Listener,
+    generation: 2,
+};
+
+/// The edit field "Body" committed from the listener's focus tell, under
+/// its element's token 9; then the listener ends, its re-take of the
+/// foreground window (request 5) answers not responding, and the listener
+/// restarts. The focus is still the readers' last focus and the committed
+/// one, so the system caret's tells read it, as NVDA judges a caret event
+/// by the focus object alone (`NVDAObjects/__init__.py` 1424 to 1429,
+/// `NVDAObjects/behaviors.py` 346 to 349): a selection is said.
+#[test]
+fn after_the_listener_restarts_and_its_retake_fails_the_system_caret_is_still_read() {
+    let mut held = ready();
+    assert_eq!(
+        feed_at(&mut held, 500, Input::Foreground(IN_FRONT)),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    let _ = feed_at(
+        &mut held,
+        600,
+        answer_outcome(OUTPOST, 1, WireOutcome::NotThere),
+    );
+    let _ = feed_at(&mut held, 1_000, entry(uia_tell(1, Vec::new())));
+    let _ = found_at(
+        &mut held,
+        1_100,
+        (LISTENER, 2),
+        crate::entries::tests::listener_answer(),
+    );
+    let mut read = focus_read(None);
+    read.focus.read.values = values("Body", Role::EditableText);
+    let _ = found_at(&mut held, 1_200, (OUTPOST, 3), Found::Read(read));
+    assert_eq!(
+        feed_at(&mut held, 1_300, Input::ReaderEnded(LISTENER)),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    let _ = feed_at(
+        &mut held,
+        1_400,
+        answer_outcome(OUTPOST, 5, WireOutcome::NotResponding),
+    );
+    let _ = crate::entries::tests::ready_at(&mut held, 1_500, RESTARTED);
+    let mut tell = msaa_tell(-8);
+    tell.kind = EventKind::SystemCaret;
+    let restarted_caret =
+        || Input::Entry(Entry::of_tell(RESTARTED, tell.clone(), false).expect("a caret tell"));
+    let asked = step(&mut held, 1_600, restarted_caret());
+    assert_eq!(
+        asked.text,
+        [(6, read_adopting(TextProvider::Uia, None, None))]
+    );
+    let answered = step(
+        &mut held,
+        1_700,
+        selection_read(6, (caret(1, 0), 70), None, None),
+    );
+    assert_eq!(answered.said, Vec::<Vec<String>>::new());
+    let asked = step(&mut held, 2_000, restarted_caret());
+    assert_eq!(
+        asked.text,
+        [(7, read_adopting(TextProvider::Uia, Some(70), None))]
+    );
+    let answered = step(
+        &mut held,
+        2_100,
+        selection_read(
+            7,
+            (caret(1, 3), 71),
+            Some(differing(vec![change(true, "lph")], Some("lph"))),
+            None,
+        ),
+    );
+    assert_eq!(answered.said, [phrase(Phrase::Selected(text("lph")))]);
+}

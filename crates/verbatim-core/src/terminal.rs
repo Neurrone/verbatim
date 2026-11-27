@@ -411,12 +411,11 @@ fn take(
         }
     }
     if speech.followed
-        && let Some(navigator) = state.navigator.as_mut()
-        && Some(navigator.object.id) == node
+        && let Some(text) = node.and_then(|node| state.navigator_text_on(node))
     {
         // The review cursor followed the caret: the next review command
         // reads at the caret as the outpost finds it.
-        navigator.text = ReviewText::Caret;
+        *text = ReviewText::Caret;
     }
     let output = speech.items.iter().any(SaidItem::is_output);
     if !state.settings.report_terminal_output || before_cut || !output {

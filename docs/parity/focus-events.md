@@ -1322,7 +1322,10 @@ window cancels, as does entering a menu; each focus announcement carries
 what it is about, entered containers are their own utterances, and on
 every focus change the speech manager stops what it has handed on when
 any of that has expired, and judges waiting focus speech when its turn
-comes, as NVDA does. NVDA's tests compare objects with `==`; Verbatim
+comes, as NVDA does. Core tells the speech manager where the focus is
+at every write of the focus, a silent re-take included, naming the
+nodes the re-take replaced as the same objects, so speech stamped with
+either the ended node or its replacement holds. NVDA's tests compare objects with `==`; Verbatim
 compares them by its one identity rule ("Focus-ancestry context" in
 [Focus context](focus-context.md)): the same node, or two windows of one
 handle, so speech for a window one outpost reported holds while another
@@ -1341,7 +1344,12 @@ with NVDA's rules for what counts as a typed character
   focus the user just left only: Core names that item in
   `FocusNow::menu_item_of_focus`, where NVDA tests the object of every
   utterance still waiting. Speech for an older focus has already been
-  dropped by the focus change that left it.
+  dropped by the focus change that left it. A silent re-take names no
+  menu item, so that item's speech still waiting when the re-take lands
+  expires, where NVDA's test of its ancestors would keep it; and only
+  the nodes the latest re-take replaced count as the same objects, so
+  speech waiting across two silent re-takes expires (Claude, 2026-11-27,
+  pending Dickson's acceptance).
 - Shift's pause: Verbatim toggles the pause on the speech queue thread,
   in order with cancels, and a cancel or speech arriving while paused
   ends the pause, as NVDA's does ([Keyboard input](../nvda/input.md)),

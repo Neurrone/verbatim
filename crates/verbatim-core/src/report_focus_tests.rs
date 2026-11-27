@@ -372,5 +372,5 @@ fn it_leaves_the_navigator_where_it_is() {
         ),
         ["Label(\"OK\") Role(Button)"]
     );
-    assert_eq!(state.navigator.as_ref().unwrap().object.id, node(7));
+    assert_eq!(state.navigator_object().unwrap().id, node(7));
 }

@@ -549,8 +549,10 @@ fn uia_target(facts: &SrState, change: &UiaChange) -> Option<(Focus, NodeId)> {
 /// focus reported the focused state and the change's states, taken from
 /// the event's cache as the application raised it, lack it: the focus had
 /// moved before the change was raised (`docs/parity/changes-and-selection.md`,
-/// "State changes after the focus has left"). A description or
-/// suggestions change is asked ([`uia_entry`]) and says nothing here.
+/// "State changes after the focus has left"). A value change raised before
+/// a later live read of the focus is stale and says nothing
+/// ([`crate::reduce::stale_value`]). A description or suggestions change
+/// is asked ([`uia_entry`]) and says nothing here.
 pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbatim_model::Effect> {
     let Some((_, node)) = uia_target(facts, change) else {
         return Vec::new();
@@ -567,6 +569,13 @@ pub(crate) fn uia_changed(facts: &mut SrState, change: &UiaChange) -> Vec<verbat
                 .and_then(|answer| answer.value.as_ref()),
             Some(PropertyValue::Flag(true))
         )
+    {
+        return Vec::new();
+    }
+    // A value change raised before a later live read of the focus spoke
+    // its value is stale, and says nothing.
+    if change.property == PropertyId::Value
+        && crate::reduce::stale_value(facts, node, change.tell.at_us)
     {
         return Vec::new();
     }

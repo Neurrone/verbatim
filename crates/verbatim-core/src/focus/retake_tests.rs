@@ -416,3 +416,48 @@ fn a_tab_after_a_retake_that_kept_the_old_dialog_entry_says_the_button() {
         ["Label(\"OK\") Role(Button)"]
     );
 }
+
+/// The outpost of a focus that is not a window node is replaced and the
+/// replacement reports the same focus: it is taken silently, and speech
+/// is told where the focus now is, its new node, so that what is said of
+/// it later is not dropped against the ended node, as NVDA's speech stays
+/// valid while its object equals the focus (`eventHandler.py` 208 to 216
+/// and 229 to 232).
+#[test]
+fn the_silent_retake_tells_speech_the_focus_s_new_node() {
+    let mut state = started();
+    let _ = feed_at(&mut state, 1_000, Input::ReaderEnded(OUTPOST));
+    assert_eq!(
+        ready_at(&mut state, 1_100, REPLACEMENT),
+        ["send Outpost(Pid(40)) CurrentFocus"]
+    );
+    let input = crate::entries::tests::found(
+        &state,
+        REPLACEMENT,
+        3,
+        Found::Read(minted_anew(focus_read(None))),
+    );
+    let effects = crate::entries::feed(
+        &mut state.state,
+        &mut state.runtime,
+        crate::event_queue::Timed {
+            at_us: 1_200,
+            input,
+        },
+    )
+    .unwrap();
+    let new_id = NodeId::in_outpost(OutpostId(GENERATION + 1), 2);
+    let told: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            verbatim_model::Effect::DropExpiredSpeech(now) => Some((
+                now.focus.id,
+                now.replaced.iter().map(|key| key.id).collect::<Vec<_>>(),
+            )),
+            _ => None,
+        })
+        .collect();
+    // The ended nodes of the focus and its line are the same objects as
+    // the new ones, so what was said of them before still holds.
+    assert_eq!(told, [(new_id, vec![node(2), node(1)])]);
+}

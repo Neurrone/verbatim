@@ -57,6 +57,10 @@ pub(crate) struct FocusContext {
     /// afresh, a silent re-take after an outpost is replaced included
     /// (Dickson, 2026-11-08).
     pub(crate) reported_format: TextAttributes,
+    /// When the latest live read of the focus that was spoken as a query
+    /// was sent, on the run's shared clock: a value change raised before it
+    /// is stale (`crate::reduce::stale_value`). `None` until one is.
+    pub(crate) value_read_us: Option<u64>,
     /// The caret of the focus's text, when it has text and it was read.
     pub(crate) caret: Option<CaretContext>,
 }
@@ -109,31 +113,73 @@ impl FocusContext {
 
 /// The navigator object and its review cursor (roadmap M3): the object
 /// object-navigation commands walk, independent of keyboard focus. It
-/// follows focus by default (every focus change resets it), and the
-/// "to focus" command snaps it back.
+/// follows focus by default (every focus change puts it on the focus),
+/// and the "to focus" command snaps it back.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Navigator {
-    pub(crate) object: NodeSnapshot,
+    /// Where it is.
+    pub(crate) at: NavigatorAt,
     /// How the review cursor reviews the object's text (milestone M4).
     pub(crate) text: ReviewText,
-    /// The object's window, as the read that put the navigator there
-    /// found it; `None` for the focus, put there as it was executed, whose
-    /// window is the committed focus's while it is that focus's node
-    /// (`crate::navigator`).
-    pub(crate) window: Option<crate::event_queue::RequestWindow>,
+}
+
+/// Where the navigator is: on the committed focus itself, or on an object
+/// navigation or a controlled selection reached.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum NavigatorAt {
+    /// The committed focus itself, whatever its node, as NVDA's navigator
+    /// is its focus object after a focus change (`api.py` 189 to 190): its
+    /// object and window are the committed focus's, read from its record,
+    /// never copied. A node navigation reaches, even the focus's own, is
+    /// an [`NavigatorAt::Object`], as NVDA's navigation makes a separate
+    /// object of it.
+    Focus,
+    /// An object reached by navigation or a controlled selection, as the
+    /// read that reached it found it, and refreshed by each live read of
+    /// it; `window` the window to ask it in, `None` for a window no process
+    /// is read as serving, where no command asks anything.
+    Object {
+        object: Box<NodeSnapshot>,
+        window: Option<crate::event_queue::RequestWindow>,
+    },
 }
 
 impl Navigator {
-    /// A navigator on `object` in `window` ([`Navigator::window`]), its
+    /// A navigator on the committed focus, its review cursor at the start,
+    /// how its text is reviewed not yet known.
+    pub(crate) fn on_focus() -> Self {
+        Self {
+            at: NavigatorAt::Focus,
+            text: ReviewText::Unknown,
+        }
+    }
+
+    /// A navigator on `object` in `window` ([`NavigatorAt::Object`]), its
     /// review cursor at the start, how its text is reviewed not yet known.
     pub(crate) fn on(
         object: NodeSnapshot,
         window: Option<crate::event_queue::RequestWindow>,
     ) -> Self {
         Self {
-            object,
+            at: NavigatorAt::Object {
+                object: Box::new(object),
+                window,
+            },
             text: ReviewText::Unknown,
-            window,
+        }
+    }
+
+    /// The navigator object: the committed focus's reading, when the
+    /// navigator is on the focus and a reader's focus is committed, whose
+    /// reader lives or ended; the object it is on otherwise. The one place
+    /// the navigator's object is found.
+    pub(crate) fn object<'a>(
+        &'a self,
+        versions: &'a crate::focus::versions::Versions,
+    ) -> Option<&'a NodeSnapshot> {
+        match &self.at {
+            NavigatorAt::Focus => versions.focus().map(|focus| &focus.context.snapshot),
+            NavigatorAt::Object { object, .. } => Some(object),
         }
     }
 }
@@ -876,7 +922,7 @@ impl SrState {
                     .map(|entry| entry.snapshot.clone())
                     .collect()
             }),
-            self.navigator.as_ref().map(|navigator| &navigator.object),
+            self.navigator_object(),
         )
     }
 
@@ -936,8 +982,8 @@ impl SrState {
                 insert(entry.snapshot.id);
             }
         }
-        if let Some(navigator) = &self.navigator {
-            insert(navigator.object.id);
+        if let Some(object) = self.navigator_object() {
+            insert(object.id);
         }
         // Nodes whose text the state holds positions in or waits on.
         if let Some(marker) = self.start_marker {
@@ -1036,12 +1082,14 @@ impl SrState {
                 insert(node, selection.range.end);
             }
         }
-        if let Some(navigator) = &self.navigator {
+        if let Some(navigator) = &self.navigator
+            && let Some(object) = navigator.object(&self.versions)
+        {
             match &navigator.text {
                 ReviewText::At(position) => {
-                    insert(navigator.object.id, TextPosition::at(position.line.start));
+                    insert(object.id, TextPosition::at(position.line.start));
                 }
-                ReviewText::Point(point) => insert(navigator.object.id, *point),
+                ReviewText::Point(point) => insert(object.id, *point),
                 ReviewText::Unknown | ReviewText::Flat(_) | ReviewText::Caret => {}
             }
         }
@@ -1106,6 +1154,23 @@ impl SrState {
         let mark = SpeechMark(self.next_mark);
         self.next_mark = self.next_mark.saturating_add(1);
         mark
+    }
+
+    /// The navigator object ([`Navigator::object`]); `None` with no
+    /// navigator, or one on the focus while no reader's focus is committed.
+    pub(crate) fn navigator_object(&self) -> Option<&NodeSnapshot> {
+        self.navigator
+            .as_ref()
+            .and_then(|navigator| navigator.object(&self.versions))
+    }
+
+    /// The navigator's review text, while its object is `node`.
+    pub(crate) fn navigator_text_on(&mut self, node: NodeId) -> Option<&mut ReviewText> {
+        let navigator = self.navigator.as_mut()?;
+        let on = navigator
+            .object(&self.versions)
+            .is_some_and(|object| object.id == node);
+        on.then_some(&mut navigator.text)
     }
 
     /// Whether the committed focus's outpost ended: its data stays, so a

@@ -778,9 +778,8 @@ impl Logic for Entries {
             // which end with it (`books/dev/src/reference/crates/verbatim-core.md`, "The outpost generation record"): its commands say there is
             // none until a focus is committed again.
             if facts
-                .navigator
-                .as_ref()
-                .is_some_and(|navigator| navigator.object.id.outpost() == Some(outpost))
+                .navigator_object()
+                .is_some_and(|object| object.id.outpost() == Some(outpost))
             {
                 facts.navigator = None;
             }

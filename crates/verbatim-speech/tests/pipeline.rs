@@ -1023,6 +1023,7 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
         ancestors: Vec::new(),
         foreground: None,
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     });
 
     assert_eq!(recv_started(&harness.started), "a message");
@@ -1033,6 +1034,34 @@ fn expired_focus_speech_is_dropped_with_what_came_before_it() {
             (first, UtteranceEnding::Cancelled),
             (second, UtteranceEnding::Cancelled),
             (message, UtteranceEnding::Completed),
+        ]
+    );
+}
+
+/// The focus taken silently under a new node: the old node's speech,
+/// playing, and the new node's, waiting, are both heard, the old node
+/// named as replaced by the new, the same object.
+#[test]
+fn focus_speech_of_a_replaced_node_and_of_its_replacement_is_heard() {
+    let harness = control_manager();
+    let old = harness.manager.speak(&harness.token, about("old node", 1));
+    assert_eq!(recv_started(&harness.started), "old node");
+    let new = harness.manager.speak(&harness.token, about("new node", 2));
+    harness.manager.control().drop_expired(FocusNow {
+        focus: ObjectKey::of_id(NodeId::new(2)),
+        ancestors: Vec::new(),
+        foreground: None,
+        menu_item_of_focus: None,
+        replaced: vec![ObjectKey::of_id(NodeId::new(1))],
+    });
+    harness.finish.send(()).unwrap();
+    assert_eq!(recv_started(&harness.started), "new node");
+    harness.finish.send(()).unwrap();
+    assert_eq!(
+        harness.endings_before_a_marker(),
+        vec![
+            (old, UtteranceEnding::Completed),
+            (new, UtteranceEnding::Completed),
         ]
     );
 }
@@ -1687,6 +1716,7 @@ fn waiting_focus_speech_is_judged_when_its_turn_comes() {
         ancestors: Vec::new(),
         foreground: None,
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     });
 
     harness.finish.send(()).unwrap();
@@ -1720,6 +1750,7 @@ fn a_focus_change_just_after_a_cancel_spares_speech_handed_on_since() {
         ancestors: vec![ObjectKey::of_id(NodeId::new(2))],
         foreground: None,
         menu_item_of_focus: None,
+        replaced: Vec::new(),
     });
     assert_eq!(recv_started(&harness.started), "a dialog");
     harness.finish.send(()).unwrap();

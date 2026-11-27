@@ -496,6 +496,10 @@ impl FocusValidity {
                 .foreground
                 .is_some_and(|foreground| key.is_same_object(&foreground))
             || now.menu_item_of_focus == Some(self.node)
+            || now
+                .replaced
+                .iter()
+                .any(|replaced| key.is_same_object(replaced))
     }
 }
 
@@ -515,6 +519,13 @@ pub struct FocusNow {
     /// (`docs/nvda/speech.md`, "Expired focus speech").
     #[serde(default)]
     pub menu_item_of_focus: Option<NodeId>,
+    /// The nodes of the focus and its line that the focus taken silently
+    /// in their place replaced, under ids that ended or were superseded:
+    /// the same objects as the new ones, whose speech stays valid, as
+    /// NVDA's speech stays valid while its object equals the focus
+    /// (`docs/nvda/speech.md`, "Expired focus speech"). Empty for a focus
+    /// spoken.
+    pub replaced: Vec<ObjectKey>,
 }
 
 #[cfg(test)]
@@ -598,6 +609,7 @@ mod tests {
             ancestors: Vec::new(),
             foreground: None,
             menu_item_of_focus: None,
+            replaced: Vec::new(),
         };
         assert!(spoken.holds(&now(key(2, Some(7)))));
         assert!(!spoken.holds(&now(key(2, Some(8)))));
@@ -616,6 +628,7 @@ mod tests {
             ancestors: Vec::new(),
             foreground: None,
             menu_item_of_focus: None,
+            replaced: Vec::new(),
         };
         assert!(!spoken.holds(&now));
     }
@@ -633,8 +646,30 @@ mod tests {
             ancestors: vec![key(4, None)],
             foreground: Some(foreground),
             menu_item_of_focus: None,
+            replaced: Vec::new(),
         };
         assert!(spoken.holds(&now(key(2, Some(7)))));
         assert!(!spoken.holds(&now(key(2, None))));
+    }
+
+    /// Focus speech of a node a silent re-take replaced holds while the
+    /// new node is the focus: the same object under another id. A node
+    /// not replaced does not.
+    #[test]
+    fn focus_speech_holds_for_a_node_the_focus_replaced() {
+        let spoken = |node| FocusValidity {
+            node: NodeId::new(node),
+            window: None,
+        };
+        let now = FocusNow {
+            focus: key(2, None),
+            ancestors: Vec::new(),
+            foreground: None,
+            menu_item_of_focus: None,
+            replaced: vec![key(1, None)],
+        };
+        assert!(spoken(1).holds(&now));
+        assert!(spoken(2).holds(&now));
+        assert!(!spoken(3).holds(&now));
     }
 }

@@ -28,7 +28,9 @@ use crate::focus_rules::{
     ChangeKind, ChangeTarget, change_target, is_sensitive_slider, lowest_common_ancestor,
 };
 use crate::foreground::ForegroundFact;
-use crate::state::{CellMemory, FocusContext, Navigator, SpokenRecord, SrState};
+use crate::state::{
+    CellMemory, FocusContext, Navigator, NavigatorAt, ReviewText, SpokenRecord, SrState,
+};
 use crate::{editing, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
@@ -165,23 +167,6 @@ pub(crate) fn activation_completed(
     )]
 }
 
-/// Keeps the navigator's copy of the focus current: a name, value, or state
-/// change, or a fresher report of the same focus, applies to the navigator
-/// too while it rests on the focus, so reporting the current object or
-/// reviewing it reads what the object is now, as NVDA reads it live.
-fn sync_navigator_with_focus(state: &mut SrState) {
-    let (Some(focus), Some(navigator)) = (
-        state.versions.focus().map(|focus| &focus.context),
-        state.navigator.as_mut(),
-    ) else {
-        return;
-    };
-    if navigator.object.id != focus.snapshot.id || navigator.object == focus.snapshot {
-        return;
-    }
-    navigator.object = focus.snapshot.clone();
-}
-
 /// The parts of a `FocusChanged` event the focus handling reads.
 struct FocusReport<'a> {
     node: &'a NodeSnapshot,
@@ -222,11 +207,10 @@ impl Report {
     }
 }
 
-/// Takes `owned`'s focus silently in place of a focus that reads the same:
-/// its new ids are taken, the navigator moved only if there is none, and
-/// the caret baseline kept (the silent re-take, `crate::focus::retake`).
-/// The committed focus is written as `commit` says.
-pub(crate) fn take_silently(state: &mut SrState, owned: &Report, commit: Commit) {
+/// Takes `owned`'s focus silently in place of a focus that reads the same
+/// (the silent re-take, `crate::focus::retake`), as [`taken_silently`]
+/// does: what speech is told of where the focus now is.
+pub(crate) fn take_silently(state: &mut SrState, owned: &Report, commit: Commit) -> Effect {
     let report = &owned.view();
     let window = owned.window.as_ref();
     let found = state
@@ -246,11 +230,37 @@ pub(crate) fn take_silently(state: &mut SrState, owned: &Report, commit: Commit)
         report,
         (previous, &line.ancestors),
     );
-    write(state, commit, new_focus, line.ancestors);
-    if state.navigator.is_none() {
-        state.navigator = Some(Navigator::on(report.node.clone(), None));
+    taken_silently(state, commit, (new_focus, line.ancestors), report)
+}
+
+/// A focus that reads the same as the committed focus taken silently, as
+/// `commit` says, with `context` and `line`: its new ids are taken, and
+/// speech is told where the focus now is, the replaced ids the same
+/// objects ([`write`]). A navigator on the focus stays on it, its review
+/// position dropped when the focus's node changed, since a position in
+/// text is an anchor of the node it was read in; one elsewhere stays put;
+/// with none, it is put on the focus. The caret baseline is kept.
+fn taken_silently(
+    state: &mut SrState,
+    commit: Commit,
+    (context, line): (FocusContext, Arc<[LineEntry]>),
+    report: &FocusReport<'_>,
+) -> Effect {
+    let before = state.versions.committed_node();
+    let told = write(state, commit, context, line, Written::Silent);
+    match state.navigator.as_mut() {
+        None => state.navigator = Some(Navigator::on_focus()),
+        Some(navigator)
+            if navigator.at == NavigatorAt::Focus
+                && before != Some(report.node.id)
+                && matches!(navigator.text, ReviewText::At(_) | ReviewText::Point(_)) =>
+        {
+            navigator.text = ReviewText::Unknown;
+        }
+        Some(_) => {}
     }
     editing::keep_focus_caret(state, report.node.id, report.text);
+    told
 }
 
 /// Executes `report`, judged `left` or not, against the focus object, as
@@ -328,18 +338,17 @@ pub(crate) fn execute_report(
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
-        write(state, commit, new_focus, line.ancestors);
-        if state.navigator.is_none() {
-            state.navigator = Some(Navigator::on(report.node.clone(), None));
-        }
-        editing::keep_focus_caret(state, report.node.id, report.text);
-        return Vec::new();
+        return vec![taken_silently(
+            state,
+            commit,
+            (new_focus, line.ancestors),
+            report,
+        )];
     }
 
-    // The review cursor follows focus (roadmap M3): every focus change snaps
-    // the navigator object to the new focus and resets the review cursor to
-    // its start.
-    let navigator = Navigator::on(report.node.clone(), None);
+    // The review cursor follows focus (roadmap M3): every focus change puts
+    // the navigator on the new focus and resets the review cursor to its
+    // start.
     // When speech is cut off (`docs/nvda/speech.md`, "Cancellation", and
     // `docs/nvda/events.md`): focus speech is queued, not interrupting. A
     // focus line that differs from the previous one just below the desktop
@@ -350,16 +359,8 @@ pub(crate) fn execute_report(
     let foreground_changed = line.cut;
     let line_met = line.met.is_some();
     let entered: Vec<&NodeSnapshot> = line.entered.iter().map(|entry| &entry.snapshot).collect();
-    let mut effects = vec![Effect::DropExpiredSpeech(FocusNow {
-        focus: ObjectKey::of(report.node),
-        ancestors: line
-            .ancestors
-            .iter()
-            .map(|ancestor| ObjectKey::of(&ancestor.snapshot))
-            .collect(),
-        foreground: state.foreground.object(),
-        menu_item_of_focus: menu_item_of_focus(previous, report.node),
-    })];
+    let mut effects = Vec::new();
+    let menu_item = menu_item_of_focus(previous, report.node);
     // Entering a menu cuts speech too, at its place among the entered
     // containers (`focus_speech`).
     end_text_activity(
@@ -368,8 +369,16 @@ pub(crate) fn execute_report(
         (foreground_changed, previous_left),
         &mut effects,
     );
-    write(state, commit, new_focus, line.ancestors);
-    state.navigator = Some(navigator);
+    // Speech is told where the focus now is before anything else it says.
+    let told = write(
+        state,
+        commit,
+        new_focus,
+        line.ancestors,
+        Written::Spoken { menu_item },
+    );
+    effects.insert(0, told);
+    state.navigator = Some(Navigator::on_focus());
     // A nameless whole-window focus, and any focus in the shell's staging
     // windows, say nothing; speech was cut above if the foreground window
     // changed.
@@ -418,6 +427,7 @@ fn focus_context(
         trace_id: Some(trace_id),
         observed_at_us: report.observed_at_us,
         reported_format: verbatim_model::TextAttributes::default(),
+        value_read_us: None,
         caret: previous
             .map(|previous| &previous.context)
             .filter(|previous| previous.snapshot.id == report.node.id)
@@ -425,25 +435,97 @@ fn focus_context(
     }
 }
 
+/// How a focus is written: spoken, with the MSAA menu item it was entered
+/// from, whose speech stays valid; or taken silently in place of one that
+/// reads the same.
+#[derive(Clone, Copy)]
+enum Written {
+    /// Executed and spoken.
+    Spoken {
+        /// The menu item the focus moved from to a menu holding it.
+        menu_item: Option<NodeId>,
+    },
+    /// Taken silently.
+    Silent,
+}
+
 /// Writes the committed focus as `commit` says, with `context` what Core
 /// spoke of it and `line` its line: a reader's new focus becomes the
 /// committed focus, or the committed focus spoken again takes `context`
-/// alone ([`Commit`]).
-fn write(state: &mut SrState, commit: Commit, context: FocusContext, line: Arc<[LineEntry]>) {
+/// alone ([`Commit`]). The one writer of a reader's focus: it answers what
+/// speech is told of where the focus now is, its node, its line and the
+/// foreground object, so that speech's view of the focus is written
+/// wherever the focus is (`Effect::DropExpiredSpeech`). A focus taken
+/// silently names the nodes of the focus it replaced as the same objects,
+/// as NVDA's speech stays valid while its object equals the focus
+/// (`eventHandler.py` 208 to 216 and 229 to 232), and carries say-all and
+/// the review's start marker on the replaced focus node to the new one.
+fn write(
+    state: &mut SrState,
+    commit: Commit,
+    context: FocusContext,
+    line: Arc<[LineEntry]>,
+    written: Written,
+) -> Effect {
+    let mut now = FocusNow {
+        focus: ObjectKey::of(&context.snapshot),
+        ancestors: line
+            .iter()
+            .map(|ancestor| ObjectKey::of(&ancestor.snapshot))
+            .collect(),
+        foreground: state.foreground.object(),
+        menu_item_of_focus: None,
+        replaced: Vec::new(),
+    };
+    match written {
+        Written::Spoken { menu_item } => now.menu_item_of_focus = menu_item,
+        Written::Silent => {
+            if let Some(focus) = state.versions.focus() {
+                now.replaced = std::iter::once(ObjectKey::of(&focus.context.snapshot))
+                    .chain(
+                        focus
+                            .line
+                            .iter()
+                            .map(|ancestor| ObjectKey::of(&ancestor.snapshot)),
+                    )
+                    .filter(|key| *key != now.focus && !now.ancestors.contains(key))
+                    .collect();
+                // What reads the focus's text by its node, say-all and the
+                // review's start marker, goes on under the new node: the
+                // same object, so no record keeps the replaced id.
+                let (old, new) = (focus.context.snapshot.id, now.focus.id);
+                if old != new {
+                    if let Some(say_all) =
+                        state.say_all.as_mut().filter(|say_all| say_all.node == old)
+                    {
+                        say_all.node = new;
+                    }
+                    if let Some(marker) = state
+                        .start_marker
+                        .as_mut()
+                        .filter(|marker| marker.node == old)
+                    {
+                        marker.node = new;
+                    }
+                }
+            }
+        }
+    }
     match commit {
-        Commit::New { kept, fence } => {
+        Commit::New { kept, fence, token } => {
             let focus = Focus {
                 context,
                 kept,
                 line,
             };
-            state.versions.execute(focus, fence);
+            state.versions.execute(focus, fence, token);
         }
         Commit::InPlace(mut focus) => {
             focus.context = context;
             state.versions.respoken(focus);
         }
     }
+    Effect::DropExpiredSpeech(now)
 }
 
 /// The focus line a report is planned or executed against, owned so the
@@ -755,7 +837,7 @@ pub(crate) fn property_changed(
     change: &PropertyChange,
     child_count: Option<u32>,
 ) -> Vec<Effect> {
-    let effects = match change {
+    match change {
         PropertyChange::Name(name) => reduce_name_changed(state, trace_id, node_id, name.as_ref()),
         PropertyChange::Value(value) => {
             reduce_value_changed(state, trace_id, node_id, value.clone())
@@ -773,9 +855,7 @@ pub(crate) fn property_changed(
         PropertyChange::Suggestions(open) => reduce_suggestions(state, node_id, *open),
         // `PropertyChange` is `#[non_exhaustive]`.
         _ => Vec::new(),
-    };
-    sync_navigator_with_focus(state);
-    effects
+    }
 }
 
 /// A state change of `node_id` to the states an outpost's UI Automation
@@ -788,15 +868,13 @@ pub(crate) fn outpost_states_changed(
     node_id: NodeId,
     new_states: StateSet,
 ) -> Vec<Effect> {
-    let effects = states_event(
+    states_event(
         state,
         trace_id,
         node_id,
         (new_states, StatesFrom::OutpostEvent),
         None,
-    );
-    sync_navigator_with_focus(state);
-    effects
+    )
 }
 
 /// Where a state change's states come from, which decides whether the
@@ -1030,13 +1108,14 @@ pub(crate) fn navigator_utterance(
     Effect::Speak(utterance, None)
 }
 
-/// When `object` is the focus's reading, what was last spoken of the
-/// focus becomes what is spoken now ([`announce_focus_object`]).
-/// Moves what was last spoken of the focus to `object`, a live read of
-/// the focus's own node just spoken, as NVDA's property cache of its one
+/// Moves what was last spoken of the focus to `object`, a reading of the
+/// focus's own node just spoken, as NVDA's property cache of its one
 /// focus object takes whatever is spoken of it
 /// (`docs/parity/changes-and-selection.md`, "Name change on the focus").
-pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot) {
+/// A live read, its request sent at `sent_us`, is also the focus's value
+/// as of then, against which a value change raised before it is stale
+/// ([`stale_value`]).
+pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot, sent_us: Option<u64>) {
     if let Some(focus) = state
         .versions
         .focus_mut()
@@ -1045,19 +1124,26 @@ pub(crate) fn focus_read_spoken(state: &mut SrState, object: &NodeSnapshot) {
     {
         let ancestors = Arc::clone(&focus.spoken().ancestors);
         focus.spoken = SpokenRecord::of(object, ancestors);
+        if let Some(sent_us) = sent_us {
+            focus.snapshot.value.clone_from(&object.value);
+            focus.value_read_us = Some(sent_us);
+        }
     }
 }
 
-pub(crate) fn focus_spoken_now(state: &mut SrState, object: &NodeSnapshot) {
-    if let Some(focus) = state
+/// Whether a value change of the focus's node `node`, raised at
+/// `raised_us`, is stale: a live read of the focus sent after it was
+/// raised already found and spoke the value, so it says nothing, as NVDA's
+/// value change reads the value live and finds it spoken
+/// (`NVDAObjects/UIA/__init__.py` 1172 to 1184; Claude, 2026-11-27).
+pub(crate) fn stale_value(state: &SrState, node: NodeId, raised_us: u64) -> bool {
+    state
         .versions
-        .focus_mut()
-        .map(|focus| &mut focus.context)
-        .filter(|focus| focus.snapshot == *object)
-    {
-        let ancestors = Arc::clone(&focus.spoken().ancestors);
-        focus.spoken = SpokenRecord::of(object, ancestors);
-    }
+        .focus()
+        .map(|focus| &focus.context)
+        .filter(|focus| focus.snapshot.id == node)
+        .and_then(|focus| focus.value_read_us)
+        .is_some_and(|read_us| raised_us < read_us)
 }
 
 /// The utterance that announces `object` for a query, as
@@ -1072,8 +1158,9 @@ pub(crate) fn announce_query(
     state: &mut SrState,
     trace_id: TraceId,
     object: &NodeSnapshot,
+    sent_us: u64,
 ) -> Utterance {
-    focus_read_spoken(state, object);
+    focus_read_spoken(state, object, Some(sent_us));
     let positions = speaks_positions(state);
     let levels = (
         Reason::Query,

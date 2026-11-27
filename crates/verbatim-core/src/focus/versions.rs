@@ -15,17 +15,22 @@ use verbatim_model::{Issuer, NodeId, NodeSnapshot, OutpostId, Role, StateSet, Wi
 use crate::keys::entry::Fence;
 use crate::state::FocusContext;
 
-/// How a reader's focus is named, which the duplicate tests compare.
+/// How a reader's focus is named, which the duplicate tests compare. `T`
+/// is what a UI Automation focus carries of the listener's token for its
+/// element: nothing for the committed focus's identity ([`Kept`]), and
+/// the token itself, held once, on the readers' last focus ([`LastFocus`]),
+/// whose element the listener keeps (Claude, 2026-11-27).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ReadBy {
-    /// A UI Automation element: its runtime id, and the token the listener
-    /// keeps it behind, `None` once the listener no longer holds it (after
-    /// a re-take, or a late answer read by an outpost).
+pub(crate) enum ReadBy<T = ()> {
+    /// A UI Automation element: its runtime id, and what it carries of the
+    /// listener's token.
     Uia {
         /// Its runtime id.
         runtime_id: RuntimeId,
-        /// The listener's token for it.
-        token: Option<ElementToken>,
+        /// The listener's token for it, in [`HeldBy`]: `None` once the
+        /// listener no longer holds it (after a re-take, a late answer read
+        /// by an outpost, or the listener's end).
+        token: T,
     },
     /// An MSAA object: the ids it was read by and the child id the
     /// outpost holds it by. A focus read through `accFocus` carries the ids
@@ -47,13 +52,60 @@ pub(crate) enum ReadBy {
     Plain,
 }
 
-impl ReadBy {
+/// A focus as its reader read it: its identity with the listener's token
+/// for a UI Automation element the listener keeps.
+pub(crate) type HeldBy = ReadBy<Option<ElementToken>>;
+
+impl<T> ReadBy<T> {
     /// The backend that read it: a plain window is read as a window, by
     /// Windows' own calls, which Core names as MSAA's window object.
     pub(crate) fn backend(&self) -> verbatim_model::Backend {
         match self {
             Self::Uia { .. } => verbatim_model::Backend::Uia,
             Self::Msaa { .. } | Self::Plain => verbatim_model::Backend::Msaa,
+        }
+    }
+
+    /// Its identity, without the listener's token.
+    pub(crate) fn identity(&self) -> ReadBy {
+        match self {
+            Self::Uia { runtime_id, .. } => ReadBy::Uia {
+                runtime_id: runtime_id.clone(),
+                token: (),
+            },
+            Self::Msaa { event, held_child } => ReadBy::Msaa {
+                event: *event,
+                held_child: *held_child,
+            },
+            Self::Plain => ReadBy::Plain,
+        }
+    }
+}
+
+impl HeldBy {
+    /// The listener's token, for a UI Automation element it keeps.
+    pub(crate) fn token(&self) -> Option<ElementToken> {
+        match self {
+            Self::Uia { token, .. } => *token,
+            Self::Msaa { .. } | Self::Plain => None,
+        }
+    }
+}
+
+impl ReadBy {
+    /// This identity with the listener's token `token`, which only a UI
+    /// Automation element carries.
+    pub(crate) fn held(&self, token: Option<ElementToken>) -> HeldBy {
+        match self {
+            Self::Uia { runtime_id, .. } => ReadBy::Uia {
+                runtime_id: runtime_id.clone(),
+                token,
+            },
+            Self::Msaa { event, held_child } => ReadBy::Msaa {
+                event: *event,
+                held_child: *held_child,
+            },
+            Self::Plain => ReadBy::Plain,
         }
     }
 }
@@ -95,8 +147,9 @@ impl Place {
 /// The readers' last focus (NVDA's last queued focus).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LastFocus {
-    /// How it was read.
-    pub(crate) read_by: ReadBy,
+    /// How it was read, with the listener's token for its element: the
+    /// one holder of the token.
+    pub(crate) read_by: HeldBy,
     /// Where it is.
     pub(crate) place: Place,
     /// Its role, which the menu-start rule judges.
@@ -111,9 +164,10 @@ pub(crate) struct LastFocus {
 }
 
 impl LastFocus {
-    /// Whether it names the committed focus `focus`, whatever its fence.
+    /// Whether it names the committed focus `focus`, whatever its fence
+    /// and whether the listener still holds its element.
     pub(crate) fn names(&self, focus: &Focus) -> bool {
-        (&self.read_by, &self.place, self.role)
+        (&self.read_by.identity(), &self.place, self.role)
             == (
                 &focus.kept.read_by,
                 &focus.kept.place,
@@ -127,7 +181,8 @@ impl LastFocus {
 /// "Focus, events and objects"), beside what it spoke.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Kept {
-    /// How it was read.
+    /// How it was read, its identity: the listener's token is the readers'
+    /// last focus's alone.
     pub(crate) read_by: ReadBy,
     /// Where it is.
     pub(crate) place: Place,
@@ -200,10 +255,11 @@ impl Focus {
     }
 
     /// The readers' last focus this focus becomes when it executes for an
-    /// entry of speech fence `since`.
-    pub(crate) fn last(&self, since: Fence) -> LastFocus {
+    /// entry of speech fence `since`, its element kept by the listener
+    /// under `token`, if any.
+    pub(crate) fn last(&self, since: Fence, token: Option<ElementToken>) -> LastFocus {
         LastFocus {
-            read_by: self.kept.read_by.clone(),
+            read_by: self.kept.read_by.held(token),
             place: self.kept.place.clone(),
             role: self.context.snapshot.role,
             since: Some(since),
@@ -277,9 +333,10 @@ pub(crate) enum ReaderEnd {
 
 impl Versions {
     /// A reader's focus executes, for an entry of speech fence
-    /// `since`: both versions become it.
-    pub(crate) fn execute(&mut self, focus: Focus, since: Fence) {
-        self.last = Some(focus.last(since));
+    /// `since`, its element kept by the listener under `token`, if any:
+    /// both versions become it.
+    pub(crate) fn execute(&mut self, focus: Focus, since: Fence, token: Option<ElementToken>) {
+        self.last = Some(focus.last(since, token));
         self.committed = Committed::Read(Box::new(focus));
         self.postponed = None;
     }
