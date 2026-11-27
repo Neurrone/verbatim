@@ -13,8 +13,11 @@
 //! - A shell item list request while an enumeration is in flight is
 //!   dropped rather than queued; one that arrives after shutdown began is
 //!   ignored, as are enumeration results that arrive after it.
-//! - While a modal message box is up (the Configuration File Error box),
-//!   opening the settings dialog and the menu's Exit are refused, and
+//! - While a modal message box is up (the Configuration File Error box, a
+//!   Synthesizer Error, a theme error, the Remove Theme confirmation, a
+//!   file dialog, or any other: each is counted as the C++ layer's
+//!   `NativeModal` guard shows and returns it), opening the settings
+//!   dialog and the menu's Exit are refused, and
 //!   Verbatim says "Action unavailable while a dialog requires a response";
 //!   the menu itself still opens. This is NVDA's rule for its modal message
 //!   boxes (`docs/parity/system.md`, "A settings file that fails to load").

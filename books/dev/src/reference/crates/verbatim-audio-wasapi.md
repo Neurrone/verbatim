@@ -41,7 +41,9 @@ to the device's `DeviceNotices` (see [verbatim-audio](verbatim-audio.md)):
 a default render device change (console role) as `DefaultChanged`, and a
 device added or changed to the active state as `Available`, not filtered
 by data flow, since that would take a call into the enumerator from the
-callback, and an arrival costs a reopen only while an open has failed.
+callback, and an arrival costs a reopen only while an open has failed;
+and a device's property change as `PropertyChanged`, which costs a
+reopen only while the device's format is refused.
 `needs_reopen` reports the notices, and every notice signals the wait's
 event, so an arrival costs the audio thread one pass while a device is
 open. Any failure of the stream (an unplugged
@@ -50,6 +52,13 @@ also answers by reopening.
 
 When no stream can be opened, `open` returns the error, and the mixer
 plays real-time silence in the device's place until `needs_reopen` asks.
+A stream opened in a format the mixer cannot play is `refuse`d: it is
+closed, and the device asks for another open when Windows reports the
+default device changing, a device arriving, or a device's properties
+changing (`OnPropertyValueChanged`, the only notification changing a
+device's format in place raises), one open per notice and never at a
+deadline, so a format that stays too large is not tried again and again;
+`open_failed` answers from the notices.
 What the next open waits for depends on the failure (`open_failure`):
 when the system has no render device (`GetDefaultAudioEndpoint` returns
 `E_NOTFOUND`), only a notification, with no timer. Any other failure can

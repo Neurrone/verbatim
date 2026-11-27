@@ -1177,11 +1177,14 @@ fn play_to_the_end(probe: &mut SpeechLane, ended: &Receiver<UtteranceEnding>, le
 
 /// A silent synth with a voice and a rate, under any id, that refuses the
 /// voice "refused" the way eSpeak NG refuses a variant it cannot load, and
-/// the rate 60.
+/// the rate 60. Speaking "restart" sets its rate to 20 by itself, as a
+/// hosted synth's new host does when it refuses the rate it is given.
 struct SettingsSynth {
     id: &'static str,
     voice: String,
     rate: i32,
+    /// Its values changed by themselves since last asked.
+    changed: bool,
 }
 
 impl SettingsSynth {
@@ -1191,6 +1194,7 @@ impl SettingsSynth {
                 id,
                 voice: "default".to_owned(),
                 rate: 50,
+                changed: false,
             }) as Box<dyn SynthDriver>)
         })
     }
@@ -1236,9 +1240,57 @@ impl SynthDriver for SettingsSynth {
         true
     }
 
-    fn speak(&mut self, _: &SpeechSequence, _: &mut dyn SynthSink) -> Result<(), SynthError> {
+    fn speak(
+        &mut self,
+        sequence: &SpeechSequence,
+        _: &mut dyn SynthSink,
+    ) -> Result<(), SynthError> {
+        if sequence.text() == "restart" {
+            self.rate = 20;
+            self.changed = true;
+        }
         Ok(())
     }
+
+    fn take_values_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+}
+
+/// A driver whose values change by themselves while it speaks, as a hosted
+/// synth's do when a new host refuses a value, has them read into the
+/// mirror the settings dialog shows, as soon as it has spoken; a commit
+/// then saves them.
+#[test]
+fn values_a_driver_changes_by_itself_reach_the_mirror_and_are_saved() {
+    let store = TestStore::default();
+    let mut registry = SynthRegistry::new();
+    registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
+        registry,
+        initial_synth: SynthId::new("one"),
+        settings: Box::new(store.clone()),
+        mixer: mixer(),
+        events: Arc::new(Recorder::default()),
+        theme: theme_without_sounds(),
+        inbox: verbatim_speech::channel_inbox(),
+    })
+    .expect("pipeline starts");
+    let host = manager.settings_host();
+    let rate = SettingId::new("rate");
+    assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
+
+    manager.speak(&token, queued("restart"));
+    assert!(
+        manager.settle(Instant::now() + STEP_TIMEOUT),
+        "the synth thread has spoken"
+    );
+    assert_eq!(host.setting(&rate), Some(SettingValue::Number(20)));
+    host.commit().expect("commits");
+    assert_eq!(
+        store.persisted(1),
+        vec![(SynthId::new("one"), true, voice_and_rate("default", 20))]
+    );
 }
 
 /// A factory for a synthesizer whose host cannot start.

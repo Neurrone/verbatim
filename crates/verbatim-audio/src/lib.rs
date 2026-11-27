@@ -190,6 +190,17 @@ pub trait AudioDevice: Send {
     /// an open could succeed ([`DeviceNotices`]).
     fn open(&mut self) -> Result<DeviceFormat, AudioError>;
 
+    /// The mixer cannot play the format the device just opened in: the
+    /// device stops, and counts this as an open that failed, asking to be
+    /// reopened on the same evidence as any other failed open.
+    fn refuse(&mut self);
+
+    /// Whether the device's last open failed or was
+    /// [refused](Self::refuse), so that real-time silence plays in its
+    /// place. The device is this fact's one owner, since it also decides
+    /// from it what asks for a reopen ([`DeviceNotices`]).
+    fn open_failed(&self) -> bool;
+
     /// Frames written but not yet played.
     ///
     /// # Errors

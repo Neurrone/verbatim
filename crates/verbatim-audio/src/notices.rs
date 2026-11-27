@@ -11,7 +11,9 @@
 //! failure the system sends no notification for clearing, such as a
 //! device another program holds for itself or one reconfigured in place,
 //! is also retried at a deadline, which the device names when it reports
-//! the failure.
+//! the failure. A device that opened in a format the mixer refused is
+//! opened again when a device arrives or a device's properties change, as
+//! changing its format in place raises only property changes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -27,6 +29,9 @@ pub enum DeviceNotice {
     /// A device arrived or became usable: one that a device which failed
     /// to open could now open.
     Available,
+    /// A device's properties changed, as they do when its format is
+    /// changed in place: one refused for its format could now fit.
+    PropertyChanged,
 }
 
 /// Turns device notifications into requests to reopen, shared between the
@@ -45,12 +50,24 @@ pub struct DeviceNotices {
 struct Inner {
     default_changed: AtomicBool,
     available: AtomicBool,
-    /// The last open failed: an arrival is then a reason to reopen.
-    failed: AtomicBool,
-    /// When to try again after a failure the system sends no notification
-    /// for; read only while `failed` is set.
-    retry_at: Mutex<Option<Instant>>,
+    property_changed: AtomicBool,
+    /// How the last open ended: the one record of whether silence plays in
+    /// the device's place, and of what then asks for a reopen.
+    outcome: Mutex<Outcome>,
     waker: Waker,
+}
+
+/// How the last open ended, or that one is under way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    /// It succeeded, or one is under way.
+    Open,
+    /// It failed: an arrival asks for another, and so does `retry_at`, for
+    /// a failure the system sends no notification for.
+    Failed { retry_at: Option<Instant> },
+    /// It succeeded in a format the mixer refused: an arrival or a
+    /// property change asks for another.
+    Refused,
 }
 
 impl DeviceNotices {
@@ -62,8 +79,8 @@ impl DeviceNotices {
             inner: Arc::new(Inner {
                 default_changed: AtomicBool::new(false),
                 available: AtomicBool::new(false),
-                failed: AtomicBool::new(false),
-                retry_at: Mutex::new(None),
+                property_changed: AtomicBool::new(false),
+                outcome: Mutex::new(Outcome::Open),
                 waker,
             }),
         }
@@ -80,6 +97,9 @@ impl DeviceNotices {
         match notice {
             DeviceNotice::DefaultChanged => inner.default_changed.store(true, Ordering::SeqCst),
             DeviceNotice::Available => inner.available.store(true, Ordering::SeqCst),
+            DeviceNotice::PropertyChanged => {
+                inner.property_changed.store(true, Ordering::SeqCst);
+            }
         }
         (inner.waker)();
     }
@@ -88,64 +108,95 @@ impl DeviceNotices {
     /// answered by it.
     pub fn opening(&self) {
         let inner = &*self.inner;
-        inner.failed.store(false, Ordering::SeqCst);
+        self.set_outcome(Outcome::Open);
         inner.default_changed.store(false, Ordering::SeqCst);
         inner.available.store(false, Ordering::SeqCst);
+        inner.property_changed.store(false, Ordering::SeqCst);
     }
 
     /// The open succeeded.
     pub fn opened(&self) {
-        self.inner.failed.store(false, Ordering::SeqCst);
+        self.set_outcome(Outcome::Open);
     }
 
     /// The open failed. With `retry_after`, for a failure the system sends
     /// no notification for, the device also asks to be reopened once that
     /// long has passed; without it, only a notification does.
     pub fn failed(&self, retry_after: Option<Duration>) {
-        let inner = &*self.inner;
-        *inner
-            .retry_at
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) =
+        self.set_outcome(Outcome::Failed {
             // A retry past the clock's range is never due.
-            retry_after.and_then(|after| Instant::now().checked_add(after));
-        inner.failed.store(true, Ordering::SeqCst);
+            retry_at: retry_after.and_then(|after| Instant::now().checked_add(after)),
+        });
+    }
+
+    /// The open succeeded, but the mixer refused its format: a device
+    /// arriving, or a device's properties changing (its format changed in
+    /// place raises only that), asks for another open, one per notice, and
+    /// no deadline does, so a format that stays too large is not tried
+    /// again and again.
+    pub fn refused(&self) {
+        self.set_outcome(Outcome::Refused);
+    }
+
+    /// Whether the last open failed, or was refused for its format, since
+    /// the open now under way or the last one began: the one record of it,
+    /// which the device answers [`open_failed`] from.
+    ///
+    /// [`open_failed`]: crate::AudioDevice::open_failed
+    #[must_use]
+    pub fn open_failed(&self) -> bool {
+        self.outcome() != Outcome::Open
     }
 
     /// Whether the device should be opened again: the default device
-    /// changed, or the last open failed and since then a device became
-    /// available or its retry deadline passed.
+    /// changed; or the last open failed and since then a device became
+    /// available or its retry deadline passed; or it was refused and since
+    /// then a device became available or changed its properties.
     #[must_use]
     pub fn needs_reopen(&self) -> bool {
         let inner = &*self.inner;
         if inner.default_changed.load(Ordering::SeqCst) {
             return true;
         }
-        if !inner.failed.load(Ordering::SeqCst) {
-            return false;
+        match self.outcome() {
+            Outcome::Open => false,
+            Outcome::Failed { retry_at } => {
+                inner.available.load(Ordering::SeqCst)
+                    || retry_at.is_some_and(|at| Instant::now() >= at)
+            }
+            Outcome::Refused => {
+                inner.available.load(Ordering::SeqCst)
+                    || inner.property_changed.load(Ordering::SeqCst)
+            }
         }
-        inner.available.load(Ordering::SeqCst)
-            || self.retry_at().is_some_and(|at| Instant::now() >= at)
     }
 
     /// `timeout`, shortened so that a wait ends by the retry deadline of a
     /// failed open, when it has one.
     #[must_use]
     pub fn wait_limit(&self, timeout: Duration) -> Duration {
-        if !self.inner.failed.load(Ordering::SeqCst) {
-            return timeout;
+        match self.outcome() {
+            Outcome::Failed { retry_at: Some(at) } => {
+                timeout.min(at.saturating_duration_since(Instant::now()))
+            }
+            Outcome::Open | Outcome::Failed { retry_at: None } | Outcome::Refused => timeout,
         }
-        self.retry_at().map_or(timeout, |at| {
-            timeout.min(at.saturating_duration_since(Instant::now()))
-        })
     }
 
-    fn retry_at(&self) -> Option<Instant> {
+    fn outcome(&self) -> Outcome {
         *self
             .inner
-            .retry_at
+            .outcome
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_outcome(&self, outcome: Outcome) {
+        *self
+            .inner
+            .outcome
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = outcome;
     }
 }
 
@@ -217,6 +268,44 @@ mod tests {
         notices.opening();
         notices.opened();
         assert_eq!(notices.wait_limit(Duration::MAX), Duration::MAX);
+    }
+
+    /// A device refused for its format is opened again when a device's
+    /// properties change, as changing its format in place raises only
+    /// that; one notice asks for one open. An open device, or one that
+    /// failed for another reason, ignores property changes.
+    #[test]
+    fn a_property_change_reopens_only_a_device_refused_for_its_format() {
+        let (notices, wakes) = notices();
+        notices.opening();
+        notices.opened();
+        notices.notify(DeviceNotice::PropertyChanged);
+        assert!(!notices.needs_reopen(), "an open device");
+
+        notices.opening();
+        notices.failed(None);
+        notices.notify(DeviceNotice::PropertyChanged);
+        assert!(!notices.needs_reopen(), "a failure of another kind");
+
+        notices.opening();
+        notices.refused();
+        assert!(notices.open_failed());
+        assert!(!notices.needs_reopen());
+        assert_eq!(
+            notices.wait_limit(Duration::MAX),
+            Duration::MAX,
+            "no deadline"
+        );
+        notices.notify(DeviceNotice::PropertyChanged);
+        assert!(notices.needs_reopen());
+        assert_eq!(wakes.load(Ordering::SeqCst), 3, "every notice wakes");
+
+        notices.opening();
+        notices.refused();
+        assert!(
+            !notices.needs_reopen(),
+            "the notice was answered by one open"
+        );
     }
 
     #[test]

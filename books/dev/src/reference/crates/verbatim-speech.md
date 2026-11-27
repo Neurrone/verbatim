@@ -15,7 +15,9 @@ Public API:
   says `false` never sees a mark (see the mark fallback below).
   `changes_pitch` (default `false`) says whether it speaks a pitch change
   itself; a driver that says `false` never sees one (see "Pitch changes"
-  below).
+  below). `take_values_changed` (default `false`) says, once, that the
+  driver's values changed by themselves, as a hosted driver's do when a
+  new host refuses a value it is given.
 - `SynthSink` — receives the driver's output: `push_pcm(format, samples)`
   takes interleaved 16-bit PCM in whatever format the driver produces and
   returns `ControlFlow::Break` to request cooperative cancellation, and
@@ -323,7 +325,9 @@ to the synth thread as commands, in order. The synth thread owns the
 speech section of the settings, the committed values and whether the
 active synthesizer is the user's choice, and alone writes the mirror of
 descriptors and values that `SettingsHost` reads, so GUI reads never hop
-threads. A commit reads every value from the driver and saves them, as
+threads. After each utterance, a driver whose values changed by
+themselves (`take_values_changed`) has them read into the mirror, so the
+settings dialog shows what the driver uses. A commit reads every value from the driver and saves them, as
 NVDA saves the driver's own values; a switch that succeeds makes the new
 synthesizer the user's choice, with its values as it started as the
 committed ones. The active synthesizer's name is the registry's, which

@@ -31,7 +31,8 @@
 //! drains does: a host frozen while its utterances keep being cancelled,
 //! each before the limit, is still found, at the next request or in the
 //! next wait, and never by a timer of its own. The next request starts a
-//! new host and gives it the settings the old one had. A synthesis error
+//! new host and gives it the settings the old one had; one it refuses keeps
+//! the new host's own value. A synthesis error
 //! the host reports in turn fails only that utterance, and the host
 //! carries on. A host that dies while an utterance drains is found at the
 //! next request.
@@ -89,6 +90,10 @@ pub struct HostedSynth {
     synth: SynthId,
     description: HostDescription,
     host: Option<Host>,
+    /// A new host's values differ from those the last one had, and the
+    /// speech manager has not yet been told
+    /// ([`take_values_changed`](SynthDriver::take_values_changed)).
+    values_changed: bool,
 }
 
 /// One running host process.
@@ -159,6 +164,7 @@ impl HostedSynth {
             synth,
             description,
             host: Some(host),
+            values_changed: false,
         })
     }
 
@@ -172,8 +178,10 @@ impl HostedSynth {
     /// The running host, starting a new one with the current settings if
     /// the last one ended. A new host that fails while its settings are
     /// restored is ended again, so no reply of its can reach a later
-    /// request; a setting it refuses (a voice since uninstalled) is only
-    /// logged.
+    /// request. A setting it refuses (a voice since uninstalled) is logged
+    /// and keeps the value the new host described itself with, so the
+    /// values [`setting`](SynthDriver::setting) answers are always those
+    /// the running host has: what it started with, and what it accepted.
     fn host(&mut self) -> Result<&mut Host, SynthError> {
         // Between requests a host sends only the last frames of utterances
         // that drain, so anything else already read from it is its end or
@@ -197,16 +205,21 @@ impl HostedSynth {
         }
         if self.host.is_none() {
             warn!(target: "verbatim::speech", synth = %self.synth, "starting the synthesizer host again");
-            let (mut host, _) = Host::start(&self.exe, &self.synth)?;
+            let (mut host, started) = Host::start(&self.exe, &self.synth)?;
+            // A host lost part way leaves the values as they were, to give
+            // the next one.
+            let mut values = started.values;
             for (id, value) in self.description.values.clone() {
-                match host.set_setting(&id, value) {
-                    Ok(()) => {}
+                match host.set_setting(&id, value.clone()) {
+                    Ok(()) => set_value(&mut values, id, value),
                     Err(SynthError::Setting(refusal)) => {
-                        warn!(target: "verbatim::speech", %id, %refusal, "the new synthesizer host refused a setting");
+                        warn!(target: "verbatim::speech", %id, %refusal, "the new synthesizer host refused a setting; it keeps its own value");
                     }
                     Err(error) => return Err(error),
                 }
             }
+            self.values_changed |= values != self.description.values;
+            self.description.values = values;
             self.host = Some(host);
         }
         Ok(self.host.as_mut().expect("a host was just started"))
@@ -484,17 +497,7 @@ impl SynthDriver for HostedSynth {
     fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
         let result = self.host()?.set_setting(id, value.clone());
         match &result {
-            Ok(()) => {
-                match self
-                    .description
-                    .values
-                    .iter_mut()
-                    .find(|(setting, _)| setting == id)
-                {
-                    Some(entry) => entry.1 = value,
-                    None => self.description.values.push((id.clone(), value)),
-                }
-            }
+            Ok(()) => set_value(&mut self.description.values, id.clone(), value),
             Err(SynthError::Setting(_)) => {}
             Err(error) => self.lose_host(&error.clone()),
         }
@@ -503,6 +506,12 @@ impl SynthDriver for HostedSynth {
 
     fn places_marks(&self) -> bool {
         self.description.places_marks
+    }
+
+    /// Whether a new host, started since this was last asked, refused a
+    /// value, so its values differ from those the last host had.
+    fn take_values_changed(&mut self) -> bool {
+        std::mem::take(&mut self.values_changed)
     }
 
     fn changes_pitch(&self) -> bool {
@@ -630,6 +639,14 @@ fn write_by(
                 "the synthesizer host took no command",
             ));
         }
+    }
+}
+
+/// Sets `id` to `value` among `values`, adding it when it is not there.
+fn set_value(values: &mut Vec<(SettingId, SettingValue)>, id: SettingId, value: SettingValue) {
+    match values.iter_mut().find(|(setting, _)| *setting == id) {
+        Some(entry) => entry.1 = value,
+        None => values.push((id, value)),
     }
 }
 

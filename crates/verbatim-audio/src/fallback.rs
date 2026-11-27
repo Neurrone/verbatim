@@ -19,12 +19,12 @@ use crate::silent::PERIOD as SILENT_PERIOD;
 use crate::{AudioDevice, AudioError, ClockReading, DeviceFormat, Signal, SilentDevice, Waker};
 
 /// The real device, with real-time silence in its place while it cannot be
-/// opened.
+/// opened. Which plays is the real device's own record of whether its last
+/// open failed or was refused ([`AudioDevice::open_failed`]), so the fact
+/// that decides a reopen and the one that decides what plays are one.
 pub(crate) struct Fallback {
     device: Box<dyn AudioDevice>,
     silent: SilentDevice,
-    /// The real device's last open failed, so `silent` plays in its place.
-    failed: bool,
 }
 
 impl Fallback {
@@ -32,8 +32,12 @@ impl Fallback {
         Self {
             device,
             silent: SilentDevice::new(),
-            failed: false,
         }
+    }
+
+    /// Whether silence plays in the real device's place.
+    fn failed(&self) -> bool {
+        self.device.open_failed()
     }
 
     /// Opens the real device, or, when it fails or opens in a format that
@@ -42,10 +46,7 @@ impl Fallback {
     pub(crate) fn open_or_silence(&mut self, fits: impl Fn(DeviceFormat) -> bool) -> DeviceFormat {
         self.silent.stop();
         match self.device.open() {
-            Ok(format) if fits(format) => {
-                self.failed = false;
-                format
-            }
+            Ok(format) if fits(format) => format,
             Ok(format) => {
                 warn!(
                     target: "verbatim::audio",
@@ -54,8 +55,7 @@ impl Fallback {
                     buffer_frames = format.buffer_frames,
                     "the audio device's format is larger than the mixer reserves for; playing silently in real time until it asks to be reopened"
                 );
-                self.device.stop();
-                self.failed = true;
+                self.device.refuse();
                 self.silent.open_silent()
             }
             Err(error) => {
@@ -64,7 +64,6 @@ impl Fallback {
                     %error,
                     "the audio device could not be opened; playing silently in real time until it asks to be reopened"
                 );
-                self.failed = true;
                 self.silent.open_silent()
             }
         }
@@ -78,8 +77,20 @@ impl AudioDevice for Fallback {
         Ok(self.open_or_silence(|_| true))
     }
 
+    /// Refuses the real device's format: silence plays in its place, opened
+    /// as [`Fallback::open_or_silence`] opens it.
+    fn refuse(&mut self) {
+        self.device.refuse();
+        self.silent.open_silent();
+    }
+
+    /// Never: silence plays when the real device fails.
+    fn open_failed(&self) -> bool {
+        false
+    }
+
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
-        if self.failed {
+        if self.failed() {
             self.silent.queued_frames()
         } else {
             self.device.queued_frames()
@@ -87,7 +98,7 @@ impl AudioDevice for Fallback {
     }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), AudioError> {
-        if self.failed {
+        if self.failed() {
             self.silent.write(samples)
         } else {
             self.device.write(samples)
@@ -95,7 +106,7 @@ impl AudioDevice for Fallback {
     }
 
     fn start(&mut self) -> Result<(), AudioError> {
-        if self.failed {
+        if self.failed() {
             self.silent.start()
         } else {
             self.device.start()
@@ -103,7 +114,7 @@ impl AudioDevice for Fallback {
     }
 
     fn stop(&mut self) {
-        if self.failed {
+        if self.failed() {
             self.silent.stop();
         } else {
             self.device.stop();
@@ -115,7 +126,7 @@ impl AudioDevice for Fallback {
     /// that one; it lasts at most one period while the silence is playing,
     /// as the silent device's own wait does.
     fn wait(&mut self, timeout: Duration) {
-        if self.failed && self.silent.is_playing() {
+        if self.failed() && self.silent.is_playing() {
             self.device.wait(timeout.min(SILENT_PERIOD));
         } else {
             self.device.wait(timeout);
@@ -135,7 +146,7 @@ impl AudioDevice for Fallback {
     }
 
     fn clock_position(&mut self) -> Option<ClockReading> {
-        if self.failed {
+        if self.failed() {
             None
         } else {
             self.device.clock_position()
@@ -143,6 +154,6 @@ impl AudioDevice for Fallback {
     }
 
     fn has_clock(&self) -> bool {
-        !self.failed && self.device.has_clock()
+        !self.failed() && self.device.has_clock()
     }
 }

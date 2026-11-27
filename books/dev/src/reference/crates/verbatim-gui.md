@@ -118,16 +118,25 @@ The private modules:
   the `GuiThread` token, which also keeps it on that thread. Menus and
   modal dialogs run nested event loops that call back into it, so every
   method takes `&self`, its state sits in `RefCell`s, and no borrow is
-  ever held across a call into C++. `native_modal` logs each native
-  message box as it shows and as it returns, with the milliseconds it
-  took, which the C++ layer times on the steady clock around the box
-  (`NativeModalTimer`), so a stall of the GUI thread around a box can be
-  measured in Verbatim's log.
+  ever held across a call into C++. Every native modal box the C++ layer
+  shows, a message box, a task dialog or the system's file dialog, is
+  shown inside a `NativeModal` guard that calls `native_modal_shown` and
+  `native_modal_returned`, the latter with the milliseconds it took on the
+  steady clock. Both log the box, so a stall of the GUI thread around one
+  can be measured in Verbatim's log; the box is counted in the lifecycle
+  on that one path, so none can be shown uncounted, as NVDA counts every
+  box it shows modally, its file dialog included; and its return hides the
+  frame when nothing needs it any more, so the last of nested boxes to
+  return hides it. wxWidgets' own dialogs (the Select Synthesizer dialog,
+  a name prompt) are not counted.
 - `lifecycle` — the menu's and dialogs' lifecycle as one tested state
   machine: the menu is popped once at a time; the settings dialog and the
   shell item list are singletons, a second request focusing the open one;
   a list request during an enumeration is dropped; while a modal message
-  box (`ShowMessage`) is up, counted since one can open inside another's
+  box is up (`ShowMessage`'s, or any the C++ layer shows itself, such as
+  the Synthesizer Error, a theme error, the Remove Theme confirmation or
+  the Import and Export file dialogs),
+  counted since one can open inside another's
   loop, the settings dialog and Exit are refused, each box raised and
   the newest focused before the app says why (`refuse`; the C++ layer
   learns each box's window from a thread hook set while it is made, as

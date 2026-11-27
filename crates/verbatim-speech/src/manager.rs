@@ -1208,6 +1208,13 @@ impl SynthThread {
             match command {
                 SynthCommand::Job(job) => {
                     run_job(self.driver.as_mut(), lane, events, &job);
+                    // A hosted driver's values change by themselves when a
+                    // new host refuses one: the mirror, which the settings
+                    // dialog shows, is written again from the driver.
+                    if self.driver.take_values_changed() {
+                        self.mirror
+                            .set_values(snapshot_values(self.driver.as_ref()));
+                    }
                     let _ = inbox::post(queue_tx, QueueEvent::SynthFinished);
                 }
                 SynthCommand::SetSetting { id, value, change } => {

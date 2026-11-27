@@ -405,6 +405,16 @@ pub trait SynthDriver: Send {
         sequence: &SpeechSequence,
         sink: &mut dyn SynthSink,
     ) -> Result<(), SynthError>;
+
+    /// Whether the driver's values changed by themselves since this was
+    /// last asked, as a hosted driver's do when a new host, started in
+    /// place of one that ended, refuses a value: the speech manager then
+    /// reads them again into the settings mirror, its one writer. `false`
+    /// by default, for a driver whose values change only by
+    /// [`set_setting`](Self::set_setting).
+    fn take_values_changed(&mut self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

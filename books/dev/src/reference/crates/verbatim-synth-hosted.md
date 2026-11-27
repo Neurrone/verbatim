@@ -122,10 +122,16 @@ still in step, so only that utterance fails and the host carries on. The
 next `speak` or `set_setting` after a host was ended starts a new host
 and sends it, one `SetSetting` at a time, every setting value the old
 host had. A value the new host refuses (a voice since uninstalled) is
-logged and skipped; any other failure while restoring ends the new host
-too, so none of its replies can reach a later request. Those values are
-the ones the first host described, plus each later successful
-`set_setting`. The new host's own description is not used. Restarts log a warning under the
+logged and replaced by the value the new host described itself with, so
+the values `setting` answers, which the settings dialog shows and OK
+saves, are always those the running host has: the ones it described at
+start, and each it accepted since; when they differ from the last host's,
+`take_values_changed` says so once, and the speech manager reads them into
+its mirror after the utterance. Any other failure while restoring
+ends the new host too, so none of its replies can reach a later request,
+and leaves the values as they were, to give the next host. Only the new
+host's values are taken from its description; its settings and
+capabilities stay those of the first. Restarts log a warning under the
 `verbatim::speech` target.
 
 A host that died between requests is found before the next one when it

@@ -27,6 +27,8 @@ pub struct SilentDevice {
     queued: f64,
     running_since: Option<Instant>,
     wake: Arc<(Mutex<bool>, Condvar)>,
+    /// Its format was refused since it last opened.
+    refused: bool,
 }
 
 impl SilentDevice {
@@ -37,6 +39,7 @@ impl SilentDevice {
             queued: 0.0,
             running_since: None,
             wake: Arc::new((Mutex::new(false), Condvar::new())),
+            refused: false,
         }
     }
 
@@ -71,6 +74,7 @@ impl SilentDevice {
     pub(crate) fn open_silent(&mut self) -> DeviceFormat {
         self.queued = 0.0;
         self.running_since = None;
+        self.refused = false;
         DeviceFormat {
             sample_rate: SAMPLE_RATE,
             channels: CHANNELS,
@@ -82,6 +86,20 @@ impl SilentDevice {
 impl AudioDevice for SilentDevice {
     fn open(&mut self) -> Result<DeviceFormat, AudioError> {
         Ok(self.open_silent())
+    }
+
+    /// Stops it, and counts as a failed open until the next open. Its one
+    /// format fits the mixer, which so never refuses it, and it reports no
+    /// evidence, so only a reopen asked for elsewhere opens it again.
+    fn refuse(&mut self) {
+        self.stop();
+        self.refused = true;
+    }
+
+    /// Whether its format was refused since it last opened; its open
+    /// cannot fail.
+    fn open_failed(&self) -> bool {
+        self.refused
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {

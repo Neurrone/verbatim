@@ -151,33 +151,6 @@ public:
     }
 };
 
-// Logs, through Verbatim's log, that the native message box titled `title`
-// is about to show, and, as it goes out of scope, how long it took to
-// return, timed on the steady clock: its modal loop runs inside Windows, so
-// a stall of the GUI thread around it shows only here.
-class NativeModalTimer {
-public:
-    explicit NativeModalTimer(const wxString& title)
-        : title_(Utf8(title)), shown_(std::chrono::steady_clock::now()) {
-        if (g_shell != nullptr) {
-            g_shell->core.native_modal(title_, -1);
-        }
-    }
-    ~NativeModalTimer() {
-        if (g_shell != nullptr) {
-            const auto elapsed = std::chrono::steady_clock::now() - shown_;
-            g_shell->core.native_modal(
-                title_, std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
-        }
-    }
-    NativeModalTimer(const NativeModalTimer&) = delete;
-    NativeModalTimer& operator=(const NativeModalTimer&) = delete;
-
-private:
-    std::string title_;
-    std::chrono::steady_clock::time_point shown_;
-};
-
 // Whether `window` is a system dialog: of class #32770 and not a window
 // wxWidgets owns.
 bool IsSystemDialog(HWND window) {
@@ -186,8 +159,8 @@ bool IsSystemDialog(HWND window) {
            wxFindWinFromHandle(window) == nullptr;
 }
 
-// The hook show_message sets on its own thread while its box is made, to
-// learn the box's window, which wxMessageBox does not give.
+// The hook a message box's guard sets on its own thread while the box is
+// made, to learn the box's window, which wxMessageBox does not give.
 HHOOK g_message_box_hook = nullptr;
 
 LRESULT CALLBACK RecordMessageBox(int code, WPARAM wParam, LPARAM lParam) {
@@ -199,6 +172,54 @@ LRESULT CALLBACK RecordMessageBox(int code, WPARAM wParam, LPARAM lParam) {
     }
     return ::CallNextHookEx(nullptr, code, wParam, lParam);
 }
+
+// The guard every native modal box (a message box, a task dialog, the
+// system's file dialog) is shown inside, so none escapes Rust's count. It
+// tells Rust the box titled `title` is about to show, and, as it goes out
+// of scope, how long it took to return, timed on the steady clock: its
+// modal loop runs inside Windows, so a stall of the GUI thread around it
+// shows only here. Rust counts it in its lifecycle, which refuses the
+// settings dialog and Exit while one is up, as NVDA does for every box it
+// shows modally, and hides the frame on its return when nothing needs it.
+// Its window is recorded, from its first activation until it returns, for
+// a refusal to raise and focus; a box shown from inside this one's loop
+// has dropped its own window by the time this one returns.
+class NativeModal {
+public:
+    explicit NativeModal(const wxString& title)
+        : title_(Utf8(title)), shown_(std::chrono::steady_clock::now()) {
+        if (g_shell == nullptr) {
+            return;
+        }
+        boxes_before_ = g_shell->message_boxes.size();
+        if (g_message_box_hook == nullptr) {
+            g_message_box_hook =
+                ::SetWindowsHookExW(WH_CBT, RecordMessageBox, nullptr, ::GetCurrentThreadId());
+        }
+        g_shell->core.native_modal_shown(title_);
+    }
+    ~NativeModal() {
+        if (g_message_box_hook != nullptr) {
+            ::UnhookWindowsHookEx(g_message_box_hook);
+            g_message_box_hook = nullptr;
+        }
+        if (g_shell == nullptr) {
+            return;
+        }
+        g_shell->message_boxes.resize(boxes_before_);
+        const auto elapsed = std::chrono::steady_clock::now() - shown_;
+        g_shell->core.native_modal_returned(
+            title_, static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
+    }
+    NativeModal(const NativeModal&) = delete;
+    NativeModal& operator=(const NativeModal&) = delete;
+
+private:
+    std::string title_;
+    std::chrono::steady_clock::time_point shown_;
+    std::size_t boxes_before_ = 0;
+};
 
 // Ends the native modal loops on the GUI thread, which EndModal cannot: the
 // tracked menu, with EndMenu, and every system dialog, a top-level window
@@ -742,7 +763,7 @@ private:
             g_shell->question = &question;
             int answer = wxID_NO;
             {
-                const NativeModalTimer timer(confirm.GetCaption());
+                const NativeModal box(confirm.GetCaption());
                 answer = confirm.ShowModal();
             }
             g_shell->question = nullptr;
@@ -777,7 +798,7 @@ private:
         wxFileDialog ask(dialog_, Text(title), wxString(), Text(file), Text(filter), style);
         int answer = wxID_CANCEL;
         {
-            const NativeModalTimer timer(Text(title));
+            const NativeModal box(Text(title));
             answer = ask.ShowModal();
         }
         if (g_shell->shutting_down || answer != wxID_OK) {
@@ -793,7 +814,7 @@ private:
             wxMessageDialog message(dialog_, Text(error), Text(page_.prompts.error_title),
                                     wxOK | wxICON_ERROR);
             {
-                const NativeModalTimer timer(message.GetCaption());
+                const NativeModal box(message.GetCaption());
                 message.ShowModal();
             }
             if (g_shell->shutting_down) {
@@ -1196,9 +1217,11 @@ private:
         const SettingsCommit commit = g_shell->core.commit_settings();
         const bool saved = commit.error.empty();
         if (!saved) {
-            const NativeModalTimer timer(Text(commit.error_title));
-            wxMessageBox(Text(commit.error), Text(commit.error_title), wxOK | wxICON_WARNING,
-                         this);
+            {
+                const NativeModal box(Text(commit.error_title));
+                wxMessageBox(Text(commit.error), Text(commit.error_title),
+                             wxOK | wxICON_WARNING, this);
+            }
             if (g_shell->shutting_down) {
                 return false;
             }
@@ -1630,7 +1653,7 @@ void synthesizer_switched(const SynthesizerSwitch& outcome) {
         parent = g_shell->settings != nullptr ? static_cast<wxWindow*>(g_shell->settings)
                                               : static_cast<wxWindow*>(g_shell->frame);
     }
-    const NativeModalTimer timer(Text(outcome.error_title));
+    const NativeModal box(Text(outcome.error_title));
     wxMessageBox(Text(outcome.error), Text(outcome.error_title), wxOK | wxICON_WARNING, parent);
 }
 
@@ -1638,25 +1661,10 @@ void show_message(rust::Str title, rust::Str text) {
     if (g_shell == nullptr || g_shell->shutting_down) {
         return;
     }
-    // The box's window is recorded when it is first activated, and dropped
-    // once it has closed; a box shown from inside this one's loop has
-    // dropped its own by then.
-    const std::size_t before = g_shell->message_boxes.size();
-    g_message_box_hook =
-        ::SetWindowsHookExW(WH_CBT, RecordMessageBox, nullptr, ::GetCurrentThreadId());
-    {
-        const NativeModalTimer timer(wxString::FromUTF8(title.data(), title.size()));
-        wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
-                     wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
-                     g_shell->frame);
-    }
-    if (g_message_box_hook != nullptr) {
-        ::UnhookWindowsHookEx(g_message_box_hook);
-        g_message_box_hook = nullptr;
-    }
-    if (g_shell != nullptr) {
-        g_shell->message_boxes.resize(before);
-    }
+    const NativeModal box(wxString::FromUTF8(title.data(), title.size()));
+    wxMessageBox(wxString::FromUTF8(text.data(), text.size()),
+                 wxString::FromUTF8(title.data(), title.size()), wxOK | wxICON_EXCLAMATION,
+                 g_shell->frame);
 }
 
 std::size_t raise_message_boxes() {

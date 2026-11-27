@@ -299,6 +299,15 @@ impl AudioDevice for ManualDevice {
         Ok(self.reopened_format.lock().unwrap().unwrap_or(FORMAT))
     }
 
+    fn refuse(&mut self) {
+        self.stop();
+        self.notices.refused();
+    }
+
+    fn open_failed(&self) -> bool {
+        self.notices.open_failed()
+    }
+
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
         if self.fail.swap(false, Ordering::SeqCst) {
             return Err(AudioError::Device("the device was unplugged".to_owned()));
@@ -1041,6 +1050,46 @@ fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_op
     assert_eq!(harness.next(), started(2, trace));
     harness.play(9);
     assert_eq!(harness.next(), ended(2, trace, UtteranceEnding::Completed));
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), [SPOKEN; 10]);
+    assert_eq!(harness.device.state.0.lock().unwrap().opens, 2);
+}
+
+/// A device that opens in a format larger than the mixer reserves for is
+/// refused and silence plays in its place, until a device's properties
+/// change, as changing its format in place raises: the device is opened
+/// again and speech plays through it.
+#[test]
+fn a_device_refused_for_its_format_is_opened_again_when_its_properties_change() {
+    let device = ManualDevice::default();
+    *device.reopened_format.lock().unwrap() = Some(DeviceFormat {
+        sample_rate: 768_000,
+        channels: 32,
+        buffer_frames: 76_800,
+    });
+    let mut harness = harness_on(device, None);
+    assert_eq!(
+        harness.mixer.format(),
+        DeviceFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            buffer_frames: 1_920,
+        },
+        "silence plays in the refused device's place"
+    );
+    *harness.device.reopened_format.lock().unwrap() = None;
+    harness.device.settle();
+    harness.device.notices.notify(DeviceNotice::PropertyChanged);
+    harness
+        .device
+        .wait_opened(2, "the refused device is opened again on the notice");
+    harness.device.settle();
+    assert_eq!(harness.mixer.format(), FORMAT);
+    let trace = harness.speak(1, 10);
+    harness.play(1);
+    assert_eq!(harness.next(), started(1, trace));
+    harness.play(9);
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     harness.nothing_more();
     assert_eq!(harness.device.written(), [SPOKEN; 10]);
     assert_eq!(harness.device.state.0.lock().unwrap().opens, 2);

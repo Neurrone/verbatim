@@ -270,18 +270,48 @@ pub(crate) struct GuiCore {
     list_buttons: RefCell<Option<ListDialogButtons>>,
 }
 
-/// Logs a native message box titled `title` about to show, for a
-/// `returned_after_ms` of -1 (any value below 0), or returned after so
-/// many milliseconds: into Verbatim's log, whose clock the listener's log
-/// shares, so that a stall of the GUI thread can be timed against the
-/// box. The box's own modal loop runs inside Windows, out of wxWidgets'
-/// sight.
-fn log_native_modal(title: &str, returned_after_ms: i64) {
-    if let Ok(returned_after_ms) = u64::try_from(returned_after_ms) {
-        tracing::info!(title, returned_after_ms, "a native message box returned");
-    } else {
-        tracing::info!(title, "a native message box is about to show");
+/// Where a native modal box is in its life.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModalPhase {
+    /// About to show.
+    Shown,
+    /// Returned after so many milliseconds.
+    Returned { after_ms: u64 },
+}
+
+/// Logs a native modal box titled `title` about to show or returned, with
+/// the milliseconds it took: into Verbatim's log, whose clock the
+/// listener's log shares, so that a stall of the GUI thread can be timed
+/// against the box. The box's own modal loop runs inside Windows, out of
+/// wxWidgets' sight.
+fn log_native_modal(title: &str, phase: ModalPhase) {
+    match phase {
+        // The end-to-end harness reads these lines (`verbatim-e2e`'s
+        // `artifacts.rs`); a file dialog is logged in the same words.
+        ModalPhase::Shown => tracing::info!(title, "a native message box is about to show"),
+        ModalPhase::Returned { after_ms } => tracing::info!(
+            title,
+            returned_after_ms = after_ms,
+            "a native message box returned"
+        ),
     }
+}
+
+/// A native modal box is about to show: logged, and counted in the
+/// lifecycle. Every box the C++ layer shows, a message box, a task dialog
+/// or the system's file dialog, goes through its `NativeModal` guard and so
+/// through here, and blocks what NVDA's counted boxes block.
+fn native_modal_shown(lifecycle: &mut Lifecycle, title: &str) {
+    log_native_modal(title, ModalPhase::Shown);
+    lifecycle.message_box_shown();
+}
+
+/// That box returned: logged, its count released, and what to do with the
+/// frame now that it is gone, which the box's return decides whoever showed
+/// the frame for it, since a box shown inside another's loop returns first.
+fn native_modal_returned(lifecycle: &mut Lifecycle, title: &str, after_ms: u64) -> Frame {
+    log_native_modal(title, ModalPhase::Returned { after_ms });
+    lifecycle.message_box_closed()
 }
 
 impl GuiCore {
@@ -299,15 +329,19 @@ impl GuiCore {
         }
     }
 
-    /// A native message box titled `title` is about to show, for a
-    /// `returned_after_ms` of -1, or returned after so many milliseconds
-    /// ([`log_native_modal`]).
-    #[expect(
-        clippy::unused_self,
-        reason = "called through the bridge's GuiCore, as every callback is"
-    )]
-    fn native_modal(&self, title: &str, returned_after_ms: i64) {
-        log_native_modal(title, returned_after_ms);
+    /// A native modal box titled `title` is about to show
+    /// ([`native_modal_shown`]).
+    fn native_modal_shown(&self, title: &str) {
+        native_modal_shown(&mut self.lifecycle.borrow_mut(), title);
+    }
+
+    /// That box returned after `returned_after_ms` milliseconds
+    /// ([`native_modal_returned`]); the frame is hidden when nothing needs
+    /// it any more.
+    fn native_modal_returned(&self, title: &str, returned_after_ms: u64) {
+        let after =
+            native_modal_returned(&mut self.lifecycle.borrow_mut(), title, returned_after_ms);
+        self.post_popup(after);
     }
 
     /// Acts on every message waiting in the channel.
@@ -333,10 +367,9 @@ impl GuiCore {
             GuiCommand::Shutdown => self.shut_down(),
             GuiCommand::ShowMessage { title, text } => {
                 self.pre_popup();
-                self.lifecycle.borrow_mut().message_box_shown();
+                // The box counts itself as it shows, and its return hides
+                // the frame when nothing needs it (`native_modal_returned`).
                 self.gui.show_message(&title, &text);
-                let after = self.lifecycle.borrow_mut().message_box_closed();
-                self.post_popup(after);
             }
         }
     }
@@ -929,8 +962,8 @@ mod tests {
     fn native_modal_logs_the_title_and_the_time() {
         let lines = std::sync::Arc::new(Lines::default());
         tracing::subscriber::with_default(std::sync::Arc::clone(&lines), || {
-            log_native_modal("Remove Theme", -1);
-            log_native_modal("Remove Theme", 5_168);
+            log_native_modal("Remove Theme", ModalPhase::Shown);
+            log_native_modal("Remove Theme", ModalPhase::Returned { after_ms: 5_168 });
         });
         assert_eq!(
             *lines.0.lock().expect("the lines"),
@@ -977,5 +1010,60 @@ mod tests {
         let acts = Acts::default();
         exit_chosen(lifecycle.request_exit(), &acts);
         assert_eq!(*acts.0.borrow(), ["QuitRequested"]);
+    }
+
+    /// Every native message box blocks Exit and the settings dialog while
+    /// it is up, not only the boxes Rust asks for: here the Synthesizer
+    /// Error box the C++ layer shows over the settings dialog. Source as
+    /// the test above: NVDA counts every `gui.messageBox`
+    /// (`gui/message.py` 55-77).
+    #[test]
+    fn a_native_message_box_blocks_exit_and_settings_while_it_is_up() {
+        let mut lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Create);
+        native_modal_shown(&mut lifecycle, "Synthesizer Error");
+        assert_eq!(lifecycle.request_exit(), Exit::Blocked);
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Blocked);
+        assert_eq!(
+            native_modal_returned(&mut lifecycle, "Synthesizer Error", 1_200),
+            Frame::Keep,
+            "the settings dialog still needs the frame"
+        );
+        assert_eq!(lifecycle.request_exit(), Exit::Quit);
+        assert_eq!(lifecycle.request_settings(), OpenSettings::FocusExisting);
+    }
+
+    /// The system's file dialog blocks as a message box does: NVDA shows
+    /// its one file dialog (`gui/addonStoreGui/controls/storeDialog.py`
+    /// 446-455) through `displayDialogAsModal`, which it counts as a
+    /// message box (`gui/message.py` 77-78).
+    #[test]
+    fn exit_is_refused_behind_the_import_file_dialog() {
+        let mut lifecycle = Lifecycle::new();
+        assert_eq!(lifecycle.request_settings(), OpenSettings::Create);
+        native_modal_shown(&mut lifecycle, "Import a Theme");
+        assert_eq!(lifecycle.request_exit(), Exit::Blocked);
+        native_modal_returned(&mut lifecycle, "Import a Theme", 3_000);
+        assert_eq!(lifecycle.request_exit(), Exit::Quit);
+    }
+
+    /// A box shown over the bare frame with another shown inside its loop,
+    /// as a `ShowMessage` box can be over a Synthesizer Error box once the
+    /// settings dialog has closed: the inner box's return keeps the frame,
+    /// which the outer box still needs, and the outer box's return hides
+    /// it.
+    #[test]
+    fn the_last_box_to_return_over_the_bare_frame_hides_it() {
+        let mut lifecycle = Lifecycle::new();
+        native_modal_shown(&mut lifecycle, "Synthesizer Error");
+        native_modal_shown(&mut lifecycle, "Configuration File Error");
+        assert_eq!(
+            native_modal_returned(&mut lifecycle, "Configuration File Error", 800),
+            Frame::Keep
+        );
+        assert_eq!(
+            native_modal_returned(&mut lifecycle, "Synthesizer Error", 2_000),
+            Frame::Hide
+        );
     }
 }

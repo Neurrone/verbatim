@@ -151,8 +151,9 @@ impl GuiThread {
         unsafe { ffi::show_message(title, text) }
     }
 
-    /// Raises every message box `show_message` has up, oldest first, and
-    /// returns the newest's native window handle, 0 when none is up.
+    /// Raises every native modal box up, each shown inside the C++ layer's
+    /// `NativeModal` guard, oldest first, and returns the newest's native
+    /// window handle, 0 when none is up.
     pub(crate) fn raise_message_boxes(self) -> usize {
         // SAFETY: `self` shows this is the GUI thread.
         unsafe { ffi::raise_message_boxes() }
@@ -648,9 +649,13 @@ pub(crate) mod ffi {
         fn menu_chosen(self: &GuiCore, choice: MenuChoice);
         /// A dialog closed and was destroyed.
         fn dialog_closed(self: &GuiCore, dialog: DialogKind);
-        /// A native message box titled `title` is about to show, for -1,
-        /// or returned after `returned_after_ms` milliseconds.
-        fn native_modal(self: &GuiCore, title: &str, returned_after_ms: i64);
+        /// A native modal box titled `title` (a message box, a task dialog
+        /// or the system's file dialog), shown inside the C++ layer's
+        /// `NativeModal` guard, is about to show: while one is up, the
+        /// settings dialog and Exit are refused, as NVDA refuses them.
+        fn native_modal_shown(self: &GuiCore, title: &str);
+        /// That box returned after `returned_after_ms` milliseconds.
+        fn native_modal_returned(self: &GuiCore, title: &str, returned_after_ms: u64);
 
         /// The Speech page, built afresh from the settings host.
         fn speech_page(self: &GuiCore) -> SpeechPage;
@@ -803,8 +808,9 @@ pub(crate) mod ffi {
         /// is closed.
         unsafe fn show_message(title: &str, text: &str);
 
-        /// Raises every message box `show_message` has up, oldest first,
-        /// and returns the newest's native window handle, 0 when none is.
+        /// Raises every native modal box up, each shown inside the
+        /// `NativeModal` guard, oldest first, and returns the newest's
+        /// native window handle, 0 when none is.
         unsafe fn raise_message_boxes() -> usize;
 
         /// Sets a Speech page control to the driver's value: a slider's

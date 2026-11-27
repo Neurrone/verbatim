@@ -26,7 +26,12 @@ Public API:
   `signal` (a new `Signal` of the device's kind, for the mixer's other
   threads to wait on; a `CondvarSignal` by default), `needs_reopen` (for
   example after the system's default device changed, or a device became
-  available after an open failed; defaults to `false`), and
+  available after an open failed; defaults to `false`), `refuse` (the
+  mixer cannot play the format the device opened in: the device stops and
+  counts it as a failed open), `open_failed` (whether the last open
+  failed or was refused, so silence plays in its place; the device's
+  notices are this fact's one record, so what plays and what asks for a
+  reopen cannot disagree), and
   `clock_position` (the device's own clock as a `ClockReading`: frames
   played since it last started, and how long ago that held; defaults to
   `None`, and only the latency ledger's device clock stage uses it), and
@@ -39,13 +44,17 @@ Public API:
   WASAPI device makes Windows events.
 - `DeviceNotice` and `DeviceNotices` — the system's notifications about
   its output devices (`DefaultChanged`, `Available`: a device arrived or
-  became usable) turned into requests to reopen. A device's notification
-  thread calls `notify`; its audio thread calls `opening` before an
-  open and `opened` or `failed(retry_after)` after it, and reports
+  became usable, `PropertyChanged`: a device's properties changed, as
+  changing its format in place does) turned into requests to reopen. A
+  device's notification thread calls `notify`; its audio thread calls
+  `opening` before an open and `opened`, `failed(retry_after)` or, for a
+  format the mixer refused, `refused` after it, which they keep as one
+  outcome value, answers `open_failed` from it, and reports
   `needs_reopen` and shortens its waits with `wait_limit`. An open device
   asks to be reopened on `DefaultChanged`; after a failed open, also on
   `Available`, or once `retry_after` has passed for a failure the system
-  sends no notification for. A notification that comes during an open is
+  sends no notification for; after a refusal, also on `Available` or
+  `PropertyChanged`, one open per notice and never at a deadline. A notification that comes during an open is
   kept, so it is answered by another open. `notify` sets its flag and
   then calls the waker for every notice, and the audio thread decides
   from `needs_reopen` in its pass, so no thread decides a wake from a flag
@@ -296,8 +305,10 @@ again, is not counted as an underrun.
 Device recovery. On any device error, or when `needs_reopen` is set, the
 mixer rewinds as above and calls `open` again, on the recovery path, and
 sets every room event, since a format change frees every source. When
-`open` fails, at start or later, the mixer plays through a
-`SilentDevice` in the device's place (`fallback.rs`), so speech goes on
+`open` fails, at start or later, or opens in a format larger than the
+mixer reserves for, which the mixer `refuse`s, the mixer plays through a
+`SilentDevice` in the device's place (`fallback.rs`, which asks the
+device's `open_failed` which plays), so speech goes on
 and every utterance still ends. The silent device is 48 kHz stereo, so
 an utterance in flight when the device is lost goes on only if the lost
 device had that rate and channel count; otherwise it fails, as on any

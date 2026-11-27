@@ -177,11 +177,14 @@ mod watcher {
             Ok(())
         }
 
+        /// Changing a device's format in place raises only property
+        /// changes, which a device refused for its format reopens on.
         fn OnPropertyValueChanged(
             &self,
             _device: &PCWSTR,
             _key: &PROPERTYKEY,
         ) -> windows::core::Result<()> {
+            self.notices.notify(DeviceNotice::PropertyChanged);
             Ok(())
         }
     }
@@ -530,6 +533,21 @@ impl AudioDevice for WasapiDevice {
                 Err(error)
             }
         }
+    }
+
+    /// The stream is closed, and the device asks for another open when
+    /// Windows reports the default device changing, a device arriving, or a
+    /// device's properties changing, as changing its format raises
+    /// ([`DeviceNotices::refused`]); never at a deadline, so a format that
+    /// stays too large is not opened again and again.
+    fn refuse(&mut self) {
+        self.stop();
+        self.stream = None;
+        self.notices.refused();
+    }
+
+    fn open_failed(&self) -> bool {
+        self.notices.open_failed()
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {

@@ -52,8 +52,9 @@ use verbatim_synth_hosted::HostedSynth;
 use verbatim_synth_onecore::{Waited, wait_for_synthesis};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
-    CreateEventW, CreateSemaphoreW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenSemaphoreW,
-    ReleaseSemaphore, SYNCHRONIZATION_SYNCHRONIZE, SetEvent, WaitForSingleObject,
+    CreateEventW, CreateSemaphoreW, EVENT_MODIFY_STATE, INFINITE, OpenEventW, OpenProcess,
+    OpenSemaphoreW, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, ReleaseSemaphore,
+    SYNCHRONIZATION_SYNCHRONIZE, SetEvent, TerminateProcess, WaitForSingleObject,
 };
 use windows::core::HSTRING;
 
@@ -88,6 +89,16 @@ fn chunk(utterance: u64, index: usize, length: usize) -> Vec<i16> {
     vec![value(utterance, index); length]
 }
 
+/// The name of the manual-reset event that, set when a stand-in host
+/// starts, makes its driver refuse a rate of [`STRICT_RATE`] or more, as a
+/// host started after a voice was uninstalled refuses that voice.
+fn strict_name(script: &str) -> HSTRING {
+    HSTRING::from(format!("verbatim-test-strict-{script}"))
+}
+
+/// The lowest rate a strict host refuses.
+const STRICT_RATE: i32 = 50;
+
 /// The scripted driver, in the stand-in host.
 struct Scripted {
     gate: HANDLE,
@@ -95,6 +106,8 @@ struct Scripted {
     /// The host's command event.
     interrupt: Arc<Event>,
     rate: i32,
+    /// It refuses a rate of [`STRICT_RATE`] or more.
+    strict: bool,
 }
 
 // SAFETY: the handles are the stand-in process's own, open for its life,
@@ -116,6 +129,9 @@ impl SynthDriver for Scripted {
 
     fn set_setting(&mut self, id: &SettingId, value: SettingValue) -> Result<(), SynthError> {
         match (id.0.as_str(), value) {
+            ("rate", SettingValue::Number(rate)) if self.strict && rate >= STRICT_RATE => Err(
+                SynthError::Setting(format!("this host refuses a rate of {rate}")),
+            ),
             ("rate", SettingValue::Number(rate)) => {
                 self.rate = rate;
                 Ok(())
@@ -200,12 +216,21 @@ fn stand_in(args: &[String]) -> ExitCode {
     // SAFETY: as above.
     let waiting = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &waiting_name(&script)) }
         .expect("the test's event");
+    // SAFETY: as above.
+    let strict_event =
+        unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, &strict_name(&script)) }
+            .expect("the test's strict event");
+    // SAFETY: the event just opened, polled once, then closed.
+    let strict = unsafe { WaitForSingleObject(strict_event, 0) } == WAIT_OBJECT_0;
+    // SAFETY: as above.
+    let _ = unsafe { CloseHandle(strict_event) };
     serve(commands, replies, |command_event| {
         Ok(Box::new(Scripted {
             gate,
             waiting,
             interrupt: Arc::clone(command_event),
             rate: 0,
+            strict,
         }))
     })
 }
@@ -216,6 +241,8 @@ struct Script {
     name: String,
     gate: HANDLE,
     waiting: HANDLE,
+    /// Set, every host started after it makes its driver strict.
+    strict: HANDLE,
 }
 
 impl Script {
@@ -233,11 +260,22 @@ impl Script {
         // SAFETY: a new named auto-reset event, closed in `drop`.
         let waiting =
             unsafe { CreateEventW(None, false, false, &waiting_name(&name)) }.expect("an event");
+        // SAFETY: a new named manual-reset event, closed in `drop`.
+        let strict =
+            unsafe { CreateEventW(None, true, false, &strict_name(&name)) }.expect("an event");
         Self {
             name,
             gate,
             waiting,
+            strict,
         }
+    }
+
+    /// Every host started from now on refuses a rate of [`STRICT_RATE`] or
+    /// more.
+    fn make_strict(&self) {
+        // SAFETY: the event this script owns.
+        unsafe { SetEvent(self.strict) }.expect("the strict event is set");
     }
 
     /// A `HostedSynth` running this test binary as its host.
@@ -256,7 +294,58 @@ impl Drop for Script {
         let _ = unsafe { CloseHandle(self.gate) };
         // SAFETY: the event this script owns, closed once.
         let _ = unsafe { CloseHandle(self.waiting) };
+        // SAFETY: as above.
+        let _ = unsafe { CloseHandle(self.strict) };
     }
+}
+
+/// Ends the host process `pid` and waits until it has exited.
+fn kill(pid: u32) {
+    // SAFETY: opening the host this test started, by its id, to end it.
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid) }
+        .expect("the host is open to end");
+    // SAFETY: the handle just opened, closed below.
+    unsafe { TerminateProcess(process, 1) }.expect("the host is ended");
+    // SAFETY: as above.
+    let waited = unsafe { WaitForSingleObject(process, WAIT_LIMIT_MS) };
+    // SAFETY: as above, closed once.
+    let _ = unsafe { CloseHandle(process) };
+    assert_eq!(waited, WAIT_OBJECT_0, "the host exits");
+}
+
+/// A host started again after one ends is given the settings the old one
+/// had; a value the new one refuses, as a voice uninstalled meanwhile is,
+/// is not what the driver answers it has: it has the new host's own, which
+/// the settings dialog then shows and OK saves.
+fn a_value_a_new_host_refuses_is_answered_as_the_new_hosts_own() {
+    let script = Script::new(1_000);
+    let mut synth = script.start();
+    let rate = SettingId::new("rate");
+    synth
+        .set_setting(&rate, SettingValue::Number(STRICT_RATE))
+        .expect("the first host takes the rate");
+    assert_eq!(
+        synth.setting(&rate),
+        Some(SettingValue::Number(STRICT_RATE))
+    );
+
+    script.make_strict();
+    kill(synth.process_id().expect("a host runs"));
+    let mut sink = TestSink::new(CancelAt::Never);
+    synth
+        .speak(&sequence(1, "5"), &mut sink)
+        .expect("a new host speaks");
+    assert_eq!(
+        sink.received,
+        [chunk(1, 0, 5)],
+        "at the new host's own rate"
+    );
+    assert_eq!(synth.setting(&rate), Some(SettingValue::Number(0)));
+    assert!(
+        synth.take_values_changed(),
+        "the speech manager is told, to write its mirror again"
+    );
+    assert!(!synth.take_values_changed(), "once");
 }
 
 fn sequence(id: u64, text: &str) -> SpeechSequence {
@@ -601,7 +690,11 @@ fn main() -> ExitCode {
     // under `cargo test` they run one after another on the main thread.
     let mut arguments = libtest_mimic::Arguments::from_args();
     arguments.test_threads = Some(1);
-    let tests: [(&str, fn()); 6] = [
+    let tests: [(&str, fn()); 7] = [
+        (
+            "a_value_a_new_host_refuses_is_answered_as_the_new_hosts_own",
+            a_value_a_new_host_refuses_is_answered_as_the_new_hosts_own,
+        ),
         (
             "a_new_utterance_goes_right_behind_a_cancel",
             a_new_utterance_goes_right_behind_a_cancel,
