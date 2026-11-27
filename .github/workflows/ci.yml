@@ -385,8 +385,25 @@ jobs:
       # the suite's first launch would, so the runner tests the same
       # version as a developer's machine and a failed download is reported
       # before the suite starts.
+      # The unpacked release is cached by the file that pins it, so a
+      # group downloads it only when the pin changes: run 45925893426's
+      # group 4 ran no scenario when GitHub's release server answered 504.
+      # A restored folder is used only when its stamp holds the pinned
+      # SHA-256 (`crates/verbatim-e2e/src/windows_terminal.rs`, `prepare`).
+      - id: windows-terminal-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: target/e2e-stage/windows-terminal-*
+          key: windows-terminal-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-e2e/src/windows_terminal.rs') }}
       - name: Download the pinned Windows Terminal
         run: cargo xtask windows-terminal
+      # Saved straight after the download, before any scenario writes the
+      # terminal's settings into the folder.
+      - if: steps.windows-terminal-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: target/e2e-stage/windows-terminal-*
+          key: ${{ steps.windows-terminal-cache.outputs.cache-primary-key }}
       # Environment preparation, not a workaround in the harness: runner
       # image 20261007.264.1 shows its own "System Properties" message box
       # (SystemPropertiesPerformance.exe, "Windows created a temporary
