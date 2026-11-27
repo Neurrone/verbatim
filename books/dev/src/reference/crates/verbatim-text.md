@@ -298,7 +298,9 @@ every new line goes to Core.
   - `read(&Read, waited, colours)`: a read, with whether it waited for
     Core's speech queue and, for a read in a key's window, the screen's
     colour runs (`ColourRun`) row by row from the screen's top.
-  - `key(Key)`: a key as it reached the program, with when. `KeyKind` is
+  - `key(Key)`: a key as it reached the program, with when and its
+    `KeyTag`, the caller's trace and number for it, which the rules carry
+    and never read. `KeyKind` is
     `Typed`, a caret key with its `Unit` (character, word or line),
     `Enter`, `Forget` (Tab, Escape, Control+C, Control+D, Control+Break,
     which forget held typing), or `Other`.
@@ -306,6 +308,17 @@ every new line goes to Core.
   - `timer(now_ms)`: the timer the last step asked for came due.
   - `set_settings(Settings)`.
   - `caret_line_input()`, above.
+- The keys' window, the one place its 300 milliseconds is judged: a
+  `KeyWindow`, `Closed` with the newest key or none, or `Open` with the
+  newest key and the window's keys (the first key's time, their kinds,
+  the caret before them, whether the review followed, and the typing not
+  yet shown, pruned by `TYPED_LIMIT_MS` at each read). A read or key past
+  the window's end closes it; the focus arriving closes it, and the focus
+  leaving drops the newest key too. Core asks it two things:
+  `read_key(at_ms)`, the newest key given before a read with whether its
+  window holds the read (`ReadKey`), and `key_window(pending_ms)`, the
+  window of the newest of a key Core still holds and the keys given, for
+  the colours.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
   `timer` due time, `count_read` and `history_block` as in the
   `Outcome`, the read's `Outcome`, and `followed`, whether a key moved the

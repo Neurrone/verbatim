@@ -1379,15 +1379,21 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
 }
 
 #[test]
-fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
-    // Output the program wrote before Up's starting read: the read is
-    // aligned as any read, and its output spoken; then the key passes, its
-    // watch looks for its effect, and its final read is taken.
-    let mut session = showing(20, 4, 10, "$ ls");
-    session.outpost.sim.write(b"\r\nfile\r\n$ ");
+fn a_held_keys_starting_read_is_aligned_and_its_output_cut() {
+    // Output the program wrote before Up was pressed, still unread, as a
+    // flood's last lines are when Up comes as it ends: Up's starting read
+    // is aligned as any read, and its output is Up's cut, since it began
+    // before Up reached the program, so the recalled line is the first
+    // thing heard (Claude, 2026-11-27, pending Dickson;
+    // `windows_terminal_line_key_flood`). The key passes, its watch looks
+    // for its effect, and its final read is taken; the read that shows the
+    // recalled line finds the starting read's rows kept.
+    let mut session = showing(20, 4, 10, "$ ");
+    session.outpost.sim.write(b"\r\nflood 1\r\nflood 2\r\n$ ");
     session.at_ms = 300;
+    let up = TraceId::from_raw(9);
     session.press(&caret(
-        TraceId::from_raw(9),
+        up,
         CaretKey {
             motion: CaretMotion::PreviousLine,
             select: false,
@@ -1395,8 +1401,51 @@ fn a_held_keys_starting_read_is_aligned_and_its_output_spoken() {
         200,
         true,
     ));
-    assert_eq!(session.heard(), plain(&["file", "$"]));
+    assert_eq!(session.heard(), []);
     assert_eq!(session.requests(), [Asked::Read, Asked::Watch, Asked::Read]);
+    session.write("echo one", 320);
+    assert_eq!(session.heard(), [said(Some(up), "$ echo one")]);
+}
+
+/// Up's trace in [`a_read_begun_before_a_held_keys_release_sent_it_is_cut`].
+const HELD_UP: TraceId = TraceId::from_raw(15);
+
+#[test]
+fn a_read_begun_before_a_held_keys_release_sent_it_is_cut() {
+    // "Report status bar"'s fresh read out; Up pressed at 1000 and held
+    // behind the command, its turn not come; the flood's output is written
+    // and the command's read begins at 1050; Up's 150 ms release sends its
+    // stroke at 1150, before Up's turn; the read is answered at 1160. It
+    // began before Up reached the program, so the flood's lines, which the
+    // command's turn speaks as the terminal's speech, are Up's cut.
+    let mut session = showing(20, 6, 10, "$ ");
+    session
+        .during_reads
+        .push_back(Some(|session: &mut Session| {
+            session.at_ms = 1000;
+            session.press_only(&caret(
+                HELD_UP,
+                CaretKey {
+                    motion: CaretMotion::PreviousLine,
+                    select: false,
+                },
+                1000,
+                true,
+            ));
+            session.outpost.sim.write(b"\r\nflood 1\r\nflood 2\r\n$ ");
+            session.at_ms = 1150;
+            session.queue(QueueInput::Due { in_front: None });
+            session.next_read_began = Some(1050);
+            session.at_ms = 1160;
+        }));
+    session.at_ms = 900;
+    session.press(&command(STATUS_BAR));
+    // Up's stroke went at its release, so its turn reads nothing.
+    assert_eq!(session.requests(), [FRESH]);
+    assert_eq!(session.heard(), plain(&["$"]));
+    // Up recalls its line, the answer to Up.
+    session.write("echo one", 1200);
+    assert_eq!(session.heard(), [said(Some(HELD_UP), "$ echo one")]);
 }
 
 /// How a terminal key's wait polls: from its starting point, its pass, its
@@ -1551,6 +1600,51 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     assert_eq!(session.requests(), [Asked::Read]);
     session.write("echo onex", 320);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
+}
+
+#[test]
+fn a_reads_speech_carries_the_number_of_the_newest_key_it_was_given() {
+    // "Report status bar"'s fresh read out, and "z" typed and reaching the
+    // program before it ends: the read is given the key and shows the "z",
+    // and its echo, said at the command's turn, carries the number of "z",
+    // whose cut the speech manager's fence then keeps, not the command's
+    // (rule 18; the second defect of `docs/roadmap.md`'s M6.4).
+    let mut session = showing(20, 4, 10, "$ ");
+    let (z, input) = typed("z", 300);
+    session.at_ms = 300;
+    session
+        .presses_before_reads
+        .push_back(Some((input, "z".to_owned())));
+    let from = session.log.len();
+    session.press(&command(STATUS_BAR));
+    assert_eq!(session.requests(), [FRESH]);
+    assert_eq!(session.heard(), [said(Some(z), "z"), said(None, "$ z")]);
+    assert_eq!(
+        spoken_with_numbers(&session, from),
+        [
+            ("z".to_owned(), Some(KeySeq::new(2))),
+            ("$ z".to_owned(), Some(KeySeq::new(1)))
+        ]
+    );
+}
+
+/// The words and key number of each utterance `session`'s steps from the
+/// `from`th on spoke, those spoken for a key included.
+fn spoken_with_numbers(session: &Session, from: usize) -> Vec<(String, Option<KeySeq>)> {
+    fn of(effect: &Effect, out: &mut Vec<(String, Option<KeySeq>)>) {
+        match effect {
+            Effect::Speak(utterance, key) => {
+                out.push((terminal_support::words(&utterance.segments), *key));
+            }
+            Effect::ForKey(_, effect) => of(effect, out),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for effect in session.log[from..].iter().flat_map(|(_, effects)| effects) {
+        of(effect, &mut out);
+    }
+    out
 }
 
 #[test]

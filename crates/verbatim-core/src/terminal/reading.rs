@@ -141,9 +141,13 @@ pub(crate) struct TerminalFocus {
     /// shared clock, at which the flood policy's requests are sent.
     pub(crate) now_us: u64,
     /// Keys pressed behind a held key's stroke, which reach the program at
-    /// its pass, each with when the hook saw it, in milliseconds, and its
-    /// trace (`crate::keys::terminal`).
-    pub(crate) deferred: Vec<(crate::terminal::TerminalKeyKind, u64, TraceId)>,
+    /// its pass, each with when the hook saw it, in milliseconds, its trace
+    /// and its number (`crate::keys::terminal`).
+    pub(crate) deferred: Vec<(
+        crate::terminal::TerminalKeyKind,
+        u64,
+        (TraceId, verbatim_model::KeySeq),
+    )>,
 }
 
 /// The modelled focused terminal, whose quiet-period timer counts.
@@ -558,7 +562,7 @@ pub(crate) struct SpeechEntry {
     /// What it is the speech of.
     of: Of,
     /// The read's speech key.
-    key: Option<TraceId>,
+    key: terminal_model::SpeechKey,
     /// The trace it is spoken under without one.
     trace: TraceId,
     /// Its speech fence, set when it joins the queue.
@@ -633,21 +637,40 @@ pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
     };
     let mut effects = crate::terminal::read_spoken(
         state,
-        (entry.key.unwrap_or(entry.trace), entry.fence.key()),
+        (
+            entry.key.trace.unwrap_or(entry.trace),
+            stamp_of(entry.fence, entry.key).key(),
+        ),
         (entry.node, entry.started_ms),
         said,
         entry.silent,
     );
     effects.extend(release(state));
-    terminal_model::under(entry.key, effects)
+    terminal_model::under(entry.key.trace, effects)
+}
+
+/// The fence a read's speech carries, said at the turn of an entry whose
+/// fence is `turn`: the newer of it and the newest key the read was given,
+/// so that no cut by a key the read was given fences it off (rule 18).
+fn stamp_of(turn: Fence, key: terminal_model::SpeechKey) -> Fence {
+    key.after.map_or(turn, |after| turn.max(Fence::of(after)))
+}
+
+/// Emits what `entry`'s speech said at the turn of an entry whose fence is
+/// `turn`, every utterance stamped as [`stamp_of`] says: its answers to
+/// keys, the lines the flood policy hands on, and those a release hands on.
+fn emit_speech(cx: &mut Cx<Entries>, turn: Fence, entry: SpeechEntry) {
+    let fence = stamp_of(turn, entry.key);
+    let effects = speak(&mut cx.facts_mut(), entry);
+    for mut effect in effects {
+        crate::keys::entry::stamp(fence, &mut effect);
+        cx.emit_stamped(effect);
+    }
 }
 
 /// A speech entry's function at its turn, which asks nothing.
 pub(crate) fn speech_turn(cx: &mut Cx<Entries>, entry: SpeechEntry) {
-    let effects = speak(&mut cx.facts_mut(), entry);
-    for effect in effects {
-        cx.emit(effect);
-    }
+    emit_speech(cx, entry.fence, entry);
 }
 
 /// A read of `terminal` Core took, `reply`, as the control plane's event
@@ -1432,11 +1455,9 @@ pub(crate) fn speak_read(cx: &mut Cx<Entries>, own: Option<SpeechEntry>) {
             _ => None,
         })
         .chain(own);
+    let turn = cx.front().map(|front| front.fence()).unwrap_or_default();
     for entry in entries {
-        let effects = speak(&mut cx.facts_mut(), entry);
-        for effect in effects {
-            cx.emit(effect);
-        }
+        emit_speech(cx, turn, entry);
     }
 }
 
@@ -1492,7 +1513,7 @@ pub(crate) fn answered_with(
     let generation = terminal_model::model_of(state, terminal.node)?.generation;
     let read = Taken {
         speech: Some(speech),
-        key: None,
+        key: terminal_model::SpeechKey::default(),
         generation,
     };
     let at_us = state.terminal_focus.now_us;

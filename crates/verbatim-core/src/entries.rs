@@ -414,7 +414,7 @@ impl Entry {
     }
 
     /// Its speech fence; a run's is its newest candidate's.
-    fn fence(&self) -> Fence {
+    pub(crate) fn fence(&self) -> Fence {
         match self {
             Self::UiaFocus(focus) => focus.fence,
             Self::Candidate(candidate) | Self::Menu(candidate) => candidate.fence,
@@ -693,7 +693,8 @@ impl Logic for Entries {
         // A held key ended so says nothing; its key passes, its stroke
         // sent in press order (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
         if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
-            said.extend(facts.strokes.pass(caret.key_seq).map(Said::Queue));
+            let now_us = facts.terminal_focus.now_us;
+            said.extend(facts.strokes.pass(caret.key_seq, now_us).map(Said::Queue));
         }
     }
 
@@ -1252,7 +1253,7 @@ pub(crate) fn route(
             return Routed::Said(
                 state
                     .strokes
-                    .defer(*stroke, *pressed)
+                    .defer(*stroke, *pressed, at_us)
                     .map(Said::Queue)
                     .into_iter()
                     .collect(),

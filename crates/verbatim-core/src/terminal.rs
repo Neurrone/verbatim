@@ -327,7 +327,14 @@ pub(crate) fn read_spoken(
     speech: Said,
     silent: bool,
 ) -> Vec<Effect> {
-    let before_cut = silent || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
+    // Only a held key reaches the program later than its press, which cut
+    // speech: a read begun while its stroke is unsent, or before it was
+    // sent, shows what was written before the key, so its output is the
+    // cut's (Claude, 2026-11-27, pending Dickson).
+    let before_held = state.strokes.holds()
+        || (started_ms != 0 && started_ms.saturating_mul(1_000) < state.strokes.held_reached_us());
+    let before_cut =
+        silent || before_held || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
     take(state, under, Some(node), speech, before_cut)
 }
 

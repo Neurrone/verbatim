@@ -127,6 +127,19 @@ monitor thread diffs on every change. Verbatim: **different** ("30 and
 30", Dickson, 2026-10-06 and 2026-10-07; the model's "Features and
 settings", Core's flood policy).
 
+- Pending Dickson (Claude, 2026-11-27): output not yet read when a
+  held caret key is pressed, which its starting read then finds, is
+  part of the key's cut: the key's answer is the first thing heard. Before,
+  that read's output was spoken first, so whether a flood's last lines
+  came before the recalled line after Up Arrow depended on whether a
+  read began before the key (`windows_terminal_line_key_flood`; Up
+  Arrow after `.\long.ps1` now says "ready> .\long.ps1" first, where it
+  could say "flood line 93 …" first). This holds for every held caret
+  key at human speed whenever output is unread at the press, not only in
+  floods. It moves away from NVDA, which cuts the lines queued before
+  the key's cancel (`nvda/source/inputCore.py` 583 to 605) but speaks
+  the lines of a change it handles after it
+  (`nvda/source/NVDAObjects/behaviors.py` 497 to 501).
 - With more than "Lines spoken in full" (30) lines waiting once a
   group's last line has been heard, the older ones become "skipped N
   lines" and the newest "Last lines to speak" (30) are kept. The summary
@@ -236,7 +249,28 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   console shows, where NVDA echoes each typed character.
 - A typed character the terminal has not shown within 300 milliseconds
   of reaching the program is dropped unspoken, so a late echo over a
-  slow connection is heard as output.
+  slow connection is heard as output (Dickson kept the limit,
+  2026-11-27).
+- Pending Dickson (Claude, 2026-11-27): a character typed while a caret
+  key's final read or a review command's fresh read is out, and shown in
+  that read, is echoed. Before, its echo carried the earlier key's
+  number and the speech manager dropped it after the character's own
+  cut, so nothing was said. NVDA speaks its queued characters at the
+  terminal's next text change (`nvda/source/NVDAObjects/behaviors.py`
+  591 to 592, 615 to 619): "z".
+- Pending Dickson (Claude, 2026-11-27): the keys go with the focus, so
+  the first key after the focus returns has no interval before it, and a
+  row it owns (rule 21) is held for one second, the shortest quiet
+  period; before, the interval ran from the key before the focus left,
+  and the row was held for 1.5 times that, minutes after a long absence.
+  NVDA has no such hold.
+- Pending Dickson (Claude, 2026-11-27): typing is echoed only when
+  nothing but spaces follows it at the caret. A password prompt that
+  writes "Sorry, try again" at the caret while "S" is held says "Sorry,
+  try again" as text gained, where Verbatim said "S" as an echo and then
+  "orry, try again"; the character typed is never spoken. NVDA speaks its
+  queued characters on any text change (`behaviors.py` 591 to 592,
+  615 to 619), so it says "S" there too.
 - An input line the shell reprints at the caret, below a completion list
   or below output that arrived while the user typed, is not spoken
   again; characters typed since are echoed as usual (rule 14).

@@ -1349,9 +1349,9 @@ it has had five defects (6a9e55dc, 75b5fb5c, 33b0523c, and two found by
 the group 3 design: a terminal silent after its reading is dropped
 during a flood, until a key, and terminal speech stamped with the front
 entry's key fence, so typing echoed during a read can be dropped), and
-the third-fix rule stopped it. The first of those two was fixed when the
-flood pacing was written as one state value (2026-11-27); the second
-stays until this phase. It
+the third-fix rule stopped it. Both are fixed (2026-11-27): the flood
+pacing is one state value, and a read's speech carries the number of the
+newest key it was given. It
 is about 11,970 lines of product code and 17,000 of tests, against
 NVDA's loop of about 800 (`nvda/source/NVDAObjects/behaviors.py`,
 lines 372 to 636, with `nvda/source/diffHandler.py` and

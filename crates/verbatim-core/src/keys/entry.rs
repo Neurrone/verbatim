@@ -37,6 +37,11 @@ impl Fence {
         (self.0 != KeySeq::NONE_YET).then_some(self.0)
     }
 
+    /// The fence of key `key`.
+    pub(crate) fn of(key: KeySeq) -> Self {
+        Self(key)
+    }
+
     /// The newer of two fences.
     pub(crate) fn max(self, other: Self) -> Self {
         Self(self.0.max(other.0))
@@ -187,12 +192,13 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
         }
         return;
     }
+    let now_us = cx.now_us();
     let effects = {
         let mut facts = cx.facts_mut();
         // A held stroke is sent at its turn.
         let mut effects: Vec<Effect> = facts
             .strokes
-            .pass(press.key_seq)
+            .pass(press.key_seq, now_us)
             .map(Effect::Queue)
             .into_iter()
             .collect();

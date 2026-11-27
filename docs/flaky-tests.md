@@ -74,12 +74,12 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the Forms program not answering UI Automation's first connection, the same family on the ARM64 runner; the log carries only the panic.
   - Fix: as for the entries above.
 
-## A typed character's echo read after the key window
+## A typed character's echo read after the typing limit
 
 - `conhost_review_grid` on GitHub's runner (run 45886935399, 2026-11-27, at 81ecf771; the code was the same as the passing run at 2b3959a5)
   - How: "\\" was heard where "backslash" was expected while typing `.\grid.ps1`.
-  - Cause: the console host's change event for the typed `\` reached the listener about 250 ms late, and the output read was answered about 322 ms after the key, past the key window (`KEY_WINDOW_MS`, 300 ms, in `crates/verbatim-text/src/terminal_reading.rs`). So the echo was taken as plain output and spoken with no symbol name. Every other key in the run was read within 6 ms. The delay is the runner stall of the entries above, but the weakness is Verbatim's: a fixed window judged by the read's time means a user on a loaded machine hears a typed symbol raw.
-  - Fix: the terminal's key-handover step (`docs/simplification-review/builds.md`), which decides how a key owns its reads. The scenario is not loosened.
+  - Cause: the console host's change event for the typed `\` reached the listener about 250 ms late, and the output read was answered about 322 ms after the key, past the typing limit (`TYPED_LIMIT_MS`, 300 ms, in `crates/verbatim-text/src/terminal_reading.rs`). So the echo was taken as plain output and spoken with no symbol name. Every other key in the run was read within 6 ms.
+  - Fix: none in Verbatim. The speech is the ruled behaviour (rule 20 of `books/dev/src/explanation/design/terminal-model.md`; Dickson kept the limit on 2026-11-27), so the failure is the runner's stall delaying the echo past the limit, a cause outside Verbatim, matched to the runner-stall entries above. The scenario is not loosened.
 
 ## A key pressed as a terminal flood ends
 

@@ -151,6 +151,13 @@ impl TraceId {
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
+
+    /// The trace ID as an integer, for a platform-neutral crate that
+    /// carries it without knowing it ([`TraceId::from_raw`] gives it back).
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 impl fmt::Display for TraceId {

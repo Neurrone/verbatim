@@ -26,6 +26,12 @@ pub use crate::terminal_rows::LINGERING_MS;
 /// a change found later is output.
 pub const KEY_WINDOW_MS: u64 = 300;
 
+/// The end of the window of a key that reached the program at `key_ms`:
+/// the one place the window's length is judged.
+fn window_end(key_ms: u64) -> u64 {
+    key_ms.saturating_add(KEY_WINDOW_MS)
+}
+
 /// A typed character not shown within this many milliseconds of reaching
 /// the program is dropped unspoken ("Keys and their window"), judged at the next read.
 pub const TYPED_LIMIT_MS: u64 = 300;
@@ -115,6 +121,28 @@ pub struct Key {
     pub kind: KeyKind,
     /// When it reached the program, in milliseconds on the caller's clock.
     pub at_ms: u64,
+    /// The caller's names for it.
+    pub tag: KeyTag,
+}
+
+/// The caller's names for a key, given with it and returned with the reads
+/// that follow it ([`Step::key`]); the rules never read them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct KeyTag {
+    /// The key's trace.
+    pub trace: u64,
+    /// The key's number, which orders it among the user's inputs.
+    pub number: u64,
+}
+
+/// The newest key given before a read ("Keys and their window").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadKey {
+    /// Its names.
+    pub tag: KeyTag,
+    /// Whether its window holds the read: the read's speech is its answer.
+    pub answered: bool,
 }
 
 /// A stretch of one row's cells in one foreground and background, as the
@@ -307,7 +335,7 @@ impl Wait {
             Self::Nothing => None,
             Self::Word { due_ms } => Some(*due_ms),
             Self::Keys => keys.map(|(at, interval)| at.saturating_add(quiet_period(interval))),
-            Self::Colours(_) => keys.map(|(at, _)| at.saturating_add(KEY_WINDOW_MS)),
+            Self::Colours(_) => keys.map(|(at, _)| window_end(at)),
         }
     }
 }
@@ -571,13 +599,85 @@ impl Screen {
     }
 }
 
-/// The keys whose window is open.
+/// The newest key given: when it reached the program, the interval before
+/// it, and its names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct NewestKey {
+    at_ms: u64,
+    interval_ms: Option<u64>,
+    tag: KeyTag,
+}
+
+/// The keys' window ("Keys and their window"), the one record of the keys
+/// given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+enum KeyWindow {
+    /// No window open: before any key, once a read past the window's end
+    /// closed it, or after the focus arrived or left. The newest key stays
+    /// for the keys' pause and the next key's interval, but goes with the
+    /// focus when it leaves.
+    Closed { newest: Option<NewestKey> },
+    /// Keys within each other's windows, which end [`KEY_WINDOW_MS`] after
+    /// the newest: a read or a key past the end closes it, and until then
+    /// whether it holds a time is judged by its end.
+    Open { newest: NewestKey, keys: Keys },
+}
+
+impl KeyWindow {
+    fn newest(&self) -> Option<&NewestKey> {
+        match self {
+            Self::Closed { newest } => newest.as_ref(),
+            Self::Open { newest, .. } => Some(newest),
+        }
+    }
+
+    /// The keys of the window open, whether or not it has ended yet.
+    fn open(&self) -> Option<&Keys> {
+        match self {
+            Self::Closed { .. } => None,
+            Self::Open { keys, .. } => Some(keys),
+        }
+    }
+
+    fn open_mut(&mut self) -> Option<&mut Keys> {
+        match self {
+            Self::Closed { .. } => None,
+            Self::Open { keys, .. } => Some(keys),
+        }
+    }
+
+    /// Whether the window is open and holds `at_ms`, from the newest key
+    /// to its end.
+    fn holds(&self, at_ms: u64) -> bool {
+        match self {
+            Self::Closed { .. } => false,
+            Self::Open { newest, .. } => at_ms >= newest.at_ms && at_ms <= window_end(newest.at_ms),
+        }
+    }
+
+    /// Closes the window, keeping the newest key.
+    fn close(&mut self) {
+        *self = Self::Closed {
+            newest: self.newest().copied(),
+        };
+    }
+
+    /// The newest key's time and the interval before it, which a hold
+    /// waiting for the keys' pause is due by.
+    fn times(&self) -> Option<(u64, Option<u64>)> {
+        self.newest()
+            .map(|newest| (newest.at_ms, newest.interval_ms))
+    }
+}
+
+/// The keys of an open window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Keys {
-    /// When the first and the latest reached the program.
+    /// When the first reached the program.
     first_ms: u64,
-    last_ms: u64,
     /// The keys, oldest first.
     kinds: Vec<KeyKind>,
     /// The caret's line before them, mapped through each read: a caret back
@@ -702,9 +802,7 @@ pub struct TerminalReader {
     segmenter: Segmenter,
     screen: Screen,
     lingering: Vec<Gone>,
-    keys: Option<Keys>,
-    /// The last key's time and the interval before it.
-    last_key: Option<(u64, Option<u64>)>,
+    keys: KeyWindow,
     focused: bool,
     /// The next read speaks nothing: the first, or the first after the
     /// focus arrived.
@@ -724,8 +822,7 @@ impl TerminalReader {
             segmenter: Segmenter::new(),
             screen: Screen::default(),
             lingering: Vec::new(),
-            keys: None,
-            last_key: None,
+            keys: KeyWindow::Closed { newest: None },
             focused: true,
             fresh: true,
             reads: 0,
@@ -782,7 +879,7 @@ impl TerminalReader {
         let _ = at_ms;
         self.focused = true;
         self.fresh = true;
-        self.keys = None;
+        self.keys.close();
         self.drop_holds();
         self.idle()
     }
@@ -791,31 +888,34 @@ impl TerminalReader {
     /// on return ("The focus").
     pub fn blur(&mut self) -> Step {
         self.focused = false;
-        self.keys = None;
+        // The keys go with the focus, the newest too.
+        self.keys = KeyWindow::Closed { newest: None };
         self.drop_holds();
         self.idle()
     }
 
     /// A key reached the program.
     pub fn key(&mut self, key: Key) -> Step {
-        let interval = self.last_key.map(|(at, _)| key.at_ms.saturating_sub(at));
-        self.last_key = Some((key.at_ms, interval));
-        let open = self
-            .keys
-            .as_ref()
-            .is_some_and(|keys| key.at_ms <= keys.last_ms.saturating_add(KEY_WINDOW_MS));
-        if !open {
-            self.keys = Some(Keys {
+        let newest = NewestKey {
+            at_ms: key.at_ms,
+            interval_ms: self
+                .keys
+                .newest()
+                .map(|newest| key.at_ms.saturating_sub(newest.at_ms)),
+            tag: key.tag,
+        };
+        let keys = match std::mem::replace(&mut self.keys, KeyWindow::Closed { newest: None }) {
+            KeyWindow::Open { newest: last, keys } if key.at_ms <= window_end(last.at_ms) => keys,
+            KeyWindow::Open { .. } | KeyWindow::Closed { .. } => Keys {
                 first_ms: key.at_ms,
-                last_ms: key.at_ms,
                 kinds: Vec::new(),
                 origin: self.screen.caret.clone(),
                 followed: false,
                 typed: Vec::new(),
-            });
-        }
-        if let Some(keys) = &mut self.keys {
-            keys.last_ms = key.at_ms;
+            },
+        };
+        self.keys = KeyWindow::Open { newest, keys };
+        if let Some(keys) = self.keys.open_mut() {
             match &key.kind {
                 KeyKind::Typed(text) => keys.typed.push((text.clone(), key.at_ms)),
                 KeyKind::Enter | KeyKind::Forget => keys.typed.clear(),
@@ -824,6 +924,32 @@ impl TerminalReader {
             keys.kinds.push(key.kind);
         }
         self.idle()
+    }
+
+    /// The newest key given before a read taken at `at_ms`, the last read
+    /// given: its names, and whether its window holds the read, so that the
+    /// read's speech is its answer ("Keys and their window").
+    #[must_use]
+    pub fn read_key(&self, at_ms: u64) -> Option<ReadKey> {
+        self.keys.newest().map(|newest| ReadKey {
+            tag: newest.tag,
+            answered: at_ms >= newest.at_ms && at_ms <= window_end(newest.at_ms),
+        })
+    }
+
+    /// When the newest key given reached the program.
+    fn newest_key_ms(&self) -> Option<u64> {
+        self.keys.newest().map(|newest| newest.at_ms)
+    }
+
+    /// The window of the newest key: of `pending_ms`, a key the caller holds
+    /// for a later read and so newer than any given, or else of the newest
+    /// key given, from its time to its window's end.
+    #[must_use]
+    pub fn key_window(&self, pending_ms: Option<u64>) -> Option<std::ops::RangeInclusive<u64>> {
+        pending_ms
+            .or_else(|| self.newest_key_ms())
+            .map(|key_ms| key_ms..=window_end(key_ms))
     }
 
     /// The timer came due at `now_ms`: what waited for the quiet period
@@ -857,10 +983,10 @@ impl TerminalReader {
     /// not change with no key in the 2 seconds before the first of them;
     /// the program otherwise. With no line, whose the read's time makes it.
     fn owner(&self, now: u64, state: Option<&LineState>) -> Owner {
-        let Some(keys) = &self.keys else {
+        let Some(keys) = self.keys.open() else {
             return Owner::Program;
         };
-        let window = now >= keys.last_ms && now <= keys.last_ms.saturating_add(KEY_WINDOW_MS);
+        let window = self.keys.holds(now);
         let unprompted = state
             .and_then(|state| state.unprompted_ms)
             .is_some_and(|at| at >= keys.first_ms.saturating_sub(UNPROMPTED_MS));
@@ -876,7 +1002,7 @@ impl TerminalReader {
         self.screen
             .rows
             .iter()
-            .filter_map(|row| row.line.as_ref()?.due(self.last_key))
+            .filter_map(|row| row.line.as_ref()?.due(self.keys.times()))
             .min()
     }
 
@@ -886,7 +1012,7 @@ impl TerminalReader {
     /// changed-word rule against what it last said, a growing line's held
     /// word as growth.
     fn release(&mut self, now: u64, speech: &mut Vec<Speech>) {
-        let keys = self.last_key;
+        let keys = self.keys.times();
         let (top, skipped) = (self.screen.top, self.screen.skipped);
         for index in 0..self.screen.rows.len() {
             let Some(line) = self
@@ -1139,7 +1265,7 @@ impl TerminalReader {
             _ => None,
         };
         let before = previous.caret.as_ref().and_then(mapped);
-        if let Some(keys) = &mut self.keys {
+        if let Some(keys) = self.keys.open_mut() {
             // Typing not shown within its limit is dropped unspoken.
             keys.typed
                 .retain(|(_, at)| now <= at.saturating_add(TYPED_LIMIT_MS));
@@ -1169,14 +1295,14 @@ impl TerminalReader {
                 if answer.back {
                     // A review position that followed the program's cursor
                     // while it drew comes back with the caret.
-                    if self.keys.as_ref().is_some_and(|keys| keys.followed) {
+                    if self.keys.open().is_some_and(|keys| keys.followed) {
                         step.followed = true;
                         reviews.push((caret.row, read.caret_column));
                     }
                 } else if self.settings.review_follows_caret && movement != Move::Still {
                     step.followed = true;
                     reviews.push((caret.row, read.caret_column));
-                    if let Some(keys) = &mut self.keys {
+                    if let Some(keys) = self.keys.open_mut() {
                         keys.followed = true;
                     }
                 }
@@ -1712,11 +1838,12 @@ impl TerminalReader {
         if report {
             self.release(now, &mut step.speech);
         }
-        if !window
-            && let Some(keys) = &self.keys
-            && now > keys.last_ms.saturating_add(KEY_WINDOW_MS)
+        if self
+            .keys
+            .newest()
+            .is_some_and(|newest| now > window_end(newest.at_ms))
         {
-            self.keys = None;
+            self.keys.close();
         }
         for (row, column) in reviews {
             memory.set_review(row, column);
@@ -1749,7 +1876,7 @@ impl TerminalReader {
         (rows, colours): (&[Row], RowColours<'_>),
         speech: &mut Vec<Speech>,
     ) -> CaretAnswer {
-        let (Some(caret), Some(keys)) = (caret, self.keys.as_ref()) else {
+        let (Some(caret), Some(keys)) = (caret, self.keys.open()) else {
             return CaretAnswer::default();
         };
         // The caret back where the keys found it, on its line unchanged,
@@ -1877,7 +2004,7 @@ impl TerminalReader {
                             text: rest.trim().to_owned(),
                         });
                     }
-                    if let Some(keys) = &mut self.keys {
+                    if let Some(keys) = self.keys.open_mut() {
                         let mut count = echoed.chars().count();
                         keys.typed.retain(|(text, _)| {
                             let take = count >= text.chars().count();
@@ -1892,7 +2019,7 @@ impl TerminalReader {
                 Compared::Other(difference) => {
                     // A line changed some other way drops the held typing
                     // and speaks what it shows ("Typing echo").
-                    if let Some(keys) = &mut self.keys {
+                    if let Some(keys) = self.keys.open_mut() {
                         keys.typed.clear();
                     }
                     let (prefix, removed, inserted) = (
@@ -2075,7 +2202,7 @@ impl TerminalReader {
             .is_some_and(|between| between.contains(&NewRow::New));
         let typed: String = self
             .keys
-            .as_ref()
+            .open()
             .map(|keys| keys.typed.iter().map(|(text, _)| text.as_str()).collect())
             .unwrap_or_default();
         let with_typing = {
@@ -2304,7 +2431,10 @@ impl<'a> Difference<'a> {
                     .iter()
                     .collect();
                 let old_after: String = old_tail.iter().collect();
-                if after.trim_end() == old_after.trim_end() {
+                // Only a clean echo: text after the typing is not its echo,
+                // so that a password prompt's reply beginning with the
+                // character typed never speaks it.
+                if after.trim_end() == old_after.trim_end() && rest.trim().is_empty() {
                     return Some((all, rest));
                 }
             }

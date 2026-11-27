@@ -128,7 +128,10 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
     let kept: Vec<_> = state.terminals[0]
         .pending
         .iter()
-        .map(|key| rules_key(&key.kind, key.at_ms))
+        .map(|key| {
+            let key = rules_key(key);
+            (key.kind, key.at_ms)
+        })
         .collect();
     let expected: Vec<_> = [
         (TerminalKeyKind::Caret(TerminalUnit::Word), 1),
@@ -141,16 +144,23 @@ fn each_key_input_is_the_rules_key_and_a_clearing_key_forget() {
         (TerminalKeyKind::Forget, 8),
     ]
     .iter()
-    .map(|(kind, at_ms)| rules_key(kind, *at_ms))
+    .map(|(kind, at_ms)| {
+        let key = rules_key(&pending(kind.clone(), *at_ms));
+        (key.kind, key.at_ms)
+    })
     .collect();
     assert_eq!(kept, expected);
     assert_eq!(
-        rules_key(&TerminalKeyKind::Caret(TerminalUnit::Line), 42),
+        rules_key(&pending(TerminalKeyKind::Caret(TerminalUnit::Line), 42)),
         verbatim_text::terminal_reading::Key {
             kind: verbatim_text::terminal_reading::KeyKind::Caret(
                 verbatim_text::terminal_reading::Unit::Line
             ),
             at_ms: 42,
+            tag: verbatim_text::terminal_reading::KeyTag {
+                trace: 7,
+                number: 3,
+            },
         }
     );
 }
@@ -387,4 +397,55 @@ fn the_read_after_the_focus_returns_is_given_though_identical() {
     assert!(watch.write("", 300, false).speech.is_none());
     super::model_or_new(&mut watch.state, watched()).focused(350);
     assert!(watch.write("", 400, false).speech.is_some());
+}
+
+/// A key of `kind` Core took at `at_ms`, under trace 7, numbered 3.
+fn pending(kind: TerminalKeyKind, at_ms: u64) -> super::PendingKey {
+    super::PendingKey {
+        kind,
+        at_ms,
+        trace: TraceId::from_raw(7),
+        seq: verbatim_model::KeySeq::new(3),
+    }
+}
+
+/// A key Core holds for `watch`'s model, typed at `at_ms`.
+fn hold_key(watch: &mut Watch, at_ms: u64) {
+    let model = super::model_or_new(&mut watch.state, watched());
+    model
+        .pending
+        .push_back(pending(TerminalKeyKind::Typed("a".to_owned()), at_ms));
+}
+
+// "Colours" (`docs/design/readers-tell-core-asks-build3.md`): a full read
+// takes the screen's colours within the newest key's window, given to the
+// rules or still held.
+
+#[test]
+fn a_pending_keys_window_takes_the_colours_to_its_end() {
+    let mut watch = Watch::new();
+    let _ = watch.write("$ ", 100, false);
+    hold_key(&mut watch, 1000);
+    assert!(watch.model().takes_colours(1300));
+    assert!(!watch.model().takes_colours(1301));
+    // Given to the rules by a read in its window that took no colours:
+    // they are owed, so the next read takes them whenever it is sent.
+    let _ = watch.write("a", 1010, false);
+    assert!(watch.model().pending.is_empty(), "the key was given");
+    assert!(watch.model().colours_owed());
+    assert!(watch.model().takes_colours(1301));
+    // A read ending past the window owes none.
+    let _ = watch.write("b", 1400, false);
+    assert!(!watch.model().colours_owed());
+    assert!(!watch.model().takes_colours(1400));
+}
+
+#[test]
+fn the_focus_leaving_drops_the_keys_not_yet_given() {
+    let mut watch = Watch::new();
+    let _ = watch.write("$ ", 100, false);
+    hold_key(&mut watch, 1000);
+    super::model_or_new(&mut watch.state, watched()).blurred();
+    assert!(watch.model().pending.is_empty());
+    assert!(!watch.model().takes_colours(1100));
 }

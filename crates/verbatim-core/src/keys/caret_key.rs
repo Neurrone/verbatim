@@ -516,7 +516,7 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
                     &mut cx.facts_mut(),
                     crate::terminal::caret_key_kind(press.key),
                     released_at_us,
-                    press.trace_id,
+                    (press.trace_id, press.key_seq),
                 );
             }
             stop_say_all(cx);
@@ -798,7 +798,7 @@ fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
             &mut cx.facts_mut(),
             crate::terminal::caret_key_kind(press.key),
             now_us,
-            press.trace_id,
+            (press.trace_id, press.key_seq),
         );
     }
     reached
@@ -1102,13 +1102,14 @@ fn pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     if !press.held {
         return Reached::Sent;
     }
+    let now_us = cx.now_us();
     let sent = {
         let mut facts = cx.facts_mut();
         if facts.strokes.status(press.key_seq) == StrokeStatus::Dropped {
             facts.strokes.forget_dropped(press.key_seq);
             return Reached::Dropped;
         }
-        facts.strokes.pass(press.key_seq)
+        facts.strokes.pass(press.key_seq, now_us)
     };
     if let Some(sent) = sent {
         cx.emit(verbatim_model::Effect::Queue(sent));

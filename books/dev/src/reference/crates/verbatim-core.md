@@ -1775,19 +1775,31 @@ held at the next read's start) and the answers to the requests they make;
   focus.
 - Keys. Every key input while the focus is a modeled terminal is kept by
   its kind, a clearing key as `Forget` then `Other`. Whether a read takes
-  the screen's colours is Core's decision from the keys kept
-  (`KEY_WINDOW_MS` from a key's time) and the last read, sent in the read's
+  the screen's colours is Core's decision from the newest key's window, as
+  the rules judge it (`TerminalReader::key_window`, given the newest key
+  kept), and the last read, sent in the read's
   request (`WindowAsk::colours`). Before a read
   taken at S (`read_at`) is given to the rules, every kept key at or
   before S is given in order; before the timer at T, those up to T; past
   256 kept keys the oldest is given at once. Leaving the terminal tells
-  the rules `blur` and drops the keys; returning tells them `focus`. A
+  the rules `blur` and drops the keys; returning tells them `focus`. Each
+  key is kept with its trace and number (`PendingKey`), which the rules
+  are given as its `KeyTag`. A
   caret key in a terminal is Core's caret key entry with its watch, whose
   starting and final reads are full reads of the terminal.
-- A read's speech key is the newest key given whose window holds the
-  read's time; its speech and effects go out as `Effect::ForKey` for that
-  key. A read with no speech key, and the timer's speech, carry the
-  input's trace.
+- A read's speech key (`SpeechKey`) is what the rules say of the newest
+  key given (`TerminalReader::read_key`): its speech and effects go out as
+  `Effect::ForKey` for that key when its window holds the read's time, and
+  every utterance of it, its answers to keys and the lines the flood policy
+  or a release hands on at its entry's turn, carries the newer of the
+  turn's fence and that key's number (`reading::emit_speech`), so that no
+  cut by a key the read was given fences it off. A read with no speech
+  key's trace, and the timer's speech, carry the input's trace.
+- A read taken while a held key's stroke has not reached the program, or
+  begun before the newest held stroke of a user's key was sent
+  (`StrokeLine::held_reached_us`, written where the stroke line sends it,
+  at its key's pass or its 150 ms release), speaks only its answers to
+  keys: its output is that key's cut.
 - Reads. A full read is the reader's window batch
   (`terminal::reader::window_batch`) of a `WindowAsk`: which read, by the
   scope the rules owe (from the start the model names with the screen's

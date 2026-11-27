@@ -8,7 +8,7 @@ use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
-    ColourRun, Difference, KEY_WINDOW_MS, Key, KeyKind, Reason, Settings, Speech, Step,
+    ColourRun, Difference, KEY_WINDOW_MS, Key, KeyKind, KeyTag, Reason, Settings, Speech, Step,
     TerminalReader, Unit, Withheld,
 };
 use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
@@ -179,7 +179,11 @@ impl Term {
             Some((from, last)) if at_ms <= last => (from, last.max(until)),
             _ => (at_ms, until),
         });
-        self.reader.key(Key { kind, at_ms })
+        self.reader.key(Key {
+            kind,
+            at_ms,
+            tag: KeyTag::default(),
+        })
     }
 
     fn typed(&mut self, text: &str, at_ms: u64) -> Step {
@@ -652,6 +656,93 @@ fn up_arrow_alone_speaks_the_recalled_line_whole() {
 }
 
 #[test]
+fn a_read_at_the_end_of_the_keys_window_is_theirs() {
+    // "Keys and their window": a read taken 300 milliseconds after the key
+    // is the key's; a millisecond later the caret move is the program's,
+    // and never spoken.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ echo hello", 100);
+    term.key(KeyKind::Other, 200);
+    assert_eq!(
+        term.write("\x1b[D", 500),
+        says(vec![caret(0, Unit::Character, "o")])
+    );
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ echo hello", 100);
+    term.key(KeyKind::Other, 200);
+    assert_eq!(term.write("\x1b[D", 501), quiet(None));
+}
+
+#[test]
+fn a_key_after_the_window_ended_opens_its_own() {
+    // The line key's window ended: a character typed later is its own
+    // window's, echoed, and not a character typed after the line key.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ ", 100);
+    term.key(KeyKind::Caret(Unit::Line), 200);
+    assert_eq!(
+        term.write("echo one", 250),
+        says(vec![caret(0, Unit::Line, "$ echo one")])
+    );
+    term.typed("x", 1000);
+    assert_eq!(term.write("x", 1050), says(vec![echo(0, "x")]));
+}
+
+#[test]
+fn typing_held_when_the_focus_leaves_is_not_echoed_on_return() {
+    // "The focus": the keys and their typing go with the focus, so the
+    // character shown after it returns is output, its word held.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ ", 100);
+    term.typed("l", 200);
+    term.reader.blur();
+    term.reader.focus(210);
+    assert_eq!(term.read(220), quiet(None));
+    assert_eq!(
+        term.write("l", 250),
+        step(
+            Vec::new(),
+            vec![withheld(0, Reason::UnfinishedWord)],
+            Some(1250)
+        )
+    );
+}
+
+#[test]
+fn a_command_typed_and_reprinted_below_output_is_not_spoken_again() {
+    // "Reprinted input": the shell prints output that arrived while the
+    // user typed, then the typed line again at the caret, which is silent.
+    let mut term = Term::new(20, 5, 10);
+    term.write("$ ", 100);
+    term.typed("l", 200);
+    assert_eq!(term.write("l", 220), says(vec![echo(0, "l")]));
+    term.typed("s", 300);
+    assert_eq!(term.write("s", 320), says(vec![echo(0, "s")]));
+    assert_eq!(
+        term.write("\r\nbuild done\r\n$ ls", 2000),
+        says(vec![line(1, "build done")])
+    );
+}
+
+#[test]
+fn a_password_prompts_reply_at_the_caret_is_not_taken_for_typing() {
+    // "Typing echo": a character is echoed only when the line shows the
+    // typing and nothing else after it. The prompt's reply begins with the
+    // character held, which is not its echo: the reply is text gained, and
+    // the typing is never spoken.
+    let mut term = Term::new(30, 3, 10);
+    term.write("Password: ", 100);
+    term.typed("S", 200);
+    assert_eq!(
+        term.write("Sorry, try again", 250),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "Sorry, try again".to_owned()
+        }])
+    );
+}
+
+#[test]
 fn a_change_found_after_the_keys_window_is_output() {
     let mut term = Term::new(20, 3, 10);
     term.write("$ abcdef", 100);
@@ -807,6 +898,51 @@ fn other_rows_a_key_changed_are_spoken_once_the_keys_pause() {
         )
     );
     assert_eq!(term.reader.timer(2000), says(vec![changed(3, "2,1 Top")]));
+}
+
+#[test]
+fn the_first_key_after_the_focus_returns_waits_the_shortest_quiet_period() {
+    // "Rows the keys own": the keys go with the focus, so the first key
+    // after it returns has no interval before it, and a row it owns is
+    // held for one second, however long ago the key before the focus left
+    // was (Claude, 2026-11-27, pending Dickson).
+    let mut term = Term::new(20, 5, 10);
+    term.write("line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H", 100);
+    term.key(KeyKind::Caret(Unit::Line), 1000);
+    term.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
+    term.reader.timer(2000);
+    term.reader.blur();
+    term.reader.focus(2100);
+    assert_eq!(term.read(2200), quiet(None));
+    term.key(KeyKind::Caret(Unit::Line), 5000);
+    assert_eq!(
+        term.write("\x1b[4;1H3,1 Top\x1b[1;1H", 5050),
+        step(
+            vec![caret(0, Unit::Line, "line one")],
+            vec![withheld(3, Reason::HeldForKeys)],
+            Some(6000)
+        )
+    );
+}
+
+#[test]
+fn rows_the_keys_own_wait_one_and_a_half_times_a_slow_keys_interval() {
+    // "Rows the keys own": held until no key has been pressed for the quiet
+    // period, 1.5 times the last two keys' interval when that is longer
+    // than a second.
+    let mut term = Term::new(20, 5, 10);
+    term.write("line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H", 100);
+    term.key(KeyKind::Caret(Unit::Line), 1000);
+    term.write("\x1b[4;1H2,1 Top\x1b[2;1H", 1050);
+    term.key(KeyKind::Caret(Unit::Line), 2200);
+    assert_eq!(
+        term.write("\x1b[4;1H1,1 Top\x1b[1;1H", 2250),
+        step(
+            vec![caret(0, Unit::Line, "line one")],
+            vec![withheld(3, Reason::HeldForKeys)],
+            Some(4000)
+        )
+    );
 }
 
 #[test]
@@ -1417,6 +1553,7 @@ fn a_typed_lines_wrap_shown_over_two_reads_says_nothing_for_the_empty_row() {
     let key = |text: &str, at_ms| Key {
         kind: KeyKind::Typed(text.to_owned()),
         at_ms,
+        tag: KeyTag::default(),
     };
     reader.key(key("a", 1000));
     assert_eq!(

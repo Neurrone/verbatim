@@ -21,9 +21,11 @@
 //!   reached the program no later. Before the timer at T, likewise up to
 //!   T. The arrival of a message decides nothing.
 //! - A read's speech key: once the keys up to its time are given, the
-//!   newest key given, when its window (`KEY_WINDOW_MS` after it) holds
-//!   the read's time. The read's speech is spoken under that key's trace
-//!   ([`Effect::ForKey`]).
+//!   newest key given, as the rules name it
+//!   ([`TerminalReader::read_key`]). The read's speech carries at least
+//!   that key's number, so no cut by a key the read was given fences it
+//!   off, and is spoken under its trace ([`Effect::ForKey`]) when its
+//!   window holds the read.
 //! - The start (`docs/design/readers-tell-core-asks-build3.md`, Table 7):
 //!   every read names the start anchor of the last read the memory took
 //!   whose screen showed text, which Core holds; a read whose start is no
@@ -47,11 +49,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Effect, NodeId, OutpostId, TerminalColourRun, TerminalScope, TerminalSnapshot, TerminalText,
-    TextAnchor, TraceId,
+    Effect, KeySeq, NodeId, OutpostId, TerminalColourRun, TerminalScope, TerminalSnapshot,
+    TerminalText, TextAnchor, TraceId,
 };
 use verbatim_text::terminal_reading::{
-    ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
+    ColourRun, Key, KeyKind, KeyTag, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
 };
 use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
@@ -81,6 +83,8 @@ pub(crate) struct PendingKey {
     /// When it reached the program, on the shared clock.
     at_ms: u64,
     trace: TraceId,
+    /// Its number, which fences speech.
+    seq: KeySeq,
 }
 
 /// A command mark's line as it was when the mark was set: the text of its
@@ -121,11 +125,9 @@ pub(crate) struct TerminalModel {
     pub(crate) node: NodeId,
     /// The reading rules and their memory, shared with checkpoints.
     pub(crate) reader: Arc<TerminalReader>,
-    /// The keys not yet given to the rules, in the order Core took them in.
+    /// The keys not yet given to the rules, in the order Core took them in;
+    /// the keys given are the rules' ([`TerminalReader::read_key`]).
     pending: VecDeque<PendingKey>,
-    /// The newest key given to the rules: its trace and when it reached the
-    /// program.
-    last_key: Option<(TraceId, u64)>,
     /// Which model made for its node this is: a model forgotten or
     /// evicted and made again for the same node has a newer one, so the
     /// speech of the older one's reads is said by neither.
@@ -225,7 +227,6 @@ impl TerminalModel {
             node,
             reader: Arc::new(TerminalReader::new(settings)),
             pending: VecDeque::new(),
-            last_key: None,
             generation,
             start: None,
             owed: None,
@@ -268,18 +269,15 @@ impl TerminalModel {
         if key.kind == TerminalKeyKind::Enter && self.reader.caret_line_input() {
             self.mark_caret_line(key.at_ms);
         }
-        let step = self.rules().key(rules_key(&key.kind, key.at_ms));
+        let step = self.rules().key(rules_key(key));
         self.due_ms = step.timer;
-        self.last_key = Some((key.trace, key.at_ms));
     }
 
-    /// When the newest key Core took in reached the program, given to the
-    /// rules or not.
-    pub(crate) fn newest_key_ms(&self) -> Option<u64> {
-        self.pending
-            .back()
-            .map(|key| key.at_ms)
-            .or_else(|| self.last_key.map(|(_, at_ms)| at_ms))
+    /// The newest key's window, given to the rules or not, as the rules
+    /// judge it.
+    fn key_window(&self) -> Option<std::ops::RangeInclusive<u64>> {
+        self.reader
+            .key_window(self.pending.back().map(|key| key.at_ms))
     }
 
     /// Whether the colours are owed: the last read taken ended at or after
@@ -287,13 +285,10 @@ impl TerminalModel {
     /// no full read has been sent since it was taken
     /// (`docs/design/readers-tell-core-asks-build3.md`, "Colours").
     pub(crate) fn colours_owed(&self) -> bool {
-        let (Some(last), Some(key_ms)) = (self.last_read, self.newest_key_ms()) else {
+        let (Some(last), Some(window)) = (self.last_read, self.key_window()) else {
             return false;
         };
-        !last.coloured
-            && last.sends == self.sends
-            && last.ended_ms >= key_ms
-            && last.ended_ms <= key_ms.saturating_add(KEY_WINDOW_MS)
+        !last.coloured && last.sends == self.sends && window.contains(&last.ended_ms)
     }
 
     /// Whether a full read sent at `now_ms` takes the screen's colours:
@@ -302,8 +297,8 @@ impl TerminalModel {
     pub(crate) fn takes_colours(&self, now_ms: u64) -> bool {
         self.colours_owed()
             || self
-                .newest_key_ms()
-                .is_some_and(|key_ms| now_ms <= key_ms.saturating_add(KEY_WINDOW_MS))
+                .key_window()
+                .is_some_and(|window| now_ms <= *window.end())
     }
 
     /// Enter at `at_ms` on the caret's line, which holds input: the line is
@@ -390,12 +385,16 @@ impl TerminalModel {
         }
     }
 
-    /// The key a read taken at `at_ms` ([`read_at`]) is spoken under: the
-    /// newest key given, when its window holds the read.
-    fn speech_key(&self, at_ms: u64) -> Option<TraceId> {
-        self.last_key
-            .filter(|(_, key_ms)| key_ms.saturating_add(KEY_WINDOW_MS) >= at_ms)
-            .map(|(trace, _)| trace)
+    /// The key a read taken at `at_ms` ([`read_at`]) is spoken for: the
+    /// newest key given, as the rules name it.
+    fn speech_key(&self, at_ms: u64) -> SpeechKey {
+        let key = self.reader.read_key(at_ms);
+        SpeechKey {
+            trace: key
+                .filter(|key| key.answered)
+                .map(|key| TraceId::from_raw(key.tag.trace)),
+            after: key.map(|key| KeySeq::new(key.tag.number)),
+        }
     }
 
     /// The focus arrived at the terminal at `at_ms`: the rules are told,
@@ -412,7 +411,6 @@ impl TerminalModel {
         let step = self.rules().blur();
         self.due_ms = step.timer;
         self.pending.clear();
-        self.last_key = None;
     }
 }
 
@@ -465,7 +463,12 @@ pub(crate) fn due(state: &SrState) -> Option<u64> {
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
 /// trace: kept until a read taken at or after it. Nothing when Core does
 /// not model the focus.
-pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64, trace: TraceId) {
+pub(crate) fn key(
+    state: &mut SrState,
+    kind: TerminalKeyKind,
+    at_ms: u64,
+    (trace, seq): (TraceId, KeySeq),
+) {
     let Some(node) = focused(state) else {
         return;
     };
@@ -477,7 +480,12 @@ pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64, trace:
     {
         model.give(&oldest);
     }
-    model.pending.push_back(PendingKey { kind, at_ms, trace });
+    model.pending.push_back(PendingKey {
+        kind,
+        at_ms,
+        trace,
+        seq,
+    });
 }
 
 /// The kinds of the keys `node`'s model holds pending, oldest first, for
@@ -489,8 +497,14 @@ pub(crate) fn pending_kinds_for_tests(state: &SrState, node: NodeId) -> Vec<Term
         .unwrap_or_default()
 }
 
-/// The reading rules' key for `kind`, reaching the program at `at_ms`.
-fn rules_key(kind: &TerminalKeyKind, at_ms: u64) -> Key {
+/// The reading rules' key for `key`, named by its trace and number.
+fn rules_key(key: &PendingKey) -> Key {
+    let PendingKey {
+        kind,
+        at_ms,
+        trace,
+        seq,
+    } = key;
     Key {
         kind: match kind {
             TerminalKeyKind::Typed(text) => KeyKind::Typed(text.clone()),
@@ -504,7 +518,11 @@ fn rules_key(kind: &TerminalKeyKind, at_ms: u64) -> Key {
             TerminalKeyKind::Delete => KeyKind::Delete,
             TerminalKeyKind::Other => KeyKind::Other,
         },
-        at_ms,
+        at_ms: *at_ms,
+        tag: KeyTag {
+            trace: trace.get(),
+            number: seq.get(),
+        },
     }
 }
 
@@ -711,6 +729,16 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
     hasher.finish()
 }
 
+/// The key a read's speech is for ([`TerminalReader::read_key`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SpeechKey {
+    /// The key's trace, when its window holds the read: the speech is its
+    /// answer.
+    pub(crate) trace: Option<TraceId>,
+    /// The newest key's number, which the speech carries at least.
+    pub(crate) after: Option<KeySeq>,
+}
+
 /// What taking a read gave.
 #[derive(Debug, Default)]
 pub(crate) struct Taken {
@@ -719,7 +747,7 @@ pub(crate) struct Taken {
     /// instead ([`TerminalModel::owed`]).
     pub(crate) speech: Option<Said>,
     /// The read's speech key.
-    pub(crate) key: Option<TraceId>,
+    pub(crate) key: SpeechKey,
     /// The model's generation.
     pub(crate) generation: u64,
 }
@@ -753,7 +781,7 @@ pub(crate) fn take(
     if !waited && !model.focus_arrived && model.given == Some(print) {
         return Taken {
             speech: None,
-            key: None,
+            key: SpeechKey::default(),
             generation,
         };
     }

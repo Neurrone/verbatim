@@ -4,7 +4,9 @@
 //! queue"). Whether a key's stroke is still to be sent is read from here,
 //! never stored on its entry: present is unsent, a dropped mark is
 //! dropped, and gone is sent. [`StrokeLine::pass`], [`StrokeLine::defer`]
-//! and the drops are its only writers.
+//! and the drops are its only writers. It also knows when the newest held
+//! stroke of a user's key reached the program, which a terminal's flood
+//! policy reads ([`StrokeLine::held_reached_us`]).
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -68,6 +70,9 @@ pub(crate) struct StrokeLine {
     /// The keys whose held stroke was dropped, each kept until its entry's
     /// turn reads it.
     dropped: BTreeSet<KeySeq>,
+    /// When the newest held stroke of a user's key was sent, reaching the
+    /// program, in microseconds on the shared clock; 0 before any.
+    held_reached_us: u64,
 }
 
 impl StrokeLine {
@@ -84,14 +89,20 @@ impl StrokeLine {
 
     /// The hook deferred a transition: it joins the line, and goes at once
     /// when nothing unsent holds the line.
-    pub(crate) fn defer(&mut self, stroke: Stroke, pressed: bool) -> Option<QueueEffect> {
+    pub(crate) fn defer(
+        &mut self,
+        stroke: Stroke,
+        pressed: bool,
+        now_us: u64,
+    ) -> Option<QueueEffect> {
         self.line.push_back(InLine::Deferred { stroke, pressed });
-        self.send_ready()
+        self.send_ready(now_us)
     }
 
-    /// Key `key` passes: its stroke goes, with what is behind it up to the
-    /// next unsent held stroke, once nothing unsent is ahead of it.
-    pub(crate) fn pass(&mut self, key: KeySeq) -> Option<QueueEffect> {
+    /// Key `key` passes at `now_us`: its stroke goes, with what is behind
+    /// it up to the next unsent held stroke, once nothing unsent is ahead of
+    /// it.
+    pub(crate) fn pass(&mut self, key: KeySeq, now_us: u64) -> Option<QueueEffect> {
         let held = self.line.iter_mut().find_map(|item| match item {
             InLine::Held {
                 key: held, passed, ..
@@ -99,7 +110,7 @@ impl StrokeLine {
             InLine::Held { .. } | InLine::Deferred { .. } => None,
         })?;
         *held = true;
-        self.send_ready()
+        self.send_ready(now_us)
     }
 
     /// What the line knows of key `key`'s stroke.
@@ -162,7 +173,14 @@ impl StrokeLine {
                 *passed = true;
             }
         }
-        self.send_ready()
+        self.send_ready(now_us)
+    }
+
+    /// When the newest held stroke of a user's key reached the program, in
+    /// microseconds; 0 before any. A read begun before then shows what was
+    /// written before that key, which cut speech at its press.
+    pub(crate) fn held_reached_us(&self) -> u64 {
+        self.held_reached_us
     }
 
     /// Drops every stroke not yet sent, as the input desktop leaving the
@@ -208,14 +226,25 @@ impl StrokeLine {
             .collect()
     }
 
-    /// Sends what may go from the line's front: deferred transitions and
-    /// held strokes whose key has passed, up to the first that holds the
-    /// line.
-    fn send_ready(&mut self) -> Option<QueueEffect> {
+    /// Sends, at `now_us`, what may go from the line's front: deferred
+    /// transitions and held strokes whose key has passed, up to the first
+    /// that holds the line.
+    fn send_ready(&mut self, now_us: u64) -> Option<QueueEffect> {
         let mut sent = Vec::new();
         while self.line.front().is_some_and(|front| !front.holds()) {
             match self.line.pop_front() {
-                Some(InLine::Held { stroke, .. }) => sent.push(SentTransition::Held(stroke)),
+                Some(InLine::Held {
+                    stroke,
+                    release_at_us,
+                    ..
+                }) => {
+                    // A key Core sends itself has no release, and is no
+                    // user's key.
+                    if release_at_us.is_some() {
+                        self.held_reached_us = self.held_reached_us.max(now_us);
+                    }
+                    sent.push(SentTransition::Held(stroke));
+                }
                 Some(InLine::Deferred { stroke, pressed }) => {
                     sent.push(SentTransition::Deferred { stroke, pressed });
                 }
@@ -270,19 +299,19 @@ mod tests {
     fn a_held_stroke_goes_with_what_is_deferred_behind_it_up_to_the_next() {
         let mut line = StrokeLine::default();
         assert_eq!(
-            sent(line.defer(stroke(X, 1), true)),
+            sent(line.defer(stroke(X, 1), true, 0)),
             [SentTransition::Deferred {
                 stroke: stroke(X, 1),
                 pressed: true
             }]
         );
         line.hold(KeySeq::new(1), held(DOWN, 2), Some(0));
-        assert_eq!(sent(line.defer(stroke(X, 3), false)), []);
+        assert_eq!(sent(line.defer(stroke(X, 3), false, 0)), []);
         line.hold(KeySeq::new(2), held(DOWN, 4), Some(10));
-        assert_eq!(sent(line.defer(stroke(SHIFT, 5), true)), []);
+        assert_eq!(sent(line.defer(stroke(SHIFT, 5), true, 0)), []);
         assert_eq!(line.status(KeySeq::new(1)), StrokeStatus::Unsent);
         assert_eq!(
-            sent(line.pass(KeySeq::new(1))),
+            sent(line.pass(KeySeq::new(1), 0)),
             [
                 SentTransition::Held(held(DOWN, 2)),
                 SentTransition::Deferred {
@@ -294,7 +323,7 @@ mod tests {
         assert_eq!(line.status(KeySeq::new(1)), StrokeStatus::Sent);
         assert_eq!(line.status(KeySeq::new(2)), StrokeStatus::Unsent);
         assert_eq!(
-            sent(line.pass(KeySeq::new(2))),
+            sent(line.pass(KeySeq::new(2), 0)),
             [
                 SentTransition::Held(held(DOWN, 4)),
                 SentTransition::Deferred {
@@ -312,10 +341,10 @@ mod tests {
         let mut line = StrokeLine::default();
         line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
         line.hold(KeySeq::new(2), held(X, 2), Some(5));
-        assert_eq!(sent(line.pass(KeySeq::new(2))), []);
+        assert_eq!(sent(line.pass(KeySeq::new(2), 0)), []);
         assert_eq!(line.status(KeySeq::new(2)), StrokeStatus::Sent);
         assert_eq!(
-            sent(line.pass(KeySeq::new(1))),
+            sent(line.pass(KeySeq::new(1), 0)),
             [
                 SentTransition::Held(held(DOWN, 1)),
                 SentTransition::Held(held(X, 2))
@@ -353,12 +382,12 @@ mod tests {
     fn dropped_strokes_leave_a_mark_until_their_entrys_turn() {
         let mut line = StrokeLine::default();
         line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
-        assert_eq!(sent(line.defer(stroke(X, 2), true)), []);
+        assert_eq!(sent(line.defer(stroke(X, 2), true, 0)), []);
         line.drop_unsent();
         assert_eq!(line.status(KeySeq::new(1)), StrokeStatus::Dropped);
         assert_eq!(line.next_release(), None);
         assert_eq!(
-            sent(line.defer(stroke(X, 3), false)),
+            sent(line.defer(stroke(X, 3), false, 0)),
             [SentTransition::Deferred {
                 stroke: stroke(X, 3),
                 pressed: false
@@ -389,7 +418,7 @@ mod tests {
             (verbatim_model::stroke::VK_PACKET, false, 8),
             (ALT, false, 9),
         ] {
-            assert_eq!(sent(line.defer(stroke(vk, sequence), pressed)), []);
+            assert_eq!(sent(line.defer(stroke(vk, sequence), pressed, 0)), []);
         }
         assert_eq!(
             line.exit(),
@@ -417,7 +446,7 @@ mod tests {
             (CONTROL, false, 4),
             (CONTROL, false, 5),
         ] {
-            assert_eq!(sent(line.defer(stroke(vk, sequence), pressed)), []);
+            assert_eq!(sent(line.defer(stroke(vk, sequence), pressed, 0)), []);
         }
         assert_eq!(line.exit(), [stroke(DOWN, 1), stroke(CONTROL, 5)]);
     }

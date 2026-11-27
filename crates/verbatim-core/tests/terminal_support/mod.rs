@@ -505,6 +505,17 @@ pub struct Session {
     /// the next taken for each, as [`Session::output_before_finds`] is
     /// before a search.
     pub output_before_histories: VecDeque<(String, u64)>,
+    /// A key pressed while each full read that is not an output read is
+    /// out, with what the terminal writes for it, the next taken for each,
+    /// `None` for none: pressed, and taken in by Core, and then written,
+    /// before the outpost answers the read, as a key pressed while a caret
+    /// key's read is on its way.
+    pub presses_before_reads: VecDeque<Option<(Key, String)>>,
+    /// What happens while each full read that is not an output read is
+    /// out, after [`Session::presses_before_reads`], the next taken for
+    /// each, `None` for nothing: run before the outpost answers the read,
+    /// as keys, output and releases that come while it is on its way.
+    pub during_reads: VecDeque<Option<fn(&mut Session)>>,
     /// Whether what Core queues is played only when the test calls
     /// [`Session::play`] or [`Session::play_one`], so that output can be
     /// written while a group plays.
@@ -588,6 +599,8 @@ impl Session {
             unanswered_finds: false,
             output_before_finds: VecDeque::new(),
             output_before_histories: VecDeque::new(),
+            presses_before_reads: VecDeque::new(),
+            during_reads: VecDeque::new(),
             manual_play: false,
             pending: VecDeque::new(),
             queued: VecDeque::new(),
@@ -695,6 +708,14 @@ impl Session {
         let effects = self.step(input.clone());
         self.run(effects);
         self.settle();
+    }
+
+    /// Presses `key` and takes in its effects, answering nothing yet, as a
+    /// key pressed while a request is out.
+    pub fn press_only(&mut self, key: &Key) {
+        let input = self.pressed(key);
+        let effects = self.step(input);
+        self.take(effects, None);
     }
 
     /// Presses `key`, takes in its effects, and plays what it queued.
@@ -812,6 +833,19 @@ impl Session {
         let batch = batch_of(ask);
         match read {
             reader::Asked::Window(window) => {
+                if !window.output
+                    && let Some(Some((key, written))) = self.presses_before_reads.pop_front()
+                {
+                    let input = self.pressed(&key);
+                    let effects = self.step(input);
+                    self.take(effects, None);
+                    self.outpost.sim.write(written.as_bytes());
+                }
+                if !window.output
+                    && let Some(Some(during)) = self.during_reads.pop_front()
+                {
+                    during(self);
+                }
                 let outcomes = self.outpost.run(batch);
                 let began_ms = self.next_read_began.take().unwrap_or(self.at_ms);
                 let (sent, steps) = reader::window_batch(node(), window);
