@@ -415,6 +415,20 @@ jobs:
       - name: Close the runner image's paging-file message box
         shell: pwsh
         run: Get-Process SystemPropertiesPerformance -ErrorAction SilentlyContinue | Stop-Process
+      # Environment preparation, not a workaround in the harness: in every
+      # runner stall whose load was recorded (runs 45944007285,
+      # 46010625495 and 46012487187, 2026-11-27), the busiest process was
+      # the svchost.exe running the Storage Service (StorSvc), with the
+      # disks' queue up to 1.8, while windows stopped answering for
+      # seconds. It is disabled, so nothing restarts it during the suite,
+      # and stopped (Dickson, 2026-11-27; docs/flaky-tests.md).
+      - name: Stop the runner image's Storage Service
+        shell: pwsh
+        run: |
+          Set-Service -Name StorSvc -StartupType Disabled
+          Stop-Service -Name StorSvc -Force
+          $service = Get-Service -Name StorSvc
+          if ($service.Status -ne 'Stopped') { throw "StorSvc is $($service.Status), not stopped" }
       # Every live test is #[ignore]d, so a plain `cargo test` lists it as
       # ignored rather than reporting a pass it never ran; this step runs
       # its group's scenarios with --ignored, each named with --exact, and

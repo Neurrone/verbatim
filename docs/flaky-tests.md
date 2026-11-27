@@ -73,12 +73,12 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
 - `theme_panel` on GitHub's runner (run 45944007285, 2026-11-27, at 3810e1ec)
   - How: after Enter on "Remove button", "sound: app-not-responding" where the Remove Theme confirmation was expected, as in the entry above on the same dialog.
   - Cause: the same runner stall, the first with the service named: the busiest process was the `svchost.exe` running `StorSvc`, Windows' Storage Service, at 27.7% of the processors, with the processor 42.5% busy and the disks' queue 0.81 on average. So in the two stalls whose load was recorded, a Windows service host was the busiest process; why the Storage Service runs then is not known.
-  - Fix: none in Verbatim. When the next stall's `runner-load.txt` names a service again, whether the runner image's services can be held off during the suite goes to Dickson, since it changes the test environment rather than Verbatim.
+  - Fix: the e2e job disables and stops the Storage Service before the suite (`.github/workflows/ci.yml`, "Stop the runner image's Storage Service"; Dickson, 2026-11-27). A stall after that is read again in that light.
 
 - `switch_to_onecore` on GitHub's runner (run 46010625495, 2026-11-27, at 5d989a53)
   - How: "Synthesizer Error dialog Could not load the Windows OneCore voices synthesizer." where the Speech page was expected after choosing Windows OneCore voices.
   - Cause: the same runner stall. The OneCore synthesizer host logged "creating the speech synthesizer" and then nothing, so the switch gave up after its 10 s and Verbatim showed the error, as it should (`synth-onecore.log`, `stderr.log`). The busiest process was again the `svchost.exe` running `StorSvc`, at 13.6% of the processors (`runner-load.txt`), the second stall of the two that named a service.
-  - Fix: none in Verbatim; whether the e2e job holds the Storage Service off is Dickson's, as the entry above says.
+  - Fix: as above: the e2e job stops the Storage Service.
 
 - `spelling_errors` on GitHub's runner (run 46012487187, 2026-11-27, at 6ee643bf)
   - How: "All fine here." was not queued within 75 s; nothing was said.
