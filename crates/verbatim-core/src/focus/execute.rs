@@ -455,7 +455,15 @@ pub(crate) fn execute(
     if !matches!(read.caret, FocusCaret::Read(_)) {
         state.forget_caret();
     }
-    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
+    // The focus's own cut, which the step applies after it, drops the
+    // output a release dropped here would have left waiting.
+    let cut = said.iter().any(crate::terminal::cuts_speech);
+    said.extend(crate::terminal::reading::committed(
+        state,
+        terminal,
+        follows,
+        (origin.observed_at_us, cut),
+    ));
     Executed {
         said,
         committed: true,
@@ -605,9 +613,14 @@ pub(crate) fn retake(
         fence: origin.fence,
     };
     crate::reduce::take_silently(state, &ready.report, new);
-    crate::terminal::reading::committed(state, terminal, follows, origin.observed_at_us);
+    let said = crate::terminal::reading::committed(
+        state,
+        terminal,
+        follows,
+        (origin.observed_at_us, false),
+    );
     Executed {
-        said: Vec::new(),
+        said,
         committed: true,
     }
 }

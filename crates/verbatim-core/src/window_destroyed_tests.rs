@@ -123,7 +123,7 @@ fn followed(held: &mut Held, role: Role) -> Focus {
 fn terminal_followed() -> Held {
     let mut state = ready();
     let focus = followed(&mut state, Role::Terminal);
-    crate::terminal::reading::committed(
+    let _ = crate::terminal::reading::committed(
         &mut state.state,
         Some(crate::terminal::reading::Terminal {
             node: focus.context.snapshot.id,
@@ -131,7 +131,7 @@ fn terminal_followed() -> Held {
             console: false,
         }),
         Vec::new(),
-        500,
+        (500, false),
     );
     let _ = state.state.wants.take_for_tests();
     state

@@ -120,6 +120,10 @@ pub(crate) enum Reading {
     },
     /// Holding for the flood policy, with the newest change told.
     Holding { told: Option<u64> },
+    /// Holding, the release read `token` answered and its speech entry not
+    /// yet at its turn, with the newest change told: the look at the
+    /// backlog waits for that speech.
+    Releasing { token: u64, told: Option<u64> },
     /// Its window hung while a read was out; `holding` keeps whether the
     /// policy was holding.
     Stalled { holding: bool },
@@ -153,6 +157,54 @@ pub(crate) fn modelled(state: &SrState) -> Option<NodeId> {
 /// The focused terminal, whatever its life.
 pub(crate) fn focused(state: &SrState) -> Option<Terminal> {
     state.terminal_focus.focused.terminal()
+}
+
+/// Whether a release read is pending: out, or answered with its speech
+/// entry not yet at its turn. The flood policy's look at the backlog
+/// waits for it, and it is only ever read here
+/// (`docs/design/readers-tell-core-asks-build3.md`, "Answers and speech").
+pub(crate) fn release_pending(state: &SrState) -> bool {
+    matches!(
+        state.terminal_focus.focused,
+        FocusedTerminal::Modelled {
+            reading: Reading::Out {
+                mark: Mark::Waited { release: true },
+                ..
+            } | Reading::Releasing { .. },
+            ..
+        }
+    )
+}
+
+/// The speech entry of release read `token` reached its turn: a reading
+/// waiting for it holds on; whether it was the release's pending.
+fn release_spoken(state: &mut SrState, token: u64) -> bool {
+    if let FocusedTerminal::Modelled {
+        terminal,
+        follow,
+        reading: Reading::Releasing { token: out, told },
+    } = state.terminal_focus.focused
+        && out == token
+    {
+        state.terminal_focus.focused = FocusedTerminal::Modelled {
+            terminal,
+            follow,
+            reading: Reading::Holding { told },
+        };
+        return true;
+    }
+    false
+}
+
+/// The focused terminal's reading was replaced other than by its release
+/// read's answer, `pending` whether a release read was pending before: a
+/// release it dropped ends, and the look at the backlog waiting for it
+/// runs, as when the release read finds the terminal gone.
+fn release_dropped(state: &mut SrState, pending: bool) -> Vec<Effect> {
+    if pending && !release_pending(state) {
+        return crate::terminal::release_settled(state);
+    }
+    Vec::new()
 }
 
 /// A new token, from the facts' one counter.
@@ -278,9 +330,6 @@ fn want_output(
     let ask = full_read(state, terminal, (false, true), now_us);
     let token = token(state);
     want_read(state, token, terminal, &ask);
-    if mark == (Mark::Waited { release: true }) {
-        state.terminal.release_waiting = true;
-    }
     Reading::Out {
         token,
         mark,
@@ -302,13 +351,16 @@ fn want_baseline(state: &mut SrState, terminal: &Terminal, now_us: u64) -> (u64,
 /// terminal now committed, if the new focus is one, at `now_us`. A
 /// terminal committed, new or taken again, is baselining: its `Follow` and
 /// baseline are wanted, the `Follow` among `follows`, the commit's, which
-/// are all wanted in order first; a terminal left is told so.
+/// are all wanted in order first; a terminal left is told so. A release
+/// read the commit drops ends, its look at the backlog run, unless the
+/// commit's speech `cut` speech off, which drops the output waiting.
 pub(crate) fn committed(
     state: &mut SrState,
     to: Option<Terminal>,
     follows: Vec<(RequestWindow, Option<Followed>)>,
-    now_us: u64,
-) {
+    (now_us, cut): (u64, bool),
+) -> Vec<Effect> {
+    let pending = release_pending(state);
     let from = focused(state);
     if let Some(from) = from
         && to.is_none_or(|to| to.node != from.node)
@@ -321,7 +373,7 @@ pub(crate) fn committed(
             want_followed(state, None, window, node.as_ref());
         }
         state.terminal_focus.focused = FocusedTerminal::None;
-        return;
+        return release_dropped(state, pending && !cut);
     };
     let mut follow = None;
     for (window, node) in follows {
@@ -347,6 +399,7 @@ pub(crate) fn committed(
         read: Some(read),
         told: None,
     };
+    release_dropped(state, pending && !cut)
 }
 
 /// The terminal a focus of `role` read on `window`, `node`, is, when it is
@@ -440,6 +493,10 @@ fn reading_told(
         Reading::Holding { told } => Reading::Holding {
             told: Some(told.map_or(at_us, |told| told.max(at_us))),
         },
+        Reading::Releasing { token, told } => Reading::Releasing {
+            token,
+            told: Some(told.map_or(at_us, |told| told.max(at_us))),
+        },
         Reading::Stalled { holding } => Reading::Stalled { holding },
     }
 }
@@ -498,9 +555,8 @@ pub(crate) struct SpeechEntry {
     started_ms: u64,
     /// Whether it speaks only its answers to keys.
     silent: bool,
-    /// Whether it is the release read's, whose turn the look at the
-    /// backlog waits for.
-    release: bool,
+    /// What it is the speech of.
+    of: Of,
     /// The read's speech key.
     key: Option<TraceId>,
     /// The trace it is spoken under without one.
@@ -509,17 +565,26 @@ pub(crate) struct SpeechEntry {
     pub(crate) fence: Fence,
 }
 
+/// What a speech entry is the speech of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Of {
+    /// A baseline's or an entry's full read.
+    Read,
+    /// The output read asked under `token`.
+    Output { token: u64 },
+}
+
 /// The speech entry of `taken`, a read of `node` begun at `started_ms`
-/// with `mark`, under `trace`: `None` when it says nothing and is no
-/// release.
+/// with `mark`, `of` what it is the speech of, under `trace`: `None` when
+/// it says nothing and is no release, whose turn the look at the backlog
+/// waits for.
 fn speech_entry(
     node: NodeId,
     taken: Taken,
-    (started_ms, mark): (u64, Mark),
+    (started_ms, mark, of): (u64, Mark, Of),
     trace: TraceId,
 ) -> Option<SpeechEntry> {
-    let release = mark == (Mark::Waited { release: true });
-    if taken.speech.is_none() && !release {
+    if taken.speech.is_none() && mark != (Mark::Waited { release: true }) {
         return None;
     }
     let speech = taken.speech.unwrap_or_default();
@@ -537,7 +602,7 @@ fn speech_entry(
         followed: speech.followed,
         started_ms,
         silent: mark == Mark::Silent,
-        release,
+        of,
         key: taken.key,
         trace,
         fence: Fence::default(),
@@ -550,26 +615,30 @@ fn speech_entry(
 /// policy, unless silent or read before the last cut; otherwise it ends
 /// silent.
 pub(crate) fn speak(state: &mut SrState, entry: SpeechEntry) -> Vec<Effect> {
+    let release = |state: &mut SrState| match entry.of {
+        Of::Output { token } if release_spoken(state, token) => {
+            crate::terminal::release_settled(state)
+        }
+        Of::Read | Of::Output { .. } => Vec::new(),
+    };
     let current = modelled(state) == Some(entry.node)
         && terminal_model::model_of(state, entry.node)
             .is_some_and(|model| model.generation == entry.generation);
     if !current {
-        if entry.release {
-            return crate::terminal::release_ended(state);
-        }
-        return Vec::new();
+        return release(state);
     }
     let said = Said {
         items: entry.items.into_iter().map(SaidItem::Item).collect(),
         followed: entry.followed,
     };
-    let effects = crate::terminal::read_spoken(
+    let mut effects = crate::terminal::read_spoken(
         state,
         (entry.key.unwrap_or(entry.trace), entry.fence.key()),
         (entry.node, entry.started_ms),
         said,
-        (entry.silent, entry.release),
+        entry.silent,
     );
+    effects.extend(release(state));
     terminal_model::under(entry.key, effects)
 }
 
@@ -660,7 +729,7 @@ pub(crate) fn answered(
     };
     if follow.is_some_and(|follow| follow.token == token) {
         let outcome = outcome.map(|(reply, _)| reply);
-        follow_ended(state, &terminal, follow, &outcome, now_us);
+        said.extend(follow_ended(state, &terminal, follow, &outcome, now_us));
         return Vec::new();
     }
     let ask = match focused {
@@ -690,7 +759,7 @@ pub(crate) fn answered(
         } => output_ended(
             state,
             (&terminal, follow),
-            (mark, ask.start(), again),
+            (token, mark, ask.start(), again),
             outcome,
             (now_us, trace),
             said,
@@ -706,7 +775,8 @@ fn follow_ended(
     follow: Option<FollowOut>,
     outcome: &Outcome<Reply>,
     now_us: u64,
-) {
+) -> Vec<Effect> {
+    let pending = release_pending(state);
     let focused = state.terminal_focus.focused;
     let resent = follow.is_some_and(|follow| follow.resent);
     // The terminal's node gone is not there, as the whole `Follow` would
@@ -753,6 +823,7 @@ fn follow_ended(
         }
     };
     state.terminal_focus.focused = next;
+    release_dropped(state, pending)
 }
 
 /// `focused` with no `Follow` out.
@@ -839,7 +910,7 @@ fn modelled_by(
     let entry = speech_entry(
         terminal.node,
         taken,
-        (reply.snapshot.started_ms, Mark::Spoken),
+        (reply.snapshot.started_ms, Mark::Spoken, Of::Read),
         trace,
     );
     let reading = match uncovered(told, reply.started_us) {
@@ -858,7 +929,7 @@ fn modelled_by(
 fn output_ended(
     state: &mut SrState,
     (terminal, follow): (&Terminal, Option<FollowOut>),
-    (mark, named, again): (Mark, Option<TextAnchor>, Option<u64>),
+    (read, mark, named, again): (u64, Mark, Option<TextAnchor>, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
     (now_us, trace): (u64, TraceId),
     said: &mut Vec<Effect>,
@@ -877,7 +948,7 @@ fn output_ended(
             state.terminal_focus.focused = FocusedTerminal::None;
             state.drop_models(|model| model.node == terminal.node);
             if release {
-                said.extend(crate::terminal::release_ended(state));
+                said.extend(crate::terminal::release_settled(state));
             }
             return Vec::new();
         }
@@ -890,7 +961,7 @@ fn output_ended(
         Outcome::NotResponding | Outcome::NoLongerAwaited(CancelReason::Hung) => {
             set(state, Reading::Stalled { holding: release });
             if release {
-                said.extend(crate::terminal::release_ended(state));
+                said.extend(crate::terminal::release_settled(state));
             }
             return Vec::new();
         }
@@ -903,7 +974,7 @@ fn output_ended(
         // it was out.
         if release {
             set(state, Reading::Holding { told: again });
-            said.extend(crate::terminal::release_ended(state));
+            said.extend(crate::terminal::release_settled(state));
         } else {
             let reading = match again {
                 Some(_) => want_output(state, terminal, (Mark::Spoken, None), now_us),
@@ -918,7 +989,7 @@ fn output_ended(
     output_taken(
         state,
         (terminal, follow),
-        (mark, again),
+        (read, mark, again),
         (taken, (reply.snapshot.started_ms, reply.started_us)),
         (now_us, trace),
     )
@@ -930,7 +1001,7 @@ fn output_ended(
 fn output_taken(
     state: &mut SrState,
     (terminal, follow): (&Terminal, Option<FollowOut>),
-    (mark, again): (Mark, Option<u64>),
+    (read, mark, again): (u64, Mark, Option<u64>),
     (taken, began): (Taken, (u64, u64)),
     (now_us, trace): (u64, TraceId),
 ) -> Vec<Entry> {
@@ -942,7 +1013,12 @@ fn output_taken(
             reading,
         };
     };
-    let entry = speech_entry(terminal.node, taken, (began.0, mark), trace);
+    let entry = speech_entry(
+        terminal.node,
+        taken,
+        (began.0, mark, Of::Output { token: read }),
+        trace,
+    );
     let owed_scope =
         terminal_model::model_of(state, terminal.node).is_some_and(|model| model.owed.is_some());
     let again = uncovered(again, began.1);
@@ -950,7 +1026,10 @@ fn output_taken(
         want_output(state, terminal, (mark, again), now_us)
     } else if release {
         // The backlog look runs at the speech entry's turn.
-        Reading::Holding { told: again }
+        Reading::Releasing {
+            token: read,
+            told: again,
+        }
     } else if crate::terminal::lines_hold(state) {
         Reading::Holding { told: again }
     } else if again.is_some() {
@@ -1054,7 +1133,6 @@ pub(crate) fn cut(state: &mut SrState) {
     else {
         return;
     };
-    state.terminal.release_waiting = false;
     let reading = match reading {
         Reading::Out {
             token,
@@ -1067,11 +1145,11 @@ pub(crate) fn cut(state: &mut SrState) {
             ask,
             again,
         },
-        Reading::Holding { told: Some(_) } => {
+        Reading::Holding { told: Some(_) } | Reading::Releasing { told: Some(_), .. } => {
             let now_us = state.terminal_focus.now_us;
             want_output(state, &terminal, (Mark::Silent, None), now_us)
         }
-        Reading::Holding { told: None } => Reading::Quiet,
+        Reading::Holding { told: None } | Reading::Releasing { told: None, .. } => Reading::Quiet,
         Reading::Stalled { .. } => Reading::Stalled { holding: false },
         other => other,
     };
@@ -1136,6 +1214,10 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
                 Reading::Holding { .. } | Reading::Stalled { holding: true } => {
                     Reading::Holding { told: Some(now_us) }
                 }
+                Reading::Releasing { token, .. } => Reading::Releasing {
+                    token,
+                    told: Some(now_us),
+                },
             };
             FocusedTerminal::Modelled {
                 terminal,
@@ -1149,12 +1231,17 @@ pub(crate) fn recovered(state: &mut SrState, window: &RequestWindow, now_us: u64
 
 /// The outpost generation that holds the focused terminal's node ended
 /// (Table 1, column I): its state goes, with every model of its terminals.
-pub(crate) fn outpost_ended(state: &mut SrState, outpost: verbatim_model::OutpostId) {
+pub(crate) fn outpost_ended(
+    state: &mut SrState,
+    outpost: verbatim_model::OutpostId,
+) -> Vec<Effect> {
+    let pending = release_pending(state);
     if focused(state).is_some_and(|terminal| terminal.node.outpost() == Some(outpost)) {
         state.terminal_focus.focused = FocusedTerminal::None;
         state.terminal_focus.entry_read = false;
     }
     terminal_model::outpost_ended(state, outpost);
+    release_dropped(state, pending)
 }
 
 /// A full read of the focused terminal an entry asks inside the queue: a
@@ -1263,7 +1350,7 @@ pub(crate) fn entry_read_ended(
             speech_entry(
                 node,
                 taken,
-                (reply.snapshot.started_ms, Mark::Spoken),
+                (reply.snapshot.started_ms, Mark::Spoken, Of::Read),
                 trace,
             )
         }
@@ -1289,7 +1376,7 @@ pub(crate) fn entry_read_ended(
             let entry = speech_entry(
                 node,
                 taken,
-                (reply.snapshot.started_ms, Mark::Spoken),
+                (reply.snapshot.started_ms, Mark::Spoken, Of::Read),
                 trace,
             );
             let started_us = reply.started_us;
@@ -1310,6 +1397,10 @@ pub(crate) fn entry_read_ended(
                     again: uncovered(again, started_us),
                 },
                 Reading::Holding { told } => Reading::Holding {
+                    told: uncovered(told, started_us),
+                },
+                Reading::Releasing { token, told } => Reading::Releasing {
+                    token,
                     told: uncovered(told, started_us),
                 },
                 Reading::Quiet => owed_read(state, &terminal, Reading::Quiet, now_us),
@@ -1408,7 +1499,7 @@ pub(crate) fn answered_with(
     output_taken(
         state,
         (&terminal, follow),
-        (mark, again),
+        (token, mark, again),
         (read, (started_us / 1_000, started_us)),
         (at_us, TraceId::from_raw(5)),
     )

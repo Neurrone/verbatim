@@ -80,8 +80,10 @@ pub(crate) fn switched(state: &mut SrState, open: bool, now_us: u64) -> Switched
     state.desktop.input = InputDesktop::Other;
     state.desktop.switches_away = state.desktop.switches_away.wrapping_add(1);
     state.versions.commit_own();
-    // The focused terminal, if any, is left.
-    crate::terminal::reading::committed(state, None, Vec::new(), now_us);
+    // The focused terminal, if any, is left; the switch's stop of speech
+    // drops what its flood had waiting.
+    let released = crate::terminal::reading::committed(state, None, Vec::new(), (now_us, true));
+    debug_assert!(released.is_empty(), "a cutting commit runs no look");
     // The keys held before the switch never reach the application: the
     // hook's line is cleared with its modifiers, and the front's
     // starting read is withdrawn as the queue settles.

@@ -164,7 +164,7 @@ fn token(wants: &[(Want, u64)], want: Want) -> u64 {
 /// baseline wanted, their tokens.
 fn baselining() -> (SrState, u64, u64) {
     let mut state = SrState::new();
-    committed(&mut state, Some(terminal()), Vec::new(), 1_000);
+    let _ = committed(&mut state, Some(terminal()), Vec::new(), (1_000, false));
     let wanted = wants(&mut state);
     assert_eq!(kinds(&wanted), [Want::Baseline]);
     (state, 0, token(&wanted, Want::Baseline))
@@ -206,7 +206,7 @@ fn a_terminal_committed_is_followed_then_baselined() {
             extra: None,
         }),
     );
-    committed(&mut state, Some(terminal()), vec![follow], 1_000);
+    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
     assert_eq!(kinds(&wants(&mut state)), [Want::Follow, Want::Baseline]);
     assert!(matches!(
         state.terminal_focus.focused,
@@ -386,7 +386,7 @@ fn a_release_read_out_at_a_cut_becomes_silent() {
             ..
         }
     ));
-    assert!(state.terminal.release_waiting);
+    assert!(super::release_pending(&state));
     let _ = wants(&mut state);
     cut(&mut state);
     assert_eq!(wants(&mut state), []);
@@ -397,7 +397,7 @@ fn a_release_read_out_at_a_cut_becomes_silent() {
             ..
         }
     ));
-    assert!(!state.terminal.release_waiting);
+    assert!(!super::release_pending(&state));
 }
 
 /// Table 1, column B: `Follow` refused ends the focused terminal's state.
@@ -412,7 +412,7 @@ fn a_refused_follow_ends_the_focused_terminal() {
             extra: None,
         }),
     );
-    committed(&mut state, Some(terminal()), vec![follow], 1_000);
+    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
     let follow = token(&wants(&mut state), Want::Follow);
     let _ = answer(
         &mut state,
@@ -437,7 +437,7 @@ fn a_hung_follow_waits_for_the_window_then_follows_and_baselines() {
             extra: None,
         }),
     );
-    committed(&mut state, Some(terminal()), vec![follow], 1_000);
+    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
     let follow = token(&wants(&mut state), Want::Follow);
     let _ = answer(&mut state, follow, Outcome::NotResponding, 2_000);
     assert!(matches!(
@@ -481,7 +481,7 @@ fn an_answer_after_the_focus_left_is_taken_by_nothing() {
     let mut state = modelled();
     told(&mut state, node(), 10_000, 10_000);
     let first = token(&wants(&mut state), Want::Output);
-    committed(&mut state, None, Vec::new(), 10_500);
+    let _ = committed(&mut state, None, Vec::new(), (10_500, false));
     let before = state.clone();
     assert_eq!(answer(&mut state, first, read("$ a", 10_000), 11_000), []);
     assert_eq!(state, before);
@@ -499,7 +499,7 @@ fn followed() -> (SrState, u64, u64) {
             extra: None,
         }),
     );
-    committed(&mut state, Some(terminal()), vec![follow], 1_000);
+    let _ = committed(&mut state, Some(terminal()), vec![follow], (1_000, false));
     let wanted = wants(&mut state);
     assert_eq!(kinds(&wanted), [Want::Follow, Want::Baseline]);
     (
@@ -563,7 +563,7 @@ fn a_follow_stopped_after_the_baseline_answered_is_sent_alone() {
 #[test]
 fn a_modelled_terminal_taken_again_reads_a_new_baseline() {
     let mut state = modelled();
-    committed(&mut state, Some(terminal()), Vec::new(), 20_000);
+    let _ = committed(&mut state, Some(terminal()), Vec::new(), (20_000, false));
     assert_eq!(kinds(&wants(&mut state)), [Want::Baseline]);
     assert!(matches!(
         state.terminal_focus.focused,
@@ -577,7 +577,7 @@ fn a_modelled_terminal_taken_again_reads_a_new_baseline() {
 #[test]
 fn the_outpost_ending_drops_the_focused_terminal_and_its_models() {
     let mut state = modelled();
-    outpost_ended(&mut state, OutpostId(1));
+    let _ = outpost_ended(&mut state, OutpostId(1));
     assert_eq!(state.terminal_focus.focused, FocusedTerminal::None);
     assert!(state.terminals.is_empty());
 }

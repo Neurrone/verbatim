@@ -81,10 +81,8 @@ pub(crate) struct TerminalSpeechState {
     /// group being spoken, and after it at most as many lines as either
     /// limit keeps, older ones counted as skipped ([`bound`]).
     pub(crate) waiting: VecDeque<Waiting>,
-    /// How many more lines the group being spoken hands to speech before
-    /// the backlog is looked at; `None` between bursts of output, when
-    /// everything has been heard.
-    pub(crate) group: Option<usize>,
+    /// Where the flood policy is in a burst.
+    pub(crate) pacing: Pacing,
     /// The opening marks of output handed to speech whose playback has not
     /// reached them yet, oldest first, with whether each is a line.
     pub(crate) ahead: VecDeque<(SpeechMark, bool)>,
@@ -99,17 +97,43 @@ pub(crate) struct TerminalSpeechState {
     /// which every utterance of output handed to speech carries, whatever
     /// input hands it on; `None` for output the quiet-period timer read.
     pub(crate) key: Option<KeySeq>,
-    /// The group's last line is playing, and the backlog is looked at once
-    /// the release read's speech is taken.
-    pub(crate) deciding: bool,
-    /// A release read was sent and its speech is not yet taken: the look at
-    /// the backlog waits for it (`docs/design/readers-tell-core-asks-build3.md`,
-    /// "Answers and speech").
-    pub(crate) release_waiting: bool,
     /// When speech was last cut off (milliseconds on the shared clock):
     /// output from a read that began before it was read before the cut,
     /// and is not spoken.
     pub(crate) cut_at_ms: u64,
+}
+
+/// Where the flood policy is in a burst of output ("Core's flood policy").
+/// Whether a release read is pending is the reading's
+/// ([`reading::release_pending`]), never copied here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Pacing {
+    /// Between bursts: everything handed to speech ended its group.
+    #[default]
+    Idle,
+    /// A group is being handed to speech, `left` lines of it still to hand
+    /// on: 0 once its last line is handed and plays.
+    Speaking { left: usize },
+    /// The group's last line has been heard, and the look at the backlog
+    /// waits for the release read's speech
+    /// (`docs/design/readers-tell-core-asks-build3.md`, "Answers and
+    /// speech").
+    Deciding,
+}
+
+impl Pacing {
+    /// The lines of the group being spoken still to hand on.
+    fn left(self) -> usize {
+        match self {
+            Self::Speaking { left } => left,
+            Self::Idle | Self::Deciding => 0,
+        }
+    }
+
+    /// Whether the group being spoken has handed on its last line.
+    fn last_handed(self) -> bool {
+        matches!(self, Self::Speaking { left: 0 } | Self::Deciding)
+    }
 }
 
 /// One piece of output waiting to be spoken.
@@ -295,31 +319,23 @@ pub(crate) fn speech(
 /// Takes in what a full read of the focused terminal `node`, begun at
 /// `started_ms`, said at its speech entry's turn, under its trace and its
 /// fence's key number: the answers to keys spoken, and the output, unless
-/// `silent` or read before the last cut, queued by the flood policy; a
-/// release read's (`release`) lets the look at the backlog run.
+/// `silent` or read before the last cut, queued by the flood policy.
 pub(crate) fn read_spoken(
     state: &mut SrState,
     under: (TraceId, Option<KeySeq>),
     (node, started_ms): (NodeId, u64),
     speech: Said,
-    (silent, release): (bool, bool),
+    silent: bool,
 ) -> Vec<Effect> {
     let before_cut = silent || (started_ms != 0 && started_ms < state.terminal.cut_at_ms);
-    let mut effects = take(state, under, Some(node), speech, before_cut);
-    if release {
-        state.terminal.release_waiting = false;
-        if std::mem::take(&mut state.terminal.deciding) {
-            effects.extend(decide_and_pump(state));
-        }
-    }
-    effects
+    take(state, under, Some(node), speech, before_cut)
 }
 
-/// The release read ended with no speech to take: the look at the backlog
-/// runs, sending nothing for it.
-pub(crate) fn release_ended(state: &mut SrState) -> Vec<Effect> {
-    state.terminal.release_waiting = false;
-    if std::mem::take(&mut state.terminal.deciding) {
+/// A release read's speech was taken, or the release ended with none: the
+/// look at the backlog waiting for it runs, unless a release read is still
+/// pending ([`reading::release_pending`]), as an owed read sent after it.
+pub(crate) fn release_settled(state: &mut SrState) -> Vec<Effect> {
+    if state.terminal.pacing == Pacing::Deciding && !reading::release_pending(state) {
         return decide_and_pump(state);
     }
     Vec::new()
@@ -401,8 +417,10 @@ fn take(
     }
     state.terminal.trace = Some(trace_id);
     state.terminal.key = key;
-    if state.terminal.group.is_none() {
-        state.terminal.group = Some(state.settings.full_lines());
+    if state.terminal.pacing == Pacing::Idle {
+        state.terminal.pacing = Pacing::Speaking {
+            left: state.settings.full_lines(),
+        };
     }
     queue(state, speech.items);
     bound(state);
@@ -441,7 +459,7 @@ fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
 fn queue(state: &mut SrState, items: Vec<SaidItem>) {
     let keep = state.settings.full_lines().max(state.settings.last_lines());
     let terminal = &mut state.terminal;
-    let group_left = terminal.group.unwrap_or(0);
+    let group_left = terminal.pacing.left();
     // The backlog once the output is added: the lines past the group's
     // ([`backlog_start`]).
     let lines = waiting_lines(&terminal.waiting).saturating_add(
@@ -765,7 +783,7 @@ fn bound(state: &mut SrState) {
         })
         .sum();
     while bytes > MAX_WAITING_BYTES {
-        let start = backlog_start(&terminal.waiting, terminal.group.unwrap_or(0));
+        let start = backlog_start(&terminal.waiting, terminal.pacing.left());
         let index = terminal
             .waiting
             .iter()
@@ -778,7 +796,7 @@ fn bound(state: &mut SrState) {
             break;
         };
         if index < start
-            && let Some(left) = terminal.group.as_mut()
+            && let Pacing::Speaking { left } = &mut terminal.pacing
         {
             *left = left.saturating_sub(1);
         }
@@ -832,7 +850,7 @@ fn decide(state: &mut SrState) {
     let last = state.settings.last_lines();
     let terminal = &mut state.terminal;
     if terminal.waiting.is_empty() {
-        terminal.group = None;
+        terminal.pacing = Pacing::Idle;
         return;
     }
     let mut lines = waiting_lines(&terminal.waiting);
@@ -840,7 +858,9 @@ fn decide(state: &mut SrState) {
         skip_all_but(&mut terminal.waiting, 0, last);
         lines = lines.min(last);
     }
-    terminal.group = Some(full.max(lines));
+    terminal.pacing = Pacing::Speaking {
+        left: full.max(lines),
+    };
 }
 
 /// Whether the flood policy skips what waits in `waiting` from `start` on
@@ -939,14 +959,14 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     while state.terminal.ahead.len() < AHEAD {
         let terminal = &state.terminal;
         // A group ends after its last line and what belongs to it.
-        if terminal.group == Some(0) && !terminal.waiting.front().is_some_and(belongs) {
+        if terminal.pacing.last_handed() && !terminal.waiting.front().is_some_and(belongs) {
             break;
         }
         let Some(item) = state.terminal.waiting.pop_front() else {
             break;
         };
         if is_line(&item)
-            && let Some(left) = state.terminal.group.as_mut()
+            && let Pacing::Speaking { left } = &mut state.terminal.pacing
         {
             *left = left.saturating_sub(1);
             if *left == 0 {
@@ -960,7 +980,7 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             || (is_mark(&item)
                 && skip_says_more_than(
                     &state.terminal.waiting,
-                    state.terminal.group.unwrap_or(0),
+                    state.terminal.pacing.left(),
                     state.settings.full_lines(),
                     state.settings.last_lines(),
                 ))
@@ -1017,20 +1037,30 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     }
     // Blank lines handed on without speech can end a group, or everything
     // waiting, with nothing sounding whose end would look at the backlog.
-    let reading = state.terminal.release_waiting;
-    let terminal = &mut state.terminal;
-    if terminal.sounding.is_none()
-        && terminal.ahead.is_empty()
-        && terminal.group.is_some()
-        && (terminal.group == Some(0) || terminal.waiting.is_empty())
-    {
-        if reading {
-            terminal.deciding = true;
-        } else {
-            effects.extend(decide_and_pump(state));
-        }
-    }
+    effects.extend(group_end(state).unwrap_or_default());
     effects
+}
+
+/// The group being spoken has ended and been heard: nothing sounds and
+/// nothing is ahead of playback, and its last line was handed on, or
+/// everything waiting was. The backlog is looked at, or, while a release
+/// read is pending, the look waits for its speech (`Deciding`); `None`
+/// when the group has not ended so.
+fn group_end(state: &mut SrState) -> Option<Vec<Effect>> {
+    let terminal = &state.terminal;
+    let ended = match terminal.pacing {
+        Pacing::Idle => false,
+        Pacing::Speaking { left } => left == 0 || terminal.waiting.is_empty(),
+        Pacing::Deciding => true,
+    };
+    if !(ended && terminal.sounding.is_none() && terminal.ahead.is_empty()) {
+        return None;
+    }
+    if reading::release_pending(state) {
+        state.terminal.pacing = Pacing::Deciding;
+        return Some(Vec::new());
+    }
+    Some(decide_and_pump(state))
 }
 
 /// Handles playback reaching an index mark. An utterance's opening mark:
@@ -1042,7 +1072,6 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 /// already been written is still on its way (a burst's first line can
 /// start playing before its second line arrives).
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
-    let reading = state.terminal.release_waiting;
     let terminal = &mut state.terminal;
     let Some(trace_id) = terminal.trace else {
         return Vec::new();
@@ -1061,17 +1090,7 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
         return Vec::new();
     }
     terminal.sounding = None;
-    if terminal.ahead.is_empty()
-        && terminal.group.is_some()
-        && (terminal.group == Some(0) || terminal.waiting.is_empty())
-    {
-        if reading {
-            terminal.deciding = true;
-            return Vec::new();
-        }
-        return decide_and_pump(state);
-    }
-    pump(state, trace_id)
+    group_end(state).unwrap_or_else(|| pump(state, trace_id))
 }
 
 /// The flood policy's decision ([`decide`]), then the next group handed to
@@ -1094,8 +1113,7 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
     terminal.waiting.clear();
     terminal.ahead.clear();
     terminal.sounding = None;
-    terminal.group = None;
-    terminal.deciding = false;
+    terminal.pacing = Pacing::Idle;
     terminal.cut_at_ms = terminal.cut_at_ms.max(at_ms);
     reading::cut(state);
     Vec::new()
@@ -1143,11 +1161,13 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
 /// Drops terminal output still waiting to be spoken, as turning "Report new
 /// output" off does, whether by its key or from the settings.
 pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
-    state.terminal.waiting.clear();
-    if state.terminal.ahead.is_empty() {
-        state.terminal.group = None;
+    let terminal = &mut state.terminal;
+    terminal.waiting.clear();
+    if terminal.ahead.is_empty() {
+        terminal.pacing = Pacing::Idle;
+    } else if terminal.pacing == Pacing::Deciding {
+        terminal.pacing = Pacing::Speaking { left: 0 };
     }
-    state.terminal.deciding = false;
     reading::cut(state);
     Vec::new()
 }

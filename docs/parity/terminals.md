@@ -175,6 +175,31 @@ settings", Core's flood policy).
   "line 32", "skipped lines", "line 30" to "line 40"; it now says
   "skipped lines", "line 36", "line 32", "line 37" to "line 40"
   (`crates/verbatim-core/tests/terminal_reading.rs`).
+- Pending Dickson's approval (Claude, 2026-11-27): a flood goes on after
+  the focused terminal is taken again while Core holds and its release
+  read is out, as after the listener or the outpost is replaced. Output
+  written while Core held and before the new baseline is neither heard
+  nor counted as skipped, because the first read after a focus is
+  silent. At limits of 30, with lines 1 to 40 read and 41 to 60 written
+  while Core held: Verbatim said lines 1 to 30, then nothing until a key;
+  it now says lines 1 to 40, then later output as it comes
+  (`a_flood_goes_on_after_the_same_terminal_is_committed_again_with_its_release_out`
+  and the two re-take tests beside it in
+  `crates/verbatim-core/src/terminal/tests.rs`). NVDA never holds and
+  speaks lines 1 to 60, queued; its monitor reads its first text silently
+  when it starts (`nvda/source/NVDAObjects/behaviors.py` 470 and 488 to
+  500).
+- Pending Dickson's approval (Claude, 2026-11-27): when the rules owe a
+  whole read after the release read, the look at the backlog waits for
+  that read's speech even when the group's last line was heard first, as
+  `docs/design/readers-tell-core-asks-build3.md` (line 104) records, so
+  its lines are in the one skip. At limits of 30, lines 1 to 40 read, the
+  release reading 41 to 70 and the owed read 71 to 100: Verbatim said
+  lines 1 to 30, "skipped 10 lines", then lines 41 to 100; it now says
+  lines 1 to 30, "skipped 40 lines", lines 71 to 100
+  (`an_owed_read_after_the_release_is_waited_for_when_the_last_line_was_heard_first`
+  in `crates/verbatim-core/src/terminal/tests.rs`). NVDA never holds and
+  speaks all 100 lines.
 - While the flood policy holds, Core sends no read for the changes told:
   it reads them when a group's last line is handed to speech; a cut while
   it holds reads them at once with a silent read, which speaks only its

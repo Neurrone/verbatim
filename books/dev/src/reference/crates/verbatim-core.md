@@ -1687,8 +1687,18 @@ console's caret event is its caret.
   terminal model" below). Once a group's worth of lines waits, the
   reading holds: a change told is kept, not read. When the group's last
   line is handed to speech, one waited read is sent as the release, and
-  the backlog is decided once the release read's answer and the last
-  line have both happened (`TerminalSpeechState::deciding`). With nothing
+  the backlog is decided once the release read's speech has been taken
+  and the last line heard. The pacing is one value,
+  `TerminalSpeechState::pacing` (`Pacing`): `Idle` between bursts,
+  `Speaking { left }` while a group is handed on, and `Deciding` once its
+  last line is heard and a release is pending. Whether a release is
+  pending is read from the reading alone (`reading::release_pending`), and
+  is never copied. The group's end is judged in one place (`group_end`),
+  at a closing mark and after each hand-on. A release ends at its speech
+  entry's turn, when its read fails, at a cut, or when its reading is
+  replaced (`committed`, `follow_ended`, `outpost_ended`), which runs the
+  look waiting for it (`terminal::release_settled`) unless the commit's
+  own speech cuts speech off. With nothing
   waiting, reading goes live again. When the outpost ends, the reading
   goes with its model and nothing more is asked of it; what Core had
   already read is still spoken, as NVDA speaks the lines its monitor
@@ -1735,7 +1745,13 @@ held at the next read's start) and the answers to the requests they make;
   `Reading`. A `Reading` is `Quiet`, `Behind` (a change told while an
   entry's full read is out), `Out` (an output read out, with its token,
   its `Mark` and the change told meanwhile), `Holding` (the flood
-  policy's hold) or `Stalled` (its window hung while a read was out). A
+  policy's hold), `Releasing` (holding, with the release read `token`
+  answered and its speech entry not yet at its turn) or `Stalled` (its
+  window hung while a read was out). A speech entry names what it is the
+  speech of (`Of`): a baseline's or an entry's read, or the output read
+  by its token; only the entry of the read that
+  `Releasing` names ends the release at its turn, so an owed read sent
+  after the release keeps the look waiting for its own speech. A
   read's `Mark` says what its speech does: `Spoken`, `Waited` (the
   release at a group's last line or not) or `Silent`. A change that the
   last read, begun after it was observed, covers needs no read; every

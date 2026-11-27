@@ -538,7 +538,7 @@ fn a_read_answered_after_the_focus_moved_to_another_console_is_not_taken() {
         window: window(),
         console: false,
     };
-    super::reading::committed(&mut state, Some(other), Vec::new(), 0);
+    let _ = super::reading::committed(&mut state, Some(other), Vec::new(), (0, false));
     let _ = state.wants.take_for_tests();
     let before = state.clone();
     let mut said = Vec::new();
@@ -1775,4 +1775,387 @@ fn a_switch_to_the_secure_desktop_drops_a_flood_s_waiting_lines() {
         state.terminal_focus.focused,
         super::reading::FocusedTerminal::None
     );
+}
+
+/// Lines 1 to 40 read and spoken in groups, Core holding once 30 wait, and
+/// `told` written while it holds: the release read at line 30 is held
+/// back, and lines 1 to 28 have played.
+fn release_out(told: std::ops::RangeInclusive<u32>) -> (SrState, Playback) {
+    let mut state = terminal();
+    let mut playback = Playback {
+        answer_late: true,
+        ..Playback::default()
+    };
+    playback.feed(&mut state, &output(lines(1..=40)));
+    playback.feed(&mut state, &output(lines(told)));
+    for _ in 0..28 {
+        assert!(playback.play_one(&mut state));
+    }
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+    (state, playback)
+}
+
+/// The release read held back answered with what the terminal wrote since
+/// the last read, its speech entry kept for its turn rather than spoken.
+fn answered_unspoken(state: &mut SrState, playback: &mut Playback) -> super::reading::SpeechEntry {
+    let token = playback.late.take().expect("a release read held back");
+    let unread = playback.take_unread();
+    playback.clock_us += 1;
+    super::reading::answered_with(state, token, said_of(unread), playback.clock_us)
+        .expect("the release read's speech entry")
+}
+
+/// What a burst sounds like: lines 1 to 30, then `skipped` when given, then
+/// `last`.
+fn group_then(skipped: Option<&str>, last: std::ops::RangeInclusive<u32>) -> Vec<String> {
+    let mut expected = lines(1..=30);
+    expected.extend(skipped.map(str::to_owned));
+    expected.extend(lines(last));
+    expected
+}
+
+/// The release read's speech reaching its turn only after the group's last
+/// line has been heard, as when it waits behind that line's mark in the
+/// event queue: the look at the backlog waits for it, so the lines it read
+/// are in the skip.
+#[test]
+fn a_release_spoken_after_the_last_line_is_heard_is_in_the_backlog_look() {
+    let (mut state, mut playback) = release_out(41..=100);
+    let entry = answered_unspoken(&mut state, &mut playback);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    let effects = super::reading::speak(&mut state, entry);
+    playback.take(&mut state, effects);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, group_then(Some("skipped 40"), 71..=100));
+}
+
+/// A key's cut once the group's last line has been heard, its release read
+/// still out: the backlog is dropped, the release read answers silent with
+/// only its answer to the key, and output after it is spoken.
+#[test]
+fn a_cut_after_the_last_line_while_the_release_is_out_drops_the_backlog() {
+    let (mut state, mut playback) = release_out(41..=60);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert_eq!(std::mem::take(&mut playback.heard), lines(1..=30));
+    playback.feed(
+        &mut state,
+        &queue_input(verbatim_model::request::QueueInput::SpeechCut {
+            key: verbatim_model::KeySeq::new(1),
+        }),
+    );
+    let token = playback
+        .late
+        .take()
+        .expect("the release read out at the cut");
+    let _ = playback.take_unread();
+    let read = TerminalSpeech {
+        items: vec![
+            TerminalItem::Output("line 41".to_owned()),
+            TerminalItem::Answer("> banana".to_owned()),
+        ],
+        followed: false,
+    };
+    playback.answer_with(&mut state, token, Some(read));
+    assert_eq!(playback.play_all(&mut state), ["> banana"]);
+    playback.feed(&mut state, &output(lines(101..=101)));
+    assert_eq!(playback.play_all(&mut state), ["line 101"]);
+}
+
+/// The release read refused once the group's last line has been heard: the
+/// look at the backlog runs at once, and nothing more is read.
+#[test]
+fn a_release_read_refused_after_the_last_line_decides_the_backlog_at_once() {
+    let (mut state, mut playback) = release_out(41..=60);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    let token = playback.late.take().expect("the release read held back");
+    let mut said = Vec::new();
+    let entries = super::reading::answered(
+        &mut state,
+        token,
+        crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
+            verbatim_model::request::Refusal::Unsupported,
+        )),
+        (1_000, TraceId::from_raw(4)),
+        &mut said,
+    );
+    assert_eq!(entries, Vec::new());
+    playback.take(&mut state, said);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// The rules owe a whole read after the release read: the owed read is
+/// sent as the release too.
+fn owed_after_the_release(state: &mut SrState) {
+    crate::terminal_model::model_mut(state, id(TERMINAL))
+        .expect("the terminal's model")
+        .owed = Some(verbatim_model::TerminalScope::Fresh);
+}
+
+/// The look at the backlog after a release waits for an owed whole read
+/// sent after it (`docs/design/readers-tell-core-asks-build3.md`, "Answers
+/// and speech"), even when the group's last line was heard before the
+/// release read answered (Claude, 2026-11-27).
+#[test]
+fn an_owed_read_after_the_release_is_waited_for_when_the_last_line_was_heard_first() {
+    let (mut state, mut playback) = release_out(41..=100);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    owed_after_the_release(&mut state);
+    let first = playback.late.take().expect("the release read held back");
+    playback.unread.clear();
+    playback.clock_us += 1;
+    let entry = super::reading::answered_with(
+        &mut state,
+        first,
+        said_of(speech_of(None, lines(41..=70))),
+        playback.clock_us,
+    )
+    .expect("the release read's speech entry");
+    let effects = super::reading::speak(&mut state, entry);
+    playback.take(&mut state, effects);
+    assert_eq!(
+        playback.requests,
+        [Read::Spoken, Read::Release, Read::Release]
+    );
+    playback.unread = vec![speech_of(None, lines(71..=100))];
+    playback.answer(&mut state);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, group_then(Some("skipped 40"), 71..=100));
+}
+
+/// The release read's speech entry waits behind the group's last mark,
+/// and the owed read sent after it answers before that entry's turn: the
+/// first entry's turn ends no wait the owed read holds, so the look waits
+/// for the owed read's speech.
+#[test]
+fn an_owed_read_answered_before_the_first_release_entrys_turn_is_waited_for() {
+    let (mut state, mut playback) = release_out(41..=100);
+    owed_after_the_release(&mut state);
+    let first = playback.late.take().expect("the release read held back");
+    playback.unread.clear();
+    playback.clock_us += 1;
+    let first = super::reading::answered_with(
+        &mut state,
+        first,
+        said_of(speech_of(None, lines(41..=70))),
+        playback.clock_us,
+    )
+    .expect("the release read's speech entry");
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    assert_eq!(
+        playback.requests,
+        [Read::Spoken, Read::Release, Read::Release]
+    );
+    let owed = playback.late.take().expect("the owed read held back");
+    playback.clock_us += 1;
+    let second = super::reading::answered_with(
+        &mut state,
+        owed,
+        said_of(speech_of(None, lines(71..=100))),
+        playback.clock_us,
+    )
+    .expect("the owed read's speech entry");
+    for entry in [first, second] {
+        let effects = super::reading::speak(&mut state, entry);
+        playback.take(&mut state, effects);
+    }
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, group_then(Some("skipped 40"), 71..=100));
+}
+
+/// The terminal's outpost ends while the release read is out, and its
+/// replacement answers the re-take with the same terminal, taken silently.
+fn outpost_replaced(state: &mut SrState, playback: &mut Playback) {
+    playback.feed(
+        state,
+        &Input::Queue {
+            trace_id: TraceId::from_raw(6),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+        },
+    );
+    let replacement = verbatim_model::request::Instance {
+        reader: verbatim_model::request::Reader::Outpost(crate::entries::tests::APP),
+        generation: crate::entries::tests::GENERATION + 1,
+    };
+    state.queue.start_for_tests(replacement);
+    playback.feed(
+        state,
+        &queue_input(verbatim_model::request::QueueInput::ReaderReady(
+            replacement,
+        )),
+    );
+    let mut read = crate::entries::tests::focus_read(None);
+    read.focus.read.values = crate::entries::tests::values("Terminal", Role::Terminal);
+    read.focus.read.node = Some(NodeId::in_outpost(
+        verbatim_model::OutpostId(replacement.generation),
+        TERMINAL,
+    ));
+    let number = state.queue.last_number_for_tests();
+    let outcome = crate::readers::outcome(
+        &state
+            .queue
+            .batch_for_tests(number)
+            .expect("the re-take's read"),
+        &Found::Read(read),
+    );
+    playback.feed(
+        state,
+        &queue_input(verbatim_model::request::QueueInput::Answer {
+            from: replacement,
+            answer: verbatim_model::request::Answer {
+                number: verbatim_model::request::RequestNumber(number),
+                outcome,
+                probes: Vec::new(),
+                detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
+            },
+        }),
+    );
+}
+
+/// T1: the outpost replaced while the release read is out, the group's
+/// last line heard after the re-take: the backlog is looked at, and what
+/// waited is spoken.
+#[test]
+fn a_flood_goes_on_after_a_re_take_drops_the_release_read() {
+    let (mut state, mut playback) = release_out(41..=60);
+    outpost_replaced(&mut state, &mut playback);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// T1: the group's last line heard while the release read is out, then the
+/// outpost replaced: the look waits no longer, and what waited is spoken.
+#[test]
+fn a_flood_waiting_for_its_release_goes_on_after_a_re_take() {
+    let (mut state, mut playback) = release_out(41..=60);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    outpost_replaced(&mut state, &mut playback);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// T1, the recorded defect (`docs/design/terminal-rebuild.md`, "The five
+/// defects, replayed"): the listener dies while the release read is out,
+/// and the re-take commits the same terminal, baselining it; the release
+/// read's answer is dropped, and the group's last line heard after the
+/// re-take looks at the backlog, so what waited is spoken.
+#[test]
+fn a_flood_goes_on_after_the_same_terminal_is_committed_again_with_its_release_out() {
+    let (mut state, mut playback) = release_out(41..=60);
+    let terminal = super::reading::focused(&state).expect("the focused terminal");
+    let effects = super::reading::committed(&mut state, Some(terminal), Vec::new(), (0, false));
+    playback.take(&mut state, effects);
+    playback.answer(&mut state);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// The group's last line heard while the release read is out, then the
+/// terminal's `Follow`, sent again when its window answers, refused: the
+/// focused terminal ends, its release with it, and what waited is spoken,
+/// as when the line is heard after the refusal.
+#[test]
+fn a_flood_waiting_for_its_release_goes_on_after_its_follow_is_refused() {
+    let (mut state, mut playback) = release_out(41..=60);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    super::reading::recovered(&mut state, &window(), 600_000);
+    let follow = state
+        .wants
+        .take_for_tests()
+        .into_iter()
+        .find_map(|(token, _)| token)
+        .expect("the Follow sent again");
+    let mut said = Vec::new();
+    let entries = super::reading::answered(
+        &mut state,
+        follow,
+        crate::event_queue::Outcome::Refused(crate::event_queue::Refused::Reader(
+            verbatim_model::request::Refusal::Unsupported,
+        )),
+        (600_500, TraceId::from_raw(4)),
+        &mut said,
+    );
+    assert_eq!(entries, Vec::new());
+    assert_eq!(
+        state.terminal_focus.focused,
+        super::reading::FocusedTerminal::None
+    );
+    playback.take(&mut state, said);
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=40));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// The group's last line heard while the release read is out, then the
+/// terminal's outpost ending with no re-take yet: the look at the backlog
+/// runs at the ending, and lines 31 and 32 are handed to speech. The marks
+/// of what was handed on wait in the event queue behind the re-take, as in
+/// `output_read_before_the_outpost_ended_is_spoken_and_nothing_is_asked_of_it`,
+/// so the rest follows once the replacement answers it. Nothing is asked
+/// of the ended outpost.
+#[test]
+fn a_flood_waiting_for_its_release_hands_on_its_backlog_when_its_outpost_ends() {
+    let (mut state, mut playback) = release_out(41..=60);
+    assert!(playback.play_one(&mut state));
+    assert!(playback.play_one(&mut state));
+    assert!(playback.queued.is_empty());
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: TraceId::from_raw(6),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+        },
+    );
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=32));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
+}
+
+/// The other order: the outpost ending with no re-take yet while the
+/// release read is out. The marks of lines 29 and 30 wait in the event
+/// queue behind the re-take, so the look at the backlog waits for it too;
+/// nothing is asked of the ended outpost.
+#[test]
+fn a_flood_whose_outpost_ends_before_its_last_line_is_heard_waits_for_the_re_take() {
+    let (mut state, mut playback) = release_out(41..=60);
+    playback.feed(
+        &mut state,
+        &Input::Queue {
+            trace_id: TraceId::from_raw(6),
+            at_us: 0,
+            input: verbatim_model::request::QueueInput::ReaderEnded(crate::entries::tests::OUTPOST),
+        },
+    );
+    let mut heard = std::mem::take(&mut playback.heard);
+    heard.extend(playback.play_all(&mut state));
+    assert_eq!(heard, lines(1..=30));
+    assert_eq!(playback.requests, [Read::Spoken, Read::Release]);
 }

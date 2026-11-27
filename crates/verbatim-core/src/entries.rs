@@ -767,7 +767,7 @@ impl Logic for Entries {
             facts.follows.outpost_ended(process, outpost);
             // The focused terminal and the models of the generation's
             // terminals go with it.
-            crate::terminal::reading::outpost_ended(facts, outpost);
+            said.extend(crate::terminal::reading::outpost_ended(facts, outpost));
             // Say-all's positions are anchors of the outpost's, which end
             // with it: say-all stops, its read withdrawn.
             said.extend(crate::say_all::outpost_ended(facts, outpost));
