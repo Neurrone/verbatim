@@ -47,7 +47,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use verbatim_agent::protocol::{
     EventOutcome, ForegroundInfo, ForegroundOutcome, LaunchEnd, ListPosition, MinimizeOutcome,
@@ -89,8 +89,14 @@ const NOT_RESPONDING_WAIT_CHAINS_FILE_NAME: &str = "not-responding-wait-chains.t
 const LAUNCHED_PROCESS_FILE_STEM: &str = "launched-process";
 
 /// The stem of the files Verbatim's dump is kept in when a wait for speech
-/// ran out ([`Scenario::record_verbatim_dump`]).
+/// ran out ([`Scenario::record_dumps`]).
 const VERBATIM_DUMP_FILE_STEM: &str = "verbatim";
+
+/// The stem of the files another application's dump is kept in when a
+/// window of its own was not responding after the
+/// application-not-responding sound
+/// ([`Scenario::record_not_responding_wait_chains`]).
+const NOT_RESPONDING_DUMP_FILE_STEM: &str = "not-responding-process";
 
 /// The machine's load as a failed body ended
 /// ([`Scenario::record_runner_load`]); the load as a launch's window wait
@@ -106,11 +112,17 @@ const RUNNER_LOAD_INTERVAL: Duration = Duration::from_secs(1);
 const RUNNER_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long the agent may take to read a process's facts and write its
-/// minidump: longer than the runner's stalls, which have lasted up to 55
-/// seconds (`docs/flaky-tests.md`), since a dump given up within 10
-/// seconds once named nothing. Only a failure waits for it, and the e2e
-/// job's step limit leaves room for it.
+/// minidump, and how long all of a failed body's dumps may take together
+/// ([`Scenario::record_dumps`]): longer than the runner's stalls, which
+/// have lasted up to 55 seconds (`docs/flaky-tests.md`), since a dump
+/// given up within 10 seconds once named nothing. Only a failure waits for
+/// it, and the e2e job's step limit leaves one such minute for it.
 const PROCESS_DUMP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The least time a dump is started with: one whose turn comes with less
+/// of [`Scenario::record_dumps`]' deadline left is not started, since the
+/// agent could not finish it.
+const MIN_DUMP_TIME: Duration = Duration::from_secs(1);
 
 /// Text in the title of every window the harness opens on purpose: the
 /// document a [`Document`] names is named with it, so
@@ -353,9 +365,18 @@ pub struct Scenario {
     /// scenario's artifacts ([`Scenario::record_not_responding_wait_chains`]).
     not_responding_chains: Option<Vec<String>>,
     /// Verbatim's process id and its dump, recorded when a wait for speech
-    /// ran out ([`Scenario::record_verbatim_dump`]), for the scenario's
+    /// ran out ([`Scenario::record_dumps`]), for the scenario's
     /// artifacts.
     verbatim_dump: Option<(u32, ProcessDump)>,
+    /// The dump of each other application with a window not responding
+    /// after the application-not-responding sound, by process id
+    /// ([`Scenario::record_not_responding_wait_chains`]), for the
+    /// scenario's artifacts.
+    not_responding_dumps: Vec<(u32, ProcessDump)>,
+    /// The processes the application-not-responding sound calls to be
+    /// dumped, noted with the wait chains and dumped once the machine's
+    /// load is read ([`Scenario::record_dumps`]).
+    to_dump: ToDump,
     /// The machine's load, recorded when the body failed
     /// ([`Scenario::record_runner_load`]), one fact a line, for the
     /// scenario's artifacts.
@@ -666,6 +687,8 @@ impl Scenario {
                 launch_evidence: Vec::new(),
                 not_responding_chains: None,
                 verbatim_dump: None,
+                not_responding_dumps: Vec::new(),
+                to_dump: ToDump::default(),
                 runner_load: None,
                 replaced: Vec::new(),
             });
@@ -786,6 +809,8 @@ impl Scenario {
             launch_evidence: Vec::new(),
             not_responding_chains: None,
             verbatim_dump: None,
+            not_responding_dumps: Vec::new(),
+            to_dump: ToDump::default(),
             runner_load: None,
             replaced: Vec::new(),
         })
@@ -2724,38 +2749,38 @@ impl Scenario {
     /// window the desktop reports as not responding, and of the foreground
     /// window's (`Request::WaitChains`), so the failure names what the
     /// application waited on; written to the artifacts as
-    /// `not-responding-wait-chains.txt`. When one of those windows is
-    /// Verbatim's own, Verbatim is dumped next
-    /// ([`Scenario::record_verbatim_dump`]), since a wait chain names no
-    /// function and the minidump holds every thread's stack; no other
-    /// application is dumped. Returns a note for the failure's message, or
-    /// `None` when the sound was not heard.
+    /// `not-responding-wait-chains.txt`. A wait chain names no function,
+    /// and a chain ending in a call into another process, such as a COM
+    /// call, names nothing past it, while a minidump holds every thread's
+    /// stack; so it also notes which processes [`Scenario::record_dumps`]
+    /// dumps once the machine's load is read: Verbatim when one of those
+    /// windows is its own, and every other process owning a window
+    /// reported as not responding ([`not_responding_processes`]). Returns
+    /// a note for the failure's message, or `None` when the sound was not
+    /// heard.
     pub fn record_not_responding_wait_chains(&mut self) -> Option<String> {
         if self.is_comparing() || !self.speech.not_responding_heard() {
             return None;
         }
-        let (chains, verbatim_s) = match self.agent.foreground_info() {
+        let verbatim = self.verbatim_pid();
+        let (chains, verbatim_s, others) = match self.agent.foreground_info() {
             Ok(desktop) => (
                 not_responding_wait_chains(&mut self.agent, &desktop),
-                self.verbatim_pid()
-                    .is_some_and(|pid| owns_a_chain_window(&desktop, pid)),
+                verbatim.is_some_and(|pid| owns_a_chain_window(&desktop, pid)),
+                not_responding_processes(&desktop, verbatim),
             ),
             Err(error) => (
                 vec![format!("the desktop could not be read: {error}")],
                 false,
+                Vec::new(),
             ),
         };
-        let mut note = format!(
+        let note = format!(
             "Verbatim played the application-not-responding sound; what the windows not responding, and the foreground window, waited on when the body failed ({NOT_RESPONDING_WAIT_CHAINS_FILE_NAME}):\n{}",
             chains.join("\n")
         );
         self.not_responding_chains = Some(chains);
-        if verbatim_s
-            && let Some(dumped) =
-                self.record_verbatim_dump("one of those windows is Verbatim's own")
-        {
-            note = format!("{note}\n{dumped}");
-        }
+        self.to_dump = ToDump { verbatim_s, others };
         Some(note)
     }
 
@@ -2776,37 +2801,61 @@ impl Scenario {
         Some(format!("{summary}; see {RUNNER_LOAD_FILE_STEM}.txt"))
     }
 
-    /// Dumps Verbatim, `why` in the note: for a body that failed because a
-    /// wait for speech ran out
-    /// ([`crate::speech::SpeechFailure::waited_out`]), or after the
-    /// application-not-responding sound for a window of Verbatim's own
-    /// ([`Scenario::record_not_responding_wait_chains`]). Its state,
-    /// processor time and modules, and its minidump, are kept as
-    /// `verbatim-<pid>.txt` and `.dmp` in the scenario's artifacts. Returns
-    /// a note for the failure's message; `None` in compare mode, which has
-    /// no Verbatim, and when this body's failure has dumped it already.
-    pub fn record_verbatim_dump(&mut self, why: &str) -> Option<String> {
-        if self.verbatim_dump.is_some() {
-            return None;
+    /// Dumps the processes a failed body calls for, after the machine's
+    /// load is read ([`Scenario::record_runner_load`]): Verbatim when
+    /// `speech_waited_out`, a wait for its speech having run out
+    /// ([`crate::speech::SpeechFailure::waited_out`]), or when a window
+    /// whose wait chain was read after the application-not-responding
+    /// sound is its own, then every other process owning a window not
+    /// responding ([`Scenario::record_not_responding_wait_chains`]). Each
+    /// one's state, processor time and modules, and its minidump, are kept
+    /// as `verbatim-<pid>.txt` and `.dmp`, or
+    /// `not-responding-process-<pid>.txt` and `.dmp`, in the scenario's
+    /// artifacts. All of them share one deadline,
+    /// [`PROCESS_DUMP_TIMEOUT`] from the first, the minute the e2e job's
+    /// step limit leaves for a failure's evidence; a process whose turn
+    /// comes with less than [`MIN_DUMP_TIME`] left is not dumped, and a
+    /// line names it ([`dump_time_left`]). Returns a note a process for
+    /// the failure's message; none in compare mode, which has no Verbatim.
+    pub fn record_dumps(&mut self, speech_waited_out: bool) -> Vec<String> {
+        let to_dump = std::mem::take(&mut self.to_dump);
+        let mut planned: Vec<(u32, DumpKind)> = Vec::new();
+        if let Some(pid) = self.verbatim_pid()
+            && self.verbatim_dump.is_none()
+        {
+            if speech_waited_out {
+                planned.push((pid, DumpKind::Verbatim("a wait for speech ran out")));
+            } else if to_dump.verbatim_s {
+                planned.push((
+                    pid,
+                    DumpKind::Verbatim(
+                        "a window not responding, or the foreground window, is Verbatim's own",
+                    ),
+                ));
+            }
         }
-        let pid = self.verbatim_pid()?;
-        let dump = process_dump(
-            &mut self.agent,
-            &self.run_dir,
-            (VERBATIM_DUMP_FILE_STEM, "Verbatim process"),
-            pid,
+        planned.extend(
+            to_dump
+                .others
+                .into_iter()
+                .map(|pid| (pid, DumpKind::NotResponding)),
         );
-        let minidump = if dump.dump.is_some() {
-            format!(" and {VERBATIM_DUMP_FILE_STEM}-{pid}.dmp")
-        } else {
-            String::new()
-        };
-        let note = format!(
-            "{why}, so Verbatim was dumped: {}; see {VERBATIM_DUMP_FILE_STEM}-{pid}.txt{minidump}",
-            dump.summary
-        );
-        self.verbatim_dump = Some((pid, dump));
-        Some(note)
+        let started = Instant::now();
+        let mut notes = Vec::new();
+        for (pid, kind) in planned {
+            let (stem, what, why) = kind.names();
+            let Some(left) = dump_time_left(started, Instant::now()) else {
+                notes.push(skipped_dump_line(what, pid));
+                continue;
+            };
+            let dump = process_dump(&mut self.agent, &self.run_dir, (stem, what), pid, left);
+            notes.push(dump_note(why, (stem, what), pid, &dump));
+            match kind {
+                DumpKind::Verbatim(_) => self.verbatim_dump = Some((pid, dump)),
+                DumpKind::NotResponding => self.not_responding_dumps.push((pid, dump)),
+            }
+        }
+        notes
     }
 
     /// Collects the run's artifacts into `dir`, once Verbatim has exited:
@@ -2855,6 +2904,15 @@ impl Scenario {
                 write_process_dump(dir, &format!("{VERBATIM_DUMP_FILE_STEM}-{pid}"), dump)
         {
             problems.push(format!("could not write Verbatim's dump: {error}"));
+        }
+        for (pid, dump) in &self.not_responding_dumps {
+            if let Err(error) =
+                write_process_dump(dir, &format!("{NOT_RESPONDING_DUMP_FILE_STEM}-{pid}"), dump)
+            {
+                problems.push(format!(
+                    "could not write the dump of process {pid}, not responding: {error}"
+                ));
+            }
         }
         if let Some(load) = &self.runner_load
             && let Err(error) = fs::write(
@@ -3936,7 +3994,7 @@ fn build_default_source_binaries() -> io::Result<()> {
 
 /// Copies `verbatim.exe`, `verbatim-outpost.exe`, `verbatim-listener.exe`
 /// and the rest of [`STAGED_BINARIES`] from `source_dir` (the
-/// directory [`verbatim_exe_path`] resolved — the ordinary build output, or
+/// directory [`verbatim_exe_path`] resolved â€” the ordinary build output, or
 /// [`VERBATIM_EXE_ENV`]'s override directory) into the fixed staging
 /// directory `target/e2e-stage` under the workspace root, and returns that
 /// staging directory.
@@ -3948,7 +4006,7 @@ fn build_default_source_binaries() -> io::Result<()> {
 /// directory, they must live there too or the supervisor cannot find them.
 ///
 /// A file already staged with matching contents is left alone rather than
-/// re-copied (see [`files_match`]) — the common case in a tight edit-test
+/// re-copied (see [`files_match`]) â€” the common case in a tight edit-test
 /// loop where nothing changed since the last run.
 ///
 /// The terminal scenarios' portable Windows Terminal is unpacked there too
@@ -4076,7 +4134,7 @@ fn stage_copy(source: &Path, destination: &Path) -> io::Result<()> {
 /// Whether `source` and `destination` already hold identical bytes.
 /// `destination` not existing counts as "does not match" rather than an
 /// error, since that is the ordinary first-run case. A plain full-content
-/// comparison, not a cryptographic hash — both files are already local and
+/// comparison, not a cryptographic hash â€” both files are already local and
 /// this only guards a same-machine copy against a `cargo build` no-op, not
 /// against tampering, so simplicity wins over speed here.
 fn files_match(source: &Path, destination: &Path) -> io::Result<bool> {
@@ -4288,7 +4346,13 @@ impl LaunchEvidence {
             process,
             summary,
             dump,
-        } = process_dump(agent, run_dir, ("launched", "launched process"), pid);
+        } = process_dump(
+            agent,
+            run_dir,
+            (LAUNCHED_PROCESS_FILE_STEM, "launched process"),
+            pid,
+            PROCESS_DUMP_TIMEOUT,
+        );
         Self {
             pid,
             chains,
@@ -4296,7 +4360,7 @@ impl LaunchEvidence {
             load_summary,
             process,
             summary,
-            dump,
+            dump: dump.ok(),
         }
     }
 }
@@ -4310,42 +4374,44 @@ pub(crate) struct ProcessDump {
     process: Vec<String>,
     /// One line summing the process up.
     summary: String,
-    /// The minidump's bytes, when it was written and read.
-    dump: Option<Vec<u8>>,
+    /// The minidump's bytes, when it was written and read, or why not.
+    dump: Result<Vec<u8>, String>,
 }
 
-/// The facts and minidump of process `pid`, `what` in a message: the
+/// The facts and minidump of process `pid`, `what` in a message, for the
+/// artifacts `<stem>-<pid>.txt` and `.dmp`, read within `timeout`: the
 /// minidump is written by the agent into `run_dir`, its folder for the
-/// harness's files, as `<name>-<pid>.dmp`, read back, and deleted there.
+/// harness's files, read back, and deleted there.
 fn process_dump(
     agent: &mut AgentClient,
     run_dir: &str,
-    (name, what): (&str, &str),
+    (stem, what): (&str, &str),
     pid: u32,
+    timeout: Duration,
 ) -> ProcessDump {
-    let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}{name}-{pid}.dmp");
-    let (mut process, summary, written) =
-        match agent.process_diagnostics(pid, &dump_path, PROCESS_DUMP_TIMEOUT) {
-            Ok(read) => {
-                let (process, summary) = describe_process(pid, &read);
-                (process, summary, read.dump_error.is_none())
-            }
-            Err(error) => {
-                let why = format!("the {what} {pid} could not be read: {error}");
-                (vec![why.clone()], why, false)
-            }
-        };
-    let dump = if written {
-        match agent.read_whole_file(&dump_path) {
-            Ok(bytes) => Some(bytes),
-            Err(error) => {
-                process.push(format!("the minidump could not be read back: {error}"));
-                None
-            }
+    let dump_path = format!(r"{run_dir}\{DOCUMENT_MARKER}{stem}-{pid}.dmp");
+    let (mut process, summary, written) = match agent.process_diagnostics(pid, &dump_path, timeout)
+    {
+        Ok(read) => {
+            let (process, summary) = describe_process(pid, (stem, what), &read);
+            let written = match read.dump_error {
+                None => Ok(()),
+                Some(error) => Err(error),
+            };
+            (process, summary, written)
         }
-    } else {
-        None
+        Err(error) => {
+            let why = format!("the {what} {pid} could not be read: {error}");
+            (vec![why.clone()], why.clone(), Err(why))
+        }
     };
+    let dump = written.and_then(|()| {
+        agent.read_whole_file(&dump_path).map_err(|error| {
+            let why = format!("the minidump could not be read back: {error}");
+            process.push(why.clone());
+            why
+        })
+    });
     if let Err(error) = agent.delete_file(&dump_path) {
         process.push(format!(
             "the minidump {dump_path} could not be deleted on the agent's machine: {error}"
@@ -4519,10 +4585,81 @@ fn write_process_dump(dir: &Path, stem: &str, dump: &ProcessDump) -> io::Result<
         dir.join(format!("{stem}.txt")),
         dump.process.join("\n") + "\n",
     )?;
-    if let Some(bytes) = &dump.dump {
+    if let Ok(bytes) = &dump.dump {
         fs::write(dir.join(format!("{stem}.dmp")), bytes)?;
     }
     Ok(())
+}
+
+/// The processes the application-not-responding sound calls to be dumped
+/// ([`Scenario::record_not_responding_wait_chains`]); none by default.
+#[derive(Debug, Default)]
+struct ToDump {
+    /// Whether a window whose wait chain was read is Verbatim's own.
+    verbatim_s: bool,
+    /// Every other process owning a window not responding
+    /// ([`not_responding_processes`]).
+    others: Vec<u32>,
+}
+
+/// Which process [`Scenario::record_dumps`] dumps, and so its files' stem
+/// and how its note names it.
+#[derive(Clone, Copy, Debug)]
+enum DumpKind {
+    /// Verbatim, for the reason given.
+    Verbatim(&'static str),
+    /// Another application, which owns a window not responding.
+    NotResponding,
+}
+
+impl DumpKind {
+    /// The stem of its files, the process as a message names it, and why
+    /// it is dumped.
+    fn names(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Verbatim(why) => (VERBATIM_DUMP_FILE_STEM, "Verbatim process", why),
+            Self::NotResponding => (
+                NOT_RESPONDING_DUMP_FILE_STEM,
+                "process",
+                "another application's window was not responding",
+            ),
+        }
+    }
+}
+
+/// The time left for the next of a failed body's dumps, the first begun
+/// at `started`, at `now`: what remains of [`PROCESS_DUMP_TIMEOUT`], or
+/// `None` when less than [`MIN_DUMP_TIME`] does, so the dump is not
+/// started.
+fn dump_time_left(started: Instant, now: Instant) -> Option<Duration> {
+    PROCESS_DUMP_TIMEOUT
+        .checked_sub(now.saturating_duration_since(started))
+        .filter(|left| *left >= MIN_DUMP_TIME)
+}
+
+/// The line naming a process `pid`, `what` in a message, whose dump was
+/// not started because the failure's dumps had used their time.
+fn skipped_dump_line(what: &str, pid: u32) -> String {
+    format!(
+        "the {what} {pid} was not dumped: the failure's dumps had used the {} s they may take together",
+        PROCESS_DUMP_TIMEOUT.as_secs()
+    )
+}
+
+/// The note on `dump`, of process `pid`, dumped because `why`, with its
+/// files `<stem>-<pid>.txt` and, when written, `.dmp`; or, when its
+/// minidump was not written or read back, saying so and why.
+fn dump_note(why: &str, (stem, what): (&str, &str), pid: u32, dump: &ProcessDump) -> String {
+    match &dump.dump {
+        Ok(_) => format!(
+            "{why}, so the {what} {pid} was dumped: {}; see {stem}-{pid}.txt and {stem}-{pid}.dmp",
+            dump.summary
+        ),
+        Err(error) => format!(
+            "{why}, but the {what} {pid} could not be dumped: {error}; {}; see {stem}-{pid}.txt",
+            dump.summary
+        ),
+    }
 }
 
 /// The machine's load, read by the agent ([`AgentClient::runner_load`]),
@@ -4702,12 +4839,17 @@ fn describe_runner_load(load: &RunnerLoad) -> (Vec<String>, String) {
     (lines, summary)
 }
 
-/// The facts of launched process `pid` as the agent read them (`read`),
-/// one a line: whether it runs, its processor time, which
+/// The facts of process `pid` as the agent read them (`read`), one a
+/// line: whether it runs, its processor time, which
 /// `System.Windows.Forms` it loaded (`.ni.dll`, the precompiled native
 /// image, or `.dll`, compiled as it loads), each module, and the
-/// minidump; and one line summing up the first three.
-fn describe_process(pid: u32, read: &ProcessDiagnostics) -> (Vec<String>, String) {
+/// minidump, `<stem>-<pid>.dmp`; and one line summing up the first three,
+/// naming the process as `what`.
+fn describe_process(
+    pid: u32,
+    (stem, what): (&str, &str),
+    read: &ProcessDiagnostics,
+) -> (Vec<String>, String) {
     let state = match read.state {
         ProcessState::Running => "running".to_owned(),
         ProcessState::Exited {
@@ -4754,14 +4896,14 @@ fn describe_process(pid: u32, read: &ProcessDiagnostics) -> (Vec<String>, String
         lines.extend(read.modules.iter().cloned());
     }
     lines.push(match &read.dump_error {
-        None => format!("minidump: {LAUNCHED_PROCESS_FILE_STEM}-{pid}.dmp"),
+        None => format!("minidump: {stem}-{pid}.dmp"),
         Some(error) => format!("minidump: {error}"),
     });
     lines.push(format!(
         "read, the minidump included, in {} ms",
         read.elapsed_ms
     ));
-    let summary = format!("launched process {pid}: {state}, {time}, {forms}");
+    let summary = format!("{what} {pid}: {state}, {time}, {forms}");
     (lines, summary)
 }
 
@@ -4823,6 +4965,22 @@ fn owns_a_chain_window(desktop: &ForegroundInfo, pid: u32) -> bool {
         .0
         .iter()
         .any(|window| window.pid == pid)
+}
+
+/// The processes, other than `verbatim`, Verbatim's when it runs, that own
+/// a window `desktop` reports as not responding, each once, in the order
+/// [`chain_windows`] gives their windows: the applications dumped after
+/// the application-not-responding sound beside their wait chains. A
+/// responding foreground window's process is not one, unlike for
+/// Verbatim ([`owns_a_chain_window`]), since nothing says it hung.
+fn not_responding_processes(desktop: &ForegroundInfo, verbatim: Option<u32>) -> Vec<u32> {
+    let mut pids = Vec::new();
+    for window in chain_windows(desktop).0 {
+        if window.hung && Some(window.pid) != verbatim && !pids.contains(&window.pid) {
+            pids.push(window.pid);
+        }
+    }
+    pids
 }
 
 /// With `desktop` as the body failed: the wait chain of the thread owning
@@ -5230,11 +5388,13 @@ mod minimize_tests {
     }
 
     /// After the not-responding sound the chains are read for each window
-    /// not responding, once, then the foreground window; and Verbatim is
+    /// not responding, once, then the foreground window; Verbatim is
     /// dumped only when its process owns one of them, never for another
-    /// application's window or a window of its own that is neither.
+    /// application's window or a window of its own that is neither; and
+    /// every other process owning a window not responding is dumped once,
+    /// never one whose window only holds the foreground.
     #[test]
-    fn verbatim_is_dumped_only_for_a_chain_window_of_its_own() {
+    fn verbatim_is_dumped_for_a_chain_window_of_its_own_and_others_for_a_hung_one() {
         let window = |window: u64, pid: u32, hung: bool| WindowInfo {
             window,
             pid,
@@ -5265,6 +5425,10 @@ mod minimize_tests {
         assert_eq!(handles(&own_dialog), (vec![0x10292], true));
         assert!(owns_a_chain_window(&own_dialog, 5380));
         assert!(!owns_a_chain_window(&own_dialog, 940));
+        assert_eq!(
+            not_responding_processes(&own_dialog, Some(5380)),
+            Vec::<u32>::new()
+        );
         // Another application's window is not responding behind Verbatim's
         // responding foreground window: both are read, and both own one.
         let other_hung = ForegroundInfo {
@@ -5274,6 +5438,29 @@ mod minimize_tests {
         assert_eq!(handles(&other_hung), (vec![0x200, 0x300], true));
         assert!(owns_a_chain_window(&other_hung, 5380));
         assert!(owns_a_chain_window(&other_hung, 940));
+        assert_eq!(not_responding_processes(&other_hung, Some(5380)), vec![940]);
+        // Explorer, pid 7012, has two windows not responding, the
+        // foreground one among them, and another application, pid 1180,
+        // one more: each process is dumped once, in order.
+        let explorer_hung = ForegroundInfo {
+            foreground: Some(window(0x400, 7012, true)),
+            windows: vec![
+                window(0x400, 7012, true),
+                window(0x500, 1180, true),
+                window(0x600, 7012, true),
+                window(0x300, 5380, false),
+            ],
+        };
+        assert_eq!(handles(&explorer_hung), (vec![0x400, 0x500, 0x600], true));
+        assert!(!owns_a_chain_window(&explorer_hung, 5380));
+        assert_eq!(
+            not_responding_processes(&explorer_hung, Some(5380)),
+            vec![7012, 1180]
+        );
+        assert_eq!(
+            not_responding_processes(&explorer_hung, None),
+            vec![7012, 1180]
+        );
         // Nothing is reported as not responding and another application
         // holds the foreground: Verbatim's window behind it is not read.
         let none_hung = ForegroundInfo {
@@ -5282,12 +5469,82 @@ mod minimize_tests {
         };
         assert_eq!(handles(&none_hung), (vec![0x200], false));
         assert!(!owns_a_chain_window(&none_hung, 5380));
+        assert_eq!(
+            not_responding_processes(&none_hung, Some(5380)),
+            Vec::<u32>::new()
+        );
+        // The foreground window is reported as not responding but missing
+        // from the list of windows: it is read, and its process dumped.
+        let hung_foreground_only = ForegroundInfo {
+            foreground: Some(window(0x700, 3312, true)),
+            windows: vec![window(0x300, 5380, false)],
+        };
+        assert_eq!(handles(&hung_foreground_only), (vec![0x700], true));
+        assert_eq!(
+            not_responding_processes(&hung_foreground_only, Some(5380)),
+            vec![3312]
+        );
         let empty = ForegroundInfo {
             foreground: None,
             windows: Vec::new(),
         };
         assert_eq!(handles(&empty), (Vec::new(), false));
         assert!(!owns_a_chain_window(&empty, 5380));
+    }
+
+    /// A failure's dumps share one deadline: each starts with what is left
+    /// of it, and one whose turn comes with less than a second left is
+    /// skipped with a line naming the process and why.
+    #[test]
+    fn a_failure_s_dumps_share_one_deadline() {
+        let started = Instant::now();
+        let at = |seconds: u64| started + Duration::from_secs(seconds);
+        assert_eq!(
+            dump_time_left(started, started),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            dump_time_left(started, at(45)),
+            Some(Duration::from_secs(15))
+        );
+        assert_eq!(
+            dump_time_left(started, at(59)),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            dump_time_left(started, at(59) + Duration::from_millis(1)),
+            None
+        );
+        assert_eq!(dump_time_left(started, at(120)), None);
+        assert_eq!(
+            skipped_dump_line("process", 7012),
+            "the process 7012 was not dumped: the failure's dumps had used the 60 s they may take together"
+        );
+    }
+
+    /// A dump's note says it was dumped and names both files, or, when
+    /// its minidump was refused, that it could not be dumped and why,
+    /// naming only the facts' file.
+    #[test]
+    fn a_dump_s_note_says_whether_it_was_dumped() {
+        let dumped = ProcessDump {
+            process: Vec::new(),
+            summary: "process 7012: running".to_owned(),
+            dump: Ok(b"MDMP".to_vec()),
+        };
+        let refused = ProcessDump {
+            dump: Err("the process could not be opened: Access is denied.".to_owned()),
+            ..dumped.clone()
+        };
+        let names = (NOT_RESPONDING_DUMP_FILE_STEM, "process");
+        assert_eq!(
+            dump_note("a window hung", names, 7012, &dumped),
+            "a window hung, so the process 7012 was dumped: process 7012: running; see not-responding-process-7012.txt and not-responding-process-7012.dmp"
+        );
+        assert_eq!(
+            dump_note("a window hung", names, 7012, &refused),
+            "a window hung, but the process 7012 could not be dumped: the process could not be opened: Access is denied.; process 7012: running; see not-responding-process-7012.txt"
+        );
     }
 
     /// A launched process is described by its state, its processor time,
@@ -5309,7 +5566,11 @@ mod minimize_tests {
             dump_error: None,
             elapsed_ms: 41_870,
         };
-        let (lines, summary) = describe_process(14224, &read);
+        let (lines, summary) = describe_process(
+            14224,
+            (LAUNCHED_PROCESS_FILE_STEM, "launched process"),
+            &read,
+        );
         let time = "processor time 31250 ms in user mode and 1500 ms in kernel mode";
         let loaded = format!("System.Windows.Forms loaded as the precompiled native image {forms}");
         assert_eq!(

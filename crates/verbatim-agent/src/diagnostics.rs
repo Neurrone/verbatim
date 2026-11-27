@@ -11,7 +11,7 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
@@ -50,7 +50,10 @@ type MiniDumpWriteDump = unsafe extern "system" fn(
 ) -> BOOL;
 
 /// Held while a minidump is written: `dbghelp.dll`'s functions are not
-/// safe to call from two threads at once.
+/// safe to call from two threads at once. A dump that finds it held does
+/// not wait: the holder is a dump whose request ran out of time and may
+/// stay blocked in a stalled process, so waiting would only run every
+/// later request out of time too.
 static DUMPING: Mutex<()> = Mutex::new(());
 
 /// [`diagnostics`], read on a thread of its own and answered within
@@ -165,13 +168,21 @@ fn modules(pid: u32) -> Result<Vec<String>, String> {
 /// Returns why it could not be written.
 fn write_dump(pid: u32, path: &str) -> Result<(), String> {
     let write = dump_writer()?;
+    let _dumping = match DUMPING.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            return Err(
+                "the minidump was not started: another minidump, whose request ran out of time, is still being written".to_owned(),
+            );
+        }
+    };
     let file = std::fs::File::create(path)
         .map_err(|error| format!("the minidump's file {path} could not be made: {error}"))?;
     // SAFETY: opens the process for reading its memory; closed below.
     let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }
         .map_err(|error| format!("the process could not be opened: {error}"))?;
     let written = {
-        let _dumping = DUMPING.lock().unwrap_or_else(PoisonError::into_inner);
         // SAFETY: `process` is open with the access the call needs, the
         // file's handle is open for writing for the call, and the three
         // optional parameters are null.
@@ -220,7 +231,32 @@ fn dump_writer() -> Result<MiniDumpWriteDump, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::PoisonError;
+
     use super::*;
+
+    /// While another dump holds the lock, as one whose request ran out of
+    /// time does, a dump is refused at once, naming why, and writes no
+    /// file.
+    #[test]
+    fn a_dump_is_refused_at_once_while_another_is_written() {
+        let dir = std::env::temp_dir().join(format!("verbatim-agent-held-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("makes the folder");
+        let path = dir.join("held.dmp");
+        let held = DUMPING.lock().unwrap_or_else(PoisonError::into_inner);
+        let written = write_dump(
+            std::process::id(),
+            path.to_str().expect("a UTF-8 temporary path"),
+        );
+        drop(held);
+        let made = path.exists();
+        std::fs::remove_dir_all(&dir).expect("removes the folder");
+        assert_eq!(
+            written,
+            Err("the minidump was not started: another minidump, whose request ran out of time, is still being written".to_owned())
+        );
+        assert!(!made, "no file made");
+    }
 
     /// The agent's own process, read as a launched one is: it runs, has
     /// spent processor time, has its own executable as its first module,

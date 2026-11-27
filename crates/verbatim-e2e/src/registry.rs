@@ -765,7 +765,9 @@ fn run(def: &ScenarioDef, mode: Mode) {
     // at once, before anything else, while it may still hang; then the
     // machine's load is read, for every failure, since a window wait or a
     // speech wait that ran out on a stalled runner looks like any other;
-    // then Verbatim is dumped when a wait for its speech ran out.
+    // then the processes are dumped, within one deadline: Verbatim when a
+    // wait for its speech ran out or a window not responding is its own,
+    // and any other application with a window not responding.
     let body_failure = body_failure.map(|(message, point)| {
         let mut message = message;
         if let Some(note) = scenario.record_not_responding_wait_chains() {
@@ -774,9 +776,7 @@ fn run(def: &ScenarioDef, mode: Mode) {
         if let Some(note) = scenario.record_runner_load() {
             message = format!("{message}\n{note}");
         }
-        if dumps_verbatim
-            && let Some(note) = scenario.record_verbatim_dump("a wait for speech ran out")
-        {
+        for note in scenario.record_dumps(dumps_verbatim) {
             message = format!("{message}\n{note}");
         }
         (message, point)

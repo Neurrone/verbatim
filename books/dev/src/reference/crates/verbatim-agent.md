@@ -114,12 +114,16 @@ Public API:
     refused unless the process is in the job of a program the agent
     launched, so a process whose windows are shared, such as File
     Explorer's, is never closed this way), `ProcessDiagnostics` (protocol
-    version 29, private `diagnostics` module: a launched process's state,
+    version 29, private `diagnostics` module, which the harness asks of a
+    launched process, of Verbatim, and of an application whose window is
+    not responding: the process's state,
     its user and kernel processor time from `GetProcessTimes`, the full
     path of each module it has loaded from a Tool Help snapshot, and a
     minidump written to a path given, from `MiniDumpWriteDump` in the
     system folder's `dbghelp.dll`, loaded once, with thread information,
-    handles and unloaded modules, one dump at a time; each part that cannot
+    handles and unloaded modules, one dump at a time, a dump asked for
+    while an earlier one that ran out of time is still being written
+    refused at once rather than queued; each part that cannot
     be read says why, with how long the reading took, and the request is
     read on a thread of its own and answered with an error after the time
     limit the request gives, since version 36), `RunnerLoad` (protocol

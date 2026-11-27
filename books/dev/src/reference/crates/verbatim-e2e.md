@@ -245,11 +245,16 @@ A failed assertion unwinds with a `SpeechFailure`, without the panic
 hook, carrying its message, its `FailurePoint` (the failing step's
 trace, its entries on the timeline, and the instant it failed), and
 `waited_out`, whether a wait for speech ran out rather than speech
-differing; the registry dumps Verbatim for such a failure
-(`Scenario::record_verbatim_dump`), and for any failure after the
-application-not-responding sound when a window whose wait chain is read
-is Verbatim's own (`Scenario::record_not_responding_wait_chains`), once a
-body. Any other
+differing; once the machine's load is read, the registry dumps
+(`Scenario::record_dumps`) Verbatim for such a failure, and for any
+failure after the application-not-responding sound when a window whose
+wait chain is read is Verbatim's own
+(`Scenario::record_not_responding_wait_chains` notes it), then every
+other process owning a window reported as not responding
+(`not_responding_processes`), as `not-responding-process-<pid>.txt` and
+`.dmp`, all within one deadline of `PROCESS_DUMP_TIMEOUT`; a process
+whose turn comes with less than `MIN_DUMP_TIME` left is skipped with a
+line naming it (`dump_time_left`, `skipped_dump_line`). Any other
 failure's point is the step under way when the body ended
 (`FailurePoint::now`), or at the end of the run for a problem found after
 the body. Once the logs are collected the run panics with the whole

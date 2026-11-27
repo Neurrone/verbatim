@@ -392,7 +392,9 @@ the `plan` job, on Linux, chooses the number of groups every run with
 `cargo xtask e2e-plan`, the fewest whose estimates are each within 9
 minutes, leaving a minute's margin and a minute for a failure's evidence,
 since a failed scenario may wait up to a minute for a minidump on a
-stalled runner, and prints the `e2e` job's matrix.
+stalled runner (one minute for all of a failure's dumps together), and
+prints the
+`e2e` job's matrix.
 It starts from the suite's total estimate over 9 minutes, rounded up, and
 adds a group while the greedy split still leaves one over. Nobody edits
 the count. The one failure is a single scenario estimated over 9
@@ -567,12 +569,30 @@ losing any of them fails the run:
   chains were read, a window not responding or the foreground window,
   being Verbatim's own: Verbatim's state, processor time and
   modules, one fact a line as in `launched-process-<pid>.txt` below, and
-  its minidump, read once the wait chains above are, while a stalled
-  thread may still be stalled. A line summing them
-  up is appended to the failure message. The minidump holds every
+  its minidump, read once the wait chains and the machine's load above
+  are, while a stalled thread may still be stalled. A line summing them
+  up, or saying why the minidump could not be written, is appended to
+  the failure message. A failure's dumps, this one and those below, share
+  one deadline of 60 seconds, the minute the job's step limit leaves for
+  them: a process whose turn comes with less than a second left is not
+  dumped, and a line in the failure message names it. A dump the agent
+  is asked for while an earlier one that ran out of time is still being
+  written is refused at once with that reason. The minidump holds every
   thread's stack and registers and no other memory, so it stays small (a
   few megabytes at most), and "Reading Verbatim's minidump" below says
-  how to read it. No other application is dumped for the sound.
+  how to read it.
+- `not-responding-process-<pid>.txt` and `not-responding-process-<pid>.dmp`,
+  only when the body failed after the application-not-responding sound:
+  one pair for each process other than Verbatim that owns a window the
+  desktop reports as not responding, such as `explorer.exe` for a folder
+  window, in the form of `launched-process-<pid>.txt` and `.dmp` below
+  and within the same deadline, read after Verbatim's dump. A
+  wait chain that ends in a call into another process, such as a COM
+  call, names nothing past it, while the minidump gives the call each
+  thread is in; read it as "Reading Verbatim's minidump" says, with
+  Microsoft's symbol server alone for a Windows program. A line summing
+  each up is appended to the failure message. A responding foreground
+  window's application is not dumped.
 - `launched-process-<pid>.txt`, beside `wait-chains.txt` and only with
   it: the process the harness launched to open the window, as the agent
   read it when the wait ran out. One fact a line: whether it still runs
