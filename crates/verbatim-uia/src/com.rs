@@ -238,6 +238,18 @@ pub(crate) fn log_arrival(event: &str, id: i32, element: &IUIAutomationElement) 
     }
 }
 
+/// Logs, at debug, that a UIA event of kind `event` (`id` as for
+/// [`log_arrival`]) arrived with no sender and is dropped, the handler's
+/// one other path.
+pub(crate) fn log_no_sender(event: &str, id: i32) {
+    name_callback_thread();
+    tracing::debug!(
+        event,
+        id,
+        "UIA event dropped as it arrived: UIA passed no sender"
+    );
+}
+
 /// The name the threads UI Automation runs Verbatim's event handlers on
 /// are given, when they have none, so a trace of the CPU's scheduling
 /// tells them from UI Automation's other threads

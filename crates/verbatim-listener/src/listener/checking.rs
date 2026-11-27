@@ -34,7 +34,7 @@ use windows::Win32::UI::Accessibility::{
 use verbatim_listener_logic::check::{
     Call, CheckCalls, CheckFacts, ProbeRecord, SWITCHER_ITEM_CLASS, Walked,
 };
-use verbatim_listener_logic::check_threads::{CheckThreads, Pushed, Take};
+use verbatim_listener_logic::check_threads::{CheckThreads, Kinded, Pushed, Take};
 use verbatim_listener_logic::kept::{ListenerKept, Start, View};
 use verbatim_listener_logic::schedule::JobKind;
 use verbatim_model::event_kind::EventKind;
@@ -87,6 +87,12 @@ pub struct CheckEvent {
     /// Whether its cache names a list item of the task switcher's class,
     /// whose parent's automation id the check reads.
     switcher_item: bool,
+}
+
+impl Kinded for CheckEvent {
+    fn kind(&self) -> EventKind {
+        self.kind
+    }
 }
 
 impl CheckEvent {
@@ -497,11 +503,21 @@ impl Checks {
     /// rather than waited for, and every kept element is released here.
     pub(super) fn stop(&self) {
         let mut state = self.lock();
-        let dropped = state.threads.stop();
+        let (dropped, abandoned) = state.threads.stop();
         for wake in state.wakes.drain().map(|(_, wake)| wake) {
             wake.notify_one();
         }
         drop(state);
+        // The record holds which event its thread checks, not which call
+        // the check is in.
+        for (pid, number, kind) in abandoned {
+            tracing::debug!(
+                %pid,
+                ?kind,
+                event_number = number,
+                "a check thread is abandoned at shutdown: it is inside a check, in a call not recorded"
+            );
+        }
         drop(dropped);
         drop(self.kept.clear());
     }
@@ -537,6 +553,7 @@ impl Checks {
         let mut state = self.lock();
         let (own, waiters) = state.threads.checked(pid, generation);
         let mut unplaced = None;
+        let dropped_kind = (!own).then_some(event.kind);
         if own {
             let application = state.applications.name(event.process);
             let kind = event.kind;
@@ -565,6 +582,14 @@ impl Checks {
             waiter();
         }
         drop(state);
+        if let Some(kind) = dropped_kind {
+            tracing::debug!(
+                %pid,
+                ?kind,
+                generation,
+                "UIA event dropped at its check's end: its check thread's record is no longer its own (its application ended or the listener is stopping)"
+            );
+        }
         drop(unplaced);
     }
 }

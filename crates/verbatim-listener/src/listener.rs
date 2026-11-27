@@ -932,7 +932,7 @@ pub fn capture_selection(
     sender: &Cached<ListenerSelection>,
     fields: &ListenerSelection,
 ) -> Option<(isize, UiaSnapshotFact)> {
-    fields.event.process_id.filter(|&pid| pid != 0)?;
+    sender_process(EventKind::UiaElementSelected, fields.event.process_id)?;
     Some((
         fields.event.role.hwnd,
         snapshot_fact(fields.parts(sender.runtime_id())),
@@ -1017,7 +1017,7 @@ fn arrived(
         );
         return;
     }
-    let Some(pid) = fields.process_id.filter(|&pid| pid != 0).map(Pid) else {
+    let Some(pid) = sender_process(kind, fields.process_id) else {
         return;
     };
     let hwnd = fields.role.hwnd;
@@ -1037,6 +1037,29 @@ fn arrived(
             verbatim_win32::window::window_thread(hwnd)
         };
         checks.hand(pid, answered, event);
+    }
+}
+
+/// The process of an event of `kind` whose sender's cached process id is
+/// `process_id`; `None`, logged as the event's drop, for a sender with no
+/// cached process id or with 0.
+fn sender_process(kind: EventKind, process_id: Option<u32>) -> Option<Pid> {
+    match process_id {
+        None => {
+            tracing::debug!(
+                ?kind,
+                "UIA event dropped as it arrived: its sender has no cached process id"
+            );
+            None
+        }
+        Some(0) => {
+            tracing::debug!(
+                ?kind,
+                "UIA event dropped as it arrived: its sender's cached process id is 0"
+            );
+            None
+        }
+        Some(pid) => Some(Pid(pid)),
     }
 }
 
@@ -1453,6 +1476,16 @@ mod tests {
 
     fn outgoing() -> (Outgoing, BufReader<File>) {
         outgoing_with(EVENT_PIPE_BUFFER, IgnoredProcesses::default())
+    }
+
+    /// An event whose sender has no cached process id, or 0, has no
+    /// process and is dropped; any other id is its process.
+    #[test]
+    fn an_event_with_no_process_id_or_0_has_no_process() {
+        let kind = EventKind::UiaFocus;
+        assert_eq!(sender_process(kind, None), None);
+        assert_eq!(sender_process(kind, Some(0)), None);
+        assert_eq!(sender_process(kind, Some(42)), Some(Pid(42)));
     }
 
     /// Everything `outgoing` sent, which is closed first, as Core reads it.

@@ -115,7 +115,8 @@ waking an idle one; `take` hands the thread its next event, or has it
 wait, or exit by removing its record once idle for `IDLE_US`
 (30 seconds); `checked` says whether its tell is placed, only while the
 record is its own; `ended` drops an ended application's queue untold;
-`stop` drops every queue; and `when_idle` holds the idle barrier's waiter until every event pushed
+`stop` drops every queue and names the threads it abandons inside a
+check, for the listener's log; and `when_idle` holds the idle barrier's waiter until every event pushed
 before it is told or dropped.
 
 ## Kept elements

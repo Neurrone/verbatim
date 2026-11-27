@@ -48,6 +48,8 @@ mod handler {
             if let Some(element) = sender.as_ref() {
                 crate::com::log_arrival("focus", 0, element);
                 crate::com::guarded("focus", || (self.callback)(element));
+            } else {
+                crate::com::log_no_sender("focus", 0);
             }
             Ok(())
         }

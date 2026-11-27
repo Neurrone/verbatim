@@ -20,6 +20,14 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use verbatim_model::Pid;
+use verbatim_model::event_kind::EventKind;
+
+/// An event a check thread checks, which names its kind, so that a thread
+/// abandoned inside a check at shutdown names what it was checking.
+pub trait Kinded {
+    /// The event's kind.
+    fn kind(&self) -> EventKind;
+}
 
 /// How long a check thread with nothing to check waits before it exits,
 /// in microseconds. A thread costs one wake when it exits; one per
@@ -39,8 +47,9 @@ struct Record<E> {
 /// What an application's thread is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Thread {
-    /// Started, or checking the event pushed under this number.
-    Checking(Option<u64>),
+    /// Started, or checking the event pushed under this number, of this
+    /// kind.
+    Checking(Option<(u64, EventKind)>),
     /// Waiting for an event, since this time.
     Idle { since_us: u64 },
 }
@@ -139,7 +148,10 @@ impl<E, W> CheckThreads<E, W> {
     /// `pid`'s thread `generation` takes its next event at `now_us`, after
     /// it started, after a check ([`Self::checked`]) or when its wait ends
     /// (columns B and C).
-    pub fn take(&mut self, pid: Pid, generation: u64, now_us: u64) -> Take<E> {
+    pub fn take(&mut self, pid: Pid, generation: u64, now_us: u64) -> Take<E>
+    where
+        E: Kinded,
+    {
         if self.stopping {
             return Take::Exit;
         }
@@ -151,7 +163,7 @@ impl<E, W> CheckThreads<E, W> {
             return Take::Exit;
         };
         if let Some((number, event)) = record.queue.pop_front() {
-            record.thread = Thread::Checking(Some(number));
+            record.thread = Thread::Checking(Some((number, event.kind())));
             return Take::Check(event);
         }
         let since_us = match record.thread {
@@ -204,14 +216,21 @@ impl<E, W> CheckThreads<E, W> {
     /// The listener shuts down (column E): every queued event is dropped
     /// untold and handed back, every thread exits at its next take, one
     /// inside a call abandoned rather than waited for, and the idle
-    /// barrier's waiters are dropped unrun.
-    pub fn stop(&mut self) -> Vec<E> {
+    /// barrier's waiters are dropped unrun. Returns the dropped events and
+    /// the applications whose thread is abandoned inside a check, each
+    /// with the number its checked event was pushed under and its kind.
+    pub fn stop(&mut self) -> (Vec<E>, Vec<(Pid, u64, EventKind)>) {
         self.stopping = true;
         self.waiters.clear();
-        std::mem::take(&mut self.records)
-            .into_values()
-            .flat_map(|record| record.queue.into_iter().map(|(_, event)| event))
-            .collect()
+        let mut dropped = Vec::new();
+        let mut abandoned = Vec::new();
+        for (pid, record) in std::mem::take(&mut self.records) {
+            if let Thread::Checking(Some((number, kind))) = record.thread {
+                abandoned.push((pid, number, kind));
+            }
+            dropped.extend(record.queue.into_iter().map(|(_, event)| event));
+        }
+        (dropped, abandoned)
     }
 
     /// The idle barrier's `waiter`: handed back to run now when no event
@@ -236,7 +255,7 @@ impl<E, W> CheckThreads<E, W> {
                 .queue
                 .front()
                 .is_some_and(|&(queued, _)| queued <= number);
-            let checking = matches!(record.thread, Thread::Checking(Some(at)) if at <= number);
+            let checking = matches!(record.thread, Thread::Checking(Some((at, _))) if at <= number);
             !waiting && !checking
         })
     }
@@ -267,6 +286,17 @@ mod tests {
     use super::*;
 
     type Threads = CheckThreads<&'static str, u32>;
+
+    /// A test event named "menu..." is a menu's opening, any other a focus.
+    impl Kinded for &'static str {
+        fn kind(&self) -> EventKind {
+            if self.starts_with("menu") {
+                EventKind::UiaMenuOpened
+            } else {
+                EventKind::UiaFocus
+            }
+        }
+    }
 
     const APP: Pid = Pid(10);
     const OTHER: Pid = Pid(11);
@@ -349,17 +379,21 @@ mod tests {
     }
 
     /// At shutdown every queued event is dropped untold, every thread
-    /// exits, a check in hand places no tell, and nothing more is taken.
+    /// exits, a check in hand places no tell and its thread is named as
+    /// abandoned, and nothing more is taken.
     #[test]
     fn shutdown_drops_every_queue_and_ends_every_thread() {
         let mut threads = Threads::default();
-        let _ = threads.push(APP, "a");
+        let _ = threads.push(APP, "menu");
         let _ = threads.take(APP, 0, 0);
         let _ = threads.push(APP, "b");
         let _ = threads.push(OTHER, "x");
-        let mut dropped = threads.stop();
+        let (mut dropped, abandoned) = threads.stop();
         dropped.sort_unstable();
         assert_eq!(dropped, ["b", "x"]);
+        // Only APP's thread is inside a check, of the menu's opening pushed
+        // first; OTHER's thread has not yet taken its event.
+        assert_eq!(abandoned, [(APP, 1, EventKind::UiaMenuOpened)]);
         assert_eq!(threads.checked(APP, 0), (false, Vec::new()));
         assert_eq!(threads.take(APP, 0, 1), Take::Exit);
         assert_eq!(threads.push(APP, "c"), Pushed::Dropped("c"));

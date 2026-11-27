@@ -1682,6 +1682,8 @@ mod handlers {
                 crate::com::guarded("active text position", || {
                     (self.callback)(element, range.as_ref());
                 });
+            } else {
+                crate::com::log_no_sender("active text position", 0);
             }
             Ok(())
         }
@@ -1703,6 +1705,8 @@ mod handlers {
             if let Some(element) = sender.as_ref() {
                 crate::com::log_arrival("property", propertyid.0, element);
                 crate::com::guarded("property", || (self.callback)(element, propertyid.0));
+            } else {
+                crate::com::log_no_sender("property", propertyid.0);
             }
             Ok(())
         }
@@ -1726,6 +1730,8 @@ mod handlers {
                 crate::com::guarded("property", || {
                     (self.callback)(element, propertyid.0, newvalue);
                 });
+            } else {
+                crate::com::log_no_sender("property", propertyid.0);
             }
             Ok(())
         }
@@ -1747,6 +1753,8 @@ mod handlers {
             if let Some(element) = sender.as_ref() {
                 crate::com::log_arrival("structure", changetype.0, element);
                 crate::com::guarded("structure", || (self.callback)(element, changetype));
+            } else {
+                crate::com::log_no_sender("structure", changetype.0);
             }
             Ok(())
         }
@@ -1767,6 +1775,8 @@ mod handlers {
             if let Some(element) = sender.as_ref() {
                 crate::com::log_arrival("event", eventid.0, element);
                 crate::com::guarded("event", || (self.callback)(element, eventid.0));
+            } else {
+                crate::com::log_no_sender("event", eventid.0);
             }
             Ok(())
         }
@@ -1800,6 +1810,8 @@ mod handlers {
                         activity,
                     );
                 });
+            } else {
+                crate::com::log_no_sender("notification", notificationkind.0);
             }
             Ok(())
         }
