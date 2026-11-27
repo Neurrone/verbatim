@@ -572,7 +572,10 @@ impl Worker<'_> {
                 PropertyValues(Vec::new()),
                 verbatim_model::tell::Payload::None,
             ),
-            super::followed_window(self.context),
+            super::window_facts(
+                self.context,
+                super::sender_window(self.context, event.hwnd, &event.parts.runtime_id),
+            ),
             (trace, observed_at_us),
         );
         self.commit(Effects {
@@ -583,7 +586,7 @@ impl Worker<'_> {
 
     /// The tell of an event of kind `kind` that the `Follow` registration
     /// delivered for `object`, with its cached properties and payload,
-    /// judged by `window`, the followed node's.
+    /// judged by `window`, its sender's ([`super::sender_window`]).
     fn followed_tell(
         &self,
         kind: verbatim_model::event_kind::EventKind,
@@ -619,7 +622,7 @@ impl Worker<'_> {
     /// (`text_pattern`), for a suggestions change its automation id
     /// (`automation_id`), both from the event's cache, which Core's rule
     /// for a suggestions change off the focus reads, and the facts of the
-    /// followed node's window its callback gathered, which Core's
+    /// element's own window its callback gathered, which Core's
     /// acceptance reads, as NVDA applies `shouldAcceptEvent` in its
     /// property-change handler. The outpost
     /// judges nothing of it: Core finds the

@@ -601,8 +601,9 @@ impl Context {
     /// The state of the window of `item`, an event arriving at
     /// `observed_at_us`, read now with calls to Windows only, as NVDA tests
     /// a UIA event's window on arrival (ADR 0003, "A frozen window"): the
-    /// event's own window, or for an element that is no window itself, the
-    /// followed node's nearest window, as the tell's window facts read it.
+    /// event's own window, or for an element that is no window itself, its
+    /// nearest window, as the tell's window facts read it
+    /// ([`sender_window`]).
     /// A hung or ghosted window carries its report, which the reducer sends
     /// once per stall of its thread; with no window to read, thread 0,
     /// which marks nothing. Its events name this outpost's own
@@ -610,10 +611,9 @@ impl Context {
     fn window_state(&self, item: &Item, observed_at_us: u64) -> WindowState {
         let window = match item {
             Item::Msaa { hwnd, .. } => *hwnd,
-            Item::Uia(event) if event.hwnd != 0 => event.hwnd,
-            Item::Uia(_) => followed::node(self)
-                .and_then(|node| self.store.nearest_window_of(node))
-                .unwrap_or(0),
+            Item::Uia(event) => {
+                sender_window(self, event.hwnd, &event.parts.runtime_id).unwrap_or(0)
+            }
             Item::NodesHeld { .. } | Item::Barrier { .. } => 0,
         };
         if window == 0 {
@@ -1205,8 +1205,8 @@ fn unstamped_ask(ask: &verbatim_model::request::Ask) -> verbatim_model::request:
 
 /// What a UIA callback captures of a property change on the focus: the
 /// element's parts and window handle, read from its cache, the element for
-/// anything the worker must ask it, and the acceptance facts of the
-/// followed node's known window, read with calls to Windows only. No call
+/// anything the worker must ask it, and the acceptance facts of its own
+/// window ([`sender_window`]), read with calls to Windows only. No call
 /// reaches the application.
 fn capture_property(
     context: &Context,
@@ -1215,12 +1215,13 @@ fn capture_property(
 ) -> UiaEvent {
     let fields = event.read();
     let parts = fields.parts(event.runtime_id());
+    let window = sender_window(context, fields.role.hwnd, &parts.runtime_id);
     UiaEvent {
         kind: UiaKind::Property {
             id: property_id,
             text_pattern: fields.text_available,
             automation_id: fields.automation_id.clone(),
-            window: Box::new(followed_window(context)),
+            window: Box::new(window_facts(context, window)),
         },
         parts: UiaSnapshotFact {
             runtime_id: parts.runtime_id,
@@ -1238,17 +1239,45 @@ fn capture_property(
     }
 }
 
-/// The acceptance facts of the window of the node Core's newest `Follow`
-/// names, as the outpost recorded it when the node was built: no window
-/// when no node is followed or its window is not known.
-pub(super) fn followed_window(context: &Context) -> verbatim_model::tell::TellWindow {
+/// The window an event the `Follow` registration delivered is judged by:
+/// its sender's own, as NVDA judges a UIA property change by its sender's
+/// nearest window whatever its focus is (`UIAHandler/__init__.py`,
+/// `IUIAutomationPropertyChangedEventHandler_HandlePropertyChangedEvent`),
+/// so a change on a new focus registered before Core's `Follow` names it
+/// is not judged by the old focus's window. The sender's handle, `hwnd`,
+/// when it is a window; else the nearest window recorded for the node its
+/// `runtime_id` names as the node was built, which a focus's completion
+/// records before it registers the element; else, for the extra object
+/// `Follow` names, the ancestor whose value is followed, the followed
+/// node's. `None` for a sender with none of these.
+pub(super) fn sender_window(context: &Context, hwnd: isize, runtime_id: &[i32]) -> Option<isize> {
+    if hwnd != 0 {
+        return Some(hwnd);
+    }
+    let node = context.store.uia_node_of(runtime_id)?;
+    context
+        .store
+        .nearest_window_of(node)
+        .or_else(|| {
+            followed::extra_of(context, node)
+                .and_then(|followed| context.store.nearest_window_of(followed))
+        })
+        .filter(|&window| window != 0)
+}
+
+/// The acceptance facts of `window`, an event's ([`sender_window`]): no
+/// window when it has none.
+pub(super) fn window_facts(
+    context: &Context,
+    window: Option<isize>,
+) -> verbatim_model::tell::TellWindow {
     use verbatim_win32::window_facts::WindowPart;
     let reads = OutpostReads(context);
-    match followed::node(context).and_then(|node| context.store.nearest_window_of(node)) {
-        Some(window) if window != 0 => verbatim_model::tell::TellWindow::Found(Box::new(
+    match window {
+        Some(window) => verbatim_model::tell::TellWindow::Found(Box::new(
             WindowPart::read(&reads, window, None).with_foreground(&reads),
         )),
-        _ => verbatim_model::tell::TellWindow::NoWindow,
+        None => verbatim_model::tell::TellWindow::NoWindow,
     }
 }
 

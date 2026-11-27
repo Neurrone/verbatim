@@ -209,7 +209,7 @@ walk-up races (`books/dev/src/explanation/design/listener-without-connections.md
 so no lock is needed around them. No node is searched for by runtime id:
 a UIA node whose kept element is gone, or that has none, and whose focus
 route's walk finishes without it is answered gone
-(`read::resolve_uia_element`), while a walk that fails, a window lookup
+(`store::element`, under "A node's element" below), while a walk that fails, a window lookup
 timed out or refused among them, fails the query (`focus_path::find`),
 since a slow application has not shown the element gone. The walk has no
 time budget: it runs until it ends, unless Core cancels its request and
@@ -316,8 +316,9 @@ framing, the shared clock and `peek` are `verbatim_process::message`'s
   the entry carrying the key. Every event a callback takes in
   (`Context::take_in`) carries its window's state, read as it arrives
   with calls to Windows only (`Context::window_state`): the event's own
-  window, or for an element that is no window, the followed node's
-  nearest window; hung or ghosted with its report
+  window, or for an element that is no window, its own nearest window
+  (`outpost::sender_window`, under "Core's requests" below); hung or
+  ghosted with its report
   (`verbatim_model::hung::WindowState::Hung`), or responsive with its
   thread, thread 0 when there is no window to read. The reducer sends
   the report (ADR 0003, "A frozen window").
@@ -658,18 +659,53 @@ and the inherited pipe handles.
   each state change the `Follow` group tells of it, read from the event's
   element (`verbatim_uia::map::with_legacy_checked_states`).
 - A UIA navigation step (`read::related_step`) is one `Related` step of
-  the program builder from the kept element, one program, but by calls
+  the program builder from the node's element, one program, but by calls
   from a top-level window (a program's walk ends there) or from an
   element only UI Automation's proxies inside the outpost serve, with
-  remote operations off, or in a window marked classic. A gone element
-  is found by the focus's route and stepped from by calls, or answered
-  gone.
+  remote operations off, or in a window marked classic. A kept element
+  that answers gone is let go of, and the element its route finds is
+  stepped from by calls, or the node is answered gone.
 - A dialog's own text (`read::describe_dialogs`) is given as the
   description of every dialog in the chain below the ancestors Core
   already knows, and of a dialog focus, while descriptions are read. A UIA
   dialog the listener read, whose element the outpost does not hold, is
-  found by the route of the answer being built, so it has its text on its
-  first read.
+  found by its route, or by the route of the answer being built, so it
+  has its text on its first read.
+
+### A node's element
+
+Every reader of a UI Automation node's element finds it one way
+(`outpost/store/element.rs`): the element the store keeps, else the one
+the node's route finds, which is kept for the node from then on. A focus
+is minted with no element when neither its route's walk nor the
+application's focused element finds it, and every ancestor a completion
+mints from the listener's read has none, so a reader that took the kept
+element alone would answer such a node not there while its route finds
+it.
+
+- `element::as_kept` takes the kept element with no call, or walks the
+  route: the store's for the node, else, for a dialog's text, the route
+  of the read in progress. Text reads, programmed steps (the controller
+  relation, the first selected item, a walk down), a step's element, a
+  dialog's element, a navigation step and `Follow`, for its node and its
+  extra object (`element::reference`), take it.
+- `element::refreshed` refreshes the kept element with the read's
+  request, which proves it still answers; one that answers gone is let
+  go of and the route walked. A kept element that fails for another
+  reason stays kept and the read fails.
+- A kept element is let go of only while it is still the one kept
+  (`element::let_go`), so a worker abandoned on a hung application,
+  whose refresh fails late, never evicts the element a later worker kept.
+- The store's own lookup of the kept element and its eviction are
+  private to the store and this module. `element::kept` is the one
+  look at the kept element with no call and no search, for judgments of
+  the kept element itself: its own window, whether a completion keeps
+  one for an ancestor, whether one under a reused runtime id is stale.
+- A completion keeps the element it found, and the route of every node
+  it minted, before it answers Core, so a node Core names next is found
+  by one or the other. A focus it did not find has its text not read in
+  that answer (`FocusCaret::NotRead`), with no second walk of the route
+  its walk just missed.
 
 ### Menus
 
@@ -1094,11 +1130,10 @@ taken before any call that can block. Each step runs under its gate
 - `Follow` (`outpost/followed.rs`): what it names, the node,
   its group and any extra object, or nothing, is recorded when the
   worker takes it, then the registration is moved on the registering
-  thread to that node alone, the extra object given the value group (its
-  element found again by its route when the outpost keeps none, as an
-  ancestor the completion minted), and waited for; a node whose element
-  the outpost no longer holds answers not there, with nothing
-  registered. A console host's terminal takes the extended group
+  thread to that node alone, the extra object given the value group, each
+  element kept or found by its route ("A node's element" above), and
+  waited for; a node whose element neither is answers not there, with
+  nothing registered. A console host's terminal takes the extended group
   without its text and caret events, and is the console terminal the
   console's events are routed to. A batch of `Follow` steps alone still
   queued is replaced by a newer one, answered "ended or stopped"
@@ -1122,6 +1157,16 @@ Besides answering Core:
   (`UiaKind::Property`), so Core plays the suggestions-closed sound for
   an element that is no longer the focus only when it is a suggestions
   field, with no call added.
+- A property change and a caret tell carry the acceptance facts of their
+  sender's own window, as NVDA judges a property change by its sender's
+  nearest window (`UIAHandler/__init__.py`, the property-changed
+  handler): its handle when it is a window, else the nearest window
+  recorded for its node as the node was built, else, for the extra
+  object `Follow` names, the followed node's (`outpost::sender_window`).
+  A completion records the focus's window before it adds the focus's
+  registration, so a change on a new focus, which the registration
+  delivers before Core's `Follow` names it, is judged by its own window,
+  not by the old focus's.
 - `WindowDestroyed`: the queued batches whose MSAA subjects name the
   window are answered not there at once (`Asks::destroyed`), with the
   waits on it; every other request stays queued, whatever window it was

@@ -22,6 +22,7 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use super::RequestContext;
 use super::asked;
 use super::read::{self, ReadError};
+use super::store::element;
 use super::window::window_handle;
 
 /// The UI Automation node one object step runs on, resolved by the
@@ -61,7 +62,11 @@ impl<'a, 'c> UiaNode<'a, 'c> {
     fn source(&self) -> Result<&crate::text::uia::UiaText, Ran> {
         use verbatim_model::TextFailure;
         match self.text.get_or_init(|| {
-            super::text_reads::uia_text(self.context, self.node, verbatim_model::TextDetails::NONE)
+            super::text_reads::uia_text(
+                (self.context, self.uia),
+                self.node,
+                verbatim_model::TextDetails::NONE,
+            )
         }) {
             Ok(source) => Ok(source),
             Err(TextFailure::NoText) => Err(Ran::Unrun(Unrun::Refused(
@@ -88,24 +93,11 @@ impl<'a, 'c> UiaNode<'a, 'c> {
 impl Resolve for UiaNode<'_, '_> {
     fn object(&self, _subject: &Subject) -> Result<Element<'_>, Ran> {
         if self.element.get().is_none() {
-            let kept = self
-                .context
-                .store
-                .element_of(self.node)
-                .and_then(|agile| agile.resolve().ok());
-            let element = match kept {
-                Some(kept) => kept.live().element().clone(),
-                None => read::resolve_uia_element(
-                    self.context,
-                    self.uia,
-                    self.fill.request(),
-                    self.node,
-                )
+            let element = element::as_kept(self.context, Some(self.uia), None, self.node)
                 .map_err(|error| self.failed(error))?
                 .live()
                 .element()
-                .clone(),
-            };
+                .clone();
             let _ = self.element.set(element);
         }
         let element = self.element.get().ok_or(Ran::Failed)?;
@@ -121,7 +113,7 @@ impl Resolve for UiaNode<'_, '_> {
     }
 
     fn filled(&self, _subject: &Subject, _place: Place) -> Result<Cached<Node>, Ran> {
-        read::resolve_uia_element(self.context, self.uia, self.fill.request(), self.node)
+        element::refreshed(self.context, self.uia, self.fill.request(), self.node)
             .map_err(|error| self.failed(error))
     }
 
@@ -394,8 +386,9 @@ pub(super) type Programmed = Result<verbatim_uia_rops::batch::Found, StepOutcome
 /// `op`, a `Related` by the controller-for relation or to the first
 /// selected item, or a `Descendants`, from the UI Automation node `node`,
 /// alone through the executor, by a program where the window allows one:
-/// the element the outpost keeps, its own window and its nearest, each
-/// node reached filled by the walk's request and judged by `judge`.
+/// the node's element, kept or found by its route ([`element::as_kept`]),
+/// its own window and its nearest, each node reached filled by the walk's
+/// request and judged by `judge`.
 /// `Err` with the whole batch's outcome when the application did not
 /// answer within UI Automation's transaction timeout, which a program
 /// fails with no fallback; a program that could not run at all has its
@@ -406,13 +399,6 @@ pub(super) fn programmed(
     (node, op): (NodeId, Op),
     judge: Option<read::Judge<'_>>,
 ) -> Result<Programmed, verbatim_model::request::Outcome> {
-    let Some(element) = context
-        .store
-        .element_of(node)
-        .and_then(|agile| agile.resolve().ok())
-    else {
-        return Ok(Err(StepOutcome::NotThere(Missing::Node(node))));
-    };
     let request = match &op {
         Op::Descendants { walk, .. } if walk.set.contains(&PropertyId::Rect) => {
             RequestContext::located_many_node_request
@@ -423,11 +409,19 @@ pub(super) fn programmed(
     let Ok((uia, nodes)) = client.uia_with(context, request) else {
         return Ok(Err(StepOutcome::Failed));
     };
+    let found = match element::as_kept(context, Some(uia), None, node) {
+        Ok(found) => found.kept(),
+        Err(ReadError::Gone) => return Ok(Err(StepOutcome::NotThere(Missing::Node(node)))),
+        Err(ReadError::Failed(reason)) => {
+            tracing::debug!(reason, "a programmed step's element could not be found");
+            return Ok(Err(StepOutcome::Failed));
+        }
+    };
     let fill = Fill::new(&nodes);
     let window = asked::known_nearest_of(context, node);
     let from = read::OneElement {
-        element: element.live().element(),
-        window: read::kept_own_window(context, node).unwrap_or(0),
+        element: found.live().element(),
+        window: found.read().hwnd,
         calls_only: false,
         fill: &fill,
         judge,

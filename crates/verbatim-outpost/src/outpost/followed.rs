@@ -22,6 +22,7 @@ use verbatim_uia::{Group, Scope};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::AgileReference;
 
+use super::store::element;
 use super::{Context, RequestContext};
 
 /// What the newest `Follow` named, with the elements its registration was
@@ -34,8 +35,9 @@ pub(super) struct Named {
     element: AgileReference<IUIAutomationElement>,
     /// The group its element was given.
     group: Group,
-    /// The extra object followed for its value changes, if any.
-    extra: Option<AgileReference<IUIAutomationElement>>,
+    /// The extra object followed for its value changes, if any: its node
+    /// and its element.
+    extra: Option<(NodeId, AgileReference<IUIAutomationElement>)>,
     /// When the node is a terminal, whether its window is a console's.
     pub(super) terminal: Option<bool>,
 }
@@ -64,8 +66,9 @@ pub(super) enum Moved {
 
 /// Runs a `Follow` of `node`, or of nothing, on the worker: records what
 /// it names, moves the registration on the registering thread and waits
-/// for the move. A node the outpost no longer holds an element for is not
-/// there, with every registration removed.
+/// for the move. A node whose element is neither kept nor found by its
+/// route ([`element::as_kept`]) is not there, with every registration
+/// removed.
 pub(super) fn follow(
     context: &RequestContext<'_>,
     uia: &verbatim_uia::Uia,
@@ -76,13 +79,14 @@ pub(super) fn follow(
         return Moved::Unregistered;
     };
     let named = node.and_then(|followed| {
-        let element = context.store.element_of(followed.node)?.reference();
-        // The extra object, the slider a focused thumb is in, is an
-        // ancestor the completion minted, whose element is found again by
-        // its route when the outpost keeps none.
-        let extra = followed
-            .extra
-            .and_then(|extra| super::read::element_reference(context, uia, extra));
+        // The node's element as every reader finds it: kept, else by its
+        // route, as a focus minted when its walk did not find its element
+        // is, and the extra object, the slider a focused thumb is in, an
+        // ancestor the completion minted, is.
+        let element = element::reference(context, uia, followed.node)?;
+        let extra = followed.extra.and_then(|extra| {
+            element::reference(context, uia, extra).map(|element| (extra, element))
+        });
         Some(Named {
             node: followed.node,
             element,
@@ -111,7 +115,7 @@ pub(super) fn follow(
             named
                 .extra
                 .into_iter()
-                .map(|extra| (extra, Group::Value))
+                .map(|(_, extra)| (extra, Group::Value))
                 .collect(),
         ),
         None => registration.retarget(Scope::Nothing),
@@ -145,7 +149,7 @@ pub(super) fn add_focus(
             named.group,
             named
                 .extra
-                .map(|extra| (extra, Group::Value))
+                .map(|(_, extra)| (extra, Group::Value))
                 .into_iter()
                 .collect(),
         ),
@@ -155,7 +159,7 @@ pub(super) fn add_focus(
                 .into_iter()
                 .flat_map(|named| {
                     std::iter::once((named.element, named.group))
-                        .chain(named.extra.map(|extra| (extra, Group::Value)))
+                        .chain(named.extra.map(|(_, extra)| (extra, Group::Value)))
                 })
                 .collect(),
         ),
@@ -188,8 +192,13 @@ pub(super) fn terminal(context: &Context) -> Option<(NodeId, bool)> {
         .and_then(|named| named.terminal.map(|console| (named.node, console)))
 }
 
-/// The node Core's newest `Follow` names: the committed focus's, when it
-/// is this outpost's.
-pub(super) fn node(context: &Context) -> Option<NodeId> {
-    context.named.lock().as_ref().map(|named| named.node)
+/// The followed node whose extra object `extra` is, when Core's newest
+/// `Follow` names `extra` as one.
+pub(super) fn extra_of(context: &Context, extra: NodeId) -> Option<NodeId> {
+    context
+        .named
+        .lock()
+        .as_ref()
+        .filter(|named| named.extra.as_ref().is_some_and(|(node, _)| *node == extra))
+        .map(|named| named.node)
 }

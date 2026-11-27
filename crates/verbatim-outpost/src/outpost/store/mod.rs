@@ -75,6 +75,8 @@ use super::text_reads::Patterns;
 use crate::text::uia::{TextSupport, UiaPos};
 use verbatim_reader_rules::numbered::too_early;
 
+pub(super) mod element;
+
 /// Objects the store let go of, for the caller to drop once no lock is
 /// held: releasing an application's object can call into its process.
 #[must_use = "drop once no lock is held"]
@@ -351,9 +353,16 @@ impl Store {
         self.uia.runtime_id_of(node)
     }
 
-    /// The live element kept for the UIA node `node`, a clone.
-    pub(super) fn element_of(&self, node: NodeId) -> Option<Agile<Kept>> {
+    /// The live element kept for the UIA node `node`, a clone: private to
+    /// the store and its one way to a node's element ([`element`]), so no
+    /// reader takes the kept element and misses one its route finds.
+    fn element_of(&self, node: NodeId) -> Option<Agile<Kept>> {
         self.uia.element_of(node)
+    }
+
+    /// The UIA node issued for the element `runtime_id` names, if one is.
+    pub(super) fn uia_node_of(&self, runtime_id: &[i32]) -> Option<NodeId> {
+        self.uia.existing_id(runtime_id)
     }
 
     /// The MSAA address of the MSAA node `node`.
@@ -398,18 +407,9 @@ impl Store {
             .cloned()
     }
 
-    /// Takes the element kept for `node` out, for the caller to drop.
-    pub(super) fn evict_element(&self, node: NodeId) -> Option<Agile<Kept>> {
-        self.uia.evict_element(node)
-    }
-
     /// Takes the element kept for `node` out if it is still `element`, for
-    /// the caller to drop.
-    pub(super) fn evict_element_if(
-        &self,
-        node: NodeId,
-        element: &Agile<Kept>,
-    ) -> Option<Agile<Kept>> {
+    /// the caller to drop ([`element::let_go`]).
+    fn evict_element_if(&self, node: NodeId, element: &Agile<Kept>) -> Option<Agile<Kept>> {
         self.uia.evict_element_if(node, element)
     }
 

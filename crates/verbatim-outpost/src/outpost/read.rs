@@ -17,7 +17,6 @@ use verbatim_ia2::equality::Candidates;
 use verbatim_model::{
     ActionName, Backend, NodeDetails, NodeId, NodeSnapshot, QueryKind, Role, State, StateSet,
 };
-use verbatim_uia::Interning as _;
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
     Ancestor, AncestorWalk, Cached, DialogText, Fill, Live, Node, Request, Shape, Uia,
@@ -29,6 +28,7 @@ use verbatim_model::protocol::UiaSnapshotFact;
 use verbatim_model::request::KnownAncestor;
 use verbatim_win32::window::window_class_name;
 
+use super::store::element;
 use super::window::{window_style, window_text};
 use super::{Context, RequestContext};
 use verbatim_reader_rules::CONSOLE_WINDOW_CLASS;
@@ -1046,9 +1046,9 @@ pub(super) fn wants_dialog_text(context: &RequestContext<'_>, node: &NodeSnapsho
 }
 
 /// The own text of the dialog `node`, through the backend that reported it,
-/// a UIA dialog's on `client`, found by `path`, its report's listener path,
-/// when this outpost holds no element for it; `None` when it has none or
-/// cannot be read.
+/// a UIA dialog's on `client`, its element found as every node's is
+/// ([`element::as_kept`]), by `path`, its report's listener path, too;
+/// `None` when it has none or cannot be read.
 pub(super) fn dialog_text_of(
     context: &RequestContext<'_>,
     client: &mut Client,
@@ -1061,34 +1061,13 @@ pub(super) fn dialog_text_of(
         Backend::Msaa => verbatim_ia2::dialog::DialogObject::of_node(node.id, context.nodes())
             .and_then(|dialog| dialog_text(&dialog)),
         Backend::Uia => {
-            // A dialog the focus listener read in the focus's chain, whose
-            // element this outpost does not hold, is found by its report's
-            // path.
-            let element = context.store.element_of(node.id);
-            let route = if element.is_some() {
-                None
-            } else {
-                let runtime_id = context.store.runtime_id_of(node.id)?;
-                Some(context.route_in(path?, &runtime_id)?)
-            };
-            let remote = route
-                .as_ref()
-                .is_some_and(|route| context.tries_remote(Some(route.window.get())));
-            let gates = crate::gates::node_gates(context.node_details());
             let uia = client.uia()?;
             // Nothing of the dialog's own element is read: its text is
             // gathered from its children.
-            let dialog = match (element, route) {
-                (Some(element), _) => element.resolve().ok()?.live().clone(),
-                (None, Some(route)) => {
-                    let nodes = uia.request::<Node>(gates).ok()?;
-                    let found = super::focus_path::find(uia, &route, &nodes, remote)
-                        .0
-                        .ok()??;
-                    found.live().clone()
-                }
-                (None, None) => return None,
-            };
+            let dialog = element::as_kept(context, Some(uia), path, node.id)
+                .ok()?
+                .live()
+                .clone();
             // Each child's description whatever the theme, as NVDA's
             // dialog text includes it.
             let children = uia.request_fixed::<DialogText>().ok()?;
@@ -1255,96 +1234,22 @@ pub(super) fn foreground_object_among(
     )
 }
 
-/// Resolves a UIA node to a live element filled by `nodes`: the registry's
-/// kept element first (refreshing its cache both updates it and proves it
-/// still answers), then, if that element is gone or none is kept, the route
-/// to it through the chain the focus listener read for the focus
-/// ([`super::focus_path`]). A node found by neither is gone, as NVDA's object
-/// for a gone element is: no search is made for it, since a search of the
-/// application's windows enters any child window another process serves
-/// (`books/dev/src/reference/adr/0005-calls-that-reach-another-application.md`, "A node whose element is gone"). A kept element
-/// that fails for another reason, such as a busy provider timing out, is
-/// kept and the read fails: it may well still be alive. So does a route's
-/// walk that fails rather than finishing without the element
-/// ([`super::focus_path::find`]).
-pub(super) fn resolve_uia_element(
-    context: &RequestContext<'_>,
-    uia: &Uia,
-    nodes: &Request<Node>,
-    node_id: NodeId,
-) -> Result<Cached<Node>, ReadError> {
-    if let Some(agile) = context.store.element_of(node_id) {
-        if let Ok(element) = agile.resolve() {
-            match element.live().refresh(nodes) {
-                Ok(fresh) => return Ok(fresh),
-                Err(error) if !verbatim_uia::element_is_gone(&error) => {
-                    return Err(ReadError::Failed(format!("reading the element: {error}")));
-                }
-                Err(_) => {}
-            }
-        }
-        context.store.evict_element(node_id);
-    }
-    let runtime_id = context
-        .store
-        .runtime_id_of(node_id)
-        .ok_or(ReadError::Gone)?;
-    // An element of the chain the focus listener read for the focus is
-    // found by its path.
-    let route = context.focus_route(&runtime_id).ok_or(ReadError::Gone)?;
-    let remote = context.tries_remote(Some(route.window.get()));
-    let (found, import_failed) = super::focus_path::find(uia, &route, nodes, remote);
-    if import_failed {
-        context.read_classically(route.window.get());
-    }
-    // A walk that failed, against a slow application above all, may have
-    // missed a live element; only one that finished without it says gone.
-    let element = found
-        .map_err(|reason| ReadError::Failed(format!("walking the focus's route: {reason}")))?
-        .ok_or(ReadError::Gone)?;
-    let _ = context
-        .nodes()
-        .id_for_element(&runtime_id, &element.narrow());
-    Ok(element)
-}
-
-/// A UIA node's live element, filled as a node, or the error a query
-/// reports for it.
+/// A UIA node's live element, filled as a node ([`element::refreshed`]),
+/// or the error a query reports for it.
 pub(super) fn uia_node<'a>(
     context: &RequestContext<'_>,
     client: &'a mut Client,
     node_id: NodeId,
 ) -> Result<(&'a Uia, Request<Node>, Cached<Node>), ReadError> {
     let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
-    let element = resolve_uia_element(context, uia, &nodes, node_id)?;
+    let element = element::refreshed(context, uia, &nodes, node_id)?;
     Ok((uia, nodes, element))
-}
-
-/// The UI Automation element of node `node_id`, for a registration: the
-/// one the outpost keeps, else found again by the route to it, as an
-/// ancestor the completion minted from the listener's read is. `None` for
-/// an MSAA node or one whose element is gone.
-pub(super) fn element_reference(
-    context: &RequestContext<'_>,
-    uia: &Uia,
-    node_id: NodeId,
-) -> Option<windows::core::AgileReference<windows::Win32::UI::Accessibility::IUIAutomationElement>>
-{
-    if let Some(kept) = context.store.element_of(node_id) {
-        return Some(kept.reference());
-    }
-    context.store.runtime_id_of(node_id)?;
-    let nodes = context.read_node_request(uia).ok()?;
-    let element = resolve_uia_element(context, uia, &nodes, node_id).ok()?;
-    windows::core::AgileReference::new(element.live().element()).ok()
 }
 
 /// The window handle the kept element of the UIA node `node_id` says it is,
 /// `None` for a windowless element or one no longer kept. No call.
 pub(super) fn kept_own_window(context: &RequestContext<'_>, node_id: NodeId) -> Option<isize> {
-    context
-        .store
-        .element_of(node_id)
+    element::kept(&context.store, node_id)
         .and_then(|agile| agile.resolve().ok())
         .map(|element| element.read().hwnd)
         .filter(|&hwnd| hwnd != 0)
@@ -1467,36 +1372,36 @@ fn window_object(
 
 /// One object-navigation step from a UIA node: the neighbor, or `None` for
 /// a genuine tree edge, and the node's nearest window. The step is taken
-/// from the element the registry keeps, without first refreshing it; when
-/// that element is gone, or the registry keeps none, from the element the
-/// focus's route finds, or the node is gone ([`resolve_uia_element`]).
+/// from the node's element as kept, without first refreshing it, or as its
+/// route finds it ([`element::as_kept`]); when the kept element answers as
+/// gone, it is let go of and the step taken again from the element the
+/// route finds ([`element::refreshed`]), or the node is gone.
 fn uia_step(
     context: &RequestContext<'_>,
     client: &mut Client,
     node_id: NodeId,
     relation: verbatim_model::batch::Relation,
 ) -> Result<Stepped, ReadError> {
-    if let Some(element) = context
-        .store
-        .element_of(node_id)
-        .and_then(|agile| agile.resolve().ok())
-    {
-        let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
-        let from = (
-            element.live().element(),
-            element.read().hwnd,
-            element.served_only_by_uia_proxies() == Some(true),
-        );
-        if let Some(stepped) = related_step(context, uia, &nodes, (node_id, from, relation))? {
-            return Ok(stepped);
-        }
-        context.store.evict_element(node_id);
-    }
-    let (uia, nodes, element) = uia_node(context, client, node_id)?;
+    let (uia, nodes) = client.uia_with(context, RequestContext::node_request)?;
+    let found = element::as_kept(context, Some(uia), None, node_id)?;
+    let taken = found.kept();
     let from = (
-        element.live().element(),
-        element.read().role.hwnd,
-        element.served_only_by_uia_proxies() == Some(true),
+        taken.live().element(),
+        taken.read().hwnd,
+        taken.served_only_by_uia_proxies() == Some(true),
+    );
+    if let Some(stepped) = related_step(context, uia, &nodes, (node_id, from, relation))? {
+        return Ok(stepped);
+    }
+    let element::Found::Kept(agile, _) = found else {
+        return Err(ReadError::Gone);
+    };
+    drop(element::let_go(&context.store, node_id, &agile));
+    let fresh = element::refreshed(context, uia, &nodes, node_id)?;
+    let from = (
+        fresh.live().element(),
+        fresh.read().role.hwnd,
+        fresh.served_only_by_uia_proxies() == Some(true),
     );
     related_step(context, uia, &nodes, (node_id, from, relation))?.ok_or(ReadError::Gone)
 }
@@ -1712,11 +1617,7 @@ fn uia_neighbor(
     // A menu item reached by navigation reads its legacy checked state as
     // a focused one does.
     let neighbor = neighbor.map(|neighbor| {
-        match context
-            .store
-            .element_of(neighbor.id)
-            .and_then(|agile| agile.resolve().ok())
-        {
+        match element::kept(&context.store, neighbor.id).and_then(|agile| agile.resolve().ok()) {
             Some(element) => with_legacy_checked_state(element.live().element(), neighbor),
             None => neighbor,
         }
@@ -1746,9 +1647,7 @@ pub(super) fn corrected_backend(
         return neighbor;
     };
     if context.store.runtime_id_of(neighbor.id).is_some() {
-        let window = context
-            .store
-            .element_of(neighbor.id)
+        let window = element::kept(&context.store, neighbor.id)
             .and_then(|agile| agile.resolve().ok())
             .map_or(0, |element| element.read().hwnd);
         if window == 0 || window == from_window || own_window_uses_uia(context, window) {

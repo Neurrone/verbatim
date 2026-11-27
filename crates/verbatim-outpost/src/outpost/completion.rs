@@ -28,6 +28,7 @@ use super::asked::{ancestors_end, snapshot_of};
 use super::focus_path;
 use super::read::{self, Client};
 use super::reducer::FocusPath;
+use super::store::element;
 use super::text_reads;
 use super::window::hwnd_of;
 
@@ -96,13 +97,15 @@ fn mint(
     // a focus makes it.
     let own_window = snapshot.details.window.map_or(nearest, hwnd_of);
     read::console_text_area(&mut snapshot, Some(own_window));
+    // The node's window, fixed as it is made, as NVDA's object fixes its
+    // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
+    // once it is dead; recorded before its registration, so that an event
+    // its registration delivers is judged by its own window
+    // ([`super::sender_window`]).
+    context.store.record_nearest_window(node, own_window);
     if focus && let Some(element) = &found {
         register(context, element, node);
     }
-    // The node's window, fixed as it is made, as NVDA's object fixes its
-    // own (`NVDAObjects/UIA/__init__.py` 1604 to 1607), for a step from it
-    // once it is dead.
-    context.store.record_nearest_window(node, own_window);
     Some(Minted {
         found,
         window_element,
@@ -300,7 +303,7 @@ fn keep_window_element(
         return;
     };
     if ancestors.iter().any(|ancestor| ancestor.id == node)
-        && context.store.element_of(node).is_none()
+        && element::kept(&context.store, node).is_none()
     {
         let _ = context
             .nodes()
@@ -321,7 +324,7 @@ fn replaced_stale(context: &RequestContext<'_>, client: &mut Client, runtime_id:
     let Some(node) = context.nodes().existing(runtime_id) else {
         return false;
     };
-    let Some(kept) = context.store.element_of(node) else {
+    let Some(kept) = element::kept(&context.store, node) else {
         return false;
     };
     let stale = match kept.resolve() {
@@ -343,7 +346,7 @@ fn replaced_stale(context: &RequestContext<'_>, client: &mut Client, runtime_id:
             "a runtime id names a new element: the node's element and text are dropped"
         );
         text_reads::forget_text(context, node);
-        drop(context.store.evict_element_if(node, &kept));
+        drop(element::let_go(&context.store, node, &kept));
     }
     stale
 }

@@ -42,7 +42,7 @@ use verbatim_outpost_logic::{WatchProgram, WatchWork};
 
 use super::commit::Effects;
 use super::reducer::{NodeAnchors, RangeKey, TextChange};
-use super::store::TextWrite;
+use super::store::{TextWrite, element};
 use super::{Context, RequestContext};
 
 /// A node's text pattern, kept so each request does not fetch it again;
@@ -248,18 +248,23 @@ fn support_of(context: &RequestContext<'_>, node_id: NodeId) -> TextSupport {
     context.store.support(node_id)
 }
 
-/// A UIA node's text, its patterns fetched once and kept, its reads
-/// fetching `details` beyond the text.
+/// A UIA node's text, from its element as every reader finds it, kept or
+/// by its route through `uia` ([`element::as_kept`]), its patterns fetched
+/// once and kept, its reads fetching `details` beyond the text.
 fn uia_source(
     context: &RequestContext<'_>,
+    uia: Option<&verbatim_uia::Uia>,
     node_id: NodeId,
     details: TextDetails,
 ) -> Result<UiaText, TextFailure> {
-    let element = context
-        .store
-        .element_of(node_id)
-        .and_then(|agile| agile.resolve().ok())
-        .ok_or(TextFailure::Gone)?;
+    let element = match element::as_kept(context, uia, None, node_id) {
+        Ok(found) => found.kept(),
+        Err(super::read::ReadError::Gone) => return Err(TextFailure::Gone),
+        Err(super::read::ReadError::Failed(reason)) => {
+            tracing::debug!(reason, "the text's element could not be found");
+            return Err(TextFailure::Unanswered);
+        }
+    };
     let kept = patterns_of(context, node_id);
     let found = if let Some(found) = kept {
         found
@@ -346,9 +351,7 @@ pub(super) fn text_event_from(
         // holds, so nothing is read beyond the cache (decision 7 of
         // `books/dev/src/explanation/design/uia-shapes.md`).
         let describe = |element: &Cached<Kept>| (element.runtime_id(), element.read().class_name);
-        let replaced = context
-            .store
-            .element_of(node_id)
+        let replaced = element::kept(&context.store, node_id)
             .and_then(|agile| agile.resolve().ok())
             .map(|old| describe(&old));
         tracing::info!(
@@ -445,12 +448,12 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
 /// committing what the read changed: `Err` with the reply a node with no
 /// text, or gone, answers.
 fn on_uia_text<T>(
-    context: &RequestContext<'_>,
+    (context, uia): (&RequestContext<'_>, Option<&verbatim_uia::Uia>),
     node_id: NodeId,
     (details, named): (TextDetails, &[u64]),
     read: impl FnOnce(&mut UiaText, &mut text::NodeText<'_, UiaPos>) -> T,
 ) -> Result<T, TextFailure> {
-    let mut source = uia_source(context, node_id, details)?;
+    let mut source = uia_source(context, uia, node_id, details)?;
     let mut call = uia_call(context, node_id, named);
     let read = read(&mut source, &mut call.text());
     put_uia(context, node_id, call);
@@ -510,7 +513,7 @@ pub(super) fn fused_steps(
             adopt_told(context, node_id, Some(adopt));
         }
     }
-    let mut source = uia_source(context, node_id, TextDetails::NONE)?;
+    let mut source = uia_source(context, Some(uia), node_id, TextDetails::NONE)?;
     let named = text::fused::named(steps, first, earlier);
     let mut call = uia_call(context, node_id, &named);
     let window = super::asked::known_nearest_of(context, node_id);
@@ -561,7 +564,7 @@ pub(super) fn watch(
     let WatchWork::Check { word, last } = program.work;
     let is_uia = context.store.runtime_id_of(node_id).is_some();
     if let (Some(uia), true) = (uia, is_uia)
-        && let Ok(mut source) = uia_source(context, node_id, TextDetails::NONE)
+        && let Ok(mut source) = uia_source(context, Some(uia), node_id, TextDetails::NONE)
     {
         let later = program.batch.steps.get(1..).unwrap_or_default();
         let named: Vec<u64> = std::iter::once(wait.from.0)
@@ -596,7 +599,7 @@ pub(super) fn watch(
     let ask = text::check::CheckAsk { wait, word, last };
     let ran = if is_uia {
         on_uia_text(
-            context,
+            (context, uia),
             node_id,
             (TextDetails::NONE, &[wait.from.0]),
             |source, text| match text.held_read(wait.from) {
@@ -635,11 +638,11 @@ fn watch_outcome(
 /// UI Automation node `node_id`'s text, its reads fetching `details`:
 /// `Err` with the reply a node with no text, or gone, answers.
 pub(super) fn uia_text(
-    context: &RequestContext<'_>,
+    (context, uia): (&RequestContext<'_>, &verbatim_uia::Uia),
     node_id: NodeId,
     details: TextDetails,
 ) -> Result<UiaText, TextFailure> {
-    uia_source(context, node_id, details)
+    uia_source(context, Some(uia), node_id, details)
 }
 
 /// A focus's caret, read after its states (`books/dev/src/reference/crates/verbatim-core.md`, "Caret tells and Core's text facts"): the
@@ -659,16 +662,12 @@ pub(super) fn focus_caret(
         return verbatim_ia2::text::focus_caret(&EditFacts(context), node_id);
     }
     let read_at_us = context.observed_now();
-    let read =
-        on_uia_text(
-            context,
-            node_id,
-            (details, &[]),
-            |source, text| match text::InOneGo::in_one_go(source, uia, node_id) {
-                Ok(one_go) => text::held::read_focus(source, text, (one_go, read_at_us)),
-                Err(error) => Err(error),
-            },
-        );
+    let read = on_uia_text((context, uia), node_id, (details, &[]), |source, text| {
+        match text::InOneGo::in_one_go(source, uia, node_id) {
+            Ok(one_go) => text::held::read_focus(source, text, (one_go, read_at_us)),
+            Err(error) => Err(error),
+        }
+    });
     match read {
         Err(TextFailure::NoText) => FocusCaret::NoText,
         Err(_) | Ok(Err(_)) => FocusCaret::NotRead,

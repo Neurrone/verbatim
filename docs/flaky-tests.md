@@ -86,12 +86,12 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: the console host's change event for the typed `\` reached the listener about 250 ms late, and the output read was answered about 322 ms after the key, past the typing limit (`TYPED_LIMIT_MS`, 300 ms, in `crates/verbatim-text/src/terminal_reading.rs`). So the echo was taken as plain output and spoken with no symbol name. Every other key in the run was read within 6 ms.
   - Fix: none in Verbatim. The speech is the ruled behaviour (rule 20 of `books/dev/src/explanation/design/terminal-model.md`; Dickson kept the limit on 2026-11-27), so the failure is the runner's stall delaying the echo past the limit, a cause outside Verbatim, matched to the runner-stall entries above. The scenario is not loosened.
 
-## A focus followed before the outpost stores its element
+## A focus minted with no element, followed at once
 
 - `windows_terminal_marker_list` locally (run 3 of 3, 2026-11-27, at 085384bb)
   - How: as the terminal opened, before any key, "<title> terminal" was said for the second focus but its line, "blank", never was.
-  - Cause: Windows Terminal's second focus is a new element (node 4:6). The focus read reported it, and Core's `Follow` of it was answered not there after no UI Automation call, as was the terminal's first read: the outpost's store had no element for the node yet (`crates/verbatim-outpost/src/outpost/followed.rs` 80, `element_of`), which it held only about 2 ms later. So a node a focus read mints can be followed before the outpost keeps its element. The code before the terminal series behaves the same.
-  - Fix: the complete audit's root-cause stage, with its entry 13 (a focus minted with no element answering its reads gone), which share the cause; the scenario is not loosened.
+  - Cause: Windows Terminal's second focus is a new element (node 4:6). The completion's walk down its route did not find it and the application's focused element read for it was not taken (`outpost-spare-4.log`, request 13: a `NoRoute` read and no registration), so the node was minted with no element, its route kept. Core's `Follow` of it and the terminal's first read then took only the element the outpost keeps, and answered not there with no UI Automation call.
+  - Fix: built, not yet confirmed by the scenario's runs: every reader finds a node's element one way, kept or by its route (`crates/verbatim-outpost/src/outpost/store/element.rs`), `Follow` and text reads included, tested by focus_reports `a_focus_minted_without_its_element_is_followed_by_its_route`; the scenario is not loosened.
 
 ## A key pressed as a terminal flood ends
 

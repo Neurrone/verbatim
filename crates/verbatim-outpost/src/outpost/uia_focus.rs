@@ -24,6 +24,7 @@ use super::asked;
 use super::completion::{self, RouteKept, Unread};
 use super::focus::FocusNow;
 use super::read::{self, Client};
+use super::store::element;
 use super::window::hwnd_of;
 
 /// What a UI Automation `FocusRead` is of.
@@ -193,32 +194,23 @@ impl FocusResolve for UiaFocusRead<'_, '_> {
 
     fn dialog_element(&self, uia: &Uia, node: &NodeSnapshot) -> Option<Live> {
         // A dialog the focus listener read in the focus's chain, whose
-        // element this outpost does not hold, is found by its report's
-        // path.
-        if let Some(element) = self.context.store.element_of(node.id) {
-            return Some(element.resolve().ok()?.live().clone());
-        }
-        let Of::Route(_, kept) = &self.of else {
-            return None;
+        // element this outpost does not hold, is found by its route, its
+        // report's path too.
+        let kept = match &self.of {
+            Of::Route(_, kept) => Some(kept.borrow()),
+            Of::Focus => None,
         };
-        let kept = kept.borrow();
-        let runtime_id = self.context.store.runtime_id_of(node.id)?;
-        let route = self.context.route_in(&kept.as_ref()?.path, &runtime_id)?;
-        let remote = self.context.tries_remote(Some(route.window.get()));
-        let nodes = uia
-            .request::<Node>(crate::gates::node_gates(self.context.node_details()))
-            .ok()?;
-        let found = super::focus_path::find(uia, &route, &nodes, remote)
-            .0
-            .ok()??;
+        let path = kept
+            .as_ref()
+            .and_then(|kept| kept.as_ref())
+            .map(|kept| &kept.path);
+        let found = element::as_kept(self.context, Some(uia), path, node.id).ok()?;
         Some(found.live().clone())
     }
 
     fn held_element(&self, node: NodeId) -> Option<Live> {
         Some(
-            self.context
-                .store
-                .element_of(node)?
+            element::kept(&self.context.store, node)?
                 .resolve()
                 .ok()?
                 .live()
@@ -231,11 +223,18 @@ impl FocusResolve for UiaFocusRead<'_, '_> {
     }
 
     fn caret(&self, node: &NodeSnapshot) -> verbatim_model::request::FocusCaret {
-        if super::text_reads::may_have_text(self.context, node.id, node.role) {
+        if !super::text_reads::may_have_text(self.context, node.id, node.role) {
+            verbatim_model::request::FocusCaret::NoText
+        } else if self.context.store.runtime_id_of(node.id).is_some()
+            && element::kept(&self.context.store, node.id).is_none()
+        {
+            // A UI Automation focus this read did not find, its route's
+            // walk having just missed it: walking it again within the same
+            // read finds no more, so its text is not read.
+            verbatim_model::request::FocusCaret::NotRead
+        } else {
             let mut client = self.client.borrow_mut();
             super::text_reads::focus_caret(self.context, client.uia(), node.id, self.details)
-        } else {
-            verbatim_model::request::FocusCaret::NoText
         }
     }
 

@@ -1664,6 +1664,267 @@ fn a_button_no_route_finds_is_read_as_the_focused_element_and_followed() {
     app.quit();
 }
 
+/// The outpost's completion of the listener's read of `element`, made
+/// while mockapp holds its provider calls past UIA's transaction timeout,
+/// set to [`HELD_TIMEOUT_MS`]: the walk down the focus's route fails and
+/// the application's focused element is not read (the test's reader has
+/// none), so the focus is minted with no element, its route kept, as
+/// Windows Terminal's new terminal was in the flaky run
+/// (`docs/flaky-tests.md`, "A focus minted with no element, followed at
+/// once"). The usual timeout is restored and the call released once
+/// the completion has answered. The outpost must have read mockapp's
+/// window before, so the held call is a read's, not its connection's.
+fn minted_without_its_element(
+    app: &mut common::MockApp,
+    outpost: &OutpostUnderTest,
+    element: &Cached<ListenerEvent>,
+) -> Focused {
+    let (focus, _) = outpost.listener_focus(element);
+    let usual = transaction_timeout();
+    set_transaction_timeout(HELD_TIMEOUT_MS);
+    app.hold();
+    let (outcome, calls) = outpost.complete_focus(focus);
+    let held = app.held();
+    set_transaction_timeout(usual);
+    app.release();
+    assert!(!held.is_empty(), "mockapp held the completion's call");
+    Focused::of(outcome, calls)
+}
+
+/// The flaky focus's sequence: a focus minted with no element, its walk
+/// having failed, is followed at once, as Core's `Follow` follows its
+/// commit; its element is found by its route, so `Follow` registers it
+/// and its rename is told. Taking only the element the outpost keeps,
+/// `Follow` answered it not there and nothing was followed.
+fn a_focus_minted_without_its_element_is_followed_by_its_route() {
+    use verbatim_model::batch::{Done, StepOutcome};
+    use verbatim_model::request::{FollowGroup, Followed};
+    let title = common::unique_title("mockapp-minted-unfound-follow");
+    let mut app = common::spawn_visible("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus slider1");
+    let _ = outpost.uia_focus_answer(&client.focused());
+    app.send("set-focus btn1");
+    let button = client.focused();
+    let node = minted_without_its_element(&mut app, &outpost, &button).node();
+    let followed = outpost.requested(
+        hwnd,
+        common::outpost::follow(Some(Followed {
+            node,
+            group: FollowGroup::Base,
+            extra: None,
+        })),
+    );
+    assert_eq!(
+        common::outpost::only_step(followed.outcome),
+        StepOutcome::Done(Done::Follow)
+    );
+    assert_followed(&mut app, &outpost, "btn1", &button);
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A text field minted with no element, its walk having failed, has its
+/// caret and line read from the element its route finds, where taking only
+/// the element the outpost keeps answered it not there.
+fn a_text_focus_minted_without_its_element_reads_its_line_by_its_route() {
+    use verbatim_model::batch::{Batch, Done, Op, Place, Placement, Point, PointOf, Step};
+    use verbatim_model::batch::{StepOutcome, Subject};
+    use verbatim_model::{TextDetails, TextUnit};
+    let title = common::unique_title("mockapp-minted-unfound-text");
+    let mut app = common::spawn_visible("reuse_text.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus second");
+    let _ = outpost.uia_focus_answer(&client.focused());
+    app.send("set-focus first");
+    let first = client.focused();
+    let node = minted_without_its_element(&mut app, &outpost, &first).node();
+    let step = |op| Step { op, when: None };
+    let (answer, _) = outpost.batch(
+        hwnd,
+        verbatim_model::request::WindowVerdict::Uia,
+        Batch {
+            steps: vec![
+                step(Op::Caret {
+                    subject: Subject::Node(node),
+                    adopt: None,
+                }),
+                step(Op::ReadText {
+                    trim: false,
+                    whole: false,
+                    subject: Subject::Node(node),
+                    at: Point::Of(Place(0), PointOf::Caret),
+                    movement: None,
+                    unit: TextUnit::Line,
+                    count: 1,
+                    details: TextDetails::NONE,
+                }),
+            ],
+            placement: Placement::Queue,
+            spare: None,
+        },
+    );
+    let steps = match answer.outcome {
+        verbatim_model::request::Outcome::Result(verbatim_model::request::Reply::Steps(steps)) => {
+            steps
+        }
+        other => panic!("the read's steps, not {other:?}"),
+    };
+    match steps.as_slice() {
+        [
+            StepOutcome::Done(Done::Caret(_)),
+            StepOutcome::Done(Done::ReadText(read)),
+        ] => {
+            assert_eq!(read.chunks[0].text, "alpha line\n");
+        }
+        other => panic!("the caret and its line, not {other:?}"),
+    }
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A walk down from "Options", an ancestor the completion of the focus
+/// "First" minted from the listener's read with no element, runs from the
+/// element its route finds and reaches both items, where taking only the
+/// element the outpost keeps answered the list not there.
+fn a_walk_from_an_ancestor_minted_without_its_element_runs_by_its_route() {
+    use verbatim_model::batch::{
+        Batch, Done, MAX_DEPTH, Op, Placement, Step, StepOutcome, Subject, View, Walk,
+    };
+    let title = common::unique_title("mockapp-minted-ancestor-walk");
+    let mut app = common::spawn_visible("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item1");
+    let reported = outpost.uia_focus_answer(&client.focused());
+    let list = reported
+        .read
+        .ancestors
+        .iter()
+        .find(|ancestor| common::outpost::name_of(&ancestor.node) == Some("Options"))
+        .and_then(|ancestor| ancestor.node.read.node)
+        .expect("the focus's chain has the list");
+    let (answer, _) = outpost.batch(
+        hwnd,
+        verbatim_model::request::WindowVerdict::Uia,
+        Batch {
+            steps: vec![Step {
+                op: Op::Descendants {
+                    subject: Subject::Node(list),
+                    walk: Box::new(Walk {
+                        depth: MAX_DEPTH,
+                        view: View::Raw,
+                        matcher: None,
+                        prune: None,
+                        include_subject: false,
+                        limit: 1000,
+                        nodes: 1000,
+                        set: vec![PropertyId::Name],
+                    }),
+                },
+                when: None,
+            }],
+            placement: Placement::Queue,
+            spare: None,
+        },
+    );
+    let walked = match common::outpost::only_step(answer.outcome) {
+        StepOutcome::Done(Done::Descendants(walked)) => walked,
+        other => panic!("the walk's result, not {other:?}"),
+    };
+    let names: Vec<Option<PropertyValue>> = walked
+        .nodes
+        .iter()
+        .map(|descendant| {
+            descendant
+                .node
+                .values
+                .answer(PropertyId::Name)
+                .and_then(|answer| answer.value.clone())
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            Some(PropertyValue::Text("First".to_owned())),
+            Some(PropertyValue::Text("Second".to_owned()))
+        ]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A new focus in another window of the application, its registration
+/// added by its completion before Core's `Follow` names it, raises a name
+/// change: the tell carries the facts of its own window, mockapp's UIA
+/// child window, as NVDA judges a property change by its sender's nearest
+/// window, not those of the followed focus's window, the host's, by which
+/// Core would refuse it while the new focus's window is in front.
+fn a_change_on_a_new_focus_is_judged_by_its_own_window() {
+    use verbatim_model::batch::{Done, StepOutcome};
+    use verbatim_model::request::{FollowGroup, Followed};
+    use verbatim_model::tell::TellWindow;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let title = common::unique_title("mockapp-new-focus-own-window");
+    let mut app = common::spawn_visible("uia_island_beside.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    let client = Client::new(host);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus apply");
+    let apply = outpost.uia_focus_answer(&client.named("Apply")).node();
+    let followed = outpost.requested(
+        host,
+        common::outpost::follow(Some(Followed {
+            node: apply,
+            group: FollowGroup::Base,
+            extra: None,
+        })),
+    );
+    assert_eq!(
+        common::outpost::only_step(followed.outcome),
+        StepOutcome::Done(Done::Follow)
+    );
+    let uia = Uia::new().expect("a UIA client");
+    let ok = common::listener_focus(&uia, island.0 as isize);
+    let _ = outpost.uia_focus_answer(&ok);
+    app.send("island set-name ok Renamed");
+    match outpost.next() {
+        OutpostToCore::Tell(tell) => match (&tell.object, &tell.window) {
+            (EventObject::Followed { runtime_id }, TellWindow::Found(facts)) => assert_eq!(
+                (&runtime_id.0, facts.window.handle),
+                (&ok.runtime_id(), handle(island))
+            ),
+            other => panic!("the new focus's change with its window, not {other:?}"),
+        },
+        other => panic!("the outpost said {other:?}, not the new focus's change"),
+    }
+
+    drop(outpost);
+    app.quit();
+}
+
 /// An ancestor of the focus, whose element the outpost does not hold, is
 /// answered not there when the walk down the focus's route shows it gone:
 /// once mockapp has disconnected "Inner group", four levels below its
@@ -4137,6 +4398,22 @@ fn main() {
         (
             "a_button_no_route_finds_is_read_as_the_focused_element_and_followed",
             a_button_no_route_finds_is_read_as_the_focused_element_and_followed,
+        ),
+        (
+            "a_focus_minted_without_its_element_is_followed_by_its_route",
+            a_focus_minted_without_its_element_is_followed_by_its_route,
+        ),
+        (
+            "a_text_focus_minted_without_its_element_reads_its_line_by_its_route",
+            a_text_focus_minted_without_its_element_reads_its_line_by_its_route,
+        ),
+        (
+            "a_walk_from_an_ancestor_minted_without_its_element_runs_by_its_route",
+            a_walk_from_an_ancestor_minted_without_its_element_runs_by_its_route,
+        ),
+        (
+            "a_change_on_a_new_focus_is_judged_by_its_own_window",
+            a_change_on_a_new_focus_is_judged_by_its_own_window,
         ),
         (
             "a_route_walk_that_finds_its_element_gone_answers_gone",
