@@ -89,7 +89,7 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: both are time limits run out on the runner, the family above; neither test touches the change pushed. The `ci` job records no machine load, and it does not stop the Storage Service, which only the e2e job does.
   - Fix: the `ci` and `ci-arm64` jobs stop the Storage Service too (Dickson, 2026-11-27).
 
-- `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci` on x64 too (run 46010625495, the run above): UIA_E_TIMEOUT reading the form's window element, as below.
+- `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci` on x64 too (run 46010625495, the run above): UIA_E_TIMEOUT reading the form's window element, as below. Again in `ci-arm64` (run 46026551074, 2026-11-27, at 1e68b04f, HRESULT 0x80131505) with the Storage Service stopped. Fix: the test reads the form with `window_live` as soon as the program says "shown", before the Forms program's lazily loaded UI Automation provider has answered once; it is to wait for the window to answer UI Automation, as the e2e harness's `WaitForUiaAnswer` does, before it measures (queued after the probes build).
 
 - `mockapp::remote_ops::a_windows_forms_menu_item_is_checked_from_the_remote_read` in `ci-arm64` (run 45884584255, the `wpf_password` run's)
   - How: UIA_E_TIMEOUT from `window_live` on the compiled Forms program it had just started, after 14.7 s; it took 2.7 to 7.8 s in the 11 runs before.
