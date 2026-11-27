@@ -24,7 +24,7 @@ use windows::core::Interface;
 
 use verbatim_model::{CallKind, NodeSnapshot};
 
-use crate::com::init_mta;
+use crate::com::{CallFailure, init_mta};
 use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::Interning;
 use crate::shape::{
@@ -84,6 +84,18 @@ pub enum AncestorWalk {
     /// (`NVDAObjects/UIA/__init__.py` 2142 to 2145,
     /// `NVDAObjects/window/__init__.py` 287 to 293); 0 for none.
     Failed(FailedHop, isize),
+}
+
+/// What an activation did ([`Uia::activate`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Activation {
+    /// A pattern's method was called: with the action's name, "invoke"
+    /// for `Invoke` and none for the others.
+    Performed(Option<verbatim_model::ActionName>),
+    /// The element supports none of the three patterns, NVDA's
+    /// `NotImplementedError`, after which its review activate tries the
+    /// parent.
+    NoAction,
 }
 
 /// How a walk's step to a parent failed.
@@ -821,43 +833,41 @@ impl Uia {
 
     /// Activates `element`: tries `Invoke`, then `Toggle`, then selecting it
     /// (`SelectionItem`), in that order, NVDA's default action for a UIA
-    /// element. Answers the action's name as NVDA names it: "invoke" for
-    /// `Invoke`, none for the others. Each pattern is fetched live (`GetCurrentPatternAs`, not a
-    /// cached read), since activation is an infrequent, user-triggered
-    /// action rather than something a shape's request prefetches.
-    /// Cross-process; the outpost's worker only, guarded by the caller's
-    /// deadline.
+    /// element, going on to the next pattern only when the element does
+    /// not support one. Answers the action's name as NVDA names it:
+    /// "invoke" for `Invoke`, none for the others. Each pattern is fetched
+    /// live, since activation is an infrequent, user-triggered action
+    /// rather than something a shape's request prefetches. Cross-process;
+    /// the outpost's worker only, guarded by the caller's deadline.
     ///
     /// # Errors
     ///
-    /// Returns the COM error from whichever pattern fetch or invocation
-    /// failed, or a "not implemented" error if `element` exposes none of the
-    /// three patterns.
-    pub fn activate(
-        &self,
-        element: &IUIAutomationElement,
-    ) -> windows::core::Result<Option<verbatim_model::ActionName>> {
-        // Each pattern fetch fails (an error) when the pattern is
-        // unsupported.
-        if let Ok(pattern) =
-            element.current_pattern::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+    /// How a pattern's fetch or its call failed: the activation ends there,
+    /// nothing else tried, as NVDA's COM error from `GetCurrentPattern` or
+    /// the pattern's method ends its `doAction`
+    /// (`NVDAObjects/UIA/__init__.py` 1653 to 1656 and 2389 to 2402).
+    pub fn activate(&self, element: &IUIAutomationElement) -> Result<Activation, CallFailure> {
+        if let Some(pattern) =
+            element.current_pattern::<IUIAutomationInvokePattern>(UIA_InvokePatternId)?
         {
-            return invoke(&pattern).map(|()| Some(verbatim_model::ActionName::Invoke));
+            invoke(&pattern).map_err(CallFailure::of)?;
+            return Ok(Activation::Performed(Some(
+                verbatim_model::ActionName::Invoke,
+            )));
         }
-        if let Ok(pattern) =
-            element.current_pattern::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+        if let Some(pattern) =
+            element.current_pattern::<IUIAutomationTogglePattern>(UIA_TogglePatternId)?
         {
-            return toggle(&pattern).map(|()| None);
+            toggle(&pattern).map_err(CallFailure::of)?;
+            return Ok(Activation::Performed(None));
         }
-        if let Ok(pattern) =
-            element.current_pattern::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+        if let Some(pattern) = element
+            .current_pattern::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)?
         {
-            return select(&pattern).map(|()| None);
+            select(&pattern).map_err(CallFailure::of)?;
+            return Ok(Activation::Performed(None));
         }
-        Err(windows::core::Error::new(
-            windows::Win32::Foundation::E_NOTIMPL,
-            "element exposes no Invoke, Toggle, or SelectionItem pattern",
-        ))
+        Ok(Activation::NoAction)
     }
 }
 

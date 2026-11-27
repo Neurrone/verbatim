@@ -67,12 +67,12 @@ pub mod text;
 
 pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, FailedHop, UIA_CONNECTION_TIMEOUT, Uia, Visited,
-    release_mta_usage,
+    Activation, AncestorParts, AncestorStops, AncestorWalk, FailedHop, UIA_CONNECTION_TIMEOUT, Uia,
+    Visited, release_mta_usage,
 };
 pub use com::{
-    element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,
-    variant_element, variant_f64, variant_i32, variant_i32_array, variant_optional_bool,
+    CallFailure, element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id,
+    timed_out, variant_element, variant_f64, variant_i32, variant_i32_array, variant_optional_bool,
     variant_string,
 };
 pub use element::{ElementExt, WalkerExt, containing_grid, elements_of, runtime_id_key, table_id};

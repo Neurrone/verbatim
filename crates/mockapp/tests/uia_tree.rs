@@ -783,9 +783,10 @@ fn activation_calls(hwnd: windows::Win32::Foundation::HWND) -> Vec<(&'static str
 /// selecting the element, as NVDA's default action for a UIA element does
 /// (`docs/parity/review.md`): each pattern is asked for only when the one
 /// before is absent, the first present one is called once, and only
-/// `Invoke` has a name to say. An element with none of the three is
-/// refused (`activation.json`).
+/// `Invoke` has a name to say. An element with none of the three has no
+/// action (`activation.json`).
 fn uia_activation_invokes_then_toggles_then_selects() {
+    use verbatim_uia::Activation;
     common::init_com();
     let title = common::unique_title("mockapp-uia-activate");
     let app = common::spawn("activation.json", "uia", &title);
@@ -794,33 +795,31 @@ fn uia_activation_invokes_then_toggles_then_selects() {
     let cases = [
         (
             "Invoke, toggle or select",
-            Some(verbatim_model::ActionName::Invoke),
+            Activation::Performed(Some(verbatim_model::ActionName::Invoke)),
             vec![("GetPatternProvider", 1), ("Invoke", 1)],
         ),
         (
             "Toggle or select",
-            None,
+            Activation::Performed(None),
             vec![("GetPatternProvider", 2), ("Toggle", 1)],
         ),
         (
             "Select only",
-            None,
+            Activation::Performed(None),
             vec![("GetPatternProvider", 3), ("Select", 1)],
         ),
+        (
+            "Nothing to do",
+            Activation::NoAction,
+            vec![("GetPatternProvider", 3)],
+        ),
     ];
-    for (name, action, calls) in cases {
+    for (name, activation, calls) in cases {
         let element = common::named_element(&uia, hwnd, name);
         common::reset_hits(hwnd);
-        assert_eq!(uia.activate(&element).expect(name), action, "{name}");
+        assert_eq!(uia.activate(&element), Ok(activation), "{name}");
         assert_eq!(activation_calls(hwnd), calls, "{name}");
     }
-    let element = common::named_element(&uia, hwnd, "Nothing to do");
-    common::reset_hits(hwnd);
-    assert_eq!(
-        uia.activate(&element).map_err(|error| error.code()),
-        Err(windows::Win32::Foundation::E_NOTIMPL)
-    );
-    assert_eq!(activation_calls(hwnd), vec![("GetPatternProvider", 3)]);
     app.quit();
 }
 

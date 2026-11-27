@@ -3939,7 +3939,9 @@ fn edit_control_select_and_location_cost_exactly() {
 fn uia_notes(hwnd: HWND) -> UiaText {
     let under_test = UiaUnderTest::new(hwnd);
     let notes = under_test.element("Notes").clone();
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     UiaText::new(notes, pattern, false).details(Theme::builtin_default().reported().text)
 }
 

@@ -280,9 +280,29 @@ fn a_navigation_to_an_edit_field_reads_its_text_in_place_of_its_value() {
     );
 }
 
+/// An activation says its action's name, "Activate" for one with none, or
+/// "No action" when every object tried was there and none had one; one
+/// whose call failed, or found its object gone, says nothing, as NVDA's
+/// COM error from `doAction` ends its review activate, which catches only
+/// `NotImplementedError` (`nvda/source/globalCommands.py` 1887 to 1903),
+/// and so does a window not responding.
 #[test]
 fn an_activation_says_its_action_activate_or_no_action() {
+    let step = |outcome| WireOutcome::Result(Reply::Steps(vec![outcome]));
     for (outcome, said) in [
+        (
+            step(verbatim_model::batch::StepOutcome::Refused(
+                verbatim_model::batch::StepRefusal::Unsupported,
+            )),
+            vec!["Message(NoAction)"],
+        ),
+        (step(verbatim_model::batch::StepOutcome::Failed), vec![]),
+        (
+            step(verbatim_model::batch::StepOutcome::NotThere(
+                verbatim_model::batch::Missing::Node(node(2)),
+            )),
+            vec![],
+        ),
         (
             WireOutcome::Result(crate::entries::tests::activated(Some(ActionName::Named(
                 "press".to_owned(),
@@ -297,7 +317,7 @@ fn an_activation_says_its_action_activate_or_no_action() {
             WireOutcome::Result(crate::entries::tests::activated(None)),
             vec!["Message(Activate)"],
         ),
-        (WireOutcome::NotThere, vec!["Message(NoAction)"]),
+        (WireOutcome::NotThere, vec![]),
         (WireOutcome::NotResponding, vec![]),
     ] {
         let mut state = committed();

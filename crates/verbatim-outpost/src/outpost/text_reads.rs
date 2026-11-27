@@ -33,7 +33,7 @@ use windows::core::AgileReference;
 use verbatim_model::request::{FocusCaret, FocusCaretRead};
 use verbatim_model::{NodeId, Role, TextDetails, TextFailure};
 use verbatim_uia::map::is_terminal_class;
-use verbatim_uia::{Cached, Interning as _, Kept};
+use verbatim_uia::{Cached, CallFailure, Interning as _, Kept};
 
 use crate::text::uia::{TextSupport, UiaPos, UiaText};
 use crate::text::{self, NodeTextCopy, Slot, TextError};
@@ -271,17 +271,15 @@ fn uia_source(
     } else {
         {
             let fetched = match verbatim_uia::text::text_pattern(element.live().element()) {
-                Ok(text_pattern) => AgileReference::new(&text_pattern).ok(),
-                Err(error) if verbatim_uia::element_is_gone(&error) => {
-                    return Err(TextFailure::Gone);
-                }
+                Ok(Some(text_pattern)) => AgileReference::new(&text_pattern).ok(),
                 // An answer with no pattern: the element has none.
-                Err(error) if error.code().is_ok() => None,
+                Ok(None) => None,
+                Err(CallFailure::Gone(_)) => return Err(TextFailure::Gone),
                 // The provider did not answer, as one that is not ready yet
                 // while its application starts: nothing is kept, so the
                 // next read fetches again.
-                Err(error) => {
-                    tracing::debug!(%error, "the text pattern could not be fetched");
+                Err(failure @ (CallFailure::TimedOut(_) | CallFailure::Other(_))) => {
+                    tracing::debug!(%failure, "the text pattern could not be fetched");
                     return Err(TextFailure::Unanswered);
                 }
             };

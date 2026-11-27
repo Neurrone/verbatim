@@ -59,6 +59,54 @@ pub fn timed_out(error: &windows::core::Error) -> bool {
     error.code() == HRESULT(UIA_E_TIMEOUT.cast_signed())
 }
 
+/// How a call into an application failed, parsed once from its error, so
+/// that each caller decides what each failure means and none reads one as
+/// an answer, such as a missing pattern.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallFailure {
+    /// The provider did not answer within UIA's transaction timeout
+    /// ([`timed_out`]): it said nothing about what was asked.
+    TimedOut(windows::core::Error),
+    /// The element is gone ([`element_is_gone`]).
+    Gone(windows::core::Error),
+    /// Any other failure.
+    Other(windows::core::Error),
+}
+
+impl CallFailure {
+    /// The failure `error`, a failed call's, says.
+    pub(crate) fn of(error: windows::core::Error) -> Self {
+        if timed_out(&error) {
+            Self::TimedOut(error)
+        } else if element_is_gone(&error) {
+            Self::Gone(error)
+        } else {
+            Self::Other(error)
+        }
+    }
+}
+
+impl From<CallFailure> for windows::core::Error {
+    fn from(failure: CallFailure) -> Self {
+        match failure {
+            CallFailure::TimedOut(error) | CallFailure::Gone(error) | CallFailure::Other(error) => {
+                error
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for CallFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, error) = match self {
+            Self::TimedOut(error) => ("timed out", error),
+            Self::Gone(error) => ("element gone", error),
+            Self::Other(error) => ("failed", error),
+        };
+        write!(formatter, "{kind}: {error}")
+    }
+}
+
 /// Runs the body of the UIA event handler `handler`, catching a panic, which
 /// would otherwise abort the whole process at the COM boundary: a panic is
 /// logged and the event dropped, as the outpost's worker drops an entry

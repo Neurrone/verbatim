@@ -75,7 +75,9 @@ fn notes_element(hwnd: HWND) -> IUIAutomationElement {
 /// classically.
 fn uia_notes(hwnd: HWND, remote: bool) -> UiaText {
     let notes = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     UiaText::new(notes, pattern, false).remote(remote)
 }
 
@@ -685,7 +687,9 @@ fn remote_and_classic_text_reads_agree() {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
@@ -849,7 +853,9 @@ fn a_batch_in_several_languages_gives_each_line_its_own() {
     let mut app = common::spawn("languages.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
@@ -1404,7 +1410,9 @@ fn a_backward_move_is_counted_backward_both_ways() {
     let mut app = common::spawn("backward_moves.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),
@@ -1447,7 +1455,9 @@ fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
     let mut app = common::spawn("lines_clamp.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let element = notes_element(hwnd);
-    let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&element)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     let text = batch::Text {
         element: element.clone(),
         pattern: pattern.clone(),

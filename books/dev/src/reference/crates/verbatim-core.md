@@ -988,7 +988,9 @@ at its turn and makes its reads as the queue's requests, naming the
 object's window, so each holds the queue until its last answer.
 Report-object announces, spells, then copies on repeated presses; parent,
 sibling and first-child moves read the neighbour and announce it as the
-navigator; activate says what was done; to-focus snaps back; report focus
+navigator; activate says what was done, "No action" when every object
+tried was there and none had one, and nothing when a call failed or
+found an object gone; to-focus snaps back; report focus
 is "Verbatim+Tab", below. With no navigator a command says "No navigator
 object" (`navigator::no_navigator`). A review press is an event-queue
 entry too (`review_text::begin`), so it reads live and runs in press

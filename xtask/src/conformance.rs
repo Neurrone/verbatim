@@ -332,7 +332,10 @@ fn text_element(
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     };
-    let pattern = verbatim_uia::text::text_pattern(&element).map_err(error)?;
+    // The element was found by its text pattern's availability.
+    let pattern = verbatim_uia::text::text_pattern(&element)
+        .map_err(|failure| failure.to_string())?
+        .ok_or_else(|| "the terminal's text has no text pattern".to_owned())?;
     Ok((element, pattern))
 }
 

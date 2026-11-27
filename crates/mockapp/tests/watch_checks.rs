@@ -43,7 +43,9 @@ const NODE: NodeId = NodeId::new(1);
 fn uia_notes(hwnd: HWND, remote: bool) -> UiaText {
     let uia = Uia::new().expect("a UIA client");
     let notes = common::named_element(&uia, hwnd, "Notes");
-    let pattern = verbatim_uia::text::text_pattern(&notes).expect("a text pattern");
+    let pattern = verbatim_uia::text::text_pattern(&notes)
+        .expect("the text pattern's fetch")
+        .expect("a text pattern");
     UiaText::new(notes, pattern, false).remote(remote)
 }
 

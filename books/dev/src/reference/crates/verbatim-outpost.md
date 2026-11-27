@@ -1102,8 +1102,17 @@ taken before any call that can block. Each step runs under its gate
   the node, then up to 1,024
   parents (`ACTIVATION_PARENT_HOPS`), stopping at a node it has visited
   before, by runtime id or by an MSAA object's address where it was
-  acquired at it (`Store::address_of`), and answers "nothing activated"
-  past either.
+  acquired at it (`Store::address_of`). Each node answers a
+  `read::Activated`: done, no action (the walk goes on to the parent),
+  gone, or failed. A UIA element with none of the patterns has no
+  action, and a UIA fetch or call that failed otherwise than by the
+  element being gone ends the walk failed; an MSAA object's failed call
+  is no action, as NVDA's `IAccessible` turns it into
+  `NotImplementedError` (`docs/parity/review.md`, "Object activation").
+  The step answers `Refused(Unsupported)` when every node tried was
+  there and none had an action, `NotThere` for the node itself gone, and
+  `Failed` for a failed call or a parent gone; Core says nothing for the
+  last two.
 - `FocusRead` of an MSAA candidate (the MSAA arm): its object
   not at its address is not there; it reads it in full with its
   ancestors up to the first Core already knows.

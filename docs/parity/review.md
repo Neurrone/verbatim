@@ -458,12 +458,35 @@ then its name spoken, or "No action". Verbatim: **matched (unverified)**:
 an MSAA object's default action is spoken by its own name
 ("Press"), a UIA element's Invoke as "invoke", and an action with no
 name as "Activate"; a UIA element is activated by Invoke, then Toggle,
-then selecting it, NVDA's order. NVDA walks the parents with no cap;
-Verbatim's walk tries the object and up to 1,024 parents, a safety bound
-far above any real tree, and stops at an object it has visited before,
-by runtime id for UI Automation and by window, object id and child id
-for an MSAA object acquired at its address, answering "No action" in
-either case (Dickson, 2026-11-21; `docs/design/security-model.md`, U2).
+then selecting it, NVDA's order, going on to the next pattern, and then
+to the parent, only when the element does not support one. A UIA
+pattern fetch or call that fails every time it is made, a busy
+provider's timeout among them, or that finds the element or a parent
+gone, ends the activation with nothing performed and nothing said, as
+NVDA's COM error from `GetCurrentPattern` or the pattern's method leaves
+`doAction` and its review activate, which catches only
+`NotImplementedError` (`NVDAObjects/UIA/__init__.py` 1653 to 1656 and
+2389 to 2402, `globalCommands.py` 1887 to 1903); "No action" is said
+only when every object tried was there and none had an action. An MSAA
+object's failed call is no action, walked on from, as NVDA's
+`IAccessible.doAction` turns its COM error into `NotImplementedError`
+(`NVDAObjects/IAccessible/__init__.py` 1011 to 1027). NVDA walks the
+parents with no cap; Verbatim's walk tries the object and up to 1,024
+parents, a safety bound far above any real tree, and stops at an object
+it has visited before, by runtime id for UI Automation and by window,
+object id and child id for an MSAA object acquired at its address,
+answering "No action" in either case (Dickson, 2026-11-21;
+`docs/design/security-model.md`, U2).
+
+Pending (Claude, 2026-11-27): an Invoke fetch that times out once and
+then answers. NVDA says "invoke": `getActionName` fetches the pattern
+inside a bare `except` (`globalCommands.py` 1889 to 1892,
+`NVDAObjects/UIA/__init__.py` 2381 to 2386), a failed fetch is not
+cached (1653 to 1663), so `doAction` fetches it again (2389 to 2392),
+gets it and invokes. Verbatim says nothing and invokes nothing: it makes
+the one fetch, since NVDA's second fetch is incidental, two reads of an
+uncached pattern, and repeating a failed call would be a retry hiding
+the failure.
 NVDA first tries the review
 position's own activation, which the M4 text model brings.
 

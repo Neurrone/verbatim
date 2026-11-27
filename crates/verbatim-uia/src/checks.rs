@@ -114,7 +114,12 @@ pub fn held_console_reports_formatting(
             if out_of_time() {
                 return Ok(None);
             }
-            text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)?
+            // A text area without the pattern has no complete provider; a
+            // failed fetch is judged below as every failed call is.
+            match text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)? {
+                Some(pattern) => pattern,
+                None => return Ok(Some(false)),
+            }
         };
         if out_of_time() {
             return Ok(None);
@@ -153,9 +158,13 @@ fn text_area_under(
 
 /// Whether the console's text area `text_area` reports one visible range,
 /// and that range its font: its text pattern, its visible ranges and the
-/// first range's font, three calls.
+/// first range's font, three calls. A text area without the pattern has no
+/// complete provider.
 fn reports_formatting(text_area: &IUIAutomationElement) -> windows::core::Result<bool> {
-    formatting_of(&text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)?)
+    match text_area.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)? {
+        Some(pattern) => formatting_of(&pattern),
+        None => Ok(false),
+    }
 }
 
 /// [`reports_formatting`] from the text area's Text pattern `pattern`: its

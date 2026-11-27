@@ -23,7 +23,7 @@ use windows::core::{BSTR, Interface};
 use verbatim_model::CallKind;
 
 use crate::ElementExt;
-use crate::com::{take_f64_safearray, take_variant_safearray, variant_i32};
+use crate::com::{CallFailure, take_f64_safearray, take_variant_safearray, variant_i32};
 use verbatim_win32::calls::count;
 
 pub use windows::Win32::System::Variant::VARIANT;
@@ -61,16 +61,16 @@ pub fn uia_text_unit(unit: verbatim_model::TextUnit) -> Option<TextUnit> {
     })
 }
 
-/// An element's text pattern. One cross-process call. Its caret is read
-/// from its selection, as NVDA reads it, never from `TextPattern2`.
+/// An element's text pattern, `Ok(None)` when it has none. One
+/// cross-process call. Its caret is read from its selection, as NVDA reads
+/// it, never from `TextPattern2`.
 ///
 /// # Errors
 ///
-/// The COM error of the fetch when the element has no text pattern, or is
-/// gone.
+/// How the fetch failed ([`CallFailure`]).
 pub fn text_pattern(
     element: &IUIAutomationElement,
-) -> windows::core::Result<IUIAutomationTextPattern> {
+) -> Result<Option<IUIAutomationTextPattern>, CallFailure> {
     element.current_pattern::<IUIAutomationTextPattern>(UIA_TextPatternId)
 }
 

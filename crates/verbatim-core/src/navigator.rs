@@ -21,7 +21,7 @@ use verbatim_model::{
     TextUnit, TraceId, UtteranceSegment,
 };
 
-use crate::batch::{Single, flat};
+use crate::batch::{Got, Single, flat};
 use crate::editing::{self, NavigatorText};
 use crate::entries::Entries;
 use crate::event_queue::{Cx, OTHER_DUE_US, Outcome, Reader, RequestWindow};
@@ -227,7 +227,10 @@ pub(crate) async fn navigate(mut cx: Cx<Entries>, press: ReviewPress, kind: Quer
 /// Activate at its turn: the navigator object's default action, its
 /// outcome said. An activation stopped or refused because its window is
 /// hung, or no longer awaited, says nothing either way, since whether it
-/// happened is unknown; whatever it caused announces itself.
+/// happened is unknown; whatever it caused announces itself. One whose
+/// call failed, or found an object gone, says nothing, as NVDA's COM error
+/// ends its review activate (`docs/parity/review.md`, "Object
+/// activation").
 pub(crate) async fn activate(mut cx: Cx<Entries>, trace_id: TraceId) {
     let found = found(&cx.facts());
     let on = match found {
@@ -240,16 +243,38 @@ pub(crate) async fn activate(mut cx: Cx<Entries>, trace_id: TraceId) {
     let request = batch
         .finish()
         .of(Reader::Outpost(on.window.process), on.window)
-        .one(activated);
+        .judged(move |answers| {
+            Some(match answers.get(activated) {
+                Got::Done(action) => Activation::Done(action.clone()),
+                Got::Failed | Got::NotThere(_) => Activation::Failed,
+                Got::Refused(_) | Got::Skipped => Activation::NoAction,
+            })
+        });
     let due_us = cx.due_in(OTHER_DUE_US);
-    let said = match flat(cx.ask(request, due_us).await) {
-        Outcome::Result(action) => reduce::activation_completed(trace_id, true, action.as_ref()),
-        Outcome::NotResponding | Outcome::NoLongerAwaited(_) => return,
-        Outcome::Refused(_) | Outcome::NotThere | Outcome::ReaderEnded => {
+    let said = match cx.ask(request, due_us).await {
+        Outcome::Result(Activation::Done(action)) => {
+            reduce::activation_completed(trace_id, true, action.as_ref())
+        }
+        Outcome::Result(Activation::Failed)
+        | Outcome::NotThere
+        | Outcome::NotResponding
+        | Outcome::NoLongerAwaited(_) => return,
+        Outcome::Result(Activation::NoAction) | Outcome::Refused(_) | Outcome::ReaderEnded => {
             reduce::activation_completed(trace_id, false, None)
         }
     };
     emit_all(&mut cx, said);
+}
+
+/// What an activation's step answered.
+#[derive(Debug)]
+enum Activation {
+    /// Performed, with the action's name.
+    Done(Option<verbatim_model::ActionName>),
+    /// Every object tried was there and none had an action.
+    NoAction,
+    /// A call failed, or found an object gone.
+    Failed,
 }
 
 /// Report the current object at its turn: the navigator object read live,

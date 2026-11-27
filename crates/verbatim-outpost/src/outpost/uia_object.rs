@@ -522,16 +522,22 @@ pub(super) fn step(context: &RequestContext<'_>, uia: &Uia, node: NodeId, op: &O
 }
 
 /// Activates exactly the UI Automation node `node` through the executor's
-/// call arm, answering the action's name.
+/// call arm: no action for an element with none of the patterns, and a
+/// failure for a fetch or call that failed otherwise than by the element
+/// being gone.
 pub(super) fn activate(
     context: &RequestContext<'_>,
     uia: &Uia,
     node: NodeId,
-) -> Result<Option<verbatim_model::ActionName>, ReadError> {
+) -> super::read::Activated {
+    use super::read::Activated;
     use verbatim_uia_rops::batch::Found;
-    let request = context
-        .node_request(uia)
-        .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
+    let request = match context.node_request(uia) {
+        Ok(request) => request,
+        Err(error) => {
+            return Activated::Failed(format!("could not build a cache request: {error}"));
+        }
+    };
     let resolver = UiaNode::new(context, uia, node, &request);
     match run(
         context,
@@ -541,11 +547,12 @@ pub(super) fn activate(
             subject: Subject::Node(node),
         },
     ) {
-        Ran::Done(Found::Activate(action)) => Ok(action),
-        Ran::Unrun(Unrun::NotThere(_)) | Ran::Gone => Err(ReadError::Gone),
-        other => Err(ReadError::Failed(format!(
-            "UIA activation failed: {other:?}"
-        ))),
+        Ran::Done(Found::Activate(action)) => Activated::Done(action),
+        Ran::Unrun(Unrun::Refused(verbatim_model::batch::StepRefusal::Unsupported)) => {
+            Activated::NoAction
+        }
+        Ran::Unrun(Unrun::NotThere(_)) | Ran::Gone => Activated::Gone,
+        other => Activated::Failed(format!("UIA activation failed: {other:?}")),
     }
 }
 

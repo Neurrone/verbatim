@@ -37,7 +37,9 @@ pub struct Text {
 
 impl Text {
     pub fn of(element: IUIAutomationElement) -> Self {
-        let pattern = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+        let pattern = verbatim_uia::text::text_pattern(&element)
+            .expect("the text pattern's fetch")
+            .expect("a text pattern");
         Self {
             element,
             pattern,

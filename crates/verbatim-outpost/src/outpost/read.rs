@@ -1689,10 +1689,27 @@ pub(super) fn corrected_backend(
 /// `docs/design/security-model.md`, U2).
 const ACTIVATION_PARENT_HOPS: u32 = 1_024;
 
+/// What activating one node came to, or the walk up the parents from it.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Activated {
+    /// Performed, with the action's name.
+    Done(Option<ActionName>),
+    /// The node has no action, which the walk goes on from to its parent;
+    /// for the walk, no node it tried had one.
+    NoAction,
+    /// The node is gone.
+    Gone,
+    /// A call failed, why: the activation ends, nothing performed, as
+    /// NVDA's COM error ends its review activate
+    /// (`nvda/source/globalCommands.py` 1887 to 1903 catches only
+    /// `NotImplementedError`).
+    Failed(String),
+}
+
 /// What activation's walk up the parents calls, a seam for its tests.
 pub(super) trait ActivationWalk {
-    /// Activates exactly `node`, answering the action's name.
-    fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError>;
+    /// Activates exactly `node`.
+    fn activate(&mut self, node: NodeId) -> Activated;
     /// The parent of `node`, `None` when it has none or it cannot be read.
     fn parent(&mut self, node: NodeId) -> Option<NodeId>;
     /// What identifies `node`, `None` for a node with no identity.
@@ -1706,7 +1723,7 @@ pub(super) struct LiveActivation<'a, 'b> {
 }
 
 impl ActivationWalk for LiveActivation<'_, '_> {
-    fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError> {
+    fn activate(&mut self, node: NodeId) -> Activated {
         activate_one(self.context, self.client, node)
     }
     fn parent(&mut self, node: NodeId) -> Option<NodeId> {
@@ -1733,15 +1750,12 @@ impl ActivationWalk for LiveActivation<'_, '_> {
 /// ancestor that can be activated, as NVDA's review activate walks up the
 /// navigator object's parents until one performs an action, answering the
 /// action's name: the node, then up to [`ACTIVATION_PARENT_HOPS`] parents,
-/// stopping at a node it has visited before, where the tree loops. Each
+/// stopping at a node it has visited before, where the tree loops. Only a
+/// node with no action is walked on from: a failed call ends the walk. Each
 /// node is activated by its backend's executor, and each parent is a
 /// navigation step on the backend of the node it goes from.
-pub(super) fn activate_walk(
-    walk: &mut impl ActivationWalk,
-    node_id: NodeId,
-) -> Result<Option<ActionName>, ReadError> {
+pub(super) fn activate_walk(walk: &mut impl ActivationWalk, node_id: NodeId) -> Activated {
     let mut current = node_id;
-    let mut first_error = None;
     let mut visited = BTreeSet::new();
     for hop in 0..=ACTIVATION_PARENT_HOPS {
         if let Some(identity) = walk.visited(current)
@@ -1750,15 +1764,16 @@ pub(super) fn activate_walk(
             break;
         }
         match walk.activate(current) {
-            Ok(action) => return Ok(action),
+            Activated::NoAction => {}
             // A node that is gone has no parent to reach: a step to it
-            // would find the node, and walk its route, again.
-            Err(ReadError::Gone) => return Err(first_error.unwrap_or(ReadError::Gone)),
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+            // would find the node, and walk its route, again. A parent gone
+            // ends the walk as a failed call, as NVDA's COM error from a
+            // gone element's pattern fetch does; the node itself gone is
+            // not there.
+            Activated::Gone if hop > 0 => {
+                return Activated::Failed("a parent is gone".to_owned());
             }
+            ended @ (Activated::Done(_) | Activated::Gone | Activated::Failed(_)) => return ended,
         }
         // The last parent within the cap is not read past.
         if hop == ACTIVATION_PARENT_HOPS {
@@ -1769,19 +1784,15 @@ pub(super) fn activate_walk(
             None => break,
         }
     }
-    Err(first_error.unwrap_or_else(|| ReadError::Failed("nothing to activate".to_owned())))
+    Activated::NoAction
 }
 
-/// Activates exactly `node_id`, answering the action's name.
-fn activate_one(
-    context: &RequestContext<'_>,
-    client: &mut Client,
-    node_id: NodeId,
-) -> Result<Option<ActionName>, ReadError> {
+/// Activates exactly `node_id`.
+fn activate_one(context: &RequestContext<'_>, client: &mut Client, node_id: NodeId) -> Activated {
     if context.store.runtime_id_of(node_id).is_some() {
-        let uia = client
-            .uia()
-            .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
+        let Some(uia) = client.uia() else {
+            return Activated::Failed("could not create a UIA client".to_owned());
+        };
         return super::uia_object::activate(context, uia, node_id);
     }
     super::msaa_object::activate(context, client, node_id)
@@ -1791,13 +1802,15 @@ fn activate_one(
 mod activation_tests {
     use verbatim_model::{ActionName, NodeId};
 
-    use super::{ACTIVATION_PARENT_HOPS, ActivationWalk, Identity, ReadError, activate_walk};
+    use super::{ACTIVATION_PARENT_HOPS, Activated, ActivationWalk, Identity, activate_walk};
 
     /// A chain of parents above node 0, node `n`'s parent `n + 1`, whose
-    /// node `action` alone activates; `identity` names each node's
-    /// identity.
+    /// node `action` alone activates, and whose node `ends`, when there is
+    /// one, ends the walk as `ending` makes it; every other node has no
+    /// action. `identity` names each node's identity.
     struct Chain {
         action: u64,
+        ends: Option<(u64, fn() -> Activated)>,
         identity: fn(u64) -> Option<Identity>,
         tried: Vec<u64>,
         /// How many parents were read.
@@ -1805,12 +1818,12 @@ mod activation_tests {
     }
 
     impl ActivationWalk for Chain {
-        fn activate(&mut self, node: NodeId) -> Result<Option<ActionName>, ReadError> {
+        fn activate(&mut self, node: NodeId) -> Activated {
             self.tried.push(node.number());
-            if node.number() == self.action {
-                Ok(Some(ActionName::Invoke))
-            } else {
-                Err(ReadError::Failed("no action".to_owned()))
+            match self.ends {
+                Some((ends, ending)) if ends == node.number() => ending(),
+                _ if node.number() == self.action => Activated::Done(Some(ActionName::Invoke)),
+                _ => Activated::NoAction,
             }
         }
         fn parent(&mut self, node: NodeId) -> Option<NodeId> {
@@ -1825,6 +1838,7 @@ mod activation_tests {
     fn chain(action: u64, identity: fn(u64) -> Option<Identity>) -> Chain {
         Chain {
             action,
+            ends: None,
             identity,
             tried: Vec::new(),
             parents: 0,
@@ -1847,23 +1861,23 @@ mod activation_tests {
     fn an_action_12_parents_up_is_performed() {
         let mut walk = chain(12, unique);
         assert_eq!(
-            activate_walk(&mut walk, NodeId::new(0)).ok(),
-            Some(Some(ActionName::Invoke))
+            activate_walk(&mut walk, NodeId::new(0)),
+            Activated::Done(Some(ActionName::Invoke))
         );
         assert_eq!(walk.tried, (0..=12).collect::<Vec<_>>());
     }
 
     /// An action one parent past the cap of 1,024 is not reached: the walk
     /// tries the node and 1,024 parents, reading no parent past them, then
-    /// answers its first failure (Dickson, 2026-11-21).
+    /// answers that no node had an action (Dickson, 2026-11-21).
     #[test]
     fn an_action_past_the_cap_is_not_reached() {
         let hops = u64::from(ACTIVATION_PARENT_HOPS);
         let mut walk = chain(hops + 1, unique);
-        assert!(matches!(
+        assert_eq!(
             activate_walk(&mut walk, NodeId::new(0)),
-            Err(ReadError::Failed(reason)) if reason == "no action"
-        ));
+            Activated::NoAction
+        );
         assert_eq!(walk.tried.last(), Some(&hops));
         assert_eq!(walk.tried.len(), usize::try_from(hops + 1).expect("small"));
         assert_eq!(walk.parents, hops);
@@ -1880,7 +1894,10 @@ mod activation_tests {
                 child: i32::try_from(node % 3).expect("small"),
             })
         });
-        assert!(activate_walk(&mut walk, NodeId::new(0)).is_err());
+        assert_eq!(
+            activate_walk(&mut walk, NodeId::new(0)),
+            Activated::NoAction
+        );
         assert_eq!(walk.tried, [0, 1, 2]);
     }
 
@@ -1890,9 +1907,44 @@ mod activation_tests {
     fn nodes_with_no_identity_are_walked_up_to_the_cap() {
         let hops = u64::from(ACTIVATION_PARENT_HOPS);
         let mut walk = chain(hops + 1, |_| None);
-        assert!(activate_walk(&mut walk, NodeId::new(0)).is_err());
+        assert_eq!(
+            activate_walk(&mut walk, NodeId::new(0)),
+            Activated::NoAction
+        );
         assert_eq!(walk.tried, (0..=hops).collect::<Vec<_>>());
         assert_eq!(walk.parents, hops);
+    }
+
+    /// A parent whose call failed ends the walk with the failure, reading
+    /// no parent above it and performing the action above it nothing, as
+    /// NVDA's review activate catches only `NotImplementedError`
+    /// (`nvda/source/globalCommands.py` 1887 to 1903), so a COM error from
+    /// `doAction` ends it.
+    #[test]
+    fn a_failed_call_ends_the_walk() {
+        let mut walk = chain(5, unique);
+        walk.ends = Some((2, || Activated::Failed("timed out".to_owned())));
+        assert_eq!(
+            activate_walk(&mut walk, NodeId::new(0)),
+            Activated::Failed("timed out".to_owned())
+        );
+        assert_eq!((walk.tried, walk.parents), (vec![0, 1, 2], 2));
+    }
+
+    /// The node itself gone is not there; a parent gone ends the walk as a
+    /// failure, its own parent unread, as NVDA's COM error from a gone
+    /// element ends its review activate with nothing said.
+    #[test]
+    fn a_gone_node_ends_the_walk() {
+        for (gone, answered, parents) in [
+            (0, Activated::Gone, 0),
+            (2, Activated::Failed("a parent is gone".to_owned()), 2),
+        ] {
+            let mut walk = chain(5, unique);
+            walk.ends = Some((gone, || Activated::Gone));
+            assert_eq!(activate_walk(&mut walk, NodeId::new(0)), answered, "{gone}");
+            assert_eq!(walk.parents, parents, "{gone}");
+        }
     }
 }
 

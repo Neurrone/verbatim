@@ -371,8 +371,123 @@ fn a_failed_controller_for_read_is_a_failed_step() {
     app.quit();
 }
 
+/// An activation whose `Invoke` pattern fetch times out, through a real
+/// outpost, on `activation.json`'s element that has `Invoke`, `Toggle` and
+/// `SelectionItem`: the step fails, and neither the next pattern nor a
+/// parent is tried; mockapp sees no pattern asked for and nothing toggled
+/// or selected. The next activation, with the provider answering, invokes
+/// it. NVDA matches this for a fetch that fails every time: its COM error
+/// from `GetCurrentPattern` ends its review activate
+/// (`NVDAObjects/UIA/__init__.py` 1653 to 1656 and 2389 to 2402,
+/// `globalCommands.py` 1887 to 1903). A fetch that fails once and then
+/// answers is a difference pending Dickson's ruling: NVDA fetches the
+/// uncached pattern again in `doAction` and invokes, where Verbatim makes
+/// the one fetch (`docs/parity/review.md`, "Object activation").
+fn an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else() {
+    use verbatim_model::batch::{Batch, Done, Op, Placement, Step, StepOutcome, Subject};
+    use verbatim_model::request::{Reply, WindowVerdict};
+    use windows::Win32::UI::Accessibility::UIA_InvokePatternId;
+
+    common::init_com();
+    let title = common::unique_title("mockapp-activate-timed-out");
+    let mut app = common::spawn("activation.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    app.send("set-focus all_three");
+    let uia = Uia::new().expect("a UIA client");
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.read_focus_as(
+        common::listener_focus(&uia, hwnd.0 as isize)
+            .live()
+            .element(),
+    );
+    let only = |outcome| match outcome {
+        Outcome::Result(Reply::Steps(steps)) if steps.len() == 1 => {
+            steps.into_iter().next().expect("one step")
+        }
+        other => panic!("one step's outcome, not {other:?}"),
+    };
+    let node = match only(
+        outpost
+            .batch(
+                hwnd,
+                WindowVerdict::Uia,
+                Batch {
+                    steps: vec![Step {
+                        op: Op::FocusRead {
+                            subject: Subject::Focus,
+                            known: Vec::new(),
+                            set: common::outpost::focus_set(),
+                            details: verbatim_model::TextDetails::NONE,
+                        },
+                        when: None,
+                    }],
+                    placement: Placement::Queue,
+                    spare: None,
+                },
+            )
+            .0
+            .outcome,
+    ) {
+        StepOutcome::Done(Done::FocusRead(read)) => read.focus.read.node.expect("a node"),
+        other => panic!("the focus read: {other:?}"),
+    };
+    let activation_calls = || {
+        common::read_hits(hwnd)
+            .into_iter()
+            .filter(|(method, _)| {
+                matches!(
+                    *method,
+                    "GetPatternProvider" | "Invoke" | "Toggle" | "Select"
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let activate = || {
+        only(
+            outpost
+                .batch(hwnd, WindowVerdict::Uia, common::outpost::activate(node))
+                .0
+                .outcome,
+        )
+    };
+
+    let timeout = verbatim_faults::arm(
+        Fault::PatternFetchTimesOut,
+        |pattern: &i32| *pattern == UIA_InvokePatternId.0,
+        1,
+    );
+    // The element's fill before its activation asks mockapp for the
+    // patterns the node's cache request holds, 11 of them; each live fetch
+    // that reaches mockapp asks for one more.
+    common::reset_hits(hwnd);
+    assert_eq!(activate(), StepOutcome::Failed, "the activation failed");
+    assert_eq!(
+        activation_calls(),
+        vec![("GetPatternProvider", 11)],
+        "no other pattern asked for, nothing toggled or selected"
+    );
+    drop(timeout);
+
+    common::reset_hits(hwnd);
+    assert_eq!(
+        activate(),
+        StepOutcome::Done(Done::Activate(Some(verbatim_model::ActionName::Invoke))),
+        "answering, the element is invoked"
+    );
+    assert_eq!(
+        activation_calls(),
+        vec![("GetPatternProvider", 12), ("Invoke", 1)]
+    );
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else",
+            an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else,
+        ),
         (
             "a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next",
             a_first_worker_that_cannot_start_answers_its_program_and_starts_with_the_next,

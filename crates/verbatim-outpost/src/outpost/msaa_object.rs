@@ -181,24 +181,32 @@ pub(super) fn window(
     }
 }
 
-/// Activates exactly the MSAA node `node` through the executor, answering
-/// the action's name.
+/// Activates exactly the MSAA node `node` through the executor. A failed
+/// call is no action, which the walk goes on from to the parent, unless
+/// the object is gone, as NVDA's `doAction` turns an MSAA object's COM
+/// error into `NotImplementedError` (`NVDAObjects/IAccessible/__init__.py`
+/// 1011 to 1027).
 pub(super) fn activate(
     context: &RequestContext<'_>,
     client: &mut Client,
     node: NodeId,
-) -> Result<Option<verbatim_model::ActionName>, ReadError> {
+) -> super::read::Activated {
+    use super::read::Activated;
     let resolver = MsaaNodes::new(context, client);
     let op = Op::Activate {
         subject: verbatim_model::batch::Subject::Node(node),
     };
     match verbatim_ia2::batch::run(&op, Object::Node(node), &resolver) {
-        Ok(Found::Activate(action)) => Ok(action),
-        Ok(other) => Err(ReadError::Failed(format!(
-            "an activation answered {other:?}"
-        ))),
-        Err(Unrun::Failed(error)) => Err(ReadError::from(error)),
-        Err(Unrun::Unsupported) => Err(ReadError::Failed("nothing to activate".to_owned())),
+        Ok(Found::Activate(action)) => Activated::Done(action),
+        Ok(other) => Activated::Failed(format!("an activation answered {other:?}")),
+        Err(Unrun::Failed(error)) => match ReadError::from(error) {
+            ReadError::Gone => Activated::Gone,
+            ReadError::Failed(reason) => {
+                tracing::debug!(reason, "an MSAA activation failed");
+                Activated::NoAction
+            }
+        },
+        Err(Unrun::Unsupported) => Activated::NoAction,
     }
 }
 

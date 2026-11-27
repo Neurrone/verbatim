@@ -89,6 +89,11 @@ pub enum Fault {
     /// `terminal_colours::go_on_remote`). Subject: how many rows were read
     /// before it, a `usize`.
     ColourProgramFails,
+    /// A live fetch of an element's control pattern ends at UI
+    /// Automation's transaction timeout, `UIA_E_TIMEOUT`, as a busy
+    /// provider's does (`verbatim-uia`'s `ElementExt::current_pattern`).
+    /// Subject: the pattern's id, an `i32`.
+    PatternFetchTimesOut,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

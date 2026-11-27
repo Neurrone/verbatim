@@ -122,9 +122,13 @@ call waits up to `UIA_CONNECTION_TIMEOUT` to connect and
   is an error, never "nothing selected". `selected_node(container,
   request, registry)` reads the item as a `Node` snapshot.
 - `activate`: NVDA's activation ladder, `Invoke`, then `Toggle`, then
-  `SelectionItem`'s select, answering `ActionName::Invoke` for an Invoke
-  and no name otherwise; each pattern fetched live, since activation is
-  infrequent.
+  `SelectionItem`'s select, each pattern fetched live, since activation
+  is infrequent, and the next tried only when the element does not
+  support one. Answers an `Activation`: `Performed` with
+  `ActionName::Invoke` for an Invoke and no name otherwise, or `NoAction`
+  for an element with none of the three; a fetch or call that fails is
+  its `CallFailure`, nothing else tried, as NVDA's COM error ends its
+  `doAction`.
 - `compare_elements`: UIA's `CompareElements`, counted as one call, for
   the focus listener's log of whether two focus senders are one element.
 - `raw_view_walker`, `control_view_walker`, `root_element`, and
@@ -287,6 +291,13 @@ safe to call.
   `has_keyboard_focus`, `build_updated_cache`, `current_pattern`,
   `controller_for`, `find_first`, `find_first_build_cache`), each counted
   as one UIA call; no cached read, since the shapes make every one.
+  `current_pattern` is the crate's one live pattern fetch, and answers
+  `Result<Option<T>, CallFailure>`: `Ok(None)` for a pattern the element
+  does not support (UIA's null pointer), and `CallFailure` for a fetch
+  that failed, `TimedOut` (`UIA_E_TIMEOUT`), `Gone` (`element_is_gone`)
+  or `Other`, so no caller reads a failed fetch as a missing pattern. A
+  test makes a fetch time out at the fault point `PatternFetchTimesOut`
+  ([verbatim-faults](verbatim-faults.md)).
 - `WalkerExt`, on `IUIAutomationTreeWalker`: `parent`, `next_sibling`,
   `previous_sibling`, `first_child`, and `normalize`, each built with a
   cache and counted.
@@ -299,6 +310,8 @@ safe to call.
   UIA's element not available or a disconnected provider;
   `timed_out(error)` is a call that ended at the transaction timeout
   (`UIA_E_TIMEOUT`), which says nothing about what was asked.
+  `CallFailure` is a failed call's error parsed once by those two tests
+  into `TimedOut`, `Gone` or `Other`, each carrying the error.
 
 The pattern methods the crate calls are crate-private wrappers of the
 same kind. `unsafe` remains only in the wrapper module (`element.rs`),
@@ -315,7 +328,8 @@ reads with. Every method is a cross-process call, counted once: a text
 range is a provider object in the application, so even copying one is a
 round trip.
 
-- `text_pattern(element)` fetches a node's `TextPattern`, one call: its
+- `text_pattern(element)` fetches a node's `TextPattern`, one call,
+  `Ok(None)` for none and a `CallFailure` for a failed fetch: its
   caret is read from its selection, as NVDA reads it, never from
   `TextPattern2`; `TextPatternExt` has `selection` and `document_range`.
 - `TextRangeExt` on a range: `clone_range`, `compare_endpoints`,

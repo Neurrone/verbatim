@@ -29,7 +29,7 @@ use windows::core::Interface;
 
 use verbatim_model::{CallKind, TableId};
 
-use crate::com::{runtime_id, variant_element, variant_i32};
+use crate::com::{CallFailure, runtime_id, variant_element, variant_i32};
 use verbatim_win32::calls::count;
 
 /// Safe live reads and calls on a UIA element ([`IUIAutomationElement`]),
@@ -91,13 +91,18 @@ pub trait ElementExt {
     ) -> windows::core::Result<IUIAutomationElement>;
 
     /// The element's control pattern `pattern` as the interface `T`, fetched
-    /// live. Cross-process.
+    /// live: `Ok(None)` when the element does not support it. The only
+    /// live pattern fetch, so that no caller reads a failed fetch as a
+    /// missing pattern. Cross-process.
     ///
     /// # Errors
     ///
-    /// The COM error if the element does not support the pattern or the
-    /// provider fails.
-    fn current_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> windows::core::Result<T>;
+    /// How the fetch failed: the provider timed out, the element is gone,
+    /// or another failure.
+    fn current_pattern<T: Interface>(
+        &self,
+        pattern: UIA_PATTERN_ID,
+    ) -> Result<Option<T>, CallFailure>;
 
     /// The elements the element names in its `ControllerFor` relation, read
     /// live. Cross-process.
@@ -175,6 +180,19 @@ pub fn containing_grid(element: &IUIAutomationElement) -> Option<TableId> {
     }
 }
 
+/// Whether a test made the fetch of `pattern` end at UIA's transaction
+/// timeout (`verbatim_faults::Fault::PatternFetchTimesOut`); never in a
+/// build without fault points.
+fn fetch_times_out(pattern: UIA_PATTERN_ID) -> bool {
+    #[cfg(any(test, feature = "faults"))]
+    return verbatim_faults::hit(verbatim_faults::Fault::PatternFetchTimesOut, &pattern.0);
+    #[cfg(not(any(test, feature = "faults")))]
+    {
+        let _ = pattern;
+        false
+    }
+}
+
 /// No match is a null element, which `windows` reports as an error carrying
 /// no failure code.
 fn found(
@@ -237,11 +255,29 @@ impl ElementExt for IUIAutomationElement {
         unsafe { self.BuildUpdatedCache(cache) }
     }
 
-    fn current_pattern<T: Interface>(&self, pattern: UIA_PATTERN_ID) -> windows::core::Result<T> {
-        count(CallKind::Uia)?;
-        // SAFETY: `self` is a live element; the pattern object is queried
-        // for `T`'s own interface id, so the returned value is a `T`.
-        unsafe { self.GetCurrentPatternAs::<T>(pattern) }
+    fn current_pattern<T: Interface>(
+        &self,
+        pattern: UIA_PATTERN_ID,
+    ) -> Result<Option<T>, CallFailure> {
+        count(CallKind::Uia).map_err(|error| CallFailure::of(error.into()))?;
+        let fetched = if fetch_times_out(pattern) {
+            Err(windows::core::Error::from(windows::core::HRESULT(
+                windows::Win32::UI::Accessibility::UIA_E_TIMEOUT.cast_signed(),
+            )))
+        } else {
+            // SAFETY: `self` is a live element; the pattern object is
+            // queried for `T`'s own interface id, so the returned value is
+            // a `T`.
+            unsafe { self.GetCurrentPatternAs::<T>(pattern) }
+        };
+        match fetched {
+            Ok(fetched) => Ok(Some(fetched)),
+            // A pattern the element does not support is answered with a
+            // null pointer, which `windows` reports as an error carrying no
+            // failure code.
+            Err(error) if error.code().is_ok() => Ok(None),
+            Err(error) => Err(CallFailure::of(error)),
+        }
     }
 
     fn controller_for(&self) -> windows::core::Result<Vec<IUIAutomationElement>> {

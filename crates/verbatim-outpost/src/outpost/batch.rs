@@ -649,15 +649,10 @@ impl Run<'_, '_> {
             Ok(Held::Node(node)) if context.store.runtime_id_of(*node).is_none() => {
                 let node = *node;
                 Some(match op {
-                    Op::Activate { .. } => {
-                        match read::activate_walk(
-                            &mut read::LiveActivation { context, client },
-                            node,
-                        ) {
-                            Ok(action) => StepOutcome::Done(Done::Activate(action)),
-                            Err(error) => failed(&error, node),
-                        }
-                    }
+                    Op::Activate { .. } => activation_outcome(
+                        read::activate_walk(&mut read::LiveActivation { context, client }, node),
+                        node,
+                    ),
                     op => super::msaa_object::step(
                         context,
                         client,
@@ -694,16 +689,16 @@ impl Run<'_, '_> {
     /// ([`read::activate_walk`]).
     fn activate(&mut self, node: NodeId) -> StepOutcome {
         let context = self.context;
-        match read::activate_walk(
-            &mut read::LiveActivation {
-                context,
-                client: self.client,
-            },
+        activation_outcome(
+            read::activate_walk(
+                &mut read::LiveActivation {
+                    context,
+                    client: self.client,
+                },
+                node,
+            ),
             node,
-        ) {
-            Ok(action) => StepOutcome::Done(Done::Activate(action)),
-            Err(error) => failed(&error, node),
-        }
+        )
     }
 
     /// `Follow` through the executor's call arm: the registration moved to
@@ -1234,6 +1229,22 @@ fn failed(error: &ReadError, node: NodeId) -> StepOutcome {
         ReadError::Gone => StepOutcome::NotThere(Missing::Node(node)),
         ReadError::Failed(reason) => {
             tracing::debug!(reason, "a batch step's read failed");
+            StepOutcome::Failed
+        }
+    }
+}
+
+/// The outcome of node `node`'s activation that walked up to `activated`:
+/// refused as unsupported when every node tried was there and none had an
+/// action, not there for the node itself gone, and failed when a call
+/// failed or found a parent gone.
+fn activation_outcome(activated: read::Activated, node: NodeId) -> StepOutcome {
+    match activated {
+        read::Activated::Done(action) => StepOutcome::Done(Done::Activate(action)),
+        read::Activated::NoAction => StepOutcome::Refused(StepRefusal::Unsupported),
+        read::Activated::Gone => StepOutcome::NotThere(Missing::Node(node)),
+        read::Activated::Failed(reason) => {
+            tracing::debug!(reason, "an activation failed");
             StepOutcome::Failed
         }
     }

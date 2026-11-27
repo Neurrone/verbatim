@@ -10,7 +10,9 @@ use verbatim_model::batch::{Place, Subject};
 use verbatim_model::matcher::Matcher;
 use verbatim_model::property::{PropertyAnswer, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::{StateSet, TableId, WindowHandle};
-use verbatim_uia::{Cached, ComboBoxRefresh, Node, SuggestionsRefresh, Uia, Ungated};
+use verbatim_uia::{
+    Activation, Cached, CallFailure, ComboBoxRefresh, Node, SuggestionsRefresh, Uia, Ungated,
+};
 
 use super::{Defect, Found, Ran, Resolve, Segment, failed};
 
@@ -426,17 +428,28 @@ pub(super) fn is_one_of(
 }
 
 /// `Activate`'s call arm: exactly the subject activated, its element
-/// filled first, answering the action's name. A failed activation is a
-/// failure, whatever its cause, which the dispatcher's walk up the parents
-/// goes on from.
+/// filled first, answering the action's name. An element with none of the
+/// patterns is refused as unsupported, which the dispatcher's walk up the
+/// parents goes on from; a failed fetch or call is a failure by its cause,
+/// which ends the walk.
 pub(super) fn activate(
     uia: &Uia,
     resolver: &dyn Resolve,
     (subject, place): (&Subject, Place),
 ) -> Result<Option<verbatim_model::ActionName>, Ran> {
     let node = resolver.filled(subject, place)?;
-    uia.activate(node.live().element()).map_err(|error| {
-        tracing::debug!(%error, "UIA activation failed");
-        Ran::Failed
-    })
+    match uia.activate(node.live().element()) {
+        Ok(Activation::Performed(action)) => Ok(action),
+        Ok(Activation::NoAction) => Err(Ran::Unrun(super::Unrun::Refused(
+            verbatim_model::batch::StepRefusal::Unsupported,
+        ))),
+        Err(failure) => {
+            tracing::debug!(%failure, "UIA activation failed");
+            Err(match failure {
+                CallFailure::TimedOut(_) => Ran::TimedOut,
+                CallFailure::Gone(_) => Ran::Gone,
+                CallFailure::Other(_) => Ran::Failed,
+            })
+        }
+    }
 }
