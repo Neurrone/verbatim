@@ -393,7 +393,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(quit_inside_a_file_dialog, Refused("it quits Verbatim inside a file dialog Verbatim opened")),
     suite!(speak_time_and_date, Runs),
     suite!(toast, Runs)
-        .local_only("No reason was recorded when it was added, and it has never run on GitHub's runner; a dispatched run of it there gives one, or lets it run there (`docs/flaky-tests.md`)."),
+        .local_only("The runner's Windows Server shell shows no toast: PowerShell's call to show it succeeds, but no toast window opens and none is on screen, in 5 of 5 dispatched runs (run 45920531476). It runs there again once a runner image shows toasts (`docs/flaky-tests.md`)."),
     suite!(msaa_flood_then_focus, Refused("nvda/source/IAccessibleHandler/orderedWinEventLimiter.py 10-120: NVDA keeps at most 10 of a thread's events, and a capture records no flood")),
     suite!(stale_focus_behind_a_caret_key, Runs),
     suite!(read_only_field_typing, Runs),
@@ -411,8 +411,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!(owned_dialog_across_processes, Runs),
     suite!(lock_key_announcements, Runs),
     suite!(quick_link_menu, Runs),
-    suite!(explorer_folder_window, Runs)
-        .local_only("On GitHub's runner its new explorer.exe window sometimes stops responding, with dwm.exe's window thread blocked too (run 44344991044); the cause is not named, and the harness does not wait for the Desktop Window Manager (Dickson, 2026-10-26). It runs there again once a wait chain names what Explorer's thread waits on and Verbatim's part, if any, is fixed, or Dickson rules to keep it there (`docs/flaky-tests.md`)."),
+    suite!(explorer_folder_window, Runs),
     suite!(settings_dialog_keys, Refused(OWN_GUI)),
     suite!(settings_combo_box_expanded, Runs)
         .local_only("The runner's Date and time page opens with its focus on its location settings link, not the Region button. It runs there again once the runner's Settings opens it on the Region button."),
@@ -429,8 +428,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("notepad_caret_keys", caret_keys::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(caret_keys::document),
-    suite!("text_box_caret_keys", caret_keys::{text_box_setup, text_box_body, teardown}, Runs)
-        .local_only("On GitHub's runner the outpost releases a caret key's starting anchor before Core commits it, so the reads after a paste answer not there and the line is never said (runs 44514942878 and 44754313469; docs/flaky-tests.md). It runs again on GitHub when build 8, which redesigns how anchors cross, fixes the release."),
+    suite!("text_box_caret_keys", caret_keys::{text_box_setup, text_box_body, teardown}, Runs),
     suite!("notepad_document_keys", document_keys::{notepad_setup, notepad_body, teardown}, Runs)
         .local_only(NOTEPAD)
         .document(document_keys::document),
@@ -495,8 +493,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
     suite!("conhost_progress", terminal_progress::{setup_console_host, body_console_host, teardown}, Runs),
     suite!("windows_terminal_typing", terminal_typing::{setup_windows_terminal, body_windows_terminal, teardown}, Runs),
     suite!("conhost_typing", terminal_typing::{setup_console_host, body_console_host, teardown}, Runs),
-    suite!("windows_terminal_long_lines", terminal_screens::{setup_windows_terminal, body_long_lines_windows_terminal, teardown}, Runs)
-        .local_only("GitHub's runner once delivered no UI Automation focus for the new terminal to the listener (run 44414430624), a loss Verbatim accepts as NVDA does (ADR 0001). It runs there again once dispatched runs show the runner delivering the terminal's focus (`docs/flaky-tests.md`)."),
+    suite!("windows_terminal_long_lines", terminal_screens::{setup_windows_terminal, body_long_lines_windows_terminal, teardown}, Runs),
     suite!("conhost_long_lines", terminal_screens::{setup_console_host, body_long_lines_console_host, teardown}, Runs),
     suite!("windows_terminal_full_screen", terminal_screens::{setup_windows_terminal, body_full_screen_windows_terminal, teardown}, Runs),
     suite!("conhost_full_screen", terminal_screens::{setup_console_host, body_full_screen_console_host, teardown}, Runs),
