@@ -512,6 +512,24 @@ pub(crate) fn pending_kinds_for_tests(state: &SrState, node: NodeId) -> Vec<Term
         .unwrap_or_default()
 }
 
+/// The kinds and times, in milliseconds, of the keys `node`'s model holds
+/// pending, oldest first, for tests of when it takes them.
+#[cfg(test)]
+pub(crate) fn pending_times_for_tests(
+    state: &SrState,
+    node: NodeId,
+) -> Vec<(TerminalKeyKind, u64)> {
+    model_of(state, node)
+        .map(|model| {
+            model
+                .pending
+                .iter()
+                .map(|key| (key.kind.clone(), key.at_ms))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The reading rules' key for `key`, named by its trace and number.
 fn rules_key(key: &PendingKey) -> Key {
     let PendingKey {

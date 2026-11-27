@@ -1374,7 +1374,21 @@ it, and the key ends as dropped. At `QueueInput::Exit` Core names the
 keys whose last transition in line is a release, a held stroke counting
 as one (`QueueEffect::ReleaseAtExit`). The line is sent only from its
 front, since releases fire in press order and keys reach the front in
-press order; the shell keeps no copy. The speech fence is not a state of
+press order; the shell keeps no copy. The line is also the one record of
+the keys the focused terminal's model takes behind a held stroke: a held
+key bound to the modelled terminal at its arrival carries its terminal key
+(`keys::terminal::TerminalKey`), a key reported while the line holds joins
+it as a marker that sends nothing (`InLine::Keys`), and each send
+(`strokes::Sent`) names the terminal keys that went, which the model takes
+in that order at the send's time (`keys::terminal::reached`), so a dropped
+key never reaches it and a released key is never taken after the keys
+behind it. A key is bound to the focused terminal at its arrival in any
+state of its reading, a baseline out included, and taken at the send only
+while that node is the modelled focus: a key whose terminal lost the focus,
+or is still baselining, at the send is not taken. Limit: a terminal taken
+again under a new node, as after its outpost restarts, and modelled before
+the send, does not take a key bound to its old node; the echo of typed
+text does not depend on it. The speech fence is not a state of
 the line: `keys::entry::Arrivals` moves it on any press, and a
 modifier's cut moves it and marks nothing.
 Beside the line, `SrState::alt_down` is whether Alt is down, set by the
@@ -1849,7 +1863,9 @@ held at the next read's start) and the answers to the requests they make;
   the model keeps no copy of them. A model is made with the baseline while
   the terminal has the focus.
 - Keys. Every key input while the focus is a modeled terminal is kept by
-  its kind, a clearing key as `Forget` then `Other`. Whether a read takes
+  its kind, a clearing key as `Forget` then `Other`, when it reaches the
+  program: at its arrival, or, for a held key and the keys behind one, as
+  the stroke line sends it ("The caret key on the event queue"). Whether a read takes
   the screen's colours is Core's decision from the newest key's window, as
   the rules judge it (`TerminalReader::key_window`, given the newest key
   kept), and the last read, sent in the read's

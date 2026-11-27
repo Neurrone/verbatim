@@ -48,8 +48,6 @@ pub(crate) struct CaretPress {
     pub(crate) trace_id: TraceId,
     /// Its number.
     pub(crate) key_seq: KeySeq,
-    /// When the hook saw it, in microseconds on the shared clock.
-    pub(crate) pressed_at_us: u64,
     /// Which key.
     pub(crate) key: CaretKey,
     /// Whether the hook held it back.
@@ -501,25 +499,12 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
             return Reached::Dropped;
         }
         StrokeStatus::Sent => {
-            // Waiting, its stroke sent: released by its 150 ms timer, or never held. Its selection
-            // words, if any, come from its caret tell. A held key bound to
-            // the focused terminal passed at its release, which its model
-            // takes now. Its script never ran, so the word typed is kept,
-            // as NVDA forgets it only when a caret script speaks
-            // (`docs/parity/input.md`, "Typed-character echo").
-            if press.held && press.terminal_bound(&cx.facts()) {
-                let released_at_us = press
-                    .pressed_at_us
-                    .saturating_add(crate::keys::strokes::RELEASE_AFTER_US)
-                    .min(cx.now_us());
-                let now = cx.now();
-                crate::keys::terminal::passed(
-                    &mut cx.facts_mut(),
-                    crate::terminal::caret_key_kind(press.key),
-                    (released_at_us, now),
-                    (press.trace_id, press.key_seq),
-                );
-            }
+            // Waiting, its stroke sent: released by its 150 ms timer, or
+            // never held. Its selection words, if any, come from its caret
+            // tell; a terminal's model took it as the line sent it. Its
+            // script never ran, so the word typed is kept, as NVDA forgets
+            // it only when a caret script speaks (`docs/parity/input.md`,
+            // "Typed-character echo").
             stop_say_all(cx);
             return Reached::Sent;
         }
@@ -535,7 +520,7 @@ async fn run_key(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
         // Enter held for a terminal, by a hook view behind the focus: the
         // carriage return it types there, with no read, as where the view
         // is current.
-        let reached = terminal_pass(cx, press);
+        let reached = pass(cx, press);
         new_line_typed(cx, press);
         return reached;
     }
@@ -667,14 +652,14 @@ async fn marked_end(
 /// (build 3, "Answers and speech").
 async fn terminal_key(cx: &mut Cx<Entries>, press: &CaretPress, binding: &CaretBinding) -> Reached {
     if marked(cx, press) || counts_behind(cx) {
-        return terminal_pass(cx, press);
+        return pass(cx, press);
     }
     let due_us = cx.due_in(OTHER_DUE_US);
     let Some(started) = terminal_read(cx, press, binding.node, true, due_us).await else {
-        return terminal_pass(cx, press);
+        return pass(cx, press);
     };
     let passed_at_us = cx.now_us();
-    if terminal_pass(cx, press) == Reached::Dropped {
+    if pass(cx, press) == Reached::Dropped {
         return Reached::Dropped;
     }
     if marked(cx, press) {
@@ -786,23 +771,6 @@ async fn terminal_read(
     );
     crate::terminal::reading::speak_read(cx, entry);
     reply.map(|reply| reply.point.zip(reply.snapshot.caret.clone()))
-}
-
-/// A terminal's held key passes: its stroke is sent, and the focused
-/// terminal's model takes it at its pass; a dropped stroke is neither.
-fn terminal_pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
-    let unsent = press.held && cx.facts().strokes.status(press.key_seq) == StrokeStatus::Unsent;
-    let reached = pass(cx, press);
-    if unsent {
-        let now = cx.now();
-        crate::keys::terminal::passed(
-            &mut cx.facts_mut(),
-            crate::terminal::caret_key_kind(press.key),
-            (now.us(), now),
-            (press.trace_id, press.key_seq),
-        );
-    }
-    reached
 }
 
 /// How a watch ended.
@@ -1097,20 +1065,23 @@ fn say(cx: &mut Cx<Entries>, press: &CaretPress, words: Vec<UtteranceSegment>) {
 /// say-all; says whether the stroke reached the application. One dropped
 /// at a switch away from the user's desktop, before the key's turn or
 /// while its starting read was out, never does: its dropped mark is read
-/// here, once, and forgotten.
+/// here, once, and forgotten. The focused terminal's model takes the
+/// terminal keys the send carried, this one's included.
 fn pass(cx: &mut Cx<Entries>, press: &CaretPress) -> Reached {
     stop_say_all(cx);
     if !press.held {
         return Reached::Sent;
     }
-    let now_us = cx.now_us();
+    let now = cx.now();
     let sent = {
         let mut facts = cx.facts_mut();
         if facts.strokes.status(press.key_seq) == StrokeStatus::Dropped {
             facts.strokes.forget_dropped(press.key_seq);
             return Reached::Dropped;
         }
-        facts.strokes.pass(press.key_seq, now_us)
+        let sent = facts.strokes.pass(press.key_seq, now.us());
+        crate::keys::terminal::reached(&mut facts, sent.reached, now);
+        sent.strokes
     };
     if let Some(sent) = sent {
         cx.emit(verbatim_model::Effect::Queue(sent));
@@ -1269,18 +1240,9 @@ impl CaretPress {
         Some(Self {
             trace_id: press.trace_id,
             key_seq: press.press.key_seq,
-            pressed_at_us: press.press.pressed_at_us,
             key: *key,
             held: held.is_some(),
             bound: bound.as_deref().cloned(),
-        })
-    }
-
-    /// Whether it is bound to the focused terminal.
-    fn terminal_bound(&self, state: &SrState) -> bool {
-        self.bound.as_ref().is_some_and(|bound| {
-            editing::is_grid(bound.role)
-                && crate::terminal::reading::modelled(state) == Some(bound.node)
         })
     }
 }

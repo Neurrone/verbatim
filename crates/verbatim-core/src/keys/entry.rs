@@ -196,13 +196,10 @@ pub(crate) async fn run(mut cx: Cx<Entries>, entry: PressEntry) {
     let effects = {
         let mut facts = cx.facts_mut();
         // A held stroke is sent at its turn.
-        let mut effects: Vec<Effect> = facts
-            .strokes
-            .pass(press.key_seq, now.us())
-            .map(Effect::Queue)
-            .into_iter()
-            .collect();
+        let sent = facts.strokes.pass(press.key_seq, now.us());
+        let mut effects: Vec<Effect> = sent.strokes.map(Effect::Queue).into_iter().collect();
         let facts = &mut *facts;
+        crate::keys::terminal::reached(facts, sent.reached, now);
         match &press.action {
             PressAction::Command { command, .. } => {
                 // Any command stops say-all, as any key does in NVDA.

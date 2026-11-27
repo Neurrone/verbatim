@@ -138,14 +138,6 @@ pub(crate) struct TerminalFocus {
     /// Whether an entry's full read of the focused terminal is out (a
     /// caret key's or a review command's).
     entry_read: bool,
-    /// Keys pressed behind a held key's stroke, which reach the program at
-    /// its pass, each with when the hook saw it, in milliseconds, its trace
-    /// and its number (`crate::keys::terminal`).
-    pub(crate) deferred: Vec<(
-        crate::terminal::TerminalKeyKind,
-        u64,
-        (TraceId, verbatim_model::KeySeq),
-    )>,
 }
 
 /// The modelled focused terminal, whose quiet-period timer counts.
@@ -1481,6 +1473,27 @@ pub(crate) fn modelled_for_tests(state: &mut SrState, node: NodeId, window: Requ
         },
         follow: None,
         reading: Reading::Quiet,
+    };
+}
+
+/// Makes `node` the focused terminal, its window `window`, baselining with
+/// no read out, as a commit or a silent re-take leaves it, with its model.
+#[cfg(test)]
+pub(crate) fn baselining_for_tests(state: &mut SrState, node: NodeId, window: RequestWindow) {
+    if terminal_model::model_of(state, node).is_none() {
+        state
+            .terminals
+            .add(node, verbatim_text::terminal_reading::Settings::default());
+    }
+    state.terminal_focus.focused = FocusedTerminal::Baselining {
+        terminal: Terminal {
+            node,
+            window,
+            console: false,
+        },
+        follow: None,
+        read: None,
+        told: None,
     };
 }
 

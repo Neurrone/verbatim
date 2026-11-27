@@ -1816,6 +1816,176 @@ fn enter_bound_to_a_terminal_is_sent_with_no_read() {
     );
 }
 
+/// The field committed in `held` modelled as a terminal, and its binding.
+fn modelled_terminal(held: &mut Held) -> CaretBinding {
+    let terminal = CaretBinding {
+        role: Role::Terminal,
+        ..bound(held)
+    };
+    crate::terminal::reading::modelled_for_tests(
+        &mut held.state,
+        terminal.node,
+        crate::event_queue::RequestWindow::of_served(&terminal.window),
+    );
+    terminal
+}
+
+/// "x" typed as key `key` at `at_us`.
+fn typed_x(key: u64, at_us: u64) -> Input<Entry> {
+    pressed(
+        key,
+        at_us,
+        PressAction::Typed {
+            text: "x".to_owned(),
+        },
+    )
+}
+
+/// Up Arrow held for the focused terminal, "x" typed behind it, and Up's
+/// 150 ms release: the two reach the program in one send, Up first, and the
+/// terminal's model takes them in that order as they are sent, before Up's
+/// turn ends (`books/dev/src/explanation/design/terminal-model.md`, rule 18).
+#[test]
+fn a_held_key_released_by_its_timer_reaches_the_model_before_the_keys_behind_it() {
+    let mut held = editing();
+    let terminal = modelled_terminal(&mut held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::PreviousLine, 1_000, &terminal),
+    );
+    let _ = step(&mut held, 20_000, typed_x(2, 20_000));
+    assert_eq!(route(&mut held, 20_000, &deferred(2, true)), []);
+    let released = step(&mut held, 151_000, Input::Tick);
+    assert_eq!(released.strokes, [vec![1, 2]]);
+    assert_eq!(
+        crate::terminal_model::pending_kinds_for_tests(&held.state, terminal.node),
+        [
+            crate::terminal::TerminalKeyKind::Caret(crate::terminal::TerminalUnit::Line),
+            crate::terminal::TerminalKeyKind::Typed("x".to_owned()),
+        ]
+    );
+}
+
+/// A reset of the hook's line drops what is unsent, the key typed behind a
+/// held key included: the program never gets it, so neither does the
+/// terminal's model.
+#[test]
+fn a_reset_drops_the_keys_deferred_behind_a_held_key() {
+    let mut held = editing();
+    let terminal = modelled_terminal(&mut held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::NextLine, 1_000, &terminal),
+    );
+    let _ = step(&mut held, 20_000, typed_x(2, 20_000));
+    assert_eq!(route(&mut held, 20_000, &deferred(2, true)), []);
+    let _ = route(&mut held, 30_000, &QueueInput::StrokesReset);
+    let _ = step(&mut held, 151_000, Input::Tick);
+    assert_eq!(
+        crate::terminal_model::pending_kinds_for_tests(&held.state, terminal.node),
+        []
+    );
+}
+
+/// A held key bound to a terminal that loses the focus before the key is
+/// sent is not taken by that terminal's model, nor by the terminal focused
+/// at the send: the key opened no window on either.
+#[test]
+fn a_held_key_sent_after_its_terminal_lost_the_focus_is_taken_by_no_model() {
+    let mut held = editing();
+    let terminal = modelled_terminal(&mut held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::PreviousLine, 1_000, &terminal),
+    );
+    let other = node(9);
+    crate::terminal::reading::modelled_for_tests(
+        &mut held.state,
+        other,
+        crate::event_queue::RequestWindow::of_served(&terminal.window),
+    );
+    let released = step(&mut held, 151_000, Input::Tick);
+    assert_eq!(released.strokes, [vec![1]]);
+    for modelled in [terminal.node, other] {
+        assert_eq!(
+            crate::terminal_model::pending_kinds_for_tests(&held.state, modelled),
+            [],
+            "{modelled:?}"
+        );
+    }
+}
+
+/// Up Arrow held while the focused terminal is baselining, as after a
+/// silent re-take of it, and sent once the baseline has answered: the
+/// terminal's model takes it, so the line it recalls is the key's answer.
+#[test]
+fn a_held_key_pressed_while_its_terminal_is_baselining_is_taken_once_sent() {
+    let mut held = editing();
+    let terminal = CaretBinding {
+        role: Role::Terminal,
+        ..bound(&held)
+    };
+    let window = crate::event_queue::RequestWindow::of_served(&terminal.window);
+    crate::terminal::reading::baselining_for_tests(&mut held.state, terminal.node, window);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::PreviousLine, 1_000, &terminal),
+    );
+    // The baseline answers.
+    crate::terminal::reading::modelled_for_tests(&mut held.state, terminal.node, window);
+    let released = step(&mut held, 151_000, Input::Tick);
+    assert_eq!(released.strokes, [vec![1]]);
+    assert_eq!(
+        crate::terminal_model::pending_times_for_tests(&held.state, terminal.node),
+        [(
+            crate::terminal::TerminalKeyKind::Caret(crate::terminal::TerminalUnit::Line),
+            151
+        )]
+    );
+}
+
+/// Held key 2 passes at 3 ms while held key 1, ahead of it, is unsent, as
+/// when a foreground change ends key 2's waiting entry
+/// (`Logic::ended_at_foreground`, which passes it as here); key 1's 150 ms
+/// release sends both at 151 ms. The model takes both at 151 ms, when they
+/// reached the program, in that order, and nothing at the pass.
+#[test]
+fn a_key_passed_behind_an_unsent_one_is_taken_when_it_is_sent() {
+    let mut held = editing();
+    let terminal = modelled_terminal(&mut held);
+    let _ = step(
+        &mut held,
+        1_000,
+        held_key(1, CaretMotion::PreviousLine, 1_000, &terminal),
+    );
+    let _ = step(
+        &mut held,
+        2_000,
+        held_key(2, CaretMotion::NextCharacter, 2_000, &terminal),
+    );
+    let sent = held.state.strokes.pass(KeySeq::new(2), 3_000);
+    assert_eq!(sent, crate::keys::strokes::Sent::default());
+    let released = step(&mut held, 151_000, Input::Tick);
+    assert_eq!(released.strokes, [vec![1, 2]]);
+    assert_eq!(
+        crate::terminal_model::pending_times_for_tests(&held.state, terminal.node),
+        [
+            (
+                crate::terminal::TerminalKeyKind::Caret(crate::terminal::TerminalUnit::Line),
+                151
+            ),
+            (
+                crate::terminal::TerminalKeyKind::Caret(crate::terminal::TerminalUnit::Character),
+                151
+            ),
+        ]
+    );
+}
+
 /// A key released by its 150 ms timer before its turn runs no script: a
 /// movement key and Enter, which saw no move, keep the word typed, and
 /// Backspace's U+0008 still drops its last character.

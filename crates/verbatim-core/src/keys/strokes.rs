@@ -3,10 +3,13 @@
 //! (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event
 //! queue"). Whether a key's stroke is still to be sent is read from here,
 //! never stored on its entry: present is unsent, a dropped mark is
-//! dropped, and gone is sent. [`StrokeLine::pass`], [`StrokeLine::defer`]
-//! and the drops are its only writers. It also knows when the newest held
-//! stroke of a user's key reached the program, which a terminal's flood
-//! policy reads ([`StrokeLine::held_reached_us`]).
+//! dropped, and gone is sent. [`StrokeLine::hold`], [`StrokeLine::behind`],
+//! [`StrokeLine::defer`], the passes and the drops are its only writers. It is the one record of which keys
+//! the focused terminal's model takes behind a held stroke: each send names
+//! the terminal keys that went with it, in the order they reached the
+//! program ([`Sent::reached`]). It also knows when the newest held stroke
+//! of a user's key reached the program, which a terminal's flood policy
+//! reads ([`StrokeLine::held_reached_us`]).
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -14,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use verbatim_model::KeySeq;
 use verbatim_model::request::QueueEffect;
 use verbatim_model::stroke::{HeldStroke, SentTransition, Stroke};
+
+use crate::keys::terminal::TerminalKey;
 
 /// How long after its press a held key is sent if its turn has not come:
 /// the keyboard stays alive (ADR 0003, "Keys and commands").
@@ -33,6 +38,9 @@ enum InLine {
         release_at_us: Option<u64>,
         /// Its key has passed: it goes once nothing unsent is ahead.
         passed: bool,
+        /// The key the focused terminal's model takes when it is sent, if
+        /// it was bound to that terminal at its arrival.
+        terminal: Option<TerminalKey>,
     },
     /// A transition deferred behind a held stroke.
     Deferred {
@@ -41,6 +49,11 @@ enum InLine {
         /// A press, or else a release.
         pressed: bool,
     },
+    /// The terminal keys of a press reported behind a held stroke, ahead of
+    /// its own deferred transitions, as the hook reports them: they reach
+    /// the program when what is ahead of them goes. It sends nothing and
+    /// never holds the line.
+    Keys(Vec<TerminalKey>),
 }
 
 impl InLine {
@@ -62,6 +75,16 @@ pub(crate) enum StrokeStatus {
     Dropped,
 }
 
+/// What one send from the line's front sent.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct Sent {
+    /// The transitions, as one effect; `None` when nothing went.
+    pub(crate) strokes: Option<QueueEffect>,
+    /// The terminal keys that reached the program with them, in order.
+    pub(crate) reached: Vec<TerminalKey>,
+}
+
 /// The stroke line.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StrokeLine {
@@ -76,25 +99,35 @@ pub(crate) struct StrokeLine {
 }
 
 impl StrokeLine {
-    /// The hook held key `key`'s `stroke`, pressed at `pressed_at_us`; a
-    /// key Core sends itself passes `None` and has no release.
-    pub(crate) fn hold(&mut self, key: KeySeq, stroke: HeldStroke, pressed_at_us: Option<u64>) {
+    /// The hook held key `key`'s `stroke`, pressed at `pressed_at_us`, `None`
+    /// for a key Core sends itself, which has no release. `terminal` is the
+    /// terminal key it is, reported with the send that sends it.
+    pub(crate) fn hold(
+        &mut self,
+        key: KeySeq,
+        stroke: HeldStroke,
+        (pressed_at_us, terminal): (Option<u64>, Option<TerminalKey>),
+    ) {
         self.line.push_back(InLine::Held {
             key,
             stroke,
             release_at_us: pressed_at_us.map(|at| at.saturating_add(RELEASE_AFTER_US)),
             passed: false,
+            terminal,
         });
+    }
+
+    /// The terminal keys of a press reported while the line holds join it,
+    /// to reach the program with what is ahead of them.
+    pub(crate) fn behind(&mut self, keys: Vec<TerminalKey>) {
+        if !keys.is_empty() {
+            self.line.push_back(InLine::Keys(keys));
+        }
     }
 
     /// The hook deferred a transition: it joins the line, and goes at once
     /// when nothing unsent holds the line.
-    pub(crate) fn defer(
-        &mut self,
-        stroke: Stroke,
-        pressed: bool,
-        now_us: u64,
-    ) -> Option<QueueEffect> {
+    pub(crate) fn defer(&mut self, stroke: Stroke, pressed: bool, now_us: u64) -> Sent {
         self.line.push_back(InLine::Deferred { stroke, pressed });
         self.send_ready(now_us)
     }
@@ -102,13 +135,16 @@ impl StrokeLine {
     /// Key `key` passes at `now_us`: its stroke goes, with what is behind
     /// it up to the next unsent held stroke, once nothing unsent is ahead of
     /// it.
-    pub(crate) fn pass(&mut self, key: KeySeq, now_us: u64) -> Option<QueueEffect> {
+    pub(crate) fn pass(&mut self, key: KeySeq, now_us: u64) -> Sent {
         let held = self.line.iter_mut().find_map(|item| match item {
             InLine::Held {
                 key: held, passed, ..
             } if *held == key => Some(passed),
-            InLine::Held { .. } | InLine::Deferred { .. } => None,
-        })?;
+            InLine::Held { .. } | InLine::Deferred { .. } | InLine::Keys(_) => None,
+        });
+        let Some(held) = held else {
+            return Sent::default();
+        };
         *held = true;
         self.send_ready(now_us)
     }
@@ -155,13 +191,13 @@ impl StrokeLine {
                     passed: false,
                     ..
                 } => Some(*at),
-                InLine::Held { .. } | InLine::Deferred { .. } => None,
+                InLine::Held { .. } | InLine::Deferred { .. } | InLine::Keys(_) => None,
             })
             .min()
     }
 
     /// Fires every release due by `now_us`: each such key passes.
-    pub(crate) fn release_due(&mut self, now_us: u64) -> Option<QueueEffect> {
+    pub(crate) fn release_due(&mut self, now_us: u64) -> Sent {
         for item in &mut self.line {
             if let InLine::Held {
                 release_at_us: Some(at),
@@ -186,7 +222,8 @@ impl StrokeLine {
     /// Drops every stroke not yet sent, as the input desktop leaving the
     /// user's or the hook's line being reset does, in the same step that
     /// clears the hook's own record: each held stroke whose key has not
-    /// passed leaves a dropped mark for its entry's turn.
+    /// passed leaves a dropped mark for its entry's turn, and the terminal
+    /// keys behind go with them, never reaching the program.
     pub(crate) fn drop_unsent(&mut self) {
         for item in std::mem::take(&mut self.line) {
             if let InLine::Held {
@@ -211,6 +248,7 @@ impl StrokeLine {
             let (stroke, pressed) = match item {
                 InLine::Held { stroke, .. } => (stroke.stroke, false),
                 InLine::Deferred { stroke, pressed } => (stroke, pressed),
+                InLine::Keys(_) => continue,
             };
             if stroke.is_unicode() {
                 continue;
@@ -228,14 +266,16 @@ impl StrokeLine {
 
     /// Sends, at `now_us`, what may go from the line's front: deferred
     /// transitions and held strokes whose key has passed, up to the first
-    /// that holds the line.
-    fn send_ready(&mut self, now_us: u64) -> Option<QueueEffect> {
+    /// that holds the line, with the terminal keys among them.
+    fn send_ready(&mut self, now_us: u64) -> Sent {
         let mut sent = Vec::new();
+        let mut reached = Vec::new();
         while self.line.front().is_some_and(|front| !front.holds()) {
             match self.line.pop_front() {
                 Some(InLine::Held {
                     stroke,
                     release_at_us,
+                    terminal,
                     ..
                 }) => {
                     // A key Core sends itself has no release, and is no
@@ -244,14 +284,19 @@ impl StrokeLine {
                         self.held_reached_us = self.held_reached_us.max(now_us);
                     }
                     sent.push(SentTransition::Held(stroke));
+                    reached.extend(terminal);
                 }
                 Some(InLine::Deferred { stroke, pressed }) => {
                     sent.push(SentTransition::Deferred { stroke, pressed });
                 }
+                Some(InLine::Keys(keys)) => reached.extend(keys),
                 None => break,
             }
         }
-        (!sent.is_empty()).then_some(QueueEffect::SendStrokes(sent))
+        Sent {
+            strokes: (!sent.is_empty()).then_some(QueueEffect::SendStrokes(sent)),
+            reached,
+        }
     }
 }
 
@@ -284,8 +329,9 @@ mod tests {
         }
     }
 
-    fn sent(effect: Option<QueueEffect>) -> Vec<SentTransition> {
-        match effect {
+    fn sent(sent: Sent) -> Vec<SentTransition> {
+        assert_eq!(sent.reached, [], "no terminal key in these lines");
+        match sent.strokes {
             Some(QueueEffect::SendStrokes(sent)) => sent,
             None => Vec::new(),
             Some(other) => panic!("a send: {other:?}"),
@@ -305,9 +351,9 @@ mod tests {
                 pressed: true
             }]
         );
-        line.hold(KeySeq::new(1), held(DOWN, 2), Some(0));
+        line.hold(KeySeq::new(1), held(DOWN, 2), (Some(0), None));
         assert_eq!(sent(line.defer(stroke(X, 3), false, 0)), []);
-        line.hold(KeySeq::new(2), held(DOWN, 4), Some(10));
+        line.hold(KeySeq::new(2), held(DOWN, 4), (Some(10), None));
         assert_eq!(sent(line.defer(stroke(SHIFT, 5), true, 0)), []);
         assert_eq!(line.status(KeySeq::new(1)), StrokeStatus::Unsent);
         assert_eq!(
@@ -339,8 +385,8 @@ mod tests {
     #[test]
     fn a_stroke_passed_behind_an_unsent_one_goes_with_it_in_press_order() {
         let mut line = StrokeLine::default();
-        line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
-        line.hold(KeySeq::new(2), held(X, 2), Some(5));
+        line.hold(KeySeq::new(1), held(DOWN, 1), (Some(0), None));
+        line.hold(KeySeq::new(2), held(X, 2), (Some(5), None));
         assert_eq!(sent(line.pass(KeySeq::new(2), 0)), []);
         assert_eq!(line.status(KeySeq::new(2)), StrokeStatus::Sent);
         assert_eq!(
@@ -357,9 +403,9 @@ mod tests {
     #[test]
     fn a_held_stroke_is_released_150_ms_after_its_press() {
         let mut line = StrokeLine::default();
-        line.hold(KeySeq::new(1), held(DOWN, 1), Some(1_000));
-        line.hold(KeySeq::new(2), held(X, 2), Some(40_000));
-        line.hold(KeySeq::new(3), held(DOWN, 3), None);
+        line.hold(KeySeq::new(1), held(DOWN, 1), (Some(1_000), None));
+        line.hold(KeySeq::new(2), held(X, 2), (Some(40_000), None));
+        line.hold(KeySeq::new(3), held(DOWN, 3), (None, None));
         assert_eq!(line.next_release(), Some(151_000));
         assert_eq!(sent(line.release_due(150_999)), []);
         assert_eq!(
@@ -381,7 +427,7 @@ mod tests {
     #[test]
     fn dropped_strokes_leave_a_mark_until_their_entrys_turn() {
         let mut line = StrokeLine::default();
-        line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
+        line.hold(KeySeq::new(1), held(DOWN, 1), (Some(0), None));
         assert_eq!(sent(line.defer(stroke(X, 2), true, 0)), []);
         line.drop_unsent();
         assert_eq!(line.status(KeySeq::new(1)), StrokeStatus::Dropped);
@@ -407,7 +453,7 @@ mod tests {
     #[test]
     fn at_exit_the_keys_released_behind_a_held_key_are_named() {
         let mut line = StrokeLine::default();
-        line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
+        line.hold(KeySeq::new(1), held(DOWN, 1), (Some(0), None));
         for (vk, pressed, sequence) in [
             (SHIFT, true, 2),
             (X, true, 3),
@@ -439,7 +485,7 @@ mod tests {
     #[test]
     fn only_a_keys_last_transition_decides_whether_it_is_named_at_exit() {
         let mut line = StrokeLine::default();
-        line.hold(KeySeq::new(1), held(DOWN, 1), Some(0));
+        line.hold(KeySeq::new(1), held(DOWN, 1), (Some(0), None));
         for (vk, pressed, sequence) in [
             (SHIFT, false, 2),
             (SHIFT, true, 3),

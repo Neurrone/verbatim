@@ -15,7 +15,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
-use verbatim_model::request::{MsaaIds, PressAction, Probe, Question, QueueEffect, QueueInput};
+use verbatim_model::request::{MsaaIds, Probe, Question, QueueEffect, QueueInput};
 use verbatim_model::tell::{
     AcceptanceFacts, ElementToken, Event, EventObject, Payload, TellWindow,
 };
@@ -660,23 +660,12 @@ impl Logic for Entries {
         }
         if let Entry::Press(press) = entry {
             facts.arrivals.key_joined(press.press.key_seq);
-            // A key reaching the focused terminal is taken by its model as
-            // it reaches the inbox, a held caret key's at its pass
+            // A held key's stroke joins the stroke line as its report
+            // arrives, in the hook's order; a key reaching the focused
+            // terminal is taken by its model as it reaches the program
             // (`docs/design/readers-tell-core-asks-build3.md`, "Keys and
             // ordering").
             crate::keys::terminal::arrived(facts, press, now);
-            // A held key's stroke joins the stroke line as its report
-            // arrives, in the hook's order.
-            if let PressAction::CaretKey {
-                held: Some(stroke), ..
-            } = &press.press.action
-            {
-                facts.strokes.hold(
-                    press.press.key_seq,
-                    stroke.clone(),
-                    Some(press.press.pressed_at_us),
-                );
-            }
         }
         // A caret tell's selection speech is its key's words, so it is
         // fenced as the key's.
@@ -702,7 +691,9 @@ impl Logic for Entries {
         // A held key ended so says nothing; its key passes, its stroke
         // sent in press order (`books/dev/src/reference/crates/verbatim-core.md`, "The caret key on the event queue").
         if let Some(caret) = crate::keys::caret_key::of_entry(entry) {
-            said.extend(facts.strokes.pass(caret.key_seq, now.us()).map(Said::Queue));
+            let sent = facts.strokes.pass(caret.key_seq, now.us());
+            said.extend(sent.strokes.map(Said::Queue));
+            crate::keys::terminal::reached(facts, sent.reached, now);
         }
     }
 
@@ -722,8 +713,9 @@ impl Logic for Entries {
         foreground: Option<Foreground>,
         said: &mut Vec<Said>,
     ) -> Vec<Entry> {
-        said.extend(facts.strokes.release_due(now.us()).map(Said::Queue));
-        crate::keys::terminal::released(facts, now.ms(), now);
+        let sent = facts.strokes.release_due(now.us());
+        said.extend(sent.strokes.map(Said::Queue));
+        crate::keys::terminal::reached(facts, sent.reached, now);
         said.extend(crate::desktop::tick(facts, now.us()));
         crate::input_desktop::tick(facts, now, foreground.as_ref())
             .map(|read| Entry::CurrentFocus(Box::new(read)))
@@ -1271,14 +1263,9 @@ pub(crate) fn route(
             return Routed::Said(Vec::new());
         }
         QueueInput::Deferred { stroke, pressed } => {
-            return Routed::Said(
-                state
-                    .strokes
-                    .defer(*stroke, *pressed, now.us())
-                    .map(Said::Queue)
-                    .into_iter()
-                    .collect(),
-            );
+            let sent = state.strokes.defer(*stroke, *pressed, now.us());
+            crate::keys::terminal::reached(state, sent.reached, now);
+            return Routed::Said(sent.strokes.map(Said::Queue).into_iter().collect());
         }
         QueueInput::Alt { down } => {
             state.alt_down = *down;

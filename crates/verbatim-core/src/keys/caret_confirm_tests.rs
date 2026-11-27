@@ -130,7 +130,6 @@ fn the_stage_is_derived_from_the_request_out() {
     let press = CaretPress {
         trace_id: TraceId::from_raw(71),
         key_seq: KeySeq::new(1),
-        pressed_at_us: 1_000,
         key: caret(CaretMotion::NextCharacter),
         held: true,
         bound: Some(binding),
