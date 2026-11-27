@@ -478,7 +478,7 @@ object id and child id for an MSAA object acquired at its address,
 answering "No action" in either case (Dickson, 2026-11-21;
 `docs/design/security-model.md`, U2).
 
-Pending (Claude, 2026-11-27): an Invoke fetch that times out once and
+Approved by Dickson (2026-11-27): an Invoke fetch that times out once and
 then answers. NVDA says "invoke": `getActionName` fetches the pattern
 inside a bare `except` (`globalCommands.py` 1889 to 1892,
 `NVDAObjects/UIA/__init__.py` 2381 to 2386), a failed fetch is not
