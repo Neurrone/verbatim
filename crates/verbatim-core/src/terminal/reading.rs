@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 
 use verbatim_model::request::{CancelReason, FollowGroup, Followed, Question, Reply};
-use verbatim_model::{Effect, NodeId, Role, TerminalScope, TextAnchor, TextFailure, TraceId};
+use verbatim_model::{Effect, NodeId, Role, TerminalScope, TextFailure, TraceId};
 
 use crate::batch::Answers;
 use crate::entries::{Entries, Entry};
@@ -769,16 +769,20 @@ pub(crate) fn answered(
         said.push(observed(&terminal, reply, trace));
     }
     match focused {
-        FocusedTerminal::Baselining { told, .. } => {
-            baseline_ended(state, &terminal, (follow, told), outcome, (now, trace))
-        }
+        FocusedTerminal::Baselining { told, .. } => baseline_ended(
+            state,
+            (&terminal, &ask.read),
+            (follow, told),
+            outcome,
+            (now, trace),
+        ),
         FocusedTerminal::Modelled {
             reading: Reading::Out { mark, again, .. },
             ..
         } => output_ended(
             state,
             (&terminal, follow),
-            (token, mark, ask.start(), again),
+            (token, mark, &ask.read, again),
             outcome,
             (now, trace),
             said,
@@ -870,10 +874,10 @@ fn without_follow(focused: FocusedTerminal) -> FocusedTerminal {
     }
 }
 
-/// The baseline ended (Table 1, columns E, F and K).
+/// The baseline, asked as `asked`, ended (Table 1, columns E, F and K).
 fn baseline_ended(
     state: &mut SrState,
-    terminal: &Terminal,
+    (terminal, asked): (&Terminal, &WindowRead),
     (follow, told): (Option<FollowOut>, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
     (now, trace): (Now, TraceId),
@@ -907,7 +911,7 @@ fn baseline_ended(
         state,
         terminal,
         (follow, told),
-        (&reply, None),
+        (asked, &reply),
         (now, trace),
     )
     .into_iter()
@@ -915,17 +919,18 @@ fn baseline_ended(
     .collect()
 }
 
-/// `reply`, read naming `named`, taken as the terminal's baseline: the
-/// terminal is modelled, and read again at once if a change was told after
-/// the read began, or the rules owe a read (Table 1, column E).
+/// `reply`, the answer to the read asked as `asked`, taken as the
+/// terminal's baseline: the terminal is modelled, and read again at once
+/// if a change was told after the read began, or the rules owe a read
+/// (Table 1, column E).
 fn modelled_by(
     state: &mut SrState,
     terminal: &Terminal,
     (follow, told): (Option<FollowOut>, Option<u64>),
-    (reply, named): (&WindowReply, Option<TextAnchor>),
+    (asked, reply): (&WindowRead, &WindowReply),
     (now, trace): (Now, TraceId),
 ) -> Option<SpeechEntry> {
-    let taken = terminal_model::take(state, terminal.node, reply, (named, false));
+    let taken = terminal_model::take(state, terminal.node, (asked, reply), false);
     let entry = speech_entry(
         terminal.node,
         taken,
@@ -948,7 +953,7 @@ fn modelled_by(
 fn output_ended(
     state: &mut SrState,
     (terminal, follow): (&Terminal, Option<FollowOut>),
-    (read, mark, named, again): (u64, Mark, Option<TextAnchor>, Option<u64>),
+    (read, mark, asked, again): (u64, Mark, &WindowRead, Option<u64>),
     outcome: Outcome<Option<WindowReply>>,
     (now, trace): (Now, TraceId),
     said: &mut Vec<Effect>,
@@ -1004,7 +1009,7 @@ fn output_ended(
         return Vec::new();
     };
     let waited = matches!(mark, Mark::Waited { .. });
-    let taken = terminal_model::take(state, terminal.node, &reply, (named, waited));
+    let taken = terminal_model::take(state, terminal.node, (asked, &reply), waited);
     output_taken(
         state,
         (terminal, follow),
@@ -1346,7 +1351,7 @@ pub(crate) fn entry_read_ended(
         }
         return None;
     };
-    let named = asked.ask.start();
+    let read = &asked.ask.read;
     match state.terminal_focus.focused {
         FocusedTerminal::Baselining {
             terminal,
@@ -1357,13 +1362,13 @@ pub(crate) fn entry_read_ended(
             state,
             &terminal,
             (follow, told),
-            (reply, named),
+            (read, reply),
             (now, trace),
         ),
         FocusedTerminal::Baselining { terminal, .. } if terminal.node == node => {
             // The baseline answers first, in the worker's order; a read
             // answered before it is taken all the same.
-            let taken = terminal_model::take(state, node, reply, (named, false));
+            let taken = terminal_model::take(state, node, (read, reply), false);
             speech_entry(
                 node,
                 taken,
@@ -1380,7 +1385,7 @@ pub(crate) fn entry_read_ended(
                 state,
                 &terminal,
                 (follow, told),
-                (reply, named),
+                (read, reply),
                 (now, trace),
             )
         }
@@ -1389,7 +1394,7 @@ pub(crate) fn entry_read_ended(
             follow,
             reading,
         } if terminal.node == node => {
-            let taken = terminal_model::take(state, node, reply, (named, false));
+            let taken = terminal_model::take(state, node, (read, reply), false);
             let entry = speech_entry(
                 node,
                 taken,

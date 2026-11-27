@@ -647,8 +647,7 @@ fn read_reply(text: &str) -> WindowReply {
     let read = verbatim_text::terminal_rows::Read {
         text: verbatim_text::terminal_rows::ReadText::unpadded(text),
         screen: text.to_owned(),
-        from_start: false,
-        shrank: false,
+        start: verbatim_text::terminal_rows::ReadStart::First,
         at_document_start: true,
         alternate: true,
         first_row: text.to_owned(),
@@ -657,7 +656,6 @@ fn read_reply(text: &str) -> WindowReply {
         caret_column: 0,
         at_ms: 1,
         above: 0,
-        rows_above: None,
     };
     WindowReply {
         snapshot: crate::snapshot_of(&read, false, None),

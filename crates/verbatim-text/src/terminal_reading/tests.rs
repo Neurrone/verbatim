@@ -11,7 +11,18 @@ use super::{
     ColourRun, Difference, KEY_WINDOW_MS, Key, KeyKind, KeyTag, Reason, Settings, Speech, Step,
     TerminalReader, Unit, Withheld,
 };
-use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
+use crate::terminal_rows::{Anchor, Lost, Read, ReadStart, ReadText, Text, hash};
+
+/// The start of a read of `snapshot` asked with `query`, as a reader that
+/// keeps the memory's start answers it.
+fn start_of(query: &Query, snapshot: &verbatim_term_sim::Snapshot) -> ReadStart {
+    ReadStart::answered(
+        query.start.is_some(),
+        usize::try_from(query.above).expect("a few rows"),
+        snapshot.from_start,
+        snapshot.rows_above,
+    )
+}
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, a screen above it, a count read is taken when the reader asks,
@@ -117,9 +128,8 @@ impl Term {
             taken += 1;
             let read = Read {
                 text: ReadText::unpadded(&snapshot.text),
+                start: start_of(&query, &snapshot),
                 screen: snapshot.screen,
-                from_start: snapshot.from_start,
-                shrank: snapshot.shrank,
                 at_document_start: snapshot.at_document_start,
                 alternate: snapshot.alternate,
                 first_row: snapshot.first_row,
@@ -128,7 +138,6 @@ impl Term {
                 caret_column: snapshot.caret_column + std::mem::take(&mut self.caret_ahead),
                 at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
-                rows_above: snapshot.rows_above,
             };
             let step = self.reader.read(&read, waited, colours);
             let screen_rows = u32::try_from(
@@ -1138,8 +1147,7 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
     Read {
         text: ReadText::unpadded(&text),
         screen: text,
-        from_start: true,
-        shrank: false,
+        start: ReadStart::Kept,
         at_document_start: true,
         alternate: true,
         first_row: padded[0].clone(),
@@ -1148,7 +1156,6 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
         caret_column: column,
         at_ms,
         above: 0,
-        rows_above: None,
     }
 }
 
@@ -2338,9 +2345,8 @@ fn corpus_read(
         taken += 1;
         let read = Read {
             text: ReadText::unpadded(&snapshot.text),
+            start: start_of(query, &snapshot),
             screen: snapshot.screen,
-            from_start: snapshot.from_start,
-            shrank: snapshot.shrank,
             at_document_start: snapshot.at_document_start,
             alternate: snapshot.alternate,
             first_row: snapshot.first_row,
@@ -2349,7 +2355,6 @@ fn corpus_read(
             caret_column: snapshot.caret_column,
             at_ms,
             above: usize::try_from(snapshot.above).expect("a few rows"),
-            rows_above: snapshot.rows_above,
         };
         let step = reader.read(&read, false, None);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);

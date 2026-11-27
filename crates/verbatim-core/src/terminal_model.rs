@@ -55,11 +55,11 @@ use verbatim_model::{
 use verbatim_text::terminal_reading::{
     ColourRun, Key, KeyKind, KeyTag, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
+use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadStart, ReadText};
 
 use crate::now::Now;
 use crate::state::SrState;
-use crate::terminal::reader::WindowReply;
+use crate::terminal::reader::{WindowRead, WindowReply};
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::ReadCaret;
@@ -571,19 +571,50 @@ pub fn read_at(snapshot: &TerminalSnapshot) -> u64 {
     snapshot.ended_ms.max(snapshot.started_ms)
 }
 
-/// The reading rules' read of `snapshot`: its text as it came, without
-/// its lines' padding, which the rules take as each line's length; the
-/// screen and the rows, a screen at most, padded again.
+/// What `read`, asked of a terminal whose memory's last read placed
+/// `last` as the next start, started from, as the snapshot it answered
+/// says: parsed once here, from the request Core sent, so that no read is
+/// judged by what another was asked as (`books/dev/src/explanation/design/terminal-model.md`,
+/// "The read").
 #[must_use]
-pub fn read_of(snapshot: &TerminalSnapshot) -> Read {
+pub fn read_start(
+    read: &WindowRead,
+    snapshot: &TerminalSnapshot,
+    last: Option<TextAnchor>,
+) -> ReadStart {
+    match *read {
+        WindowRead::First => ReadStart::First,
+        WindowRead::HistoryBlock { height } => ReadStart::HistoryBlock {
+            height: std::num::NonZeroUsize::try_from(height).unwrap_or(std::num::NonZeroUsize::MAX),
+        },
+        WindowRead::From { start, .. } if snapshot.from_start => {
+            if Some(start) == last {
+                ReadStart::Kept
+            } else {
+                ReadStart::Other
+            }
+        }
+        WindowRead::From { .. } => snapshot
+            .rows_above
+            .map_or(ReadStart::Refused, |rows_above| ReadStart::Counted {
+                rows_above,
+            }),
+    }
+}
+
+/// The reading rules' read of `snapshot`, which started as `start` says:
+/// its text as it came, without its lines' padding, which the rules take
+/// as each line's length; the screen and the rows, a screen at most,
+/// padded again.
+#[must_use]
+pub fn read_of(snapshot: &TerminalSnapshot, start: ReadStart) -> Read {
     Read {
         text: ReadText {
             text: snapshot.text.text.clone(),
             lengths: snapshot.text.lengths.clone(),
         },
         screen: snapshot.screen.padded(),
-        from_start: snapshot.from_start,
-        shrank: snapshot.shrank,
+        start,
         at_document_start: snapshot.at_document_start,
         alternate: snapshot.alternate,
         first_row: snapshot.first_row.padded(),
@@ -592,7 +623,6 @@ pub fn read_of(snapshot: &TerminalSnapshot) -> Read {
         caret_column: usize::try_from(snapshot.caret_column).unwrap_or(usize::MAX),
         at_ms: read_at(snapshot),
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
-        rows_above: snapshot.rows_above,
     }
 }
 
@@ -613,8 +643,8 @@ pub fn snapshot_of(
             lengths: read.text.lengths.clone(),
         },
         screen: TerminalText::unpadded(&read.screen),
-        from_start: read.from_start,
-        shrank: read.shrank,
+        from_start: read.start.from_start(),
+        shrank: read.start.shrank(),
         at_document_start: read.at_document_start,
         alternate: read.alternate,
         first_row: TerminalText::unpadded(&read.first_row),
@@ -622,7 +652,7 @@ pub fn snapshot_of(
         caret_line: TerminalText::unpadded(&read.caret_line),
         caret_column: cells(read.caret_column),
         above: cells(read.above),
-        rows_above: read.rows_above,
+        rows_above: read.start.rows_above(),
         started_ms: read.at_ms,
         ended_ms: read.at_ms,
         waited,
@@ -785,18 +815,18 @@ pub(crate) struct Taken {
     pub(crate) generation: u64,
 }
 
-/// Takes `reply`, a full read of terminal `node` that named the start
-/// `named` and `waited` for Core's speech queue: covers the changes told
-/// before it began, gives the rules the keys that reached the program by
-/// its end and the read, keeps the scope they ask for, the start, the
-/// caret and the shape it found, and takes the read's caret as Core's. A
-/// read identical to the last given is not given, unless it waited or is
-/// the first after the focus arrived.
+/// Takes `reply`, the answer to the full read of terminal `node` that Core
+/// asked as `asked`, which `waited` for Core's speech queue: covers the
+/// changes told before it began, gives the rules the keys that reached the
+/// program by its end and the read, keeps the scope they ask for, the
+/// start, the caret and the shape it found, and takes the read's caret as
+/// Core's. A read identical to the last given is not given, unless it
+/// waited or is the first after the focus arrived.
 pub(crate) fn take(
     state: &mut SrState,
     node: NodeId,
-    reply: &WindowReply,
-    (named, waited): (Option<TextAnchor>, bool),
+    (asked, reply): (&WindowRead, &WindowReply),
+    waited: bool,
 ) -> Taken {
     let snapshot = &reply.snapshot;
     let at_ms = read_at(snapshot);
@@ -820,31 +850,26 @@ pub(crate) fn take(
     }
     model.given = Given::Last(print);
     model.give_keys(at_ms);
-    let mut read = read_of(snapshot);
-    // Only a start the read named can be refused, so the rules ask for a
-    // count read, which reads from that start again, only after one.
-    let refused = named.filter(|_| read.shrank);
-    read.shrank = refused.is_some();
-    // A read named a start other than the memory's: its rows are found by
-    // their text, as after a refused start (Table 7; rules 2 and 4).
-    if named != model.start {
-        read.from_start = false;
-    }
+    // What the read started from, parsed once from what Core asked: a
+    // start other than the memory's has its rows found by their text, as
+    // after a refused start (Table 7; rules 2 and 4).
+    let read = read_of(snapshot, read_start(asked, snapshot, model.start));
     let colours = snapshot.colours.as_deref().map(colours_of);
     let step = model.rules().read(&read, waited, colours.as_deref());
     let key = model.speech_key(at_ms);
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
-    // The rules ask a count read only of a read whose start shrank, and
-    // `read.shrank` is set above only with the start the read named, so a
-    // count read with no start is not reached. The pairing stays a match
-    // rather than a type because the rules are platform-neutral and hold no
-    // text anchor to carry the start in their step, and the snapshot's
-    // `shrank`, a flag of the recorded format, names none either.
-    let owed = match (step.count_read, refused) {
-        (true, Some(start)) => Some(TerminalScope::Count { start }),
-        (true, None) | (false, _) => step
+    // A count read reads again from the start the refused read named; the
+    // rules also ask one of a lost read with new output not reported, which
+    // starts the memory again and is owed nothing. The pairing stays a
+    // match rather than a type because the rules are platform-neutral and
+    // hold no text anchor to carry the start in their step.
+    let owed = match (step.count_read, read.start, asked) {
+        (true, ReadStart::Refused, WindowRead::From { start, .. }) => {
+            Some(TerminalScope::Count { start: *start })
+        }
+        _ => step
             .history_block
             .then_some(TerminalScope::HistoryBlock { height }),
     };

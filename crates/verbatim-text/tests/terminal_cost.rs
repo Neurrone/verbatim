@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use verbatim_term_sim::conformance::history;
 use verbatim_term_sim::{Flavor, Query, Snapshot, Terminal};
 use verbatim_text::terminal_reading::{Settings, Step, TerminalReader};
-use verbatim_text::terminal_rows::{Read, ReadText};
+use verbatim_text::terminal_rows::{Read, ReadStart, ReadText};
 
 /// The screen's width and height.
 const WIDTH: usize = 120;
@@ -286,12 +286,16 @@ struct Reads {
     sizes: Vec<usize>,
 }
 
-fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
+fn read_of(query: &Query, snapshot: &Snapshot, at_ms: u64) -> Read {
     Read {
         text: ReadText::unpadded(&snapshot.text),
         screen: snapshot.screen.clone(),
-        from_start: snapshot.from_start,
-        shrank: snapshot.shrank,
+        start: ReadStart::answered(
+            query.start.is_some(),
+            usize::try_from(query.above).unwrap_or(usize::MAX),
+            snapshot.from_start,
+            snapshot.rows_above,
+        ),
         at_document_start: snapshot.at_document_start,
         alternate: snapshot.alternate,
         first_row: snapshot.first_row.clone(),
@@ -300,7 +304,6 @@ fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
         caret_column: snapshot.caret_column,
         at_ms,
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
-        rows_above: snapshot.rows_above,
     }
 }
 
@@ -319,7 +322,7 @@ fn settle(
         let snapshot = terminal
             .snapshot(query)
             .expect("the simulated terminal answers every read");
-        let read = read_of(&snapshot, *at_ms);
+        let read = read_of(query, &snapshot, *at_ms);
         let step = reader.read(&read, false, None);
         reads.push(read);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);

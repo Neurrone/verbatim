@@ -196,7 +196,8 @@ fn time(
     times.parse_padded.push(started.elapsed());
     drop(parsed);
     let started = Instant::now();
-    let again = verbatim_core::read_of(snapshot);
+    // Timed for a read from the kept start, an ordinary read's.
+    let again = verbatim_core::read_of(snapshot, verbatim_text::terminal_rows::ReadStart::Kept);
     times.rebuild.push(started.elapsed());
     drop(again);
     let started = Instant::now();

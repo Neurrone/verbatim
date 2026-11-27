@@ -24,7 +24,7 @@ use verbatim_term_sim::oracle::{
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{OldRow, Read, ReadText};
+use verbatim_text::terminal_rows::{OldRow, Read, ReadStart, ReadText};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -159,8 +159,12 @@ impl Reader for Core {
         let read = Read {
             text: ReadText::unpadded(&snapshot.text),
             screen: snapshot.screen.clone(),
-            from_start: snapshot.from_start,
-            shrank: snapshot.shrank,
+            start: ReadStart::answered(
+                self.query.start.is_some(),
+                usize::try_from(self.query.above).expect("a few rows"),
+                snapshot.from_start,
+                snapshot.rows_above,
+            ),
             at_document_start: snapshot.at_document_start,
             alternate: snapshot.alternate,
             first_row: snapshot.first_row.clone(),
@@ -169,7 +173,6 @@ impl Reader for Core {
             caret_column: snapshot.caret_column,
             at_ms: self.now(),
             above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
-            rows_above: snapshot.rows_above,
         };
         self.answer(&read, snapshot.next_start)
     }

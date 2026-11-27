@@ -48,10 +48,6 @@ pub const MARKS: usize = 1_000;
 /// (`verbatim_uia_rops::Snapshot`), with its text as UTF-8 and the time
 /// of the read. The start for the next read is the outpost's to keep.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent answers of one read, as the read program gives them"
-)]
 pub struct Read {
     /// The text from the read's start to the document's end, line breaks
     /// included, without its lines' padding and with each line's length
@@ -59,11 +55,8 @@ pub struct Read {
     pub text: ReadText,
     /// The screen's text, for its width and height.
     pub screen: String,
-    /// Whether the read started where the last read said to start.
-    pub from_start: bool,
-    /// Whether that start was refused: the text shrank, or the screen
-    /// switched.
-    pub shrank: bool,
+    /// What the read was asked to start from, and what became of it.
+    pub start: ReadStart,
     /// Whether the read started at the document's start.
     pub at_document_start: bool,
     /// Whether the screen starts at the document's start: no history
@@ -84,9 +77,89 @@ pub struct Read {
     /// ([`TerminalMemory::above`]): fewer than asked when the document's
     /// start came first.
     pub above: usize,
-    /// For a count read whose start was refused, how many rows lie above
-    /// the read ([`Outcome::count_read`]); `None` for any other read.
-    pub rows_above: Option<u32>,
+}
+
+/// What a read was asked to start from and what became of it ("The read"),
+/// parsed once from the request its reader sent and the reader's answer, so
+/// that the memory never judges a read by what the next read is asked as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReadStart {
+    /// The screen alone, before the screen's height is known: a terminal's
+    /// first read.
+    #[default]
+    First,
+    /// A first read again with its history block, the screen's worth of
+    /// rows above the screen of `height` rows it was asked with.
+    HistoryBlock {
+        /// The screen's height the read was asked with.
+        height: std::num::NonZeroUsize,
+    },
+    /// From the start the memory's last read placed, accepted.
+    Kept,
+    /// From a start other than the one the memory's last read placed,
+    /// accepted: its rows are found by their text.
+    Other,
+    /// From a start that was refused: the text shrank, or the screen
+    /// switched.
+    Refused,
+    /// A count read, its start refused, with how many rows lie above it
+    /// ([`Outcome::count_read`]).
+    Counted {
+        /// The rows above the read.
+        rows_above: u32,
+    },
+}
+
+impl ReadStart {
+    /// The start of a read made as a reader that keeps the memory's start
+    /// answers it: asked from that start when `named`, else a first read,
+    /// again with its history block when `history_rows` rows were asked
+    /// above the screen; whether the start was kept (`from_start`), and the
+    /// rows a count read counted above a refused start.
+    #[must_use]
+    pub fn answered(
+        named: bool,
+        history_rows: usize,
+        from_start: bool,
+        rows_above: Option<u32>,
+    ) -> Self {
+        match (named, from_start, rows_above) {
+            (false, _, _) => std::num::NonZeroUsize::new(history_rows)
+                .map_or(Self::First, |height| Self::HistoryBlock { height }),
+            (true, true, _) => Self::Kept,
+            (true, false, Some(rows_above)) => Self::Counted { rows_above },
+            (true, false, None) => Self::Refused,
+        }
+    }
+
+    /// Whether the read started where the memory's last read placed its
+    /// start: its positions may be trusted.
+    #[must_use]
+    pub fn kept(self) -> bool {
+        self == Self::Kept
+    }
+
+    /// Whether the start the read named was refused.
+    #[must_use]
+    pub fn shrank(self) -> bool {
+        matches!(self, Self::Refused | Self::Counted { .. })
+    }
+
+    /// Whether a reader answering the read reports it began at a start it
+    /// was asked to begin from: a first read names none.
+    #[must_use]
+    pub fn from_start(self) -> bool {
+        matches!(self, Self::Kept | Self::Other)
+    }
+
+    /// The rows a count read counted above its refused start.
+    #[must_use]
+    pub fn rows_above(self) -> Option<u32> {
+        match self {
+            Self::Counted { rows_above } => Some(rows_above),
+            _ => None,
+        }
+    }
 }
 
 /// A read's text without the spaces that pad its lines, and how long each
@@ -824,10 +897,6 @@ pub struct TerminalMemory {
     /// a read keeps something of the last read with its own screen below
     /// the document's start, or another new screen replaces it.
     aside: Option<Aside>,
-    /// The screen's height a first read was asked again with, a screen of
-    /// rows above its screen ([`Outcome::history_block`]), until that read
-    /// comes.
-    asked_above: Option<usize>,
     /// The number the next place gets ([`TerminalMemory::add_place`]).
     next_place: u64,
 }
@@ -1071,18 +1140,21 @@ impl TerminalMemory {
             height,
             ..Outcome::default()
         };
-        let asked_above = self.asked_above.take();
         let Some(current) = self.screen.take() else {
             // A first read takes only the screen: when the document goes on
-            // above it, it is read again with its history block.
-            if asked_above.is_none() && read.above == 0 && !read.at_document_start {
-                self.asked_above = Some(height);
-                return Outcome {
-                    history_block: true,
-                    ..shape
-                };
-            }
-            let next = Screen::fresh(rows, read, (width, height), asked_above.unwrap_or(0));
+            // above it, it is read again with its history block, as the
+            // read says it was asked, however many reads were lost between.
+            let asked = match read.start {
+                ReadStart::HistoryBlock { height } => height.get(),
+                _ if read.above == 0 && !read.at_document_start => {
+                    return Outcome {
+                        history_block: true,
+                        ..shape
+                    };
+                }
+                _ => 0,
+            };
+            let next = Screen::fresh(rows, read, (width, height), asked);
             let outcome = Outcome {
                 first: true,
                 rows: vec![NewRow::New; next.rows.len()],
@@ -1109,7 +1181,7 @@ impl TerminalMemory {
             };
         }
         let had_text = current.rows.iter().any(|row| !row.is_blank());
-        let refused = read.shrank || !read.from_start;
+        let refused = !read.start.kept();
         let trusted = !refused && positions(&current, &rows, read);
         let aligned = align_read(&current, &rows, read, caret, trusted);
         let shape = Outcome {
@@ -1141,19 +1213,21 @@ impl TerminalMemory {
         // caller starts the memory again.
         let lost = !trusted && !refused && had_text && (aligned.lost() || aligned.ambiguous);
         if nothing || lost {
-            let (aligned, lost) = match read.rows_above {
+            let (aligned, lost) = match read.start {
                 _ if lost && aligned.ambiguous && report => (
                     align_screen(&current, (&rows, height), read, caret),
                     Lost::Uncounted,
                 ),
-                None if read.shrank || !report => {
+                ReadStart::Counted { rows_above } => {
+                    (all_new(aligned), Lost::About { above: rows_above })
+                }
+                _ if read.start == ReadStart::Refused || !report => {
                     self.screen = Some(current);
                     return Outcome {
                         count_read: true,
                         ..shape
                     };
                 }
-                Some(above) if read.shrank => (all_new(aligned), Lost::About { above }),
                 _ => (all_new(aligned), Lost::MoreThan),
             };
             self.drop_aside(&aligned, read);
@@ -1624,7 +1698,7 @@ fn align_read(
     // Where a row of the history block was, as the shift to its place: by
     // the read's start, or, with the start refused, by the document's
     // start when both reads began there; otherwise it is not known.
-    let place = if !read.shrank && read.from_start {
+    let place = if read.start.kept() {
         base
     } else if read.at_document_start && memory.at_document_start {
         isize_of(memory.skipped)
@@ -1776,6 +1850,10 @@ fn keep_places(next: &mut Screen, memory: &Screen, aligned: &Aligned) {
         }
         let row = anchor.row.saturating_add(shift);
         match usize::try_from(row) {
+            // A command mark keeps its own line, by which it is found
+            // ("Moving by command"): the line at its place now may be
+            // another, once a full history moved under it.
+            Ok(_) if mark => Some(Anchor { row, ..anchor }),
             Ok(row) => anchor_at(rows, row, anchor.column),
             Err(_) if at_start && mark => None,
             Err(_) if at_start => anchor_at(rows, 0, anchor.column),
@@ -1894,7 +1972,7 @@ fn classify(
     } = how;
     let old = &memory.rows;
     let (count, total) = (old.len(), rows.len());
-    let refused = read.shrank || !read.from_start;
+    let refused = !read.start.kept();
     let place = |from: usize| isize_of(from).saturating_add(fixed);
     // A row of the read, and of the last read, by index: each table is made
     // as long as its rows, and the alignment's pairs index both.

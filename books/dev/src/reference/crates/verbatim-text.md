@@ -144,7 +144,7 @@ terminal model").
     printed its history again);
   - each set alone with the memory unchanged: `count_read` (a lost read
     left to the caller: read again from the same start as a count read,
-    whose `Read::rows_above` counts the rows above it, and give that
+    whose `ReadStart::Counted { rows_above }` counts the rows above it, and give that
     instead; with new output not reported, start the memory again with
     `restart`), `history_block` (read again
     with no start, counting a screen up from the document's end, with a
@@ -182,7 +182,16 @@ terminal model").
   document shrank, as after Windows Terminal's clear) reads from a screen
   above the screen instead. A first read takes only the screen, and is
   read again from a screen above when the document goes on above it, so
-  every read the memory holds has its history block.
+  every read the memory holds has its history block. A read says what it
+  was asked as and what became of its start, as one `ReadStart` the
+  caller parses from its request and the reader's answer: `First`,
+  `HistoryBlock { height }`, `Kept` (from the start the memory's last
+  read placed), `Other` (another start, accepted, its rows found by
+  text), `Refused`, or `Counted { rows_above }`. The memory keeps no
+  record of what it asked for, so a first read again whose answer is
+  lost leaves the next first read to ask for the history block again;
+  when every such read fails, first reads and history-block reads
+  alternate, one per change told, never in a loop of their own.
 - Positions are trusted when the rows above the last read's screen read
   exactly as the last read's history block did, at least one with text,
   or when the last read's screen started at the document's start. Then
@@ -216,7 +225,10 @@ terminal model").
   keeps them equally well at two places. It is handled within itself,
   `Lost::MoreThan`: every row it did not keep is new; at more than one
   place only its screen is aligned, `Lost::Uncounted`; its anchors keep their places
-  (`keep_places`). After a start that shrank, the memory asks for a count
+  (`keep_places`): the review position and the places take the line at
+  their place now, and a command mark keeps its own line, by which it is
+  found, since after a full history moved the line at its place is
+  another. After a start that shrank, the memory asks for a count
   read instead, and when that keeps nothing every row is new and the rows
   above it are `Lost::About { above }`. With new output not reported, any
   lost read is left to the caller to start the memory again.

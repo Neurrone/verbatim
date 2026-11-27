@@ -93,8 +93,7 @@ fn read(text: &str, started_us: u64) -> Outcome<WindowReply> {
     let read = Read {
         text: ReadText::unpadded(text),
         screen: text.to_owned(),
-        from_start: false,
-        shrank: false,
+        start: verbatim_text::terminal_rows::ReadStart::First,
         at_document_start: true,
         alternate: true,
         first_row: text.to_owned(),
@@ -103,7 +102,6 @@ fn read(text: &str, started_us: u64) -> Outcome<WindowReply> {
         caret_column: 0,
         at_ms: started_us / 1_000,
         above: 0,
-        rows_above: None,
     };
     Outcome::Result(WindowReply {
         snapshot: crate::snapshot_of(&read, false, None),

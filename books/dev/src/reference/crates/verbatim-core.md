@@ -1813,9 +1813,12 @@ terminal reader reads back of its window batch's answer, with the anchor
 held at the next read's start) and the answers to the requests they make;
 `terminal/reading.rs` is the focused terminal's life and its reading.
 
-- Public: `read_of(&TerminalSnapshot)`, the rules' `Read` of a snapshot
-  (its text without its lines' padding, and the screen, padded again
-  exactly); `snapshot_of(&Read, waited, colours)`, the snapshot of a read
+- Public: `read_start(&WindowRead, &TerminalSnapshot, last)`, what a
+  read Core asked as the `WindowRead` started from, parsed once from the
+  request and the snapshot, `Kept` only when it named `last`, the start
+  the model's memory placed; `read_of(&TerminalSnapshot, ReadStart)`, the
+  rules' `Read` of a snapshot (its text without its lines' padding, and
+  the screen, padded again exactly); `snapshot_of(&Read, waited, colours)`, the snapshot of a read
   as an outpost sends it, for tests and measurements over the simulated
   terminal; and `read_at(&TerminalSnapshot)`, when a snapshot was taken as
   far as keys are concerned: when the read ended, or when it began for a
@@ -1852,7 +1855,10 @@ held at the next read's start) and the answers to the requests they make;
   yet given to them, the history rows that came, the review places, the
   start anchor the next read names (the start of the last read whose
   screen showed text, or the first), the scope the rules owe (`Fresh`,
-  `Whole` or `HistoryBlock`, taken by the next full read sent), when the
+  `Count` or `HistoryBlock`, taken by the next full read sent and Core's
+  alone: a read that is lost loses it harmlessly, since each answer is
+  taken with the `WindowRead` it was asked as, `terminal_model::take`
+  parsing its `ReadStart` once), when the
   newest read began, and `Given`, the read given before: `Focus`, none
   since the focus arrived, so the next is given whatever it shows, or
   `Last` with its hash, so an identical read that did not wait is not

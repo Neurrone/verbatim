@@ -5,7 +5,9 @@
 
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
-use super::{Anchor, Lost, NewRow, OldRow, Outcome, Read, ReadText, Switch, TerminalMemory, hash};
+use super::{
+    Anchor, Lost, NewRow, OldRow, Outcome, Read, ReadStart, ReadText, Switch, TerminalMemory, hash,
+};
 
 /// A terminal watched as the outpost watches it: each read starts where
 /// the last said, a screen above it, with the height the memory found, and
@@ -58,8 +60,12 @@ impl Watch {
             let read = Read {
                 text: ReadText::unpadded(&snapshot.text),
                 screen: snapshot.screen,
-                from_start: snapshot.from_start,
-                shrank: snapshot.shrank,
+                start: ReadStart::answered(
+                    query.start.is_some(),
+                    usize::try_from(query.above).expect("a few rows"),
+                    snapshot.from_start,
+                    snapshot.rows_above,
+                ),
                 at_document_start: snapshot.at_document_start,
                 alternate: snapshot.alternate,
                 first_row: snapshot.first_row,
@@ -68,7 +74,6 @@ impl Watch {
                 caret_column: snapshot.caret_column,
                 at_ms: self.at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
-                rows_above: snapshot.rows_above,
             };
             let outcome = self.memory.read(&read, true);
             let screen_rows = u32::try_from(outcome.height).expect("a small screen");
@@ -1099,7 +1104,8 @@ fn a_lost_reads_anchor_on_a_kept_row_follows_it_and_any_other_keeps_its_place() 
     // The lost read above, its last read's rows three rows further up: the
     // mark on a row the visible screen's alignment kept follows that row,
     // and the mark on a row it did not keep stays at its place, three rows
-    // up ("A lost read"; Claude, 2026-11-27).
+    // up, with its own line, by which it is found ("A lost read"; Claude,
+    // 2026-11-27; "Moving by command": Claude, 2026-11-28).
     let mut watch = Watch::console(10, 3, 6);
     watch.write("a\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\n");
     let anchor = |row: isize, text: &str| Anchor {
@@ -1113,7 +1119,7 @@ fn a_lost_reads_anchor_on_a_kept_row_follows_it_and_any_other_keeps_its_place() 
     assert_eq!(outcome.lost, Some(Lost::Uncounted));
     assert_eq!(outcome.old[3], kept_row(3));
     assert_eq!(watch.texts(), ["a", "b", "a", "b", "a", ""]);
-    assert_eq!(watch.memory.marks(), [anchor(3, "b"), anchor(2, "a")]);
+    assert_eq!(watch.memory.marks(), [anchor(3, "b"), anchor(2, "b")]);
 }
 
 /// A read of `rows`, each padded to 10 cells, its screen the last
@@ -1151,7 +1157,7 @@ fn with_the_shell_aside() -> TerminalMemory {
     );
     let opened = memory.read(
         &Read {
-            shrank: true,
+            start: ReadStart::Refused,
             ..read_of(&["q1", "q2", "q3"], 3, true, 100)
         },
         true,
@@ -1250,7 +1256,7 @@ fn the_aside_screen_is_looked_for_only_in_the_read() {
     let mut memory = with_the_shell_aside();
     let far = memory.read(
         &Read {
-            from_start: true,
+            start: ReadStart::Kept,
             above: 3,
             ..read_of(&["o1", "o2", "o3", "o4", "o5", "o6", "o7"], 3, false, 200)
         },
@@ -1270,7 +1276,7 @@ fn a_read_keeping_something_with_its_screen_below_the_documents_start_drops_the_
     let mut memory = with_the_shell_aside();
     let kept_some = memory.read(
         &Read {
-            from_start: true,
+            start: ReadStart::Kept,
             ..read_of(&["q1", "q2", "q3", "r1"], 3, true, 200)
         },
         true,
@@ -1278,7 +1284,7 @@ fn a_read_keeping_something_with_its_screen_below_the_documents_start_drops_the_
     assert_eq!(kept_some.switch, Switch::None);
     let far = memory.read(
         &Read {
-            from_start: true,
+            start: ReadStart::Kept,
             above: 3,
             ..read_of(
                 &["h1", "h2", "$ pi", "s1", "s2", "s3", "s4", "s5", "s6"],

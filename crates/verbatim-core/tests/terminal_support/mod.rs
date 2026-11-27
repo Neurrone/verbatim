@@ -47,7 +47,7 @@ use verbatim_model::{
     SpeechMark, TextAnchor, TraceId, WindowHandle,
 };
 use verbatim_term_sim::{Flavor, Position, Query, Range, Terminal};
-use verbatim_text::terminal_rows::{Read, ReadText};
+use verbatim_text::terminal_rows::{Read, ReadStart, ReadText};
 
 pub const TERMINAL: u64 = 12;
 
@@ -204,8 +204,12 @@ impl Outpost {
         let read = Read {
             text: ReadText::unpadded(&snapshot.text),
             screen: snapshot.screen,
-            from_start: snapshot.from_start,
-            shrank: snapshot.shrank,
+            start: ReadStart::answered(
+                query.start.is_some(),
+                usize::try_from(query.above).expect("rows"),
+                snapshot.from_start,
+                snapshot.rows_above,
+            ),
             at_document_start: snapshot.at_document_start,
             alternate: snapshot.alternate,
             first_row: snapshot.first_row,
@@ -214,7 +218,6 @@ impl Outpost {
             caret_column: snapshot.caret_column,
             at_ms,
             above: usize::try_from(snapshot.above).expect("rows"),
-            rows_above: snapshot.rows_above,
         };
         let colours = colours.then(|| self.colours());
         let wire = snapshot_of(&read, false, colours.as_deref());
@@ -586,7 +589,23 @@ impl Session {
     }
 
     fn built(outpost: Outpost, depth: u64, console: bool) -> Self {
-        let mut session = Self {
+        let mut session = Self::unstarted(outpost, depth, console);
+        session.start();
+        session
+    }
+
+    /// [`Session::with`], the outpost holding back Core's output reads from
+    /// the start ([`Session::hold_output`]), the first read's history block
+    /// among them.
+    pub fn holding_output(outpost: Outpost) -> Self {
+        let mut session = Self::unstarted(outpost, 0, false);
+        session.hold_output = true;
+        session.start();
+        session
+    }
+
+    fn unstarted(outpost: Outpost, depth: u64, console: bool) -> Self {
+        Self {
             state: SrState::new(),
             runtime: verbatim_core::Runtime::default(),
             outpost,
@@ -621,7 +640,14 @@ impl Session {
             earcons: Vec::new(),
             wake: None,
             checks: Vec::new(),
-        };
+        }
+    }
+
+    /// The terminal focused at startup and read at time 0, all of which is
+    /// let pass unasserted.
+    fn start(&mut self) {
+        let console = self.console;
+        let session = self;
         // The terminal's window in front: Core starts the application's
         // outpost to read its focus, which commits the terminal.
         session.queue(QueueInput::Foreground(ForegroundReport {
@@ -653,7 +679,6 @@ impl Session {
         session.answered_reads.clear();
         session.observed.clear();
         session.timers.clear();
-        session
     }
 
     /// One step of the reducer, logged, with the timer's due time read
@@ -944,6 +969,16 @@ impl Session {
             from: OUTPOST,
             tell: Box::new(tell),
         });
+    }
+
+    /// Refuses the output reads held back, as an outpost whose provider
+    /// refused the read answers it.
+    pub fn refuse_output(&mut self) {
+        while let Some((ask, _)) = self.held_output.pop_front() {
+            self.reply(&ask, Outcome::Refused(Refusal::Unsupported));
+        }
+        self.run(Vec::new());
+        self.settle();
     }
 
     /// Answers the count read held back.

@@ -33,7 +33,7 @@ use verbatim_model::{
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
 use verbatim_text::terminal_reading::{Settings, TerminalReader};
-use verbatim_text::terminal_rows::{Read, ReadText};
+use verbatim_text::terminal_rows::{Read, ReadStart, ReadText};
 
 /// Heard with no key.
 fn plain(words: &[&str]) -> Vec<Said> {
@@ -514,6 +514,101 @@ fn live_snapshots_that_arrive_while_a_count_read_is_owed_are_dropped() {
 }
 
 #[test]
+fn a_lost_history_block_read_asks_for_it_again() {
+    // The first read finds the document going on above the screen, and the
+    // read again with its history block is refused: the next read, a first
+    // read again, says so (`ReadStart::First`) and asks for its history
+    // block once more, so that the read after it compares its positions
+    // ("The read"). A memory that took whatever read came next as the
+    // history block's answer asked nothing.
+    let mut outpost = Outpost::new(Flavor::ConsoleHost, 20, 3, 50);
+    outpost.sim.write(numbered(1..=12).as_bytes());
+    let mut session = Session::holding_output(outpost);
+    // The history block's read is refused; the next change is read with
+    // nothing owed, as a first read again, which asks for the history
+    // block once more.
+    session.refuse_output();
+    session.hold_output = false;
+    let _ = session.requests();
+    session.write(&numbered(13..=13), 100);
+    assert_eq!(session.requests(), [Asked::FirstAgain]);
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn a_return_whose_start_shrank_asks_a_count_read() {
+    // The screen and the history cleared and five lines written while
+    // Core read nothing; the focus read again: the baseline names the
+    // model's start, which is refused, and keeps nothing, so the count
+    // read is asked, silent as the baseline is (rule 15).
+    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    session
+        .outpost
+        .sim
+        .write(format!("\x1b[H\x1b[2J\x1b[3J{}", numbered(13..=17)).as_bytes());
+    session.at_ms = 1_000;
+    session.focus_after(false);
+    assert_eq!(session.requests(), [FRESH, Asked::Count]);
+    // The focus said again, its lines silent (rule 15).
+    assert_eq!(
+        session.heard(),
+        plain(&["Label(\"Terminal\") Role(Terminal)"])
+    );
+}
+
+#[test]
+fn a_flood_past_a_return_reads_reach_keeps_a_command_mark_at_its_place() {
+    // A command entered and marked, then, with Core reading nothing, more
+    // output than the return's read reaches, rotating the full history by
+    // 14 rows, the command's line still in it: the baseline names the
+    // model's start, accepted (`ReadStart::Kept`), keeps nothing and is a
+    // lost read, through which the mark keeps its place and its own line
+    // (rule 6), found by its text by one search ("Moving by command"). A
+    // baseline judged from another start finds its rows by text and drops
+    // the mark, asking no search and saying nothing. NVDA has no command
+    // marks.
+    let mut session = showing(30, 4, 20, &numbered(1..=17));
+    session.write("$ ", 500);
+    enter(&mut session, "echo one", "one\r\n", 1000);
+    session.outpost.sim.write(numbered(18..=35).as_bytes());
+    session.at_ms = 5_000;
+    session.focus_after(false);
+    // The focus said again, its lines silent (rule 15).
+    assert_eq!(
+        session.heard(),
+        plain(&["Label(\"Terminal\") Role(Terminal)"])
+    );
+    let _ = session.requests();
+    session.press(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo one"]));
+    assert_eq!(session.requests(), [FRESH, find("$ echo one")]);
+}
+
+#[test]
+fn a_mark_whose_line_left_the_history_while_away_is_dropped() {
+    // As above, but the flood rotates the full history by 19 rows, past
+    // the command's line: its mark keeps its place and its line, the
+    // search finds the line nowhere, and the mark is dropped, so nothing
+    // is said ("Moving by command"); a mark taking the line now at its
+    // place says that line, and a baseline judged from another start
+    // drops the mark with no search. NVDA has no command marks.
+    let mut session = showing(30, 4, 20, &numbered(1..=17));
+    session.write("$ ", 500);
+    enter(&mut session, "echo one", "one\r\n", 1000);
+    session.outpost.sim.write(numbered(18..=40).as_bytes());
+    session.at_ms = 5_000;
+    session.focus_after(false);
+    assert_eq!(
+        session.heard(),
+        plain(&["Label(\"Terminal\") Role(Terminal)"])
+    );
+    let _ = session.requests();
+    session.press(&command(UP));
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.requests(), [FRESH, find("$ echo one")]);
+}
+
+#[test]
 fn a_flood_through_a_tiny_terminal_speaks_only_the_lost_reads_lines() {
     // Three rows and a full history of nine, the last read's start in it:
     // 28 lines carry the last read's rows out of the buffer, so the read
@@ -664,8 +759,12 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                     let read = Read {
                         text: ReadText::unpadded(&snapshot.text),
                         screen: snapshot.screen,
-                        from_start: snapshot.from_start,
-                        shrank: snapshot.shrank,
+                        start: ReadStart::answered(
+                            query.start.is_some(),
+                            usize::try_from(query.above).expect("rows"),
+                            snapshot.from_start,
+                            snapshot.rows_above,
+                        ),
                         at_document_start: snapshot.at_document_start,
                         alternate: snapshot.alternate,
                         first_row: snapshot.first_row,
@@ -674,11 +773,14 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                         caret_column: snapshot.caret_column,
                         at_ms,
                         above: usize::try_from(snapshot.above).expect("rows"),
-                        rows_above: snapshot.rows_above,
                     };
                     let wire = serde_json::to_string(&snapshot_of(&read, false, None))
                         .expect("a snapshot serializes");
-                    let again = read_of(&serde_json::from_str(&wire).expect("a snapshot parses"));
+                    // The start comes from what Core asked, not the snapshot.
+                    let again = read_of(
+                        &serde_json::from_str(&wire).expect("a snapshot parses"),
+                        read.start,
+                    );
                     assert_eq!(again, read, "{name} in {flavor:?}, chunk {chunk}");
                     let step = original.read(&read, false, None);
                     assert_eq!(

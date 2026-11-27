@@ -315,7 +315,18 @@ impl Watch {
             started_us: at_ms * 1_000,
             point: None,
         };
-        super::take(&mut self.state, watched(), &reply, (named, waited))
+        // What Core asked: from the start it names, or else a first read,
+        // again with its history block once the screen's height is known.
+        let asked = match (named, std::num::NonZeroU32::new(height)) {
+            (Some(start), _) => crate::terminal::reader::WindowRead::From {
+                start,
+                height,
+                count: false,
+            },
+            (None, None) => crate::terminal::reader::WindowRead::First,
+            (None, Some(height)) => crate::terminal::reader::WindowRead::HistoryBlock { height },
+        };
+        super::take(&mut self.state, watched(), (&asked, &reply), waited)
     }
 }
 
