@@ -2129,6 +2129,7 @@ dependencies = [
  "verbatim-model",
  "verbatim-process",
  "verbatim-reader-rules",
+ "verbatim-test-console",
  "verbatim-uia",
  "verbatim-uia-rops",
  "verbatim-win32",
