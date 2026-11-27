@@ -1843,6 +1843,185 @@ fn a_rows_emphasis_drawn_after_the_keys_first_read_with_colours_is_their_answer(
     );
 }
 
+// Each line's hold, released or dropped: the cases neither the transcripts
+// nor the oracle pin.
+
+#[test]
+fn a_line_that_lost_its_unfinished_word_holds_nothing() {
+    // "Growing lines": a line that lost text no longer holds its unfinished
+    // word, so no quiet period waits for it.
+    let mut term = Term::new(30, 5, 10);
+    term.write("abc", 100);
+    term.write("de", 200);
+    assert_eq!(
+        term.write("\x1b[2D\x1b[K", 300),
+        step(Vec::new(), vec![withheld(0, Reason::LostText)], None)
+    );
+}
+
+#[test]
+fn a_volatile_caret_line_answered_by_a_key_stays_volatile() {
+    // "Volatile rows": a key's answer on a volatile line ends its settling
+    // but not its volatility, so its next change, 3.9 seconds after the
+    // last, is held at once, until 1.5 times that interval has passed.
+    let mut term = Term::new(20, 3, 10);
+    term.write("1 $ ", 100);
+    // Each rewrite puts the caret back after the prompt.
+    assert_eq!(
+        term.write("\r2\x1b[1;5H", 1100),
+        says(vec![changed(0, "2 $")])
+    );
+    assert_eq!(
+        term.write("\r3\x1b[1;5H", 2100),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(3600))
+    );
+    term.typed("l", 2200);
+    assert_eq!(term.write("l", 2250), says(vec![echo(0, "l")]));
+    assert_eq!(
+        term.write("\r4\x1b[1;6H", 6000),
+        step(
+            Vec::new(),
+            vec![withheld(0, Reason::Volatile)],
+            Some(11_850)
+        )
+    );
+}
+
+#[test]
+fn a_volatile_rows_held_word_spoken_as_the_caret_leaves_keeps_it_volatile() {
+    // "Growing lines" and "Volatile rows": a volatile row that grows holds
+    // its unfinished word, and stays volatile once the caret leaving speaks
+    // the word, so its next change, 3 seconds after the last, is held.
+    let mut term = Term::new(20, 4, 10);
+    term.write("W 0", 100);
+    assert_eq!(term.write("\rW 1", 1100), says(vec![changed(0, "1")]));
+    assert_eq!(
+        term.write("\rW 2", 1600),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(2600))
+    );
+    assert_eq!(
+        term.write("\rW 1", 2000),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(3000))
+    );
+    assert_eq!(
+        term.write(" x", 2100),
+        step(
+            Vec::new(),
+            vec![withheld(0, Reason::UnfinishedWord)],
+            Some(3100)
+        )
+    );
+    // A prompt below it, kept, so that the row's rewrite pairs as one.
+    assert_eq!(
+        term.write("\r\n$ ", 2200),
+        says(vec![growth(0, " x"), line(1, "$")])
+    );
+    assert_eq!(
+        term.write("\x1b[1;1HW 2 x\x1b[2;3H", 5000),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(9500))
+    );
+}
+
+#[test]
+fn a_volatile_row_a_key_changed_stays_volatile_until_its_hold_is_released() {
+    // "Rows the keys own" and "Volatile rows": the keys' hold replaces the
+    // row's settling but not its volatility.
+    let mut term = Term::new(20, 5, 10);
+    term.write("cpu 10%\r\n$ ", 100);
+    assert_eq!(
+        term.write("\x1b[1;1Hcpu 20%\x1b[2;3H", 1600),
+        says(vec![changed(0, "20%")])
+    );
+    assert_eq!(
+        term.write("\x1b[1;1Hcpu 30%\x1b[2;3H", 3100),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(5350))
+    );
+    term.key(KeyKind::Other, 5300);
+    assert_eq!(
+        term.write("\x1b[1;1Hcpu 40%\x1b[2;3H", 5320),
+        step(
+            Vec::new(),
+            vec![withheld(0, Reason::HeldForKeys)],
+            Some(6300)
+        )
+    );
+    assert_eq!(
+        term.write("\x1b[1;1Hcpu 50%\x1b[2;3H", 5700),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(9600))
+    );
+}
+
+#[test]
+fn a_held_row_a_full_history_rotates_out_is_spoken_as_held_before_the_output() {
+    // A held line the rotation carried above the read's start is spoken as
+    // it was last read, by the changed-word rule against what it last said,
+    // before the read's output.
+    let mut term = Term::new(20, 3, 2);
+    term.write("h0\r\nh1\r\nW 0\r\nx\r\ny", 100);
+    assert_eq!(
+        term.write("\x1b[1;1HW 1\x1b[3;2H", 1100),
+        says(vec![changed(2, "1")])
+    );
+    assert_eq!(
+        term.write("\x1b[1;1HW 2\x1b[3;2H", 1600),
+        step(Vec::new(), vec![withheld(2, Reason::Volatile)], Some(2600))
+    );
+    assert_eq!(
+        term.write("\r\nl1\r\nl2\r\nl3", 1700),
+        says(vec![
+            Speech::Held {
+                text: "2".to_owned()
+            },
+            line(2, "l1"),
+            line(3, "l2"),
+            line(4, "l3")
+        ])
+    );
+}
+
+#[test]
+fn a_held_word_is_dropped_unspoken_when_the_focus_leaves() {
+    // "The focus": output written while the focus is elsewhere is never
+    // heard, a held word included.
+    let mut term = Term::new(30, 5, 10);
+    term.write("abc", 100);
+    term.write("de", 200);
+    assert_eq!(term.reader.blur(), quiet(None));
+    assert_eq!(term.reader.timer(1200), quiet(None));
+}
+
+#[test]
+fn turning_report_new_output_off_drops_a_held_word_unspoken() {
+    let mut term = Term::new(30, 5, 10);
+    term.write("abc", 100);
+    term.write("de", 200);
+    let off = Settings {
+        report_new_output: false,
+        ..Settings::default()
+    };
+    assert_eq!(term.reader.set_settings(off), quiet(None));
+    assert_eq!(term.reader.timer(1200), quiet(None));
+}
+
+#[test]
+fn with_output_off_text_held_for_colours_is_dropped_at_the_next_read() {
+    // "Colours" with "report new output" off: text after the caret held for
+    // colours is settled by the next read, which reports nothing.
+    let settings = Settings {
+        report_new_output: false,
+        ..Settings::default()
+    };
+    let mut term = Term::with(20, 3, 10, settings);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"cho hi\x1b[5D");
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
+    assert_eq!(term.read(1400), quiet(None));
+}
+
 // The reader restored from its serialized form, as Core's flight recorder
 // dumps and replays it ("Where it runs").
 

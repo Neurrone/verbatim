@@ -282,21 +282,143 @@ pub struct Step {
 /// A read's colours by row, each row's when the read took them.
 type RowColours<'a> = Option<&'a [Option<&'a Vec<ColourRun>>]>;
 
-/// What a line waits for.
+/// What a line waits for, besides a volatile row's settling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-enum Hold {
-    /// A volatile row's settling.
-    Volatile,
-    /// A growing line's unfinished word.
-    Word,
-    /// The keys' pause.
+enum Wait {
+    /// Nothing.
+    Nothing,
+    /// A growing line's unfinished word ("Growing lines"), due when the
+    /// quiet period after its growth ends.
+    Word { due_ms: u64 },
+    /// The keys' pause ("Rows the keys own").
     Keys,
     /// A read with colours in the keys' window: the caret's line's text
     /// after the caret that was not typed, which a read without colours
     /// cannot tell from a suggestion ("Colours"); spoken as gained when
     /// the window ends without one.
     Colours(String),
+}
+
+impl Wait {
+    /// When it is due, given the keys' last two times.
+    fn due(&self, keys: Option<(u64, Option<u64>)>) -> Option<u64> {
+        match self {
+            Self::Nothing => None,
+            Self::Word { due_ms } => Some(*due_ms),
+            Self::Keys => keys.map(|(at, interval)| at.saturating_add(quiet_period(interval))),
+            Self::Colours(_) => keys.map(|(at, _)| at.saturating_add(KEY_WINDOW_MS)),
+        }
+    }
+}
+
+/// A line's hold: whether it is volatile, and what it waits for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+enum Hold {
+    /// Not volatile, or no longer: its hold was released or dropped.
+    Steady(Wait),
+    /// Volatile and settling ("Volatile rows"): silent until the quiet
+    /// period after its last change ends.
+    Settling { due_ms: u64 },
+    /// Volatile, its settling replaced by another rule's wait: its next
+    /// change the program owns is held at once.
+    Volatile(Wait),
+}
+
+impl Default for Hold {
+    fn default() -> Self {
+        Self::Steady(Wait::Nothing)
+    }
+}
+
+impl Hold {
+    /// What it waits for besides settling; `None` while settling.
+    fn wait(&self) -> Option<&Wait> {
+        match self {
+            Self::Steady(wait) | Self::Volatile(wait) => Some(wait),
+            Self::Settling { .. } => None,
+        }
+    }
+
+    /// The hold waiting for `wait` instead, as volatile as it was.
+    fn with_wait(&self, wait: Wait) -> Self {
+        match self {
+            Self::Steady(_) => Self::Steady(wait),
+            Self::Settling { .. } | Self::Volatile(_) => Self::Volatile(wait),
+        }
+    }
+
+    fn is_volatile(&self) -> bool {
+        !matches!(self, Self::Steady(_))
+    }
+
+    /// Whether it waits for anything.
+    fn holds(&self) -> bool {
+        self.wait() != Some(&Wait::Nothing)
+    }
+
+    fn holds_word(&self) -> bool {
+        matches!(self.wait(), Some(Wait::Word { .. }))
+    }
+
+    /// When it is due, given the keys' last two times.
+    fn due(&self, keys: Option<(u64, Option<u64>)>) -> Option<u64> {
+        match self {
+            Self::Steady(wait) | Self::Volatile(wait) => wait.due(keys),
+            Self::Settling { due_ms } => Some(*due_ms),
+        }
+    }
+
+    /// A line that lost text no longer holds its unfinished word.
+    fn drop_word(&mut self) {
+        if self.holds_word() {
+            *self = self.with_wait(Wait::Nothing);
+        }
+    }
+
+    /// The text held for colours, no longer held.
+    fn take_colours(&mut self) -> Option<String> {
+        let Some(Wait::Colours(after)) = self.wait() else {
+            return None;
+        };
+        let after = after.clone();
+        *self = self.with_wait(Wait::Nothing);
+        Some(after)
+    }
+}
+
+/// A line's change found at a read, spoken or held by the rules of
+/// output: when, and which read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct Change {
+    at_ms: u64,
+    read: u64,
+}
+
+/// What a hold says when it is released ([`TerminalReader::held`]).
+enum Released {
+    Growth(String),
+    Changed(String),
+    Gained(String),
+}
+
+impl Released {
+    /// It spoken of the line at `row`.
+    fn at(self, row: usize) -> Speech {
+        match self {
+            Self::Growth(text) => Speech::Growth { row, text },
+            Self::Changed(text) => Speech::Changed { row, text },
+            Self::Gained(text) => Speech::Gained { row, text },
+        }
+    }
+
+    fn into_text(self) -> String {
+        match self {
+            Self::Growth(text) | Self::Changed(text) | Self::Gained(text) => text,
+        }
+    }
 }
 
 /// A line's history ("The memory"), kept on its first row, or on the
@@ -311,23 +433,15 @@ struct LineState {
     /// silently: a growing line's spoken start while its word is held.
     /// Usually the same text as `text`, shared.
     said: Text,
-    /// Whether it was rewritten in place other than by growth.
-    redrawn: bool,
-    /// Whether it is volatile.
-    volatile: bool,
-    /// When it last changed in a way that is spoken, other than as a key's
-    /// answer, and the interval before that change.
-    changed_ms: Option<u64>,
-    interval_ms: Option<u64>,
-    /// The read that change was found at.
-    changed_read: Option<u64>,
+    /// Whether it is volatile, and what it waits for.
+    hold: Hold,
+    /// Its last change the rules of output found, other than as a key's
+    /// answer, which the next judges volatility by.
+    changed: Option<Change>,
     /// When it last changed outside a key's window.
     unprompted_ms: Option<u64>,
-    /// When it last grew, and the interval before that growth.
+    /// When it last grew, which the next growth's quiet period follows.
     grew_ms: Option<u64>,
-    grew_interval_ms: Option<u64>,
-    /// What it waits for.
-    hold: Option<Hold>,
     /// Whether a key changed it since it appeared: it holds input.
     input: bool,
     /// How much of `text`, in bytes, is above the read, or above the
@@ -347,16 +461,13 @@ impl LineState {
 
     /// When what it waits for is due, given the keys' last two times.
     fn due(&self, keys: Option<(u64, Option<u64>)>) -> Option<u64> {
-        match self.hold.as_ref()? {
-            Hold::Volatile => self
-                .changed_ms
-                .map(|at| at.saturating_add(quiet_period(self.interval_ms))),
-            Hold::Word => self
-                .grew_ms
-                .map(|at| at.saturating_add(quiet_period(self.grew_interval_ms))),
-            Hold::Keys => keys.map(|(at, interval)| at.saturating_add(quiet_period(interval))),
-            Hold::Colours(_) => keys.map(|(at, _)| at.saturating_add(KEY_WINDOW_MS)),
-        }
+        self.hold.due(keys)
+    }
+
+    /// Holds nothing, not volatile, and all of it heard.
+    fn settle(&mut self) {
+        self.hold = Hold::default();
+        self.said.clone_from(&self.text);
     }
 }
 
@@ -735,9 +846,7 @@ impl TerminalReader {
     fn drop_holds(&mut self) {
         for row in &mut self.screen.rows {
             if let Some(line) = &mut row.line {
-                line.hold = None;
-                line.volatile = false;
-                line.said.clone_from(&line.text);
+                line.settle();
             }
         }
     }
@@ -797,37 +906,8 @@ impl TerminalReader {
             if due > now && end > top {
                 continue;
             }
-            let (text, said, hold, cut) = (
-                line.text.clone(),
-                line.said.clone(),
-                line.hold.clone(),
-                line.cut,
-            );
-            match hold {
-                Some(Hold::Word) => {
-                    if let Some(rest) = text.strip_prefix(&*said)
-                        && !rest.is_empty()
-                    {
-                        let start = text.len().saturating_sub(rest.len()).max(cut);
-                        speech.push(Speech::Growth {
-                            row: index.saturating_add(skipped),
-                            text: text_in(&text, start..).to_owned(),
-                        });
-                    }
-                }
-                Some(Hold::Volatile | Hold::Keys) => {
-                    if let Some(start) = self.changed_start(&[&*said], &text) {
-                        speech.push(Speech::Changed {
-                            row: index.saturating_add(skipped),
-                            text: text_in(&text, start.max(cut)..).to_owned(),
-                        });
-                    }
-                }
-                Some(Hold::Colours(after)) => speech.push(Speech::Gained {
-                    row: index.saturating_add(skipped),
-                    text: after,
-                }),
-                None => {}
+            if let Some(released) = self.held(line) {
+                speech.push(released.at(index.saturating_add(skipped)));
             }
             if let Some(line) = self
                 .screen
@@ -835,27 +915,35 @@ impl TerminalReader {
                 .get_mut(index)
                 .and_then(|row| row.line.as_mut())
             {
-                line.hold = None;
-                line.volatile = false;
-                line.said = text;
+                line.settle();
             }
         }
     }
 
-    /// What `line` holds, as [`TerminalReader::release`] would speak it: a
-    /// growing line's unfinished word, or a volatile row, or a row the keys
-    /// changed, from the word that changed; `None` when it holds nothing.
-    fn held_text(&self, line: &LineState) -> Option<String> {
+    /// What `line`'s hold says when it is released, at the timer, above
+    /// the screen, as the caret leaves its word, or carried above the read:
+    /// a growing line's unfinished word as growth; a settling row or a row
+    /// the keys changed by the changed-word rule against what it last said;
+    /// text held for colours as gained. `None` when it holds nothing or
+    /// there is nothing to say.
+    fn held(&self, line: &LineState) -> Option<Released> {
         let text = &line.text;
-        let start = match line.hold.as_ref()? {
-            Hold::Colours(held) => return Some(held.clone()),
-            Hold::Word => text
-                .strip_prefix(&*line.said)
-                .filter(|rest| !rest.is_empty())
-                .map(|rest| text.len().saturating_sub(rest.len()))?,
-            Hold::Volatile | Hold::Keys => self.changed_start(&[&*line.said], text)?,
-        };
-        Some(text.get(start.max(line.cut)..)?.to_owned())
+        let from = |start: usize| text_in(text, start.max(line.cut)..).to_owned();
+        match line.hold.wait() {
+            Some(Wait::Nothing) => None,
+            Some(Wait::Word { .. }) => {
+                let rest = text
+                    .strip_prefix(&*line.said)
+                    .filter(|rest| !rest.is_empty())?;
+                Some(Released::Growth(from(
+                    text.len().saturating_sub(rest.len()),
+                )))
+            }
+            None | Some(Wait::Keys) => Some(Released::Changed(from(
+                self.changed_start(&[&*line.said], text)?,
+            ))),
+            Some(Wait::Colours(after)) => Some(Released::Gained(after.clone())),
+        }
     }
 
     /// Where the changed-word rule speaks `new` from ("Changed rows"): the
@@ -1212,24 +1300,20 @@ impl TerminalReader {
                 Reason::LostText
             };
             if answered == Some(start) {
-                put(
-                    &mut screen,
-                    &line.rows,
-                    keep_from,
-                    LineState {
-                        input: true,
-                        cut,
-                        hold: colours_held.take().map(Hold::Colours),
-                        ..base.map_or_else(
-                            || LineState::read(text),
-                            |mut base| {
-                                base.text.clone_from(text);
-                                base.said.clone_from(text);
-                                base
-                            },
-                        )
+                let mut state = base.map_or_else(
+                    || LineState::read(text),
+                    |mut base| {
+                        base.text.clone_from(text);
+                        base.said.clone_from(text);
+                        base
                     },
                 );
+                state.input = true;
+                state.cut = cut;
+                state.hold = state
+                    .hold
+                    .with_wait(colours_held.take().map_or(Wait::Nothing, Wait::Colours));
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             if line.text.is_empty() {
@@ -1247,9 +1331,7 @@ impl TerminalReader {
                     let mut state = base.unwrap_or_default();
                     state.cut = cut;
                     state.text.clone_from(text);
-                    state.said.clone_from(text);
-                    state.hold = None;
-                    state.volatile = false;
+                    state.settle();
                     put(&mut screen, &line.rows, keep_from, state);
                 }
                 continue;
@@ -1262,8 +1344,7 @@ impl TerminalReader {
             let mut base = base;
             if window_colours
                 && let Some(state) = &mut base
-                && matches!(state.hold, Some(Hold::Colours(_)))
-                && let Some(Hold::Colours(after)) = state.hold.take()
+                && let Some(after) = state.hold.take_colours()
                 && let Some(new_colours) = &new_colours
                 && let Some(at) = line.text.rfind(after.as_str())
             {
@@ -1351,7 +1432,7 @@ impl TerminalReader {
                             row: start,
                             reason: lost_reason,
                         });
-                        drop_word(&mut state);
+                        state.hold.drop_word();
                     } else {
                         items.push((
                             start,
@@ -1367,22 +1448,13 @@ impl TerminalReader {
                     emphasis_candidates.push(start);
                 }
                 // The cursor leaving a growing line speaks its held word.
-                if state.hold == Some(Hold::Word)
-                    && caret.as_ref().is_none_or(|caret| caret.line != start)
+                if state.hold.holds_word() && caret.as_ref().is_none_or(|caret| caret.line != start)
                 {
-                    if let Some(rest) = text.strip_prefix(&*state.said)
-                        && !rest.is_empty()
-                    {
-                        items.push((
-                            start,
-                            Speech::Growth {
-                                row: start,
-                                text: part(text.len().saturating_sub(rest.len())),
-                            },
-                        ));
+                    if let Some(released) = self.held(&state) {
+                        items.push((start, released.at(start)));
                     }
                     state.said.clone_from(text);
-                    state.hold = None;
+                    state.hold = state.hold.with_wait(Wait::Nothing);
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
@@ -1395,15 +1467,13 @@ impl TerminalReader {
             // was all heard, or held back only by its unfinished word; a line
             // that lost text or was held for another reason since is spoken
             // by the changed-word rule below.
-            let heard = state.said == old_text || state.hold == Some(Hold::Word);
+            let heard = state.said == old_text || state.hold.holds_word();
             if line.grew_from.is_some() && heard && text.starts_with(&*state.said) {
                 // A growing line speaks what it gained, holding back an
                 // unfinished last word ("Growing lines").
-                state.grew_interval_ms = state.grew_ms.map(|at| now.saturating_sub(at));
+                let due_ms = now
+                    .saturating_add(quiet_period(state.grew_ms.map(|at| now.saturating_sub(at))));
                 state.grew_ms = Some(now);
-                if state.hold == Some(Hold::Volatile) || state.hold == Some(Hold::Keys) {
-                    state.hold = None;
-                }
                 let unfinished = caret.as_ref().is_some_and(|caret| {
                     caret.line == start
                         && caret.column == text.chars().count()
@@ -1449,9 +1519,9 @@ impl TerminalReader {
                         row: start,
                         reason: Reason::UnfinishedWord,
                     });
-                    state.hold = Some(Hold::Word);
+                    state.hold = state.hold.with_wait(Wait::Word { due_ms });
                 } else {
-                    state.hold = None;
+                    state.hold = state.hold.with_wait(Wait::Nothing);
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
@@ -1459,7 +1529,6 @@ impl TerminalReader {
             // A redrawn row ("Changed rows"), or a row a key changed away from
             // the caret ("Rows the keys own"), compared once.
             let difference = Difference::new(&old_text, text);
-            state.redrawn = true;
             let caret_line = caret.as_ref().is_some_and(|caret| caret.line == start);
             // "Rows the keys own".
             if !caret_line && self.owner(now, Some(&state)) == Owner::Keys {
@@ -1469,19 +1538,19 @@ impl TerminalReader {
                         text: part(0),
                     });
                     state.said.clone_from(text);
-                    state.hold = None;
+                    state.hold = state.hold.with_wait(Wait::Nothing);
                 } else if difference.lost {
                     step.withheld.push(Withheld {
                         row: start,
                         reason: lost_reason,
                     });
-                    drop_word(&mut state);
+                    state.hold.drop_word();
                 } else {
                     step.withheld.push(Withheld {
                         row: start,
                         reason: Reason::HeldForKeys,
                     });
-                    state.hold = Some(Hold::Keys);
+                    state.hold = state.hold.with_wait(Wait::Keys);
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
@@ -1491,7 +1560,7 @@ impl TerminalReader {
                     row: start,
                     reason: lost_reason,
                 });
-                drop_word(&mut state);
+                state.hold.drop_word();
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
@@ -1500,22 +1569,27 @@ impl TerminalReader {
                     row: start,
                     reason: Reason::Spinner,
                 });
-                if state.hold.is_none() {
+                if !state.hold.holds() {
                     state.said.clone_from(text);
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            let interval = state.changed_ms.map(|at| now.saturating_sub(at));
-            let volatile = state.volatile
+            let interval = state.changed.map(|change| now.saturating_sub(change.at_ms));
+            let volatile = state.hold.is_volatile()
                 || interval.is_some_and(|interval| interval <= VOLATILE_MS)
-                || (waited && state.changed_read == Some(self.reads.saturating_sub(1)));
-            state.interval_ms = interval;
-            state.changed_ms = Some(now);
-            state.changed_read = Some(self.reads);
+                || (waited
+                    && state
+                        .changed
+                        .is_some_and(|change| change.read == self.reads.saturating_sub(1)));
+            state.changed = Some(Change {
+                at_ms: now,
+                read: self.reads,
+            });
             if volatile {
-                state.volatile = true;
-                state.hold = Some(Hold::Volatile);
+                state.hold = Hold::Settling {
+                    due_ms: now.saturating_add(quiet_period(interval)),
+                };
                 step.withheld.push(Withheld {
                     row: start,
                     reason: Reason::Volatile,
@@ -1542,7 +1616,7 @@ impl TerminalReader {
                     ));
                 }
                 state.said.clone_from(text);
-                state.hold = None;
+                state.hold = Hold::default();
             }
             put(&mut screen, &line.rows, keep_from, state);
         }
@@ -1621,8 +1695,10 @@ impl TerminalReader {
                     matches!(outcome.old.get(old), Some(OldRow::Above | OldRow::Left))
                 })
                 .filter_map(|(_, row)| row.line.as_ref())
-                .filter_map(|line| self.held_text(line))
-                .map(|text| Speech::Held { text })
+                .filter_map(|line| self.held(line))
+                .map(|released| Speech::Held {
+                    text: released.into_text(),
+                })
                 .collect()
         } else {
             Vec::new()
@@ -2071,17 +2147,10 @@ fn above_read(previous: &Screen, from: usize) -> String {
 /// kept once the read is handled, `keep_from` on, and holds nothing: its
 /// history would be dropped unused.
 fn put(screen: &mut Screen, rows: &std::ops::Range<usize>, keep_from: usize, state: LineState) {
-    if (rows.end > keep_from || state.hold.is_some())
+    if (rows.end > keep_from || state.hold.holds())
         && let Some(row) = screen.rows.get_mut(rows.start)
     {
         row.line = Some(Box::new(state));
-    }
-}
-
-/// A line that lost text no longer holds its unfinished word.
-fn drop_word(state: &mut LineState) {
-    if state.hold == Some(Hold::Word) {
-        state.hold = None;
     }
 }
 

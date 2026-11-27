@@ -174,7 +174,7 @@ Both floors miss the owner's 1.3 target (about 1,190) by about three times; F8 a
 
 **P8. Caps (both; confirmed).** `MODELS = 16` (64; eviction at 441), `PENDING_KEYS = 256` (69; at 473, past it the oldest key goes to the rules unread), `KEPT_PLACES = 64` (`review.rs` 44, 189), `mark_lines` at `2 * MARKS` (340).
 
-**P9. Eleven fields and a parallel array (B only; confirmed, one detail corrected).** `LineState` (`terminal_reading.rs` 308 to 335): `redrawn`, `volatile`, `changed_ms`, `interval_ms`, `changed_read`, `unprompted_ms`, `grew_ms`, `grew_interval_ms`, `hold: Option<Hold>`, `input`, `cut`. `due` (348 to 359) returns `None` for a `Hold::Word` whose `grew_ms` is `None`, so such a hold is never due (B wrote "due at no time"). `Screen`'s trim, "Drops the first `dropped` rows, as the memory trimmed them" (426), and `RowState.text`, "The memory's row's text, shared" (368), keep a second array in step with the memory.
+**P9. Eleven fields and a parallel array (B only).** Resolved: each line's hold is one value, `Hold` in `terminal_reading.rs`, with its due time set with it, and the dead `redrawn` field is gone (Claude, 2026-11-27).
 
 **P10. Silent fallbacks (B only; confirmed, one location corrected).** `terminal.rs` 807 to 811, `(Some(_), None) => { debug_assert!(false, "no count before the line at {index}"); terminal.waiting.insert(index, count); }`; `reading.rs` 618 to 623, `read_reply`'s `_ => None` takes a reply of another kind as refused; `full_read` with no model sends `height: 0` and `width: 0` (`reading.rs` 233 to 238, not `terminal_model.rs` as B wrote); `mark_reached`'s `let Some(trace_id) = terminal.trace else` (`terminal.rs` 1040).
 

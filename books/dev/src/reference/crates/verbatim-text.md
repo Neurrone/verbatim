@@ -333,12 +333,23 @@ every new line goes to Core.
 
 Beside the memory's rows the reader keeps each row's colours when last
 read and, on a line's first row, the line's history: its text as last
-read, what the user was last told of it, whether it is volatile, when it
-last changed and the interval before, when it last changed outside a key's
-window and last grew, what it waits for, and whether a key changed it
-since it appeared. That history moves with the alignment as the memory's
-anchors do; a row rewritten alone starts its change history afresh, and a
-lingering line taken back brings its history. The state is trimmed with
+read, what the user was last told of it, its hold, its last change the
+rules of output found (when, and at which read), when it last changed
+outside a key's window and last grew, and whether a key changed it since
+it appeared. The hold is one value, `Hold`. It is `Steady` while the line
+is not volatile, `Settling` while a volatile row waits out its quiet
+period, and `Volatile` once another rule has replaced that settling. Both
+`Steady` and `Volatile` carry what else the line waits for (`Wait`):
+nothing, its unfinished word, the keys' pause, or text held for colours.
+A settling row and a held word carry the time they are due. Another
+rule's wait keeps the row's volatility. Releasing a hold at the timer,
+dropping it, or a silent read ends the volatility. One function, `held`,
+gives what a hold says when it is released. It is used at the timer,
+above the screen, when the caret leaves a held word, and for a held line
+carried above the read. That history moves with the alignment as the
+memory's anchors do; a row rewritten alone starts its hold and change
+history afresh, and a lingering line taken back brings its history. The
+state is trimmed with
 the memory; a line's text, what was said of it, and its row's text are one
 shared string while they are the same, and no history is built for empty
 lines above the rows the memory will keep, so a whole-document read does
