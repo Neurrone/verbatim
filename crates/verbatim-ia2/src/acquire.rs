@@ -1646,9 +1646,8 @@ pub fn activate(
 /// "Checking where a call landed"). Blocking; worker only.
 #[must_use]
 pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<FocusedObject> {
-    let (acc, node_hwnd, at_address) =
+    let (acc, key, at_address) =
         follow_acc_focus(Accessible::client_of_window(hwnd)?, hwnd, serves)?;
-    let key = (node_hwnd, OBJID_CLIENT.0, acc.child());
     Some(FocusedObject {
         candidate: FocusCandidate {
             acc,
@@ -1665,20 +1664,25 @@ pub fn focused_object(hwnd: isize, serves: &dyn Fn(isize) -> bool) -> Option<Foc
 const MAX_ACC_FOCUS_STEPS: u32 = 64;
 
 /// [`focused_object`]'s walk down `accFocus` from `client`, the client of
-/// `hwnd`: the object reached, its window, and whether it is at an address
-/// of its own, as the client and its children by id are, where an object
-/// `accFocus` or `accChild` gave is not. Each object of its own a step
-/// reaches is in whatever window it is in, so its window is checked with
-/// `serves` before anything more is asked of it: `None` for one of a
+/// `hwnd`: the object reached, the address it is kept at, and whether that
+/// is an address of its own. The client and its children by id are at
+/// their own; an object of its own a step gives is at the address its
+/// identity string names, in its own window, as NVDA's object built with no
+/// event takes its ids from `IAccIdentity`
+/// (`NVDAObjects/IAccessible/__init__.py` 799 to 808), and the accParent
+/// walk keys a parent; with no such string it is kept under a key made up
+/// from its window, which is no address of its own. Each object of its own
+/// a step reaches is in whatever window it is in, so its window is checked
+/// with `serves` before anything more is asked of it: `None` for one of a
 /// window the application does not serve, or in no window, which is not
 /// known to be served by it.
 fn follow_acc_focus(
     client: Accessible,
     hwnd: isize,
     serves: &dyn Fn(isize) -> bool,
-) -> Option<(Accessible, isize, bool)> {
+) -> Option<(Accessible, MsaaKey, bool)> {
     let mut acc = client;
-    let mut window = hwnd;
+    let mut key = (hwnd, OBJID_CLIENT.0, CHILDID_SELF);
     let mut at_address = true;
     for _ in 0..MAX_ACC_FOCUS_STEPS {
         let next = match read_acc_focus(&acc) {
@@ -1690,7 +1694,11 @@ fn follow_acc_focus(
                     None => {
                         // A simple child: accFocus asked of its object
                         // again names it again, so the walk ends here.
-                        return Some((acc.with_child(child_id), window, at_address));
+                        return Some((
+                            acc.with_child(child_id),
+                            (key.0, key.1, child_id),
+                            at_address,
+                        ));
                     }
                 }
             }
@@ -1700,11 +1708,17 @@ fn follow_acc_focus(
         if next.canonical() == acc.canonical() {
             break;
         }
-        window = served_window(&next, hwnd, serves)?;
+        let window = served_window(&next, hwnd, serves)?;
+        (key, at_address) = match next
+            .identity_string()
+            .and_then(|identity| crate::accessible::decompose(&identity))
+        {
+            Some(address) if address.0 == window && address.2 == CHILDID_SELF => (address, true),
+            _ => ((window, OBJID_CLIENT.0, CHILDID_SELF), false),
+        };
         acc = next;
-        at_address = false;
     }
-    Some((acc, window, at_address))
+    Some((acc, key, at_address))
 }
 
 /// The window of `acc`, an object of its own that `accFocus` or `accChild`

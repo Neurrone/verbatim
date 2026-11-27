@@ -52,7 +52,7 @@ use verbatim_listener_logic::check::Call;
 use verbatim_model::event_kind::EventKind;
 use verbatim_model::property::RuntimeId;
 use verbatim_model::property::{PropertyId, PropertyValue};
-use verbatim_model::request::{FocusCaret, KnownAncestor, MsaaIds, RouteEnd};
+use verbatim_model::request::{FocusCaret, HeldIds, KnownAncestor, MsaaIds, RouteEnd};
 use verbatim_model::tell::ElementToken;
 use verbatim_model::tell::{EventObject, Payload};
 
@@ -429,7 +429,7 @@ fn a_controls_own_focus_reports_its_focused_child() {
         child: 1,
     };
     assert_eq!(
-        reported.read.msaa.map(|held| held.event),
+        reported.read.msaa.and_then(|held| held.event),
         Some(reached),
         "the item the redirect reached, named by the ids its own event names"
     );
@@ -607,7 +607,7 @@ fn the_twin_deletion_stand_in_matches_the_desktop_lists_recording() {
     assert_eq!(
         (
             common::outpost::name_of(&read.focus),
-            read.msaa.map(|held| held.event)
+            read.msaa.and_then(|held| held.event)
         ),
         (Some("Copy"), Some(first))
     );
@@ -944,7 +944,10 @@ fn a_focus_that_was_not_redirected_carries_its_own_ids() {
     };
     let reported = outpost.msaa_focus_answer(ids);
     assert_eq!(
-        (reported.role(), reported.read.msaa.map(|held| held.event)),
+        (
+            reported.role(),
+            reported.read.msaa.and_then(|held| held.event)
+        ),
         (Role::Window, Some(ids))
     );
 
@@ -2094,9 +2097,10 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// its state cleared by `set-states`, as NVDA refuses its fake focus before
 /// it is queued (`docs/parity/focus-events.md`): nothing is said. The
 /// outpost runs the test, asked by Core's check, before it reads the
-/// object, so its calls are the focused object's lookup, `accFocus` asked
-/// again of the object it named, which names itself, and the test's steps
-/// up to the desktop alone. With the focused state, the same answer is spoken.
+/// object, so its calls are the focused object's lookup, the identity
+/// string asked of the object it named, which offers none (one
+/// `QueryInterface`), `accFocus` asked again of that object, which names
+/// itself, and the test's steps up to the desktop alone. With the focused state, the same answer is spoken.
 fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
     let title = common::unique_title("mockapp-fake-focus-unfocused");
     let mut app = common::spawn_visible("counts.json", "msaa", &title);
@@ -2116,7 +2120,7 @@ fn a_fake_focus_on_an_msaa_object_without_the_focused_state_answers_nothing() {
         (
             Vec::new(),
             CallCounts {
-                msaa: 15,
+                msaa: 16,
                 ..CallCounts::default()
             }
         ),
@@ -2227,7 +2231,11 @@ fn a_focus_now_takes_the_focus_window_before_its_probe() {
 /// the focus, by child id (`acc-focus-stepwise`), so the read reaches
 /// "Deep button", five levels below the client, through four objects
 /// `accChild` gives. Followed one level, the focus would be the client's
-/// first child, the unnamed pane.
+/// first child, the unnamed pane. An object `accChild` gave has no address
+/// of its own, so the read names no event ids, as NVDA's object built with
+/// no event has none, and no later focus event is its duplicate (Dickson,
+/// 2026-11-27): its key in the outpost's store, the client's ids, is not
+/// sent as them.
 fn an_msaa_focus_now_follows_acc_focus_down_to_the_focus() {
     let title = common::unique_title("mockapp-acc-focus-stepwise");
     let mut app = common::spawn_visible("ancestry.json", "msaa", &title);
@@ -2239,6 +2247,59 @@ fn an_msaa_focus_now_follows_acc_focus_down_to_the_focus() {
     assert_eq!(
         (focus.role(), focus.name()),
         (Role::Button, Some("Deep button"))
+    );
+    assert_eq!(
+        focus.read.msaa,
+        Some(HeldIds {
+            event: None,
+            held_child: 0
+        }),
+        "an object accChild gave names no event ids"
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// An object `accFocus` gives whose identity string names its address is
+/// named by that address, as NVDA's object built with no event takes its
+/// ids from `IAccIdentity` (`NVDAObjects/IAccessible/__init__.py` 799 to
+/// 808), so the button's own later focus event at those ids is its
+/// duplicate: mockapp's client answers `accFocus` with the client object
+/// of its native "Apply" button (`acc-focus-window`), the system's button
+/// proxy, whose identity string decomposes to the button window's client
+/// address. Without the decomposition the read names no event ids, and the
+/// button's own focus would be said a second time.
+fn an_acc_focus_object_with_an_identity_string_is_named_by_its_address() {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, OBJID_CLIENT};
+    let title = common::unique_title("mockapp-acc-focus-identity");
+    let mut app = common::spawn_visible("group_box.json", "msaa", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let apply = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("Button"),
+            windows::core::w!("Apply"),
+        )
+    }
+    .expect("mockapp made the Apply button");
+    app.send(&format!("acc-focus-window {}", apply.0 as isize));
+    let outpost = OutpostUnderTest::new(&app);
+    let (outcome, calls) = outpost.current_focus();
+    let focus = Focused::of(outcome, calls);
+    assert_eq!((focus.role(), focus.name()), (Role::Button, Some("Apply")));
+    assert_eq!(
+        focus.read.msaa,
+        Some(HeldIds {
+            event: Some(MsaaIds {
+                window: WindowHandle(apply.0 as u64),
+                object: OBJID_CLIENT.0,
+                child: 0,
+            }),
+            held_child: 0
+        }),
+        "the button's client address, which its identity string names"
     );
     drop(outpost);
     app.quit();
@@ -4202,6 +4263,10 @@ fn main() {
         (
             "an_msaa_focus_now_follows_acc_focus_down_to_the_focus",
             an_msaa_focus_now_follows_acc_focus_down_to_the_focus,
+        ),
+        (
+            "an_acc_focus_object_with_an_identity_string_is_named_by_its_address",
+            an_acc_focus_object_with_an_identity_string_is_named_by_its_address,
         ),
         (
             "a_focused_element_of_another_process_is_not_read_further",

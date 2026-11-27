@@ -362,11 +362,16 @@ pub struct MsaaIds {
 pub struct HeldIds {
     /// The ids the event named; for a focus a redirect took to its
     /// focused child, that child's ids, as NVDA builds the redirected
-    /// object with the child's id as its event's; and for a focus read
-    /// through `accFocus`, the ids it is held by, as NVDA's object gets its
-    /// ids from `IAccIdentity` (`NVDAObjects/IAccessible/__init__.py` 803
-    /// to 808).
-    pub event: MsaaIds,
+    /// object with the child's id as its event's; for a focus read through
+    /// `accFocus`, the address it was acquired at, for an object of its
+    /// own the address its identity string names; and `None` for an object
+    /// `accFocus` or `accChild` gave with no identity string, which has no
+    /// address of its own, so that no event is its duplicate, as NVDA's
+    /// object built with no event takes its ids from `IAccIdentity` or has
+    /// none
+    /// (`NVDAObjects/IAccessible/__init__.py` 799 to 808; Dickson,
+    /// 2026-11-27).
+    pub event: Option<MsaaIds>,
     /// The child id the outpost holds the object by.
     pub held_child: i32,
 }
@@ -525,7 +530,9 @@ pub struct Answer {
     pub number: RequestNumber,
     /// Its outcome.
     pub outcome: Outcome,
-    /// The probes the request made, each a verdict Core records.
+    /// Every probe the request made, of its own window or of any window
+    /// its reads crossed, each a verdict Core records, the newest start
+    /// winning (Dickson, 2026-11-27).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub probes: Vec<Probe>,
     /// A diagnostic detail for the log, such as the failed call; empty

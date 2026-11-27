@@ -37,7 +37,6 @@ const MAX_NODES: usize = 1000;
 /// began and ended.
 pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &Ask) -> Answer {
     let began_us = verbatim_process::clock::now_us();
-    let mut probes = Vec::new();
     // Core's verdict for the request's window is the one its reads judge
     // that window by: the outpost probes it again for none of them.
     let given = match ask.verdict {
@@ -49,11 +48,11 @@ pub(super) fn answer(context: &RequestContext<'_>, client: &mut Client, ask: &As
         .given_verdict
         .set(given.map(|uia| (hwnd_of(ask.window), uia)));
     let Question::Batch(batch) = &ask.request;
-    let outcome = super::batch::answer(context, client, ask, batch, &mut probes);
+    let outcome = super::batch::answer(context, client, ask, batch);
     Answer {
         number: ask.number,
         outcome,
-        probes,
+        probes: told(context),
         detail: String::new(),
         began_us,
         ended_us: verbatim_process::clock::now_us(),
@@ -67,17 +66,23 @@ pub(super) fn node_details(request: &Question) -> NodeDetailSet {
     super::batch::node_details(batch)
 }
 
+/// Every probe the request whose context is `context` made that answered,
+/// of its own window or of one its reads crossed, for its answer to tell
+/// Core ([`crate::arbitration::RequestVerdicts::told`]).
+pub(super) fn told(context: &RequestContext<'_>) -> Vec<Probe> {
+    context.verdicts.told()
+}
+
 /// Whether window `hwnd` is read through UI Automation, by `verdict`, or,
-/// with none in force, by a probe, which `probes` records, begun at now on
-/// the clock the outpost stamps its observations with, the run's shared
-/// clock but in a test that sets its own: `None` for a window the
-/// outpost's application does not serve, which is neither probed nor
-/// read.
+/// with none in force, by a probe, begun at now on the clock the outpost
+/// stamps its observations with, the run's shared clock but in a test that
+/// sets its own, which the request's answer tells Core ([`told`]): `None`
+/// for a window the outpost's application does not serve, which is
+/// neither probed nor read.
 pub(super) fn verdict(
     context: &RequestContext<'_>,
     hwnd: isize,
     verdict: WindowVerdict,
-    probes: &mut Vec<Probe>,
 ) -> Option<bool> {
     match verdict {
         WindowVerdict::Uia => Some(true),
@@ -87,27 +92,13 @@ pub(super) fn verdict(
                 return None;
             }
             // Core asks for a probe: the window is probed whatever the
-            // class lists say, and the probe is reported, Core's cache
-            // being the one that keeps a verdict past its request.
-            let uia = crate::arbitration::probed_uses_uia(
+            // class lists say.
+            Some(crate::arbitration::probed_uses_uia(
                 &context.arbitrator,
                 (&context.verdicts, context.observed_now()),
                 hwnd,
                 || verbatim_uia::console_reports_formatting(hwnd),
-            );
-            if let Some(probed) = context.verdicts.probed(hwnd)
-                && !probes
-                    .iter()
-                    .any(|probe| probe.window == window_handle(hwnd))
-            {
-                probes.push(Probe {
-                    window: window_handle(hwnd),
-                    thread: verbatim_win32::window::window_thread(hwnd),
-                    provider: uia,
-                    began_us: probed.began_us,
-                });
-            }
-            Some(uia)
+            ))
         }
     }
 }
@@ -459,15 +450,19 @@ pub(super) fn focus_read(
     }
 }
 
-/// The MSAA ids `node` was read by, by the key it is kept under.
-pub(super) fn held_ids(context: &RequestContext<'_>, node: &NodeSnapshot) -> Option<HeldIds> {
-    let (window, object, child) = context.store.key_of(node.id)?;
+/// The MSAA ids MSAA node `node` was read by, the one place the outpost
+/// makes them: the address it was acquired at, or no event ids for an
+/// object kept under a key that is no address of its own, one `accFocus`
+/// or `accChild` gave with no identity string naming its address
+/// (Dickson, 2026-11-27); with the child id it is held by.
+pub(super) fn held_ids(context: &RequestContext<'_>, node: NodeId) -> Option<HeldIds> {
+    let ((window, object, child), at_address) = context.store.held_at(node)?;
     Some(HeldIds {
-        event: MsaaIds {
+        event: at_address.then(|| MsaaIds {
             window: window_handle(window),
             object,
             child,
-        },
+        }),
         held_child: child,
     })
 }

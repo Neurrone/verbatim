@@ -374,9 +374,16 @@ impl Store {
     /// address, so the address identifies it: none for an object reached
     /// through its parent or as a child object, whose address is made up.
     pub(super) fn address_of(&self, node: NodeId) -> Option<MsaaKey> {
+        self.held_at(node)
+            .and_then(|(key, at_address)| at_address.then_some(key))
+    }
+
+    /// The key the MSAA node `node` is kept under, and whether it was
+    /// acquired at that address ([`Self::address_of`]), in one read.
+    pub(super) fn held_at(&self, node: NodeId) -> Option<(MsaaKey, bool)> {
         self.msaa
             .locate(node)
-            .and_then(|(key, _, at_address)| at_address.then_some(key))
+            .map(|(key, _, at_address)| (key, at_address))
     }
 
     /// The nearest window recorded for the UIA node `node`

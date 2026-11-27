@@ -955,11 +955,11 @@ fn a_checkpoint_that_does_not_replay_is_an_error_and_leaves_the_state() {
 /// The run's held ids for the candidate of object `object`.
 pub(crate) fn held(object: i32) -> HeldIds {
     HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: WindowHandle(5),
             object,
             child: 0,
-        },
+        }),
         held_child: 0,
     }
 }
@@ -1013,7 +1013,7 @@ fn a_run_asks_one_candidate_at_a_time_newest_first_and_executes_the_valid_focus(
     assert_eq!(
         state.versions.last.as_ref().map(|last| &last.read_by),
         Some(&ReadBy::Msaa {
-            event: Some(held(-5).event),
+            event: held(-5).event,
             held_child: 0,
         })
     );
@@ -1024,7 +1024,7 @@ fn an_msaa_duplicate_of_the_readers_last_focus_ends_the_run_with_no_read() {
     let mut state = ready();
     state.versions.last = Some(LastFocus {
         read_by: ReadBy::Msaa {
-            event: Some(held(-4).event),
+            event: held(-4).event,
             held_child: 0,
         },
         place: crate::focus::versions::Place {
@@ -1062,11 +1062,11 @@ fn a_second_focus_on_the_desktops_item_with_no_key_between_is_said_once() {
     };
     assert_eq!(item(&mut state, 1_000), ["send Outpost(Pid(40)) Candidate"]);
     let read = focus_read(Some(HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: WindowHandle(5),
             object: -4,
             child: 3,
-        },
+        }),
         held_child: 3,
     }));
     let tried = Found::Read(read);
@@ -1253,7 +1253,7 @@ fn the_item_a_redirect_reached_says_nothing_when_its_outpost_finds_it_the_same()
         child: 2,
     };
     let read = focus_read(Some(HeldIds {
-        event: child,
+        event: Some(child),
         held_child: 2,
     }));
     let tried = Found::Read(read);
@@ -1307,7 +1307,7 @@ fn a_redirect_to_the_committed_focus_that_reads_differently_is_spoken() {
         child: 2,
     };
     let at_child = HeldIds {
-        event: child,
+        event: Some(child),
         held_child: 2,
     };
     let mut state = ready();
@@ -1522,11 +1522,11 @@ fn frame_menu_tell(child: i32) -> Event {
 /// "Verbatim", as its foreground object when `frame`.
 fn frame_menu_read(number: u64, name: &str, role: Role, child: i32, frame: bool) -> FocusRead {
     let mut read = focus_read(Some(HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: WindowHandle(6),
             object: -4,
             child,
-        },
+        }),
         held_child: child,
     }));
     read.focus.read.node = Some(node(number));

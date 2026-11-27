@@ -94,6 +94,10 @@ pub enum Fault {
     /// provider's does (`verbatim-uia`'s `ElementExt::current_pattern`).
     /// Subject: the pattern's id, an `i32`.
     PatternFetchTimesOut,
+    /// The raw probe of a window for a UI Automation provider gets no
+    /// answer in time, as a busy window's does (`verbatim-uia`'s
+    /// `raw_probe`). Subject: the window's handle, an `isize`.
+    RawProbeTimesOut,
 }
 
 /// Whether a subject is the one a test names: false for a subject of

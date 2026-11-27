@@ -325,7 +325,7 @@ fn focus_read(
             Via::Msaa | Via::Client | Via::Whole => {
                 let event = msaa_ids(via, focus.id.number(), win);
                 Some(HeldIds {
-                    event,
+                    event: Some(event),
                     held_child: event.child,
                 })
             }

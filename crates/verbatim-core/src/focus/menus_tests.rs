@@ -109,6 +109,69 @@ fn a_menu_end_checks_the_focus_50_ms_later_and_speaks_a_focused_answer() {
     );
 }
 
+/// A check whose focus the outpost reached through `accFocus`, an object
+/// with no address of its own, names no event ids, so a later focus event
+/// on the window's client is no duplicate of it and is read, as NVDA reads
+/// it (Dickson, 2026-11-27): before, the outpost sent the object's key in
+/// its store, the client's ids, and the client's own focus was dropped as
+/// a duplicate.
+#[test]
+fn a_focus_after_a_check_that_read_an_object_with_no_address_is_read() {
+    let mut state = in_front();
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    assert_eq!(
+        due_at(&mut state, 51_000, Some(the_records())),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    let no_address = verbatim_model::request::HeldIds {
+        event: None,
+        held_child: 0,
+    };
+    let Found::Read(mut read) = focused(true) else {
+        panic!("a focused answer");
+    };
+    read.msaa = Some(no_address);
+    assert_eq!(
+        found_at(&mut state, 52_000, (OUTPOST, 2), Found::Read(read)),
+        SPOKEN
+    );
+    assert_eq!(
+        state.versions.last.as_ref().map(|last| &last.read_by),
+        Some(&crate::focus::versions::ReadBy::Msaa {
+            event: None,
+            held_child: 0
+        })
+    );
+    let mut client = msaa_tell(-4);
+    client.at_us = 60_000;
+    assert_eq!(
+        feed_at(&mut state, 60_000, entry(client)),
+        ["send Outpost(Pid(40)) Candidate"]
+    );
+}
+
+/// A check whose focus the outpost reached through `accFocus` and named by
+/// the address its identity string gives is the duplicate of that object's
+/// own later focus event at the address, which says nothing, as NVDA's
+/// object with ids from `IAccIdentity` is (Dickson, 2026-11-27).
+#[test]
+fn a_focus_at_the_address_a_check_named_its_object_by_is_a_duplicate() {
+    let mut state = in_front();
+    assert_eq!(feed_at(&mut state, 1_000, menu_end()), NOTHING);
+    assert_eq!(
+        due_at(&mut state, 51_000, Some(the_records())),
+        ["send Outpost(Pid(40)) CurrentFocus with the focused state as a fact"]
+    );
+    assert_eq!(
+        found_at(&mut state, 52_000, (OUTPOST, 2), focused(true)),
+        SPOKEN
+    );
+    let mut own = msaa_tell(-4);
+    own.at_us = 60_000;
+    assert_eq!(feed_at(&mut state, 60_000, entry(own)), NOTHING);
+    assert!(state.queue.front_for_tests().is_none());
+}
+
 /// A menu ends while the foreground record still names its application,
 /// the listener's report of the window that came in front being late, and
 /// Windows names another application's window in front when the check
@@ -499,7 +562,7 @@ fn a_menu_opening_behind_a_run_whose_newest_is_a_duplicate_is_kept() {
     let mut state = crate::state::SrState::default();
     state.versions.last = Some(crate::focus::versions::LastFocus {
         read_by: crate::focus::versions::ReadBy::Msaa {
-            event: Some(held(-4).event),
+            event: held(-4).event,
             held_child: 0,
         },
         place: crate::focus::versions::Place {

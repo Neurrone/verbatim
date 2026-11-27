@@ -135,7 +135,7 @@ fn ids(window: u64, object: i32, child: i32) -> MsaaIds {
 /// `read` as an MSAA focus read by `event`, held by its child id.
 fn by_ids(mut read: FocusRead, event: MsaaIds) -> FocusRead {
     read.msaa = Some(HeldIds {
-        event,
+        event: Some(event),
         held_child: event.child,
     });
     read

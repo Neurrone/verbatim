@@ -14,7 +14,7 @@ use std::cell::OnceCell;
 use verbatim_model::NodeId;
 use verbatim_model::batch::{FollowTarget, Missing, Op, Place, Step, StepOutcome, Subject};
 use verbatim_model::property::{PropertyId, PropertyValue, PropertyValues};
-use verbatim_model::request::{Followed, HeldIds, MsaaIds};
+use verbatim_model::request::Followed;
 use verbatim_uia::{Cached, Fill, Node, Request, Uia};
 use verbatim_uia_rops::batch::{Element, ElementRead, Ran, Resolve, Unrun};
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -182,16 +182,7 @@ pub(super) fn held(
     let window =
         || read::kept_own_window(context, node).or_else(|| asked::known_nearest_of(context, node));
     match id {
-        PropertyId::MsaaAddress => context.store.key_of(node).map(|(window, object, child)| {
-            PropertyValue::MsaaAddress(HeldIds {
-                event: MsaaIds {
-                    window: window_handle(window),
-                    object,
-                    child,
-                },
-                held_child: child,
-            })
-        }),
+        PropertyId::MsaaAddress => asked::held_ids(context, node).map(PropertyValue::MsaaAddress),
         PropertyId::WindowShown => window()
             .map(|hwnd| PropertyValue::Flag(verbatim_win32::window::window_is_visible(hwnd))),
         PropertyId::WindowClass => window()

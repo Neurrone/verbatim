@@ -359,7 +359,7 @@ impl FocusResolve for MsaaFocusRead<'_, '_> {
     }
 
     fn held_ids(&self, node: &NodeSnapshot) -> Option<HeldIds> {
-        asked::held_ids(self.nodes.context, node)
+        asked::held_ids(self.nodes.context, node.id)
     }
 
     fn answer(&self, focus: MsaaFocus) -> FocusRead {

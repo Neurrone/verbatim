@@ -307,7 +307,10 @@ Public API:
   after 64 steps where NVDA has no limit; the window of each object of its
   own a step reaches is checked with `serves` before anything more is asked
   of it, and an object of a window the caller's application does not serve
-  answers `None`),
+  answers `None`; an object of its own is kept at the address its identity
+  string names, as the `accParent` walk keys a parent and as NVDA's
+  object takes its ids from `IAccIdentity`, and one with none under a key
+  made up from its window, no address of its own),
   acquired and not yet read (`FocusedObject`), so a fake focus can make
   NVDA's focused-state test on it first (`has_focused_state`, the walk a
   focus event's candidate gets) before it is read (`read`);

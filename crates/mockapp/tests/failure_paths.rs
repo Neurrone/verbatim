@@ -482,8 +482,65 @@ fn an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else() {
     app.quit();
 }
 
+/// A probe that gets no answer in time is told to no one, while a probe
+/// the same request made that answered is told (Dickson, 2026-11-27):
+/// Core asks "probe first" of mockapp's host window of `uia_island.json`,
+/// whose probe times out at its fault point, and the focus is in the
+/// island child window, whose probe answers with a provider. The answer
+/// tells the island's probe alone; Core counts the host's untold probe as
+/// one that timed out.
+fn a_probe_that_timed_out_is_not_told_and_one_that_answered_is() {
+    use verbatim_model::WindowHandle;
+    use verbatim_model::request::WindowVerdict;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+    let title = common::unique_title("mockapp-probe-told");
+    let app = common::spawn_visible("uia_island.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.set_focus_window(island);
+    let uia = verbatim_uia::Uia::new().expect("a UIA client");
+    outpost.read_focus_as(
+        common::listener_focus(&uia, island.0 as isize)
+            .live()
+            .element(),
+    );
+    let host_handle = host.0 as isize;
+    let timeout = verbatim_faults::arm(
+        Fault::RawProbeTimesOut,
+        move |window: &isize| *window == host_handle,
+        1,
+    );
+    let (_, _, probes) = outpost.current_focus_probed(WindowVerdict::ProbeFirst);
+    drop(timeout);
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| (probe.window, probe.provider))
+            .collect::<Vec<_>>(),
+        [(WindowHandle(island.0 as u64), true)],
+        "the island's probe is told, and the host's, which timed out, is not"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_probe_that_timed_out_is_not_told_and_one_that_answered_is",
+            a_probe_that_timed_out_is_not_told_and_one_that_answered_is,
+        ),
         (
             "an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else",
             an_activation_whose_invoke_fetch_timed_out_fails_and_tries_nothing_else,

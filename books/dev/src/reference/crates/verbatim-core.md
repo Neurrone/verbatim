@@ -301,7 +301,11 @@ before the moment judged (`PROBE_LIFE_US`, NVDA's cache period), the
 newest probe's start winning; otherwise none. A request that carried
 "probe first" and ended with no answer for its probe counts as a probe
 that timed out, begun when the request was sent, and a window's
-destruction forgets its probes.
+destruction forgets its probes. An outpost's answer tells every probe
+its request made that answered, of the request's window and of any
+window its reads crossed, so the cache holds the newest verdict any
+reader found (Dickson, 2026-11-27); an outpost tells no probe that timed
+out.
 
 A tell is judged at its turn by the verdict in force when its callback
 received it: an MSAA tell, other than a caret one, of a window read
@@ -788,7 +792,11 @@ code is in `reduce.rs` unless named.
   versions of the focus (`focus/versions.rs`), the committed focus and
   the readers' last focus, by the one definition of a candidate's
   validity (below), whose duplicate tests (`focus/duplicate.rs`) need no
-  read. A duplicate is valid, reads and says nothing, and ends a run.
+  read. A duplicate is valid, reads and says nothing, and ends a run. An
+  MSAA focus a reader names with no event ids (`HeldIds::event` `None`,
+  an object `accFocus` gave with no identity string naming its address) is
+  kept as `ReadBy::Msaa { event: None, .. }`, which no event duplicates
+  and no change or cap exemption names (Dickson, 2026-11-27).
 - Background speech across a foreground change
   ([ADR 0001: Focus](../adr/0001-focus.md), "One input to Core, in
   arrival order"): a background event

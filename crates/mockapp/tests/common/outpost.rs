@@ -1146,6 +1146,21 @@ impl OutpostUnderTest {
     /// The application's current focus, asked as Core asks it with the
     /// ancestors it already knows, which it commits; with its calls.
     pub fn current_focus(&self) -> (FocusOutcome, CallCounts) {
+        let (outcome, calls, _) = self.current_focus_probed(WindowVerdict::ProbeFirst);
+        (outcome, calls)
+    }
+
+    /// [`Self::current_focus`] with Core's verdict `verdict` for the
+    /// foreground window the request names, with the probes its answer
+    /// tells.
+    pub fn current_focus_probed(
+        &self,
+        verdict: WindowVerdict,
+    ) -> (
+        FocusOutcome,
+        CallCounts,
+        Vec<verbatim_model::request::Probe>,
+    ) {
         let sent = self.known();
         let batch = focus_batch(
             Some(verbatim_model::batch::WindowOf::Focused),
@@ -1154,11 +1169,8 @@ impl OutpostUnderTest {
             (sent.clone(), focus_set()),
         );
         // Core names the window its foreground record holds.
-        let (answer, calls) = self.batch(
-            HWND(self.foreground() as _),
-            WindowVerdict::ProbeFirst,
-            batch.clone(),
-        );
+        let (answer, calls) = self.batch(HWND(self.foreground() as _), verdict, batch.clone());
+        let probes = answer.probes;
         let outcome = focus_outcome(&batch, answer.outcome);
         if let FocusOutcome::Result(FocusReply::Candidate(CandidateAnswer {
             read: Some(read),
@@ -1167,7 +1179,7 @@ impl OutpostUnderTest {
         {
             self.commit_focus(read, &sent);
         }
-        (outcome, calls)
+        (outcome, calls, probes)
     }
 
     /// The outpost's next message, counted as Core counts the messages
@@ -1750,7 +1762,7 @@ fn same(ids: MsaaIds, identity: &Identity) -> verbatim_model::matcher::Matcher {
         Matcher::Is(
             PropertyId::MsaaAddress,
             PropertyValue::MsaaAddress(verbatim_model::request::HeldIds {
-                event: ids,
+                event: Some(ids),
                 held_child: ids.child,
             }),
         ),

@@ -391,11 +391,11 @@ fn candidate_property(
         PropertyId::MsaaAddress => {
             let (window, object, child) = candidate.key();
             Some(PropertyValue::MsaaAddress(HeldIds {
-                event: MsaaIds {
+                event: Some(MsaaIds {
                     window: WindowHandle(u64::from_ne_bytes(window.to_ne_bytes())),
                     object,
                     child,
-                },
+                }),
                 held_child: candidate.resolved_child(),
             }))
         }
@@ -808,7 +808,10 @@ fn candidate_read(candidate: FocusCandidate, resolver: &dyn FocusResolve) -> Foc
             ancestors,
             met,
             nearest: window,
-            msaa: Some(HeldIds { event, held_child }),
+            msaa: Some(HeldIds {
+                event: Some(event),
+                held_child,
+            }),
             foreground,
             caret,
         })),

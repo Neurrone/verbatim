@@ -218,11 +218,11 @@ fn msaa_tell(app: App, kind: EventKind, (window, object): (u64, i32), at_us: u64
 fn by_ids(mut read: FocusRead, window: u64) -> FocusRead {
     read.focus.read.window.handle = WindowHandle(window);
     read.msaa = Some(HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: WindowHandle(window),
             object: -4,
             child: 0,
-        },
+        }),
         held_child: 0,
     });
     read

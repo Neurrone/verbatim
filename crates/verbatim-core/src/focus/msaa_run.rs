@@ -92,7 +92,7 @@ impl UnlessSame {
             Matcher::Is(
                 PropertyId::MsaaAddress,
                 PropertyValue::MsaaAddress(HeldIds {
-                    event: self.ids,
+                    event: Some(self.ids),
                     held_child: self.held_child,
                 }),
             ),
@@ -529,7 +529,7 @@ pub(crate) fn executed(
         return false;
     };
     let read_by = ReadBy::Msaa {
-        event: Some(held.event),
+        event: held.event,
         held_child: held.held_child,
     };
     let origin = Origin::of_tell(&candidate.tell, candidate.window, candidate.fence);

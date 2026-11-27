@@ -268,7 +268,7 @@ pub(crate) async fn check(mut cx: Cx<Entries>, check: MenuCheck) {
         }
         Answered::Read { facts, read } => (facts, read),
     };
-    let ids = read.msaa.map(|held| held.event);
+    let ids = read.msaa.and_then(|held| held.event);
     match validity::read_at(&cx, Subject::MenuCheck(ids.as_ref()), &facts, false) {
         Settled::Valid(_) => {}
         Settled::Refused(reason) => {

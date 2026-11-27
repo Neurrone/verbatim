@@ -20,8 +20,9 @@ reports it and stays UIA, checked live), and a list view outside
 Windows Forms (a Windows Forms list view was recognized live). A probe's
 verdict, a provider or none, is kept by Core for half a second from the
 probe's start, NVDA's cache period; an outpost keeps a verdict only
-within one request, so a window a walk crosses that Core is never told
-of is probed once per request ([ADR
+within one request, so a window a walk crosses is probed once per
+request, and its answer tells Core every probe it made that answered,
+Core keeping the newest (Dickson, 2026-11-27; [ADR
 0004](../../books/dev/src/reference/adr/0004-focus-validity.md)).
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
@@ -113,10 +114,17 @@ connection to the window follows the probe, where NVDA's probe connects as
 part of it, so a new File Explorer window gets no UIA connection at
 Verbatim's first sight of it. The window is asked once. A window that did
 not answer the probe within its 3 seconds has an unknown verdict: the
-outpost reads the window through MSAA, as NVDA takes a cancelled probe as
-"no provider", and keeps that "no" for the events observed until 500 ms
-after the probe's end, where NVDA times its cache from before the probe. A
-provider probe so stays within the outpost's deadline. The 3 seconds stay,
+outpost reads the window through MSAA for the rest of its request, a
+walk crossing it included, as NVDA takes a cancelled probe as "no
+provider", and tells Core no probe, so Core counts a "probe first"
+request's untold probe as a "no" begun when it sent the request, as NVDA
+times its cache from before the probe (Dickson, 2026-10-30, kept on
+2026-11-27). Its limit: NVDA, holding a verdict under half a second
+old, makes no probe at all, while an outpost probes every window its
+walk crosses, so on a busy machine a walk whose probe times out reads
+the window's MSAA client where NVDA reads its UI Automation element, and
+an ancestor can be announced again or under another name. A provider
+probe so stays within the outpost's deadline. The 3 seconds stay,
 though `UiaHasServerSideProvider` waits about 5 seconds on a window that
 does not pump (Dickson, 2026-10-30; the `stall` case of
 [the program that measured it](https://github.com/Neurrone/verbatim/blob/e29c8f3a/uia-facts/uiahasserversideprovider-says-no-for-a-new-conhost-window-while-another-process-has-an-event-handler/readme.md),

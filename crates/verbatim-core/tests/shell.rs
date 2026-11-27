@@ -488,11 +488,11 @@ fn ok_button() -> Vec<UtteranceSegment> {
 /// The ids an MSAA read of the "OK" button holds it by.
 fn held_ok(app: App) -> HeldIds {
     HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: app.window(),
             object: -4,
             child: 0,
-        },
+        }),
         held_child: 0,
     }
 }

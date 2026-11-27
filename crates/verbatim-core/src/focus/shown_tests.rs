@@ -232,11 +232,11 @@ fn read_of(
     Found::Read(FocusRead {
         focus: focus_node(number, window, name, role),
         msaa: Some(HeldIds {
-            event: MsaaIds {
+            event: Some(MsaaIds {
                 window: WindowHandle(ids.0),
                 object: ids.1,
                 child: 0,
-            },
+            }),
             held_child: 0,
         }),
         ancestors,

@@ -247,9 +247,13 @@ the same tables and code, which the arbitrator's own lists are built from.
   probes only for the request it probes in
   (`arbitration::RequestVerdicts`, held by the request's context and
   dropped with it), so a window a walk crosses is probed at most once per
-  request, and a "probe first" request reports only a probe it made,
-  begun when that probe began on the observation clock. A window Core is
-  never told of costs one probe per request that crosses it.
+  request. The request's answer tells Core every probe it made that
+  answered, its own window's and those of the windows its reads crossed,
+  each begun when that probe began on the observation clock
+  (`RequestVerdicts::told`, set by `asked::answer` and the caret watch's
+  answer alike), and Core's cache keeps the newest (Dickson, 2026-11-27).
+  A window Core holds no verdict for costs one probe per request that
+  crosses it.
 - `verbatim_win32::window::window_classes(hwnd)` reads a window's
   `WindowClasses` (`verbatim_reader_rules::class`): the raw class, the
   class normalized as NVDA does (`verbatim_model::class::normalize`), and the root
@@ -258,8 +262,14 @@ the same tables and code, which the arbitrator's own lists are built from.
   view's Windows Forms origin, or a console's formatted text, read from
   the window. A provider that fails it is read through MSAA.
 - A timed-out probe is an unknown verdict (`arbitration::Verdict::Unknown`),
-  which the worker reads through MSAA for the rest of its request. A
-  probe on an abandoned worker sends nothing and keeps nothing.
+  which the worker reads through MSAA for the rest of its request, a walk
+  that crosses the window included, and which is told to no one (Dickson,
+  2026-11-27, keeping the 2026-10-30 ruling). Its limit: on a busy
+  machine a walk whose probe of a window times out reads that window's
+  MSAA client, which can differ from the ancestor Core holds, so an
+  ancestor can be announced again or under another name. A probe on an
+  abandoned worker sends nothing and keeps nothing; the fault point
+  `RawProbeTimesOut` makes a probe time out for a test.
 - Both class lists are `verbatim_model::class`'s, written from
   `docs/parity/backends.md` ("The class lists the per-window verdict
   reads").
@@ -545,8 +555,14 @@ and the inherited pipe handles.
   difference from NVDA, which says nothing (Dickson, 2026-10-29). Through
   MSAA the focus is the focus window's client's `accFocus`, and an object
   it names in a window this application does not serve answers no focused
-  control (`verbatim_ia2::acquire::focused_object`). There are no
-  retries. Its UIA ancestry is one remote operation
+  control (`verbatim_ia2::acquire::focused_object`). The MSAA ids an
+  answer names an object by (`HeldIds`) are made in one place,
+  `asked::held_ids`, from the store's record of whether the object was
+  acquired at its address: an object of its own `accFocus` gives is kept
+  at the address its identity string names, as NVDA's object takes its
+  ids from `IAccIdentity`, and one with no identity string has no address
+  of its own, so its answer names no event ids and no later focus event
+  is its duplicate (Dickson, 2026-11-27). There are no retries. Its UIA ancestry is one remote operation
   (`verbatim_uia_rops::focus_ancestry`); with remote operations off, or
   for a window whose element cannot be imported (a proxy, marked for the
   window's life), the per-hop walk is used. Every remote operation that

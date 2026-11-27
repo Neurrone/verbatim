@@ -173,11 +173,11 @@ fn conversions() -> Vec<(&'static str, ReaderKind, Vec<Step>)> {
             Matcher::Is(
                 PropertyId::MsaaAddress,
                 PropertyValue::MsaaAddress(HeldIds {
-                    event: MsaaIds {
+                    event: Some(MsaaIds {
                         window: WindowHandle(5),
                         object: -4,
                         child: 0,
-                    },
+                    }),
                     held_child: 0,
                 }),
             ),

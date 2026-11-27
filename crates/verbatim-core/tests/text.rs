@@ -897,11 +897,11 @@ fn edit_control(text: &str, offset: u32) -> Text {
     let mut read = FocusRead {
         caret: caret_read(caret.clone(), None, 1),
         msaa: Some(verbatim_model::request::HeldIds {
-            event: verbatim_model::request::MsaaIds {
+            event: Some(verbatim_model::request::MsaaIds {
                 window: ONE.window(),
                 object: -4,
                 child: 0,
-            },
+            }),
             held_child: 0,
         }),
         ..desk::focus_read_of(ONE, &node(FIELD, Role::EditableText, StateSet::new()), &[])
@@ -4027,11 +4027,11 @@ impl Text {
         let mut read = FocusRead {
             caret: FocusCaret::NotRead,
             msaa: Some(verbatim_model::request::HeldIds {
-                event: verbatim_model::request::MsaaIds {
+                event: Some(verbatim_model::request::MsaaIds {
                     window: app.top_level(),
                     object: 0,
                     child: 0,
-                },
+                }),
                 held_child: 0,
             }),
             ..desk::focus_read_of(app, &nameless, &[])

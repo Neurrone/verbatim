@@ -302,7 +302,11 @@ fn run_watch(
             answer: Box::new(verbatim_model::request::Answer {
                 number: watch.number,
                 outcome,
-                probes: Vec::new(),
+                // A poll that leaves the wait going makes no probe: only
+                // the steps after the wait, run in the poll that ends it,
+                // judge a window's backend, so this poll's probes are all
+                // the watch made.
+                probes: super::asked::told(request_context),
                 detail: String::new(),
                 began_us,
                 ended_us: verbatim_process::clock::now_us(),

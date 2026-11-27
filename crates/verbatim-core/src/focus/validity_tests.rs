@@ -831,11 +831,11 @@ fn a_recovered_read_of_the_last_focuss_element_is_a_duplicate_and_any_other_is_v
     );
     let msaa_last = versions(Some(last_msaa(-4, 0)));
     let held = HeldIds {
-        event: MsaaIds {
+        event: Some(MsaaIds {
             window: WindowHandle(5),
             object: -4,
             child: 0,
-        },
+        }),
         held_child: 0,
     };
     assert_eq!(

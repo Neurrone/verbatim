@@ -236,7 +236,7 @@ pub(crate) async fn current_full(
 pub(crate) fn read_by(read: &FocusRead) -> Option<HeldBy> {
     match (&read.msaa, &read.focus.runtime_id) {
         (Some(held), _) => Some(ReadBy::Msaa {
-            event: Some(held.event),
+            event: held.event,
             held_child: held.held_child,
         }),
         (None, Some(runtime_id)) => Some(ReadBy::Uia {

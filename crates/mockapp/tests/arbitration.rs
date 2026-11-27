@@ -14,11 +14,13 @@ use std::time::Duration;
 
 use common::outpost::{CandidateKind, Depth, FocusOutcome, FocusReply};
 use verbatim_model::protocol::OutpostToCore;
-use verbatim_model::request::MsaaIds;
+use verbatim_model::request::{MsaaIds, WindowVerdict};
 use verbatim_model::{CallCounts, WindowHandle};
 use verbatim_outpost::arbitration::Arbitrator;
 use verbatim_uia::{RawProbe, UIA_RAW_PROBE_TIMEOUT_MS, raw_probe};
 use verbatim_win32::window::window_classes;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
@@ -84,7 +86,9 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
 /// decides the window's backend once, on the probe that timed out: the
 /// run's probe decides, and the read of the window that follows asks
 /// nothing again, so the request sends the window one message and reads
-/// it through MSAA, its answer carrying the probe that found no provider.
+/// it through MSAA, its answer telling no probe, since a probe that got no
+/// answer is no verdict to keep (Dickson, 2026-11-27), and Core counts the
+/// untold probe as one that timed out.
 /// The stall outlasts the probe's wait, the request's first call that
 /// waits, by a second and a half, and ends before a second probe's would,
 /// so a second probe would find the provider and the request would read
@@ -115,13 +119,9 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
     };
     assert_eq!(answer.number, number);
     assert_eq!(
-        answer
-            .probes
-            .iter()
-            .map(|probe| probe.provider)
-            .collect::<Vec<_>>(),
-        [false],
-        "the window is probed once, and its probe found no provider"
+        answer.probes,
+        [],
+        "the window's probe got no answer, and is told to no one"
     );
     let outcome = common::outpost::candidate_outcome(
         &batch,
@@ -141,6 +141,68 @@ fn a_probe_that_timed_out_is_made_once_in_its_request() {
     );
     outpost.settled();
 
+    drop(outpost);
+    app.quit();
+}
+
+/// mockapp's UIA window of `uia_island.json`, titled after `label`, its
+/// window, and its child window that is a native UIA provider of its own,
+/// whose button "OK" has the focus.
+fn uia_island(label: &str) -> (common::MockApp, HWND, HWND) {
+    let title = common::unique_title(label);
+    let app = common::spawn_visible("uia_island.json", "uia", &title);
+    let host = common::find_window(&title);
+    // SAFETY: a local search of the host window's children.
+    let island = unsafe {
+        FindWindowExW(
+            Some(host),
+            None,
+            windows::core::w!("VerbatimMockAppUiaWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the UIA window");
+    (app, host, island)
+}
+
+/// A request's answer tells Core every probe the request made that
+/// answered, not only its own window's (Dickson, 2026-11-27): Core gives
+/// its verdict for the host window, and the focus is in the island child
+/// window, whose class no list names, so the focus read probes the island,
+/// and the answer carries that probe, a provider, begun while the request
+/// ran.
+fn every_probe_a_request_made_is_told() {
+    let (app, _host, island) = uia_island("mockapp-arb-every-probe");
+    let outpost = common::outpost::OutpostUnderTest::new(&app);
+    outpost.set_focus_window(island);
+    let uia = verbatim_uia::Uia::new().expect("a UIA client");
+    outpost.read_focus_as(
+        common::listener_focus(&uia, island.0 as isize)
+            .live()
+            .element(),
+    );
+    let before = outpost.observed_now();
+    let (outcome, _, probes) = outpost.current_focus_probed(WindowVerdict::Uia);
+    let after = outpost.observed_now();
+    assert!(
+        matches!(outcome, FocusOutcome::Result(_)),
+        "the focus was read: {outcome:?}"
+    );
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| (probe.window, probe.provider))
+            .collect::<Vec<_>>(),
+        [(WindowHandle(island.0 as u64), true)],
+        "the island's probe is told, and the host, given, is not probed"
+    );
+    assert!(
+        probes
+            .iter()
+            .all(|probe| (before..=after).contains(&probe.began_us)),
+        "each probe began while the request ran: {probes:?}"
+    );
+    outpost.settled();
     drop(outpost);
     app.quit();
 }
@@ -221,6 +283,10 @@ fn main() {
         (
             "a_busy_uia_window_is_read_once_it_answers",
             a_busy_uia_window_is_read_once_it_answers,
+        ),
+        (
+            "every_probe_a_request_made_is_told",
+            every_probe_a_request_made_is_told,
         ),
         (
             "msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa",

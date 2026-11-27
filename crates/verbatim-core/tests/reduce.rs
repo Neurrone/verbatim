@@ -230,11 +230,11 @@ fn msaa_read_in(
 ) -> FocusRead {
     FocusRead {
         msaa: Some(HeldIds {
-            event: MsaaIds {
+            event: Some(MsaaIds {
                 window,
                 object,
                 child: 0,
-            },
+            }),
             held_child: 0,
         }),
         ..focus_read_of(app, focus, ancestors)
@@ -264,7 +264,11 @@ fn msaa_tell(desk: &Desk, app: App, window: WindowHandle, object: i32) -> Event 
 /// listener, its run answered with `read`: every effect of the answer.
 fn msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Vec<Heard> {
     desk.app(app);
-    let window = read.msaa.expect("an MSAA read").event.window;
+    let window = read
+        .msaa
+        .and_then(|held| held.event)
+        .expect("an MSAA read at an address")
+        .window;
     let tell = msaa_tell(desk, app, window, object);
     let _ = desk.tell(LISTENER, tell);
     let Some((run, to, "Candidate")) = one_sent(desk) else {
@@ -1064,7 +1068,11 @@ fn raw_found(desk: &mut Desk, to: Instance, number: u64, found: &Found) -> Vec<E
 /// [`msaa_focus`], its answer's effects whole.
 fn raw_msaa_focus(desk: &mut Desk, app: App, object: i32, read: FocusRead) -> Vec<Effect> {
     desk.app(app);
-    let window = read.msaa.expect("an MSAA read").event.window;
+    let window = read
+        .msaa
+        .and_then(|held| held.event)
+        .expect("an MSAA read at an address")
+        .window;
     let tell = msaa_tell(desk, app, window, object);
     let _ = desk.tell(LISTENER, tell);
     let Some((run, to, "Candidate")) = one_sent(desk) else {

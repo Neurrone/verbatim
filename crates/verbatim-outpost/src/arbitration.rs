@@ -21,11 +21,12 @@
 //! carries Core's verdict for its window, or "probe first". The outpost
 //! keeps what it probes only for the request it probes in
 //! ([`RequestVerdicts`]), as one program's memo, so a window a walk crosses
-//! is probed at most once per request, and a "probe first" request reports
-//! only a probe it made. A probe that did not answer in time
+//! is probed at most once per request, and the request's answer tells Core
+//! every probe it made that answered ([`RequestVerdicts::told`]; Dickson,
+//! 2026-11-27). A probe that did not answer in time
 //! ([`verbatim_uia::UIA_RAW_PROBE_TIMEOUT_MS`]) has an unknown verdict
 //! ([`Verdict::Unknown`]), which the outpost reads through MSAA, as NVDA
-//! takes a cancelled probe as no provider.
+//! takes a cancelled probe as no provider, and tells to no one.
 //!
 //! These verdicts decide only how the outpost reads a window; which
 //! backend's events speak for a window is Core's judgement, by its own
@@ -63,6 +64,10 @@ pub(crate) struct Probed {
     pub(crate) verdict: Verdict,
     /// When it began.
     pub(crate) began_us: u64,
+    /// The thread that owned the window as the probe began, which keys
+    /// the verdict with the window in Core; `None` when the window was
+    /// already gone.
+    pub(crate) thread: Option<u32>,
 }
 
 /// What one request's probes found, by window: kept for that request
@@ -80,6 +85,33 @@ impl RequestVerdicts {
 
     fn record(&self, hwnd: isize, probed: Probed) {
         self.probed.borrow_mut().insert(hwnd, probed);
+    }
+
+    /// Every probe this request made that answered, as its answer tells
+    /// Core, whose backend cache keeps the newest (Dickson, 2026-11-27): its
+    /// window, the thread that owned it as the probe began, what it found
+    /// and when it began. A probe that did not answer in time is told to no
+    /// one, and Core counts a "probe first" request whose probe it is not
+    /// told as one that timed out; nor is one of a window gone before it
+    /// began, which no tell can name.
+    pub(crate) fn told(&self) -> Vec<verbatim_model::request::Probe> {
+        self.probed
+            .borrow()
+            .iter()
+            .filter_map(|(&hwnd, probed)| {
+                let provider = match probed.verdict {
+                    Verdict::Uia => true,
+                    Verdict::NotUia => false,
+                    Verdict::Unknown => return None,
+                };
+                Some(verbatim_model::request::Probe {
+                    window: verbatim_model::WindowHandle(u64::from_ne_bytes(hwnd.to_ne_bytes())),
+                    thread: probed.thread?,
+                    provider,
+                    began_us: probed.began_us,
+                })
+            })
+            .collect()
     }
 }
 
@@ -218,6 +250,7 @@ fn decide(
             (Lists::First, None) | (Lists::Skipped, _) => Arc::clone(&arbitrator.probe),
         }
     };
+    let thread = Some(verbatim_win32::window::window_thread(hwnd)).filter(|&thread| thread != 0);
     let started = Instant::now();
     let probed = probe(hwnd);
     tracing::debug!(
@@ -253,6 +286,7 @@ fn decide(
         Probed {
             verdict,
             began_us: now_us,
+            thread,
         },
     );
     verdict
@@ -314,7 +348,8 @@ mod tests {
             first.probed(WINDOW),
             Some(Probed {
                 verdict: Verdict::Uia,
-                began_us: 1_000
+                began_us: 1_000,
+                thread: None,
             })
         );
         let next = RequestVerdicts::default();
@@ -349,7 +384,8 @@ mod tests {
             request.probed(desktop),
             Some(Probed {
                 verdict: Verdict::NotUia,
-                began_us: 1_000
+                began_us: 1_000,
+                thread: Some(verbatim_win32::window::window_thread(desktop)),
             })
         );
         assert!(
@@ -369,6 +405,33 @@ mod tests {
         assert_eq!(
             request.probed(WINDOW).map(|probed| probed.verdict),
             Some(Verdict::Unknown)
+        );
+        assert_eq!(
+            request.told(),
+            [],
+            "a probe with no answer is told to no one"
+        );
+    }
+
+    /// Every probe a request made that answered is told, with the thread
+    /// that owned its window as it began and when it began: the desktop
+    /// window, probed first and answering with no provider. A window that
+    /// was gone as its probe began is not told.
+    #[test]
+    fn a_probe_that_answered_is_told_and_one_of_a_gone_window_is_not() {
+        let desktop = verbatim_win32::window::desktop_window();
+        let (arb, _) = probing(verbatim_uia::RawProbe::Answered(0));
+        let request = RequestVerdicts::default();
+        assert!(!probed_uses_uia(&arb, (&request, 1_000), desktop, || None));
+        assert!(!uses_uia(&arb, (&request, 2_000), WINDOW, || None));
+        assert_eq!(
+            request.told(),
+            [verbatim_model::request::Probe {
+                window: verbatim_model::WindowHandle(u64::from_ne_bytes(desktop.to_ne_bytes())),
+                thread: verbatim_win32::window::window_thread(desktop),
+                provider: false,
+                began_us: 1_000,
+            }]
         );
     }
 

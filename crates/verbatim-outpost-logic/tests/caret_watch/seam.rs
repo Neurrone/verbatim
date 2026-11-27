@@ -793,11 +793,11 @@ impl Seam {
             Kind::TextBox => {
                 read.focus.runtime_id = None;
                 read.msaa = Some(HeldIds {
-                    event: MsaaIds {
+                    event: Some(MsaaIds {
                         window: WindowHandle(5),
                         object: -4,
                         child: 0,
-                    },
+                    }),
                     held_child: 0,
                 });
             }
@@ -836,11 +836,11 @@ fn button_read(kind: Kind) -> FocusRead {
         Kind::TextBox => {
             read.focus.runtime_id = None;
             read.msaa = Some(HeldIds {
-                event: MsaaIds {
+                event: Some(MsaaIds {
                     window: WindowHandle(6),
                     object: -4,
                     child: 0,
-                },
+                }),
                 held_child: 0,
             });
         }

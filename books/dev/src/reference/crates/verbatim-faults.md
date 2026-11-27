@@ -32,7 +32,9 @@ Public API:
   it), where a colour program going on from an earlier program's rows
   fails before it runs; `PatternFetchTimesOut` (an `i32`, the pattern's
   id), where `verbatim-uia`'s live pattern fetch ends at UI Automation's
-  transaction timeout; and `WindowMessageSent` (`(window, message, timeout,
+  transaction timeout; `RawProbeTimesOut` (an `isize`, the window's
+  handle), where `verbatim-uia`'s raw probe gets no answer in time; and
+  `WindowMessageSent` (`(window, message, timeout,
   buffer)`, an `(isize, u32, Option<u32>, Option<usize>)`), where
   `verbatim-ia2` is about to send a window message, with the time limit it
   is sent with, `None` for none, and the address of the buffer it carries

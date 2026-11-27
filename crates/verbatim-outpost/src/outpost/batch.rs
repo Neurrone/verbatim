@@ -30,7 +30,7 @@ use verbatim_model::batch::{
 };
 use verbatim_model::property::{NodeDetailSet, PropertyId, PropertyValue, PropertyValues};
 use verbatim_model::request::{
-    Ask, Followed, KnownAncestor, MsaaIds, NodeRead, Outcome, Probe, Refusal, Reply, Route,
+    Ask, Followed, KnownAncestor, MsaaIds, NodeRead, Outcome, Refusal, Reply, Route,
 };
 use verbatim_model::{
     Backend, NodeId, NodeSnapshot, QueryKind, TextFailure, TextPoint, TextPosition,
@@ -61,14 +61,13 @@ pub(super) fn node_details(batch: &Batch) -> NodeDetailSet {
     NodeDetailSet::named_by(&set)
 }
 
-/// The answer to `batch`, `ask`'s, read on the worker; `probes` records
-/// the probe of a window with no verdict in force.
+/// The answer to `batch`, `ask`'s, read on the worker; the request's
+/// context keeps its probes ([`asked::told`]).
 pub(super) fn answer(
     context: &RequestContext<'_>,
     client: &mut Client,
     ask: &Ask,
     batch: &Batch,
-    probes: &mut Vec<Probe>,
 ) -> Outcome {
     let parsed = match parse(batch.clone(), ReaderKind::Outpost) {
         Ok(parsed) => parsed,
@@ -82,7 +81,7 @@ pub(super) fn answer(
         .then(|| read::checked_focus_window(context).map_err(|_| ()));
     // The request's window's verdict, probed once for the batch: a subject
     // on that window takes it, so no step probes it again.
-    let verdict = asked::verdict(context, hwnd_of(ask.window), ask.verdict, probes);
+    let verdict = asked::verdict(context, hwnd_of(ask.window), ask.verdict);
     // What a read of the focus takes, which a test of the focus reads it
     // by, so that the one read serves both.
     let focus_read = parsed.steps().iter().find_map(|step| match &step.op {
@@ -98,7 +97,6 @@ pub(super) fn answer(
         context,
         client,
         given: ask.verdict,
-        probes,
         focus,
         focus_read,
         verdicts: vec![(ask.window, verdict)],
@@ -142,12 +140,10 @@ fn after_wait(
     program: &verbatim_outpost_logic::WatchProgram,
     waited: verbatim_model::batch::Waited,
 ) -> Outcome {
-    let mut probes = Vec::new();
     let run = Run {
         context,
         client,
         given: verbatim_model::request::WindowVerdict::ProbeFirst,
-        probes: &mut probes,
         focus: None,
         focus_read: None,
         verdicts: Vec::new(),
@@ -207,7 +203,6 @@ struct Run<'r, 'c> {
     client: &'r mut Client,
     /// The verdict Core gave for the request's window.
     given: verbatim_model::request::WindowVerdict,
-    probes: &'r mut Vec<Probe>,
     /// The focused window, taken before anything else when the first step
     /// reads the focus.
     focus: Option<Result<isize, ()>>,
@@ -339,7 +334,7 @@ impl Run<'_, '_> {
         if let Some((_, verdict)) = self.verdicts.iter().find(|(held, _)| *held == window) {
             return *verdict;
         }
-        let verdict = asked::verdict(self.context, hwnd_of(window), given, self.probes);
+        let verdict = asked::verdict(self.context, hwnd_of(window), given);
         self.verdicts.push((window, verdict));
         verdict
     }

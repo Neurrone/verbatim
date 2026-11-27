@@ -39,7 +39,8 @@
 //! 2. Mockapp's arbitration tests (`crates/mockapp/tests/arbitration.rs`):
 //!    a UI Automation window answers `0x10000`, a window with no provider
 //!    answers 0, and a stalled window is asked with one message and is a
-//!    "no".
+//!    "no"; the fault point `RawProbeTimesOut`, placed before the message,
+//!    makes a probe time out for a test.
 //! 3. Before the switch, both probes were compared on the windows of real
 //!    applications, and agreed on every window answering 0 or `0x10000`.
 //! 4. The fault itself is not a test: a mockapp version needs a window
@@ -96,9 +97,9 @@ pub enum RawProbe {
 
 impl RawProbe {
     /// Whether the window has a server-side UIA provider. Every outcome but
-    /// [`RawProbe::Provider`] is a "no"; the arbitrator keeps one for
-    /// [`RawProbe::TimedOut`] only until the outpost's entry that probed
-    /// ends.
+    /// [`RawProbe::Provider`] is a "no"; an outpost keeps a
+    /// [`RawProbe::TimedOut`] as an unknown verdict for its request alone,
+    /// and tells it to no one.
     #[must_use]
     pub fn has_provider(self) -> bool {
         self == Self::Provider
@@ -158,6 +159,9 @@ pub fn raw_probe(hwnd: isize) -> RawProbe {
     if verbatim_win32::calls::count(CallKind::WindowMessage).is_err() {
         return RawProbe::Abandoned;
     }
+    if times_out(hwnd) {
+        return RawProbe::TimedOut;
+    }
     let mut answer = 0usize;
     // SAFETY: sets this thread's last error, so an error read after a
     // failure is this call's.
@@ -186,6 +190,19 @@ pub fn raw_probe(hwnd: isize) -> RawProbe {
     let verdict = raw_probe_verdict(sent, answer as isize, last_error);
     tracing::debug!(hwnd, ?verdict, "raw probe");
     verdict
+}
+
+/// Whether a test made the probe of `hwnd` get no answer in time
+/// (`verbatim_faults::Fault::RawProbeTimesOut`); never in a build without
+/// fault points.
+fn times_out(hwnd: isize) -> bool {
+    #[cfg(any(test, feature = "faults"))]
+    return verbatim_faults::hit(verbatim_faults::Fault::RawProbeTimesOut, &hwnd);
+    #[cfg(not(any(test, feature = "faults")))]
+    {
+        let _ = hwnd;
+        false
+    }
 }
 
 #[cfg(test)]

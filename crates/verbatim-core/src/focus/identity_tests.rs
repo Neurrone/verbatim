@@ -77,7 +77,7 @@ fn item_tell(at_us: u64) -> Event {
 /// The item read by its ids, named `name`, item `position` of `size`.
 fn item_read(name: &str, (position, size): (u32, u32)) -> FocusRead {
     let mut read = focus_read(Some(HeldIds {
-        event: ITEM,
+        event: Some(ITEM),
         held_child: 2,
     }));
     let mut item = values(name, Role::ListItem);
@@ -204,7 +204,7 @@ fn depth_out(held: &Held) -> Depth {
         panic!("a test of the identity: {test:?}");
     };
     let depth = Depth::FullUnlessSame {
-        ids: address.event,
+        ids: address.event.expect("the identity check names ids"),
         identity: Box::new(Identity {
             states,
             role,

@@ -35,12 +35,21 @@ duplicate.
   focus and the foreground's same-ids test compare the item's ids, and by
   NVDA's test it is never a duplicate, its child id being above 0 (the
   identity check, the last entry, is Verbatim's own). A focus read
-  through `accFocus` carries the ids it is held by, as NVDA's object gets
-  its ids from `IAccIdentity` (`NVDAObjects/IAccessible/__init__.py` 803
-  to 808). Core's
+  through `accFocus` carries the address it was acquired at: an object
+  of its own that `accFocus` gave carries the address its identity
+  string names, so its own later focus event there is its duplicate and
+  says nothing, and one with no identity string carries no event ids, so
+  no event is its duplicate, as NVDA's object built with no event takes
+  its ids from `IAccIdentity` or has none
+  (`NVDAObjects/IAccessible/__init__.py` 799 to 808 and 863 to 872;
+  Dickson, 2026-11-27). Core's
   `an_msaa_focus_with_the_last_focuss_ids_and_no_child_is_a_duplicate`,
   `a_repeat_of_a_focus_held_by_a_child_above_zero_is_not_a_duplicate`
-  and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`.
+  and `nothing_is_a_duplicate_of_a_focus_read_through_acc_focus`, Core's
+  `a_focus_after_a_check_that_read_an_object_with_no_address_is_read`, and
+  `a_focus_at_the_address_a_check_named_its_object_by_is_a_duplicate`,
+  and mockapp's `an_msaa_focus_now_follows_acc_focus_down_to_the_focus`
+  and `an_acc_focus_object_with_an_identity_string_is_named_by_its_address`.
 - Different, deliberately (Dickson, 2026-11-18: "I do want it to
   read"): File Explorer raises a second MSAA focus on some items, a menu
   item of a classic list view (`SysListView32`, the start menu's Places
