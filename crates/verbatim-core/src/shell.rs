@@ -51,6 +51,9 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::ShellItemUnclickable { trace_id, name } => {
             shell_item_not_clicked(*trace_id, Phrase::ShellItemUnclickable(name.to_owned()))
         }
+        Input::ShellItemClickFailed { trace_id, name } => {
+            shell_item_not_clicked(*trace_id, Phrase::ShellItemClickFailed(name.to_owned()))
+        }
         Input::BlockedByMessageBox { trace_id } => blocked_by_message_box(*trace_id),
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],

@@ -1266,12 +1266,13 @@ fn values_a_driver_changes_by_itself_reach_the_mirror_and_are_saved() {
     let store = TestStore::default();
     let mut registry = SynthRegistry::new();
     registry.register(SynthId::new("one"), "One", SettingsSynth::factory("one"));
+    let recorder = Arc::new(Recorder::default());
     let (manager, token, _sounds) = SpeechManager::new(SpeechManagerConfig {
         registry,
         initial_synth: SynthId::new("one"),
         settings: Box::new(store.clone()),
         mixer: mixer(),
-        events: Arc::new(Recorder::default()),
+        events: Arc::clone(&recorder) as Arc<dyn SpeechEvents>,
         theme: theme_without_sounds(),
         inbox: verbatim_speech::channel_inbox(),
     })
@@ -1280,10 +1281,13 @@ fn values_a_driver_changes_by_itself_reach_the_mirror_and_are_saved() {
     let rate = SettingId::new("rate");
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(50)));
 
-    manager.speak(&token, queued("restart"));
-    assert!(
-        manager.settle(Instant::now() + STEP_TIMEOUT),
-        "the synth thread has spoken"
+    let restart = manager.speak(&token, queued("restart"));
+    // The synth thread speaks the marker only once it has finished with
+    // "restart", the mirror's write included.
+    let marker = manager.speak(&token, queued("marker"));
+    assert_eq!(
+        recorder.endings_before(marker),
+        [(restart, UtteranceEnding::Completed)]
     );
     assert_eq!(host.setting(&rate), Some(SettingValue::Number(20)));
     host.commit().expect("commits");

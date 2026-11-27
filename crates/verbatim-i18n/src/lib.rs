@@ -639,6 +639,7 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::CopiedToClipboard(text) => messages::clipboard_copied(text),
         Phrase::ShellItemGone(name) => crate::t!("tray-list-gone", name = name),
         Phrase::ShellItemUnclickable(name) => crate::t!("tray-list-unclickable", name = name),
+        Phrase::ShellItemClickFailed(name) => crate::t!("tray-list-failed", name = name),
     }
 }
 
@@ -1661,6 +1662,10 @@ mod tests {
         assert_eq!(
             phrase_text(&Phrase::ShellItemUnclickable("Clock".to_owned())),
             "Clock cannot be clicked"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::ShellItemClickFailed("Clock".to_owned())),
+            "Could not click Clock, try again"
         );
     }
 

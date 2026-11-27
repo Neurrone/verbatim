@@ -287,6 +287,9 @@ pub enum Phrase {
     /// The shell item list dialog's chosen item was there with no point to
     /// click: "Clock cannot be clicked".
     ShellItemUnclickable(String),
+    /// The request for where the shell item list dialog's chosen item is
+    /// failed: "Could not click Clock, try again" (Dickson, 2026-11-28).
+    ShellItemClickFailed(String),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.

@@ -519,10 +519,19 @@ pub enum Input {
         name: String,
     },
     /// The shell item list dialog's chosen item was there when it would
-    /// have been clicked, but off the screen or with no rectangle or an
-    /// empty one, so it was not clicked.
+    /// have been clicked, but with no rectangle or an empty one, so it was
+    /// not clicked.
     ShellItemUnclickable {
         /// Trace ID minted when the dialog found it unclickable.
+        trace_id: TraceId,
+        /// The item's name, as the list showed it.
+        name: String,
+    },
+    /// The shell item list dialog's chosen item was not clicked because the
+    /// request for where it is failed: the outpost timed out, ended or
+    /// dropped it.
+    ShellItemClickFailed {
+        /// Trace ID minted when the dialog had the failure.
         trace_id: TraceId,
         /// The item's name, as the list showed it.
         name: String,
@@ -688,6 +697,7 @@ impl Input {
             | Self::ClipboardCopied { trace_id, .. }
             | Self::ShellItemGone { trace_id, .. }
             | Self::ShellItemUnclickable { trace_id, .. }
+            | Self::ShellItemClickFailed { trace_id, .. }
             | Self::BlockedByMessageBox { trace_id }
             | Self::PreviewSpeech { trace_id, .. }
             | Self::Queue { trace_id, .. } => Some(*trace_id),

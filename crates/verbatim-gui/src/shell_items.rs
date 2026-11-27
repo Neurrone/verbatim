@@ -79,14 +79,12 @@ pub fn refind<'a>(
     }
 }
 
-/// The rectangle a click on `candidate` targets: none when it is off the
-/// screen or has no rectangle or an empty one, since a click targets its
-/// center.
+/// The rectangle a click on `candidate` targets: none when it has no
+/// rectangle or an empty one, since a click targets its center. Whether it
+/// is off the screen is the click's target to judge, before this is asked
+/// (`tray_list.rs`).
 #[must_use]
 pub fn usable_position(candidate: &ShellCandidate) -> Option<Rect> {
-    if candidate.offscreen {
-        return None;
-    }
     candidate
         .rect
         .filter(|rect| rect.width > 0 && rect.height > 0)
@@ -194,13 +192,17 @@ mod tests {
         );
     }
 
+    /// Off the screen is judged once, by the click's target, which never
+    /// asks for an off-screen button's position (`tray_list.rs`,
+    /// `a_found_item_gone_off_the_screen_is_no_longer_there`): the position
+    /// is the rectangle alone.
     #[test]
-    fn an_offscreen_button_has_no_position() {
+    fn an_offscreen_buttons_position_is_its_rectangle() {
         let offscreen = ShellCandidate {
             offscreen: true,
             ..candidate("Clock", &[1])
         };
-        assert_eq!(usable_position(&offscreen), None);
+        assert_eq!(usable_position(&offscreen), Some(rect(24, 24)));
     }
 
     #[test]

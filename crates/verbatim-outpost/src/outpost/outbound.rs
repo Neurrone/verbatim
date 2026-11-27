@@ -22,6 +22,10 @@
 //!   then; one a message still waiting carries has no number yet. So the
 //!   store releases only nodes and anchors Core has seen
 //!   ([`super::store::Store::release`]).
+//! - A message is encoded before it is numbered, so one larger than a frame
+//!   may take has no side effect: its nodes are withdrawn, and an answer is
+//!   replaced by its request's answer ended, so every request keeps its one
+//!   answer; any other such message is dropped, logged.
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +34,7 @@ use std::convert::Infallible;
 use std::io;
 
 use verbatim_model::protocol::{OutpostToCore, Urgent};
+use verbatim_model::request::{Answer, Outcome};
 use verbatim_process::transport::{Backlog, SendError, Sender};
 
 use super::store::Recorded;
@@ -138,13 +143,16 @@ impl Backlog for Pending {
         self.urgent.is_empty() && self.ordinary.is_empty()
     }
 
+    /// Encodes `item` into `buffer`. An ordinary message is encoded before
+    /// it is numbered, so one that cannot be (larger than a frame may take)
+    /// has no side effect: the nodes it named are withdrawn, never recorded
+    /// as seen, and an answer is replaced by its request's answer ended, so
+    /// the request still has its one answer, at once ([`too_large`]).
     fn encode(&mut self, item: Outgoing, buffer: &mut Vec<u8>) -> io::Result<()> {
-        let mut message = match item {
+        let mut message: OutpostToCore = match item {
             Outgoing::Urgent(message) => message.into(),
             Outgoing::Message(message, touched) => {
-                self.numbered
-                    .written(message.carries_nodes(), touched.iter().copied());
-                message
+                return self.encode_ordinary(message, &touched, buffer);
             }
             Outgoing::Flushed(done) => {
                 // Every write before it has completed.
@@ -156,11 +164,78 @@ impl Backlog for Pending {
         // queue's time from the pipe's, taken as the write begins, whichever
         // thread writes.
         message.written(now_us());
+        put_message(buffer, &message)
+    }
+}
+
+impl Pending {
+    /// Encodes the ordinary `message`, which may name each of `touched`,
+    /// and only once it is encoded numbers it; or, when it cannot be,
+    /// encodes what stands for it ([`too_large`]).
+    fn encode_ordinary(
+        &mut self,
+        message: OutpostToCore,
+        touched: &[Carried],
+        buffer: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        let message = match put_message(buffer, &message) {
+            Ok(()) => message,
+            Err(error) => {
+                for &carried in touched {
+                    self.numbered.withdrawn(carried);
+                }
+                let Some(mut ended) = too_large(message, &error) else {
+                    return Ok(());
+                };
+                if put_message(buffer, &OutpostToCore::Answer(ended.clone())).is_err() {
+                    // Too many probes to fit even so: they are dropped, so
+                    // the answer, now only fixed fields and a short detail,
+                    // always fits. Core has no verdict from them and
+                    // probes those windows again when it next reads them.
+                    tracing::warn!(request = %ended.number, probes = ended.probes.len(), "the ended answer's probes are dropped to fit it in a frame");
+                    ended.probes.clear();
+                    put_message(buffer, &OutpostToCore::Answer(ended))?;
+                }
+                // An ended answer carries no node: it is not numbered.
+                self.numbered.written(false, []);
+                return Ok(());
+            }
+        };
+        self.numbered
+            .written(message.carries_nodes(), touched.iter().copied());
         if let OutpostToCore::Answer(answer) = &message {
             tracing::debug!(request = %answer.number, "answer written to Core's pipe");
         }
-        put_message(buffer, &message)
+        Ok(())
     }
+}
+
+/// What stands for `message`, which could not be encoded for `error` (it is
+/// larger than a frame may take, as a terminal's whole history can be): an
+/// answer is replaced by its request's answer ended, the outcome a reader
+/// gives a request it ends, with why for the log, so the request is
+/// answered at once rather than waiting to its deadline; any other message
+/// is dropped, logged, since nothing waits for it. NVDA has no frame limit;
+/// a review read that fails there raises and is logged, saying nothing
+/// (`nvda/source/scriptHandler.py` 294-295), as Core's review command
+/// whose history read ends says nothing.
+fn too_large(message: OutpostToCore, error: &io::Error) -> Option<Answer> {
+    let OutpostToCore::Answer(answer) = message else {
+        tracing::error!(%error, "a message to Core cannot be sent and is dropped");
+        return None;
+    };
+    tracing::error!(request = %answer.number, %error, "an answer to Core cannot be sent; its request is answered ended");
+    tracing::debug!(request = %answer.number, "the oversized answer is replaced by its request's answer ended");
+    // The probes go with it, as their verdicts are Core's to record; the
+    // reader's detail, which can grow with the read, does not.
+    Some(Answer {
+        number: answer.number,
+        outcome: Outcome::Ended,
+        probes: answer.probes,
+        detail: format!("the answer cannot be sent: {error}"),
+        began_us: answer.began_us,
+        ended_us: answer.ended_us,
+    })
 }
 
 /// A send's outcome: once the outpost is shutting down, or Core's pipe has
@@ -347,6 +422,85 @@ mod tests {
         let mut pending = pending();
         push(&mut pending, ended(1, &text), &[]);
         assert_eq!(write(&mut pending), [ended(1, &text)]);
+    }
+
+    /// An answer too large for a frame is judged before it is numbered:
+    /// its request is answered ended instead, at once, with why for the
+    /// log, and the nodes it named are withdrawn, never recorded as seen.
+    /// A message behind it is written and numbered as usual.
+    #[test]
+    fn an_answer_too_large_for_a_frame_answers_its_request_ended() {
+        let too_large = Answer {
+            number: RequestNumber(7),
+            outcome: Outcome::Result(Reply::Steps(Vec::new())),
+            probes: Vec::new(),
+            detail: "z".repeat(verbatim_process::transport::MAX_FRAME_BYTES),
+            began_us: 10,
+            ended_us: 20,
+        };
+        // The transport's own refusal of the answer, which the detail gives.
+        let refused = put_message(&mut Vec::new(), &OutpostToCore::Answer(too_large.clone()))
+            .expect_err("larger than a frame may take");
+        let mut pending = pending();
+        push(&mut pending, OutpostToCore::Answer(too_large), &[1]);
+        push(&mut pending, answer(8), &[2]);
+        let written = write(&mut pending);
+        let [OutpostToCore::Answer(ended), next] = written.as_slice() else {
+            panic!("two messages are written: {written:?}");
+        };
+        assert_eq!(
+            (ended.number, &ended.outcome, ended.began_us, ended.ended_us),
+            (RequestNumber(7), &Outcome::Ended, 10, 20)
+        );
+        assert_eq!(
+            ended.detail,
+            format!("the answer cannot be sent: {refused}")
+        );
+        assert_eq!(next, &answer(8));
+        let numbered = pending.numbered();
+        assert_eq!(numbered.position(), 1, "only the answer behind it counts");
+        let report = |number| {
+            numbered
+                .report(Carried::Node(number))
+                .map(|report| (report.position, report.waiting))
+        };
+        assert_eq!(report(1), Some((0, 0)), "withdrawn, never seen");
+        assert_eq!(report(2), Some((1, 0)));
+    }
+
+    /// An answer whose probes alone pass a frame's limit is still answered
+    /// ended: the probes are dropped so the ended answer fits, and the
+    /// request keeps its one answer.
+    #[test]
+    fn an_ended_answer_too_large_for_its_probes_is_sent_without_them() {
+        let probe = verbatim_model::request::Probe {
+            window: verbatim_model::WindowHandle(0x0001_0203),
+            thread: 4_096,
+            provider: true,
+            began_us: 1_000_000_000,
+        };
+        let probes = vec![probe; verbatim_process::transport::MAX_FRAME_BYTES / 40];
+        let mut pending = pending();
+        push(
+            &mut pending,
+            OutpostToCore::Answer(Answer {
+                number: RequestNumber(9),
+                outcome: Outcome::Result(Reply::Steps(Vec::new())),
+                probes,
+                detail: String::new(),
+                began_us: 0,
+                ended_us: 0,
+            }),
+            &[],
+        );
+        let written = write(&mut pending);
+        let [OutpostToCore::Answer(ended)] = written.as_slice() else {
+            panic!("one message is written");
+        };
+        assert_eq!(
+            (ended.number, &ended.outcome, ended.probes.len()),
+            (RequestNumber(9), &Outcome::Ended, 0)
+        );
     }
 
     #[test]

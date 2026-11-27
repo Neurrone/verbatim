@@ -134,6 +134,9 @@ tray-list-gone = { $name } is no longer there
 # Spoken when the chosen item is there as the click is made but has no
 # rectangle or an empty one, so there is no point to click.
 tray-list-unclickable = { $name } cannot be clicked
+# Spoken when the request for where the chosen item is failed, so whether
+# it is there is not known.
+tray-list-failed = Could not click { $name }, try again
 
 ## Synthesizer display names.
 

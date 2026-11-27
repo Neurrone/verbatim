@@ -47,10 +47,13 @@ use crate::shell_items::{
 /// Why an item chosen was not clicked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Missed {
-    /// It is not there, its name no longer tells it apart, the request
-    /// failed, or it has gone off the screen since the list, which leaves
-    /// off-screen buttons out, was made (Dickson, 2026-10-26).
+    /// It is not there, its name no longer tells it apart, or it has gone
+    /// off the screen since the list, which leaves off-screen buttons out,
+    /// was made (Dickson, 2026-10-26).
     Gone,
+    /// The request for where it is failed: the outpost timed out, ended or
+    /// dropped it, so whether it is there is not known.
+    Failed,
     /// It is there but has no point to click: it has no rectangle or an
     /// empty one, which the list cannot leave out since it reads no
     /// rectangles.
@@ -177,15 +180,16 @@ fn name_unique(items: &[ShellItem], name: &str) -> bool {
 }
 
 /// Where a click on `chosen` lands, given the outpost's answer `found`
-/// (`None` when the request failed): the rectangle of the button
-/// [`refind`] picks, or why nothing is clicked.
+/// (`None` when the request failed, which is [`Missed::Failed`], parsed
+/// here where the answer arrives): the rectangle of the button [`refind`]
+/// picks, or why nothing is clicked. Off the screen is judged here, once.
 fn target(
     chosen: &ShellItem,
     name_unique: bool,
     found: Option<&ShellCandidates>,
 ) -> Result<Rect, Missed> {
-    let candidate = found
-        .and_then(|found| refind(chosen, name_unique, found))
+    let found = found.ok_or(Missed::Failed)?;
+    let candidate = refind(chosen, name_unique, found)
         .filter(|candidate| !candidate.offscreen)
         .ok_or(Missed::Gone)?;
     usable_position(candidate).ok_or(Missed::Unclickable)
@@ -307,12 +311,18 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_item_or_a_failed_request_is_gone() {
+    fn a_missing_item_is_gone() {
         let none = ShellCandidates {
             candidates: Vec::new(),
             complete: true,
         };
         assert_eq!(target(&chosen(), true, Some(&none)), Err(Missed::Gone));
-        assert_eq!(target(&chosen(), true, None), Err(Missed::Gone));
+    }
+
+    /// A request that failed says nothing of whether the item is there,
+    /// so it is not taken for the item being gone (Dickson, 2026-11-28).
+    #[test]
+    fn a_failed_request_is_its_own_miss() {
+        assert_eq!(target(&chosen(), true, None), Err(Missed::Failed));
     }
 }

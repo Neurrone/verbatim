@@ -272,6 +272,25 @@ fn a_shell_item_unclickable_is_said_queued() {
     );
 }
 
+#[test]
+fn a_shell_item_click_whose_request_failed_is_said_queued() {
+    let trace_id = TraceId::from_raw(6);
+    assert_eq!(
+        effects_of(&verbatim_model::Arrival {
+            at_us: 0,
+            input: Input::ShellItemClickFailed {
+                trace_id,
+                name: "Clock".to_owned(),
+            },
+        }),
+        [said(
+            trace_id,
+            SpeechPriority::Queued,
+            SegmentContent::Phrase(Phrase::ShellItemClickFailed("Clock".to_owned())),
+        )]
+    );
+}
+
 /// Source-derived (`nvda/source/gui/blockAction.py` 55-59 and 104,
 /// the message, at `ui.delayedMessage`'s priority NOW, `ui.py` 183);
 /// see the GUI lifecycle's test of the block itself.

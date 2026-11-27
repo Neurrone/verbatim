@@ -92,6 +92,11 @@ pub enum GuiEvent {
     /// an empty one, which the list cannot leave out since it reads no
     /// rectangles, so nothing was clicked; the app says so.
     ShellItemUnclickable(String),
+    /// The tray icon or taskbar button with this name, chosen in the list
+    /// dialog, was not clicked because the request for where it is failed
+    /// (File Explorer's outpost timed out, ended or dropped it); the app
+    /// says so, and that it can be tried again.
+    ShellItemClickFailed(String),
     /// The settings dialog or Exit was asked for while a modal message box
     /// is up, and refused; the app says so.
     BlockedByMessageBox,
@@ -501,6 +506,7 @@ impl GuiCore {
         let missed: tray_list::OnMissed = Arc::new(move |name, why| {
             let _ = events.send(match why {
                 tray_list::Missed::Gone => GuiEvent::ShellItemGone(name),
+                tray_list::Missed::Failed => GuiEvent::ShellItemClickFailed(name),
                 tray_list::Missed::Unclickable => GuiEvent::ShellItemUnclickable(name),
             });
         });

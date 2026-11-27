@@ -1257,7 +1257,14 @@ Nothing that sends ever waits, so the reducer can always abandon a worker.
   (`Outpost::settle`'s) is answered once every earlier write has
   completed.
 - What waits is bounded by Core's requests and the intake's limits.
-  Messages carrying node ids are numbered as written (`Pending`).
+  Messages carrying node ids are numbered as written (`Pending`), once
+  encoded: one larger than the transport's 32 MiB frame, as a terminal's
+  whole history read can be, is never numbered, its nodes are withdrawn,
+  and an answer is replaced by its request's answer ended, with why for
+  the log, so the request is answered at once instead of waiting to its
+  deadline (a review command whose history read ends says nothing, as
+  NVDA's review script that raises does); any other such message is
+  dropped, logged.
 
 The supervisor and the listener never wait to send either.
 

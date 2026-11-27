@@ -2258,6 +2258,13 @@ fn gui_event_loop(
                 };
                 let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(input))));
             }
+            GuiEvent::ShellItemClickFailed(name) => {
+                let input = Input::ShellItemClickFailed {
+                    trace_id: TraceId::mint(),
+                    name,
+                };
+                let _ = command_tx.send(ShellCommand::Input(Box::new(arrived(input))));
+            }
         }
     }
 }

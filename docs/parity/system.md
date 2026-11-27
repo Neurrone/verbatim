@@ -313,7 +313,11 @@ with its name when no other item of the list had that name and the walk
 read every button, and clicks its center there, as the add-on clicks the
 center. An item that cannot be found this way, or is found off the
 screen since the list was made, is not clicked, and Verbatim says "is no
-longer there" after its name (Dickson, 2026-10-26). The list leaves out a
+longer there" after its name (Dickson, 2026-10-26). When the request for
+where it is fails (the outpost timed out, ended or dropped it), nothing is
+clicked and Verbatim says "Could not click Clock, try again", with the
+item's name (Dickson, 2026-11-28); the add-on, which asks nothing at the
+click, has no such case. The list leaves out a
 button off the screen, as the add-on does; one with no rectangle or an
 empty one, which the add-on also leaves out, is listed, since the list
 reads no rectangles, and is not clicked, and Verbatim says "cannot be
