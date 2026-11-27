@@ -36,8 +36,8 @@ mod walk;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange, TextUnit};
 
 use verbatim_model::batch::{
-    Before, Check, Gate, Missing, Op, Place, Point, Step, StepOutcome, StepRefusal, Subject, Test,
-    View, Walk,
+    Before, Check, Gate, KindMismatch, Known, Missing, Op, Outcomes, Place, Point, Step,
+    StepOutcome, StepRefusal, Subject, View, Walk,
 };
 use verbatim_model::{NodeSnapshot, TableId, TextDetails, TextMovement, TextPoint};
 use verbatim_uia::{Cached, Fill, Node, Uia};
@@ -839,121 +839,58 @@ impl<'s, 'a> State<'s, 'a> {
             .and_then(|index| self.ran[index].as_ref())
     }
 
-    /// Whether the step at `index` runs: every step it refers to is done,
-    /// and its condition holds (the design's condition table). `Err` when
-    /// it names a step it cannot, a defect of the segment's.
-    fn gate(&self, index: usize) -> Result<Holds, Defect> {
-        for place in self.step(index).references() {
-            if self.before(place) {
-                if !matches!(
-                    self.segment.earlier.get(place.index()),
-                    Some(StepOutcome::Done(_))
-                ) {
-                    return Ok(Holds::Skip);
-                }
-                continue;
-            }
-            match self.named(place, index) {
-                Some(Ran::Done(_)) => {}
-                Some(_) => return Ok(Holds::Skip),
-                None => return Err(Defect("a step names one not before it in its segment")),
-            }
-        }
-        self.holds(index, &|_| false)
+    /// Whether the step at `index` runs, by the model's one rule
+    /// ([`Step::judge`]) over the outcomes before it. `Err` when it names a
+    /// step it cannot, a defect of the segment's.
+    fn gate(&self, index: usize) -> Result<Gate, Defect> {
+        self.step(index)
+            .judge(&Earlier {
+                state: self,
+                by: index,
+            })
+            .map(|(gate, _)| gate)
     }
 
-    /// Whether the condition of the step at `index` holds, its named
-    /// steps' outcomes known. `in_program` says which places are steps of
-    /// a program being planned, whose outcomes the program itself tests;
-    /// a comparison of two points is answered [`Holds::Compare`] once no
-    /// step outside the program decides it.
-    fn holds(&self, index: usize, in_program: &dyn Fn(Place) -> bool) -> Result<Holds, Defect> {
-        let Some(condition) = self.step(index).when else {
-            return Ok(Holds::Run);
-        };
-        let decided = |holds: bool| {
-            if holds == condition.negated {
-                Holds::Skip
-            } else {
-                Holds::Run
-            }
-        };
-        let (on, check) = match condition.test {
-            Test::Step { on, check } => (on, check),
-            Test::NotAfter { point, than } => {
-                let mut failed = false;
-                for place in condition.compared() {
-                    if in_program(place) {
-                        continue;
-                    }
-                    if self.before(place) {
-                        match self.segment.earlier.get(place.index()) {
-                            None | Some(StepOutcome::Skipped) => return Ok(Holds::Skip),
-                            Some(StepOutcome::Done(_)) => {}
-                            Some(_) => failed = true,
-                        }
-                        continue;
-                    }
-                    match self.named(place, index) {
-                        None => {
-                            return Err(Defect(
-                                "a comparison names a step not before it in its segment",
-                            ));
-                        }
-                        Some(Ran::Unrun(Unrun::Skipped)) => return Ok(Holds::Skip),
-                        Some(Ran::Done(_)) => {}
-                        Some(_) => failed = true,
-                    }
-                }
-                return Ok(Holds::Compare {
-                    points: (!failed).then_some((point, than)),
-                    negated: condition.negated,
-                });
-            }
-        };
-        if self.before(on) {
-            return match condition.gate(self.segment.earlier) {
-                Ok(Gate::Run) => Ok(Holds::Run),
-                Ok(Gate::Skip) => Ok(Holds::Skip),
-                Ok(Gate::Compare { .. }) | Err(_) => {
-                    Err(Defect("a condition names a result it cannot test"))
-                }
-            };
+    /// What the step at `by` knows of the step at `place`, which runs
+    /// before it, by the batch's earlier outcomes or by calls.
+    fn known<P>(&self, place: Place, by: usize) -> Result<Known<P>, Defect> {
+        if self.before(place) {
+            return Ok(Known::of(self.segment.earlier.get(place.index())).widen());
         }
-        let holds = match self.named(on, index) {
-            None => {
-                return Err(Defect(
-                    "a condition names a step not before it in its segment",
-                ));
-            }
-            Some(Ran::Unrun(Unrun::Skipped)) => return Ok(Holds::Skip),
-            Some(Ran::Done(found)) => match check {
-                Check::Found => found
-                    .found()
-                    .ok_or(Defect("a condition tests a result that finds nothing"))?,
-                Check::Matched => return Err(Defect("a condition in a segment tests a match")),
-            },
-            Some(_) => false,
-        };
-        Ok(decided(holds))
+        match self.named(place, by) {
+            Some(Ran::Done(_)) => Ok(Known::Done),
+            Some(Ran::Unrun(Unrun::Skipped)) => Ok(Known::Skipped),
+            Some(_) => Ok(Known::Unrun),
+            None => Err(Defect("a step names one not before it in its segment")),
+        }
+    }
+
+    /// What the done step at `place`, before the step at `by`, answers
+    /// `check`: a match is tested only of a step before the segment.
+    fn check(&self, place: Place, by: usize, check: Check) -> Option<bool> {
+        if self.before(place) {
+            return Outcomes::check(self.segment.earlier, place, check);
+        }
+        match (self.named(place, by), check) {
+            (Some(Ran::Done(found)), Check::Found) => found.found(),
+            _ => None,
+        }
     }
 
     /// Runs the step at `index` by calls.
     fn call(&mut self, index: usize) {
         let ran = match self.gate(index) {
-            Ok(Holds::Run) => calls::run(self, index),
-            Ok(Holds::Skip) => Ran::Unrun(Unrun::Skipped),
-            Ok(Holds::Compare { points, negated }) => {
-                let holds = match points {
-                    Some((point, than)) => calls::not_after(self, index, (&point, &than)),
-                    None => Ok(false),
-                };
-                match holds {
-                    Err(answered) => answered,
-                    Ok(holds) if holds == negated => Ran::Unrun(Unrun::Skipped),
-                    Ok(_) => calls::run(self, index),
-                }
-            }
+            Ok(Gate::Run) => calls::run(self, index),
+            Ok(Gate::Skip) => Ran::Unrun(Unrun::Skipped),
+            Ok(Gate::Compare {
+                point,
+                than,
+                negated,
+            }) => match calls::not_after(self, index, (&point, &than)) {
+                Err(answered) => answered,
+                Ok(holds) if holds == negated => Ran::Unrun(Unrun::Skipped),
+                Ok(_) => calls::run(self, index),
+            },
             Err(defect) => defect.ran(),
         };
         self.ran[index] = Some(ran);
@@ -1023,28 +960,35 @@ impl<'s, 'a> State<'s, 'a> {
     }
 }
 
-/// Whether a step runs, by what it names and its condition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Holds {
-    /// It runs.
-    Run,
-    /// It is skipped.
-    Skip,
-    /// Its condition compares two points
-    /// ([`verbatim_model::batch::Test::NotAfter`]), which the calls or the
-    /// program find and compare; `points` is `None` when a step one of
-    /// them names was refused, not there or failed, so the test is false.
-    Compare {
-        /// The point, and the point it is compared with.
-        points: Option<(Point, Point)>,
-        /// Whether the step runs when the test is false.
-        negated: bool,
-    },
+/// The outcomes before the step at `by`, as its gate judges them: every
+/// step named has run, so none is left to test.
+struct Earlier<'v, 's, 'a> {
+    state: &'v State<'s, 'a>,
+    by: usize,
+}
+
+impl Outcomes for Earlier<'_, '_, '_> {
+    type Pending = std::convert::Infallible;
+    type Error = Defect;
+
+    fn known(&self, place: Place) -> Result<Known<Self::Pending>, Defect> {
+        self.state.known(place, self.by)
+    }
+
+    fn check(&self, place: Place, check: Check) -> Option<bool> {
+        self.state.check(place, self.by, check)
+    }
 }
 
 /// A defect in a segment the outpost built, which no call can answer.
 #[derive(Clone, Copy, Debug)]
 struct Defect(&'static str);
+
+impl From<KindMismatch> for Defect {
+    fn from(_: KindMismatch) -> Self {
+        Self("a condition names a result it cannot test")
+    }
+}
 
 impl Defect {
     /// The defect logged, and its step answered as failed.

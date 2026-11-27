@@ -24,6 +24,8 @@ mod walk;
 #[cfg(test)]
 mod tests;
 
+use std::convert::Infallible;
+
 use serde::{Deserialize, Serialize};
 
 use crate::matcher::Matcher;
@@ -777,9 +779,9 @@ pub enum Gate {
     Run,
     /// It is skipped.
     Skip,
-    /// Every step it names is done, and its condition compares two points
-    /// ([`Test::NotAfter`]): the executor that makes the calls finds the
-    /// two points and decides.
+    /// Every step it names is done, or runs with it ([`Pending::compared`]),
+    /// and its condition compares two points ([`Test::NotAfter`]): the
+    /// executor that makes the calls finds the two points and decides.
     Compare {
         /// The point.
         point: Point,
@@ -795,6 +797,113 @@ pub enum Gate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KindMismatch;
 
+/// What a gate knows of a step its step names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Known<P> {
+    /// It is done.
+    Done,
+    /// It was skipped.
+    Skipped,
+    /// It was refused, not there, or failed.
+    Unrun,
+    /// It runs with the step judged, in one remote program, under the
+    /// executor's name `P`: its outcome is tested where the step runs.
+    Pending(P),
+}
+
+impl Known<Infallible> {
+    /// The same knowledge, where steps can run with the step judged.
+    #[must_use]
+    pub const fn widen<P>(self) -> Known<P> {
+        match self {
+            Self::Done => Known::Done,
+            Self::Skipped => Known::Skipped,
+            Self::Unrun => Known::Unrun,
+            Self::Pending(never) => match never {},
+        }
+    }
+
+    /// What `outcome`, an earlier step's, tells a gate; a step not yet
+    /// run, which the parse rules out, is taken as skipped.
+    #[must_use]
+    pub const fn of(outcome: Option<&StepOutcome>) -> Self {
+        match outcome {
+            Some(StepOutcome::Done(_)) => Self::Done,
+            None | Some(StepOutcome::Skipped) => Self::Skipped,
+            Some(StepOutcome::Refused(_) | StepOutcome::NotThere(_) | StepOutcome::Failed) => {
+                Self::Unrun
+            }
+        }
+    }
+}
+
+/// The outcomes a gate judges a step by: what each executor knows of the
+/// steps the step names ([`Step::judge`]).
+pub trait Outcomes {
+    /// The executor's name for a step run with the step judged:
+    /// [`Infallible`] where none is.
+    type Pending: Copy;
+    /// A step named that these outcomes cannot answer, a defect.
+    type Error: From<KindMismatch>;
+
+    /// What is known of the step at `place`.
+    ///
+    /// # Errors
+    ///
+    /// When `place` names a step these outcomes do not hold.
+    fn known(&self, place: Place) -> Result<Known<Self::Pending>, Self::Error>;
+
+    /// What the done step at `place` answers `check`; `None` for a result
+    /// with no answer to it.
+    fn check(&self, place: Place, check: Check) -> Option<bool>;
+}
+
+impl Outcomes for [StepOutcome] {
+    type Pending = Infallible;
+    type Error = KindMismatch;
+
+    fn known(&self, place: Place) -> Result<Known<Infallible>, KindMismatch> {
+        Ok(Known::of(self.get(place.index())))
+    }
+
+    fn check(&self, place: Place, check: Check) -> Option<bool> {
+        match self.get(place.index()) {
+            Some(StepOutcome::Done(done)) => done.answer(check),
+            _ => None,
+        }
+    }
+}
+
+/// What is left of a step's gate to test where it runs, of the steps it
+/// names that run with it ([`Known::Pending`]): nothing where none does.
+/// The step runs when [`Gate`] lets it and every test here holds.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Pending<P> {
+    /// The steps it takes a result from: each must be done.
+    pub done: Vec<P>,
+    /// Its condition's test of one step, with whether it is negated: one
+    /// skipped skips it, and one not done makes the test false.
+    pub step: Option<(P, Check, bool)>,
+    /// The steps its comparison's points name: one skipped skips it, and
+    /// one not done makes the comparison false, as [`Gate`] decides it.
+    pub compared: Vec<P>,
+}
+
+impl<P> Pending<P> {
+    /// Nothing left to test.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            done: Vec::new(),
+            step: None,
+            compared: Vec::new(),
+        }
+    }
+}
+
+/// A step's gate: what is decided before it runs, and what is left.
+pub type Judged<P> = (Gate, Pending<P>);
+
 impl Condition {
     /// A test of the step at `on`.
     #[must_use]
@@ -805,12 +914,12 @@ impl Condition {
         }
     }
 
-    /// The step runs, or not, as the test came out.
-    const fn decided(&self, holds: bool) -> Gate {
+    /// The step runs, or not, as the test came out, with what is left.
+    fn decided<P>(&self, holds: bool, pending: Pending<P>) -> Judged<P> {
         if holds == self.negated {
-            Gate::Skip
+            (Gate::Skip, Pending::none())
         } else {
-            Gate::Run
+            (Gate::Run, pending)
         }
     }
 
@@ -838,44 +947,53 @@ impl Condition {
     /// [`KindMismatch`] when the outcome a test of a step names is a
     /// result with no answer to the check.
     pub fn gate(&self, earlier: &[StepOutcome]) -> Result<Gate, KindMismatch> {
+        self.judge(earlier, Pending::none())
+            .map(|(gate, _): Judged<Infallible>| gate)
+    }
+
+    /// Whether the step carrying this condition runs, by `outcomes`, with
+    /// what its references left to test (the condition's rule, written
+    /// once for every executor).
+    fn judge<O: Outcomes + ?Sized>(
+        &self,
+        outcomes: &O,
+        mut pending: Pending<O::Pending>,
+    ) -> Result<Judged<O::Pending>, O::Error> {
+        let skip = || Ok((Gate::Skip, Pending::none()));
         match self.test {
             Test::Step { on, check } => {
-                let holds = match earlier.get(on.index()) {
-                    None | Some(StepOutcome::Skipped) => return Ok(Gate::Skip),
-                    Some(
-                        StepOutcome::Refused(_) | StepOutcome::NotThere(_) | StepOutcome::Failed,
-                    ) => false,
-                    Some(StepOutcome::Done(done)) => match check {
-                        Check::Matched => done.matched(),
-                        Check::Found => done.found(),
+                let holds = match outcomes.known(on)? {
+                    Known::Skipped => return skip(),
+                    Known::Unrun => false,
+                    Known::Done => outcomes.check(on, check).ok_or(KindMismatch)?,
+                    Known::Pending(here) => {
+                        pending.step = Some((here, check, self.negated));
+                        return Ok((Gate::Run, pending));
                     }
-                    .ok_or(KindMismatch)?,
                 };
-                Ok(self.decided(holds))
+                Ok(self.decided(holds, pending))
             }
             Test::NotAfter { point, than } => {
-                let named: Vec<Option<&StepOutcome>> = self
-                    .compared()
-                    .into_iter()
-                    .map(|place| earlier.get(place.index()))
-                    .collect();
-                if named
-                    .iter()
-                    .any(|named| matches!(named, None | Some(StepOutcome::Skipped)))
-                {
-                    return Ok(Gate::Skip);
+                let mut unrun = false;
+                for place in self.compared() {
+                    match outcomes.known(place)? {
+                        Known::Skipped => return skip(),
+                        Known::Unrun => unrun = true,
+                        Known::Done => {}
+                        Known::Pending(here) => pending.compared.push(here),
+                    }
                 }
-                if named
-                    .iter()
-                    .any(|named| !matches!(named, Some(StepOutcome::Done(_))))
-                {
-                    return Ok(self.decided(false));
+                if unrun {
+                    return Ok(self.decided(false, pending));
                 }
-                Ok(Gate::Compare {
-                    point,
-                    than,
-                    negated: self.negated,
-                })
+                Ok((
+                    Gate::Compare {
+                        point,
+                        than,
+                        negated: self.negated,
+                    },
+                    pending,
+                ))
             }
         }
     }
@@ -950,13 +1068,34 @@ impl Step {
     /// compares two points answers [`Gate::Compare`] once every step
     /// named is done, for the executor to decide.
     pub fn gate(&self, earlier: &[StepOutcome]) -> Result<Gate, KindMismatch> {
-        let done = |place: Place| matches!(earlier.get(place.index()), Some(StepOutcome::Done(_)));
-        if !self.references().into_iter().all(done) {
-            return Ok(Gate::Skip);
+        self.judge(earlier)
+            .map(|(gate, _): Judged<Infallible>| gate)
+    }
+
+    /// Whether it runs, by `outcomes`: [`Step::gate`]'s rule, the one every
+    /// executor judges by, where some steps it names may run with it in
+    /// one remote program, their tests left to make where it runs.
+    ///
+    /// # Errors
+    ///
+    /// What `outcomes` answers for a step it does not hold, or
+    /// [`KindMismatch`] when its condition names a result with no answer
+    /// to the check.
+    pub fn judge<O: Outcomes + ?Sized>(
+        &self,
+        outcomes: &O,
+    ) -> Result<Judged<O::Pending>, O::Error> {
+        let mut pending = Pending::none();
+        for place in self.references() {
+            match outcomes.known(place)? {
+                Known::Done => {}
+                Known::Pending(here) => pending.done.push(here),
+                Known::Skipped | Known::Unrun => return Ok((Gate::Skip, Pending::none())),
+            }
         }
         match &self.when {
-            None => Ok(Gate::Run),
-            Some(condition) => condition.gate(earlier),
+            None => Ok((Gate::Run, pending)),
+            Some(condition) => condition.judge(outcomes, pending),
         }
     }
 }
@@ -1333,6 +1472,16 @@ impl Done {
             | Self::Move(_)
             | Self::FindText(_)
             | Self::ReadColours(_) => Vec::new(),
+        }
+    }
+
+    /// What the result answers `check`; `None` for a result with no answer
+    /// to it.
+    #[must_use]
+    pub fn answer(&self, check: Check) -> Option<bool> {
+        match check {
+            Check::Matched => self.matched(),
+            Check::Found => self.found(),
         }
     }
 

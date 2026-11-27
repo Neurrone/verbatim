@@ -359,6 +359,30 @@ impl verbatim_uia_rops::batch::Resolve for Shape<'_> {
     }
 }
 
+/// The targets of the log lines a run on this thread wrote, Verbatim's
+/// own only.
+#[derive(Default)]
+pub struct Targets(pub std::sync::Mutex<Vec<String>>);
+
+impl tracing::Subscriber for Targets {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let target = event.metadata().target();
+        if target.starts_with("verbatim::") {
+            self.0.lock().expect("the log").push(target.to_owned());
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 /// The caret and the selection of the text.
 pub fn caret() -> Op {
     Op::Caret {

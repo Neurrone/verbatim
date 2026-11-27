@@ -601,7 +601,7 @@ fn generic_window_reads_execute_exactly() {
     assert!(first.iter().chain(&capped).all(|&count| count < LIMIT / 2));
     assert_eq!(
         [first, capped],
-        [vec![233], vec![353]],
+        [vec![230], vec![347]],
         "terminal window first and capped"
     );
 }
@@ -652,12 +652,12 @@ fn generic_colours_execute_exactly() {
     assert_eq!(plain_runs, vec![1; 29], "every row one run");
     assert_eq!(
         worst,
-        vec![233, 4106, 4099, 4099, 4099, 4099, 3285],
+        vec![230, 4106, 4099, 4099, 4099, 4099, 3285],
         "the window read's program, then the worst case's colour programs"
     );
     assert_eq!(
         plain,
-        vec![233, 1262],
+        vec![230, 1262],
         "the window read's program, then a plain screen's"
     );
     assert!(worst.iter().all(|&count| count < LIMIT / 2));
@@ -796,15 +796,15 @@ fn terminal_reader_batches_execute_exactly() {
     assert_eq!(
         counts,
         [
-            vec![207],
-            vec![242],
-            vec![303],
-            vec![303],
-            vec![304],
-            vec![153],
+            vec![204],
+            vec![237],
+            vec![287],
+            vec![287],
+            vec![288],
+            vec![139],
             vec![39],
-            vec![294],
-            vec![295]
+            vec![277],
+            vec![278]
         ],
         "first, history block, from a start, starting, count, history above, whole history, \
          and from a start and a count read past the text's end"
@@ -938,7 +938,7 @@ fn searches_execute_exactly() {
     assert_eq!(
         typical,
         Searched {
-            programs: vec![219],
+            programs: vec![211],
             down: vec![(0, "end".to_owned())],
             up: Vec::new(),
             // The whole text, once for both ways, and the text no terminal
@@ -952,7 +952,7 @@ fn searches_execute_exactly() {
     assert_eq!(
         nowhere,
         Searched {
-            programs: vec![152],
+            programs: vec![144],
             down: Vec::new(),
             up: Vec::new(),
             // The whole text, once for both ways.
@@ -972,11 +972,11 @@ fn searches_execute_exactly() {
         "the bound: a hundred calls each way, the whole text once and the text no terminal holds"
     );
     // A call whose hit is passed over executes 20 instructions, and a
-    // match 8 more: (1385 - 1225) / 8 and (1225 - 216) / 36, the costs the
+    // match 8 more: (1377 - 1217) / 8 and (1217 - 208) / 36, the costs the
     // emitter declares (`FIND_CALL` and `FIND_MATCH`, `batch/program.rs`).
     assert_eq!(
         (counts, bound.programs),
-        ([vec![216], vec![1225], vec![1385]], vec![4481]),
+        ([vec![208], vec![1217], vec![1377]], vec![4473]),
         "one call each way, 19, 23, and the bound"
     );
 }
@@ -1013,7 +1013,7 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         both,
         Searched {
-            programs: vec![332],
+            programs: vec![324],
             down: vec![row(3, "y 3"), row(2, "y 4"), row(1, "y 5")],
             up: vec![row(4, "y 2"), row(5, "y 1")],
             // The whole text once and the text no terminal holds, three
@@ -1027,7 +1027,7 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         one,
         Searched {
-            programs: vec![220],
+            programs: vec![212],
             down: vec![row(1, "y 5")],
             up: Vec::new(),
             find_calls: 5,
@@ -1038,7 +1038,7 @@ fn searches_whose_misses_answer_a_range_run_alone() {
     assert_eq!(
         nowhere,
         Searched {
-            programs: vec![162],
+            programs: vec![154],
             down: Vec::new(),
             up: Vec::new(),
             // The whole text once for both ways, and the text no terminal
@@ -1120,15 +1120,15 @@ fn terminal_reader_colours_execute_exactly() {
     };
     assert_eq!(
         counts(&plain),
-        [vec![330, 1262], vec![1599]],
+        [vec![314, 1262], vec![1583]],
         "a plain screen: a first read's program and its colour program, then a read that is \
          one program, colours and all"
     );
     assert_eq!(
         counts(&worst),
         [
-            vec![330, 4106, 4099, 4099, 4099, 4099, 3285],
-            vec![4443, 4099, 4099, 4099, 4099, 3285]
+            vec![314, 4106, 4099, 4099, 4099, 4099, 3285],
+            vec![4427, 4099, 4099, 4099, 4099, 3285]
         ],
         "the worst case: a first read's program and its colour programs, then the read's \
          program with the first rows' colours and the colour programs that go on"

@@ -151,16 +151,27 @@ elements and ranges), and the shapes key the thread's `ProgramCache`, so
 a caret key's starting read and each later one bind one built and
 checked program to their own imports. Each emitted step runs in a try
 block with its own status register, written "not reached" before any
-step runs; a gate inside the program tests the statuses of the steps of
-the same program it names, and a condition's found-or-not on one of
-them is a register taken as it is or negated, never compared. A
+step runs, and ending as one value: done, skipped, refused (a move from
+a held point past the text's end, a selection the provider refuses, each
+with its reason), cut, or a failure's code. Whether a step runs is the
+model's one rule, `Step::judge` (the verbatim-model crate guide, its
+`batch` entry), which both arms call: the calls over the outcomes before the
+step, the planner with the program's own steps named as pending, so that
+it answers what is decided before the program and what is left to test
+inside it. The program emits exactly what is left, each test as the rule
+states it: a step it takes a result from has status done; a
+found-or-not test of one is skipped when it was skipped and false when
+it was not done, else a register taken as it is or negated, never
+compared; a comparison's steps skip it when skipped, and the comparison
+is made once they are done. `compare_points.rs` and `batch.rs` in
+mockapp run both arms over these cases and require one answer. A
 condition comparing two points finds both as a step's own points are
 found and makes one `CompareEndpoints` call, inside a try block of its
 own in a program, so a failed comparison is false; a point Core holds
 that is no longer held is found at planning, as by calls, and answers
-the step not there; a later step of the program that takes that step's
-result is skipped at planning too, since the program emits nothing for a
-step decided there. Each node
+the step not there; a later step of the program that names that step is
+judged at planning by that outcome, since the program emits nothing for
+a step decided there. Each node
 a relation or a walk reaches fills its cache inside the provider with
 the absent record of `RemoteCache`, so a property the element lacks
 reads absent as it does by calls.
@@ -907,7 +918,8 @@ Unit tests cover each instruction's bytes and the builder's offsets,
 constants, and source locations. The mockapp tests run both executors,
 or both implementations of a read outside the list, against real
 providers and assert that they agree: `batch.rs` (every converted batch
-shape, a shape's program bound again, absent properties),
+shape, a shape's program bound again, absent properties, a step taking a
+refused move's landing, with no fallback logged),
 `batch_faults.rs` (each case of the fallback rule at a fault point),
 `remote_ops.rs` (the focus ancestry, a navigation step, cached
 properties, a stalled and an exited provider), `call_counts.rs` (the

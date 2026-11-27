@@ -244,8 +244,15 @@ tell, Core asks", which the protocol below carries.
   done, and the executor that makes the calls compares them, a failed
   comparison false and an anchor no longer held the step's own outcome;
   `Step::gate` adds that every step it takes a result from,
-  `Step::references`, is done, the one gate each reader runs, and
-  `Subject::earlier_nodes` the nodes an earlier result names, by
+  `Step::references`, is done, the one gate each reader runs. Both are
+  `Step::judge` over `[StepOutcome]`: the rule is written once there,
+  over any `Outcomes`, a view that says of each step named whether it is
+  done, skipped, unrun (refused, missing or failed) or, under the
+  executor's own name, `Known::Pending`, run with the step in one remote
+  program. It answers a `Gate` for what is decided and a `Pending` for
+  what the program is left to test where the step runs; a view of
+  outcomes alone has `Infallible` for its pending name, so nothing is
+  left. `Subject::earlier_nodes` gives the nodes an earlier result names, by
   `Done::nodes`),
   its `Placement` in the reader's order and a `spare` node and anchor
   held while it is out. An operation names its object by a `Subject`: a

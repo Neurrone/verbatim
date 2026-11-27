@@ -227,8 +227,9 @@ fn summary(outcome: &StepOutcome) -> Ran {
 }
 
 /// Two held points compared each way, plain and negated; a point of an
-/// earlier step done, of one skipped and of one refused; and an anchor no
-/// longer held, which is its step's outcome whatever the negation.
+/// earlier step done, of one skipped and of one refused, whose found-or-not
+/// test is false and whose landing a later step cannot take; and an anchor
+/// no longer held, which is its step's outcome whatever the negation.
 fn a_comparison_runs_or_skips_its_step_as_the_table_says() {
     let rows = ["r 1", "r 2", "r 3", "r 4", "r 5", "r 6"];
     let mut terminal = Terminal::start("mockapp-compare-table", &rows);
@@ -300,6 +301,15 @@ fn a_comparison_runs_or_skips_its_step_as_the_table_says() {
             batch
                 .when(!Cond::not_after(refused.landed(), end.landed()))
                 .move_point(node, third, lines(-1));
+            // It found nothing, and a step taking where it landed is
+            // skipped.
+            batch
+                .when(refused.found())
+                .move_point(node, third, lines(-1));
+            batch
+                .when(!refused.found())
+                .move_point(node, third, lines(-1));
+            batch.move_point(node, refused.landed(), lines(-1));
             // An anchor no longer held.
             batch
                 .when(Cond::not_after(held(missing).into(), end.landed()))
@@ -322,6 +332,9 @@ fn a_comparison_runs_or_skips_its_step_as_the_table_says() {
             Ran::Refused(StepRefusal::OutsideText),
             Ran::Skipped,
             Ran::Moved(-1),
+            Ran::Skipped,
+            Ran::Moved(-1),
+            Ran::Skipped,
             Ran::Missing(missing),
             Ran::Missing(missing),
         ]

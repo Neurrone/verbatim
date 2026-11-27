@@ -727,7 +727,8 @@ Each file's module comment says exactly what it asserts; in outline:
   when moved forward from it (probed 2026-11-26).
 - `compare_points.rs` runs a condition comparing two text positions
   through a real outpost remotely and by calls, which must agree: each
-  row of the condition's table a provider can give, the move of one line
+  row of the condition's table a provider can give, a refused move's
+  found-or-not tests and a step taking its landing, the move of one line
   back that goes nowhere at the text's start, and the move forward from
   the text's end that later output stays past; a condition naming a step
   whose outcome is decided before any call, a move from an anchor no

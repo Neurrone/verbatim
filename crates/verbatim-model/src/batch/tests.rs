@@ -1505,6 +1505,86 @@ fn a_comparison_is_left_to_the_executor_once_the_steps_it_names_are_done() {
     }
 }
 
+/// Outcomes where the step at 0 runs with the step judged, under the
+/// name 10, and every other step named was skipped.
+struct OneRunsWith;
+
+impl Outcomes for OneRunsWith {
+    type Pending = u8;
+    type Error = KindMismatch;
+
+    fn known(&self, place: Place) -> Result<Known<u8>, KindMismatch> {
+        Ok(match place {
+            Place(0) => Known::Pending(10),
+            _ => Known::Skipped,
+        })
+    }
+
+    fn check(&self, _: Place, _: Check) -> Option<bool> {
+        None
+    }
+}
+
+#[test]
+fn a_step_named_that_runs_with_the_step_judged_is_left_to_test_where_it_runs() {
+    let moved = Point::Of(Place(0), PointOf::Moved);
+    let pending = |done: Vec<u8>, step, compared: Vec<u8>| Pending {
+        done,
+        step,
+        compared,
+    };
+    let read_from = |at| Op::ReadText {
+        subject: Subject::Node(node(1)),
+        at,
+        movement: None,
+        unit: TextUnit::Line,
+        count: 1,
+        details: TextDetails::NONE,
+        whole: false,
+        trim: false,
+    };
+    // A reference: it must be done.
+    assert_eq!(
+        step(read_from(moved)).judge(&OneRunsWith),
+        Ok((Gate::Run, pending(vec![10], None, Vec::new())))
+    );
+    // A test of it, with its negation.
+    assert_eq!(
+        when(read_from(at(7)), 0, Check::Found, true).judge(&OneRunsWith),
+        Ok((
+            Gate::Run,
+            pending(Vec::new(), Some((10, Check::Found, true)), Vec::new())
+        ))
+    );
+    // A comparison of its point: made where it runs, once it is done.
+    assert_eq!(
+        compared(false).judge(&OneRunsWith),
+        Ok((
+            Gate::Compare {
+                point: at(7),
+                than: moved,
+                negated: false,
+            },
+            pending(Vec::new(), None, vec![10])
+        ))
+    );
+    // A step named that is known skipped skips it, whatever is left.
+    let through = Step {
+        op: Op::ReadRange {
+            subject: Subject::Node(node(1)),
+            start: moved,
+            end: Point::Of(Place(1), PointOf::Moved),
+            through: None,
+            trim: false,
+        },
+        when: None,
+    };
+    assert_eq!(
+        through.judge(&OneRunsWith),
+        Ok((Gate::Skip, Pending::none()))
+    );
+}
+
 #[test]
 fn a_comparison_parses_only_on_an_outposts_text_step_naming_points() {
     let end = Step {

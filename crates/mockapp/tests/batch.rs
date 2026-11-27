@@ -11,12 +11,14 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::sync::Arc;
+
 use batch::{
-    Text, after, by, caret, describe, held, locate, many_node_fill, named, node_fill, one_read,
-    read_range,
+    Targets, Text, after, by, caret, describe, held, locate, many_node_fill, named, node_fill,
+    one_read, read_range,
 };
-use verbatim_model::batch::{Point, Relation, View};
-use verbatim_model::{TextPoint, TextUnit};
+use verbatim_model::batch::{Op, Place, Point, PointOf, Relation, Subject, View};
+use verbatim_model::{TextMovement, TextPoint, TextUnit};
 use verbatim_uia::text::Endpoint;
 use verbatim_uia::{Cached, Live, Node, Shape as _, Uia, runtime_id};
 use verbatim_uia_rops::batch::{CaretFound, Found, Judged, Ran, run_batch, run_calls};
@@ -282,6 +284,64 @@ fn walks_agree() {
     }
 }
 
+/// Shows `rows` in `terminal.json`'s terminal, each ended by a line
+/// break, the caret at the text's start.
+fn show(fixture: &mut Fixture, rows: &[&str]) {
+    let text = rows.join(r"\r\n") + r"\r\n";
+    fixture.apply(&format!("set-text term {text}"));
+    fixture.apply("caret term 0 0");
+}
+
+/// A move from a held point that later output left past the text's end is
+/// refused, and a step that takes where it landed, under no condition, is
+/// skipped: by the programs as by the calls, and with no fallback logged.
+fn a_step_taking_a_refused_moves_landing_is_skipped() {
+    let mut fixture = Fixture::start("terminal.json", "mockapp-batch-refused");
+    fixture.apply("screen term 3");
+    show(&mut fixture, &["r 1", "r 2", "r 3", "r 4", "r 5", "r 6"]);
+    let text = Text::of(fixture.find("Terminal"));
+    let lines = |count| TextMovement {
+        unit: TextUnit::Line,
+        count,
+    };
+    let move_from = |at: Point, count| Op::Move {
+        subject: Subject::Node(batch::TEXT),
+        at,
+        movement: lines(count),
+    };
+    let mut sixth = batch::Shape::of(Some(&text));
+    sixth.step(move_from(Point::At(TextPoint::Start), 5));
+    let Some(Ran::Done(Found::Move(sixth))) = run_calls(&sixth.segment(&fixture.uia))
+        .steps
+        .into_iter()
+        .next()
+    else {
+        panic!("a move to the sixth row")
+    };
+    show(&mut fixture, &["r 1", "r 2", "r 3"]);
+    let past_end = held(&sixth.to, Endpoint::Start, true);
+    let shape = || {
+        let mut shape = batch::Shape::of(Some(&text));
+        let at = shape.point(&past_end);
+        shape.step(move_from(at, -1)).step(read_range(
+            Point::Of(Place(0), PointOf::Moved),
+            Point::At(TextPoint::End),
+            None,
+        ));
+        shape
+    };
+    let targets = Arc::new(Targets::default());
+    let remote = tracing::subscriber::with_default(Arc::clone(&targets), || {
+        run_batch(&shape().segment(&fixture.uia))
+    });
+    let remote = describe(Some(&text), &remote);
+    let calls = describe(Some(&text), &run_calls(&shape().segment(&fixture.uia)));
+    assert_eq!(remote, calls, "the two executors differ");
+    assert_eq!(remote, "Unrun(Refused(OutsideText))\nUnrun(Skipped)\n");
+    assert_eq!(*targets.0.lock().expect("the log"), Vec::<String>::new());
+    fixture.app.quit();
+}
+
 /// A caret key's starting read run twice: the second binds the program
 /// the first built and checked, building and checking nothing.
 fn a_shape_run_again_binds_its_program() {
@@ -308,6 +368,10 @@ fn main() {
         ("review_shapes_agree", review_shapes_agree),
         ("object_shapes_agree", object_shapes_agree),
         ("walks_agree", walks_agree),
+        (
+            "a_step_taking_a_refused_moves_landing_is_skipped",
+            a_step_taking_a_refused_moves_landing_is_skipped,
+        ),
         (
             "a_shape_run_again_binds_its_program",
             a_shape_run_again_binds_its_program,
