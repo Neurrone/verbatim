@@ -127,7 +127,7 @@ monitor thread diffs on every change. Verbatim: **different** ("30 and
 30", Dickson, 2026-10-06 and 2026-10-07; the model's "Features and
 settings", Core's flood policy).
 
-- Pending Dickson (Claude, 2026-11-27): output not yet read when a
+- Approved by Dickson (2026-11-27): output not yet read when a
   held caret key is pressed, which its starting read then finds, is
   part of the key's cut: the key's answer is the first thing heard. Before,
   that read's output was spoken first, so whether a flood's last lines
@@ -153,7 +153,7 @@ settings", Core's flood policy).
   (Dickson, 2026-10-25; Claude, 2026-11-27). Nothing is lost for good:
   every line is still there for the review cursor (the `*_flood` and
   `*_scrollback_overflow_during_group` scenarios).
-- Pending Dickson's approval (Claude, 2026-11-27): once the history is
+- Approved by Dickson (2026-11-27): once the history is
   full, a flood that carries the last read's rows above the next read
   says "skipped more than N lines", N the lines that read shows and does
   not speak, under his ruling that a full history's count says "more
@@ -163,7 +163,7 @@ settings", Core's flood policy).
   line 1992" to "flood line 2000", the prompt; it now says the same with
   "skipped more than 50 lines" (`crates/verbatim-core/tests/terminal_floods.rs`).
   NVDA speaks all 2,000 lines, queued.
-- Pending Dickson's approval (Claude, 2026-11-27): a lost read, one that
+- Approved by Dickson (2026-11-27): a lost read, one that
   keeps nothing of the last read and is no new screen, speaks only its
   own lines, where Verbatim read the whole document again and spoke every
   new line it held within the flood limits. A three-row console host with
@@ -174,13 +174,13 @@ settings", Core's flood policy).
   "PS C:>"; it now starts at "n14"
   (`crates/verbatim-core/tests/terminal_reading.rs`). NVDA speaks every
   new line.
-- Pending Dickson's approval (Claude, 2026-11-27): after Windows
+- Approved by Dickson (2026-11-27): after Windows
   Terminal's clear, the rows above the count read are counted, not read.
   Five lines after the clear on a three-row screen, then a sixth: Verbatim
   said "line 13" to "line 18"; it now says "skipped about 1 line", "line
   14" to "line 18" (`crates/verbatim-core/tests/terminal_reading.rs`).
   NVDA speaks every line.
-- Pending Dickson's approval (Claude, 2026-11-27): a lost read that
+- Approved by Dickson (2026-11-27): a lost read that
   arrives while a review command's history read is out is spoken as it
   arrives, its first line handed to speech ahead of the command's words,
   as any output read then is. Review current line with the review
@@ -188,7 +188,7 @@ settings", Core's flood policy).
   "line 32", "skipped lines", "line 30" to "line 40"; it now says
   "skipped lines", "line 36", "line 32", "line 37" to "line 40"
   (`crates/verbatim-core/tests/terminal_reading.rs`).
-- Pending Dickson's approval (Claude, 2026-11-27): a flood goes on after
+- Approved by Dickson (2026-11-27): a flood goes on after
   the focused terminal is taken again while Core holds and its release
   read is out, as after the listener or the outpost is replaced. Output
   written while Core held and before the new baseline is neither heard
@@ -202,7 +202,7 @@ settings", Core's flood policy).
   speaks lines 1 to 60, queued; its monitor reads its first text silently
   when it starts (`nvda/source/NVDAObjects/behaviors.py` 470 and 488 to
   500).
-- Pending Dickson's approval (Claude, 2026-11-27): when the rules owe a
+- Approved by Dickson (2026-11-27): when the rules owe a
   whole read after the release read, the look at the backlog waits for
   that read's speech even when the group's last line was heard first, as
   `docs/design/readers-tell-core-asks-build3.md` (line 104) records, so
@@ -251,20 +251,20 @@ Control+C, Control+D, and Control+Pause. Verbatim: **different** (rule
   of reaching the program is dropped unspoken, so a late echo over a
   slow connection is heard as output (Dickson kept the limit,
   2026-11-27).
-- Pending Dickson (Claude, 2026-11-27): a character typed while a caret
+- Approved by Dickson (2026-11-27): a character typed while a caret
   key's final read or a review command's fresh read is out, and shown in
   that read, is echoed. Before, its echo carried the earlier key's
   number and the speech manager dropped it after the character's own
   cut, so nothing was said. NVDA speaks its queued characters at the
   terminal's next text change (`nvda/source/NVDAObjects/behaviors.py`
   591 to 592, 615 to 619): "z".
-- Pending Dickson (Claude, 2026-11-27): the keys go with the focus, so
+- Approved by Dickson (2026-11-27): the keys go with the focus, so
   the first key after the focus returns has no interval before it, and a
   row it owns (rule 21) is held for one second, the shortest quiet
   period; before, the interval ran from the key before the focus left,
   and the row was held for 1.5 times that, minutes after a long absence.
   NVDA has no such hold.
-- Pending Dickson (Claude, 2026-11-27): typing is echoed only when
+- Approved by Dickson (2026-11-27): typing is echoed only when
   nothing but spaces follows it at the caret. A password prompt that
   writes "Sorry, try again" at the caret while "S" is held says "Sorry,
   try again" as text gained, where Verbatim said "S" as an echo and then
@@ -354,7 +354,7 @@ two lines leaves Verbatim's review cursor on the line reviewed. The
 the terminal scenarios `docs/roadmap.md`, "The terminal redesign",
 brings back to passing.
 
-- Pending Dickson (Claude, 2026-11-27): a review command whose fresh read
+- Approved by Dickson (2026-11-27): a review command whose fresh read
   lands between a program's clear and its reprint, the screen showing no
   text, reads the memory's last read with text at its caret, since a read
   with no text changes nothing in the memory (rule 10): "one" then
