@@ -61,9 +61,11 @@ impl IndicationCategory {
     ];
 }
 
-/// The states that are spoken, and so are indications: a state the reducer
-/// never speaks (focused, focusable, selectable, offscreen, checkable) is
-/// not in the catalogue.
+/// The states that are indications, which a theme can sound, reword or
+/// silence. The reducer never speaks focusable, selectable or checkable, so
+/// they have none. Focused, offscreen and invisible are spoken only on a
+/// query, and always then, so they deliberately have no entry either
+/// (Dickson, 2026-11-28).
 const SPOKEN_STATES: [State; 16] = [
     State::Selected,
     State::Checked,

@@ -53,6 +53,13 @@ Each entry gives the exact name, how it fails, how often and where, the cause wh
   - Cause: this time the dump was written (`verbatim-904.dmp`, read with cdbX64 and the job's uploaded symbols). Verbatim's GUI thread waited on no lock: it was in `comdlg32!AutoComplete`, then `combase!CoCreateInstance`, then at the entry of `shell32!CACLIShellFolder_CreateInstance`, the file name box's autocomplete creating its shell folder object. Every other thread of Verbatim's was idle in its usual wait. The runner had been up 11 minutes and Verbatim 39 s, so the thread was running the shell's first-use code, most likely held up by page-ins on a cold, stalled runner, not by Verbatim.
   - Fix: none in Verbatim's code. The machine's load the harness now records on a failure (`runner-load.txt`) is what can confirm disk or processor pressure the next time.
 
+## The desktop's foreground unreported after the settings dialog closes
+
+- `theme_panel` locally (1 of 3 runs on 2026-11-28, at 6ddbd0ae with the Theme page fixes uncommitted, which do not change Cancel)
+  - How: after Escape on the Theme page, "Desktop list" and "NVDA 3 of 13" were not queued within 75 s; nothing was said.
+  - Cause: as the dialog closed, Windows made Verbatim's hidden frame (`wxWindowNR`, the dialog's owner) the foreground and then hid it, and the foreground fell to the desktop (window 65804) with no foreground event for it (`listener.log` shows none after 20:59:55.296). The only later tells were a focus, selection and state change from the closing dialog's tree view, each carrying the desktop as the foreground (`flight-recorder.jsonl` lines 700 to 702), and Core read nothing more. So the desktop's focus was never read. Core holds the foreground from the foreground events alone; the tells' own foreground fact is not used to notice a foreground that changed with no event.
+  - Fix: proposed in the report of 2026-11-28 for Dickson to place: either the settings dialog's close leaves the hidden frame out of the activation, or a foreground whose window hides is followed by reading the current foreground, which needs a ruling on where that read is decided.
+
 ## A stand-in's window that does not answer after it shows
 
 - `text_box_page_keys` on GitHub's runner (run 45821984446, 2026-11-26, at 1fc0c0f6)

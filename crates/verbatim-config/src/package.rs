@@ -94,8 +94,8 @@ pub(crate) fn read(
 }
 
 /// Writes a package at `path` holding `files`, each a plain file name and
-/// the file on disk it is read from, at the package's top level.
-pub(crate) fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
+/// its contents, at the package's top level.
+pub(crate) fn write(path: &Path, files: &[PackedFile]) -> Result<(), String> {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
     let temp = PathBuf::from(temp);
@@ -109,15 +109,14 @@ pub(crate) fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), Stri
     result
 }
 
-fn write_to(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
+fn write_to(path: &Path, files: &[PackedFile]) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|error| error.to_string())?;
     let mut zip = ZipWriter::new(io::BufWriter::new(file));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    for (name, source) in files {
-        let contents = fs::read(source).map_err(|error| format!("{name}: {error}"))?;
+    for (name, contents) in files {
         zip.start_file(name.as_str(), options)
             .map_err(|error| error.to_string())?;
-        zip.write_all(&contents)
+        zip.write_all(contents)
             .map_err(|error| format!("{name}: {error}"))?;
     }
     let mut writer = zip.finish().map_err(|error| error.to_string())?;

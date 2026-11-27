@@ -290,30 +290,31 @@ pub fn validate_theme(
     problems
 }
 
-/// Loads the theme in `dir`. Its id is the directory's name, whatever the
-/// manifest says.
+/// Loads the theme `id`, a valid theme id its caller has checked, from its
+/// directory in the themes folder. Its id is that directory's name,
+/// whatever the manifest says: an installed theme's id has that one
+/// source, and [`export_theme`] writes it into the package's manifest.
 ///
 /// # Errors
 ///
 /// Returns [`ThemeError::Io`] when the manifest cannot be read and
 /// [`ThemeError::Parse`] when it is not a theme manifest.
-pub fn load_theme(dir: &Path, sounds_dir: &Path) -> Result<LoadedTheme, ThemeError> {
+fn load_theme(themes_dir: &Path, id: &str, sounds_dir: &Path) -> Result<LoadedTheme, ThemeError> {
+    let dir = themes_dir.join(id);
     let path = dir.join(MANIFEST);
     let text = fs::read_to_string(&path).map_err(|error| ThemeError::Io(path.clone(), error))?;
     let (mut theme, mut problems) =
         parse_theme(&text).map_err(|error| ThemeError::Parse(path, error))?;
-    if let Some(id) = dir.file_name().and_then(|name| name.to_str()) {
-        id.clone_into(&mut theme.id);
-    }
+    id.clone_into(&mut theme.id);
     // `parse_theme` found the problems that need no files.
     problems.extend(
-        validate_theme(&theme, Some(dir), sounds_dir)
+        validate_theme(&theme, Some(&dir), sounds_dir)
             .into_iter()
             .filter(|problem| matches!(problem, ThemeProblem::MissingSound { .. })),
     );
     Ok(LoadedTheme {
         theme,
-        dir: Some(dir.to_path_buf()),
+        dir: Some(dir),
         problems,
     })
 }
@@ -324,8 +325,9 @@ pub fn load_theme(dir: &Path, sounds_dir: &Path) -> Result<LoadedTheme, ThemeErr
 /// # Errors
 ///
 /// Returns [`ThemeError::InvalidId`] for an id no theme can have,
-/// [`ThemeError::NotFound`] when no such theme is installed, and the
-/// errors of [`load_theme`].
+/// [`ThemeError::NotFound`] when no such theme is installed,
+/// [`ThemeError::Io`] when its manifest cannot be read and
+/// [`ThemeError::Parse`] when it is not a theme manifest.
 pub fn find_theme(
     themes_dir: &Path,
     sounds_dir: &Path,
@@ -337,11 +339,10 @@ pub fn find_theme(
     if !is_valid_theme_id(id) {
         return Err(ThemeError::InvalidId(id.to_owned()));
     }
-    let dir = themes_dir.join(id);
-    if !dir.join(MANIFEST).is_file() {
+    if !themes_dir.join(id).join(MANIFEST).is_file() {
         return Err(ThemeError::NotFound(id.to_owned()));
     }
-    load_theme(&dir, sounds_dir)
+    load_theme(themes_dir, id, sounds_dir)
 }
 
 /// Every installed theme, for the theme panel's list: the built-in default
@@ -360,7 +361,7 @@ pub fn list_themes(themes_dir: &Path, sounds_dir: &Path) -> (Vec<LoadedTheme>, V
             if !dir.is_dir() || !is_valid_theme_id(id) || id == Theme::DEFAULT_ID {
                 continue;
             }
-            match load_theme(&dir, sounds_dir) {
+            match load_theme(themes_dir, id, sounds_dir) {
                 Ok(theme) => themes.push(theme),
                 Err(error) => errors.push(error),
             }
@@ -461,7 +462,7 @@ pub fn new_theme(
             }
         }
     }
-    load_theme(&dir, sounds_dir)
+    load_theme(themes_dir, &theme.id, sounds_dir)
 }
 
 /// Gives the theme `id` a new name; its id, and so every reference to it,
@@ -552,8 +553,10 @@ pub fn add_sound(themes_dir: &Path, id: &str, file: &Path) -> Result<String, The
 }
 
 /// Installs the theme package at `package` into the themes folder: its
-/// manifest and the WAV files beside it, nothing else. Returns the theme as
-/// loaded.
+/// manifest and the WAV files beside it, nothing else, in a directory
+/// named by the manifest's id, the one id a package carries, which
+/// [`export_theme`] writes from the exported theme's directory. Returns the
+/// theme as loaded.
 ///
 /// # Errors
 ///
@@ -606,28 +609,39 @@ pub fn import_theme(
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
     }
-    load_theme(&dir, sounds_dir)
+    load_theme(themes_dir, &theme.id, sounds_dir)
 }
 
-/// Writes `theme` as a theme package at `package`: its manifest and the
-/// sound files its directory holds that it uses. Sounds it takes from the
-/// shared sounds are not included, since every installation has them.
+/// Writes `theme` as a theme package at `package`: its manifest, with the
+/// id the theme was loaded by (its directory's name) in place of whatever
+/// id the file holds, so [`import_theme`] installs it under that id; and
+/// the sound files its directory holds that it uses. Only the id changes:
+/// the rest of the manifest, its comments, key order and any indication
+/// this version does not know, is kept as written. Sounds it takes from
+/// the shared sounds are not included, since every installation has them.
 ///
 /// # Errors
 ///
 /// Returns [`ThemeError::Builtin`] for the built-in default theme,
-/// [`ThemeError::Serialize`] when the manifest cannot be written, and
-/// [`ThemeError::Package`] when writing the package fails.
+/// [`ThemeError::Io`] when a file cannot be read, and
+/// [`ThemeError::Package`] when the manifest is not TOML or writing the
+/// package fails.
 pub fn export_theme(theme: &LoadedTheme, package: &Path) -> Result<(), ThemeError> {
     let Some(dir) = &theme.dir else {
         return Err(ThemeError::Builtin);
     };
-    let manifest = dir.join(MANIFEST);
-    let mut files = vec![(MANIFEST.to_owned(), manifest)];
+    let path = dir.join(MANIFEST);
+    let text = fs::read_to_string(&path).map_err(|error| ThemeError::Io(path.clone(), error))?;
+    let mut manifest: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|error| ThemeError::Package(path, format!("{error}")))?;
+    manifest.insert("id", toml_edit::value(theme.theme.id.as_str()));
+    let mut files = vec![(MANIFEST.to_owned(), manifest.to_string().into_bytes())];
     for file in sound_files(&theme.theme) {
         let path = dir.join(&file);
         if path.is_file() {
-            files.push((file, path));
+            let contents = fs::read(&path).map_err(|error| ThemeError::Io(path, error))?;
+            files.push((file, contents));
         }
     }
     package::write(package, &files)
@@ -924,6 +938,60 @@ mod tests {
             b"ding"
         );
         assert!(!installed.join("unused.wav").exists());
+    }
+
+    /// A theme folder copied and renamed by hand keeps its old id in its
+    /// manifest; its id is the folder's name, and export carries that id,
+    /// so import installs it under the same id. Only the id changes: the
+    /// author's comments and key order are kept.
+    #[test]
+    fn a_theme_exports_and_imports_under_its_directory_name() {
+        let root = temp_root("export-renamed");
+        let themes = root.join("themes");
+        let sounds = root.join("sounds");
+        let dir = themes.join("copied");
+        fs::create_dir_all(&dir).expect("dir");
+        fs::write(
+            dir.join(MANIFEST),
+            "# Proofreading, by sound.\nname = \"Proofreading\"\nid = \"proofreading\"\n\n\
+             [indications.spelling-error] # the one that matters\n\
+             report = \"sound\"\nsound = \"ding.wav\"\n",
+        )
+        .expect("a manifest copied by hand");
+        fs::write(dir.join("ding.wav"), b"ding").expect("a sound");
+        let copied = find_theme(&themes, &sounds, "copied").expect("loads");
+        assert_eq!(copied.theme.id, "copied");
+        let package = root.join("copied.zip");
+        export_theme(&copied, &package).expect("exports");
+        let files = package::read(&package, MANIFEST, |name| name == MANIFEST).expect("reads");
+        let manifests: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(name, contents)| {
+                (
+                    name.as_str(),
+                    std::str::from_utf8(contents).expect("the manifest is text"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            manifests,
+            [(
+                MANIFEST,
+                "# Proofreading, by sound.\nname = \"Proofreading\"\nid = \"copied\"\n\n\
+                 [indications.spelling-error] # the one that matters\n\
+                 report = \"sound\"\nsound = \"ding.wav\"\n"
+            )]
+        );
+
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("dir");
+        let imported = import_theme(&package, &elsewhere, &sounds).expect("imports");
+        assert_eq!(imported.theme, copied.theme);
+        assert_eq!(
+            fs::read(elsewhere.join("copied").join("ding.wav")).expect("unpacked"),
+            b"ding"
+        );
+        assert!(!elsewhere.join("proofreading").exists());
     }
 
     #[test]

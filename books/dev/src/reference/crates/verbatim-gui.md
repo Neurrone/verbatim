@@ -100,7 +100,8 @@ The private modules:
   `SettingControl`s, `SynthesizerPicker`, `ListDialog`, and for the Theme
   page `ThemePage` (with its `ThemePrompts`), `ThemeTreeCategory` and
   `ThemeTreeItem`, `IndicationControls`, and `ThemeEdit`, what became of a
-  change to an indication; and for the Terminal page `TerminalPage`. Every
+  change to an indication; `SettingsCommit`, what became of OK or Apply;
+  and for the Terminal page `TerminalPage`. Every
   string crosses resolved, so
   C++ never sees a Fluent message id; text is UTF-8 and C++ converts it
   explicitly, keeping its own narrow literals ASCII. The thread rule is
@@ -261,7 +262,10 @@ already do.
 The Theme page (milestone M4).
 From top to bottom, which is also the tab order: "Theme", a combo box of
 the installed themes, the built-in default first (moving through it
-applies each theme at once); "Description", a read-only multi-line field
+applies each theme at once), and last, when the theme the configuration
+names is not installed (its folder deleted or renamed, or its manifest
+broken), that theme as "<id> (not installed)", selected on opening;
+"Description", a read-only multi-line field
 with the theme's description, author, and the problems found loading it;
 "Sound volume", a slider from 0 to 100 that plays a short tone as it
 moves; the "Play sounds during say all" and "Also speak indications that
@@ -286,7 +290,20 @@ uses).
 
 Every change applies at once through the host; OK and Apply save the
 changed themes and persist the choice and its settings, and Cancel
-restores the theme and settings last applied. File operations act on the
+restores the theme and settings last applied. Whether the configured theme is listed as not installed, and which entry
+is selected, are one value (`Selection`), so the list and its selection
+cannot disagree. While the configured theme is not installed and selected, the
+page shows and speech uses the built-in default theme in its place, as at
+startup, its description first says so, and OK and Apply keep the
+configured theme as the choice, so only a theme the user chose replaces
+it; it leaves the list once another theme is applied (Claude,
+2026-11-28). A theme that cannot be saved keeps its changes on the page,
+unsaved, and the dialog shows "Failed to save theme" and each reason in a
+message box over it, as it shows a synthesizer that could not start; OK
+then leaves the dialog open, so a later Apply or OK can save them and
+Cancel drops them. The sound choice's options are kept as the controls
+last showed them, and a choice is mapped through that list, not one read
+from the folders again. File operations act on the
 themes folder at once, and Export writes the theme as saved. A change to
 an indication of the built-in theme asks for a name (a `ThemeEdit` with
 `needs_name`), makes a new theme based on it, and is made there; with the

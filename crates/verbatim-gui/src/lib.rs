@@ -568,19 +568,29 @@ impl GuiCore {
         self.apply_change(generation, control, ControlChange::Toggle(checked));
     }
 
-    fn commit_settings(&self) {
+    /// OK or Apply. A theme that could not be saved is reported in a
+    /// message box over the dialog, which stays open with its changes.
+    fn commit_settings(&self) -> ffi::SettingsCommit {
         if let Err(error) = self.host.commit() {
             tracing::warn!(%error, "could not save the settings");
         }
-        if let Some(theme) = self.theme.borrow_mut().as_mut() {
-            let failures = theme.apply();
-            if !failures.is_empty() {
-                tracing::warn!(failures, "could not save the theme settings");
-            }
+        let mut commit = ffi::SettingsCommit {
+            error: String::new(),
+            error_title: String::new(),
+        };
+        if let Some(theme) = self.theme.borrow_mut().as_mut()
+            && let Err(failures) = theme.apply()
+        {
+            tracing::warn!(failures, "could not save the theme settings");
+            commit = ffi::SettingsCommit {
+                error: failures,
+                error_title: theme.error_title(),
+            };
         }
         if let Some(terminal) = self.terminal.borrow().as_ref() {
             terminal.apply();
         }
+        commit
     }
 
     fn revert_settings(&self) {
@@ -607,7 +617,7 @@ impl GuiCore {
     }
 
     fn indication_controls(&self) -> ffi::IndicationControls {
-        self.with_theme(|theme| theme.controls())
+        self.with_theme(ThemePanel::controls)
     }
 
     fn theme_chosen(&self, index: usize) {

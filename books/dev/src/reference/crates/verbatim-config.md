@@ -86,7 +86,7 @@ Public API:
   files" below: `LoadedTheme` (a theme, its directory, and its
   problems; `builtin()` and `sound_path`), `ThemeError`, `MANIFEST`,
   `parse_theme`, `theme_to_toml`, `is_valid_theme_id`, `sound_path`,
-  `validate_theme`, `load_theme`, `find_theme`, `list_themes`,
+  `validate_theme`, `find_theme`, `list_themes`,
   `save_theme`, `theme_id_for_name`, `new_theme`, `rename_theme`,
   `remove_theme`, `add_sound`, `import_theme`, and `export_theme`.
 
@@ -157,8 +157,13 @@ sound is unavailable is spoken instead, so nothing is lost by accident.
 
 Theme files, implementation notes (`themes.rs` and `package.rs`). The
 manifest is parsed with indications keyed by id, so an unknown id is a
-problem rather than a parse error; a theme's id is its directory's name,
-whatever its manifest says. `save_theme` writes the manifest atomically
+problem rather than a parse error. An installed theme's id has one
+source, its directory's name, whatever its manifest says (each way in,
+listing, finding by id, making and importing, checks the name is a theme
+id before loading); a package's id is its
+manifest's, which `export_theme` writes from the directory's name, so a
+folder copied and renamed by hand exports and imports under its new
+name. `save_theme` writes the manifest atomically
 and refuses the built-in default theme, which has no directory.
 `new_theme` copies a theme's indications, voice styles, gain,
 description, and the sound files in its directory under an id made from
@@ -166,16 +171,19 @@ the new name (numbered when taken); based on the default theme, it starts
 with no differences. `rename_theme` changes only the name, so every
 reference by id stays. `add_sound` copies a WAV file into a theme under
 its own name, numbered when the theme has a different file by that name.
-`export_theme` writes a zip of the manifest and the sound files in the
-theme's directory that it uses, deflated, through a temporary file
-renamed into place. `import_theme` reads a package whose manifest is at
+`export_theme` writes a zip of the manifest, its `id` set to the theme's
+through `toml_edit` so the rest, comments and key order included, stays
+as written (Claude, 2026-11-28), and the sound files in the theme's
+directory that it uses, deflated, through a temporary file renamed into
+place. `import_theme` reads a package whose manifest is at
 its top level or in its single top-level folder, takes only the manifest
 and WAV files with plain names there (at most 256 files, 16 MB each, and
 64 MB in all), refuses an id that is invalid, taken, or `default`,
 unpacks into a staging directory beside the themes, and renames it into
 place, so a failure leaves nothing installed. Packages are read and
 written with the `zip` crate, using a pure-Rust deflate. Unit tests round
-trip a theme through its manifest and through export and import, parse
+trip a theme through its manifest and through export and import (a
+folder renamed by hand included), parse
 the documented example, list problems, list and find themes, and check
 new, rename, remove, add-sound, a package zipped as a folder, and that
 stray paths in a package are left out.

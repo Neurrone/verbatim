@@ -636,6 +636,11 @@ public:
     // Space on the sound choice: plays the sound it shows.
     void PlaySound() { g_shell->core.play_indication_sound(); }
 
+    // The page as Rust has it after OK or Apply, whose choice can change
+    // the list (the configured theme not installed leaves it once another
+    // is applied) and which themes can be removed.
+    void Committed() { RefreshAll(); }
+
 private:
     // Connects every control to what Rust does with it.
     void Wire() {
@@ -1116,15 +1121,16 @@ public:
         // Bound here, these run before wxDialog's own button handling,
         // which would only hide a modeless dialog. Escape and the close
         // box arrive as a click on Cancel.
-        Bind(wxEVT_BUTTON, [](wxCommandEvent&) {
-            g_shell->core.commit_settings();
-            CloseDialog(DialogKind::Settings);
+        Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            if (Commit(true)) {
+                CloseDialog(DialogKind::Settings);
+            }
         }, wxID_OK);
         Bind(wxEVT_BUTTON, [](wxCommandEvent&) {
             g_shell->core.revert_settings();
             CloseDialog(DialogKind::Settings);
         }, wxID_CANCEL);
-        Bind(wxEVT_BUTTON, [](wxCommandEvent&) { g_shell->core.commit_settings(); }, wxID_APPLY);
+        Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Commit(false); }, wxID_APPLY);
         ok_->SetDefault();
         SetAffirmativeId(wxID_OK);
         SetEscapeId(wxID_CANCEL);
@@ -1179,6 +1185,28 @@ private:
         SetTitle(page.title);
         container_->Layout();
         Layout();
+    }
+
+    // OK or Apply: keeps the live changes. False when a theme could not be
+    // saved: that is shown in a message box over the dialog, as a
+    // synthesizer that could not start is, and the dialog stays open with
+    // the Theme page showing the changes that were not saved. The page is
+    // brought up to date unless OK is about to close the dialog.
+    bool Commit(bool closing) {
+        const SettingsCommit commit = g_shell->core.commit_settings();
+        const bool saved = commit.error.empty();
+        if (!saved) {
+            const NativeModalTimer timer(Text(commit.error_title));
+            wxMessageBox(Text(commit.error), Text(commit.error_title), wxOK | wxICON_WARNING,
+                         this);
+            if (g_shell->shutting_down) {
+                return false;
+            }
+        }
+        if (theme_ != nullptr && !(saved && closing)) {
+            theme_->Committed();
+        }
+        return saved;
     }
 
     wxPanel* BuildPage(CategoryKind kind) {

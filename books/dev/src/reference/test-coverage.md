@@ -150,7 +150,7 @@ Each row is a gesture or feature with a gap still open. Its tests today are list
 |---|---|---|---|---|
 | Settings dialog keys | Enter, Control+S and Control+Tab in the dialog | verbatim-gui keys tests | n/a | `settings_dialog_keys`, `rapid_tabbing_in_settings` |
 | Settings persistence | Load, save and profiles | verbatim-config tests; verbatim-app saver tests | n/a | n/a |
-| Theme management | New, rename, export and import of themes | verbatim-gui theme_panel tests; verbatim-config themes tests | n/a | `theme_panel` |
+| Theme management | New, rename, export and import of themes (under the folder's name, `a_theme_exports_and_imports_under_its_directory_name`); the configured theme not installed listed and kept by Apply (`a_configured_theme_not_installed_is_listed_and_kept_until_another_is_chosen`); a failed save reported with its edit kept (`a_failed_theme_save_is_reported_and_keeps_the_edit`); a sound chosen from the list shown (`a_sound_is_chosen_from_the_list_the_controls_showed`) | verbatim-gui theme_panel tests; verbatim-config themes tests | n/a | `theme_panel`; none for the configured theme not installed or a failed save, whose message box and open dialog are C++ |
 | Speech settings | Rate, voice, pitch and others | verbatim-gui settings and plan tests; verbatim-speech pipeline | n/a | `menu_and_settings_dialog` |
 | Terminal settings | See the terminal table | verbatim-gui terminal_panel tests | n/a | `terminal_settings_page` |
 

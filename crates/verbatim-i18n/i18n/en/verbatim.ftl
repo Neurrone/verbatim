@@ -95,6 +95,12 @@ theme-error-not-found = no theme with the id `{ $id }` is installed
 theme-error-not-a-wav = { $path } is not a WAV file
 theme-error-package = theme package { $path }: { $error }
 theme-in-use = The configuration uses { $name }, so it cannot be removed.
+# OK or Apply could not save a theme; each reason follows on its own line.
+theme-save-failed = Failed to save theme
+# The theme list's entry for the configured theme when it is not installed,
+# and the first line of the description while it is selected.
+theme-not-installed = { $id } (not installed)
+theme-not-installed-description = The configured theme { $id } is not installed, so the default theme is used in its place.
 
 ## The Terminal settings page (books/dev/src/reference/crates/verbatim-gui.md). The dialog's own
 ## Categories and Apply take C and A.

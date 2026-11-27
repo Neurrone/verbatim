@@ -543,6 +543,17 @@ pub(crate) mod ffi {
         error_title: String,
     }
 
+    /// How OK or Apply ended.
+    struct SettingsCommit {
+        /// Empty when everything was saved, and OK closes the dialog. When
+        /// a theme could not be saved, the message saying so, and the title
+        /// of the message box that shows it; the dialog stays open with the
+        /// changes that were not saved, as it does for a synthesizer that
+        /// could not start.
+        error: String,
+        error_title: String,
+    }
+
     /// A list dialog: a label over a single-selection list, a row of
     /// buttons, and Cancel.
     struct ListDialog {
@@ -649,8 +660,9 @@ pub(crate) mod ffi {
         fn choice_changed(self: &GuiCore, generation: u32, control: usize, option: usize);
         /// A check box was toggled.
         fn toggle_changed(self: &GuiCore, generation: u32, control: usize, checked: bool);
-        /// OK or Apply: keep the live changes.
-        fn commit_settings(self: &GuiCore);
+        /// OK or Apply: keep the live changes, and say whether a theme
+        /// could not be saved.
+        fn commit_settings(self: &GuiCore) -> SettingsCommit;
         /// Cancel: undo the live changes.
         fn revert_settings(self: &GuiCore);
         /// The Select Synthesizer dialog's contents.

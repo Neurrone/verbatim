@@ -323,6 +323,7 @@ pub mod messages {
             sound_file_filter: fl!(loader, "theme-sound-file-filter"),
             remove_title: fl!(loader, "theme-remove-title"),
             error_title: fl!(loader, "theme-error-title"),
+            save_failed: fl!(loader, "theme-save-failed"),
         }
     }
 
@@ -391,6 +392,9 @@ pub mod messages {
         pub remove_title: String,
         /// The title of a message reporting a failed theme operation.
         pub error_title: String,
+        /// The first line of the message reporting that OK or Apply could
+        /// not save a theme.
+        pub save_failed: String,
     }
 
     /// The labels of the Terminal page's controls.

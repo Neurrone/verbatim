@@ -88,14 +88,50 @@ enum Pending {
     AddSound(Indication, PathBuf),
 }
 
+/// What the theme list holds and which entry of it is selected. The theme
+/// the configuration names, when it is not installed, is listed after the
+/// installed themes, with the built-in default theme shown and spoken in
+/// its place, as at startup. Apply keeps the configuration's choice while
+/// it is selected, so only a theme the user chose replaces it (Claude,
+/// 2026-11-28).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Selection {
+    /// The configured theme is installed; the installed theme at this
+    /// index in `themes` is selected.
+    Installed(usize),
+    /// The configured theme is not installed and is listed last; the
+    /// installed theme at this index in `themes` is selected.
+    InstalledBesideMissing(usize),
+    /// The configured theme is not installed, and its entry is selected.
+    Missing,
+}
+
+impl Selection {
+    /// The selected installed theme's index in `themes`.
+    fn installed(self) -> Option<usize> {
+        match self {
+            Self::Installed(index) | Self::InstalledBesideMissing(index) => Some(index),
+            Self::Missing => None,
+        }
+    }
+
+    /// Whether the configured theme is listed as not installed.
+    fn lists_missing(self) -> bool {
+        !matches!(self, Self::Installed(_))
+    }
+}
+
 /// The Theme page's state.
 pub(crate) struct ThemePanel {
     host: Arc<dyn ThemeHost>,
     labels: ThemeLabels,
     /// The installed themes, the built-in default first, as on disk.
     themes: Vec<LoadedTheme>,
-    /// The selected theme's index in `themes`.
-    selected: usize,
+    /// The selected theme.
+    selected: Selection,
+    /// The sound choice's options as the controls last showed them, which
+    /// a choice's index is mapped through.
+    shown_sounds: Vec<SoundChoice>,
     /// Themes changed since the last apply, by id, not yet saved.
     edited: BTreeMap<String, Theme>,
     /// The settings that go with the theme, as they are now.
@@ -121,7 +157,8 @@ impl ThemePanel {
             host,
             labels: messages::theme_labels(),
             themes: Vec::new(),
-            selected: 0,
+            selected: Selection::Missing,
+            shown_sounds: Vec::new(),
             edited: BTreeMap::new(),
             options,
             committed: (id.clone(), options),
@@ -134,8 +171,9 @@ impl ThemePanel {
         panel
     }
 
-    /// Lists the installed themes again and selects `id`, or the built-in
-    /// default theme when it is not installed.
+    /// Lists the installed themes again and selects `id`. Any theme other
+    /// than the configured one gone from the folder, removed by another
+    /// program while the page is open, selects the configured theme.
     fn reload(&mut self, id: &str) {
         let (themes, errors) =
             themes::list_themes(&self.host.themes_dir(), &self.host.sounds_dir());
@@ -143,16 +181,20 @@ impl ThemePanel {
             tracing::warn!(%error, "a theme in the themes folder cannot be loaded");
         }
         self.themes = themes;
-        self.selected = self
-            .themes
-            .iter()
-            .position(|loaded| loaded.theme.id == id)
-            .unwrap_or(0);
+        let position = |id: &str| self.themes.iter().position(|loaded| loaded.theme.id == id);
+        self.selected = match (position(&self.committed.0), position(id)) {
+            (Some(configured), selected) => Selection::Installed(selected.unwrap_or(configured)),
+            (None, Some(selected)) => Selection::InstalledBesideMissing(selected),
+            (None, None) => Selection::Missing,
+        };
     }
 
     /// The selected theme as it is now, with its unsaved changes.
     fn current(&self) -> LoadedTheme {
-        let mut loaded = self.themes[self.selected].clone();
+        let mut loaded = match self.selected.installed() {
+            Some(index) => self.themes[index].clone(),
+            None => LoadedTheme::builtin(),
+        };
         if let Some(edited) = self.edited.get(&loaded.theme.id) {
             loaded.theme = edited.clone();
             loaded.problems =
@@ -191,8 +233,15 @@ impl ThemePanel {
                 .themes
                 .iter()
                 .map(|loaded| Self::display_name(&loaded.theme))
+                .chain(self.selected.lists_missing().then(|| {
+                    verbatim_i18n::t!("theme-not-installed", id = self.committed.0.as_str())
+                }))
                 .collect(),
-            selected: i32::try_from(self.selected).unwrap_or(0),
+            selected: index_of(Some(match self.selected {
+                Selection::Installed(index) | Selection::InstalledBesideMissing(index) => index,
+                // Listed after the installed themes.
+                Selection::Missing => self.themes.len(),
+            })),
             description_label: labels.description.clone(),
             description: self.description(&current),
             volume_label: labels.sound_volume.clone(),
@@ -242,6 +291,12 @@ impl ThemePanel {
     /// the problems found with it.
     fn description(&self, current: &LoadedTheme) -> String {
         let mut lines = Vec::new();
+        if self.selected == Selection::Missing {
+            lines.push(verbatim_i18n::t!(
+                "theme-not-installed-description",
+                id = self.committed.0.as_str()
+            ));
+        }
         if current.theme.is_builtin() {
             lines.push(verbatim_i18n::theme_default_description());
         } else if !current.theme.description.is_empty() {
@@ -359,13 +414,15 @@ impl ThemePanel {
         choices
     }
 
-    /// The selected indication's controls.
-    pub(crate) fn controls(&self) -> ffi::IndicationControls {
+    /// The selected indication's controls. The sound choice's options are
+    /// kept, so a choice is mapped through the list it was made from.
+    pub(crate) fn controls(&mut self) -> ffi::IndicationControls {
         let report_options: Vec<String> = Presentation::ALL
             .iter()
             .map(|presentation| verbatim_i18n::presentation_name(*presentation))
             .collect();
         let Some(indication) = self.indication else {
+            self.shown_sounds.clear();
             return ffi::IndicationControls {
                 report_options,
                 report: -1,
@@ -398,7 +455,7 @@ impl ThemePanel {
             .and_then(|name| voices.iter().position(|style| *style == name))
             .map_or(0, |index| index + 1);
         let speaks = setting.report.speaks();
-        ffi::IndicationControls {
+        let controls = ffi::IndicationControls {
             report_options,
             report: index_of(Presentation::ALL.iter().position(|p| *p == setting.report)),
             report_enabled: true,
@@ -418,7 +475,9 @@ impl ThemePanel {
             voice_enabled: speaks,
             preview_enabled: true,
             reset_enabled: current.theme.differs(indication),
-        }
+        };
+        self.shown_sounds = choices;
+        controls
     }
 
     fn choice_name(&self, choice: &SoundChoice) -> String {
@@ -430,10 +489,18 @@ impl ThemePanel {
         }
     }
 
-    /// Chooses the theme at `index`, which applies at once.
+    /// Chooses the theme at `index` of the list the page shows, which
+    /// applies at once.
     pub(crate) fn choose(&mut self, index: usize) {
-        if index < self.themes.len() && index != self.selected {
-            self.selected = index;
+        let missing = self.selected.lists_missing();
+        let chosen = match (index < self.themes.len(), missing) {
+            (true, false) => Selection::Installed(index),
+            (true, true) => Selection::InstalledBesideMissing(index),
+            (false, true) if index == self.themes.len() => Selection::Missing,
+            (false, _) => return,
+        };
+        if chosen != self.selected {
+            self.selected = chosen;
             self.activate();
         }
     }
@@ -510,14 +577,14 @@ impl ThemePanel {
         self.edit(|setting| setting.report = report)
     }
 
-    /// The sound choice changed to the option at `option`.
+    /// The sound choice changed to the option at `option` of those the
+    /// controls last showed.
     pub(crate) fn set_sound(&mut self, option: usize) -> ffi::ThemeEdit {
         let Some(indication) = self.indication else {
             return edit_done();
         };
-        let current = self.current();
-        let setting = current.theme.setting(indication);
-        let sound = match self.sound_choices(&current, &setting).get(option) {
+        let setting = self.current().theme.setting(indication);
+        let sound = match self.shown_sounds.get(option) {
             Some(SoundChoice::None) => None,
             Some(SoundChoice::Tone(tone)) => Some(SoundSource::Tone(*tone)),
             Some(SoundChoice::File(file)) => Some(SoundSource::File(file.clone())),
@@ -721,7 +788,11 @@ impl ThemePanel {
     /// Writes the selected theme, as saved, as a package at `path`.
     /// Returns why it failed, or empty.
     pub(crate) fn export(&self, path: &Path) -> String {
-        match themes::export_theme(&self.themes[self.selected], path) {
+        let exported = match self.selected.installed() {
+            Some(index) => themes::export_theme(&self.themes[index], path),
+            None => Err(ThemeError::NotFound(self.committed.0.clone())),
+        };
+        match exported {
             Ok(()) => String::new(),
             Err(error) => theme_error_text(&error),
         }
@@ -747,21 +818,42 @@ impl ThemePanel {
     }
 
     /// OK or Apply: saves the changed themes and the choice, which Cancel
-    /// then restores. Returns why something could not be saved, or empty.
-    pub(crate) fn apply(&mut self) -> String {
+    /// then restores. A theme that could not be saved keeps its changes on
+    /// the page, unsaved, for a later Apply; the error is "Failed to save
+    /// theme" and why, for each such theme. The choice is the theme the user
+    /// chose, or, while the configured theme is not installed and still
+    /// selected, the configured theme, kept.
+    pub(crate) fn apply(&mut self) -> Result<(), String> {
         let themes_dir = self.host.themes_dir();
         let mut failures = Vec::new();
-        for theme in self.edited.values() {
-            if let Err(error) = themes::save_theme(&themes_dir, theme) {
-                failures.push(theme_error_text(&error));
-            }
-        }
-        self.edited.clear();
-        let id = self.themes[self.selected].theme.id.clone();
+        self.edited
+            .retain(|_, theme| match themes::save_theme(&themes_dir, theme) {
+                Ok(_) => false,
+                Err(error) => {
+                    failures.push(theme_error_text(&error));
+                    true
+                }
+            });
+        let id = match self.selected.installed() {
+            Some(index) => self.themes[index].theme.id.clone(),
+            None => self.committed.0.clone(),
+        };
         self.host.persist(&id, self.options);
+        self.committed = (id.clone(), self.options);
         self.reload(&id);
-        self.committed = (id, self.options);
-        failures.join("\n")
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(std::iter::once(self.labels.save_failed.clone())
+                .chain(failures)
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+    }
+
+    /// The title of a message reporting a failed theme operation.
+    pub(crate) fn error_title(&self) -> String {
+        self.labels.error_title.clone()
     }
 
     /// Cancel: drops every unsaved change and restores the theme and
@@ -1254,7 +1346,7 @@ mod tests {
         let mut panel = with_user_theme(&host);
         panel.set_report(0);
         panel.set_volume(40);
-        assert_eq!(panel.apply(), "");
+        assert_eq!(panel.apply(), Ok(()));
         let (id, options) = host.configured();
         assert_eq!(id, "mine");
         assert_eq!(options.sound_volume.get(), 40);
@@ -1271,11 +1363,97 @@ mod tests {
         assert_eq!(panel.page().themes[1], "Mine");
     }
 
+    /// A configured theme that is not installed is listed as such after
+    /// the installed ones and selected; Apply keeps it as the
+    /// configuration's choice until the user chooses another.
+    #[test]
+    fn a_configured_theme_not_installed_is_listed_and_kept_until_another_is_chosen() {
+        let host = FakeHost::new("missing");
+        host.configured.lock().unwrap().0 = "gone".to_owned();
+        let mut panel = ThemePanel::open(Arc::clone(&host) as Arc<dyn ThemeHost>);
+        let page = panel.page();
+        assert_eq!(page.themes, ["Default", "gone (not installed)"]);
+        assert_eq!(page.selected, 1);
+        assert_eq!(
+            page.description,
+            "The configured theme gone is not installed, so the default theme is used in its place.\n\
+             Matches NVDA's speech and sounds.\n\
+             No problems found."
+        );
+        assert!(!page.can_rename && !page.can_remove);
+
+        panel.set_volume(40);
+        assert_eq!(panel.apply(), Ok(()));
+        let (id, options) = host.configured();
+        assert_eq!(id, "gone", "the configured theme is kept");
+        assert_eq!(options.sound_volume.get(), 40);
+        assert_eq!(panel.page().selected, 1);
+
+        panel.choose(0);
+        assert_eq!(panel.apply(), Ok(()));
+        assert_eq!(host.configured().0, Theme::DEFAULT_ID, "the user's choice");
+        assert_eq!(panel.page().themes, ["Default"]);
+    }
+
+    /// A theme whose save fails is reported, and its edit stays on the
+    /// page, unsaved, until a later Apply saves it.
+    #[test]
+    fn a_failed_theme_save_is_reported_and_keeps_the_edit() {
+        let host = FakeHost::new("save-fails");
+        let mut panel = with_user_theme(&host);
+        panel.set_report(0);
+        // The manifest's temporary file cannot be written over a folder.
+        let blocker = host.themes_dir.join("mine").join("theme.toml.tmp");
+        std::fs::create_dir(&blocker).expect("block the save");
+        // The system's own wording for writing a file over a folder.
+        let refused = std::fs::write(&blocker, b"").expect_err("a folder is not a file");
+        assert_eq!(
+            panel.apply(),
+            Err(format!(
+                "Failed to save theme\ntheme I/O error at {}: {refused}",
+                blocker.display()
+            ))
+        );
+        assert_eq!(
+            label_of(&panel, LINK),
+            "link: off, changed",
+            "the edit stays"
+        );
+        let saved = themes::find_theme(&host.themes_dir, &host.sounds_dir, "mine").unwrap();
+        assert_eq!(saved.theme.setting(LINK).report, Presentation::Speech);
+
+        std::fs::remove_dir(&blocker).expect("unblock the save");
+        assert_eq!(panel.apply(), Ok(()));
+        let saved = themes::find_theme(&host.themes_dir, &host.sounds_dir, "mine").unwrap();
+        assert_eq!(saved.theme.setting(LINK).report, Presentation::Off);
+    }
+
+    /// The sound chosen is the one the controls showed at that index, even
+    /// when the sounds folder changed since.
+    #[test]
+    fn a_sound_is_chosen_from_the_list_the_controls_showed() {
+        let host = FakeHost::new("sound-list");
+        let mut panel = with_user_theme(&host);
+        panel.set_report(2);
+        let controls = panel.controls();
+        let start = controls
+            .sound_options
+            .iter()
+            .position(|option| option == "start.wav")
+            .expect("the shared sounds are offered");
+        write_wav(&host.sounds_dir.join("added.wav"));
+        assert_eq!(panel.set_sound(start).error, "");
+        assert_eq!(
+            host.last_activated().0.setting(LINK).sound,
+            Some(SoundSource::File("start.wav".to_owned()))
+        );
+    }
+
     #[test]
     fn the_configured_theme_cannot_be_removed_and_another_can() {
         let host = FakeHost::new("remove");
         let mut panel = with_user_theme(&host);
-        assert_eq!(panel.apply(), "");
+        assert_eq!(panel.apply(), Ok(()));
         assert!(!panel.page().can_remove);
         assert_eq!(
             panel.remove(),
